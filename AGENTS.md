@@ -14,7 +14,7 @@ opens a new execution phase.
 
 - Run task-major: one task across every method and both devices before the next task.
 - The exact method set is `fixed_replay`, `ours`,
-  `mobilegpt_offline_retrieval`, `appagent_demo`, and `mobile_agent_v3`.
+  `mobilegpt_offline_retrieval`, `appagent_demo`, and `t3a_hint`.
 - Source seed is `111`; target seed is `113`.
 - Targets are SmallPhone and Pixel Fold in unfolded state `2`.
 - Use AndroidWorld native observation/action and its official validator. Do not use OOB.

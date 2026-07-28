@@ -4699,6 +4699,7 @@ def _task_result_path_context(path: Path) -> dict[str, str]:
         "m3a_hint",
         "m3a_retrieval",
         "t3a_official",
+        "t3a_hint",
         "t3a_retrieval",
         "appagent_baseline",
         "appagent_demo",
@@ -5317,6 +5318,7 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
                 "m3a_hint",
                 "m3a_retrieval",
                 "t3a_official",
+                "t3a_hint",
                 "t3a_retrieval",
             }
         ):
@@ -5604,6 +5606,7 @@ ONE_TASK_SUPPORTED_METHODS = ONE_TASK_ALL_METHODS + (
     "m3a_official",
     "m3a_hint",
     "t3a_official",
+    "t3a_hint",
     "appagent_baseline",
     "appagent_demo",
     "mobile_agent_v3",
@@ -8328,7 +8331,10 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                     "replay_memory_root": str(memory_root),
                 },
             )
-        elif method == "m3a_hint":
+        elif method in {"m3a_hint", "t3a_hint"}:
+            official_agent_name = (
+                "t3a_gpt4" if method == "t3a_hint" else "m3a_gpt4v"
+            )
             source_hint_store_path = (
                 _repo_path(str(args.store_path))
                 if str(args.store_path or "").strip()
@@ -8367,7 +8373,7 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                         if source_hint_store_path is not None
                         else None
                     ),
-                    "official_agent_name": "m3a_gpt4v",
+                    "official_agent_name": official_agent_name,
                     "uses_omniflow_agent": False,
                     "uses_source_action_hints": True,
                     "hint_mode": "official_goal_reference_trace",
@@ -8456,6 +8462,7 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                 "m3a_official",
                 "m3a_hint",
                 "t3a_official",
+                "t3a_hint",
             }:
                 spec = build_official_androidworld_command(
                     item,
@@ -8878,7 +8885,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Comma-separated methods or `all`: fixed_replay, ours, "
             "mobilegpt_baseline; "
-            "m3a_official, m3a_hint, t3a_official, appagent_baseline, "
+            "m3a_official, m3a_hint, t3a_official, t3a_hint, appagent_baseline, "
             "and appagent_demo are available "
             "explicitly."
         ),

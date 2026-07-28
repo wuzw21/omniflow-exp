@@ -5,7 +5,7 @@
     "index": "runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json",
     "android_world_root": "runtime/external/droidrun-android-world/android_world",
     "output_root": "runtime/evals/androidworld_single_task_attempt_override_required",
-    "methods": "fixed_replay,ours,mobilegpt_offline_retrieval,appagent_demo,mobile_agent_v3",
+    "methods": "fixed_replay,ours,mobilegpt_offline_retrieval,appagent_demo,t3a_hint",
     "store_path": "runtime/evals/androidworld_single_task_assets/source_seed_111/SystemBluetoothTurnOn/ours/store_r1/store.json",
     "device_targets": "small5554:emulator-5554:5554,fold5564:emulator-5564:5564",
     "source_format": "all",

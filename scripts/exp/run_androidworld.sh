@@ -16,7 +16,7 @@ config="$repo/config/paper_androidworld.json"
 preflight="$repo/skills/androidworld-runtime-preflight/scripts/preflight.py"
 task="${OMNIFLOW_SINGLE_TASK_TASK:-SystemBluetoothTurnOn}"
 task_iteration="${OMNIFLOW_SINGLE_TASK_ITERATION:-1}"
-all_methods="fixed_replay,ours,mobilegpt_offline_retrieval,appagent_demo,mobile_agent_v3"
+all_methods="fixed_replay,ours,mobilegpt_offline_retrieval,appagent_demo,t3a_hint"
 if [[ "$task_iteration" == "1" ]]; then
   default_methods="$all_methods"
 else
@@ -27,8 +27,9 @@ baseline_environment_repair="${OMNIFLOW_BASELINE_ENVIRONMENT_REPAIR_REASON:-}"
 device_targets="${OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS:-small5554:emulator-5554:5554,fold5564:emulator-5564:5564}"
 fixed_task_params="${OMNIFLOW_SINGLE_TASK_FIXED_TASK_PARAMS:-0}"
 timeout_sec="${OMNIFLOW_SINGLE_TASK_TIMEOUT_SEC:-600}"
+max_steps="${OMNIFLOW_SINGLE_TASK_MAX_STEPS:-20}"
 max_fallback_steps="${OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS:-5}"
-store_path="${OMNIFLOW_SINGLE_TASK_STORE_PATH:-${asset_root:+$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111/$task/ours/store_r1/store.json}}"
+store_path="${OMNIFLOW_SINGLE_TASK_STORE_PATH:-}"
 mobilegpt_root="${OMNIFLOW_MOBILEGPT_ROOT:-${asset_root:+$asset_root/runtime/external/mobilegpt}}"
 mobilegpt_source_memory_root="${OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT:-${asset_root:+$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111/$task/mobilegpt_offline_retrieval/native_source_r2/memory}}"
 appagent_root="${OMNIFLOW_APPAGENT_ROOT:-${asset_root:+$asset_root/runtime/external/appagent}}"
@@ -49,12 +50,40 @@ emulator_boot_timeout_sec="${OMNIFLOW_SINGLE_TASK_EMULATOR_BOOT_TIMEOUT_SEC:-240
 fold_serial="${OMNIFLOW_SINGLE_TASK_FOLD_SERIAL:-emulator-5564}"
 fold_state="${OMNIFLOW_SINGLE_TASK_FOLD_STATE:-2}"
 fold_size="${OMNIFLOW_SINGLE_TASK_FOLD_SIZE:-2208x1840}"
+dry_run=0
+all_tasks=0
+case "$#" in
+  0)
+    ;;
+  1)
+    case "$1" in
+      --dry-run)
+        dry_run=1
+        ;;
+      --all-tasks)
+        all_tasks=1
+        ;;
+      *)
+        echo "Usage: $0 [--dry-run|--all-tasks]" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  *)
+    echo "Usage: $0 [--dry-run|--all-tasks]" >&2
+    exit 2
+    ;;
+esac
 if [[ ! "$task_iteration" =~ ^[1-3]$ ]]; then
   echo "OMNIFLOW_SINGLE_TASK_ITERATION must be an integer from 1 through 3." >&2
   exit 2
 fi
 if [[ ! "$max_fallback_steps" =~ ^[0-5]$ ]]; then
   echo "OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS must be an integer from 0 through 5." >&2
+  exit 2
+fi
+if [[ ! "$max_steps" =~ ^[1-9][0-9]*$ ]]; then
+  echo "OMNIFLOW_SINGLE_TASK_MAX_STEPS must be a positive integer." >&2
   exit 2
 fi
 if [[ ! "$manage_emulators" =~ ^[01]$ ]]; then
@@ -69,7 +98,6 @@ printf -v iteration_label '%02d' "$task_iteration"
 attempt_id="iteration_${iteration_label}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 attempt_series_root="${results_root:+$results_root/androidworld_single_task_attempts/$task}"
 output_root="${OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT:-$attempt_series_root/$attempt_id}"
-dry_run=0
 requires_mobilegpt_source_memory=0
 requires_omnitransfer=0
 need_native_preflight=0
@@ -97,6 +125,10 @@ for method in ${methods//,/ }; do
       need_appagent_preflight=1
       contains_baseline_method=1
       ;;
+    t3a_hint)
+      need_native_preflight=1
+      contains_baseline_method=1
+      ;;
     mobile_agent_v3)
       need_mobile_agent_v3_preflight=1
       contains_baseline_method=1
@@ -107,18 +139,14 @@ for method in ${methods//,/ }; do
       ;;
   esac
 done
+if [[ "$requires_omnitransfer" -eq 1 && -z "$store_path" ]]; then
+  store_path="${asset_root:+$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111/$task/ours/store_r1/store.json}"
+fi
 if [[ "$task_iteration" != "1" && "$contains_baseline_method" -eq 1 && -z "$baseline_environment_repair" ]]; then
   echo "Baseline methods are frozen after iteration 1. Set OMNIFLOW_BASELINE_ENVIRONMENT_REPAIR_REASON only for an audited environment-only retry." >&2
   exit 2
 fi
 
-if [[ $# -gt 1 || ($# -eq 1 && "$1" != "--dry-run") ]]; then
-  echo "Usage: $0 [--dry-run]" >&2
-  exit 2
-fi
-if [[ $# -eq 1 ]]; then
-  dry_run=1
-fi
 if [[ -z "$asset_root" || -z "$results_root" ]]; then
   echo "Set OMNIFLOW_EXP_ASSET_ROOT and OMNIFLOW_EXP_RESULTS_ROOT to external absolute paths." >&2
   exit 2
@@ -130,6 +158,89 @@ fi
 if ! python_bin="$(command -v "$python_bin")"; then
   echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
   exit 1
+fi
+if [[ "$all_tasks" -eq 1 ]]; then
+  if [[ "$methods" == *","* || "$device_targets" == *","* ]]; then
+    echo "--all-tasks currently requires exactly one method and one device target." >&2
+    exit 2
+  fi
+  if [[ "$task_iteration" != "1" ]]; then
+    echo "--all-tasks only accepts task iteration 1; resume skips registered cells." >&2
+    exit 2
+  fi
+  if [[ ! -f "$source_index" ]]; then
+    echo "Canonical source index missing: $source_index" >&2
+    exit 1
+  fi
+  batch_output_root="${OMNIFLOW_BATCH_OUTPUT_ROOT:-$results_root/attempts}"
+  batch_log_root="${OMNIFLOW_BATCH_LOG_ROOT:-$results_root/logs}"
+  mkdir -p "$batch_output_root" "$batch_log_root"
+  mapfile -t batch_tasks < <(
+    "$python_bin" - "$source_index" "$expected_source_seed" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+index_path = Path(sys.argv[1]).expanduser().resolve()
+expected_seed = int(sys.argv[2])
+payload = json.loads(index_path.read_text(encoding="utf-8"))
+if not isinstance(payload, dict) or len(payload) != 116:
+    raise SystemExit(
+        f"formal_task_index_invalid:expected=116:actual="
+        f"{len(payload) if isinstance(payload, dict) else 'not_object'}"
+    )
+for task_name, row in payload.items():
+    if not isinstance(row, dict):
+        raise SystemExit(f"formal_source_task_invalid:{task_name}")
+    actual_seed = row.get("source_seed", row.get("replay_seed"))
+    if actual_seed != expected_seed:
+        raise SystemExit(
+            f"formal_source_seed_mismatch:{task_name}:"
+            f"expected={expected_seed}:actual={actual_seed}"
+        )
+    print(task_name)
+PY
+  )
+  if [[ "${#batch_tasks[@]}" -ne 116 ]]; then
+    echo "Formal task enumeration failed: expected 116, got ${#batch_tasks[@]}." >&2
+    exit 1
+  fi
+  device_label="${device_targets%%:*}"
+  completed=0
+  skipped=0
+  for batch_task in "${batch_tasks[@]}"; do
+    registered_result="$results_root/androidworld_validator/runs/$batch_task/$methods/$device_label/iteration_01/registered_result.json"
+    if [[ -f "$registered_result" ]]; then
+      echo "[batch] skip registered task=$batch_task method=$methods device=$device_label"
+      skipped="$((skipped + 1))"
+      continue
+    fi
+    task_output_root="$batch_output_root/$batch_task/iteration_01"
+    task_log="$batch_log_root/$batch_task.log"
+    if [[ -e "$task_output_root" || -e "$task_log" ]]; then
+      echo "Unregistered immutable task artifacts require audit before resume: task=$batch_task output=$task_output_root log=$task_log" >&2
+      exit 1
+    fi
+    echo "[batch] start task=$batch_task method=$methods device=$device_label"
+    if (
+      export OMNIFLOW_SINGLE_TASK_TASK="$batch_task"
+      export OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT="$task_output_root"
+      "$0"
+    ) 2>&1 | tee "$task_log"; then
+      if [[ ! -f "$registered_result" ]]; then
+        echo "Task command returned successfully without a registered result: $batch_task" >&2
+        exit 1
+      fi
+      completed="$((completed + 1))"
+      echo "[batch] registered task=$batch_task completed=$completed skipped=$skipped total=116"
+    else
+      status="$?"
+      echo "[batch] stopped task=$batch_task status=$status log=$task_log" >&2
+      exit "$status"
+    fi
+  done
+  echo "[batch] complete completed=$completed skipped=$skipped total=116"
+  exit 0
 fi
 "$python_bin" - "$task_iteration" "$attempt_series_root" "$(dirname "$output_root")" <<'PY'
 import json
@@ -541,6 +652,7 @@ command=(
   --mobile-agent-v3-base-url "$mobile_agent_v3_base_url"
   --mobile-agent-v3-api-key "$mobile_agent_v3_api_key"
   --timeout-sec "$timeout_sec"
+  --max-steps "$max_steps"
   --max-fallback-steps "$max_fallback_steps"
 )
 if [[ -n "$baseline_environment_repair" ]]; then

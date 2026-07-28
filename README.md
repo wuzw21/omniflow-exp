@@ -12,7 +12,7 @@ must live outside the repository and are supplied through environment paths.
 - `ours` (OmniFlow)
 - `mobilegpt_offline_retrieval` (MobileGPT)
 - `appagent_demo` (AppAgent)
-- `mobile_agent_v3` (Mobile-Agent-V3)
+- `t3a_hint` (T3A + retrieved semantic trace)
 
 The public entry point is:
 
@@ -23,6 +23,19 @@ PYTHON_BIN=/absolute/path/to/python \
 OMNITRANSFER_ROOT=/absolute/path/to/versioned/omnitransfer \
 bash scripts/exp/run_androidworld.sh
 ```
+
+To fill one missing method/device column across the canonical 116 tasks with
+automatic resume, keep the same environment and run:
+
+```bash
+OMNIFLOW_SINGLE_TASK_METHODS=t3a_hint \
+OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS=fold5564:emulator-5564:5564 \
+bash scripts/exp/run_androidworld.sh --all-tasks
+```
+
+Batch mode accepts exactly one method and one device, skips immutable cells
+that are already registered, continues after validator failures, and stops on
+an execution or environment failure.
 
 The scheduler is task-major: one task, all five methods, then SmallPhone and
 the unfolded Pixel Fold cells. It does not launch a method-major campaign.
