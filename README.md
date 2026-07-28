@@ -26,6 +26,10 @@ bash scripts/exp/run_androidworld.sh
 
 The scheduler is task-major: one task, all five methods, then SmallPhone and
 the unfolded Pixel Fold cells. It does not launch a method-major campaign.
+The same entry point validates all static task assets before touching a device,
+then starts or repairs the configured AVDs, waits for adb and emulator gRPC,
+forces the Pixel Fold to state `2`, and runs every required runtime preflight
+before claiming the immutable experiment attempt.
 
 ## Repository contents
 

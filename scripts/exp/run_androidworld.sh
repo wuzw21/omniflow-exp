@@ -42,12 +42,27 @@ mobile_agent_v3_base_url="${OMNIFLOW_MOBILE_AGENT_V3_BASE_URL:-http://127.0.0.1:
 mobile_agent_v3_api_key="${OMNIFLOW_MOBILE_AGENT_V3_API_KEY:-local-vllm}"
 preflight_profile="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_PROFILE:-}"
 preflight_serials="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_SERIALS:-}"
+manage_emulators="${OMNIFLOW_SINGLE_TASK_MANAGE_EMULATORS:-1}"
+emulator_avds="${OMNIFLOW_SINGLE_TASK_EMULATOR_AVDS:-emulator-5554=SmallPhone,emulator-5564=OmniFlowTargetPixelFoldApi34}"
+emulator_gpu="${OMNIFLOW_SINGLE_TASK_EMULATOR_GPU:-swiftshader_indirect}"
+emulator_boot_timeout_sec="${OMNIFLOW_SINGLE_TASK_EMULATOR_BOOT_TIMEOUT_SEC:-240}"
+fold_serial="${OMNIFLOW_SINGLE_TASK_FOLD_SERIAL:-emulator-5564}"
+fold_state="${OMNIFLOW_SINGLE_TASK_FOLD_STATE:-2}"
+fold_size="${OMNIFLOW_SINGLE_TASK_FOLD_SIZE:-2208x1840}"
 if [[ ! "$task_iteration" =~ ^[1-3]$ ]]; then
   echo "OMNIFLOW_SINGLE_TASK_ITERATION must be an integer from 1 through 3." >&2
   exit 2
 fi
 if [[ ! "$max_fallback_steps" =~ ^[0-5]$ ]]; then
   echo "OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS must be an integer from 0 through 5." >&2
+  exit 2
+fi
+if [[ ! "$manage_emulators" =~ ^[01]$ ]]; then
+  echo "OMNIFLOW_SINGLE_TASK_MANAGE_EMULATORS must be 0 or 1." >&2
+  exit 2
+fi
+if [[ ! "$emulator_boot_timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
+  echo "OMNIFLOW_SINGLE_TASK_EMULATOR_BOOT_TIMEOUT_SEC must be a positive integer." >&2
   exit 2
 fi
 printf -v iteration_label '%02d' "$task_iteration"
@@ -191,8 +206,230 @@ export OMNITRANSFER_ROOT="$omnitransfer_root"
 unset OMNIFLOW_OOB_DEVICE_URL
 export OMNIFLOW_OBSERVE_BACKEND="androidworld"
 export OMNIFLOW_ACT_BACKEND="androidworld"
-export PATH="/home/wuzewen/.local/bin:/home/wuzewen/Android/Sdk/platform-tools:$PATH"
+android_sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/home/wuzewen/Android/Sdk}}"
+adb_bin="${OMNIFLOW_ADB_PATH:-$android_sdk_root/platform-tools/adb}"
+emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$android_sdk_root/emulator/emulator}"
+export PATH="/home/wuzewen/.local/bin:$android_sdk_root/platform-tools:$PATH"
 export PYTHONPATH="$repo:$repo/src${PYTHONPATH:+:$PYTHONPATH}"
+
+missing_assets=()
+require_file() {
+  local label="$1"
+  local path="$2"
+  if [[ ! -f "$path" ]]; then
+    missing_assets+=("$label=$path")
+  fi
+}
+require_directory() {
+  local label="$1"
+  local path="$2"
+  if [[ ! -d "$path" ]]; then
+    missing_assets+=("$label=$path")
+  fi
+}
+require_command() {
+  local label="$1"
+  local command_name="$2"
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    missing_assets+=("$label=command:$command_name")
+  fi
+}
+
+require_file "experiment_config" "$config"
+require_file "runtime_preflight" "$preflight"
+require_file "androidworld_setup" "$android_world_root/android_world/env/setup_device/apps.py"
+require_file "adb" "$adb_bin"
+require_command "java" "java"
+if [[ "$manage_emulators" -eq 1 ]]; then
+  require_file "emulator" "$emulator_bin"
+fi
+if [[ "$requires_omnitransfer" -eq 1 ]]; then
+  require_file "omnitransfer_runtime" "$omnitransfer_root/src/omnitransfer/runtime.py"
+  require_file "ours_store" "$store_path"
+fi
+if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
+  require_command "jq" "jq"
+  require_file "mobilegpt_server" "$mobilegpt_root/Server/main.py"
+  require_file "mobilegpt_tasks" "$mobilegpt_source_memory_root/tasks.csv"
+  require_file "mobilegpt_cold_manifest" "$(dirname "$mobilegpt_source_memory_root")/cold_memory_manifest.json"
+fi
+if [[ "$need_appagent_preflight" -eq 1 ]]; then
+  require_directory "appagent_root" "$appagent_root"
+  require_file "appagent_demo_manifest" "$appagent_demo_memory_root/appagent_demo_manifest.json"
+fi
+if [[ "$need_mobile_agent_v3_preflight" -eq 1 ]]; then
+  require_directory "mobile_agent_v3_root" "$mobile_agent_v3_root"
+  require_directory "mobile_agent_v3_model_root" "$mobile_agent_v3_model_root"
+fi
+if [[ ${#missing_assets[@]} -gt 0 ]]; then
+  echo "Static experiment asset preflight failed before device startup:" >&2
+  printf '  - %s\n' "${missing_assets[@]}" >&2
+  exit 1
+fi
+
+target_serials=()
+IFS=',' read -r -a target_specs <<< "$device_targets"
+for target_spec in "${target_specs[@]}"; do
+  IFS=':' read -r target_label target_serial target_console_port target_extra <<< "$target_spec"
+  if [[ -z "$target_label" || -z "$target_serial" || ! "$target_console_port" =~ ^[0-9]+$ || -n "${target_extra:-}" ]]; then
+    echo "Invalid device target: $target_spec" >&2
+    exit 2
+  fi
+  if [[ "$target_serial" != "emulator-$target_console_port" ]]; then
+    echo "Device target serial/console mismatch: $target_spec" >&2
+    exit 2
+  fi
+  target_serials+=("$target_serial")
+done
+if [[ ${#target_serials[@]} -eq 0 ]]; then
+  echo "At least one device target is required." >&2
+  exit 2
+fi
+
+avd_for_serial() {
+  local wanted_serial="$1"
+  local mapping mapping_serial mapping_avd
+  IFS=',' read -r -a mappings <<< "$emulator_avds"
+  for mapping in "${mappings[@]}"; do
+    mapping_serial="${mapping%%=*}"
+    mapping_avd="${mapping#*=}"
+    if [[ "$mapping_serial" == "$wanted_serial" && "$mapping_avd" != "$mapping" ]]; then
+      printf '%s\n' "$mapping_avd"
+      return 0
+    fi
+  done
+  return 1
+}
+
+device_state() {
+  local serial="$1"
+  local devices
+  devices="$("$adb_bin" devices 2>/dev/null || true)"
+  awk -v wanted="$serial" '$1 == wanted {print $2; exit}' <<< "$devices"
+}
+
+grpc_ready() {
+  local port="$1"
+  "$python_bin" - "$port" <<'PY'
+import socket
+import sys
+
+try:
+    with socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=0.5):
+        pass
+except OSError:
+    raise SystemExit(1)
+PY
+}
+
+wait_for_emulator() {
+  local serial="$1"
+  local grpc_port="$2"
+  local log_path="$3"
+  local deadline now boot_completed
+  deadline="$(( $(date +%s) + emulator_boot_timeout_sec ))"
+  while true; do
+    boot_completed=""
+    if [[ "$(device_state "$serial")" == "device" ]]; then
+      boot_completed="$("$adb_bin" -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')"
+    fi
+    if [[ "$boot_completed" == "1" ]] && grpc_ready "$grpc_port"; then
+      echo "[emulator] ready serial=$serial grpc=$grpc_port"
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      echo "Emulator did not become ready: serial=$serial grpc=$grpc_port log=$log_path" >&2
+      tail -n 80 "$log_path" >&2 || true
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+ensure_emulator() {
+  local serial="$1"
+  local console_port="${serial#emulator-}"
+  local grpc_port="$(( console_port + 3000 ))"
+  local avd log_path current_state stop_deadline
+  current_state="$(device_state "$serial")"
+  if [[ "$current_state" == "device" ]] && grpc_ready "$grpc_port"; then
+    echo "[emulator] reuse serial=$serial grpc=$grpc_port"
+    return 0
+  fi
+  if [[ "$manage_emulators" -ne 1 ]]; then
+    echo "Emulator is not ready and automatic management is disabled: serial=$serial grpc=$grpc_port" >&2
+    return 1
+  fi
+  if [[ -n "$current_state" ]]; then
+    echo "[emulator] restart serial=$serial state=$current_state grpc=$grpc_port"
+    "$adb_bin" -s "$serial" emu kill >/dev/null 2>&1 || true
+    stop_deadline="$(( $(date +%s) + 30 ))"
+    while [[ -n "$(device_state "$serial")" ]]; do
+      if (( $(date +%s) >= stop_deadline )); then
+        echo "Existing emulator could not be stopped safely: $serial" >&2
+        return 1
+      fi
+      sleep 1
+    done
+  elif grpc_ready "$grpc_port"; then
+    echo "gRPC port is occupied without its emulator: 127.0.0.1:$grpc_port" >&2
+    return 1
+  fi
+  if ! avd="$(avd_for_serial "$serial")"; then
+    echo "No AVD mapping configured for $serial in OMNIFLOW_SINGLE_TASK_EMULATOR_AVDS." >&2
+    return 1
+  fi
+  if ! "$emulator_bin" -list-avds | grep -Fqx "$avd"; then
+    echo "Configured AVD is not installed: serial=$serial avd=$avd" >&2
+    return 1
+  fi
+  log_path="$output_root/emulator_${serial#emulator-}.log"
+  echo "[emulator] launch serial=$serial avd=$avd grpc=$grpc_port"
+  nohup "$emulator_bin" \
+    -avd "$avd" \
+    -port "$console_port" \
+    -grpc "$grpc_port" \
+    -no-window \
+    -no-audio \
+    -no-boot-anim \
+    -no-snapshot-save \
+    -gpu "$emulator_gpu" \
+    >"$log_path" 2>&1 </dev/null &
+  wait_for_emulator "$serial" "$grpc_port" "$log_path"
+}
+
+ensure_fold_state() {
+  local selected=0 serial
+  if [[ -z "$fold_serial" ]]; then
+    return 0
+  fi
+  for serial in "${target_serials[@]}"; do
+    if [[ "$serial" == "$fold_serial" ]]; then
+      selected=1
+      break
+    fi
+  done
+  if [[ "$selected" -ne 1 ]]; then
+    return 0
+  fi
+  "$adb_bin" -s "$fold_serial" shell cmd device_state state "$fold_state" >/dev/null
+  local deadline current_state current_size
+  deadline="$(( $(date +%s) + 30 ))"
+  while true; do
+    current_state="$("$adb_bin" -s "$fold_serial" shell cmd device_state print-state 2>/dev/null | tr -d '\r')"
+    current_size="$("$adb_bin" -s "$fold_serial" shell wm size 2>/dev/null | tr -d '\r')"
+    if [[ "$current_state" == "$fold_state" && "$current_size" == *"$fold_size"* ]]; then
+      echo "[emulator] fold-ready serial=$fold_serial state=$current_state size=$fold_size"
+      return 0
+    fi
+    if (( $(date +%s) >= deadline )); then
+      echo "Pixel Fold did not reach required state/size: serial=$fold_serial expected_state=$fold_state expected_size=$fold_size actual_state=$current_state actual_size=$current_size" >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
 
 if [[ -n "$preflight_profile" ]]; then
   preflight_profiles="$preflight_profile"
@@ -212,10 +449,14 @@ else
   fi
 fi
 if [[ -z "$preflight_serials" ]]; then
-  preflight_serials="emulator-5554 emulator-5564"
+  preflight_serials="${target_serials[*]}"
 fi
 
 mkdir -p "$output_root"
+for serial in "${target_serials[@]}"; do
+  ensure_emulator "$serial"
+done
+ensure_fold_state
 for profile in $preflight_profiles; do
 for serial in $preflight_serials; do
   preflight_args=(

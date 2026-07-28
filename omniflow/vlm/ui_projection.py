@@ -71,6 +71,9 @@ def project_ui(xml_text: str, goal: str, *, max_nodes: int = 50) -> UIProjection
             compact["b"] = bounds
         if actions:
             compact["a"] = actions
+        checked = str(element.attrib.get("checked") or "").strip().lower()
+        if checked in {"true", "false"}:
+            compact["checked"] = checked == "true"
         candidate_terms = _terms(" ".join(semantic_values))
         overlap = goal_terms.intersection(candidate_terms)
         goal_match = bool(overlap)

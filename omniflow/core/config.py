@@ -20,8 +20,8 @@ DEFAULT_PLANNER_SYSTEM_PROMPT = (
     "the same normal tool path. Treat execution_history as the shared history of "
     "all canonical actions, regardless of whether they came from Function replay "
     "or the planner. Use recent_actions to advance the goal and never repeat an "
-    "already successful action on an unchanged screen. A recalled Function, when "
-    "provided, is an ordinary tool at the same selection level as built-in tools."
+    "already successful action on an unchanged screen. Treat checked=false as an "
+    "off switch or checkbox and checked=true as on."
 )
 
 

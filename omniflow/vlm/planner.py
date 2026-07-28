@@ -9,7 +9,11 @@ from omniflow.core.config import PromptSet
 from omniflow.core.model import Function, Observation, ToolCall
 from omniflow.core.schemas import canonicalize_action, vlm_action_tools
 from omniflow.functions.artifact import validate_arguments
-from omniflow.vlm.gui import constrain_open_app_tool, function_tools
+from omniflow.vlm.gui import (
+    constrain_open_app_tool,
+    function_tools,
+    has_successful_function_action,
+)
 from omniflow.vlm.model_adapter import adapt_tool_arguments
 from omniflow.vlm.tool_arguments import load_tool_arguments
 from omniflow.vlm.ui_projection import project_ui
@@ -96,23 +100,33 @@ class VLMPlanner:
             },
             display,
         )
+        completion_review = has_successful_function_action(observation.extra)
+        turn_payload: dict[str, Any] = {
+            "goal": goal,
+            "relevant_ui_elements": projection.text,
+            "ui_candidate_count": projection.candidate_count,
+            "display": {"width": width, "height": height},
+            "coordinate_space": "current_display_pixels",
+            "screen_context": screen_context,
+        }
+        if completion_review:
+            turn_payload["completion_review"] = (
+                "A recalled Function selected for the complete goal finished all "
+                "of its actions successfully, and those actions are already "
+                "applied. Judge completion from the current screenshot and UI "
+                "state. If they match the goal, call finished now. Never repeat "
+                "or toggle the last successful action merely to verify it, because "
+                "that can undo the completed operation."
+            )
         content: list[dict[str, Any]] = [
             {
                 "type": "text",
-                "text": json.dumps(
-                    {
-                        "goal": goal,
-                        "relevant_ui_elements": projection.text,
-                        "ui_candidate_count": projection.candidate_count,
-                        "display": {"width": width, "height": height},
-                        "coordinate_space": "current_display_pixels",
-                        "screen_context": screen_context,
-                    },
-                    ensure_ascii=False,
-                ),
+                "text": json.dumps(turn_payload, ensure_ascii=False),
             }
         ]
-        if observation.image_base64 and projection.requires_screenshot:
+        if observation.image_base64 and (
+            projection.requires_screenshot or completion_review
+        ):
             image = str(observation.image_base64)
             image_url = (
                 image

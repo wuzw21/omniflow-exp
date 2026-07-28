@@ -32,6 +32,8 @@ must include a concise summary explaining why that action is the best next step.
 Every coordinate is one scalar raw-pixel number, never an array, object, string,
 boolean, normalized value, or combined coordinate pair.
 Use finished only when current evidence directly proves the goal is complete.
+For switches and checkboxes, checked=false means off and checked=true means on.
+Never toggle a switch when its checked state already matches the requested goal.
 """.strip()
 
 
@@ -84,7 +86,10 @@ def build_model_turn_request(
         projection=projection,
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
-    include_images = not validation_error.strip() and projection.requires_screenshot
+    include_images = not validation_error.strip() and (
+        projection.requires_screenshot
+        or has_successful_function_action(state.get("extra"))
+    )
     current_image = _state_image_data_uri(state) if include_images else ""
     if current_image:
         content.append({"type": "image_url", "image_url": {"url": current_image}})
@@ -367,17 +372,14 @@ def _turn_text(
         context.pop("installed_apps", None)
         execution_history = str(context.pop("execution_history", "") or "").strip()
         recent_actions = context.get("recent_actions")
-        if isinstance(recent_actions, list) and any(
-            isinstance(item, dict)
-            and item.get("success") is True
-            and str(item.get("function_id") or "").strip()
-            for item in recent_actions
-        ):
+        if has_successful_function_action(context):
             lines.append(
-                "A recalled Function completed successfully in the recent action "
-                "history. If the goal asks to run, use, or execute that saved "
-                "workflow once, the requested operation is already complete: "
-                "choose finished now. Do not add extra GUI actions merely to verify it."
+                "A recalled Function selected for the complete goal finished all "
+                "of its actions successfully. Those actions are already applied. "
+                "Judge the goal from the current screenshot and UI state; if they "
+                "match the goal, choose finished now. Never repeat or toggle the "
+                "last successful action merely to verify it, because that can undo "
+                "the completed operation."
             )
         if context.get("previous_action_error") or context.get("recent_actions"):
             lines.append(
@@ -402,6 +404,18 @@ def _turn_text(
             )
         )
     return "\n".join(lines)
+
+
+def has_successful_function_action(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    recent_actions = value.get("recent_actions")
+    return isinstance(recent_actions, list) and any(
+        isinstance(item, dict)
+        and item.get("success") is True
+        and bool(str(item.get("function_id") or "").strip())
+        for item in recent_actions
+    )
 
 
 def constrain_open_app_tool(
@@ -486,5 +500,6 @@ __all__ = [
     "ModelToolCallError",
     "SYSTEM_PROMPT",
     "build_model_turn_request",
+    "has_successful_function_action",
     "parse_model_turn_response",
 ]

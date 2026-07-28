@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 from omniflow import (
@@ -411,6 +412,102 @@ def test_bridge_planner_exposes_packages_only_through_open_app_tool() -> None:
         else:
             assert "com.android.chrome" not in serialized
             assert "com.android.settings" not in serialized
+
+
+def test_function_completion_review_keeps_final_screenshot_and_checked_state() -> None:
+    request = build_model_turn_request(
+        goal="Turn bluetooth off",
+        model="test-model",
+        state={
+            "xml": (
+                '<hierarchy><node text="Use Bluetooth" checkable="true" '
+                'checked="false" bounds="[0,406][720,620]" /></hierarchy>'
+            ),
+            "image_base64": "final-screenshot",
+            "display": {"width": 720, "height": 1280},
+            "extra": {
+                "recent_actions": [
+                    {
+                        "tool": "click",
+                        "args": {"x": 500, "y": 400},
+                        "success": True,
+                        "function_id": "complete_run_turn_bluetooth_off",
+                    }
+                ],
+                "execution_history": (
+                    "Function `complete_run_turn_bluetooth_off` completed successfully."
+                ),
+            },
+        },
+        max_steps=8,
+        turn_index=0,
+    )
+
+    content = request["messages"][1]["content"]
+    assert [item["type"] for item in content] == ["text", "image_url"]
+    assert '"checked":false' in content[0]["text"]
+    assert "Those actions are already applied" in content[0]["text"]
+    assert "Never repeat or toggle" in content[0]["text"]
+
+
+def test_vlm_planner_function_completion_review_uses_final_screenshot() -> None:
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    tool_calls=[
+                        SimpleNamespace(
+                            function=SimpleNamespace(
+                                name="finished",
+                                arguments="{}",
+                            )
+                        )
+                    ]
+                )
+            )
+        ],
+        usage=None,
+    )
+    completions = CapturingCompletions(response)
+    planner = VLMPlanner(
+        model="test-model",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+    )
+
+    planned = asyncio.run(
+        planner.one_step_tool_call(
+            "Turn bluetooth off",
+            Observation(
+                xml=(
+                    '<hierarchy><node text="Use Bluetooth" checkable="true" '
+                    'checked="false" bounds="[0,406][720,620]" /></hierarchy>'
+                ),
+                image_base64="final-screenshot",
+                extra={
+                    "display": {"width": 720, "height": 1280},
+                    "recent_actions": [
+                        {
+                            "tool": "click",
+                            "args": {"x": 500, "y": 400},
+                            "success": True,
+                            "function_id": "complete_run_turn_bluetooth_off",
+                        }
+                    ],
+                    "execution_history": (
+                        "Function `complete_run_turn_bluetooth_off` completed successfully."
+                    ),
+                },
+            ),
+        )
+    )
+
+    assert planned == ToolCall("finished", {})
+    request = completions.requests[0]
+    content = request["messages"][1]["content"]
+    assert [item["type"] for item in content] == ["text", "image_url"]
+    turn_payload = json.loads(content[0]["text"])
+    assert '"checked":false' in turn_payload["relevant_ui_elements"]
+    assert "Never repeat or toggle" in turn_payload["completion_review"]
 
 
 def test_androidworld_agent_installs_function_router(tmp_path) -> None:
