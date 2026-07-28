@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omniflow-exp"
+version = "0.1.0"
+description = "Paper-only AndroidWorld evaluation for OmniFlow"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+dependencies = [
+    "json-repair==0.61.7",
+    "jsonschema>=4.23",
+    "numpy==1.26.4",
+    "pillow>=10",
+    "torch>=2.2",
+]
+
+[project.optional-dependencies]
+llm = ["openai>=1.99.9"]
+
+[tool.setuptools.package-data]
+"*" = ["*.json", "*.yaml", "*.yml", "*.md"]
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.data-files]
+"schemas/oob" = [
+    "schemas/oob/README.md",
+    "schemas/oob/oob_canonical_actions.v1.json",
+    "schemas/oob/omniflow_canonical_run_log.v1.json",
+    "schemas/oob/omniflow_checker_rule.v1.json",
+    "schemas/oob/omniflow_function.v2.json",
+    "schemas/oob/omniflow_android_bridge.v2.json",
+]
+
+[tool.setuptools.packages.find]
+include = [
+    "omniflow",
+    "omniflow.*",
+    "omnitransfer",
+    "omnitransfer.*",
+    "src",
+    "src.*",
+    "scripts",
+]
+
+[tool.ruff.lint]
+extend-select = ["I"]
+ignore = ["E402"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true

@@ -1,0 +1,35 @@
+.DS_Store
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# External experiment assets and outputs never belong in this repository.
+runtime/
+data/
+assets/
+artifacts/
+results/
+runs/
+models/
+checkpoints/
+*.apk
+*.aab
+*.avd/
+*.qcow2
+*.npz
+*.pt
+*.pth
+*.safetensors
+*.run_log.json
+*.xml
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# Local launch output.
+*.log
+nohup.out

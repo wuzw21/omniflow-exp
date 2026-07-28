@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omniflow.local/schemas/oob/omniflow_checker_rule.v1.json",
+  "title": "OmniFlow Checker Rule",
+  "description": "One learned recovery: a restricted Python trigger and one canonical Action grounded by source_state_id.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "trigger", "source_state_id", "action"],
+  "properties": {
+    "schema_version": {"const": "omniflow.checker_rule.v1"},
+    "trigger": {"type": "string", "minLength": 1, "maxLength": 512},
+    "source_state_id": {"type": "string", "minLength": 1},
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool", "args"],
+      "properties": {
+        "tool": {"type": "string", "minLength": 1},
+        "args": {"type": "object"}
+      }
+    }
+  }
+}

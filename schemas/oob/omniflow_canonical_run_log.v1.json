@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omnimind.ai/schemas/oob/omniflow_canonical_run_log.v1.json",
+  "title": "OmniFlow Canonical RunLog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "goal", "status", "success", "steps"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {"status": {"const": "succeeded"}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {"success": {"const": true}},
+        "required": ["success"]
+      },
+      "else": {
+        "properties": {"success": {"const": false}},
+        "required": ["success"]
+      }
+    }
+  ],
+  "properties": {
+    "schema_version": {"const": "omniflow.canonical_run_log.v1"},
+    "run_id": {"type": "string", "minLength": 1},
+    "goal": {"type": "string"},
+    "status": {"enum": ["running", "succeeded", "failed", "cancelled"]},
+    "success": {"type": "boolean"},
+    "error": {"type": "string"},
+    "started_at_ms": {"type": "integer", "minimum": 0},
+    "finished_at_ms": {"type": "integer", "minimum": 0},
+    "steps": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/step"}
+    },
+    "final_state_id": {"type": "string", "minLength": 1},
+    "diagnostics": {"$ref": "#/$defs/object"}
+  },
+  "$defs": {
+    "object": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "step_metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "step_id": {"type": "string", "minLength": 1},
+        "status": {"enum": ["running", "succeeded", "failed", "waiting_user"]},
+        "thinking": {"type": "string"},
+        "summary": {"type": "string"}
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["success"],
+      "properties": {
+        "success": {"type": "boolean"},
+        "error": {"type": "string"}
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool", "args"],
+      "properties": {
+        "tool": {"type": "string", "minLength": 1},
+        "args": {"$ref": "#/$defs/object"}
+      }
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_index", "before_state_id", "action", "result", "after_state_id"],
+      "properties": {
+        "step_index": {"type": "integer", "minimum": 0},
+        "before_state_id": {"type": "string", "minLength": 1},
+        "action": {"$ref": "#/$defs/action"},
+        "result": {"$ref": "#/$defs/result"},
+        "after_state_id": {"type": "string", "minLength": 1},
+        "metadata": {"$ref": "#/$defs/step_metadata"}
+      }
+    }
+  }
+}

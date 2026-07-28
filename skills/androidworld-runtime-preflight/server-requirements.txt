@@ -1,0 +1,3 @@
+imageio-ffmpeg==0.6.0
+json-repair==0.61.7
+pysqlite3-binary==0.5.4
