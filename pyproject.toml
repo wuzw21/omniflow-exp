@@ -44,7 +44,6 @@ include = [
     "omnitransfer.*",
     "src",
     "src.*",
-    "scripts",
 ]
 
 [tool.ruff.lint]

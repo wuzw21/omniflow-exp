@@ -5,9 +5,10 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+*.egg-info/
 
 # External experiment assets and outputs never belong in this repository.
-runtime/
+/runtime/
 data/
 assets/
 artifacts/

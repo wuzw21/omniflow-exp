@@ -29,6 +29,19 @@ environment, installation, preflight, accounting, and registration repairs may
 not change a method's prompt, memory, demonstration, action policy, parser,
 retry policy, step budget, model, or output.
 
+## Code layout
+
+- Put contracts and shared data types in `omniflow/core/`.
+- Put Function lifecycle code in `omniflow/functions/`.
+- Put replay orchestration and execution in `omniflow/runtime/`.
+- Put transfer orchestration and evidence tooling in `omniflow/transfer/`.
+- Put VLM-specific planning and adaptation in `omniflow/vlm/`.
+- Keep `omniflow/bridge.py` as the external bridge entry point.
+- Keep `omniflow/vlm_coordinates.py` at its shared-contract path.
+- Do not recreate the retired flat module layout.
+- Keep `scripts/exp/run_androidworld.sh` as the only repository script.
+- Put experiment implementation in `src/experiment/` or `src/integrations/`.
+
 ## Data boundary
 
 Never commit RunLogs, screenshots, XML dumps, model weights, APKs, emulator

@@ -21,7 +21,7 @@ OMNIFLOW_EXP_ASSET_ROOT=/absolute/path/to/external/assets \
 OMNIFLOW_EXP_RESULTS_ROOT=/absolute/path/to/external/results \
 PYTHON_BIN=/absolute/path/to/python \
 OMNITRANSFER_ROOT=/absolute/path/to/versioned/omnitransfer \
-bash scripts/run_androidworld_single_task_server.sh
+bash scripts/exp/run_androidworld.sh
 ```
 
 The scheduler is task-major: one task, all five methods, then SmallPhone and
@@ -29,10 +29,18 @@ the unfolded Pixel Fold cells. It does not launch a method-major campaign.
 
 ## Repository contents
 
-- `omniflow/`: OmniFlow Function recall, transfer, execution, and accounting.
+- `omniflow/`: OmniFlow's public Python package.
+  - `core/`: data models, configuration, schemas, and canonical RunLog handling.
+  - `functions/`: Function artifacts, compilation, retrieval, storage, and management.
+  - `runtime/`: runtime orchestration, action execution, and Checker recovery.
+  - `transfer/`: OmniTransfer calls, page encoding, alignment, memory, and review.
+  - `vlm/`: VLM planning, prompt construction, model adaptation, UI projection, and accounting.
+  - `bridge.py`: external JSON-line bridge entry point.
+  - `vlm_coordinates.py`: shared-contract owner for VLM coordinate conversion.
 - `omnitransfer/`: the real OmniTransfer runtime code; learned checkpoints stay external.
-- `src/integrations/`: AndroidWorld and the four baseline adapters.
-- `scripts/`: source preparation, single-task execution, preflight support, and result registration.
+- `src/experiment/`: formal task-major orchestration and immutable result registration.
+- `src/integrations/`: AndroidWorld, baseline adapters, and their runtime helpers.
+- `scripts/exp/run_androidworld.sh`: the only experiment script and public one-command entry point.
 - `skills/`: AndroidWorld preflight and source RunLog collection instructions.
 - `config/paper_androidworld.json`: the five-method paper configuration.
 

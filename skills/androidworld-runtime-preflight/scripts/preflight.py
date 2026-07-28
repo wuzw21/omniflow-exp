@@ -76,8 +76,8 @@ def _stale_processes(serial: str) -> list[str]:
             "pgrep",
             "-af",
             (
-                "run_mobilegpt.sh|androidworld_replay_pipeline.py|"
-                "mobile_agent_v3_androidworld_runner.py|python main.py"
+                "src.experiment.androidworld|androidworld.py|"
+                "mobile_agent_v3_runner.py|python main.py"
             ),
         ],
         timeout=3,
@@ -591,7 +591,7 @@ def _validate_function_manifest(manifest_path: Path, repo: Path) -> dict[str, An
         raise ValueError("function_manifest_tasks_required")
     if str(repo) not in sys.path:
         sys.path.insert(0, str(repo))
-    from omniflow.store import FunctionStore
+    from omniflow.functions.store import FunctionStore
 
     task_names = set()
     store_paths = []
@@ -746,16 +746,14 @@ def build_parser() -> argparse.ArgumentParser:
 def _required_files(profile: str) -> list[str]:
     if profile == "function":
         return [
-            "omniflow/artifact.py",
-            "omniflow/store.py",
+            "omniflow/functions/artifact.py",
+            "omniflow/functions/store.py",
             "skills/androidworld-runlog-harvester/scripts/run_4090_function_campaign.py",
-            "skills/androidworld-runlog-harvester/scripts/run_offline_function_probe.py",
-            "skills/androidworld-runlog-harvester/scripts/run_cloud_function_onepass.py",
             "runtime/external/droidrun-android-world/android_world/android_world/env/setup_device/apps.py",
         ]
     if profile == "appagent":
         return [
-            "scripts/androidworld_replay_pipeline.py",
+            "src/experiment/androidworld.py",
             "src/integrations/appagent_adapter.py",
             "src/integrations/android_world/launch.py",
             "runtime/external/appagent/scripts/document_generation.py",
@@ -763,21 +761,20 @@ def _required_files(profile: str) -> list[str]:
         ]
     if profile == "androidworld_native":
         return [
-            "scripts/androidworld_replay_pipeline.py",
+            "src/experiment/androidworld.py",
             "src/integrations/android_world/launch.py",
             "runtime/external/droidrun-android-world/android_world/android_world/env/setup_device/apps.py",
         ]
     if profile == "mobile_agent_v3":
         return [
-            "scripts/androidworld_replay_pipeline.py",
-            "scripts/mobile_agent_v3_androidworld_runner.py",
+            "src/experiment/androidworld.py",
+            "src/integrations/mobile_agent_v3_runner.py",
             "src/integrations/mobile_agent_v3_adapter.py",
         ]
     if profile == "mobilegpt":
         return [
-            "scripts/run_mobilegpt.sh",
-            "scripts/mobilegpt_adapted_memory_pipeline.py",
-            "scripts/androidworld_replay_pipeline.py",
+            "src/experiment/androidworld.py",
+            "src/integrations/mobilegpt_runtime.py",
             "src/integrations/mobilegpt_teacher.py",
             "runtime/external/mobilegpt/Server/main.py",
             "runtime/external/droidrun-android-world/android_world/android_world/env/setup_device/apps.py",

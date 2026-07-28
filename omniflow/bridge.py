@@ -9,24 +9,24 @@ import tempfile
 import time
 from typing import Any, TextIO
 
-from omniflow.artifact import parse_function_artifact
-from omniflow.compile import compile_runlog_to_store
-from omniflow.config import OmniFlowConfig, RuntimeSettings
-from omniflow.function_management import edit_function, enhance_function
-from omniflow.gui import (
-    ModelToolCallError,
-    build_model_turn_request,
-    parse_model_turn_response,
-)
-from omniflow.model import (
+from omniflow.core.config import OmniFlowConfig, RuntimeSettings
+from omniflow.core.model import (
     Action,
     ActionResult,
     Function,
     Observation,
     ToolCall,
 )
-from omniflow.runtime import InputRequired, OmniFlow
-from omniflow.trajectory import canonicalize_state
+from omniflow.core.trajectory import canonicalize_state
+from omniflow.functions.artifact import parse_function_artifact
+from omniflow.functions.compiler import compile_runlog_to_store
+from omniflow.functions.management import edit_function, enhance_function
+from omniflow.runtime.engine import InputRequired, OmniFlow
+from omniflow.vlm.gui import (
+    ModelToolCallError,
+    build_model_turn_request,
+    parse_model_turn_response,
+)
 
 PROTOCOL_VERSION = "2025-11-25"
 _DEFAULT_GUI_MAX_STEPS = 12

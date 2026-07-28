@@ -15,6 +15,10 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 from omniflow import Action, ActionResult, Observation
+from src.integrations.android_world.accessibility import (
+    xml_covers_screen,
+    xml_with_screen_size,
+)
 
 _OOB_FIELDS_OUTSIDE_EXTRA = {
     "image",
@@ -439,6 +443,14 @@ class AndroidWorldHost:
             if state is None:
                 raise
         elements = list(getattr(state, "ui_elements", ()) or ())
+        activity = str(
+            getattr(state, "activity_name", "")
+            or getattr(self.env, "foreground_activity_name", "")
+            or ""
+        )
+        package = str(getattr(state, "package_name", "") or "")
+        package = package or (activity.split("/", 1)[0] if activity else "")
+        display_width, display_height = self._screen_size()
         xml_text = str(getattr(state, "xml", "") or "")
         auxiliaries = getattr(state, "auxiliaries", None)
         if not xml_text and isinstance(auxiliaries, dict):
@@ -449,15 +461,18 @@ class AndroidWorldHost:
             xml_text = _native_androidworld_xml(self.env)
         if xml and not xml_text:
             xml_text = _elements_xml(elements)
-        activity = str(
-            getattr(state, "activity_name", "")
-            or getattr(self.env, "foreground_activity_name", "")
-            or ""
-        )
-        package = str(getattr(state, "package_name", "") or "")
         package = package or _package_from_xml(xml_text)
-        package = package or (activity.split("/", 1)[0] if activity else "")
-        display_width, display_height = self._screen_size()
+        graph_source = "uiautomator"
+        if xml and xml_text and not xml_covers_screen(
+            xml_text,
+            package_name=package,
+            screen_size=(display_width, display_height),
+        ):
+            xml_text = xml_with_screen_size(
+                xml_text,
+                screen_size=(display_width, display_height),
+            )
+            graph_source = "uiautomator_partial"
         return Observation(
             xml=xml_text or None if xml else None,
             package_name=package or None if app_info else None,
@@ -466,6 +481,7 @@ class AndroidWorldHost:
             extra={
                 "observe_backend": "androidworld",
                 "ui_element_count": len(elements),
+                "ui_graph_source": graph_source,
                 "display": {
                     "width": int(display_width),
                     "height": int(display_height),
@@ -474,9 +490,10 @@ class AndroidWorldHost:
         )
 
     def _screen_size(self) -> tuple[float, float]:
-        value = tuple(getattr(self.env, "logical_screen_size", ()) or ())
-        if len(value) == 2 and float(value[0]) > 0 and float(value[1]) > 0:
-            return float(value[0]), float(value[1])
+        for attribute in ("device_screen_size", "logical_screen_size"):
+            value = tuple(getattr(self.env, attribute, ()) or ())
+            if len(value) == 2 and float(value[0]) > 0 and float(value[1]) > 0:
+                return float(value[0]), float(value[1])
         return 1000.0, 1000.0
 
     def _wait_for_package(self, package_name: str) -> tuple[bool, str]:
@@ -486,7 +503,9 @@ class AndroidWorldHost:
             try:
                 observation = self.observe(xml=True, screenshot=False, app_info=True)
                 observed_package = str(observation.package_name or "").strip()
-                if observed_package == package_name and str(observation.xml or "").strip():
+                if observed_package == package_name and str(
+                    observation.xml or ""
+                ).strip():
                     return True, observed_package
             except Exception:
                 pass

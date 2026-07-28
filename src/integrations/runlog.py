@@ -4,11 +4,10 @@ import hashlib
 import json
 from typing import Any
 
-from omniflow.trajectory import (
+from omniflow.core.trajectory import (
     CANONICAL_RUN_LOG_SCHEMA_VERSION,
     canonicalize_run_log,
 )
-
 
 _EXECUTION_TIMING_ARGS = {
     "post_action_wait_s",

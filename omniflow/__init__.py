@@ -1,25 +1,19 @@
 """Adaptive replay for GUI agents."""
 
-from omniflow.artifact import FUNCTION_ARTIFACT_VERSION
-from omniflow.compile import compile_runlog_to_store
-from omniflow.config import (
+from omniflow.core.config import (
     Experiment,
     OmniFlowConfig,
     PluginSet,
     PromptSet,
     RuntimeSettings,
 )
-from omniflow.embedding import (
-    ElementEmbedding,
-    EncoderWeights,
-    PageEncoder,
-    TreeEmbedding,
-)
-from omniflow.model import (
+from omniflow.core.model import (
     Action,
     ActionResult,
     CheckerContext,
+    CompletionChecker,
     Function,
+    FunctionRouter,
     Host,
     Observation,
     Planner,
@@ -27,13 +21,21 @@ from omniflow.model import (
     StepResult,
     ToolCall,
 )
-from omniflow.runtime import OmniFlow
-from omniflow.trajectory import (
+from omniflow.core.trajectory import (
     CANONICAL_RUN_LOG_SCHEMA_VERSION,
     canonicalize_run_log,
     canonicalize_run_log_step,
 )
-from omniflow.transfer_memory import (
+from omniflow.functions.artifact import FUNCTION_ARTIFACT_VERSION
+from omniflow.functions.compiler import compile_runlog_to_store
+from omniflow.runtime.engine import OmniFlow
+from omniflow.transfer.embedding import (
+    ElementEmbedding,
+    EncoderWeights,
+    PageEncoder,
+    TreeEmbedding,
+)
+from omniflow.transfer.memory import (
     TRANSFER_PAIR_MEMORY_VERSION,
     TransferDirection,
     TransferPair,
@@ -45,11 +47,13 @@ __all__ = [
     "ActionResult",
     "CANONICAL_RUN_LOG_SCHEMA_VERSION",
     "CheckerContext",
+    "CompletionChecker",
     "ElementEmbedding",
     "EncoderWeights",
     "Experiment",
     "FUNCTION_ARTIFACT_VERSION",
     "Function",
+    "FunctionRouter",
     "Host",
     "Observation",
     "OmniFlowConfig",

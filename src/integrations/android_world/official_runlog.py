@@ -5,14 +5,13 @@ import json
 from typing import Any, Callable
 
 from omniflow import Observation
-from omniflow.schemas import canonicalize_action
-from omniflow.trajectory import canonicalize_run_log
-from omniflow.transfer import (
+from omniflow.core.schemas import canonicalize_action
+from omniflow.core.trajectory import canonicalize_run_log
+from omniflow.transfer.runtime import (
     TRANSFER_STATE_CATALOG_VERSION,
     capture_transfer_state,
 )
 from src.integrations.android_world.host import androidworld_elements_xml
-
 
 PackageResolver = Callable[[str], str]
 

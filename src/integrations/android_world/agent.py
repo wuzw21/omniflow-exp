@@ -9,21 +9,23 @@ from typing import Any
 import uuid
 
 from omniflow import (
+    CompletionChecker,
+    FunctionRouter,
     Observation,
     OmniFlow,
     OmniFlowConfig,
     PluginSet,
     RuntimeSettings,
 )
-from omniflow.config import Experiment
-from omniflow.model import TransferResult
-from omniflow.trajectory import canonicalize_run_log
-from omniflow.transfer import (
+from omniflow.core.config import Experiment
+from omniflow.core.model import TransferResult
+from omniflow.core.trajectory import canonicalize_run_log
+from omniflow.transfer.runtime import (
     TRANSFER_STATE_CATALOG_FILENAME,
     load_transfer_state_catalog,
     transfer_state_coverage,
 )
-from omniflow.transfer import (
+from omniflow.transfer.runtime import (
     capture_transfer_state as _transfer_state,
 )
 from src.integrations.android_world.host import AndroidWorldHost, make_agent_result
@@ -84,6 +86,8 @@ def build_agent(
     store_path: str | None = None,
     runtime: Any | None = None,
     planner: Any | None = None,
+    function_router: FunctionRouter | None = None,
+    completion_checker: CompletionChecker | None = None,
     max_steps: int = DEFAULT_RUN_MAX_STEPS,
     adb_serial: str = "",
     adb_path: str = "",
@@ -127,6 +131,8 @@ def build_agent(
         resolved_store_path,
         host=host,
         planner=planner,
+        function_router=function_router,
+        completion_checker=completion_checker,
         installed_apps={package: package for package in raw_host.installed_packages()},
         config=OmniFlowConfig(
             runtime=RuntimeSettings(

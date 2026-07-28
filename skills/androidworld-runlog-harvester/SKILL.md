@@ -122,7 +122,7 @@ result = compile_runlog_to_store(
 )
 ```
 
-The compiler validates each Function through `omniflow.artifact`, binds source
+The compiler validates each Function through `omniflow.functions.artifact`, binds source
 arguments once, and saves the referenced source states for OmniTransfer. It
 saves exactly the authored Functions when a bundle/model is supplied; otherwise
 it saves one complete multi-action Function. It does not repair invalid output
