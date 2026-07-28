@@ -14,7 +14,6 @@ from omniflow import (
 from omniflow.core.model import FunctionStep
 from omniflow.functions.artifact import FUNCTION_ARTIFACT_VERSION
 from omniflow.functions.store import FunctionStore
-from omniflow.vlm.completion_checker import VLMCompletionChecker
 from omniflow.vlm.function_router import VLMFunctionRouter
 from omniflow.vlm.gui import build_model_turn_request
 from omniflow.vlm.planner import VLMPlanner
@@ -72,6 +71,7 @@ class RejectingRouter(AcceptingRouter):
 class FinishingPlanner:
     def __init__(self) -> None:
         self.visible_function_ids: list[tuple[str, ...]] = []
+        self.observations: list[Observation] = []
 
     def one_step_tool_call(
         self,
@@ -81,32 +81,8 @@ class FinishingPlanner:
         _installed_apps: dict[str, str],
     ) -> ToolCall:
         self.visible_function_ids.append(tuple(function.id for function in functions))
+        self.observations.append(_observation)
         return ToolCall("finished", {"content": ""})
-
-
-class AcceptingCompletionChecker:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, Observation, str]] = []
-
-    def check_completion(
-        self,
-        goal: str,
-        observation: Observation,
-        action_summary: str,
-    ) -> bool:
-        self.calls.append((goal, observation, action_summary))
-        return True
-
-
-class RejectingCompletionChecker(AcceptingCompletionChecker):
-    def check_completion(
-        self,
-        goal: str,
-        observation: Observation,
-        action_summary: str,
-    ) -> bool:
-        self.calls.append((goal, observation, action_summary))
-        return False
 
 
 class SequencePlanner(FinishingPlanner):
@@ -190,13 +166,11 @@ def test_run_routes_recalled_function_before_gui_planner(tmp_path) -> None:
     host = RecordingHost()
     router = AcceptingRouter()
     planner = FinishingPlanner()
-    completion_checker = AcceptingCompletionChecker()
     flow = OmniFlow(
         store_path,
         host=host,
         function_router=router,
         planner=planner,
-        completion_checker=completion_checker,
         installed_apps={"Settings": "com.android.settings"},
     )
 
@@ -206,12 +180,11 @@ def test_run_routes_recalled_function_before_gui_planner(tmp_path) -> None:
     assert result.function_id == function_id
     assert [action.tool for action in host.actions] == ["open_app"]
     assert len(router.calls) == 1
-    assert planner.visible_function_ids == []
-    assert len(completion_checker.calls) == 1
-    checked_goal, checked_observation, action_summary = completion_checker.calls[0]
-    assert checked_goal == "Turn bluetooth on"
-    assert checked_observation.image_base64 == "final-screenshot"
-    assert "Turn bluetooth on" in action_summary
+    assert planner.visible_function_ids == [()]
+    assert planner.observations[0].image_base64 == "final-screenshot"
+    assert "Function `complete_run_turn_bluetooth_on`" in str(
+        planner.observations[0].extra.get("execution_history")
+    )
 
 
 def test_rejected_function_enters_gui_planner_without_function_tools(tmp_path) -> None:
@@ -235,31 +208,6 @@ def test_rejected_function_enters_gui_planner_without_function_tools(tmp_path) -
     assert host.actions == []
     assert len(router.calls) == 1
     assert planner.visible_function_ids == [()]
-
-
-def test_rejected_completion_check_enters_gui_planner(tmp_path) -> None:
-    store_path = tmp_path / "store.json"
-    function_id = _store_with_open_settings_function(store_path)
-    host = RecordingHost()
-    router = AcceptingRouter()
-    completion_checker = RejectingCompletionChecker()
-    planner = FinishingPlanner()
-    flow = OmniFlow(
-        store_path,
-        host=host,
-        function_router=router,
-        completion_checker=completion_checker,
-        planner=planner,
-        installed_apps={"Settings": "com.android.settings"},
-    )
-
-    result = flow.run("Turn bluetooth on")
-
-    assert result.success is True
-    assert result.function_id == function_id
-    assert len(completion_checker.calls) == 1
-    assert planner.visible_function_ids == [()]
-    assert result.fallback_steps == 1
 
 
 def test_transfer_failure_falls_back_without_replaying_source_coordinates(
@@ -370,70 +318,6 @@ def test_vlm_function_router_only_exposes_candidates_and_reject() -> None:
     )
 
 
-def test_vlm_completion_checker_only_receives_summary_and_final_screenshot() -> None:
-    response = SimpleNamespace(
-        choices=[
-            SimpleNamespace(
-                message=SimpleNamespace(
-                    tool_calls=[
-                        SimpleNamespace(
-                            function=SimpleNamespace(
-                                name="confirm_goal_finished",
-                                arguments="{}",
-                            )
-                        )
-                    ]
-                )
-            )
-        ],
-        usage=None,
-    )
-    completions = CapturingCompletions(response)
-    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
-    checker = VLMCompletionChecker(model="test-model", client=client)
-
-    confirmed = asyncio.run(
-        checker.check_completion(
-            "Turn bluetooth on",
-            Observation(
-                xml="<hierarchy><node text='must-not-leak'/></hierarchy>",
-                package_name="com.android.settings",
-                image_base64="final-screenshot-base64",
-                extra={
-                    "installed_apps": {"Settings": "com.android.settings"},
-                    "recent_actions": [{"tool": "click"}],
-                },
-            ),
-            "Turn Bluetooth on ran successfully (open_app x1, click x4).",
-        )
-    )
-
-    assert confirmed is True
-    request = completions.requests[0]
-    assert [tool["function"]["name"] for tool in request["tools"]] == [
-        "confirm_goal_finished",
-        "reject_goal_finished",
-    ]
-    request_text = request["messages"][1]["content"][0]["text"]
-    assert request_text == (
-        '{"goal":"Turn bluetooth on","action_summary":'
-        '"Turn Bluetooth on ran successfully (open_app x1, click x4)."}'
-    )
-    assert request["messages"][1]["content"][1] == {
-        "type": "image_url",
-        "image_url": {
-            "url": "data:image/png;base64,final-screenshot-base64"
-        },
-    }
-    serialized_request = str(request)
-    assert "installed_apps" not in serialized_request
-    assert "must-not-leak" not in serialized_request
-    assert "recent_actions" not in serialized_request
-    assert "open_app" not in {
-        tool["function"]["name"] for tool in request["tools"]
-    }
-
-
 def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:
     response = SimpleNamespace(
         choices=[
@@ -531,14 +415,11 @@ def test_bridge_planner_exposes_packages_only_through_open_app_tool() -> None:
 
 def test_androidworld_agent_installs_function_router(tmp_path) -> None:
     router = RejectingRouter()
-    completion_checker = AcceptingCompletionChecker()
 
     flow = build_agent(
         env=SimpleNamespace(),
         store_path=str(tmp_path / "empty-store.json"),
         function_router=router,
-        completion_checker=completion_checker,
     )
 
     assert flow.function_router is router
-    assert flow.completion_checker is completion_checker

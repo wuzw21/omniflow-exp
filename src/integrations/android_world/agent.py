@@ -9,7 +9,6 @@ from typing import Any
 import uuid
 
 from omniflow import (
-    CompletionChecker,
     FunctionRouter,
     Observation,
     OmniFlow,
@@ -87,7 +86,6 @@ def build_agent(
     runtime: Any | None = None,
     planner: Any | None = None,
     function_router: FunctionRouter | None = None,
-    completion_checker: CompletionChecker | None = None,
     max_steps: int = DEFAULT_RUN_MAX_STEPS,
     adb_serial: str = "",
     adb_path: str = "",
@@ -132,7 +130,6 @@ def build_agent(
         host=host,
         planner=planner,
         function_router=function_router,
-        completion_checker=completion_checker,
         installed_apps={package: package for package in raw_host.installed_packages()},
         config=OmniFlowConfig(
             runtime=RuntimeSettings(

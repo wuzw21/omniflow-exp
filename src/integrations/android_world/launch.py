@@ -4264,7 +4264,6 @@ def _build_launch_agent(
     if resolved_agent in {MODE_OMNIFLOW, "fixed_replay"}:
         planner = None
         function_router = None
-        completion_checker = None
         resolved_planner_model = str(
             planner_model or os.environ.get("OMNIFLOW_PLANNER_MODEL") or ""
         ).strip()
@@ -4288,15 +4287,9 @@ def _build_launch_agent(
                 timeout=resolved_planner_timeout,
             )
             if resolved_agent == MODE_OMNIFLOW:
-                from omniflow.vlm.completion_checker import VLMCompletionChecker
                 from omniflow.vlm.function_router import VLMFunctionRouter
 
                 function_router = VLMFunctionRouter(
-                    provider=resolved_planner_provider or "openai",
-                    model=resolved_planner_model,
-                    timeout=resolved_planner_timeout,
-                )
-                completion_checker = VLMCompletionChecker(
                     provider=resolved_planner_provider or "openai",
                     model=resolved_planner_model,
                     timeout=resolved_planner_timeout,
@@ -4311,7 +4304,6 @@ def _build_launch_agent(
             build_kwargs["planner"] = planner
         if function_router is not None:
             build_kwargs["function_router"] = function_router
-            build_kwargs["completion_checker"] = completion_checker
         built_agent = build_agent(**build_kwargs)
         if resolved_agent == "fixed_replay":
             run_log_json_path = str(raw_replay_run_log or "").strip()

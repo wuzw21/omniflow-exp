@@ -318,15 +318,6 @@ class FunctionRouter(Protocol):
     ) -> ToolCall | None | Awaitable[ToolCall | None]: ...
 
 
-class CompletionChecker(Protocol):
-    def check_completion(
-        self,
-        goal: str,
-        observation: Observation,
-        action_summary: str,
-    ) -> bool | Awaitable[bool]: ...
-
-
 def _coerce_int(value: Any) -> int:
     try:
         return int(value or 0)

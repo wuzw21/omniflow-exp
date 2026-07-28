@@ -8,7 +8,6 @@ from typing import Any
 from omniflow.core.config import Experiment, OmniFlowConfig
 from omniflow.core.model import (
     Action,
-    CompletionChecker,
     Function,
     FunctionRouter,
     Host,
@@ -44,7 +43,6 @@ class OmniFlow:
         host: Host | None = None,
         planner: Planner | None = None,
         function_router: FunctionRouter | None = None,
-        completion_checker: CompletionChecker | None = None,
         installed_apps: dict[str, str] | None = None,
         config: OmniFlowConfig | None = None,
     ):
@@ -53,7 +51,6 @@ class OmniFlow:
         self.host = host
         self.planner = planner
         self.function_router = function_router
-        self.completion_checker = completion_checker
         self.installed_apps = (
             {
                 str(label).strip(): str(package).strip()
@@ -189,49 +186,6 @@ class OmniFlow:
                         )
                     },
                 )
-
-            if replay.success and self.completion_checker is not None:
-                observation = await self._observe(
-                    screenshot=True,
-                    xml=False,
-                    app_info=False,
-                )
-                try:
-                    completion_confirmed = bool(
-                        await _await(
-                            self.completion_checker.check_completion(
-                                goal,
-                                observation,
-                                _function_completion_summary(
-                                    selected_function,
-                                    trace,
-                                ),
-                            )
-                        )
-                    )
-                except Exception:  # noqa: BLE001
-                    completion_confirmed = False
-                checker_usage = _take_llm_usage(self.completion_checker)
-                merge_usage(
-                    llm_usage,
-                    checker_usage,
-                    component="completion_checker",
-                )
-                model_calls += _usage_model_calls(checker_usage, fallback=1)
-                if completion_confirmed:
-                    return self._result(
-                        True,
-                        profile=profile,
-                        trace=trace,
-                        function_id=selected_function.id,
-                        actions_executed=actions_executed,
-                        model_calls=model_calls,
-                        llm_usage=llm_usage,
-                        final_state=observation,
-                        terminal_detail={
-                            "done_reason": "function_completion_confirmed"
-                        },
-                    )
 
         if direct_tool_call is not None:
             try:
@@ -665,19 +619,13 @@ class OmniFlow:
             planner_diagnostics=planner_diagnostics,
         )
 
-    async def _observe(
-        self,
-        *,
-        screenshot: bool,
-        xml: bool = True,
-        app_info: bool = True,
-    ) -> Observation:
+    async def _observe(self, *, screenshot: bool) -> Observation:
         return Observation.from_value(
             await _await(
                 self.host.observe(
-                    xml=xml,
+                    xml=True,
                     screenshot=screenshot,
-                    app_info=app_info,
+                    app_info=True,
                 )
             )
         )
@@ -891,32 +839,6 @@ def _execution_history(
         ]
     )
     return "\n".join(lines)
-
-
-def _function_completion_summary(
-    function: Function,
-    trace: list[dict[str, Any]],
-) -> str:
-    successful_actions = sum(
-        1
-        for step in trace
-        if isinstance(step, dict)
-        and isinstance(step.get("result"), dict)
-        and step["result"].get("success") is True
-    )
-    action_counts: dict[str, int] = {}
-    for step in trace:
-        action = step.get("action") if isinstance(step, dict) else None
-        tool = str(action.get("tool") or "").strip() if isinstance(action, dict) else ""
-        if tool:
-            action_counts[tool] = action_counts.get(tool, 0) + 1
-    actions = ", ".join(
-        f"{tool} x{count}" for tool, count in sorted(action_counts.items())
-    )
-    return (
-        f'Function "{function.name}" completed {successful_actions} successful '
-        f"actions ({actions or 'none'}). Intended outcome: {function.description}"
-    )
 
 
 def _describe_completed_action(action: Action) -> str:
