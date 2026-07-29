@@ -840,7 +840,17 @@ PY
     fi
     indexed_store_path=""
     if [[ "$task_requires_function_asset" -eq 1 ]]; then
-      indexed_store_path="$(indexed_store_path_for_task "$batch_task")"
+      if indexed_store_path="$(indexed_store_path_for_task "$batch_task")"; then
+        :
+      else
+        store_status="$?"
+        if [[ "$store_status" -eq 3 ]]; then
+          echo "Canonical Function asset missing for task=$batch_task; run --convert-ours-assets for this task before experiment execution." >&2
+        else
+          echo "Canonical Function asset is invalid for task=$batch_task." >&2
+        fi
+        exit "$store_status"
+      fi
     fi
     batch_store_paths[$batch_index]="$indexed_store_path"
     task_output_root="$batch_output_root/$batch_task/$attempt_id/static"

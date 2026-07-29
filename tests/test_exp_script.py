@@ -446,8 +446,15 @@ if [ "$1" = "-" ] && [ "$2" = "$SOURCE_INDEX" ]; then
   exit 0
 fi
 if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ]; then
-  printf 'summary\t10\t0\n'
+  if [ "${PLAN_MODE:-complete}" = "missing_store" ]; then
+    printf 'summary\t0\t1\npending\tours\tsmall5554\temulator-5554\t5554\n'
+  else
+    printf 'summary\t10\t0\n'
+  fi
   exit 0
+fi
+if [ "$1" = "-" ] && [ "$2" = "$STORE_INDEX" ]; then
+  exit 3
 fi
 exit 1
 """,
@@ -500,6 +507,27 @@ exit 1
         and line.endswith(" 111 113")
         for line in calls.splitlines()
     )
+
+    missing_store = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT),
+            "--check-only",
+            "--tasks",
+            "AudioRecorderRecordAudio",
+        ],
+        cwd=REPO,
+        env={**environment, "PLAN_MODE": "missing_store"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert missing_store.returncode == 3
+    assert (
+        "Canonical Function asset missing for "
+        "task=AudioRecorderRecordAudio"
+    ) in missing_store.stderr
 
 
 def test_memory_refresh_routes_all_evidence_through_the_only_script(
