@@ -57,9 +57,14 @@ Existing valid assets are reused without another model call.
 After adaptation, every selected method is replayed on the configured targets
 and evaluated by the official validator. The result cell records validator
 success, model calls, prompt/completion/total tokens, actions, episode duration,
-and outer wall time. For `ours`, each Function action is mapped by the canonical
-OmniTransfer implementation; a mapping failure returns to the normal VLM
-fallback. Source-device coordinates are never executed directly on a target.
+and outer wall time. When `ours` fails, the same immutable result directory
+stores the failed-action and terminal observation screenshots under
+`failure_evidence/objects/<sha256>.png`. The `failure_evidence` field in
+`task_results.jsonl` maps each event and state ID to that relative path and
+SHA-256; identical screenshots share one object. For `ours`, each Function
+action is mapped by the canonical OmniTransfer implementation; a mapping
+failure returns to the normal VLM fallback. Source-device coordinates are never
+executed directly on a target.
 `--tasks` implies task-major execution and skips cells that already have a
 registered official-validator conclusion.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import sys
 from types import SimpleNamespace
@@ -557,3 +558,144 @@ def test_androidworld_agent_installs_function_router(tmp_path) -> None:
     )
 
     assert flow.function_router is router
+
+
+def test_androidworld_failed_run_exposes_terminal_observation_image(tmp_path) -> None:
+    image_bytes = b"\x89PNG\r\n\x1a\nfailure-observation"
+    android_state = SimpleNamespace(
+        ui_elements=[],
+        xml=(
+            '<hierarchy bounds="[0,0][720,1280]">'
+            '<node package="com.android.settings" bounds="[0,0][720,1280]" />'
+            "</hierarchy>"
+        ),
+        auxiliaries={},
+        pixels=image_bytes,
+        activity_name="com.android.settings/.Settings",
+        package_name="com.android.settings",
+    )
+    env = SimpleNamespace(
+        get_state=lambda: android_state,
+        device_screen_size=(720, 1280),
+        logical_screen_size=(720, 1280),
+        foreground_activity_name="com.android.settings/.Settings",
+    )
+    flow = build_agent(
+        env=env,
+        store_path=str(tmp_path / "empty-store.json"),
+        planner=SequencePlanner([ToolCall("abort", {"value": "test failure"})]),
+    )
+
+    flow.step("Turn Wi-Fi on")
+    payload = flow.save_run_log(success=False)
+
+    assert payload is not None
+    [failure] = payload["failure_observations"]
+    assert failure == {
+        "event": "terminal_failure",
+        "state_id": failure["state_id"],
+        "image_base64": base64.b64encode(image_bytes).decode("ascii"),
+        "package_name": "com.android.settings",
+        "activity_name": "com.android.settings/.Settings",
+        "display": {"width": 720, "height": 1280},
+    }
+
+
+def test_androidworld_failed_action_exposes_before_observation_image(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    image_bytes = b"\x89PNG\r\n\x1a\nfailed-action-observation"
+    android_state = SimpleNamespace(
+        ui_elements=[],
+        xml=(
+            '<hierarchy bounds="[0,0][720,1280]">'
+            '<node package="com.android.settings" bounds="[0,0][720,1280]" />'
+            "</hierarchy>"
+        ),
+        auxiliaries={},
+        pixels=image_bytes,
+        activity_name="com.android.settings/.Settings",
+        package_name="com.android.settings",
+    )
+
+    def fail_action(_action) -> None:
+        raise RuntimeError("tap failed")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "android_world.env.json_action",
+        SimpleNamespace(
+            JSONAction=lambda **kwargs: SimpleNamespace(**kwargs),
+            ActionType=SimpleNamespace(CLICK="click"),
+            ScrollDirection=SimpleNamespace(),
+        ),
+    )
+    env = SimpleNamespace(
+        get_state=lambda: android_state,
+        execute_action=fail_action,
+        device_screen_size=(720, 1280),
+        logical_screen_size=(720, 1280),
+        foreground_activity_name="com.android.settings/.Settings",
+    )
+    flow = build_agent(
+        env=env,
+        store_path=str(tmp_path / "empty-store.json"),
+        planner=SequencePlanner(
+            [
+                ToolCall("click", {"x": 500, "y": 500}),
+                ToolCall("abort", {"value": "stop"}),
+            ]
+        ),
+    )
+
+    flow.step("Turn Wi-Fi on")
+    payload = flow.save_run_log(success=False)
+
+    assert payload is not None
+    action_failure, terminal_failure = payload["failure_observations"]
+    assert action_failure["event"] == "action_failure"
+    assert action_failure["step_index"] == 0
+    assert action_failure["error"] == "tap failed"
+    assert action_failure["image_base64"] == base64.b64encode(image_bytes).decode(
+        "ascii"
+    )
+    assert terminal_failure["event"] == "terminal_failure"
+
+
+def test_androidworld_failure_recaptures_terminal_image_when_run_has_none(
+    tmp_path,
+) -> None:
+    image_bytes = b"\x89PNG\r\n\x1a\nrecaptured-terminal"
+    android_state = SimpleNamespace(
+        ui_elements=[],
+        xml=(
+            '<hierarchy bounds="[0,0][720,1280]">'
+            '<node package="com.android.settings" bounds="[0,0][720,1280]" />'
+            "</hierarchy>"
+        ),
+        auxiliaries={},
+        pixels=image_bytes,
+        activity_name="com.android.settings/.Settings",
+        package_name="com.android.settings",
+    )
+    env = SimpleNamespace(
+        get_state=lambda: android_state,
+        device_screen_size=(720, 1280),
+        logical_screen_size=(720, 1280),
+        foreground_activity_name="com.android.settings/.Settings",
+    )
+    flow = build_agent(
+        env=env,
+        store_path=str(tmp_path / "empty-store.json"),
+    )
+
+    flow.step("Turn Wi-Fi on")
+    payload = flow.save_run_log(success=False)
+
+    assert payload is not None
+    [terminal_failure] = payload["failure_observations"]
+    assert terminal_failure["event"] == "terminal_failure"
+    assert terminal_failure["image_base64"] == base64.b64encode(image_bytes).decode(
+        "ascii"
+    )

@@ -25,6 +25,7 @@ import urllib.parse
 import urllib.request
 
 from omniflow.vlm.usage import token_usage_status
+from src.experiment.failure_evidence import write_failure_observations
 from src.integrations.android_world.agent import (
     MODE_OMNIFLOW,
     build_agent,
@@ -5099,6 +5100,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     try:
                         canonical_run = None
                         canonical_run_id = None
+                        failure_observations: list[dict[str, Any]] = []
                         save_run_log = getattr(agent, "save_run_log", None)
                         if selected_agent == MODE_OMNIFLOW and callable(save_run_log):
                             official_success = bool(
@@ -5120,6 +5122,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 run_log = payload.get("run_log")
                                 if isinstance(run_log, dict):
                                     canonical_run = dict(run_log)
+                                raw_failure_observations = payload.get(
+                                    "failure_observations"
+                                )
+                                if isinstance(raw_failure_observations, list):
+                                    failure_observations = [
+                                        dict(item)
+                                        for item in raw_failure_observations
+                                        if isinstance(item, dict)
+                                    ]
                         task_success = False
                         validator_reward = 0.0
                         step_count = 0
@@ -5376,6 +5387,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 )
                                 task_result_record["relocation_diagnostics"] = (
                                     to_serializable(relocation_diagnostics)
+                                )
+                        if not task_success and selected_agent == MODE_OMNIFLOW:
+                            if failure_observations and canonical_run_id:
+                                try:
+                                    task_result_record["failure_evidence"] = (
+                                        write_failure_observations(
+                                            run_output_dir,
+                                            task_name=task_name,
+                                            run_id=canonical_run_id,
+                                            observations=failure_observations,
+                                        )
+                                    )
+                                except (OSError, TypeError, ValueError) as exc:
+                                    task_result_record["failure_evidence_error"] = str(
+                                        exc
+                                    )
+                            else:
+                                task_result_record["failure_evidence_error"] = (
+                                    "failure_observation_missing"
                                 )
                         if (
                             task_success

@@ -48,12 +48,17 @@ class _TaskHost:
         self.state["captured_transfer_states"][transfer_state["state_id"]] = (
             transfer_state
         )
-        return Observation.from_value(
+        identified = Observation.from_value(
             {
                 **observation.to_dict(),
                 "state_id": transfer_state["state_id"],
             }
         )
+        if identified.image_base64:
+            self.state["captured_observations"][transfer_state["state_id"]] = (
+                _failure_observation(identified)
+            )
+        return identified
 
     def act(self, action: Any):
         return self.host.act(action)
@@ -96,6 +101,7 @@ def build_agent(
         "last_run_id": "",
         "last_run_log": None,
         "captured_transfer_states": {},
+        "captured_observations": {},
         "transfer_catalog_preexisting": transfer_state_path.is_file(),
     }
     transfer_states = load_transfer_state_catalog(transfer_state_path)
@@ -136,6 +142,7 @@ def build_agent(
             last_run_id="",
             last_run_log=None,
             captured_transfer_states={},
+            captured_observations={},
         )
         raw_host.reset(go_home=go_home)
 
@@ -276,6 +283,31 @@ def build_agent(
             },
             "run_log": run_log,
         }
+        if not success:
+            failure_observations = _run_failure_observations(
+                run_log,
+                state,
+            )
+            if not any(
+                item.get("event") == "terminal_failure"
+                for item in failure_observations
+            ):
+                try:
+                    terminal = host.observe(
+                        xml=True,
+                        screenshot=True,
+                        app_info=True,
+                    )
+                except Exception:  # noqa: BLE001
+                    terminal = None
+                if terminal is not None and terminal.image_base64:
+                    failure_observations.append(
+                        {
+                            "event": "terminal_failure",
+                            **_failure_observation(terminal),
+                        }
+                    )
+            payload["failure_observations"] = failure_observations
         return payload
 
     flow.reset = reset
@@ -285,6 +317,62 @@ def build_agent(
     flow.step = step
     flow.save_run_log = save_run_log
     return flow
+
+
+def _failure_observation(observation: Observation) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "state_id": str(observation.extra.get("state_id") or "").strip(),
+        "image_base64": str(observation.image_base64 or ""),
+    }
+    for key, value in (
+        ("package_name", observation.package_name),
+        ("activity_name", observation.activity_name),
+    ):
+        text = str(value or "").strip()
+        if text:
+            item[key] = text
+    display = observation.extra.get("display")
+    if isinstance(display, dict) and set(display) == {"width", "height"}:
+        item["display"] = dict(display)
+    return item
+
+
+def _run_failure_observations(
+    run_log: dict[str, Any],
+    state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    captured = dict(state.get("captured_observations") or {})
+    evidence: list[dict[str, Any]] = []
+    for step in run_log.get("steps") or ():
+        result = step.get("result")
+        if not isinstance(result, dict) or result.get("success") is not False:
+            continue
+        state_id = str(step.get("before_state_id") or "").strip()
+        observation = captured.get(state_id)
+        if not isinstance(observation, dict) or not observation.get("image_base64"):
+            continue
+        evidence.append(
+            {
+                "event": "action_failure",
+                "step_index": int(step["step_index"]),
+                "error": str(result.get("error") or "").strip() or None,
+                **dict(observation),
+            }
+        )
+
+    last_result = state.get("last_result")
+    final_state = getattr(last_result, "final_state", None)
+    terminal = (
+        _failure_observation(Observation.from_value(final_state))
+        if final_state is not None
+        else {}
+    )
+    state_id = str(terminal.get("state_id") or "").strip()
+    if not terminal.get("image_base64") and state_id:
+        terminal = dict(captured.get(state_id) or {})
+    if terminal.get("image_base64"):
+        evidence.append({"event": "terminal_failure", **terminal})
+    return evidence
 
 
 __all__ = ["MODE_OMNIFLOW", "AndroidWorldHost", "build_agent"]
