@@ -33,17 +33,19 @@ freezing, memory registration, real-time execution, and resume behavior, is in
 The conversion path has one public shell entry and one shared single-RunLog
 Python interface: `compile_runlog_to_store(...)`. OOB calls this interface
 directly using its RunLog and state loader. The AndroidWorld experiment adapter
-only imports historical actions/UI states and aligns the frozen semantic bundle
-before calling the same compiler. Batch conversion repeats that same call once
-per selected task; it does not implement a second compiler.
+imports the human-recorded actions and source UI states, calls the same
+compiler, and then calls the existing `enhance_function(...)` exactly once.
+OOB uses that same semantic collector. Batch conversion repeats this same path
+once per selected task; it does not implement a second compiler or a separate
+semantic-generation subsystem.
 
 Convert exactly one source RunLog:
 
 ```bash
 OMNIFLOW_EXP_ASSET_ROOT=/absolute/assets \
 OMNIFLOW_EXP_MEMORY_ROOT=/absolute/memory \
-OMNIFLOW_LEGACY_FUNCTION_ROOTS=/absolute/functions-v1:/absolute/functions-v2 \
 OMNIFLOW_OURS_CONVERTED_ASSET_ROOT=/absolute/assets/ours-functions-v3 \
+OMNIFLOW_ENV_FILE=/absolute/model.env \
 PYTHON_BIN=/absolute/python \
 OMNITRANSFER_ROOT=/absolute/OmniTransfer \
 bash scripts/exp/run_androidworld.sh \
@@ -53,8 +55,11 @@ bash scripts/exp/run_androidworld.sh \
 
 The conversion produces a v2 Function Store, referenced source transfer
 states, and source-only provenance; freezes the output; then registers it in
-the canonical long-term memory. It makes zero planner-model calls and reads no
-target input or target observation. If real OmniTransfer cannot ground a
+the canonical long-term memory. It makes one fixed-model call through
+`enhance_function(...)` to improve the Function name, description, supported
+parameters, and evidence-backed checker rules. SDK retries are disabled. The
+model cannot add, delete, reorder, or alter recorded actions. Conversion reads
+no target input or target observation. If real OmniTransfer cannot ground a
 present source element, provenance records that the corresponding runtime step
 requires the ordinary VLM fallback; the converter never substitutes source
 coordinates.
@@ -82,15 +87,15 @@ executed directly on a target.
 OOB exposes the same compiler through its `compile` bridge operation. The
 bridge loads the requested RunLog with `get_run_log`, supplies referenced
 source states with `get_state`, and calls `compile_runlog_to_store(...)`.
-`enhance=true` then uses OOB's existing offline enhancement lifecycle; it does
-not select a different compiler.
+`enhance=true` then calls the same existing `enhance_function(...)`; it does not
+select a different compiler.
 
 The AndroidWorld adapter has one experiment-only responsibility: convert its
 historical `executed_actions` and `observation_before_act` records into the
 canonical RunLog and source-state contracts OOB already uses. Semantic
-Function alignment happens before the shared compiler call. Store schema,
-binding validation, state freezing, and runtime consumption are therefore
-identical for OOB and this experiment.
+collection happens after the shared compiler call. Store schema, binding
+validation, state freezing, and runtime consumption are therefore identical
+for OOB and this experiment.
 
 To run the canonical 116-task matrix in formal task-major order, keep the same
 environment and run:

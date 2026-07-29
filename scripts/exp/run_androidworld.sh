@@ -28,9 +28,10 @@ max_steps="${OMNIFLOW_SINGLE_TASK_MAX_STEPS:-20}"
 max_fallback_steps="${OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS:-5}"
 store_path="${OMNIFLOW_SINGLE_TASK_STORE_PATH:-}"
 ours_store_index="${OMNIFLOW_OURS_STORE_INDEX:-}"
-legacy_function_roots="${OMNIFLOW_LEGACY_FUNCTION_ROOTS:-}"
 ours_source_asset_index="${OMNIFLOW_OURS_SOURCE_ASSET_INDEX:-$master_source_index}"
 ours_converted_asset_root="${OMNIFLOW_OURS_CONVERTED_ASSET_ROOT:-}"
+ours_conversion_model="${OMNIFLOW_OURS_CONVERSION_MODEL:-}"
+ours_conversion_timeout="${OMNIFLOW_OURS_CONVERSION_TIMEOUT_SEC:-60}"
 memory_root="${OMNIFLOW_EXP_MEMORY_ROOT:-${asset_root:+$asset_root/androidworld_memory}}"
 memory_index="${OMNIFLOW_EXP_MEMORY_INDEX:-${memory_root:+$memory_root/current.json}}"
 memory_function_catalogs="${OMNIFLOW_MEMORY_FUNCTION_CATALOGS:-}"
@@ -75,9 +76,9 @@ Options:
   --eight-cells             Run the four non-T3A methods on both devices.
   --tasks TASK1,TASK2,...   Limit --all-tasks or --convert-ours-assets to an
                             ordered task subset.
-  --convert-ours-assets     Deduplicate legacy authored Functions by task and
-                            convert available current source evidence, then
-                            register the frozen catalog in long-term memory.
+  --convert-ours-assets     Compile human-recorded source RunLogs, call the
+                            existing Function semantic collector once per task,
+                            then validate, freeze, and register the assets.
   --refresh-memory          Deduplicate and index all configured RunLogs,
                             Function assets, and existing results.
   -h, --help                Show this help and exit.
@@ -93,10 +94,11 @@ Optional runtime overrides:
   OMNIFLOW_MASTER_SOURCE_INDEX, OMNIFLOW_OURS_STORE_INDEX.
 
 Asset conversion inputs:
-  OMNIFLOW_LEGACY_FUNCTION_ROOTS    Colon-separated read-only bundle roots.
   OMNIFLOW_OURS_SOURCE_ASSET_INDEX Source RunLog index; defaults to the master
                                    source index.
   OMNIFLOW_OURS_CONVERTED_ASSET_ROOT New immutable conversion output root.
+  OMNIFLOW_OURS_CONVERSION_MODEL     Fixed model; defaults to paper config.
+  OMNIFLOW_OURS_CONVERSION_TIMEOUT_SEC One-call timeout; defaults to 60.
   OMNIFLOW_EXP_MEMORY_INDEX          Existing memory current.json.
 
 Long-term-memory refresh inputs:
@@ -218,8 +220,8 @@ if [[ "$convert_ours_assets" -eq 1 ]]; then
     echo "--convert-ours-assets cannot be combined with experiment run options." >&2
     exit 2
   fi
-  if [[ -z "$legacy_function_roots" || -z "$ours_source_asset_index" || -z "$ours_converted_asset_root" || -z "$memory_index" ]]; then
-    echo "Asset conversion requires legacy roots, source index, output root, and OMNIFLOW_EXP_MEMORY_INDEX." >&2
+  if [[ -z "$ours_source_asset_index" || -z "$ours_converted_asset_root" || -z "$memory_index" ]]; then
+    echo "Asset conversion requires a source index, output root, and OMNIFLOW_EXP_MEMORY_INDEX." >&2
     exit 2
   fi
   if [[ "$ours_source_asset_index" != /* || "$ours_converted_asset_root" != /* ]]; then
@@ -234,20 +236,29 @@ if [[ "$convert_ours_assets" -eq 1 ]]; then
     echo "Long-term-memory index must be an existing absolute file: $memory_index" >&2
     exit 2
   fi
+  if [[ -f "$env_file" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+  fi
+  if [[ -z "$ours_conversion_model" ]]; then
+    ours_conversion_model="$(
+      "$python_bin" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["one_task"]["model"])' "$config"
+    )"
+  fi
+  if [[ -z "$ours_conversion_model" ]]; then
+    echo "Function conversion model is missing." >&2
+    exit 2
+  fi
   conversion_args=(
     -m src.experiment.function_assets
     --source-asset-index "$ours_source_asset_index"
     --output-root "$ours_converted_asset_root"
     --memory-index "$memory_index"
+    --model "$ours_conversion_model"
+    --timeout "$ours_conversion_timeout"
   )
-  IFS=':' read -r -a conversion_roots <<< "$legacy_function_roots"
-  for conversion_root in "${conversion_roots[@]}"; do
-    if [[ "$conversion_root" != /* || ! -d "$conversion_root" ]]; then
-      echo "Legacy Function root must be an existing absolute directory: $conversion_root" >&2
-      exit 2
-    fi
-    conversion_args+=(--legacy-root "$conversion_root")
-  done
   if [[ -n "$batch_task_filter" ]]; then
     IFS=',' read -r -a conversion_tasks <<< "$batch_task_filter"
     for conversion_task in "${conversion_tasks[@]}"; do
@@ -431,12 +442,12 @@ PY
 }
 if [[ -z "$mobilegpt_source_memory_root" ]]; then
   mobilegpt_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111/$task/mobilegpt_offline_retrieval"
-  mobilegpt_source_bundle="$(
+  mobilegpt_source_attempt_root="$(
     select_source_asset_revision \
       "$mobilegpt_source_base" \
       "cold_memory_manifest.json"
   )"
-  mobilegpt_source_memory_root="$mobilegpt_source_bundle/memory"
+  mobilegpt_source_memory_root="$mobilegpt_source_attempt_root/memory"
 fi
 if [[ -z "$appagent_demo_memory_root" ]]; then
   appagent_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111/$task/appagent_demo"
@@ -981,14 +992,14 @@ print("[ours-assets] " + json.dumps(audit, sort_keys=True))
 PY
 fi
 
-mobilegpt_source_bundle_root="$(dirname "$mobilegpt_source_memory_root")"
-mobilegpt_source_manifest="$mobilegpt_source_bundle_root/cold_memory_manifest.json"
+mobilegpt_source_attempt_root="$(dirname "$mobilegpt_source_memory_root")"
+mobilegpt_source_manifest="$mobilegpt_source_attempt_root/cold_memory_manifest.json"
 mobilegpt_source_generation_required=0
 if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
   if [[ -f "$mobilegpt_source_manifest" ]]; then
     :
-  elif [[ -e "$mobilegpt_source_bundle_root" ]]; then
-    echo "Immutable MobileGPT source attempt is incomplete and cannot be retried: $mobilegpt_source_bundle_root" >&2
+  elif [[ -e "$mobilegpt_source_attempt_root" ]]; then
+    echo "Immutable MobileGPT source attempt is incomplete and cannot be retried: $mobilegpt_source_attempt_root" >&2
     exit 1
   else
     mobilegpt_source_generation_required=1
@@ -1286,7 +1297,7 @@ if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
     --task "$task" \
     --mobilegpt-root "$mobilegpt_root" \
     --android-world-root "$android_world_root" \
-    --output-root "$mobilegpt_source_bundle_root" \
+    --output-root "$mobilegpt_source_attempt_root" \
     --model "$paper_model" \
     --serial "$source_serial" \
     --console-port "$source_console_port" \

@@ -396,7 +396,7 @@ Set checker_rules=[] in every generated Function.
         "function_ids": function_ids,
         "function_count": len(function_ids),
     }
-    (root / "offline_enhancement.json").write_text(
+    (root / "compile_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     )
     return report

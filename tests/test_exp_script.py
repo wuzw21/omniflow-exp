@@ -154,10 +154,6 @@ def test_check_only_is_read_only_before_any_runtime_output(
 def test_asset_conversion_routes_through_the_only_script(
     tmp_path: Path,
 ) -> None:
-    legacy_v1 = tmp_path / "legacy-v1"
-    legacy_v2 = tmp_path / "legacy-v2"
-    legacy_v1.mkdir()
-    legacy_v2.mkdir()
     source_index = tmp_path / "source-index.json"
     source_index.write_text("{}", encoding="utf-8")
     output_root = tmp_path / "converted"
@@ -174,11 +170,10 @@ def test_asset_conversion_routes_through_the_only_script(
         **os.environ,
         "PYTHON_BIN": str(fake_python),
         "CAPTURE_ARGS": str(captured),
-        "OMNIFLOW_LEGACY_FUNCTION_ROOTS": (
-            f"{legacy_v1}:{legacy_v2}"
-        ),
         "OMNIFLOW_OURS_SOURCE_ASSET_INDEX": str(source_index),
         "OMNIFLOW_OURS_CONVERTED_ASSET_ROOT": str(output_root),
+        "OMNIFLOW_OURS_CONVERSION_MODEL": "qwen3-vl-plus",
+        "OMNIFLOW_OURS_CONVERSION_TIMEOUT_SEC": "60",
         "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_index),
     }
 
@@ -207,10 +202,10 @@ def test_asset_conversion_routes_through_the_only_script(
         str(output_root),
         "--memory-index",
         str(memory_index),
-        "--legacy-root",
-        str(legacy_v1),
-        "--legacy-root",
-        str(legacy_v2),
+        "--model",
+        "qwen3-vl-plus",
+        "--timeout",
+        "60",
         "--task",
         "RecordWithName",
     ]
