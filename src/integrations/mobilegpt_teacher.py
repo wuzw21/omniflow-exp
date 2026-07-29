@@ -662,6 +662,20 @@ def install_mobilegpt_teacher(
         return original_init(self, instruction, task, True)
 
     def patched_get_next_action(self, parsed_xml=None, hierarchy_xml=None, encoded_xml=None):
+        if teacher.exhausted:
+            if getattr(self, "_omniflow_teacher_task_finished", False):
+                return None
+            self._omniflow_teacher_task_finished = True
+            writer(
+                {
+                    "event": "mobilegpt_teacher_task_finishing",
+                    "instruction": getattr(self, "instruction", ""),
+                    "source_run_log": teacher.source_run_log,
+                    "cursor": teacher.cursor,
+                    "teacher_action_count": teacher.action_count,
+                }
+            )
+            return getattr(self, finish_name)()
         action = original_get_next_action(self, parsed_xml, hierarchy_xml, encoded_xml)
         if _is_internal_launch_action(action):
             _remove_last_internal_action(self, action)
