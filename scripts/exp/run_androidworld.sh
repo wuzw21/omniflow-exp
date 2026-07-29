@@ -954,7 +954,11 @@ if not run_log.is_absolute():
     run_log = index_relative if index_relative.is_file() else asset_relative
 if not run_log.is_file():
     raise SystemExit(f"formal_source_runlog_not_found:{task_name}:{run_log}")
-expected_sha256 = str(row.get("source_run_log_sha256") or "").strip()
+expected_sha256 = str(
+    row.get("retained_source_run_log_sha256")
+    or row.get("source_run_log_sha256")
+    or ""
+).strip()
 actual_sha256 = hashlib.sha256(run_log.read_bytes()).hexdigest()
 if not expected_sha256 or expected_sha256 != actual_sha256:
     raise SystemExit(

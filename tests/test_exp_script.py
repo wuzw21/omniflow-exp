@@ -84,7 +84,7 @@ def test_check_only_is_read_only_before_any_runtime_output(
                     "retained_source_run_log": str(source_run_log),
                     "method": "fixed_replay",
                     "latest_official_success_source": True,
-                    "source_run_log_sha256": hashlib.sha256(
+                    "retained_source_run_log_sha256": hashlib.sha256(
                         source_run_log.read_bytes()
                     ).hexdigest(),
                 }
