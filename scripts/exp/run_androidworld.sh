@@ -28,6 +28,9 @@ max_steps="${OMNIFLOW_SINGLE_TASK_MAX_STEPS:-20}"
 max_fallback_steps="${OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS:-5}"
 store_path="${OMNIFLOW_SINGLE_TASK_STORE_PATH:-}"
 ours_store_index="${OMNIFLOW_OURS_STORE_INDEX:-}"
+legacy_function_roots="${OMNIFLOW_LEGACY_FUNCTION_ROOTS:-}"
+ours_source_asset_index="${OMNIFLOW_OURS_SOURCE_ASSET_INDEX:-}"
+ours_converted_asset_root="${OMNIFLOW_OURS_CONVERTED_ASSET_ROOT:-}"
 mobilegpt_root="${OMNIFLOW_MOBILEGPT_ROOT:-${asset_root:+$asset_root/runtime/external/mobilegpt}}"
 mobilegpt_apk="${OMNIFLOW_MOBILEGPT_APK:-${mobilegpt_root:+$mobilegpt_root/App/app/build/outputs/apk/debug/app-debug.apk}}"
 mobilegpt_source_memory_root="${OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT:-}"
@@ -48,6 +51,7 @@ check_only=0
 all_tasks=0
 eight_cells=0
 batch_task_filter=""
+convert_ours_assets=0
 
 usage() {
   cat <<'EOF'
@@ -61,6 +65,8 @@ Options:
   --all-tasks               Run the selected task set in task-major order.
   --eight-cells             Run the four non-T3A methods on both devices.
   --tasks TASK1,TASK2,...   Limit --all-tasks to an ordered task subset.
+  --convert-ours-assets     Deduplicate legacy authored Functions by task and
+                            convert available current source evidence.
   -h, --help                Show this help and exit.
 
 Required external roots:
@@ -72,7 +78,13 @@ Optional runtime overrides:
   PYTHON_BIN, OMNIFLOW_ENV_FILE, OMNIFLOW_SINGLE_TASK_SOURCE_INDEX,
   OMNIFLOW_MASTER_SOURCE_INDEX, OMNIFLOW_OURS_STORE_INDEX.
 
+Asset conversion inputs:
+  OMNIFLOW_LEGACY_FUNCTION_ROOTS    Colon-separated read-only bundle roots.
+  OMNIFLOW_OURS_SOURCE_ASSET_INDEX Current frozen source asset index.
+  OMNIFLOW_OURS_CONVERTED_ASSET_ROOT New immutable conversion output root.
+
 Examples:
+  bash scripts/exp/run_androidworld.sh --convert-ours-assets
   bash scripts/exp/run_androidworld.sh --check-only --all-tasks --eight-cells
   bash scripts/exp/run_androidworld.sh --all-tasks --eight-cells \
     --tasks AudioRecorderRecordAudioWithFileName,SystemCopyToClipboard
@@ -97,6 +109,9 @@ while [[ "$#" -gt 0 ]]; do
     --eight-cells)
       eight_cells=1
       ;;
+    --convert-ours-assets)
+      convert_ours_assets=1
+      ;;
     --tasks)
       shift
       if [[ "$#" -eq 0 || -z "$1" ]]; then
@@ -112,6 +127,39 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
+if [[ "$convert_ours_assets" -eq 1 ]]; then
+  if [[ "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$batch_task_filter" ]]; then
+    echo "--convert-ours-assets cannot be combined with experiment run options." >&2
+    exit 2
+  fi
+  if [[ -z "$legacy_function_roots" || -z "$ours_source_asset_index" || -z "$ours_converted_asset_root" ]]; then
+    echo "Asset conversion requires OMNIFLOW_LEGACY_FUNCTION_ROOTS, OMNIFLOW_OURS_SOURCE_ASSET_INDEX, and OMNIFLOW_OURS_CONVERTED_ASSET_ROOT." >&2
+    exit 2
+  fi
+  if [[ "$ours_source_asset_index" != /* || "$ours_converted_asset_root" != /* ]]; then
+    echo "Asset conversion index and output root must be absolute paths." >&2
+    exit 2
+  fi
+  if ! python_bin="$(command -v "$python_bin")"; then
+    echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
+    exit 1
+  fi
+  conversion_args=(
+    -m src.experiment.function_assets
+    --source-asset-index "$ours_source_asset_index"
+    --output-root "$ours_converted_asset_root"
+  )
+  IFS=':' read -r -a conversion_roots <<< "$legacy_function_roots"
+  for conversion_root in "${conversion_roots[@]}"; do
+    if [[ "$conversion_root" != /* || ! -d "$conversion_root" ]]; then
+      echo "Legacy Function root must be an existing absolute directory: $conversion_root" >&2
+      exit 2
+    fi
+    conversion_args+=(--legacy-root "$conversion_root")
+  done
+  cd "$repo"
+  exec "$python_bin" "${conversion_args[@]}"
+fi
 if [[ "$all_tasks" -eq 1 && "$dry_run" -eq 1 ]]; then
   echo "--dry-run cannot be combined with --all-tasks." >&2
   exit 2

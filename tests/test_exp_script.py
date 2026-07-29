@@ -31,6 +31,7 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "--all-tasks" in completed.stdout
     assert "--eight-cells" in completed.stdout
     assert "--tasks" in completed.stdout
+    assert "--convert-ours-assets" in completed.stdout
     assert "OMNIFLOW_EXP_ASSET_ROOT" in completed.stdout
     assert completed.stderr == ""
 
@@ -135,3 +136,55 @@ def test_check_only_is_read_only_before_any_runtime_output(
     assert completed.returncode == 0, completed.stderr
     assert "[static] ready" in completed.stdout
     assert not results.exists()
+
+
+def test_asset_conversion_routes_through_the_only_script(
+    tmp_path: Path,
+) -> None:
+    legacy_v1 = tmp_path / "legacy-v1"
+    legacy_v2 = tmp_path / "legacy-v2"
+    legacy_v1.mkdir()
+    legacy_v2.mkdir()
+    source_index = tmp_path / "source-index.json"
+    source_index.write_text("{}", encoding="utf-8")
+    output_root = tmp_path / "converted"
+    captured = tmp_path / "python-args.txt"
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    environment = {
+        **os.environ,
+        "PYTHON_BIN": str(fake_python),
+        "CAPTURE_ARGS": str(captured),
+        "OMNIFLOW_LEGACY_FUNCTION_ROOTS": (
+            f"{legacy_v1}:{legacy_v2}"
+        ),
+        "OMNIFLOW_OURS_SOURCE_ASSET_INDEX": str(source_index),
+        "OMNIFLOW_OURS_CONVERTED_ASSET_ROOT": str(output_root),
+    }
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT), "--convert-ours-assets"],
+        cwd=REPO,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert captured.read_text(encoding="utf-8").splitlines() == [
+        "-m",
+        "src.experiment.function_assets",
+        "--source-asset-index",
+        str(source_index),
+        "--output-root",
+        str(output_root),
+        "--legacy-root",
+        str(legacy_v1),
+        "--legacy-root",
+        str(legacy_v2),
+    ]
