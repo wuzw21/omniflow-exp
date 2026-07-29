@@ -124,6 +124,53 @@ def test_refresh_deduplicates_runlogs_and_keeps_indexed_source_as_canonical(
     assert Path(current["by_task_root"], "RecordWithName.json").is_file()
 
 
+def test_refresh_classifies_case_normalized_task_directory_exactly(
+    tmp_path: Path,
+) -> None:
+    source = _write_json(
+        tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
+        {
+            "schema_version": "omniflow.run_log.v1",
+            "run_id": "source-run",
+            "success": True,
+            "steps": [{"step_index": 0}],
+        },
+    )
+    historical = _write_json(
+        tmp_path
+        / "raw_source_artifacts"
+        / "recordwithname"
+        / "historical.run_log.json",
+        {
+            "schema_version": "omniflow.run_log.v1",
+            "run_id": "historical-run",
+            "success": False,
+            "steps": [{"step_index": 0}],
+        },
+    )
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "evidence", historical.parents[2]),
+        result_roots=(),
+    )
+
+    task = report["by_task"]["RecordWithName"]
+    assert len(task["run_log_sha256s"]) == 2
+    assert report["unclassified"]["run_log_sha256s"] == []
+
+
 def test_refresh_keeps_one_verified_runtime_store_from_duplicate_catalogs(
     tmp_path: Path,
 ) -> None:

@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import tempfile
 from typing import Any, Iterable, Sequence
@@ -209,7 +210,25 @@ def _result_paths(roots: Iterable[Path]) -> list[Path]:
 def _task_from_path(path: Path, task_names: Sequence[str]) -> str:
     parts = set(path.parts)
     matches = [task for task in task_names if task in parts]
-    return sorted(matches, key=lambda task: (-len(task), task))[0] if matches else ""
+    if matches:
+        return sorted(matches, key=lambda task: (-len(task), task))[0]
+    tasks_by_normalized_name: dict[str, list[str]] = {}
+    for task in task_names:
+        normalized = re.sub(r"[^a-z0-9]", "", task.lower())
+        tasks_by_normalized_name.setdefault(normalized, []).append(task)
+    normalized_parts = {
+        re.sub(r"[^a-z0-9]", "", part.lower()) for part in path.parts
+    }
+    normalized_matches = {
+        tasks[0]
+        for normalized, tasks in tasks_by_normalized_name.items()
+        if normalized in normalized_parts and len(tasks) == 1
+    }
+    return (
+        sorted(normalized_matches, key=lambda task: (-len(task), task))[0]
+        if len(normalized_matches) == 1
+        else ""
+    )
 
 
 def _first_result_row(payload: Any) -> dict[str, Any]:
@@ -709,6 +728,9 @@ def _refresh_artifact_memory_unlocked(
         for digest, record in result_records.items()
         if not record["tasks"]
     )
+    unclassified_runlog_hashes = sorted(
+        digest for digest, record in records.items() if not record["tasks"]
+    )
 
     registry: dict[str, Any] = {
         "schema_version": MEMORY_SCHEMA,
@@ -763,6 +785,7 @@ def _refresh_artifact_memory_unlocked(
         },
         "by_task": by_task,
         "unclassified": {
+            "run_log_sha256s": unclassified_runlog_hashes,
             "result_sha256s": unclassified_result_hashes,
         },
     }
@@ -785,7 +808,7 @@ def _refresh_artifact_memory_unlocked(
             task_path = by_task_root / f"{task}.json"
             _atomic_write(task_path, _json_bytes(task_payload))
             task_path.chmod(0o444)
-        if unclassified_result_hashes:
+        if unclassified_runlog_hashes or unclassified_result_hashes:
             unclassified_path = by_task_root / "_unclassified.json"
             _atomic_write(
                 unclassified_path,
