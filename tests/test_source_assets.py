@@ -335,8 +335,20 @@ def test_source_revision_is_stable_for_one_exact_source_hash(
 
     selected.mkdir()
     (selected / "generation_failure.json").write_text("{}", encoding="utf-8")
+    revision_two = base / f"source_{expected[:12]}_r2"
     assert select_source_asset_revision(
         base,
         manifest_name="cold_memory_manifest.json",
         expected_source_sha256=expected,
-    ) == selected
+    ) == revision_two
+
+    revision_two.mkdir()
+    (revision_two / "cold_memory_manifest.json").write_text(
+        json.dumps({"source_run_log_sha256": expected}),
+        encoding="utf-8",
+    )
+    assert select_source_asset_revision(
+        base,
+        manifest_name="cold_memory_manifest.json",
+        expected_source_sha256=expected,
+    ) == revision_two

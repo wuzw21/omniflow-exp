@@ -58,7 +58,24 @@ def select_source_asset_revision(
             )
         if matches:
             return matches[0]
-        return base / f"source_{source_sha256[:12]}"
+        prefix = f"source_{source_sha256[:12]}"
+        revisions: list[int] = []
+        if base.is_dir():
+            for candidate in base.iterdir():
+                if not candidate.is_dir():
+                    continue
+                if candidate.name == prefix:
+                    revisions.append(1)
+                    continue
+                match = re.fullmatch(
+                    rf"{re.escape(prefix)}_r([2-9][0-9]*)",
+                    candidate.name,
+                )
+                if match:
+                    revisions.append(int(match.group(1)))
+        if not revisions:
+            return base / prefix
+        return base / f"{prefix}_r{max(revisions) + 1}"
     revisions: list[tuple[int, Path]] = []
     if base.is_dir():
         for candidate in base.iterdir():
