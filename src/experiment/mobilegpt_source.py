@@ -30,7 +30,10 @@ _IGNORED_SOURCE_PACKAGES = {
 def source_method_label(item: pipeline.ArchivedRunLog) -> str:
     """Use the recorded method or the protocol's source replay method."""
 
-    return str(item.meta.get("method") or "").strip() or "fixed_replay"
+    return (
+        str(item.meta.get("method") or "").strip()
+        or pipeline.DEFAULT_SOURCE_METHOD
+    )
 
 
 def load_canonical_source_item(

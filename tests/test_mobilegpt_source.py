@@ -171,6 +171,59 @@ def test_mobilegpt_source_accepts_successful_canonical_seed111(
     assert mobilegpt_source.source_method_label(item) == "fixed_replay"
 
 
+def test_mobilegpt_offline_runner_uses_protocol_source_method_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_memory_root = tmp_path / "source-memory"
+    source_memory_root.mkdir()
+    source_run_log = tmp_path / "source.run_log.json"
+    source_run_log.write_text("{}", encoding="utf-8")
+    item = pipeline.ArchivedRunLog(
+        task="SystemBluetoothTurnOn",
+        goal="Turn Bluetooth on.",
+        params={},
+        source_run_log=source_run_log,
+        replay_seed=111,
+        step_count=1,
+        meta={"latest_official_success_source": True},
+    )
+
+    class ValidationReached(RuntimeError):
+        pass
+
+    def validate_source_memory(*args: object, **kwargs: object) -> dict[str, object]:
+        assert kwargs["expected_source_method"] == "fixed_replay"
+        raise ValidationReached
+
+    monkeypatch.setattr(
+        pipeline,
+        "validate_mobilegpt_adapted_memory",
+        validate_source_memory,
+    )
+
+    with pytest.raises(ValidationReached):
+        pipeline._run_one_task_mobilegpt(
+            args=pipeline.argparse.Namespace(
+                mobilegpt_source_memory_root=str(source_memory_root),
+                model="qwen3-vl-plus",
+            ),
+            item=item,
+            targets=[
+                pipeline.DeviceTarget(
+                    label="small5554",
+                    serial="emulator-5554",
+                    console_port=5554,
+                )
+            ],
+            output_root=tmp_path / "results",
+            task_params_override=None,
+            task_seed=113,
+            method="mobilegpt_offline_retrieval",
+            attempt_id="attempt-1",
+        )
+
+
 def test_mobilegpt_source_accepts_registered_historical_runlog(
     tmp_path: Path,
 ) -> None:

@@ -74,6 +74,7 @@ DEFAULT_DEVICE_TARGETS = (
 DEFAULT_MOBILEGPT_WAIT_START_TIMEOUT_SEC = 60.0
 DEFAULT_MOBILEGPT_EPISODE_WAIT_TIMEOUT_SEC = 120.0
 DEFAULT_EVAL_TASK_RANDOM_SEED = 113
+DEFAULT_SOURCE_METHOD = "fixed_replay"
 
 
 @dataclass(frozen=True)
@@ -7418,7 +7419,10 @@ def _run_one_task_mobilegpt(
 
     offline_retrieval = method == "mobilegpt_offline_retrieval"
     if offline_retrieval:
-        source_method = str(item.meta.get("method") or "").strip()
+        source_method = (
+            str(item.meta.get("method") or "").strip()
+            or DEFAULT_SOURCE_METHOD
+        )
         if item.meta.get("latest_official_success_source") is not True:
             raise ValueError(
                 "mobilegpt_offline_retrieval_requires_official_success_source:"
@@ -7447,7 +7451,7 @@ def _run_one_task_mobilegpt(
             source_seed=item.replay_seed,
             source_run_log=item.source_run_log,
             expected_model=str(args.model or ""),
-            expected_source_method=source_method or "unrecorded",
+            expected_source_method=source_method,
         )
 
     memory_root = _method_memory_root(output_root, item.task, method)
