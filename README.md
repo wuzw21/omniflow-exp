@@ -28,59 +28,43 @@ The complete command reference, including one-RunLog Function conversion,
 freezing, memory registration, real-time execution, and resume behavior, is in
 [scripts/exp/README.md](scripts/exp/README.md).
 
-## Ours: source RunLog to real-time execution
+## One source RunLog to method-native replay
 
-The conversion path has one public shell entry and one shared single-RunLog
-Python interface: `compile_runlog_to_store(...)`. OOB calls this interface
-directly using its RunLog and state loader. The AndroidWorld experiment adapter
-imports the human-recorded actions and source UI states, calls the same
-compiler, and then calls the existing `enhance_function(...)` exactly once.
-OOB uses that same semantic collector. Batch conversion repeats this same path
-once per selected task; it does not implement a second compiler or a separate
-semantic-generation subsystem.
-
-Convert exactly one source RunLog:
-
-```bash
-OMNIFLOW_EXP_ASSET_ROOT=/absolute/assets \
-OMNIFLOW_EXP_MEMORY_ROOT=/absolute/memory \
-OMNIFLOW_OURS_CONVERTED_ASSET_ROOT=/absolute/assets/ours-functions-v3 \
-OMNIFLOW_ENV_FILE=/absolute/model.env \
-PYTHON_BIN=/absolute/python \
-OMNITRANSFER_ROOT=/absolute/OmniTransfer \
-bash scripts/exp/run_androidworld.sh \
-  --convert-ours-assets \
-  --tasks AudioRecorderRecordAudio
-```
-
-The conversion produces a v2 Function Store, referenced source transfer
-states, and source-only provenance; freezes the output; then registers it in
-the canonical long-term memory. It makes one fixed-model call through
-`enhance_function(...)` to improve the Function name, description, supported
-parameters, and evidence-backed checker rules. SDK retries are disabled. The
-model cannot add, delete, reorder, or alter recorded actions. Conversion reads
-no target input or target observation. If real OmniTransfer cannot ground a
-present source element, provenance records that the corresponding runtime step
-requires the ordinary VLM fallback; the converter never substitutes source
-coordinates.
-
-Run that frozen Function in real time:
+The normal single-task command is the complete workflow. It reads one canonical
+human-recorded source RunLog, resolves or creates each selected method's native
+source asset, then continues to target replay and the AndroidWorld official
+validator. It does not stop after Function validation.
 
 ```bash
 OMNIFLOW_EXP_ASSET_ROOT=/absolute/assets \
 OMNIFLOW_EXP_RESULTS_ROOT=/absolute/results \
 OMNIFLOW_EXP_MEMORY_ROOT=/absolute/memory \
-OMNIFLOW_SINGLE_TASK_TASK=AudioRecorderRecordAudio \
-OMNIFLOW_SINGLE_TASK_METHODS=ours \
+OMNIFLOW_ENV_FILE=/absolute/model.env \
 PYTHON_BIN=/absolute/python \
 OMNITRANSFER_ROOT=/absolute/OmniTransfer \
-bash scripts/exp/run_androidworld.sh
+bash scripts/exp/run_androidworld.sh \
+  --tasks AudioRecorderRecordAudio
 ```
 
-At runtime the Function competes only in the dedicated Function routing path.
-Each action is mapped by the canonical OmniTransfer implementation; a mapping
-failure returns to the normal VLM fallback. Source-device coordinates are never
-executed directly on a target.
+For `fixed_replay`, the runtime consumes the recorded actions directly. For
+`ours`, a missing canonical Store is created through
+`compile_runlog_to_store(...)` followed by exactly one call to the existing
+`enhance_function(...)`, then frozen and registered in long-term memory.
+MobileGPT and AppAgent resolve or create their method-native source assets from
+the same RunLog. T3A derives its hint from the same frozen Function and RunLog.
+Existing valid assets are reused without another model call.
+
+After adaptation, every selected method is replayed on the configured targets
+and evaluated by the official validator. The result cell records validator
+success, model calls, prompt/completion/total tokens, actions, episode duration,
+and outer wall time. For `ours`, each Function action is mapped by the canonical
+OmniTransfer implementation; a mapping failure returns to the normal VLM
+fallback. Source-device coordinates are never executed directly on a target.
+`--tasks` implies task-major execution and skips cells that already have a
+registered official-validator conclusion.
+
+`--convert-ours-assets` remains a conversion-only maintenance mode. It is not
+the end-to-end experiment command.
 
 ### Shared with OOB
 

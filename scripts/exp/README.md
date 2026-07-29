@@ -6,29 +6,25 @@ real-time AndroidWorld execution.
 
 ## Pipeline
 
-For `ours`, one task follows exactly this path:
+One normal single-task invocation performs the complete workflow:
 
 1. Read the task's successful seed-111 source RunLog from the authoritative
    source index.
-2. Import its actions and source UI states using the recorded full display
-   width and height.
-3. Call the single RunLog-to-Function compiler to create the complete recorded
-   Function.
-4. Call the existing `enhance_function(...)` exactly once to collect its
-   semantic name, description, supported parameters, and evidence-backed
-   checker rules. The model cannot alter the recorded action sequence.
-5. Verify Function schema, transfer-state coverage, provenance, and the
-   no-target-input audit. Record source actions that OmniTransfer cannot ground
-   so the normal real-time VLM fallback handles them.
-6. Freeze the new asset directory and register it in
-   `OMNIFLOW_EXP_MEMORY_ROOT/current.json`.
-7. During a later real-time run, resolve that frozen Store from memory and
-   execute it through the normal Function router, OmniTransfer, VLM fallback,
-   and AndroidWorld official validator.
+2. Resolve or create the native source asset for every selected method:
+   - `fixed_replay`: use the canonical recorded actions;
+   - `ours`: compile the RunLog, call the existing `enhance_function(...)`
+     exactly once, validate, freeze, and register the Store;
+   - `mobilegpt_offline_retrieval`: resolve or create native source memory;
+   - `appagent_demo`: resolve or create the native demonstration;
+   - `t3a_hint`: derive the semantic hint from the same Function and RunLog.
+3. Reuse every already registered or frozen source asset without regeneration.
+4. Prepare the selected target devices and replay each method.
+5. Use the AndroidWorld official validator as the result, recording calls,
+   tokens, actions, episode duration, and outer wall time for every cell.
 
-Conversion never observes a target device, reads target task parameters, or
-executes source coordinates directly on a target. Its only model call is the
-single existing Function semantic collector.
+Function schema and transfer-state checks are internal validation for `ours`;
+they are not the experiment conclusion. Conversion never observes a target
+device or executes source coordinates directly on a target.
 
 ## Common environment
 
@@ -50,62 +46,39 @@ The source RunLog index defaults to
 Set `OMNIFLOW_OURS_SOURCE_ASSET_INDEX` only when an explicit immutable index is
 required.
 
-## Convert one RunLog
+## Run one RunLog through all methods
 
-This is the one-click conversion command:
-
-```bash
-OMNIFLOW_EXP_ASSET_ROOT=/absolute/assets \
-OMNIFLOW_EXP_MEMORY_ROOT=/absolute/memory \
-OMNIFLOW_OURS_CONVERTED_ASSET_ROOT=/absolute/assets/ours-functions-v3 \
-OMNIFLOW_ENV_FILE=/absolute/model.env \
-PYTHON_BIN=/absolute/python \
-OMNITRANSFER_ROOT=/absolute/OmniTransfer \
-bash scripts/exp/run_androidworld.sh \
-  --convert-ours-assets \
-  --tasks AudioRecorderRecordAudio
-```
-
-`--tasks` accepts a comma-separated list. Omit it to convert every source
-RunLog in the authoritative index that does not already have a canonical
-Function Store in memory. The output root must be new or empty. After
-successful conversion it becomes read-only and is immediately registered in
-long-term memory.
-
-There is no model retry. A timeout, connection failure, invalid JSON,
-source/hash mismatch, schema error, or missing source UI state fails conversion.
-When a present source element cannot be mapped, provenance marks the Function
-as requiring normal real-time VLM fallback; it never converts that condition
-into source-coordinate passthrough. A failed target execution never rebuilds
-or replaces the frozen Function asset.
-
-## Run the converted Function in real time
-
-After conversion, run the same task through the normal `ours` runtime on the
-configured target devices:
+This is the complete one-command workflow:
 
 ```bash
 OMNIFLOW_EXP_ASSET_ROOT=/absolute/assets \
 OMNIFLOW_EXP_RESULTS_ROOT=/absolute/results \
 OMNIFLOW_EXP_MEMORY_ROOT=/absolute/memory \
-OMNIFLOW_SINGLE_TASK_TASK=AudioRecorderRecordAudio \
-OMNIFLOW_SINGLE_TASK_METHODS=ours \
+OMNIFLOW_ENV_FILE=/absolute/model.env \
 PYTHON_BIN=/absolute/python \
 OMNITRANSFER_ROOT=/absolute/OmniTransfer \
-bash scripts/exp/run_androidworld.sh
+bash scripts/exp/run_androidworld.sh \
+  --tasks AudioRecorderRecordAudio
 ```
 
-The script resolves the Store from memory, validates its SHA-256-bound Store,
-transfer-state catalog, and provenance, prepares SmallPhone and unfolded Pixel
-Fold targets, and records the official validator result and accounting fields.
-It does not call the conversion path.
+The default method set contains all five methods. Set
+`OMNIFLOW_SINGLE_TASK_METHODS` only for an intentional subset. When the
+canonical `ours` Store is missing, the command creates and registers it before
+preparing MobileGPT and AppAgent assets; then the same process continues to
+target replay. `--tasks` implies task-major scheduling and skips every result
+cell already registered with an official-validator conclusion. There is no
+model retry. A failed target execution never rebuilds or replaces frozen source
+assets.
 
-Use `--check-only` first to validate all static dependencies without creating
-attempts or starting emulators:
+`--check-only` is deliberately read-only. It validates existing assets but
+will fail rather than create a missing method asset:
 
 ```bash
 bash scripts/exp/run_androidworld.sh --check-only
 ```
+
+`--convert-ours-assets` remains available for conversion-only maintenance. It
+does not replay a task and is not the normal experiment workflow.
 
 ## Full and bounded matrices
 

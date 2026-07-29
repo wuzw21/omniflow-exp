@@ -74,8 +74,9 @@ Options:
   --dry-run                 Build one task command without executing it.
   --all-tasks               Run the selected task set in task-major order.
   --eight-cells             Run the four non-T3A methods on both devices.
-  --tasks TASK1,TASK2,...   Limit --all-tasks or --convert-ours-assets to an
-                            ordered task subset.
+  --tasks TASK1,TASK2,...   Run an ordered task-major subset, or limit
+                            --convert-ours-assets. Implies --all-tasks during
+                            experiment execution.
   --convert-ours-assets     Compile human-recorded source RunLogs, call the
                             existing Function semantic collector once per task,
                             then validate, freeze, and register the assets.
@@ -107,6 +108,7 @@ Long-term-memory refresh inputs:
   OMNIFLOW_MEMORY_FUNCTION_CATALOGS  Colon-separated Function catalogs.
 
 Examples:
+  bash scripts/exp/run_androidworld.sh --tasks AudioRecorderRecordAudio
   bash scripts/exp/run_androidworld.sh --convert-ours-assets \
     --tasks AudioRecorderRecordAudio
   bash scripts/exp/run_androidworld.sh --refresh-memory
@@ -247,8 +249,8 @@ if [[ "$convert_ours_assets" -eq 1 ]]; then
       "$python_bin" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["one_task"]["model"])' "$config"
     )"
   fi
-  if [[ -z "$ours_conversion_model" ]]; then
-    echo "Function conversion model is missing." >&2
+  if [[ "$ours_conversion_model" != "qwen3-vl-plus" ]]; then
+    echo "Function conversion model must remain qwen3-vl-plus, got: ${ours_conversion_model:-missing}" >&2
     exit 2
   fi
   conversion_args=(
@@ -272,6 +274,23 @@ if [[ "$convert_ours_assets" -eq 1 ]]; then
   cd "$repo"
   exec "$python_bin" "${conversion_args[@]}"
 fi
+if [[ -n "$batch_task_filter" && "$all_tasks" -eq 0 ]]; then
+  all_tasks=1
+fi
+if [[ "$task_iteration" == "1" ]]; then
+  if [[ "$eight_cells" -eq 1 ]]; then
+    default_methods="$eight_cell_methods"
+  else
+    default_methods="$all_methods"
+  fi
+else
+  default_methods="ours"
+fi
+methods="${OMNIFLOW_SINGLE_TASK_METHODS:-$default_methods}"
+if [[ "$eight_cells" -eq 1 && "$methods" != "$eight_cell_methods" ]]; then
+  echo "--eight-cells requires exactly: $eight_cell_methods" >&2
+  exit 2
+fi
 if [[ -z "$memory_index" || "$memory_index" != /* || ! -f "$memory_index" ]]; then
   echo "Long-term-memory index missing; run --refresh-memory first: $memory_index" >&2
   exit 2
@@ -280,7 +299,7 @@ if ! python_bin="$(command -v "$python_bin")"; then
   echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
   exit 1
 fi
-memory_paths="$(
+load_memory_paths() {
   "$python_bin" - "$repo" "$memory_index" <<'PY'
 import json
 import sys
@@ -301,36 +320,141 @@ print(
     )
 )
 PY
-)"
+}
+indexed_store_path_for_task() {
+  if [[ -z "$ours_store_index" ]]; then
+    return 1
+  fi
+  "$python_bin" - "$ours_store_index" "$1" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+index_path = Path(sys.argv[1]).expanduser().resolve()
+task_name = sys.argv[2]
+payload = json.loads(index_path.read_text(encoding="utf-8"))
+row = payload.get(task_name) if isinstance(payload, dict) else None
+if not isinstance(row, dict):
+    raise SystemExit(3)
+fields = (
+    ("store_path", "store_sha256"),
+    ("transfer_states_path", "transfer_states_sha256"),
+    ("provenance_path", "provenance_sha256"),
+)
+for path_field, hash_field in fields:
+    path = Path(str(row.get(path_field) or "")).expanduser()
+    expected = str(row.get(hash_field) or "").strip()
+    if not path.is_absolute() or not path.is_file():
+        raise SystemExit(
+            f"ours_store_index_file_missing:{task_name}:{path_field}:{path}"
+        )
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    if not expected or actual != expected:
+        raise SystemExit(
+            f"ours_store_index_hash_mismatch:{task_name}:{path_field}:"
+            f"expected={expected or 'missing'}:actual={actual}"
+        )
+store_path = Path(str(row["store_path"])).resolve()
+transfer_path = Path(str(row["transfer_states_path"])).resolve()
+if transfer_path != store_path.with_name("transfer_states.json"):
+    raise SystemExit(f"ours_store_index_catalog_mismatch:{task_name}")
+print(store_path)
+PY
+}
+memory_paths="$(load_memory_paths)"
 IFS=$'\t' read -r memory_source_index memory_store_index <<< "$memory_paths"
 master_source_index="$memory_source_index"
 source_index="$memory_source_index"
 ours_store_index="$memory_store_index"
 export OMNIFLOW_EXP_MEMORY_INDEX="$memory_index"
+requires_function_asset=0
+for selected_method in ${methods//,/ }; do
+  case "$selected_method" in
+    ours|mobilegpt_offline_retrieval|appagent_demo|t3a_hint)
+      requires_function_asset=1
+      ;;
+  esac
+done
+prepare_function_asset_for_task() {
+  local requested_task="$1"
+  local conversion_root resolved_store_path store_status
+  if resolved_store_path="$(indexed_store_path_for_task "$requested_task")"; then
+    prepared_store_path="$resolved_store_path"
+    return 0
+  else
+    store_status="$?"
+  fi
+  if [[ "$store_status" -ne 3 ]]; then
+    echo "Canonical Function asset is invalid for task=$requested_task." >&2
+    return "$store_status"
+  fi
+  if [[ "$check_only" -eq 1 || "$dry_run" -eq 1 ]]; then
+    echo "Canonical Function asset missing for task=$requested_task; a read-only check cannot create it." >&2
+    return 1
+  fi
+  if [[ -z "$asset_root" || "$asset_root" != /* ]]; then
+    echo "Set OMNIFLOW_EXP_ASSET_ROOT to an absolute path before source adaptation." >&2
+    return 2
+  fi
+  if [[ ! -f "$env_file" ]]; then
+    echo "Model environment file missing: $env_file" >&2
+    return 1
+  fi
+  conversion_root="$ours_converted_asset_root"
+  if [[ -z "$conversion_root" ]]; then
+    conversion_root="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111/$requested_task/ours/from_canonical_runlog"
+  elif [[ "$all_tasks" -eq 1 ]]; then
+    conversion_root="$conversion_root/$requested_task"
+  fi
+  if [[ "$conversion_root" != /* ]]; then
+    echo "OMNIFLOW_OURS_CONVERTED_ASSET_ROOT must be absolute." >&2
+    return 2
+  fi
+  set -a
+  # shellcheck disable=SC1090
+  source "$env_file"
+  set +a
+  if [[ -z "$ours_conversion_model" ]]; then
+    ours_conversion_model="$(
+      "$python_bin" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["one_task"]["model"])' "$config"
+    )"
+  fi
+  if [[ "$ours_conversion_model" != "qwen3-vl-plus" ]]; then
+    echo "Function conversion model must remain qwen3-vl-plus, got: ${ours_conversion_model:-missing}" >&2
+    return 1
+  fi
+  echo "[source-adapter] create method=ours task=$requested_task"
+  "$python_bin" -m src.experiment.function_assets \
+    --source-asset-index "$source_index" \
+    --output-root "$conversion_root" \
+    --memory-index "$memory_index" \
+    --model "$ours_conversion_model" \
+    --timeout "$ours_conversion_timeout" \
+    --task "$requested_task"
+  memory_paths="$(load_memory_paths)"
+  IFS=$'\t' read -r memory_source_index memory_store_index <<< "$memory_paths"
+  master_source_index="$memory_source_index"
+  source_index="$memory_source_index"
+  ours_store_index="$memory_store_index"
+  if ! prepared_store_path="$(
+    indexed_store_path_for_task "$requested_task"
+  )"; then
+    echo "Function conversion completed without a registered Store: task=$requested_task" >&2
+    return 1
+  fi
+}
+if [[ "$all_tasks" -eq 0 && "$requires_function_asset" -eq 1 && -z "$store_path" ]]; then
+  prepared_store_path=""
+  prepare_function_asset_for_task "$task"
+  store_path="$prepared_store_path"
+fi
 if [[ "$all_tasks" -eq 1 && "$dry_run" -eq 1 ]]; then
   echo "--dry-run cannot be combined with --all-tasks." >&2
   exit 2
 fi
 if [[ "$check_only" -eq 1 && "$dry_run" -eq 1 ]]; then
   echo "--check-only cannot be combined with --dry-run." >&2
-  exit 2
-fi
-if [[ -n "$batch_task_filter" && "$all_tasks" -ne 1 ]]; then
-  echo "--tasks is a batch selector and requires --all-tasks." >&2
-  exit 2
-fi
-if [[ "$task_iteration" == "1" ]]; then
-  if [[ "$eight_cells" -eq 1 ]]; then
-    default_methods="$eight_cell_methods"
-  else
-    default_methods="$all_methods"
-  fi
-else
-  default_methods="ours"
-fi
-methods="${OMNIFLOW_SINGLE_TASK_METHODS:-$default_methods}"
-if [[ "$eight_cells" -eq 1 && "$methods" != "$eight_cell_methods" ]]; then
-  echo "--eight-cells requires exactly: $eight_cell_methods" >&2
   exit 2
 fi
 if [[ ! "$task_iteration" =~ ^[1-3]$ ]]; then
@@ -400,9 +524,6 @@ for method in ${methods//,/ }; do
       ;;
   esac
 done
-if [[ "$requires_omnitransfer" -eq 1 && -z "$store_path" ]]; then
-  store_path="${asset_root:+$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111/$task/ours/store_r1/store.json}"
-fi
 if [[ "$task_iteration" != "1" && "$contains_baseline_method" -eq 1 && -z "$baseline_environment_repair" ]]; then
   echo "Baseline methods are frozen after iteration 1. Set OMNIFLOW_BASELINE_ENVIRONMENT_REPAIR_REASON only for an audited environment-only retry." >&2
   exit 2
@@ -628,48 +749,6 @@ for method, device in plan["pending"]:
     print(f"pending\t{method}\t{label}\t{serial}\t{port}")
 PY
   }
-  indexed_store_path_for_task() {
-    if [[ -z "$ours_store_index" ]]; then
-      return 0
-    fi
-    "$python_bin" - "$ours_store_index" "$1" <<'PY'
-import hashlib
-import json
-import sys
-from pathlib import Path
-
-index_path = Path(sys.argv[1]).expanduser().resolve()
-task_name = sys.argv[2]
-payload = json.loads(index_path.read_text(encoding="utf-8"))
-row = payload.get(task_name) if isinstance(payload, dict) else None
-if not isinstance(row, dict):
-    raise SystemExit(f"ours_store_index_task_missing:{task_name}")
-fields = (
-    ("store_path", "store_sha256"),
-    ("transfer_states_path", "transfer_states_sha256"),
-    ("provenance_path", "provenance_sha256"),
-)
-for path_field, hash_field in fields:
-    path = Path(str(row.get(path_field) or "")).expanduser()
-    expected = str(row.get(hash_field) or "").strip()
-    if not path.is_absolute() or not path.is_file():
-        raise SystemExit(
-            f"ours_store_index_file_missing:{task_name}:{path_field}:{path}"
-        )
-    actual = hashlib.sha256(path.read_bytes()).hexdigest()
-    if not expected or actual != expected:
-        raise SystemExit(
-            f"ours_store_index_hash_mismatch:{task_name}:{path_field}:"
-            f"expected={expected or 'missing'}:actual={actual}"
-        )
-store_path = Path(str(row["store_path"])).resolve()
-transfer_path = Path(str(row["transfer_states_path"])).resolve()
-if transfer_path != store_path.with_name("transfer_states.json"):
-    raise SystemExit(f"ours_store_index_catalog_mismatch:{task_name}")
-print(store_path)
-PY
-  }
-
   batch_registration_plans=()
   batch_store_paths=()
   pending_cell_count=0
@@ -689,6 +768,10 @@ PY
       continue
     fi
     pending_cell_count="$((pending_cell_count + pending_cells))"
+    if [[ "$batch_task_count" -eq 1 && "$requires_function_asset" -eq 1 ]]; then
+      prepared_store_path=""
+      prepare_function_asset_for_task "$batch_task"
+    fi
     indexed_store_path="$(indexed_store_path_for_task "$batch_task")"
     batch_store_paths[$batch_index]="$indexed_store_path"
     task_output_root="$batch_output_root/$batch_task/$attempt_id/static"

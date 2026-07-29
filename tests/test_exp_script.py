@@ -211,6 +211,212 @@ def test_asset_conversion_routes_through_the_only_script(
     ]
 
 
+def test_one_task_run_adapts_all_methods_then_replays(
+    tmp_path: Path,
+) -> None:
+    assets = tmp_path / "assets"
+    results = tmp_path / "results"
+    memory_index = tmp_path / "memory" / "current.json"
+    source_index = tmp_path / "memory" / "source_index.json"
+    store_index = tmp_path / "memory" / "store_index.json"
+    converted_root = assets / "converted"
+    store_path = assets / "store.json"
+    android_world = assets / "android_world"
+    omnitransfer = assets / "OmniTransfer"
+    env_file = assets / ".env"
+    for path, content in (
+        (memory_index, "{}"),
+        (source_index, "{}"),
+        (store_index, "{}"),
+        (store_path, "{}"),
+        (env_file, ""),
+        (
+            android_world
+            / "android_world"
+            / "env"
+            / "setup_device"
+            / "apps.py",
+            "",
+        ),
+        (omnitransfer / "src" / "omnitransfer" / "runtime.py", ""),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    call_log = tmp_path / "calls.txt"
+    converted_marker = tmp_path / "converted.marker"
+    replayed_marker = tmp_path / "replayed.marker"
+    mobilegpt_marker = tmp_path / "mobilegpt.marker"
+    appagent_marker = tmp_path / "appagent.marker"
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        """#!/bin/sh
+printf '%s\n' "$*" >> "$CALL_LOG"
+if [ "$1" = "-m" ] && [ "$2" = "src.experiment.function_assets" ]; then
+  : > "$CONVERTED_MARKER"
+  exit 0
+fi
+if [ "$1" = "-m" ] && [ "$2" = "src.experiment.androidworld" ]; then
+  : > "$REPLAYED_MARKER"
+  exit 0
+fi
+if [ "$1" = "-m" ] && [ "$2" = "src.experiment.mobilegpt_source" ]; then
+  if [ "$3" = "prepare" ]; then
+    : > "$MOBILEGPT_MARKER"
+    mkdir -p "$(dirname "$MOBILEGPT_MANIFEST")"
+    : > "$MOBILEGPT_MANIFEST"
+  fi
+  exit 0
+fi
+if [ "$1" = "-m" ] && [ "$2" = "src.experiment.appagent_source" ]; then
+  if [ "$3" = "prepare" ]; then
+    : > "$APPAGENT_MARKER"
+    mkdir -p "$(dirname "$APPAGENT_MANIFEST")"
+    : > "$APPAGENT_MANIFEST"
+  fi
+  exit 0
+fi
+if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ] && [ "$3" = "$MEMORY_INDEX" ]; then
+  printf '%s\t%s\n' "$SOURCE_INDEX" "$STORE_INDEX"
+  exit 0
+fi
+if [ "$1" = "-" ] && [ "$2" = "$STORE_INDEX" ]; then
+  if [ -f "$CONVERTED_MARKER" ]; then
+    printf '%s\n' "$STORE_PATH"
+    exit 0
+  fi
+  exit 3
+fi
+if [ "$1" = "-" ] && [ "$2" = "$CONFIG_PATH" ]; then
+  printf '%s\n' 'qwen3-vl-plus'
+  exit 0
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_adb = fake_bin / "adb"
+    fake_adb.write_text(
+        """#!/bin/sh
+if [ "$1" = "devices" ]; then
+  printf 'List of devices attached\nemulator-5554\tdevice\nemulator-5560\tdevice\n'
+elif [ "$1" = "-s" ] && [ "$3" = "shell" ] && [ "$4" = "pm" ]; then
+  printf 'package:/data/app/mobilegpt.apk\n'
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    fake_adb.chmod(0o755)
+    fake_java = fake_bin / "java"
+    fake_java.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_java.chmod(0o755)
+    fake_jq = fake_bin / "jq"
+    fake_jq.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_jq.chmod(0o755)
+    mobilegpt_root = assets / "mobilegpt"
+    appagent_root = assets / "appagent"
+    for path in (
+        mobilegpt_root / "Server" / "main.py",
+        mobilegpt_root / "App" / "app" / "build" / "outputs" / "apk" / "debug"
+        / "app-debug.apk",
+        appagent_root / "README.md",
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+
+    environment = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        "PYTHON_BIN": str(fake_python),
+        "CALL_LOG": str(call_log),
+        "CONVERTED_MARKER": str(converted_marker),
+        "REPLAYED_MARKER": str(replayed_marker),
+        "MOBILEGPT_MARKER": str(mobilegpt_marker),
+        "APPAGENT_MARKER": str(appagent_marker),
+        "MOBILEGPT_MANIFEST": str(
+            assets / "mobilegpt-source" / "cold_memory_manifest.json"
+        ),
+        "APPAGENT_MANIFEST": str(
+            assets / "appagent-source" / "appagent_demo_manifest.json"
+        ),
+        "REPO_PATH": str(REPO),
+        "MEMORY_INDEX": str(memory_index),
+        "SOURCE_INDEX": str(source_index),
+        "STORE_INDEX": str(store_index),
+        "STORE_PATH": str(store_path),
+        "CONFIG_PATH": str(REPO / "config" / "paper_androidworld.json"),
+        "OMNIFLOW_EXP_ASSET_ROOT": str(assets),
+        "OMNIFLOW_EXP_RESULTS_ROOT": str(results),
+        "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_index),
+        "OMNIFLOW_ENV_FILE": str(env_file),
+        "OMNIFLOW_ANDROID_WORLD_ROOT": str(android_world),
+        "OMNIFLOW_ADB_PATH": str(fake_adb),
+        "OMNITRANSFER_ROOT": str(omnitransfer),
+        "OMNIFLOW_OURS_CONVERTED_ASSET_ROOT": str(converted_root),
+        "OMNIFLOW_OURS_CONVERSION_MODEL": "qwen3-vl-plus",
+        "OMNIFLOW_MOBILEGPT_ROOT": str(mobilegpt_root),
+        "OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT": str(
+            assets / "mobilegpt-source" / "memory"
+        ),
+        "OMNIFLOW_APPAGENT_ROOT": str(appagent_root),
+        "OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT": str(
+            assets / "appagent-source"
+        ),
+        "OMNIFLOW_SINGLE_TASK_TASK": "RecordWithName",
+        "OMNIFLOW_SINGLE_TASK_METHODS": (
+            "fixed_replay,ours,mobilegpt_offline_retrieval,"
+            "appagent_demo,t3a_hint"
+        ),
+        "OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS": (
+            "small5554:emulator-5554:5554"
+        ),
+        "OMNIFLOW_SINGLE_TASK_MANAGE_EMULATORS": "0",
+        "OMNIFLOW_SINGLE_TASK_FOLD_SERIAL": "",
+        "OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS": "1",
+    }
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT)],
+        cwd=REPO,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert converted_marker.is_file()
+    assert mobilegpt_marker.is_file()
+    assert appagent_marker.is_file()
+    assert replayed_marker.is_file()
+    calls = call_log.read_text(encoding="utf-8")
+    assert calls.index("src.experiment.function_assets") < calls.index(
+        "src.experiment.androidworld"
+    )
+
+    repeated = subprocess.run(
+        ["bash", str(SCRIPT)],
+        cwd=REPO,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert repeated.returncode == 0, repeated.stderr
+    repeated_calls = call_log.read_text(encoding="utf-8")
+    assert repeated_calls.count("src.experiment.function_assets") == 1
+    assert repeated_calls.count(
+        "src.experiment.mobilegpt_source prepare"
+    ) == 1
+    assert repeated_calls.count("src.experiment.appagent_source prepare") == 1
+    assert repeated_calls.count("src.experiment.androidworld one-task") == 2
+
+
 def test_memory_refresh_routes_all_evidence_through_the_only_script(
     tmp_path: Path,
 ) -> None:
