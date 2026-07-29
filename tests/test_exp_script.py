@@ -399,6 +399,7 @@ exit 0
     assert calls.index("src.experiment.function_assets") < calls.index(
         "src.experiment.androidworld"
     )
+    assert f"--store-index {store_index}" in calls
 
     repeated = subprocess.run(
         ["bash", str(SCRIPT)],

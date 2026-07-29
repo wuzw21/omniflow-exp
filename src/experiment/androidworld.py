@@ -31,6 +31,7 @@ if str(REPO_ROOT) not in sys.path:
 from omniflow.core.trajectory import canonicalize_run_log
 from omniflow.functions.store import FunctionStore
 from src.experiment.result_registry import register_attempt_summary
+from src.experiment.source_assets import resolve_store_source_run_log
 from src.integrations.appagent_adapter import validate_appagent_demo_memory
 
 DEFAULT_ARCHIVE_INDEX = (
@@ -7411,6 +7412,7 @@ def _run_one_task_mobilegpt(
     task_seed: int | None,
     method: str,
     attempt_id: str,
+    source_run_log: Path,
 ) -> tuple[list[dict[str, Any]], int]:
     if method not in MOBILEGPT_METHODS:
         raise ValueError(f"unsupported_mobilegpt_method:{method}")
@@ -7449,7 +7451,7 @@ def _run_one_task_mobilegpt(
             source_memory_root,
             task_name=item.task,
             source_seed=item.replay_seed,
-            source_run_log=item.source_run_log,
+            source_run_log=source_run_log,
             expected_model=str(args.model or ""),
             expected_source_method=source_method,
         )
@@ -7912,6 +7914,17 @@ def cmd_one_task(args: argparse.Namespace) -> int:
     item = selected[0]
     methods = _parse_one_task_methods(args.methods)
     targets = parse_device_targets(args.device_targets)
+    source_memory_run_log = item.source_run_log
+    if any(
+        _is_mobilegpt_method(method) or method == "appagent_demo"
+        for method in methods
+    ):
+        store_index_text = str(getattr(args, "store_index", "") or "").strip()
+        if store_index_text:
+            source_memory_run_log = resolve_store_source_run_log(
+                store_index_text,
+                task_name=item.task,
+            )[0]
     attempt_root, _ = _task_managed_output_root(args.output_root)
     output_root = _source_seed_output_root(attempt_root, item.replay_seed)
     attempt_id = attempt_root.name
@@ -7951,6 +7964,7 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                 task_seed=task_seed,
                 method=method,
                 attempt_id=attempt_id,
+                source_run_log=source_memory_run_log,
             )
             command_records.extend(mobilegpt_records)
             failed += mobilegpt_failed
@@ -8011,7 +8025,7 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                 provenance = validate_appagent_demo_memory(
                     source_memory_root,
                     task_name=item.task,
-                    source_run_log=item.source_run_log,
+                    source_run_log=source_memory_run_log,
                 )
                 appagent_docs_root = Path(provenance["demo_docs_root"]).resolve()
                 source_metrics = dict(provenance["source_episode_metrics"])
@@ -8095,7 +8109,9 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                 evaluation_seed=task_seed,
                 attempt_id=attempt_id,
                 source_run_log=(
-                    item.source_run_log if method == "appagent_demo" else None
+                    source_memory_run_log
+                    if method == "appagent_demo"
+                    else None
                 ),
                 artifacts=artifacts,
             )
@@ -8604,6 +8620,11 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Validated omniflow.store.v2 required by the OmniFlow methods."
         ),
+    )
+    one_task_parser.add_argument(
+        "--store-index",
+        default="",
+        help="Canonical task-to-Store index used by frozen source assets.",
     )
     one_task_parser.add_argument(
         "--omnitransfer-root",

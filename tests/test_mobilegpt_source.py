@@ -179,6 +179,8 @@ def test_mobilegpt_offline_runner_uses_protocol_source_method_default(
     source_memory_root.mkdir()
     source_run_log = tmp_path / "source.run_log.json"
     source_run_log.write_text("{}", encoding="utf-8")
+    adapted_source_run_log = tmp_path / "adapted-source.run_log.json"
+    adapted_source_run_log.write_text('{"canonical": true}', encoding="utf-8")
     item = pipeline.ArchivedRunLog(
         task="SystemBluetoothTurnOn",
         goal="Turn Bluetooth on.",
@@ -194,6 +196,7 @@ def test_mobilegpt_offline_runner_uses_protocol_source_method_default(
 
     def validate_source_memory(*args: object, **kwargs: object) -> dict[str, object]:
         assert kwargs["expected_source_method"] == "fixed_replay"
+        assert kwargs["source_run_log"] == adapted_source_run_log
         raise ValidationReached
 
     monkeypatch.setattr(
@@ -221,6 +224,7 @@ def test_mobilegpt_offline_runner_uses_protocol_source_method_default(
             task_seed=113,
             method="mobilegpt_offline_retrieval",
             attempt_id="attempt-1",
+            source_run_log=adapted_source_run_log,
         )
 
 

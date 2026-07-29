@@ -1552,6 +1552,7 @@ command=(
   --master-progress-root "$results_root/androidworld_validator/master_progress"
   --omnitransfer-root "$omnitransfer_root"
   --store-path "$store_path"
+  --store-index "$ours_store_index"
   --mobilegpt-root "$mobilegpt_root"
   --mobilegpt-source-memory-root "$mobilegpt_source_memory_root"
   --appagent-root "$appagent_root"
