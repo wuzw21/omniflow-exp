@@ -232,6 +232,13 @@ def _unique_editable_identity(xml_text: str) -> dict[str, str]:
         if str(node.attrib.get("editable") or "").lower() == "true"
         or str(node.attrib.get("class") or "") == "android.widget.EditText"
     ]
+    focused_nodes = [
+        node
+        for node in nodes
+        if str(node.attrib.get("focused") or "").lower() == "true"
+    ]
+    if focused_nodes:
+        nodes = focused_nodes if len(focused_nodes) == 1 else []
     identities = [_node_identity(node) for node in nodes]
     identities = [identity for identity in identities if identity]
     return identities[0] if len(identities) == 1 else {}

@@ -59,8 +59,11 @@ def _write_source_bundle(root: Path) -> tuple[Path, Path, Path]:
         '<hierarchy><node class="android.widget.Button" text="Save" '
         'resource-id="app:id/save" clickable="true" bounds="[0,0][100,100]" />'
         '<node class="android.widget.EditText" text="" '
-        'resource-id="app:id/name" editable="true" '
-        'bounds="[0,100][100,200]" /></hierarchy>'
+        'resource-id="app:id/name" editable="true" focused="true" '
+        'bounds="[0,100][100,200]" />'
+        '<node class="android.widget.EditText" text="Address" '
+        'resource-id="browser:id/url" editable="true" '
+        'bounds="[0,200][100,300]" /></hierarchy>'
     )
     states = root / "transfer_states.json"
     states.write_text(
