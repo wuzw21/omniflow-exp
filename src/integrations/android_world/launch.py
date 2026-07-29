@@ -39,6 +39,7 @@ from src.integrations.android_world.host import (
 )
 from src.integrations.android_world.setup_compat import (
     patch_androidworld_setup_click_retry,
+    patch_androidworld_setup_fail_closed,
 )
 from src.integrations.runlog import extract_canonical_step_actions, import_run_log
 
@@ -4605,6 +4606,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             aw_setup = None
 
         patch_androidworld_setup_click_retry(android_world_tools)
+        if aw_setup is not None:
+            patch_androidworld_setup_fail_closed(aw_setup)
 
         try:
             from android_world.env import adb_utils

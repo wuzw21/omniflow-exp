@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any
 
@@ -39,9 +40,47 @@ def _visible_setup_strings(controller: Any) -> set[str]:
 
 
 def _setup_click_is_already_complete(controller: Any, target_text: str) -> bool:
-    if target_text != "No thanks":
-        return False
-    return "Search or type web address" in _visible_setup_strings(controller)
+    visible = _visible_setup_strings(controller)
+    if "Search or type web address" in visible:
+        return target_text in {"Accept & continue", "No thanks"}
+    if target_text == "Accept & continue":
+        return "No thanks" in visible
+    return False
+
+
+def patch_androidworld_setup_fail_closed(
+    setup_module: Any,
+    *,
+    attempts: int = 2,
+    delay_seconds: float = 1.0,
+) -> None:
+    """Retry official app setup and save snapshots only after success."""
+
+    if getattr(setup_module, "_omniflow_setup_fail_closed_patch", False):
+        return
+
+    def setup_app_with_retry(app: Any, env: Any) -> None:
+        attempt_count = max(1, int(attempts))
+        for attempt in range(1, attempt_count + 1):
+            try:
+                app.setup(env)
+            except ValueError as error:
+                if attempt >= attempt_count:
+                    raise
+                logging.warning(
+                    "AndroidWorld app setup failed; retrying app=%s attempt=%d/%d error=%s",
+                    app.app_name,
+                    attempt,
+                    attempt_count,
+                    error,
+                )
+                time.sleep(max(0.0, float(delay_seconds)))
+                continue
+            setup_module.app_snapshot.save_snapshot(app.app_name, env.controller)
+            return
+
+    setup_module.setup_app = setup_app_with_retry
+    setup_module._omniflow_setup_fail_closed_patch = True
 
 
 def patch_androidworld_setup_click_retry(
