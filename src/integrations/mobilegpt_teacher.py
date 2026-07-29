@@ -1001,6 +1001,7 @@ def _target_preflight_action(current_screen: str) -> TeacherActionResult | None:
         "not now",
         "skip",
         "got it",
+        "keep google",
     }
     for element in root.iter():
         index = str(element.attrib.get("index") or "").strip()

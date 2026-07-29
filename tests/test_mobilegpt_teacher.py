@@ -146,3 +146,14 @@ def test_adb_foreground_package_reads_top_resumed_activity(monkeypatch) -> None:
     monkeypatch.setattr(mobilegpt_teacher.subprocess, "run", fake_run)
 
     assert mobilegpt_teacher._adb_foreground_package() == "com.android.chrome"
+
+
+def test_teacher_handles_chrome_search_provider_prompt_without_consuming_source() -> None:
+    result = mobilegpt_teacher._target_preflight_action(
+        '<div><p text="Search with Sogou" index="9" />'
+        '<button text="Keep Google" index="12" /></div>'
+    )
+
+    assert result is not None
+    assert result.action == {"name": "click", "parameters": {"index": "12"}}
+    assert result.consumed_source_action is False
