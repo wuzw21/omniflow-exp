@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 from omniflow import Action, Observation
 from omniflow.runtime import execution
-from omniflow.transfer.runtime import load_omnitransfer
+from omniflow.transfer import runtime as transfer_runtime
+from omniflow.transfer.runtime import audit_transfer_action_sources, load_omnitransfer
 
 SOURCE_XML = """\
 <hierarchy width="720" height="1280">
@@ -36,6 +38,15 @@ TARGET_XML = """\
 </hierarchy>
 """
 
+COMPACT_ANDROIDWORLD_XML = """\
+<hierarchy>
+  <node id="0" bounds="[0,0][720,1280]">
+    <node id="11" clickable="true" focusable="true"
+          bounds="[222,1040][498,1136]" />
+  </node>
+</hierarchy>
+"""
+
 
 def test_omnitransfer_loads_only_from_configured_canonical_root(
     tmp_path: Path,
@@ -57,6 +68,45 @@ def test_omnitransfer_loads_only_from_configured_canonical_root(
         for name in tuple(sys.modules):
             if name == "omnitransfer" or name.startswith("omnitransfer."):
                 sys.modules.pop(name, None)
+
+
+def test_source_audit_accepts_native_compact_androidworld_semantics(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        transfer_runtime,
+        "transfer_action",
+        lambda **_kwargs: {
+            "mapped": True,
+            "src_element": {
+                "bounds": [222, 1040, 498, 1136],
+            },
+        },
+    )
+    function = SimpleNamespace(
+        id="start_recorder",
+        steps=(
+            SimpleNamespace(
+                step_index=0,
+                source_state_id="source-state",
+                action=Action("click", {"x": 500, "y": 851.5625}),
+            ),
+        ),
+    )
+
+    audit = audit_transfer_action_sources(
+        (function,),
+        {
+            "source-state": {
+                "state_id": "source-state",
+                "xml": COMPACT_ANDROIDWORLD_XML,
+                "display": {"width": 720, "height": 1280},
+            }
+        },
+    )
+
+    assert audit["source_target_audit_complete"] is True
+    assert audit["source_target_count"] == 1
 
 
 def test_transfer_rejects_semantically_conflicting_row_match(monkeypatch) -> None:

@@ -11,7 +11,13 @@ import re
 from typing import Any, Iterable
 
 from omniflow import compile_runlog_to_store
-from omniflow.core.trajectory import canonicalize_run_log
+from omniflow.functions.store import FunctionStore
+from omniflow.transfer.runtime import (
+    audit_transfer_action_sources,
+    load_transfer_state_catalog,
+    transfer_state_coverage,
+)
+from src.integrations.runlog import import_run_log_evidence
 
 CATALOG_SCHEMA = "omniflow.function-asset-catalog.v1"
 _LEGACY_BUNDLE_NAME = "codex_function_bundle.json"
@@ -37,6 +43,8 @@ def convert_function_assets(
     legacy_roots: Iterable[str | Path],
     source_asset_index: str | Path,
     output_root: str | Path,
+    task_names: Iterable[str] | None = None,
+    exclude_task_names: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Deduplicate authored bundles by task and convert available source assets.
 
@@ -66,6 +74,32 @@ def convert_function_assets(
         raise ValueError("source_asset_index_tasks_required")
 
     bundles = _deduplicated_bundles(roots)
+    if task_names is not None:
+        requested = tuple(str(value).strip() for value in task_names)
+        if not requested or any(not value for value in requested):
+            raise ValueError("function_asset_task_names_required")
+        if len(set(requested)) != len(requested):
+            raise ValueError("function_asset_task_names_duplicate")
+        missing = sorted(set(requested) - set(bundles))
+        if missing:
+            raise ValueError(
+                f"legacy_function_task_missing:{','.join(missing)}"
+            )
+        bundles = {
+            task_name: bundles[task_name]
+            for task_name in sorted(requested)
+        }
+    excluded = {
+        str(value).strip()
+        for value in exclude_task_names
+        if str(value).strip()
+    }
+    excluded_present = sorted(set(bundles) & excluded)
+    bundles = {
+        task_name: bundle
+        for task_name, bundle in bundles.items()
+        if task_name not in excluded
+    }
     task_reports: dict[str, dict[str, Any]] = {}
     store_index: dict[str, dict[str, Any]] = {}
     destination.mkdir(parents=True, exist_ok=True)
@@ -86,11 +120,17 @@ def convert_function_assets(
         if not isinstance(source_row, dict):
             report["status"] = "catalogued_source_evidence_missing"
         else:
-            converted = _convert_task(
+            source_path = _source_run_log_path(
+                source_row,
+                source_index_path=source_index_path,
+                task_name=task_name,
+            )
+            converted = _convert_runlog_to_function_asset(
                 task_name=task_name,
                 legacy_bundle=legacy["payload"],
                 legacy_bundle_sha256=legacy["sha256"],
-                source_row=source_row,
+                source_run_log=source_path,
+                source_index_path=source_index_path,
                 output_root=task_root / "function_store",
             )
             report.update(converted)
@@ -112,6 +152,8 @@ def convert_function_assets(
         "source_asset_index": str(source_index_path),
         "source_asset_index_sha256": _sha256(source_index_path),
         "task_count": len(task_reports),
+        "excluded_existing_task_count": len(excluded_present),
+        "excluded_existing_tasks": excluded_present,
         "converted_task_count": len(store_index),
         "catalogued_task_count": len(task_reports) - len(store_index),
         "target_inputs_read": False,
@@ -174,64 +216,39 @@ def _validate_legacy_bundle(payload: dict[str, Any], path: Path) -> None:
         raise ValueError(f"legacy_function_bundle_functions_required:{path}")
 
 
-def _convert_task(
+def _convert_runlog_to_function_asset(
     *,
     task_name: str,
     legacy_bundle: dict[str, Any],
-    legacy_bundle_sha256: str,
-    source_row: dict[str, Any],
-    output_root: Path,
+    source_run_log: str | Path,
+    output_root: str | Path,
+    legacy_bundle_sha256: str | None = None,
+    source_index_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    indexed_source_path = _frozen_path(
-        source_row,
-        path_fields=("source_run_log",),
-        hash_fields=("source_run_log_sha256",),
-        label=f"{task_name}:source_run_log",
-    )
-    states_path = _frozen_path(
-        source_row,
-        path_fields=("transfer_state_catalog", "transfer_states_path"),
-        hash_fields=(
-            "transfer_state_catalog_sha256",
-            "transfer_states_sha256",
-        ),
-        label=f"{task_name}:transfer_states",
-    )
-    provenance_path = _frozen_path(
-        source_row,
-        path_fields=("provenance_manifest", "provenance_path"),
-        hash_fields=("provenance_manifest_sha256", "provenance_sha256"),
-        label=f"{task_name}:provenance",
-    )
-    provenance = _read_object(provenance_path)
-    recorded_indexed_hash = str(
-        provenance.get("source_run_log_sha256") or ""
-    ).strip()
-    if recorded_indexed_hash and recorded_indexed_hash != _sha256(
-        indexed_source_path
-    ):
-        raise ValueError(
-            f"function_asset_provenance_source_mismatch:{task_name}"
+    """Adapt one historical source RunLog to the shared Function compiler."""
+    source_path = Path(source_run_log).expanduser().resolve()
+    if not source_path.is_file():
+        raise FileNotFoundError(
+            f"function_asset_source_run_log_missing:{task_name}:{source_path}"
         )
-    raw_source_states = _read_object(states_path)
-    source_path = _paired_source_run_log(
-        task_name=task_name,
-        indexed_source_path=indexed_source_path,
-        provenance=provenance,
-        provenance_path=provenance_path,
-        source_states=raw_source_states,
+    output_path = Path(output_root).expanduser().resolve()
+    bundle_sha256 = legacy_bundle_sha256 or _json_sha256(legacy_bundle)
+    index_path = (
+        Path(source_index_path).expanduser().resolve()
+        if source_index_path is not None
+        else None
     )
-    source_run_log = canonicalize_run_log(_read_object(source_path))
+    source_run_log, source_states = import_run_log_evidence(
+        _read_object(source_path),
+        evidence_root=source_path.parent,
+    )
     legacy_source_run_id = str(legacy_bundle.get("source_run_id") or "").strip()
     if legacy_source_run_id != str(source_run_log["run_id"]):
         raise ValueError(
             "legacy_function_bundle_source_run_id_mismatch:"
             f"{task_name}:legacy={legacy_source_run_id}:"
-            f"current={source_run_log['run_id']}"
+            f"source={source_run_log['run_id']}"
         )
-    source_states = deepcopy(raw_source_states)
-    original_state_catalog_run_id = str(source_states.get("run_id") or "")
-    source_states["run_id"] = source_run_log["run_id"]
     source_steps = [
         step
         for step in source_run_log["steps"]
@@ -264,23 +281,92 @@ def _convert_task(
     }
     compile_result = compile_runlog_to_store(
         source_run_log,
-        output_root,
+        output_path,
         function_bundle=current_bundle,
         source_states=source_states,
     )
     store_path = Path(compile_result["store_path"]).resolve()
     transfer_path = Path(compile_result["transfer_state_catalog"]).resolve()
+    store = FunctionStore(store_path)
+    if store.load_errors:
+        raise ValueError(
+            "converted_function_store_invalid:"
+            f"{task_name}:{','.join(sorted(store.load_errors))}"
+        )
+    compiled_states = load_transfer_state_catalog(transfer_path)
+    coverage = transfer_state_coverage(store.functions, compiled_states)
+    if not coverage["complete"]:
+        raise ValueError(
+            "converted_function_transfer_states_incomplete:"
+            f"{task_name}:{','.join(coverage['missing_state_ids'])}"
+        )
+    try:
+        source_target_audit = audit_transfer_action_sources(
+            store.functions,
+            compiled_states,
+        )
+    except ValueError as error:
+        reason = str(error)
+        if not reason.startswith(
+            (
+                "transfer_action_source_target_unresolved:",
+                "transfer_action_source_state_not_raw:",
+            )
+        ):
+            raise
+        source_target_audit = {
+            "source_target_audit_complete": False,
+            "source_target_count": 0,
+            "source_targets": [],
+            "fallback_required": True,
+            "failure": reason,
+        }
+    provenance_path = output_path.parent / "provenance_manifest.json"
+    provenance = {
+        "schema_version": "omniflow.function-asset-conversion-provenance.v1",
+        "task": task_name,
+        "source_run_log": str(source_path),
+        "source_run_log_sha256": _sha256(source_path),
+        "source_run_id": source_run_log["run_id"],
+        "source_asset_index": str(index_path) if index_path is not None else "",
+        "source_asset_index_sha256": (
+            _sha256(index_path) if index_path is not None else ""
+        ),
+        "legacy_bundle_sha256": bundle_sha256,
+        "legacy_source_run_id": legacy_source_run_id,
+        "legacy_source_run_id_match": (
+            legacy_source_run_id == str(source_run_log["run_id"])
+        ),
+        "semantic_enhancement": {
+            "mode": "frozen_authored_function_bundle",
+            "model_calls": 0,
+            "function_ids": list(compile_result["function_ids"]),
+        },
+        "store_path": str(store_path),
+        "store_sha256": _sha256(store_path),
+        "transfer_states_path": str(transfer_path),
+        "transfer_states_sha256": _sha256(transfer_path),
+        "source_state_count": len(compiled_states),
+        "transfer_state_coverage": {
+            key: list(value) if isinstance(value, tuple) else value
+            for key, value in coverage.items()
+        },
+        "source_target_audit": source_target_audit,
+        "target_inputs_read": False,
+        "target_observations_read": False,
+        "validator_state_read": False,
+    }
+    _write_json(provenance_path, provenance)
     return {
         "function_ids": list(compile_result["function_ids"]),
         "function_count": int(compile_result["function_count"]),
-        "legacy_bundle_sha256": legacy_bundle_sha256,
-        "indexed_source_run_log": str(indexed_source_path),
-        "indexed_source_run_log_sha256": _sha256(indexed_source_path),
+        "legacy_bundle_sha256": bundle_sha256,
+        "legacy_source_run_id": legacy_source_run_id,
+        "legacy_source_run_id_match": provenance["legacy_source_run_id_match"],
+        "indexed_source_run_log": str(source_path),
+        "indexed_source_run_log_sha256": _sha256(source_path),
         "source_run_log": str(source_path),
         "source_run_log_sha256": _sha256(source_path),
-        "source_transfer_states": str(states_path),
-        "source_transfer_states_sha256": _sha256(states_path),
-        "source_transfer_states_run_id": original_state_catalog_run_id,
         "compiled_source_run_id": source_run_log["run_id"],
         "store_path": str(store_path),
         "store_sha256": _sha256(store_path),
@@ -288,66 +374,66 @@ def _convert_task(
         "transfer_states_sha256": _sha256(transfer_path),
         "provenance_path": str(provenance_path),
         "provenance_sha256": _sha256(provenance_path),
+        "source_target_audit": source_target_audit,
     }
 
 
-def _paired_source_run_log(
+def _source_run_log_path(
+    row: dict[str, Any],
     *,
+    source_index_path: Path,
     task_name: str,
-    indexed_source_path: Path,
-    provenance: dict[str, Any],
-    provenance_path: Path,
-    source_states: dict[str, Any],
 ) -> Path:
-    raw_states = source_states.get("states")
-    if not isinstance(raw_states, dict):
-        raise ValueError(f"function_asset_source_states_invalid:{task_name}")
-    available = set(raw_states)
-    indexed = canonicalize_run_log(_read_object(indexed_source_path))
-    if _required_state_ids(indexed).issubset(available):
-        return indexed_source_path
-
-    paired_value = str(provenance.get("output_source_run_log") or "").strip()
-    paired_hash = str(
-        provenance.get("output_source_run_log_sha256") or ""
-    ).strip()
-    if not paired_value or not paired_hash:
-        raise ValueError(
-            f"function_asset_paired_source_run_log_required:{task_name}"
+    path_value = next(
+        (
+            str(row.get(field) or "").strip()
+            for field in (
+                "retained_source_run_log",
+                "source_run_log",
+                "object_path",
+            )
+            if row.get(field)
+        ),
+        "",
+    )
+    if not path_value:
+        raise ValueError(f"source_index_run_log_required:{task_name}")
+    raw_path = Path(path_value).expanduser()
+    candidates = (
+        (raw_path,)
+        if raw_path.is_absolute()
+        else tuple(
+            parent / raw_path
+            for parent in (source_index_path.parent, *source_index_path.parents)
         )
-    paired_path = Path(paired_value).expanduser()
-    if not paired_path.is_absolute():
-        paired_path = provenance_path.parent / paired_path
-    paired_path = paired_path.resolve()
-    if not paired_path.is_file():
+    )
+    source_path = next(
+        (candidate.resolve() for candidate in candidates if candidate.is_file()),
+        candidates[0].resolve(),
+    )
+    if not source_path.is_file():
         raise FileNotFoundError(
-            f"function_asset_paired_source_run_log_missing:{task_name}:{paired_path}"
+            f"function_asset_source_run_log_missing:{task_name}:{source_path}"
         )
-    actual_hash = _sha256(paired_path)
-    if actual_hash != paired_hash:
+    expected_hash = next(
+        (
+            str(row.get(field) or "").strip()
+            for field in (
+                "retained_source_run_log_sha256",
+                "source_run_log_sha256",
+                "sha256",
+            )
+            if row.get(field)
+        ),
+        "",
+    )
+    actual_hash = _sha256(source_path)
+    if expected_hash and expected_hash != actual_hash:
         raise ValueError(
-            "function_asset_paired_source_run_log_hash_mismatch:"
-            f"{task_name}:expected={paired_hash}:actual={actual_hash}"
+            "function_asset_source_run_log_hash_mismatch:"
+            f"{task_name}:expected={expected_hash}:actual={actual_hash}"
         )
-    paired = canonicalize_run_log(_read_object(paired_path))
-    missing = sorted(_required_state_ids(paired) - available)
-    if missing:
-        raise ValueError(
-            f"function_asset_source_states_missing:{task_name}:{','.join(missing)}"
-        )
-    return paired_path
-
-
-def _required_state_ids(run_log: dict[str, Any]) -> set[str]:
-    return {
-        str(step.get("before_state_id") or "").strip()
-        for step in run_log.get("steps") or ()
-        if isinstance(step, dict)
-        and isinstance(step.get("result"), dict)
-        and step["result"].get("success") is True
-        and isinstance(step.get("action"), dict)
-        and str(step.get("before_state_id") or "").strip()
-    }
+    return source_path
 
 
 def _convert_function(
@@ -383,7 +469,7 @@ def _convert_function(
     )
 
     expected, legacy_to_expected = _expanded_actions(actions, function_id)
-    start = _unique_alignment(
+    start = _source_alignment(
         expected,
         source_steps=source_steps,
         function_id=function_id,
@@ -541,6 +627,16 @@ def _expanded_actions(
             ]
         elif tool == "press_back":
             converted = [{"tool": "press_key", "args": {"key": "back"}}]
+        elif tool == "press_key":
+            raw_key = str(args.get("key") or args.get("keycode") or "").strip()
+            key = raw_key.lower().removeprefix("keycode_")
+            if key == "del":
+                key = "delete"
+            converted = [{"tool": "press_key", "args": {"key": key}}]
+        elif tool == "start_activity":
+            converted = [{"tool": "open_app", "args": {}}]
+        elif tool in {"answer", "finished"}:
+            converted = []
         elif tool == "wait" and "time_s" in args:
             converted = [
                 {
@@ -549,14 +645,40 @@ def _expanded_actions(
                 }
             ]
         else:
+            normalized_args = {
+                key: value
+                for key, value in args.items()
+                if key not in _IGNORED_LEGACY_ARGS
+            }
+            if tool == "swipe":
+                aliases = {
+                    "start_x": "x1",
+                    "start_y": "y1",
+                    "end_x": "x2",
+                    "end_y": "y2",
+                }
+                for old, new in aliases.items():
+                    if new not in normalized_args and old in normalized_args:
+                        normalized_args[new] = normalized_args.pop(old)
+                if "direction" not in normalized_args and all(
+                    key in normalized_args
+                    for key in ("x1", "y1", "x2", "y2")
+                ):
+                    dx = float(normalized_args["x2"]) - float(
+                        normalized_args["x1"]
+                    )
+                    dy = float(normalized_args["y2"]) - float(
+                        normalized_args["y1"]
+                    )
+                    normalized_args["direction"] = (
+                        ("right" if dx > 0 else "left")
+                        if abs(dx) >= abs(dy)
+                        else ("down" if dy > 0 else "up")
+                    )
             converted = [
                 {
                     "tool": tool,
-                    "args": {
-                        key: value
-                        for key, value in args.items()
-                        if key not in _IGNORED_LEGACY_ARGS
-                    },
+                    "args": normalized_args,
                 }
             ]
         mapping[legacy_index] = list(
@@ -566,7 +688,7 @@ def _expanded_actions(
     return expanded, mapping
 
 
-def _unique_alignment(
+def _source_alignment(
     expected: list[dict[str, Any]],
     *,
     source_steps: list[dict[str, Any]],
@@ -580,7 +702,7 @@ def _unique_alignment(
             for offset, item in enumerate(expected)
         )
     ]
-    if len(matches) != 1:
+    if not matches:
         raise ValueError(
             f"legacy_function_source_alignment_invalid:{function_id}:{matches}"
         )
@@ -595,6 +717,8 @@ def _actions_match(expected: dict[str, Any], actual: dict[str, Any]) -> bool:
     if not isinstance(expected_args, dict) or not isinstance(actual_args, dict):
         return False
     for key, value in expected_args.items():
+        if expected["tool"] == "swipe" and key == "direction":
+            continue
         if key == "app_name":
             continue
         if key not in actual_args:
@@ -608,33 +732,6 @@ def _actions_match(expected: dict[str, Any], actual: dict[str, Any]) -> bool:
         elif value != actual_value:
             return False
     return True
-
-
-def _frozen_path(
-    row: dict[str, Any],
-    *,
-    path_fields: tuple[str, ...],
-    hash_fields: tuple[str, ...],
-    label: str,
-) -> Path:
-    path_value = next(
-        (str(row.get(field) or "").strip() for field in path_fields if row.get(field)),
-        "",
-    )
-    expected = next(
-        (str(row.get(field) or "").strip() for field in hash_fields if row.get(field)),
-        "",
-    )
-    path = Path(path_value).expanduser()
-    if not path.is_absolute() or not path.is_file():
-        raise FileNotFoundError(f"function_asset_evidence_missing:{label}:{path}")
-    actual = _sha256(path)
-    if not expected or actual != expected:
-        raise ValueError(
-            f"function_asset_evidence_hash_mismatch:{label}:"
-            f"expected={expected or 'missing'}:actual={actual}"
-        )
-    return path.resolve()
 
 
 def _path_tokens(value: str) -> list[str | int]:
@@ -716,6 +813,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-asset-index", required=True)
     parser.add_argument("--output-root", required=True)
     parser.add_argument(
+        "--task",
+        action="append",
+        help="Convert only this exact task; repeat for multiple tasks.",
+    )
+    parser.add_argument(
         "--memory-index",
         required=True,
         help=(
@@ -724,17 +826,24 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     args = parser.parse_args(argv)
+    from src.experiment.artifact_memory import (
+        load_artifact_memory,
+        refresh_artifact_memory_from_pointer,
+    )
+
+    existing_memory = load_artifact_memory(args.memory_index)
+    existing_function_stores = set(
+        existing_memory["canonical"]["function_stores"]
+    )
     report = convert_function_assets(
         legacy_roots=args.legacy_root,
         source_asset_index=args.source_asset_index,
         output_root=args.output_root,
+        task_names=args.task,
+        exclude_task_names=existing_function_stores,
     )
     output_root = Path(args.output_root).expanduser().resolve()
     _freeze_tree(output_root)
-    from src.experiment.artifact_memory import (
-        refresh_artifact_memory_from_pointer,
-    )
-
     memory = refresh_artifact_memory_from_pointer(
         memory_index=args.memory_index,
         additional_function_catalogs=(output_root / "catalog.json",),
@@ -751,6 +860,7 @@ def main(argv: list[str] | None = None) -> int:
                     "function_store_tasks"
                 ],
                 "tasks": report["task_count"],
+                "reused": report["excluded_existing_task_count"],
                 "converted": report["converted_task_count"],
                 "catalogued": report["catalogued_task_count"],
                 "frozen": True,

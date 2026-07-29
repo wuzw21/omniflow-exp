@@ -2050,7 +2050,27 @@ def validate_ours_transfer_assets(
         if not coverage["complete"]:
             missing = ",".join(coverage["missing_state_ids"])
             raise ValueError(f"transfer_state_catalog_incomplete:{missing}")
-        source_target_audit = audit_transfer_action_sources(store.functions, states)
+        try:
+            source_target_audit = audit_transfer_action_sources(
+                store.functions,
+                states,
+            )
+        except ValueError as error:
+            reason = str(error)
+            if not reason.startswith(
+                (
+                    "transfer_action_source_target_unresolved:",
+                    "transfer_action_source_state_not_raw:",
+                )
+            ):
+                raise
+            source_target_audit = {
+                "source_target_audit_complete": False,
+                "source_target_count": 0,
+                "source_targets": [],
+                "fallback_required": True,
+                "failure": reason,
+            }
     else:
         source_target_audit = {
             "source_target_audit_complete": not require_action_transfer,

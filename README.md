@@ -24,6 +24,74 @@ OMNITRANSFER_ROOT=/absolute/path/to/versioned/omnitransfer \
 bash scripts/exp/run_androidworld.sh
 ```
 
+The complete command reference, including one-RunLog Function conversion,
+freezing, memory registration, real-time execution, and resume behavior, is in
+[scripts/exp/README.md](scripts/exp/README.md).
+
+## Ours: source RunLog to real-time execution
+
+The conversion path has one public shell entry and one shared single-RunLog
+Python interface: `compile_runlog_to_store(...)`. OOB calls this interface
+directly using its RunLog and state loader. The AndroidWorld experiment adapter
+only imports historical actions/UI states and aligns the frozen semantic bundle
+before calling the same compiler. Batch conversion repeats that same call once
+per selected task; it does not implement a second compiler.
+
+Convert exactly one source RunLog:
+
+```bash
+OMNIFLOW_EXP_ASSET_ROOT=/absolute/assets \
+OMNIFLOW_EXP_MEMORY_ROOT=/absolute/memory \
+OMNIFLOW_LEGACY_FUNCTION_ROOTS=/absolute/functions-v1:/absolute/functions-v2 \
+OMNIFLOW_OURS_CONVERTED_ASSET_ROOT=/absolute/assets/ours-functions-v3 \
+PYTHON_BIN=/absolute/python \
+OMNITRANSFER_ROOT=/absolute/OmniTransfer \
+bash scripts/exp/run_androidworld.sh \
+  --convert-ours-assets \
+  --tasks AudioRecorderRecordAudio
+```
+
+The conversion produces a v2 Function Store, referenced source transfer
+states, and source-only provenance; freezes the output; then registers it in
+the canonical long-term memory. It makes zero planner-model calls and reads no
+target input or target observation. If real OmniTransfer cannot ground a
+present source element, provenance records that the corresponding runtime step
+requires the ordinary VLM fallback; the converter never substitutes source
+coordinates.
+
+Run that frozen Function in real time:
+
+```bash
+OMNIFLOW_EXP_ASSET_ROOT=/absolute/assets \
+OMNIFLOW_EXP_RESULTS_ROOT=/absolute/results \
+OMNIFLOW_EXP_MEMORY_ROOT=/absolute/memory \
+OMNIFLOW_SINGLE_TASK_TASK=AudioRecorderRecordAudio \
+OMNIFLOW_SINGLE_TASK_METHODS=ours \
+PYTHON_BIN=/absolute/python \
+OMNITRANSFER_ROOT=/absolute/OmniTransfer \
+bash scripts/exp/run_androidworld.sh
+```
+
+At runtime the Function competes only in the dedicated Function routing path.
+Each action is mapped by the canonical OmniTransfer implementation; a mapping
+failure returns to the normal VLM fallback. Source-device coordinates are never
+executed directly on a target.
+
+### Shared with OOB
+
+OOB exposes the same compiler through its `compile` bridge operation. The
+bridge loads the requested RunLog with `get_run_log`, supplies referenced
+source states with `get_state`, and calls `compile_runlog_to_store(...)`.
+`enhance=true` then uses OOB's existing offline enhancement lifecycle; it does
+not select a different compiler.
+
+The AndroidWorld adapter has one experiment-only responsibility: convert its
+historical `executed_actions` and `observation_before_act` records into the
+canonical RunLog and source-state contracts OOB already uses. Semantic
+Function alignment happens before the shared compiler call. Store schema,
+binding validation, state freezing, and runtime consumption are therefore
+identical for OOB and this experiment.
+
 To run the canonical 116-task matrix in formal task-major order, keep the same
 environment and run:
 

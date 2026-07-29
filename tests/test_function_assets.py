@@ -81,94 +81,88 @@ def _legacy_bundle() -> dict:
 
 
 def _source_assets(root: Path) -> Path:
+    menu_xml = (
+        '<hierarchy><node text="Record" resource-id="record" '
+        'class="android.widget.Button" package="com.example.recorder" '
+        'clickable="true" enabled="true" '
+        'bounds="[450,750][550,850]" /></hierarchy>'
+    )
+    input_xml = (
+        '<hierarchy><node text="File name" resource-id="filename" '
+        'class="android.widget.EditText" editable="true" '
+        'package="com.example.recorder" clickable="true" enabled="true" '
+        'bounds="[400,100][600,300]" /></hierarchy>'
+    )
     run_log = _write_json(
-        root / "paired.source.run_log.json",
+        root / "RecordWithName" / "source.run_log.json",
         {
-            "schema_version": "omniflow.canonical_run_log.v1",
             "run_id": "current-source",
             "goal": "Record and save audio as source_name.m4a.",
-            "status": "succeeded",
             "success": True,
             "steps": [
                 {
-                    "step_index": 0,
-                    "before_state_id": "state-open",
+                    "observation_before_act": {
+                        "state_id": "state-open",
+                        "package_name": "com.android.launcher",
+                        "display_width": 1000,
+                        "display_height": 1000,
+                    },
                     "action": {
                         "tool": "open_app",
                         "args": {"package_name": "com.example.recorder"},
                     },
                     "result": {"success": True},
-                    "after_state_id": "state-menu",
                 },
                 {
-                    "step_index": 1,
-                    "before_state_id": "state-menu",
+                    "observation_before_act": {
+                        "state_id": "state-menu",
+                        "xml": menu_xml,
+                        "package_name": "com.example.recorder",
+                        "activity_name": ".MainActivity",
+                        "display_width": 1000,
+                        "display_height": 1000,
+                    },
                     "action": {"tool": "click", "args": {"x": 500, "y": 800}},
                     "result": {"success": True},
-                    "after_state_id": "state-input",
                 },
                 {
-                    "step_index": 2,
-                    "before_state_id": "state-input",
+                    "observation_before_act": {
+                        "state_id": "state-input",
+                        "xml": input_xml,
+                        "package_name": "com.example.recorder",
+                        "activity_name": ".MainActivity",
+                        "display_width": 1000,
+                        "display_height": 1000,
+                    },
                     "action": {"tool": "click", "args": {"x": 500, "y": 200}},
                     "result": {"success": True},
-                    "after_state_id": "state-input",
                 },
                 {
-                    "step_index": 3,
-                    "before_state_id": "state-input",
+                    "observation_before_act": {
+                        "state_id": "state-input",
+                        "xml": input_xml,
+                        "package_name": "com.example.recorder",
+                        "activity_name": ".MainActivity",
+                        "display_width": 1000,
+                        "display_height": 1000,
+                    },
                     "action": {
                         "tool": "input_text",
                         "args": {"text": "source_name.m4a"},
                     },
                     "result": {"success": True},
-                    "after_state_id": "state-done",
                 },
             ],
         },
     )
-    indexed_payload = json.loads(run_log.read_text(encoding="utf-8"))
-    indexed_payload["run_id"] = "indexed-source"
-    for step in indexed_payload["steps"]:
-        step["before_state_id"] = "old-" + step["before_state_id"]
-        step["after_state_id"] = "old-" + step["after_state_id"]
-    indexed_run_log = _write_json(
-        root / "indexed.source.run_log.json",
-        indexed_payload,
-    )
-    states = _write_json(
-        root / "transfer_states.json",
-        {
-            "schema_version": "omniflow.transfer-state-catalog.v1",
-            "run_id": "source-replay-wrapper",
-            "states": {
-                state_id: {"state_id": state_id}
-                for state_id in ("state-open", "state-menu", "state-input")
-            },
-        },
-    )
-    provenance = _write_json(
-        root / "provenance_manifest.json",
-        {
-            "schema_version": "test.provenance.v1",
-            "source_run_log": str(indexed_run_log),
-            "source_run_log_sha256": _sha256(indexed_run_log),
-            "output_source_run_log": str(run_log),
-            "output_source_run_log_sha256": _sha256(run_log),
-        },
-    )
     return _write_json(
-        root / "asset_index.json",
+        root / "index_by_task.json",
         {
-            "assets": {
-                "RecordWithName": {
-                    "source_run_log": str(indexed_run_log),
-                    "source_run_log_sha256": _sha256(indexed_run_log),
-                    "transfer_state_catalog": str(states),
-                    "transfer_state_catalog_sha256": _sha256(states),
-                    "provenance_manifest": str(provenance),
-                    "provenance_manifest_sha256": _sha256(provenance),
-                }
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "collect_seed": 111,
+                "retained_source_run_log": str(run_log),
+                "retained_source_run_log_sha256": _sha256(run_log),
             }
         },
     )
@@ -234,6 +228,14 @@ def test_conversion_deduplicates_task_bundles_and_rebinds_current_steps(
     )
     assert list(store_index) == ["RecordWithName"]
     assert store_index["RecordWithName"]["store_path"] == task["store_path"]
+    provenance = json.loads(
+        Path(task["provenance_path"]).read_text(encoding="utf-8")
+    )
+    assert provenance["source_run_log_sha256"] == task["source_run_log_sha256"]
+    assert provenance["legacy_bundle_sha256"] == task["legacy_bundle_sha256"]
+    assert provenance["target_inputs_read"] is False
+    assert provenance["target_observations_read"] is False
+    assert provenance["source_target_audit"]["source_target_audit_complete"] is True
 
 
 def test_conversion_rejects_conflicting_bundles_for_one_task(
@@ -265,6 +267,100 @@ def test_conversion_rejects_conflicting_bundles_for_one_task(
     assert not output_root.exists()
 
 
+def test_conversion_can_freeze_exactly_one_requested_runlog_task(
+    tmp_path: Path,
+) -> None:
+    legacy_root = tmp_path / "legacy"
+    for task_name in ("RecordWithName", "NoEvidenceTask"):
+        _write_json(
+            legacy_root / task_name / "codex_function_bundle.json",
+            _legacy_bundle(),
+        )
+
+    report = convert_function_assets(
+        legacy_roots=(legacy_root,),
+        source_asset_index=_source_assets(tmp_path / "source"),
+        output_root=tmp_path / "converted",
+        task_names=("RecordWithName",),
+    )
+
+    assert list(report["tasks"]) == ["RecordWithName"]
+    assert report["task_count"] == 1
+    assert report["converted_task_count"] == 1
+
+
+def test_conversion_skips_a_function_store_already_registered_in_memory(
+    tmp_path: Path,
+) -> None:
+    legacy_root = tmp_path / "legacy"
+    _write_json(
+        legacy_root / "RecordWithName" / "codex_function_bundle.json",
+        _legacy_bundle(),
+    )
+
+    report = convert_function_assets(
+        legacy_roots=(legacy_root,),
+        source_asset_index=_source_assets(tmp_path / "source"),
+        output_root=tmp_path / "converted",
+        exclude_task_names=("RecordWithName",),
+    )
+
+    assert report["task_count"] == 0
+    assert report["converted_task_count"] == 0
+    assert report["excluded_existing_tasks"] == ["RecordWithName"]
+
+
+def test_conversion_rejects_coordinate_function_without_source_ui(
+    tmp_path: Path,
+) -> None:
+    legacy_root = tmp_path / "legacy"
+    _write_json(
+        legacy_root / "RecordWithName" / "codex_function_bundle.json",
+        _legacy_bundle(),
+    )
+    source_index = _source_assets(tmp_path / "source")
+    index_payload = json.loads(source_index.read_text(encoding="utf-8"))
+    source_row = index_payload["RecordWithName"]
+    run_log_path = Path(source_row["retained_source_run_log"])
+    run_log = json.loads(run_log_path.read_text(encoding="utf-8"))
+    run_log["steps"][1]["observation_before_act"].pop("xml")
+    _write_json(run_log_path, run_log)
+    source_row["retained_source_run_log_sha256"] = _sha256(run_log_path)
+    _write_json(source_index, index_payload)
+
+    with pytest.raises(
+        ValueError,
+        match="transfer_action_source_state_xml_invalid",
+    ):
+        convert_function_assets(
+            legacy_roots=(legacy_root,),
+            source_asset_index=source_index,
+            output_root=tmp_path / "converted",
+        )
+
+
+def test_conversion_rejects_semantics_authored_from_a_different_runlog(
+    tmp_path: Path,
+) -> None:
+    legacy_root = tmp_path / "legacy"
+    bundle = _legacy_bundle()
+    bundle["source_run_id"] = "different-source"
+    _write_json(
+        legacy_root / "RecordWithName" / "codex_function_bundle.json",
+        bundle,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="legacy_function_bundle_source_run_id_mismatch",
+    ):
+        convert_function_assets(
+            legacy_roots=(legacy_root,),
+            source_asset_index=_source_assets(tmp_path / "source"),
+            output_root=tmp_path / "converted",
+        )
+
+
 def test_conversion_cli_freezes_the_completed_asset_root(
     tmp_path: Path,
 ) -> None:
@@ -275,22 +371,10 @@ def test_conversion_cli_freezes_the_completed_asset_root(
     )
     output_root = tmp_path / "converted"
     conversion_source_index = _source_assets(tmp_path / "source")
-    source_item = json.loads(
-        conversion_source_index.read_text(encoding="utf-8")
-    )["assets"]["RecordWithName"]
-    master_source_index = _write_json(
-        tmp_path / "master_source_index.json",
-        {
-            "RecordWithName": {
-                "task": "RecordWithName",
-                "retained_source_run_log": source_item["source_run_log"],
-            }
-        },
-    )
     memory_root = tmp_path / "memory"
     refresh_artifact_memory(
         memory_root=memory_root,
-        source_index=master_source_index,
+        source_index=conversion_source_index,
         function_catalogs=(),
         runlog_roots=(tmp_path / "source",),
         result_roots=(),

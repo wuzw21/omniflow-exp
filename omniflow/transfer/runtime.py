@@ -195,12 +195,7 @@ def transfer_state_coverage(
 def audit_transfer_action_sources(
     functions: Any,
     states: dict[str, dict[str, Any]],
-    *,
-    center_tolerance: float = 0.02,
 ) -> dict[str, Any]:
-    tolerance = float(center_tolerance)
-    if not math.isfinite(tolerance) or tolerance < 0.0 or tolerance > 0.5:
-        raise ValueError("transfer_source_center_tolerance_invalid")
     audited: list[dict[str, Any]] = []
     values = functions.values() if isinstance(functions, dict) else functions
     for function in values or ():
@@ -229,7 +224,7 @@ def audit_transfer_action_sources(
                 float(action.args["x"]) / 1000.0 * width,
                 float(action.args["y"]) / 1000.0 * height,
             )
-            _require_raw_source_target(
+            source_grounding = _require_raw_source_target(
                 source_xml,
                 source_point,
                 function_id=function_id,
@@ -266,18 +261,9 @@ def audit_transfer_action_sources(
                 step_index=step_index,
                 source_state_id=source_state_id,
             )
-            centered = max(abs(offset_x - 0.5), abs(offset_y - 0.5)) <= tolerance
-            center_conflict = False
-            if not centered:
-                center_conflict = _source_center_conflicts(
-                    source_xml=source_xml,
-                    source_element=source_element,
-                    state=state,
-                    action_type=str(getattr(action, "tool", "") or ""),
-                )
-            if not centered and not center_conflict:
+            if not (0.0 <= offset_x <= 1.0 and 0.0 <= offset_y <= 1.0):
                 raise ValueError(
-                    f"transfer_action_source_point_not_centered:{function_id}:"
+                    f"transfer_action_source_point_outside:{function_id}:"
                     f"{step_index}:{source_state_id}:"
                     f"offset={offset_x:.6f},{offset_y:.6f}"
                 )
@@ -286,9 +272,9 @@ def audit_transfer_action_sources(
                     "function_id": function_id,
                     "step_index": step_index,
                     "source_state_id": source_state_id,
+                    "source_grounding": source_grounding,
                     "offset_x": offset_x,
                     "offset_y": offset_y,
-                    "center_conflict": center_conflict,
                     "target": {
                         key: source_element[key]
                         for key in ("resource_id", "text", "content_desc", "class")
@@ -326,43 +312,6 @@ def _source_element_offset(
             f"{step_index}:{source_state_id}"
         )
     return offset_x, offset_y
-
-
-def _source_center_conflicts(
-    *,
-    source_xml: str,
-    source_element: dict[str, Any],
-    state: dict[str, Any],
-    action_type: str,
-) -> bool:
-    try:
-        left, top, right, bottom = (float(item) for item in source_element["bounds"])
-    except (KeyError, TypeError, ValueError) as error:
-        raise ValueError("transfer_action_source_target_offset_invalid") from error
-    result = transfer_action(
-        source_xml=source_xml,
-        target_xml=source_xml,
-        source_point=((left + right) / 2.0, (top + bottom) / 2.0),
-        source_package_name=str(state.get("package_name") or ""),
-        target_package_name=str(state.get("package_name") or ""),
-        source_activity_name=str(state.get("activity_name") or ""),
-        target_activity_name=str(state.get("activity_name") or ""),
-        action_type=action_type,
-        top_k=3,
-    )
-    centered_element = result.get("src_element")
-    return (
-        result.get("mapped") is not True
-        or not isinstance(centered_element, dict)
-        or _element_signature(centered_element) != _element_signature(source_element)
-    )
-
-
-def _element_signature(value: dict[str, Any]) -> tuple[Any, ...]:
-    return tuple(
-        json.dumps(value.get(key), ensure_ascii=False, sort_keys=True)
-        for key in ("resource_id", "text", "content_desc", "class", "bounds")
-    )
 
 
 def _action_requires_transfer_state(action: Any) -> bool:
@@ -444,7 +393,7 @@ def _require_raw_source_target(
     function_id: str,
     step_index: int,
     source_state_id: str,
-) -> None:
+) -> str:
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError as error:
@@ -479,8 +428,14 @@ def _require_raw_source_target(
             0 if str(item[1].attrib.get("class") or "").strip() else 1,
         ),
     )[1]
-    explicit_class = str(target.attrib.get("class") or "").strip()
+    semantic_attributes = {
+        "text",
+        "content-desc",
+        "resource-id",
+        "class",
+    }
     raw_attributes = {
+        "id",
         "package",
         "resource-id",
         "content-desc",
@@ -489,11 +444,23 @@ def _require_raw_source_target(
         "focusable",
         "scrollable",
     }
-    if not explicit_class or not any(key in target.attrib for key in raw_attributes):
+    named = any(
+        str(target.attrib.get(key) or "").strip()
+        for key in semantic_attributes
+    )
+    actionable = bool(str(target.attrib.get("id") or "").strip()) and any(
+        str(target.attrib.get(key) or "").strip().lower() == "true"
+        for key in ("clickable", "scrollable")
+    )
+    if (
+        not (named or actionable)
+        or not any(key in target.attrib for key in raw_attributes)
+    ):
         raise ValueError(
             f"transfer_action_source_state_not_raw:{function_id}:"
             f"{step_index}:{source_state_id}"
         )
+    return "named_element" if named else "workflow_actionable_element"
 
 
 def transfer_action(**kwargs: Any) -> dict[str, Any]:

@@ -29,7 +29,7 @@ max_fallback_steps="${OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS:-5}"
 store_path="${OMNIFLOW_SINGLE_TASK_STORE_PATH:-}"
 ours_store_index="${OMNIFLOW_OURS_STORE_INDEX:-}"
 legacy_function_roots="${OMNIFLOW_LEGACY_FUNCTION_ROOTS:-}"
-ours_source_asset_index="${OMNIFLOW_OURS_SOURCE_ASSET_INDEX:-}"
+ours_source_asset_index="${OMNIFLOW_OURS_SOURCE_ASSET_INDEX:-$master_source_index}"
 ours_converted_asset_root="${OMNIFLOW_OURS_CONVERTED_ASSET_ROOT:-}"
 memory_root="${OMNIFLOW_EXP_MEMORY_ROOT:-${asset_root:+$asset_root/androidworld_memory}}"
 memory_index="${OMNIFLOW_EXP_MEMORY_INDEX:-${memory_root:+$memory_root/current.json}}"
@@ -73,7 +73,8 @@ Options:
   --dry-run                 Build one task command without executing it.
   --all-tasks               Run the selected task set in task-major order.
   --eight-cells             Run the four non-T3A methods on both devices.
-  --tasks TASK1,TASK2,...   Limit --all-tasks to an ordered task subset.
+  --tasks TASK1,TASK2,...   Limit --all-tasks or --convert-ours-assets to an
+                            ordered task subset.
   --convert-ours-assets     Deduplicate legacy authored Functions by task and
                             convert available current source evidence, then
                             register the frozen catalog in long-term memory.
@@ -93,7 +94,8 @@ Optional runtime overrides:
 
 Asset conversion inputs:
   OMNIFLOW_LEGACY_FUNCTION_ROOTS    Colon-separated read-only bundle roots.
-  OMNIFLOW_OURS_SOURCE_ASSET_INDEX Current frozen source asset index.
+  OMNIFLOW_OURS_SOURCE_ASSET_INDEX Source RunLog index; defaults to the master
+                                   source index.
   OMNIFLOW_OURS_CONVERTED_ASSET_ROOT New immutable conversion output root.
   OMNIFLOW_EXP_MEMORY_INDEX          Existing memory current.json.
 
@@ -103,7 +105,8 @@ Long-term-memory refresh inputs:
   OMNIFLOW_MEMORY_FUNCTION_CATALOGS  Colon-separated Function catalogs.
 
 Examples:
-  bash scripts/exp/run_androidworld.sh --convert-ours-assets
+  bash scripts/exp/run_androidworld.sh --convert-ours-assets \
+    --tasks AudioRecorderRecordAudio
   bash scripts/exp/run_androidworld.sh --refresh-memory
   bash scripts/exp/run_androidworld.sh --check-only --all-tasks --eight-cells
   bash scripts/exp/run_androidworld.sh --all-tasks --eight-cells \
@@ -211,7 +214,7 @@ if [[ "$refresh_memory" -eq 1 ]]; then
   exec "$python_bin" "${memory_args[@]}"
 fi
 if [[ "$convert_ours_assets" -eq 1 ]]; then
-  if [[ "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$batch_task_filter" ]]; then
+  if [[ "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 ]]; then
     echo "--convert-ours-assets cannot be combined with experiment run options." >&2
     exit 2
   fi
@@ -245,6 +248,16 @@ if [[ "$convert_ours_assets" -eq 1 ]]; then
     fi
     conversion_args+=(--legacy-root "$conversion_root")
   done
+  if [[ -n "$batch_task_filter" ]]; then
+    IFS=',' read -r -a conversion_tasks <<< "$batch_task_filter"
+    for conversion_task in "${conversion_tasks[@]}"; do
+      if [[ -z "$conversion_task" ]]; then
+        echo "Conversion task list contains an empty task name." >&2
+        exit 2
+      fi
+      conversion_args+=(--task "$conversion_task")
+    done
+  fi
   cd "$repo"
   exec "$python_bin" "${conversion_args[@]}"
 fi

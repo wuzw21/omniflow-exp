@@ -183,7 +183,13 @@ def test_asset_conversion_routes_through_the_only_script(
     }
 
     completed = subprocess.run(
-        ["bash", str(SCRIPT), "--convert-ours-assets"],
+        [
+            "bash",
+            str(SCRIPT),
+            "--convert-ours-assets",
+            "--tasks",
+            "RecordWithName",
+        ],
         cwd=REPO,
         env=environment,
         check=False,
@@ -205,6 +211,8 @@ def test_asset_conversion_routes_through_the_only_script(
         str(legacy_v1),
         "--legacy-root",
         str(legacy_v2),
+        "--task",
+        "RecordWithName",
     ]
 
 
