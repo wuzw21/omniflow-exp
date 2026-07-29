@@ -18,6 +18,11 @@ from src.experiment.source_assets import (
 )
 
 SOURCE_SEED = 111
+_IGNORED_SOURCE_PACKAGES = {
+    "com.android.systemui",
+    "com.example.MobileGPT",
+    "com.google.android.apps.nexuslauncher",
+}
 
 
 def source_method_label(item: pipeline.ArchivedRunLog) -> str:
@@ -131,7 +136,12 @@ def _preflight_mobilegpt_teacher(
     index_path: str | Path,
     item: pipeline.ArchivedRunLog,
     store_index_path: str | Path | None = None,
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+) -> tuple[
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, str],
+]:
     grounded, grounding_audit = _grounded_source_payload(
         index_path=index_path,
         item=item,
@@ -151,7 +161,50 @@ def _preflight_mobilegpt_teacher(
             source_seed=SOURCE_SEED,
             provenance_source_run_log=item.source_run_log,
         )
-    return grounded, grounding_audit, teacher_payload
+    target_info = _mobilegpt_source_target(item=item, grounded=grounded)
+    return grounded, grounding_audit, teacher_payload, target_info
+
+
+def _mobilegpt_source_target(
+    *,
+    item: pipeline.ArchivedRunLog,
+    grounded: dict[str, Any],
+) -> dict[str, str]:
+    inferred = pipeline._infer_mobilegpt_target_from_source_run_log(item)
+    package_name = str(inferred.get("target_package") or "").strip()
+    if package_name:
+        return {
+            key: str(value)
+            for key, value in inferred.items()
+            if value is not None
+        }
+
+    source_packages: set[str] = set()
+    for step in grounded.get("steps") or []:
+        observation = (
+            step.get("observation_before_act")
+            if isinstance(step, dict)
+            else None
+        )
+        package = str(
+            observation.get("package_name")
+            if isinstance(observation, dict)
+            else ""
+        ).strip()
+        if package and package not in _IGNORED_SOURCE_PACKAGES:
+            source_packages.add(package)
+    if len(source_packages) != 1:
+        label = "unresolved" if not source_packages else "ambiguous"
+        raise ValueError(
+            f"mobilegpt_source_target_package_{label}:"
+            + ",".join(sorted(source_packages))
+        )
+    package_name = next(iter(source_packages))
+    return {
+        "target_package": package_name,
+        "target_app": package_name,
+        "target_source": "frozen_source_states",
+    }
 
 
 def preflight_mobilegpt_source(
@@ -163,10 +216,12 @@ def preflight_mobilegpt_source(
     """Validate one source asset without creating a persistent output."""
 
     item = load_canonical_source_item(index_path, task_name=task_name)
-    _, grounding_audit, teacher_payload = _preflight_mobilegpt_teacher(
+    _, grounding_audit, teacher_payload, target_info = (
+        _preflight_mobilegpt_teacher(
         index_path=index_path,
         item=item,
         store_index_path=store_index_path,
+        )
     )
     return {
         "schema_version": "omniflow.mobilegpt-source-preflight.v1",
@@ -175,6 +230,8 @@ def preflight_mobilegpt_source(
         "source_method": source_method_label(item),
         "source_run_log": str(item.source_run_log),
         "action_count": int(teacher_payload["action_count"]),
+        "target_package": target_info["target_package"],
+        "target_source": target_info["target_source"],
         "grounding": grounding_audit,
         "ready": True,
     }
@@ -212,7 +269,7 @@ def prepare_mobilegpt_source_memory(
         raise FileExistsError(
             f"immutable_mobilegpt_source_attempt_exists:{bundle_root}"
         )
-    grounded_payload, grounding_audit, teacher_payload = (
+    grounded_payload, grounding_audit, teacher_payload, target_info = (
         _preflight_mobilegpt_teacher(
             index_path=index_path,
             item=item,
@@ -220,7 +277,6 @@ def prepare_mobilegpt_source_memory(
         )
     )
 
-    target_info = pipeline._infer_mobilegpt_target_from_source_run_log(item)
     target_package = str(target_info.get("target_package") or "").strip()
     if not target_package:
         raise ValueError("mobilegpt_source_target_package_unresolved")

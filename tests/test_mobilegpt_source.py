@@ -52,6 +52,7 @@ def _write_source_index(
                 "states": {
                     "state-0": {
                         "state_id": "state-0",
+                        "package_name": "com.android.settings",
                         "xml": (
                             '<hierarchy><node text="Bluetooth" '
                             'resource-id="android:id/switch_widget" '
@@ -166,6 +167,30 @@ def test_mobilegpt_source_accepts_successful_canonical_seed111(
         task_name="SystemBluetoothTurnOn",
     )
     assert mobilegpt_source.source_method_label(item) == "fixed_replay"
+
+
+def test_mobilegpt_preflight_resolves_target_from_frozen_source_states(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    index, _ = _write_source_index(tmp_path / "source-package")
+    monkeypatch.setattr(
+        pipeline,
+        "_infer_mobilegpt_target_from_source_run_log",
+        lambda _item: {
+            "target_package": "",
+            "target_app": "",
+            "target_source": "unresolved",
+        },
+    )
+
+    result = mobilegpt_source.preflight_mobilegpt_source(
+        index_path=index,
+        task_name="SystemBluetoothTurnOn",
+    )
+
+    assert result["target_package"] == "com.android.settings"
+    assert result["target_source"] == "frozen_source_states"
 
 
 def test_mobilegpt_source_reads_explicit_source_seed(tmp_path: Path) -> None:
