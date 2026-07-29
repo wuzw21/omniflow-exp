@@ -178,3 +178,27 @@ def test_source_index_accepts_registered_historical_runlog(
     )
 
     assert result["run_log_count"] == 1
+
+
+def test_source_index_validates_only_selected_task_for_one_task_run(
+    tmp_path: Path,
+) -> None:
+    index = _write_index(tmp_path / "selected")
+    payload = json.loads(index.read_text(encoding="utf-8"))
+    payload["UnrelatedInvalidTask"] = {
+        "source_seed": 111,
+        "latest_official_success_source": True,
+        "retained_source_run_log": "missing.run_log.json",
+        "retained_source_run_log_sha256": "0" * 64,
+    }
+    index.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = _validate_source_index(
+        index,
+        source_root=tmp_path,
+        expected_tasks=2,
+        task_names=("Task",),
+    )
+
+    assert result["task_count"] == 2
+    assert result["run_log_count"] == 1

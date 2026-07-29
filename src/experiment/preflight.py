@@ -388,6 +388,7 @@ def _validate_source_index(
     *,
     source_root: Path,
     expected_tasks: int,
+    task_names: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     resolved_index = index_path.expanduser().resolve()
     payload = json.loads(resolved_index.read_text(encoding="utf-8"))
@@ -395,9 +396,20 @@ def _validate_source_index(
         raise ValueError(
             f"source_index_task_count_invalid:{len(payload) if isinstance(payload, dict) else 0}/{expected_tasks}"
         )
+    selected_tasks = tuple(dict.fromkeys(task_names))
+    missing_tasks = [task for task in selected_tasks if task not in payload]
+    if missing_tasks:
+        raise ValueError(
+            "source_index_selected_tasks_missing:" + ",".join(missing_tasks)
+        )
+    items = (
+        ((task, payload[task]) for task in selected_tasks)
+        if selected_tasks
+        else payload.items()
+    )
     run_logs: list[Path] = []
     invalid: list[str] = []
-    for task, metadata in payload.items():
+    for task, metadata in items:
         if not isinstance(metadata, dict):
             invalid.append(str(task))
             continue
@@ -488,6 +500,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--serial", default="emulator-5554")
     parser.add_argument("--expected-tasks", type=int)
     parser.add_argument("--source-index")
+    parser.add_argument("--source-task", action="append", default=[])
     parser.add_argument("--source-root")
     parser.add_argument("--source-memory-root")
     parser.add_argument("--expected-memory-tasks", type=int)
@@ -622,6 +635,7 @@ def main(argv: list[str] | None = None) -> int:
                     Path(source_index_value),
                     source_root=source_root,
                     expected_tasks=expected_tasks,
+                    task_names=tuple(args.source_task),
                 )
             except (OSError, ValueError, json.JSONDecodeError) as error:
                 add("source_index", False, str(error))

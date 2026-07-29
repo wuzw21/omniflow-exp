@@ -1455,6 +1455,7 @@ for serial in $preflight_serials; do
     preflight_args+=(
       --expected-tasks "$source_index_expected_tasks"
       --source-index "$source_index"
+      --source-task "$task"
     )
   fi
   if [[ "$profile" == "appagent" ]]; then
