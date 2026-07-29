@@ -1000,6 +1000,7 @@ def registered_cell_plan_from_memory(
 def refresh_artifact_memory_from_pointer(
     *,
     memory_index: str | Path,
+    source_index: str | Path | None = None,
     additional_function_catalogs: Sequence[str | Path] = (),
     additional_runlog_roots: Sequence[str | Path] = (),
     additional_result_roots: Sequence[str | Path] = (),
@@ -1039,7 +1040,7 @@ def refresh_artifact_memory_from_pointer(
         )
         return _refresh_artifact_memory_unlocked(
             memory_root=pointer_path.parent,
-            source_index=str(inputs["source_index"]),
+            source_index=source_index or str(inputs["source_index"]),
             function_catalogs=function_catalogs,
             runlog_roots=runlog_roots,
             result_roots=result_roots,
@@ -1079,20 +1080,29 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "refresh":
-        report = refresh_artifact_memory(
-            memory_root=args.memory_root,
-            source_index=args.source_index,
-            function_catalogs=_split_values(args.function_catalog),
-            runlog_roots=_split_values(args.runlog_root),
-            result_roots=_split_values(args.result_root),
-        )
-        pointer = _load_object(
-            Path(args.memory_root).expanduser().resolve() / "current.json"
-        )
+        memory_root = Path(args.memory_root).expanduser().resolve()
+        pointer_path = memory_root / "current.json"
+        if pointer_path.is_file():
+            report = refresh_artifact_memory_from_pointer(
+                memory_index=pointer_path,
+                source_index=args.source_index,
+                additional_function_catalogs=_split_values(
+                    args.function_catalog
+                ),
+                additional_runlog_roots=_split_values(args.runlog_root),
+                additional_result_roots=_split_values(args.result_root),
+            )
+        else:
+            report = refresh_artifact_memory(
+                memory_root=memory_root,
+                source_index=args.source_index,
+                function_catalogs=_split_values(args.function_catalog),
+                runlog_roots=_split_values(args.runlog_root),
+                result_roots=_split_values(args.result_root),
+            )
+        pointer = _load_object(pointer_path)
         output = {
-            "current": str(
-                Path(args.memory_root).expanduser().resolve() / "current.json"
-            ),
+            "current": str(pointer_path),
             "registry": pointer["registry_path"],
             "counts": report["counts"],
         }

@@ -7,6 +7,7 @@ import stat
 
 from src.experiment.artifact_memory import (
     load_artifact_memory,
+    main as artifact_memory_main,
     refresh_artifact_memory,
     refresh_artifact_memory_from_pointer,
     registered_cell_plan_from_memory,
@@ -294,6 +295,22 @@ def test_refresh_keeps_one_verified_runtime_store_from_duplicate_catalogs(
     assert Path(row["provenance_path"]).read_bytes() == provenance.read_bytes()
     assert Path(row["source_run_log_path"]).read_bytes() == source.read_bytes()
     assert row["source_run_log_sha256"] == _sha256(source)
+
+    assert artifact_memory_main(
+        [
+            "refresh",
+            "--memory-root",
+            str(tmp_path / "memory"),
+            "--source-index",
+            str(source_index),
+            "--runlog-root",
+            str(tmp_path / "evidence"),
+        ]
+    ) == 0
+    refreshed = load_artifact_memory(tmp_path / "memory" / "current.json")
+    assert list(refreshed["canonical"]["function_stores"]) == [
+        "RecordWithName"
+    ]
 
 
 def test_refresh_keeps_earliest_formal_result_without_success_cherry_picking(
