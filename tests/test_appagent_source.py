@@ -3,11 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from src.experiment import androidworld as pipeline
 from src.experiment import appagent_source
+from src.integrations import appagent_adapter
 
 
 def _write_source_index(root: Path) -> Path:
@@ -280,3 +283,105 @@ def test_appagent_source_failure_marker_forbids_retry(tmp_path: Path) -> None:
     )
     assert marker["retry_allowed"] is False
     assert marker["error_type"] == "RuntimeError"
+
+
+def test_appagent_teacher_input_replaces_existing_field_text(
+    tmp_path: Path,
+) -> None:
+    source_run_log = tmp_path / "source.run_log.json"
+    source_run_log.write_text("{}", encoding="utf-8")
+    teacher_source = tmp_path / "teacher_source.json"
+    teacher_source.write_text(
+        json.dumps(
+            {
+                "schema_version": appagent_adapter.APPAGENT_TEACHER_SOURCE_SCHEMA,
+                "task_name": "AudioRecorderRecordAudioWithFileName",
+                "source_seed": 111,
+                "source_run_id": "source",
+                "source_run_log": str(source_run_log),
+                "source_run_log_sha256": hashlib.sha256(
+                    source_run_log.read_bytes()
+                ).hexdigest(),
+                "official_appagent_revision": (
+                    appagent_adapter.APPAGENT_OFFICIAL_REVISION
+                ),
+                "source_app_package": "com.dimowner.audiorecorder",
+                "actions": [
+                    {
+                        "source_step_index": 1,
+                        "source_action_index": 0,
+                        "action": {
+                            "type": "input_text",
+                            "params": {
+                                "text": "G367_conference.m4a",
+                                "source_context": {
+                                    "element": {
+                                        "resource_id": (
+                                            "com.dimowner.audiorecorder:"
+                                            "id/input_name"
+                                        ),
+                                        "text": "Record-1",
+                                    }
+                                },
+                            },
+                        },
+                    }
+                ],
+                "action_count": 1,
+                "consumer": "appagent_official_human_demonstration",
+                "adapter_scope": "human_demo_primitive_grounding_only",
+                "uses_omniflow_function": False,
+                "writes_appagent_docs": False,
+                "requires_native_source_episode": True,
+                "target_inputs_read": False,
+                "coordinate_replay": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    actions: list[dict] = []
+    xml = (
+        '<hierarchy class="android.widget.FrameLayout" '
+        'bounds="[0,0][220,100]"><node class="android.widget.EditText" '
+        'text="Record-1" '
+        'resource-id="com.dimowner.audiorecorder:id/input_name" '
+        'editable="true" clickable="true" enabled="true" '
+        'bounds="[10,10][200,80]" /></hierarchy>'
+    )
+    env = SimpleNamespace(
+        execute_action=actions.append,
+        get_state=lambda: SimpleNamespace(
+            xml=xml,
+            pixels=np.zeros((100, 220, 3), dtype=np.uint8),
+        ),
+    )
+
+    def draw_elements(source, destination, *_args, **_kwargs):
+        Path(destination).write_bytes(Path(source).read_bytes())
+
+    agent = appagent_adapter.AppAgentTeacherAgent(
+        env=env,
+        official_runtime=SimpleNamespace(
+            min_dist=0.0,
+            request_interval=0.0,
+            draw_elements=draw_elements,
+        ),
+        teacher_source=teacher_source,
+        workspace_root=tmp_path / "workspace",
+        demo_name="record_with_name",
+        action_factory=lambda **kwargs: kwargs,
+    )
+    agent.set_current_task(
+        "AudioRecorderRecordAudioWithFileName",
+        "Record with a file name.",
+        {"app_names": ["audio recorder"]},
+    )
+
+    result = agent.step("Record with a file name.")
+
+    assert result.done is False
+    assert actions[-1] == {
+        "action_type": "input_text",
+        "text": "G367_conference.m4a",
+        "clear_text": True,
+    }

@@ -734,7 +734,11 @@ class AppAgentTeacherAgent:
             record = f"tap({grounded.tag}):::{grounded.uid}"
         elif action_type == "input_text":
             text = re.sub(r"[\r\n]+", " ", str(params.get("text") or ""))
-            native_action = self._new_action(action_type="input_text", text=text)
+            native_action = self._new_action(
+                action_type="input_text",
+                text=text,
+                clear_text=True,
+            )
             record = f'text({grounded.tag}:sep:"{text}"):::{grounded.uid}'
         elif action_type == "long_press":
             native_action = self._new_action(action_type="long_press", x=x, y=y)
