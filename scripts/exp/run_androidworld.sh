@@ -1428,7 +1428,7 @@ ensure_emulator() {
 
 ensure_mobilegpt_package() {
   local serial="$1"
-  local expected_sha installed_path installed_sha
+  local expected_sha installed_path installed_sha install_output
   if command -v sha256sum >/dev/null 2>&1; then
     expected_sha="$(sha256sum "$mobilegpt_apk" | awk '{print $1}')"
   else
@@ -1455,7 +1455,16 @@ ensure_mobilegpt_package() {
     return 0
   fi
   echo "[mobilegpt] install-apk serial=$serial apk=$mobilegpt_apk sha256=$expected_sha"
-  "$adb_bin" -s "$serial" install -r "$mobilegpt_apk"
+  if install_output="$("$adb_bin" -s "$serial" install -r "$mobilegpt_apk" 2>&1)"; then
+    printf '%s\n' "$install_output"
+  elif [[ "$install_output" == *INSTALL_FAILED_UPDATE_INCOMPATIBLE* ]]; then
+    echo "[mobilegpt] replace-incompatible-apk serial=$serial package=com.example.MobileGPT" >&2
+    "$adb_bin" -s "$serial" uninstall com.example.MobileGPT
+    "$adb_bin" -s "$serial" install "$mobilegpt_apk"
+  else
+    printf '%s\n' "$install_output" >&2
+    return 1
+  fi
   installed_path="$(
     "$adb_bin" -s "$serial" shell pm path com.example.MobileGPT 2>/dev/null \
       | sed -n 's/^package://p' \

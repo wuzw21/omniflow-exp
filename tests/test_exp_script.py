@@ -284,6 +284,7 @@ def test_one_task_run_adapts_all_methods_then_replays(
     converted_marker = tmp_path / "converted.marker"
     replayed_marker = tmp_path / "replayed.marker"
     mobilegpt_marker = tmp_path / "mobilegpt.marker"
+    mobilegpt_install_marker = tmp_path / "mobilegpt-install.marker"
     appagent_marker = tmp_path / "appagent.marker"
     fake_python = tmp_path / "python"
     fake_python.write_text(
@@ -350,7 +351,18 @@ if [ "$1" = "devices" ]; then
 elif [ "$1" = "-s" ] && [ "$3" = "shell" ] && [ "$4" = "pm" ]; then
   printf 'package:/data/app/mobilegpt.apk\n'
 elif [ "$1" = "-s" ] && [ "$3" = "shell" ] && [ "$4" = "sha256sum" ]; then
-  printf '%s  %s\n' "$MOBILEGPT_APK_SHA" "$5"
+  if [ -f "$MOBILEGPT_INSTALL_MARKER" ]; then
+    printf '%s  %s\n' "$MOBILEGPT_APK_SHA" "$5"
+  else
+    printf '%064d  %s\n' 0 "$5"
+  fi
+elif [ "$1" = "-s" ] && [ "$3" = "install" ] && [ "$4" = "-r" ]; then
+  printf '%s\n' 'Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: signatures do not match]' >&2
+  exit 1
+elif [ "$1" = "-s" ] && [ "$3" = "uninstall" ]; then
+  exit 0
+elif [ "$1" = "-s" ] && [ "$3" = "install" ]; then
+  : > "$MOBILEGPT_INSTALL_MARKER"
 fi
 exit 0
 """,
@@ -386,6 +398,7 @@ exit 0
         "REPLAYED_MARKER": str(replayed_marker),
         "MOBILEGPT_MARKER": str(mobilegpt_marker),
         "MOBILEGPT_APK_SHA": hashlib.sha256(b"").hexdigest(),
+        "MOBILEGPT_INSTALL_MARKER": str(mobilegpt_install_marker),
         "APPAGENT_MARKER": str(appagent_marker),
         "MOBILEGPT_MANIFEST": str(
             assets / "mobilegpt-source" / "cold_memory_manifest.json"
@@ -443,6 +456,7 @@ exit 0
     assert completed.returncode == 0, completed.stderr
     assert converted_marker.is_file()
     assert mobilegpt_marker.is_file()
+    assert mobilegpt_install_marker.is_file()
     assert appagent_marker.is_file()
     assert replayed_marker.is_file()
     calls = call_log.read_text(encoding="utf-8")
