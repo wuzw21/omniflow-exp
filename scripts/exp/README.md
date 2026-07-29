@@ -41,7 +41,7 @@ All data paths are absolute and outside the repository.
 | `OMNIFLOW_SINGLE_TASK_EVALUATION_SEED` | Target evaluation seed; formal value is `113` |
 | `OMNIFLOW_OURS_CONVERTED_ASSET_ROOT` | A new, empty conversion version directory |
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
-| `OMNIFLOW_OURS_CONVERSION_MODEL` | Fixed conversion model; defaults to the paper config |
+| `OMNIFLOW_OURS_AUTHORING_MANIFEST` | Immutable offline Function authoring manifest |
 
 The source RunLog index defaults to
 `$OMNIFLOW_EXP_ASSET_ROOT/runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json`.
@@ -66,7 +66,8 @@ bash scripts/exp/run_androidworld.sh \
 The default method set contains all five methods. Set
 `OMNIFLOW_SINGLE_TASK_METHODS` only for an intentional subset. When the
 canonical `ours` Store is missing, the command creates and registers it before
-preparing MobileGPT and AppAgent assets; then the same process continues to
+preparing MobileGPT and AppAgent assets, provided the immutable authoring
+manifest is configured; then the same process continues to
 target replay. `--tasks` implies task-major scheduling and skips every result
 cell with the same task, method, device, source seed, and evaluation seed that
 is already registered with an official-validator conclusion. A result from a
@@ -81,7 +82,8 @@ bash scripts/exp/run_androidworld.sh --check-only
 ```
 
 `--convert-ours-assets` remains available for conversion-only maintenance. It
-does not replay a task and is not the normal experiment workflow.
+uses no external authoring model, does not replay a task, and is not the normal
+experiment workflow.
 
 ## Full and bounded matrices
 

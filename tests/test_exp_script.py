@@ -37,6 +37,7 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "--refresh-memory" in completed.stdout
     assert "OMNIFLOW_EXP_ASSET_ROOT" in completed.stdout
     assert "OMNIFLOW_EXP_MEMORY_ROOT" in completed.stdout
+    assert "OMNIFLOW_OURS_AUTHORING_MANIFEST" in completed.stdout
     assert completed.stderr == ""
     assert SCRIPT.read_text(encoding="utf-8").count('bash "$0"') == 2
 
@@ -162,6 +163,8 @@ def test_asset_conversion_routes_through_the_only_script(
     output_root = tmp_path / "converted"
     memory_index = tmp_path / "current.json"
     memory_index.write_text("{}", encoding="utf-8")
+    authoring_manifest = tmp_path / "authoring-manifest.json"
+    authoring_manifest.write_text("{}", encoding="utf-8")
     captured = tmp_path / "python-args.txt"
     fake_python = tmp_path / "python"
     fake_python.write_text(
@@ -175,8 +178,7 @@ def test_asset_conversion_routes_through_the_only_script(
         "CAPTURE_ARGS": str(captured),
         "OMNIFLOW_OURS_SOURCE_ASSET_INDEX": str(source_index),
         "OMNIFLOW_OURS_CONVERTED_ASSET_ROOT": str(output_root),
-        "OMNIFLOW_OURS_CONVERSION_MODEL": "qwen3-vl-plus",
-        "OMNIFLOW_OURS_CONVERSION_TIMEOUT_SEC": "60",
+        "OMNIFLOW_OURS_AUTHORING_MANIFEST": str(authoring_manifest),
         "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_index),
     }
 
@@ -201,14 +203,12 @@ def test_asset_conversion_routes_through_the_only_script(
         "src.experiment.function_assets",
         "--source-asset-index",
         str(source_index),
+        "--authoring-manifest",
+        str(authoring_manifest),
         "--output-root",
         str(output_root),
         "--memory-index",
         str(memory_index),
-        "--model",
-        "qwen3-vl-plus",
-        "--timeout",
-        "60",
         "--task",
         "RecordWithName",
     ]
@@ -227,12 +227,14 @@ def test_one_task_run_adapts_all_methods_then_replays(
     android_world = assets / "android_world"
     omnitransfer = assets / "OmniTransfer"
     env_file = assets / ".env"
+    authoring_manifest = assets / "authoring-manifest.json"
     for path, content in (
         (memory_index, "{}"),
         (source_index, "{}"),
         (store_index, "{}"),
         (store_path, "{}"),
         (env_file, ""),
+        (authoring_manifest, "{}"),
         (
             android_world
             / "android_world"
@@ -360,7 +362,7 @@ exit 0
         "OMNIFLOW_ADB_PATH": str(fake_adb),
         "OMNITRANSFER_ROOT": str(omnitransfer),
         "OMNIFLOW_OURS_CONVERTED_ASSET_ROOT": str(converted_root),
-        "OMNIFLOW_OURS_CONVERSION_MODEL": "qwen3-vl-plus",
+        "OMNIFLOW_OURS_AUTHORING_MANIFEST": str(authoring_manifest),
         "OMNIFLOW_MOBILEGPT_ROOT": str(mobilegpt_root),
         "OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT": str(
             assets / "mobilegpt-source" / "memory"

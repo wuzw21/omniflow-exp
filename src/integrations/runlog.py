@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
+from omniflow.core.schemas import canonicalize_action
 from omniflow.core.trajectory import (
     CANONICAL_RUN_LOG_SCHEMA_VERSION,
     canonicalize_run_log,
@@ -274,10 +275,29 @@ def _actions(
         )
         if tool == "input_text" and all(key in args for key in ("x", "y")):
             click_args = {"x": args.pop("x"), "y": args.pop("y")}
-            return [
+            actions = [
                 {"tool": "click", "args": click_args},
                 {"tool": "input_text", "args": args},
             ]
+        else:
+            actions = [{"tool": tool, "args": args}] if tool else []
+        for action in actions:
+            try:
+                canonicalize_action(
+                    action,
+                    replayable_only=True,
+                    allow_non_action=True,
+                )
+            except ValueError as error:
+                if str(error).startswith(
+                    (
+                        "canonical_action_tool_unsupported:",
+                        "canonical_action_tool_not_replayable:",
+                    )
+                ):
+                    return []
+                raise
+        return actions
     return [{"tool": tool, "args": args}] if tool else []
 
 

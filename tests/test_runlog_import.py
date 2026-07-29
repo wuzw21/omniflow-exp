@@ -241,6 +241,52 @@ def test_import_run_log_evidence_adapts_historical_actions_before_compiling() ->
     ]
 
 
+def test_import_run_log_evidence_omits_unsupported_historical_actions() -> None:
+    run_log, source_states = import_run_log_evidence(
+        {
+            "run_id": "historical-clipboard",
+            "goal": "Copy the requested text to the clipboard.",
+            "success": True,
+            "steps": [
+                {
+                    "observation_before_act": {
+                        "state_id": "clipboard-home",
+                        "package_name": "com.android.launcher",
+                    },
+                    "executed_actions": [
+                        {
+                            "type": "open_app",
+                            "params": {"package_name": "ca.zgrs.clipper"},
+                        }
+                    ],
+                    "success": True,
+                },
+                {
+                    "observation_before_act": {
+                        "state_id": "clipboard-app",
+                        "package_name": "ca.zgrs.clipper",
+                    },
+                    "executed_actions": [
+                        {
+                            "type": "set_clipboard",
+                            "params": {"text": "9876 Pine Ave"},
+                        }
+                    ],
+                    "success": True,
+                },
+            ],
+        }
+    )
+
+    assert [step["action"] for step in run_log["steps"]] == [
+        {
+            "tool": "open_app",
+            "args": {"package_name": "ca.zgrs.clipper"},
+        }
+    ]
+    assert set(source_states["states"]) == {"clipboard-home"}
+
+
 def test_fixed_replay_imports_the_full_runlog_before_extracting_actions() -> None:
     actions = _raw_replay_step_actions(
         {

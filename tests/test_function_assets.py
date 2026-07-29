@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from pathlib import Path
 import stat
-import sys
-from types import SimpleNamespace
 
 import pytest
 
 from omniflow.functions.artifact import bind_function
 from omniflow.functions.store import FunctionStore
-from src.experiment import function_assets
 from src.experiment.artifact_memory import (
     load_artifact_memory,
     refresh_artifact_memory,
@@ -117,49 +115,76 @@ def _source_assets(root: Path) -> Path:
     )
 
 
-def _semantic_response(_prompt: str) -> str:
-    return json.dumps(
+def _authoring_manifest(root: Path, source_index: Path) -> Path:
+    source_row = json.loads(source_index.read_text(encoding="utf-8"))[
+        "RecordWithName"
+    ]
+    return _write_json(
+        root / "authoring_manifest.json",
         {
-            "name": "Record audio with a chosen filename",
-            "description": (
-                "Open the recorder, start recording, and save the audio using "
-                "the filename supplied by the user."
-            ),
-            "parameters": [
-                {
-                    "name": "filename",
-                    "description": "Exact filename requested by the user.",
-                    "step_index": 3,
-                    "arg_name": "text",
+            "schema_version": "omniflow.function-authoring-manifest.v1",
+            "source_asset_index_sha256": _sha256(source_index),
+            "tasks": {
+                "RecordWithName": {
+                    "source_run_log_sha256": source_row[
+                        "retained_source_run_log_sha256"
+                    ],
+                    "functions": [
+                        {
+                            "function_id": "record_audio_with_filename",
+                            "name": "Record audio with a chosen filename",
+                            "description": (
+                                "Open the recorder, start recording, and save "
+                                "the audio using the filename supplied by the user."
+                            ),
+                            "source_step_indexes": [0, 1, 2, 3],
+                            "parameters": [
+                                {
+                                    "name": "filename",
+                                    "schema": {
+                                        "type": "string",
+                                        "description": (
+                                            "Exact filename requested by the user."
+                                        ),
+                                    },
+                                    "bindings": [
+                                        {
+                                            "source_step_index": 3,
+                                            "arg_name": "text",
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
                 }
-            ],
-            "checker_rules": [],
-        }
+            },
+        },
     )
 
 
-def test_human_runlog_calls_existing_semantic_function_once_and_preserves_actions(
+def test_human_runlog_uses_offline_manifest_and_preserves_actions(
     tmp_path: Path,
 ) -> None:
-    prompts: list[str] = []
-
-    def complete_json(prompt: str) -> str:
-        prompts.append(prompt)
-        return _semantic_response(prompt)
-
     source_index = _source_assets(tmp_path / "source")
+    authoring_manifest = _authoring_manifest(tmp_path, source_index)
     report = convert_function_assets(
         source_asset_index=source_index,
+        authoring_manifest=authoring_manifest,
         output_root=tmp_path / "converted",
-        complete_json=complete_json,
-        model="qwen3-vl-plus",
     )
 
-    assert len(prompts) == 1
-    assert "Record and save audio as source_name.m4a." in prompts[0]
-    assert '"tool":"input_text"' in prompts[0]
+    assert set(inspect.signature(convert_function_assets).parameters) == {
+        "source_asset_index",
+        "authoring_manifest",
+        "output_root",
+        "task_names",
+        "exclude_task_names",
+    }
     assert report["task_count"] == 1
     assert report["converted_task_count"] == 1
+    assert report["authoring_manifest"] == str(authoring_manifest.resolve())
+    assert report["authoring_manifest_sha256"] == _sha256(authoring_manifest)
 
     task = report["tasks"]["RecordWithName"]
     store = FunctionStore(task["store_path"])
@@ -190,125 +215,60 @@ def test_human_runlog_calls_existing_semantic_function_once_and_preserves_action
         Path(task["provenance_path"]).read_text(encoding="utf-8")
     )
     assert provenance["source_run_id"] == "human-source"
-    assert provenance["semantic_collection"]["function"] == "enhance_function"
-    assert provenance["semantic_collection"]["model_calls"] == 1
-    assert provenance["semantic_collection"]["model"] == "qwen3-vl-plus"
+    assert provenance["semantic_collection"] == {
+        "function": "offline_codex_authoring_manifest",
+        "manifest_path": str(authoring_manifest.resolve()),
+        "manifest_sha256": _sha256(authoring_manifest),
+        "model": None,
+        "model_calls": 0,
+    }
     assert provenance["target_inputs_read"] is False
     assert provenance["target_observations_read"] is False
     assert provenance["source_target_audit"]["source_target_audit_complete"] is True
 
 
-def test_semantic_function_failure_is_not_retried(tmp_path: Path) -> None:
-    calls = 0
-
-    def fail(_prompt: str) -> str:
-        nonlocal calls
-        calls += 1
-        raise TimeoutError("model timed out")
-
-    with pytest.raises(TimeoutError, match="model timed out"):
-        convert_function_assets(
-            source_asset_index=_source_assets(tmp_path / "source"),
-            output_root=tmp_path / "converted",
-            complete_json=fail,
-            model="qwen3-vl-plus",
-        )
-
-    assert calls == 1
-
-
-def test_model_adapter_disables_sdk_retries(
-    monkeypatch: pytest.MonkeyPatch,
+def test_conversion_rejects_manifest_for_different_source_index(
+    tmp_path: Path,
 ) -> None:
-    captured: dict[str, object] = {}
-    for name in (
-        "OPENAI_API_KEY",
-        "DASHSCOPE_API_KEY",
-        "OPENAI_BASE_URL",
-        "OMNIFLOW_OPENAI_BASE_URL",
+    source_index = _source_assets(tmp_path / "source")
+    manifest = _authoring_manifest(tmp_path, source_index)
+    payload = json.loads(source_index.read_text(encoding="utf-8"))
+    payload["extra"] = {}
+    _write_json(source_index, payload)
+
+    with pytest.raises(
+        ValueError,
+        match="function_authoring_source_index_hash_mismatch",
     ):
-        monkeypatch.delenv(name, raising=False)
-
-    class FakeCompletions:
-        def create(self, **kwargs: object) -> object:
-            captured["request"] = kwargs
-            return SimpleNamespace(
-                choices=[
-                    SimpleNamespace(
-                        message=SimpleNamespace(content='{"parameters":[]}')
-                    )
-                ],
-                usage=SimpleNamespace(
-                    prompt_tokens=20,
-                    completion_tokens=5,
-                    total_tokens=25,
-                ),
-            )
-
-    class FakeOpenAI:
-        def __init__(self, **kwargs: object) -> None:
-            captured["client"] = kwargs
-            self.chat = SimpleNamespace(completions=FakeCompletions())
-
-    monkeypatch.setitem(
-        sys.modules,
-        "openai",
-        SimpleNamespace(OpenAI=FakeOpenAI),
-    )
-    complete_json = function_assets._build_complete_json(
-        model="qwen3-vl-plus",
-        timeout=60,
-    )
-
-    assert complete_json("prompt") == '{"parameters":[]}'
-    assert captured["client"] == {
-        "api_key": "not-required",
-        "max_retries": 0,
-        "timeout": 60.0,
-    }
-    request = captured["request"]
-    assert isinstance(request, dict)
-    assert request["model"] == "qwen3-vl-plus"
-    assert request["max_tokens"] == 1800
-    assert request["timeout"] == 60.0
-    assert complete_json.last_usage == {
-        "prompt_tokens": 20,
-        "completion_tokens": 5,
-        "total_tokens": 25,
-    }
+        convert_function_assets(
+            source_asset_index=source_index,
+            authoring_manifest=manifest,
+            output_root=tmp_path / "converted",
+        )
 
 
 def test_conversion_can_select_tasks_and_skip_registered_tasks(
     tmp_path: Path,
 ) -> None:
     source_index = _source_assets(tmp_path / "source")
+    authoring_manifest = _authoring_manifest(tmp_path, source_index)
 
     selected = convert_function_assets(
         source_asset_index=source_index,
+        authoring_manifest=authoring_manifest,
         output_root=tmp_path / "selected",
-        complete_json=_semantic_response,
-        model="qwen3-vl-plus",
         task_names=("RecordWithName",),
     )
     assert list(selected["tasks"]) == ["RecordWithName"]
 
-    calls = 0
-
-    def should_not_run(_prompt: str) -> str:
-        nonlocal calls
-        calls += 1
-        return "{}"
-
     skipped = convert_function_assets(
         source_asset_index=source_index,
+        authoring_manifest=authoring_manifest,
         output_root=tmp_path / "skipped",
-        complete_json=should_not_run,
-        model="qwen3-vl-plus",
         exclude_task_names=("RecordWithName",),
     )
     assert skipped["task_count"] == 0
     assert skipped["excluded_existing_tasks"] == ["RecordWithName"]
-    assert calls == 0
 
 
 def test_conversion_rejects_coordinate_function_without_source_ui(
@@ -330,15 +290,103 @@ def test_conversion_rejects_coordinate_function_without_source_ui(
     ):
         convert_function_assets(
             source_asset_index=source_index,
+            authoring_manifest=_authoring_manifest(tmp_path, source_index),
             output_root=tmp_path / "converted",
-            complete_json=_semantic_response,
-            model="qwen3-vl-plus",
         )
+
+
+def test_conversion_keeps_safe_prefix_when_historical_action_is_unsupported(
+    tmp_path: Path,
+) -> None:
+    source_run_log = _write_json(
+        tmp_path / "source" / "SystemCopyToClipboard" / "source.run_log.json",
+        {
+            "run_id": "clipboard-source",
+            "goal": "Copy the requested text to the clipboard.",
+            "success": True,
+            "steps": [
+                {
+                    "observation_before_act": {
+                        "state_id": "clipboard-home",
+                        "package_name": "com.android.launcher",
+                    },
+                    "executed_actions": [
+                        {
+                            "type": "open_app",
+                            "params": {"package_name": "ca.zgrs.clipper"},
+                        }
+                    ],
+                    "success": True,
+                },
+                {
+                    "observation_before_act": {
+                        "state_id": "clipboard-app",
+                        "package_name": "ca.zgrs.clipper",
+                    },
+                    "executed_actions": [
+                        {
+                            "type": "set_clipboard",
+                            "params": {"text": "9876 Pine Ave"},
+                        }
+                    ],
+                    "success": True,
+                },
+            ],
+        },
+    )
+    source_index = _write_json(
+        tmp_path / "source" / "index.json",
+        {
+            "SystemCopyToClipboard": {
+                "retained_source_run_log": str(source_run_log),
+                "retained_source_run_log_sha256": _sha256(source_run_log),
+            }
+        },
+    )
+    authoring_manifest = _write_json(
+        tmp_path / "authoring.json",
+        {
+            "schema_version": "omniflow.function-authoring-manifest.v1",
+            "source_asset_index_sha256": _sha256(source_index),
+            "tasks": {
+                "SystemCopyToClipboard": {
+                    "source_run_log_sha256": _sha256(source_run_log),
+                    "functions": [
+                        {
+                            "function_id": "open_clipboard_manager",
+                            "name": "Open clipboard manager",
+                            "description": (
+                                "Open the clipboard manager before entering "
+                                "the currently requested clipboard text."
+                            ),
+                            "source_step_indexes": [0],
+                            "parameters": [],
+                        }
+                    ],
+                }
+            },
+        },
+    )
+
+    report = convert_function_assets(
+        source_asset_index=source_index,
+        authoring_manifest=authoring_manifest,
+        output_root=tmp_path / "converted",
+    )
+
+    function = FunctionStore(
+        report["tasks"]["SystemCopyToClipboard"]["store_path"]
+    ).list_functions()[0]
+    assert [step.action.to_dict() for step in function.steps] == [
+        {
+            "tool": "open_app",
+            "args": {"package_name": "ca.zgrs.clipper"},
+        }
+    ]
 
 
 def test_conversion_cli_freezes_and_registers_completed_assets(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     output_root = tmp_path / "converted"
     source_index = _source_assets(tmp_path / "source")
@@ -350,22 +398,19 @@ def test_conversion_cli_freezes_and_registers_completed_assets(
         runlog_roots=(tmp_path / "source",),
         result_roots=(),
     )
-    monkeypatch.setattr(
-        "src.experiment.function_assets._build_complete_json",
-        lambda **_kwargs: _semantic_response,
-    )
+    authoring_manifest = _authoring_manifest(tmp_path, source_index)
 
     assert (
         main(
             [
                 "--source-asset-index",
                 str(source_index),
+                "--authoring-manifest",
+                str(authoring_manifest),
                 "--output-root",
                 str(output_root),
                 "--memory-index",
                 str(memory_root / "current.json"),
-                "--model",
-                "qwen3-vl-plus",
             ]
         )
         == 0

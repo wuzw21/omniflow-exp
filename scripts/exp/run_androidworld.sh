@@ -32,8 +32,7 @@ store_path="${OMNIFLOW_SINGLE_TASK_STORE_PATH:-}"
 ours_store_index="${OMNIFLOW_OURS_STORE_INDEX:-}"
 ours_source_asset_index="${OMNIFLOW_OURS_SOURCE_ASSET_INDEX:-$master_source_index}"
 ours_converted_asset_root="${OMNIFLOW_OURS_CONVERTED_ASSET_ROOT:-}"
-ours_conversion_model="${OMNIFLOW_OURS_CONVERSION_MODEL:-}"
-ours_conversion_timeout="${OMNIFLOW_OURS_CONVERSION_TIMEOUT_SEC:-60}"
+ours_authoring_manifest="${OMNIFLOW_OURS_AUTHORING_MANIFEST:-}"
 memory_root="${OMNIFLOW_EXP_MEMORY_ROOT:-${asset_root:+$asset_root/androidworld_memory}}"
 memory_index="${OMNIFLOW_EXP_MEMORY_INDEX:-${memory_root:+$memory_root/current.json}}"
 memory_function_catalogs="${OMNIFLOW_MEMORY_FUNCTION_CATALOGS:-}"
@@ -79,9 +78,9 @@ Options:
   --tasks TASK1,TASK2,...   Run an ordered task-major subset, or limit
                             --convert-ours-assets. Implies --all-tasks during
                             experiment execution.
-  --convert-ours-assets     Compile human-recorded source RunLogs, call the
-                            existing Function semantic collector once per task,
-                            then validate, freeze, and register the assets.
+  --convert-ours-assets     Compile human-recorded source RunLogs with an
+                            immutable offline authoring manifest, then validate,
+                            freeze, and register the assets.
   --refresh-memory          Deduplicate and index all configured RunLogs,
                             Function assets, and existing results.
   -h, --help                Show this help and exit.
@@ -99,9 +98,8 @@ Optional runtime overrides:
 Asset conversion inputs:
   OMNIFLOW_OURS_SOURCE_ASSET_INDEX Source RunLog index; defaults to the master
                                    source index.
+  OMNIFLOW_OURS_AUTHORING_MANIFEST Immutable offline Function authoring manifest.
   OMNIFLOW_OURS_CONVERTED_ASSET_ROOT New immutable conversion output root.
-  OMNIFLOW_OURS_CONVERSION_MODEL     Fixed model; defaults to paper config.
-  OMNIFLOW_OURS_CONVERSION_TIMEOUT_SEC One-call timeout; defaults to 60.
   OMNIFLOW_EXP_MEMORY_INDEX          Existing memory current.json.
 
 Long-term-memory refresh inputs:
@@ -224,12 +222,16 @@ if [[ "$convert_ours_assets" -eq 1 ]]; then
     echo "--convert-ours-assets cannot be combined with experiment run options." >&2
     exit 2
   fi
-  if [[ -z "$ours_source_asset_index" || -z "$ours_converted_asset_root" || -z "$memory_index" ]]; then
-    echo "Asset conversion requires a source index, output root, and OMNIFLOW_EXP_MEMORY_INDEX." >&2
+  if [[ -z "$ours_source_asset_index" || -z "$ours_authoring_manifest" || -z "$ours_converted_asset_root" || -z "$memory_index" ]]; then
+    echo "Asset conversion requires a source index, authoring manifest, output root, and OMNIFLOW_EXP_MEMORY_INDEX." >&2
     exit 2
   fi
-  if [[ "$ours_source_asset_index" != /* || "$ours_converted_asset_root" != /* ]]; then
-    echo "Asset conversion index and output root must be absolute paths." >&2
+  if [[ "$ours_source_asset_index" != /* || "$ours_authoring_manifest" != /* || "$ours_converted_asset_root" != /* ]]; then
+    echo "Asset conversion index, authoring manifest, and output root must be absolute paths." >&2
+    exit 2
+  fi
+  if [[ ! -f "$ours_source_asset_index" || ! -f "$ours_authoring_manifest" ]]; then
+    echo "Asset conversion index and authoring manifest must exist." >&2
     exit 2
   fi
   if ! python_bin="$(command -v "$python_bin")"; then
@@ -240,28 +242,12 @@ if [[ "$convert_ours_assets" -eq 1 ]]; then
     echo "Long-term-memory index must be an existing absolute file: $memory_index" >&2
     exit 2
   fi
-  if [[ -f "$env_file" ]]; then
-    set -a
-    # shellcheck disable=SC1090
-    source "$env_file"
-    set +a
-  fi
-  if [[ -z "$ours_conversion_model" ]]; then
-    ours_conversion_model="$(
-      "$python_bin" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["one_task"]["model"])' "$config"
-    )"
-  fi
-  if [[ "$ours_conversion_model" != "qwen3-vl-plus" ]]; then
-    echo "Function conversion model must remain qwen3-vl-plus, got: ${ours_conversion_model:-missing}" >&2
-    exit 2
-  fi
   conversion_args=(
     -m src.experiment.function_assets
     --source-asset-index "$ours_source_asset_index"
+    --authoring-manifest "$ours_authoring_manifest"
     --output-root "$ours_converted_asset_root"
     --memory-index "$memory_index"
-    --model "$ours_conversion_model"
-    --timeout "$ours_conversion_timeout"
   )
   if [[ -n "$batch_task_filter" ]]; then
     IFS=',' read -r -a conversion_tasks <<< "$batch_task_filter"
@@ -374,7 +360,7 @@ export OMNIFLOW_EXP_MEMORY_INDEX="$memory_index"
 requires_function_asset=0
 for selected_method in ${methods//,/ }; do
   case "$selected_method" in
-    ours|mobilegpt_offline_retrieval|appagent_demo|t3a_hint)
+    ours)
       requires_function_asset=1
       ;;
   esac
@@ -400,8 +386,8 @@ prepare_function_asset_for_task() {
     echo "Set OMNIFLOW_EXP_ASSET_ROOT to an absolute path before source adaptation." >&2
     return 2
   fi
-  if [[ ! -f "$env_file" ]]; then
-    echo "Model environment file missing: $env_file" >&2
+  if [[ -z "$ours_authoring_manifest" || "$ours_authoring_manifest" != /* || ! -f "$ours_authoring_manifest" ]]; then
+    echo "OMNIFLOW_OURS_AUTHORING_MANIFEST must be an existing absolute file before source adaptation." >&2
     return 1
   fi
   conversion_root="$ours_converted_asset_root"
@@ -414,26 +400,12 @@ prepare_function_asset_for_task() {
     echo "OMNIFLOW_OURS_CONVERTED_ASSET_ROOT must be absolute." >&2
     return 2
   fi
-  set -a
-  # shellcheck disable=SC1090
-  source "$env_file"
-  set +a
-  if [[ -z "$ours_conversion_model" ]]; then
-    ours_conversion_model="$(
-      "$python_bin" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["one_task"]["model"])' "$config"
-    )"
-  fi
-  if [[ "$ours_conversion_model" != "qwen3-vl-plus" ]]; then
-    echo "Function conversion model must remain qwen3-vl-plus, got: ${ours_conversion_model:-missing}" >&2
-    return 1
-  fi
   echo "[source-adapter] create method=ours task=$requested_task"
   "$python_bin" -m src.experiment.function_assets \
     --source-asset-index "$source_index" \
+    --authoring-manifest "$ours_authoring_manifest" \
     --output-root "$conversion_root" \
     --memory-index "$memory_index" \
-    --model "$ours_conversion_model" \
-    --timeout "$ours_conversion_timeout" \
     --task "$requested_task"
   memory_paths="$(load_memory_paths)"
   IFS=$'\t' read -r memory_source_index memory_store_index <<< "$memory_paths"
@@ -830,7 +802,7 @@ PY
     fi
     task_requires_function_asset=0
     case ",$pending_task_methods," in
-      *,ours,*|*,mobilegpt_offline_retrieval,*|*,appagent_demo,*|*,t3a_hint,*)
+      *,ours,*)
         task_requires_function_asset=1
         ;;
     esac

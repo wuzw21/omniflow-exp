@@ -52,7 +52,7 @@ For `fixed_replay`, the runtime consumes the recorded actions directly. For
 `enhance_function(...)`, then frozen and registered in long-term memory.
 MobileGPT and AppAgent resolve or create their method-native source assets from
 the same RunLog. T3A derives its hint from the same frozen Function and RunLog.
-Existing valid assets are reused without another model call.
+Existing valid assets are reused without rebuilding or re-authoring them.
 
 After adaptation, every selected method is replayed on the configured targets
 and evaluated by the official validator. The result cell records validator
@@ -72,7 +72,9 @@ Source-device coordinates are never executed directly on a target.
 registered official-validator conclusion.
 
 `--convert-ours-assets` remains a conversion-only maintenance mode. It is not
-the end-to-end experiment command.
+the end-to-end experiment command. Conversion requires an immutable offline
+Function authoring manifest whose source-index and source-RunLog hashes match;
+it does not call an external authoring model.
 
 ### Shared with OOB
 
@@ -82,12 +84,12 @@ source states with `get_state`, and calls `compile_runlog_to_store(...)`.
 `enhance=true` then calls the same existing `enhance_function(...)`; it does not
 select a different compiler.
 
-The AndroidWorld adapter has one experiment-only responsibility: convert its
-historical `executed_actions` and `observation_before_act` records into the
-canonical RunLog and source-state contracts OOB already uses. Semantic
-collection happens after the shared compiler call. Store schema, binding
-validation, state freezing, and runtime consumption are therefore identical
-for OOB and this experiment.
+The AndroidWorld adapter converts historical `executed_actions` and
+`observation_before_act` records into the canonical RunLog and source-state
+contracts OOB already uses. The experiment then passes the reviewed offline
+`function_bundle` directly to the shared compiler. Store schema, binding
+validation, state freezing, and runtime consumption remain identical for OOB
+and this experiment.
 
 To run the canonical 116-task matrix in formal task-major order, keep the same
 environment and run:
