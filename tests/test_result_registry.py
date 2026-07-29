@@ -28,6 +28,7 @@ def _write_registered_cell(
     device: str,
     success: bool,
     validator_task_count: int = 1,
+    validator_used: bool = True,
 ) -> None:
     cell = runs_root / task / method / device / "iteration_01"
     result_path = cell / "registered_result.json"
@@ -42,6 +43,7 @@ def _write_registered_cell(
             {
                 "method": method,
                 "device": device,
+                "official_validator_used": validator_used,
                 "official_validator_success": success,
                 "official_validator_task_count": validator_task_count,
                 "official_validator_coverage_rate": float(
@@ -188,6 +190,7 @@ def test_registered_cell_plan_retries_rows_without_validator_coverage(
         device="small5554",
         success=False,
         validator_task_count=0,
+        validator_used=False,
     )
 
     plan = registered_cell_plan(
@@ -199,3 +202,29 @@ def test_registered_cell_plan_retries_rows_without_validator_coverage(
 
     assert plan["completed"] == []
     assert plan["pending"] == [("ours", "small5554")]
+
+
+def test_registered_cell_plan_accepts_per_episode_validator_conclusion(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "runs"
+    task = "AudioRecorderRecordAudioWithFileName"
+    _write_registered_cell(
+        runs_root,
+        task=task,
+        method="fixed_replay",
+        device="small5554",
+        success=False,
+        validator_task_count=0,
+        validator_used=True,
+    )
+
+    plan = registered_cell_plan(
+        runs_root=runs_root,
+        task_name=task,
+        methods=("fixed_replay",),
+        devices=("small5554",),
+    )
+
+    assert plan["completed"] == [("fixed_replay", "small5554")]
+    assert plan["pending"] == []

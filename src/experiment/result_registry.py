@@ -684,8 +684,16 @@ def registered_cell_plan(
                 raise ValueError(
                     f"registered validator coverage is invalid: {path}"
                 ) from error
+            validator_used = row.get("official_validator_used") is True
+            validator_success = row.get("official_validator_success")
+            validator_conclusion = validator_used and isinstance(
+                validator_success,
+                bool,
+            )
             cell_completed = cell_completed or (
-                validator_task_count > 0 or validator_coverage > 0
+                validator_conclusion
+                or validator_task_count > 0
+                or validator_coverage > 0
             )
         if cell_completed:
             completed.append((method, device))
