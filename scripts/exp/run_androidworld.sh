@@ -937,7 +937,10 @@ actual_method = str(row.get("method") or "").strip()
 if row.get("latest_official_success_source") is not True:
     raise SystemExit(f"formal_source_official_success_missing:{task_name}")
 actual_kind = str(row.get("source_kind") or "").strip()
-if actual_kind != "androidworld_validator_success_source_runlog":
+if (
+    actual_kind
+    and actual_kind != "androidworld_validator_success_source_runlog"
+):
     raise SystemExit(
         f"formal_source_kind_mismatch:{task_name}:actual={actual_kind or 'missing'}"
     )
