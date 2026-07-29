@@ -417,6 +417,83 @@ exit 0
     assert repeated_calls.count("src.experiment.androidworld one-task") == 2
 
 
+def test_task_major_completed_cells_skip_before_asset_generation(
+    tmp_path: Path,
+) -> None:
+    assets = tmp_path / "assets"
+    results = tmp_path / "results"
+    memory_index = tmp_path / "memory" / "current.json"
+    source_index = tmp_path / "memory" / "source_index.json"
+    store_index = tmp_path / "memory" / "store_index.json"
+    for path in (memory_index, source_index, store_index):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+    call_log = tmp_path / "calls.txt"
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        """#!/bin/sh
+printf '%s\n' "$*" >> "$CALL_LOG"
+if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ] && [ "$3" = "$MEMORY_INDEX" ]; then
+  printf '%s\t%s\n' "$SOURCE_INDEX" "$STORE_INDEX"
+  exit 0
+fi
+if [ "$1" = "-" ] && [ "$2" = "$SOURCE_INDEX" ]; then
+  printf '%s\n' 'AudioRecorderRecordAudio'
+  exit 0
+fi
+if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ]; then
+  printf 'summary\t10\t0\n'
+  exit 0
+fi
+exit 1
+""",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    environment = {
+        **os.environ,
+        "PYTHON_BIN": str(fake_python),
+        "CALL_LOG": str(call_log),
+        "REPO_PATH": str(REPO),
+        "MEMORY_INDEX": str(memory_index),
+        "SOURCE_INDEX": str(source_index),
+        "STORE_INDEX": str(store_index),
+        "OMNIFLOW_EXP_ASSET_ROOT": str(assets),
+        "OMNIFLOW_EXP_RESULTS_ROOT": str(results),
+        "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_index),
+        "OMNIFLOW_ENV_FILE": str(assets / ".env"),
+        "OMNIFLOW_ANDROID_WORLD_ROOT": str(assets / "android_world"),
+        "OMNITRANSFER_ROOT": str(assets / "OmniTransfer"),
+        "OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT": str(
+            assets / "mobilegpt-source" / "memory"
+        ),
+        "OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT": str(
+            assets / "appagent-source"
+        ),
+    }
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT),
+            "--check-only",
+            "--tasks",
+            "AudioRecorderRecordAudio",
+        ],
+        cwd=REPO,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "already-complete" in completed.stdout
+    assert "src.experiment.function_assets" not in call_log.read_text(
+        encoding="utf-8"
+    )
+
+
 def test_memory_refresh_routes_all_evidence_through_the_only_script(
     tmp_path: Path,
 ) -> None:

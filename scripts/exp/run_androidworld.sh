@@ -594,8 +594,12 @@ for external_path in \
     exit 2
   fi
 done
-if [[ "$requires_omnitransfer" -eq 1 && ( "$omnitransfer_root" != /* || "$store_path" != /* ) ]]; then
-  echo "OmniTransfer root and ours store must be absolute paths." >&2
+if [[ "$requires_omnitransfer" -eq 1 && "$omnitransfer_root" != /* ]]; then
+  echo "OmniTransfer root must be an absolute path." >&2
+  exit 2
+fi
+if [[ "$requires_omnitransfer" -eq 1 && "$all_tasks" -eq 0 && "$store_path" != /* ]]; then
+  echo "Ours Store must be an absolute path." >&2
   exit 2
 fi
 if [[ "$all_tasks" -eq 1 ]]; then
@@ -660,6 +664,7 @@ PY
   fi
   batch_tasks=()
   if [[ -n "$batch_task_filter" ]]; then
+    requested_tasks=()
     IFS=',' read -r -a requested_tasks <<< "$batch_task_filter"
     for requested_task in "${requested_tasks[@]}"; do
       if [[ -z "$requested_task" ]]; then
@@ -677,12 +682,14 @@ PY
         echo "Unknown formal task in --tasks: $requested_task" >&2
         exit 2
       fi
-      for selected_task in "${batch_tasks[@]}"; do
-        if [[ "$selected_task" == "$requested_task" ]]; then
-          echo "Duplicate task in --tasks: $requested_task" >&2
-          exit 2
-        fi
-      done
+      if [[ "${#batch_tasks[@]}" -gt 0 ]]; then
+        for selected_task in "${batch_tasks[@]}"; do
+          if [[ "$selected_task" == "$requested_task" ]]; then
+            echo "Duplicate task in --tasks: $requested_task" >&2
+            exit 2
+          fi
+        done
+      fi
       batch_tasks+=("$requested_task")
     done
   else
