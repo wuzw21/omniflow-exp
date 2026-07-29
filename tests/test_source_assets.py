@@ -350,7 +350,9 @@ def test_baseline_grounding_uses_complete_states_embedded_in_source_runlog(
     provenance.write_text(
         json.dumps(
             {
-                "source_run_log_sha256": source_sha256,
+                "schema_version": "omniflow.source-replay-transfer-store.v1",
+                "source_run_log_sha256": "0" * 64,
+                "output_source_run_log_sha256": source_sha256,
                 "source_target_audit": {
                     "source_target_audit_complete": True,
                     "source_targets": [],

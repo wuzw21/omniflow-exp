@@ -409,7 +409,15 @@ def _build_grounded_teacher_run_log_from_embedded_source(
         provenance_source_sha256
         and provenance_source_sha256 != expected_source_run_log_sha256
     ):
-        raise ValueError("source_provenance_run_log_mismatch")
+        replay_output_sha256 = str(
+            provenance.get("output_source_run_log_sha256") or ""
+        ).strip()
+        if (
+            provenance.get("schema_version")
+            != "omniflow.source-replay-transfer-store.v1"
+            or replay_output_sha256 != expected_source_run_log_sha256
+        ):
+            raise ValueError("source_provenance_run_log_mismatch")
     grounded, semantic_action_count = _ground_source_actions(
         canonical,
         states,
