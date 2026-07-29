@@ -45,12 +45,17 @@ def import_run_log_evidence(
         and "status" in payload
     ):
         canonical = canonicalize_run_log(payload)
+        states = {
+            state_id: {"state_id": state_id}
+            for step in canonical["steps"]
+            if (state_id := str(step.get("before_state_id") or "").strip())
+        }
         return (
             canonical,
             {
                 "schema_version": "omniflow.transfer-state-catalog.v1",
                 "run_id": canonical["run_id"],
-                "states": {},
+                "states": states,
             },
         )
     run_id = str(payload.get("run_id") or value.get("run_id") or "imported-run")

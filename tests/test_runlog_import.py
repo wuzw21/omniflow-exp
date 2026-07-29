@@ -115,6 +115,37 @@ def test_import_run_log_evidence_adapts_legacy_canonical_schema_without_status()
     }
 
 
+def test_import_canonical_run_log_keeps_minimal_source_state_references() -> None:
+    run_log, source_states = import_run_log_evidence(
+        {
+            "schema_version": "omniflow.canonical_run_log.v1",
+            "run_id": "canonical-source",
+            "goal": "Open Markor.",
+            "status": "succeeded",
+            "success": True,
+            "steps": [
+                {
+                    "step_index": 0,
+                    "before_state_id": "markor-home",
+                    "action": {
+                        "tool": "open_app",
+                        "args": {"package_name": "net.gsantner.markor"},
+                    },
+                    "result": {"success": True},
+                    "after_state_id": "markor-open",
+                }
+            ],
+        }
+    )
+
+    assert run_log["steps"][0]["before_state_id"] == "markor-home"
+    assert source_states == {
+        "schema_version": "omniflow.transfer-state-catalog.v1",
+        "run_id": "canonical-source",
+        "states": {"markor-home": {"state_id": "markor-home"}},
+    }
+
+
 def test_import_run_log_evidence_resolves_historical_open_app_name() -> None:
     run_log, _source_states = import_run_log_evidence(
         {
