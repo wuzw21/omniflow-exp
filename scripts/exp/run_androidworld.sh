@@ -620,8 +620,8 @@ if [[ "$all_tasks" -eq 1 ]]; then
     echo "--all-tasks requires both formal targets in order: $formal_device_targets" >&2
     exit 2
   fi
-  if [[ "$task_iteration" != "1" ]]; then
-    echo "--all-tasks only accepts task iteration 1; resume skips registered cells." >&2
+  if [[ "$task_iteration" != "1" && -z "$baseline_environment_repair" ]]; then
+    echo "--all-tasks iterations after 1 require an audited environment repair reason; resume skips registered cells." >&2
     exit 2
   fi
   if [[ ! -f "$source_index" ]]; then
