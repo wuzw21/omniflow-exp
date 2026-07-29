@@ -330,6 +330,14 @@ def _verified_registered_result(path: Path) -> dict[str, Any]:
     }
 
 
+def _formal_device_label(value: Any) -> str:
+    label = str(value or "").strip()
+    return {
+        "target5554": "small5554",
+        "target5564": "fold5564",
+    }.get(label, label)
+
+
 def _load_results(
     memory_root: Path,
     roots: Sequence[Path],
@@ -416,7 +424,8 @@ def _load_results(
         manifest = verified["manifest"]
         task = str(result_payload["task_name"])
         method = str(result_row["method"])
-        device = str(result_row["device"])
+        registered_device_label = str(result_row["device"])
+        device = _formal_device_label(registered_device_label)
         manifest_path = verified["manifest_path"]
         manifest_digest = _sha256(manifest_path)
         manifest_object = _materialize_object(
@@ -428,6 +437,7 @@ def _load_results(
             "task": task,
             "method": method,
             "device": device,
+            "registered_device_label": registered_device_label,
             "registration_id": str(result_payload.get("registration_id") or ""),
             "attempt_id": str(result_payload.get("attempt_id") or ""),
             "registered_at": str(manifest.get("registered_at") or ""),

@@ -29,11 +29,12 @@ def _write_registered_result(
     attempt: str,
     registered_at: str,
     success: bool,
+    device: str = "small5554",
 ) -> Path:
-    cell_root = root / "RecordWithName" / "ours" / "small5554" / attempt
+    cell_root = root / "RecordWithName" / "ours" / device / attempt
     result_path = cell_root / "registered_result.json"
     manifest_path = cell_root / "registration_manifest.json"
-    registration_id = f"RecordWithName.ours.small5554.{attempt}"
+    registration_id = f"RecordWithName.ours.{device}.{attempt}"
     result = {
         "schema_version": "omniflow.androidworld_registered_result.v1",
         "registration_id": registration_id,
@@ -46,7 +47,17 @@ def _write_registered_result(
             {
                 "task_name": "RecordWithName",
                 "method": "ours",
-                "device": "small5554",
+                "device": device,
+                "serial": (
+                    "emulator-5554"
+                    if device in {"small5554", "target5554"}
+                    else "emulator-5564"
+                ),
+                "console_port": (
+                    5554
+                    if device in {"small5554", "target5554"}
+                    else 5564
+                ),
                 "official_validator_used": True,
                 "official_validator_success": success,
                 "official_validator_task_count": 1,
@@ -62,7 +73,7 @@ def _write_registered_result(
             "immutable": True,
             "task_name": "RecordWithName",
             "method": "ours",
-            "device": "small5554",
+            "device": device,
             "attempt_id": attempt,
             "registered_at": registered_at,
             "registered_result_sha256": _sha256(result_path),
@@ -360,3 +371,48 @@ def test_refresh_keeps_earliest_formal_result_without_success_cherry_picking(
     second_pointer = json.loads(pointer.read_text(encoding="utf-8"))
     assert second_pointer == first_pointer
     assert load_artifact_memory(pointer)["canonical"] == report["canonical"]
+
+
+def test_refresh_normalizes_legacy_target_device_labels(
+    tmp_path: Path,
+) -> None:
+    source = _write_json(
+        tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
+        {
+            "schema_version": "omniflow.run_log.v1",
+            "run_id": "source-run",
+            "success": True,
+            "steps": [{"step_index": 0}],
+        },
+    )
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    runs = tmp_path / "runs"
+    _write_registered_result(
+        runs,
+        attempt="attempt_001",
+        registered_at="2026-07-20T00:00:00+00:00",
+        success=True,
+        device="target5554",
+    )
+
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "evidence",),
+        result_roots=(runs,),
+    )
+
+    cell = report["canonical"]["result_cells"][
+        "RecordWithName|ours|small5554"
+    ]
+    assert cell["device"] == "small5554"
+    assert cell["registered_device_label"] == "target5554"
