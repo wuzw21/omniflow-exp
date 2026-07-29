@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.integrations.android_world.launch import _raw_replay_step_actions
 from src.integrations.runlog import import_run_log_evidence
 
 
@@ -175,4 +176,53 @@ def test_import_run_log_evidence_adapts_historical_actions_before_compiling() ->
             },
         },
         {"tool": "press_key", "args": {"key": "back"}},
+    ]
+
+
+def test_fixed_replay_imports_the_full_runlog_before_extracting_actions() -> None:
+    actions = _raw_replay_step_actions(
+        {
+            "schema_version": "omniflow.run_log.v1",
+            "run_id": "historical-full-context",
+            "goal": "Turn Wi-Fi on.",
+            "completed": True,
+            "success": True,
+            "steps": [
+                {
+                    "executed_actions": [
+                        {
+                            "type": "open_app",
+                            "params": {"app_name": "settings"},
+                        }
+                    ],
+                    "success": True,
+                },
+                {
+                    "observation_before_act": {
+                        "package_name": "com.android.settings",
+                        "width": 720,
+                        "height": 1280,
+                    },
+                    "executed_actions": [
+                        {
+                            "type": "click",
+                            "params": {"x": 360, "y": 640},
+                        }
+                    ],
+                    "success": True,
+                },
+            ],
+        }
+    )
+
+    assert actions == [
+        {
+            "type": "open_app",
+            "params": {"package_name": "com.android.settings"},
+        },
+        {
+            "type": "click",
+            "params": {"x": 500.0, "y": 500.0},
+            "coordinate_space": "canonical_0_1000",
+        },
     ]

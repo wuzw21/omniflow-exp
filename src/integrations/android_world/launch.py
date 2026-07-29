@@ -3230,12 +3230,16 @@ def _raw_replay_step_actions(data: dict[str, Any]) -> list[dict[str, Any]]:
         == "omniflow.canonical_run_log.v1"
     )
 
-    def canonical_replay_action(action: dict[str, Any]) -> dict[str, Any]:
+    def canonical_replay_action(
+        action: dict[str, Any],
+        *,
+        normalized_coordinates: bool = canonical_coordinate_space,
+    ) -> dict[str, Any]:
         tool = str(action["tool"])
         params = dict(action.get("args") or {})
         replay_action = {"type": tool, "params": params}
         if (
-            canonical_coordinate_space
+            normalized_coordinates
             and tool in {"click", "long_press", "input_text", "swipe"}
             and any(
                 key in params
@@ -3262,10 +3266,36 @@ def _raw_replay_step_actions(data: dict[str, Any]) -> list[dict[str, Any]]:
 
     if not list(data.get("steps") or []):
         canonical = import_run_log(data)
-        return [canonical_replay_action(step["action"]) for step in canonical["steps"]]
+        return [
+            canonical_replay_action(
+                step["action"],
+                normalized_coordinates=True,
+            )
+            for step in canonical["steps"]
+        ]
+
+    raw_steps = list(data.get("steps") or data.get("cards") or [])
+    has_native_replay = any(
+        isinstance(step, dict)
+        and isinstance(step.get("provider_detail"), dict)
+        and isinstance(
+            step["provider_detail"].get("native_runlog_replay"),
+            dict,
+        )
+        for step in raw_steps
+    )
+    if not has_native_replay:
+        canonical = import_run_log(data)
+        return [
+            canonical_replay_action(
+                step["action"],
+                normalized_coordinates=True,
+            )
+            for step in canonical["steps"]
+        ]
 
     actions: list[dict[str, Any]] = []
-    for step in list(data.get("steps") or data.get("cards") or []):
+    for step in raw_steps:
         if not isinstance(step, dict):
             continue
         provider_detail = step.get("provider_detail")
@@ -3297,7 +3327,10 @@ def _raw_replay_step_actions(data: dict[str, Any]) -> list[dict[str, Any]]:
                             actions.append({"type": tool, "params": args})
                     continue
         actions.extend(
-            canonical_replay_action(action)
+            canonical_replay_action(
+                action,
+                normalized_coordinates=True,
+            )
             for action in extract_canonical_step_actions(step)
         )
     return actions
