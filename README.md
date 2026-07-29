@@ -57,14 +57,17 @@ Existing valid assets are reused without another model call.
 After adaptation, every selected method is replayed on the configured targets
 and evaluated by the official validator. The result cell records validator
 success, model calls, prompt/completion/total tokens, actions, episode duration,
-and outer wall time. When `ours` fails, the same immutable result directory
-stores the failed-action and terminal observation screenshots under
-`failure_evidence/objects/<sha256>.png`. The `failure_evidence` field in
-`task_results.jsonl` maps each event and state ID to that relative path and
-SHA-256; identical screenshots share one object. For `ours`, each Function
-action is mapped by the canonical OmniTransfer implementation; a mapping
-failure returns to the normal VLM fallback. Source-device coordinates are never
-executed directly on a target.
+and outer wall time. Every method and every validator outcome records each
+AndroidWorld observation in order. Screenshots live under
+`observations/objects/<sha256>.png`; the independent
+`observations/index.json` is written before result aggregation.
+`observation_evidence` in `task_results.jsonl` also maps every observation
+index to its relative path, dimensions, and SHA-256. Repeated observations
+remain separate ordered records while identical images share one immutable
+object. Missing or unencodable images are explicit per-observation errors. For
+`ours`, each Function action is mapped by the canonical OmniTransfer
+implementation; a mapping failure returns to the normal VLM fallback.
+Source-device coordinates are never executed directly on a target.
 `--tasks` implies task-major execution and skips cells that already have a
 registered official-validator conclusion.
 

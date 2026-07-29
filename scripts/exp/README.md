@@ -130,8 +130,10 @@ bash -n scripts/exp/run_androidworld.sh
 Conversion prints a JSON summary containing the catalog, Store index, memory
 index, converted task count, and frozen status. Real-time runs write logs and
 attempt evidence only beneath `OMNIFLOW_EXP_RESULTS_ROOT`.
-For every failed `ours` cell, inspect `failure_evidence` in
-`task_results.jsonl`. Each entry identifies the failed action or terminal
-state, its screenshot path under `failure_evidence/objects/`, and the exact
-SHA-256. If screenshot capture itself fails, the result row contains
-`failure_evidence_error` instead of silently omitting the evidence.
+Every method cell records all AndroidWorld observations, including successful
+cells. `observations/index.json` is written before result aggregation; the same
+ordered records appear as `observation_evidence` in `task_results.jsonl`.
+Entries point to screenshots under `observations/objects/` with exact SHA-256
+and dimensions. Repeated observations keep separate indices while identical
+images share one object. A missing or invalid screenshot is reported on that
+observation instead of being silently omitted.
