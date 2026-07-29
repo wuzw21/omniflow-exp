@@ -103,7 +103,8 @@ tables, sidecar adapters, automatic Function writeback, or checker recovery IDs.
 8. Run normal goal-driven recall on source and target devices.
 9. Preserve every failure and record the first divergence.
 10. Fix only general Function semantics, bindings, actions, or checker memory.
-11. Run the six-cell matrix only after both ours cells pass.
+11. Admit the frozen asset to the formal ten-cell task only after the normal
+    source and target acceptance checks pass.
 
 Do not retry an unchanged bundle. Each revision uses a new immutable output
 directory and the same frozen evaluation tuple. Never change the seed to avoid a
@@ -119,11 +120,13 @@ result = compile_runlog_to_store(
     source_runlog,
     version_root,
     function_bundle=codex_authored_bundle,
+    source_states=native_source_state_catalog,
 )
 ```
 
 The compiler validates each Function through `omniflow.functions.artifact`, binds source
-arguments once, and saves the referenced source states for OmniTransfer. It
+arguments once, and requires the native source-state catalog captured by the
+seed-111 source replay. It saves only referenced source states for OmniTransfer. It
 saves exactly the authored Functions when a bundle/model is supplied; otherwise
 it saves one complete multi-action Function. It does not repair invalid output
 or append atomic actions.

@@ -16,7 +16,6 @@ import xml.etree.ElementTree as ET
 from omniflow import Observation
 from src.integrations.android_world.host import AndroidWorldHost
 
-
 _ACTION_NAME_ALIASES = {
     "enter_text": "input",
     "go_back": "back",
@@ -532,15 +531,19 @@ def prepare_mobilegpt_chat_messages(
     return prepared
 
 
+def _mobilegpt_chat_model(requested_model: Any = None) -> str:
+    return str(
+        os.getenv("MOBILEGPT_CHAT_MODEL") or requested_model or "qwen-plus"
+    ).strip()
+
+
 def install_mobilegpt_openai_runtime() -> None:
     utils_module = importlib.import_module("utils.utils")
 
     def _query(messages, model=None, is_list=False):
         from openai import OpenAI
 
-        selected_model = str(
-            model or os.getenv("MOBILEGPT_CHAT_MODEL") or "qwen-plus"
-        ).strip()
+        selected_model = _mobilegpt_chat_model(model)
         timeout_sec = max(
             1.0,
             float(os.getenv("MOBILEGPT_CHAT_TIMEOUT_SEC") or "90"),
@@ -946,13 +949,13 @@ def run_mobilegpt_server(argv: list[str] | None = None) -> int:
         sys.path.insert(0, str(server_root))
     os.chdir(server_root)
 
-    import main as mobilegpt_main  # noqa: F401
-    import mobilegpt as mobilegpt_module
-    import server as mobilegpt_server
     from agents.app_agent import AppAgent
     from agents.prompts import derive_agent_prompt
     from agents.select_agent import SelectAgent
+    import main as mobilegpt_main  # noqa: F401
+    import mobilegpt as mobilegpt_module
     from screenParser.Encoder import xmlEncoder
+    import server as mobilegpt_server
 
     Server = mobilegpt_server.Server
     MobileGPT = mobilegpt_module.MobileGPT

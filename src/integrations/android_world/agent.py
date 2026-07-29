@@ -13,11 +13,9 @@ from omniflow import (
     Observation,
     OmniFlow,
     OmniFlowConfig,
-    PluginSet,
     RuntimeSettings,
 )
 from omniflow.core.config import Experiment
-from omniflow.core.model import TransferResult
 from omniflow.core.trajectory import canonicalize_run_log
 from omniflow.transfer.runtime import (
     TRANSFER_STATE_CATALOG_FILENAME,
@@ -31,20 +29,6 @@ from src.integrations.android_world.host import AndroidWorldHost, make_agent_res
 
 MODE_OMNIFLOW = "omniflow"
 DEFAULT_RUN_MAX_STEPS = 8
-
-
-def _execution_transfer_disabled(
-    action: Any,
-    observation: Observation,
-    source_state: Observation | None = None,
-) -> TransferResult:
-    del observation, source_state
-    has_point = all(action.args.get(key) is not None for key in ("x", "y"))
-    if action.tool in {"click", "long_press", "swipe"} or (
-        action.tool == "input_text" and has_point
-    ):
-        return TransferResult(None, reason="omnitransfer_ablation_disabled")
-    return TransferResult(action)
 
 
 class _TaskHost:
@@ -116,9 +100,6 @@ def build_agent(
     }
     transfer_states = load_transfer_state_catalog(transfer_state_path)
     host = _TaskHost(raw_host, state, transfer_states)
-    disable_action_transfer = str(
-        os.environ.get("OMNIFLOW_DISABLE_ACTION_TRANSFER") or ""
-    ).strip().lower() in {"1", "true", "yes", "on"}
     fallback_limit_text = str(
         os.environ.get("OMNIFLOW_MAX_FALLBACK_STEPS") or ""
     ).strip()
@@ -136,20 +117,14 @@ def build_agent(
                 max_steps=max_steps,
                 max_fallback_steps=max_fallback_steps,
             ),
-            plugins=PluginSet(
-                transfer=_execution_transfer_disabled
-                if disable_action_transfer
-                else None
-            ),
         ),
     )
-    if not disable_action_transfer:
-        coverage = transfer_state_coverage(flow.store.functions, transfer_states)
-        if coverage["required_state_count"] and not transfer_state_path.is_file():
-            raise RuntimeError(f"transfer_state_catalog_missing:{transfer_state_path}")
-        if not coverage["complete"]:
-            missing = ",".join(coverage["missing_state_ids"])
-            raise RuntimeError(f"transfer_state_catalog_incomplete:{missing}")
+    coverage = transfer_state_coverage(flow.store.functions, transfer_states)
+    if coverage["required_state_count"] and not transfer_state_path.is_file():
+        raise RuntimeError(f"transfer_state_catalog_missing:{transfer_state_path}")
+    if not coverage["complete"]:
+        missing = ",".join(coverage["missing_state_ids"])
+        raise RuntimeError(f"transfer_state_catalog_incomplete:{missing}")
     flow.mode = MODE_OMNIFLOW
     flow.name = MODE_OMNIFLOW
     flow.env = env

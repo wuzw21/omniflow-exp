@@ -11,14 +11,19 @@ same seed and task parameters when repairing an environment failure.
 Use `--profile appagent` for AppAgent-only single-task episodes. It checks the
 AppAgent deployment and AndroidWorld dependencies without requiring the
 MobileGPT server or the full 116-task source pool. The default profile remains
-`mobilegpt`; `--function-manifest` selects the Function profile.
+`mobilegpt`; the formal native and AppAgent profiles are selected explicitly.
 
 ## Host Gate
 
 ```bash
-python skills/androidworld-runtime-preflight/scripts/preflight.py \
-  --repo "$PWD" \
+ASSET_ROOT=/absolute/path/to/external/assets
+SOURCE_INDEX="$ASSET_ROOT/runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json"
+python -m src.experiment.preflight \
+  --repo "$ASSET_ROOT" \
+  --code-root "$PWD" \
+  --profile androidworld_native \
   --serial emulator-5554 \
+  --source-index "$SOURCE_INDEX" \
   --expected-tasks 116 \
   --require-kvm \
   --require-device \
@@ -32,7 +37,7 @@ check first. Never treat a warning from AndroidWorld app setup as harmless.
 ## Per-Task Audit
 
 ```bash
-python skills/androidworld-runtime-preflight/scripts/classify_result.py \
+python -m src.experiment.classify_result \
   --summary one_task_summary.json \
   --log task.log \
   --initial-memory-condition native_memory \
@@ -49,7 +54,7 @@ manifest shown above.
   frozen seed, and parameters.
 
 `task_finished=0` alone is a method failure after one clean `task_started` and
-official-validator coverage. Missing setup, device, OOB, required warm memory,
+official-validator coverage. Missing setup, device, required warm memory,
 `task_started`, validator coverage, or result artifacts are environment failures.
 
 ## Formal Invariants

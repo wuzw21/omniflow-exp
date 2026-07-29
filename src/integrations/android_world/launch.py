@@ -32,10 +32,6 @@ from src.integrations.android_world.agent import (
 from src.integrations.android_world.host import (
     capture_adapter_state,
     make_agent_result,
-    normalize_oob_get_state_payload,
-)
-from src.integrations.android_world.official_runlog import (
-    materialize_m3a_episode_runlog,
 )
 from src.integrations.android_world.setup_compat import (
     patch_androidworld_setup_click_retry,
@@ -50,9 +46,20 @@ SOURCE_RUNLOG_POOL_DIR = (
     / "androidworld_validator"
     / "offline_source_runlog_pool"
 )
-DEFAULT_OOB_DEVICE_URL = ""
 logger = logging.getLogger(__name__)
 DEFAULT_RAW_REPLAY_ACTION_WAIT_SECONDS = 1.0
+
+
+def normalize_oob_get_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize records used only by retired, unreachable OOB helpers."""
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        return payload
+    normalized = dict(payload)
+    for key, value in state.items():
+        if value is not None or key not in normalized:
+            normalized[key] = value
+    return normalized
 
 
 def utc_now_iso() -> str:
@@ -263,7 +270,7 @@ def _load_official_agent_goal_hint(
         meta["error"] = str(exc)
         return "", meta
     if not isinstance(payload, dict) or payload.get("schema_version") != (
-        "omniflow.m3a_semantic_hint.v1"
+        "omniflow.t3a_semantic_hint.v1"
     ):
         meta["error"] = "unsupported or unsafe source hint schema"
         return "", meta
@@ -1315,20 +1322,12 @@ def _read_oob_androidworld_state(
 
 
 def _use_oob_observe_backend() -> bool:
-    raw_backend = (
-        str(os.environ.get("OMNIFLOW_OBSERVE_BACKEND") or "androidworld")
-        .strip()
-        .lower()
-        .replace("-", "_")
-    )
-    return raw_backend in {"oob", "oob_native", "oob_http", "oob_get_state"}
+    return False
 
 
 def _agent_uses_oob_observation(agent: Any) -> bool:
-    task_host = getattr(agent, "host", None)
-    raw_host = getattr(task_host, "host", task_host)
-    backend = str(getattr(raw_host, "observe_backend", "") or "").strip().lower()
-    return backend.startswith("oob")
+    del agent
+    return False
 
 
 def _check_oob_http_state_ready(
@@ -3168,35 +3167,14 @@ def _build_official_androidworld_agent(
         One upstream AndroidWorld agent instance bound to the current env.
     """
 
-    from android_world.agents import human_agent, infer, m3a, random_agent, seeact, t3a
+    from android_world.agents import t3a
 
-    resolved_name = str(official_agent_name or "").strip() or "m3a_gpt4v"
-    if resolved_name == "human_agent":
-        agent = human_agent.HumanAgent(env)
-    elif resolved_name == "random_agent":
-        agent = random_agent.RandomAgent(env)
-    elif resolved_name == "m3a_gemini_gcp":
-        agent = m3a.M3A(
-            env,
-            infer.GeminiGcpWrapper(model_name="gemini-1.5-pro-latest"),
-        )
-    elif resolved_name == "t3a_gemini_gcp":
-        agent = t3a.T3A(
-            env,
-            infer.GeminiGcpWrapper(model_name="gemini-1.5-pro-latest"),
-        )
-    elif resolved_name == "t3a_gpt4":
-        llm = _OpenAICompatibleMultimodalWrapper()
-        agent = t3a.T3A(env, llm)
-        agent._omniflow_llm_usage_tracker = llm
-    elif resolved_name == "m3a_gpt4v":
-        llm = _OpenAICompatibleMultimodalWrapper()
-        agent = m3a.M3A(env, llm)
-        agent._omniflow_llm_usage_tracker = llm
-    elif resolved_name == "seeact":
-        agent = seeact.SeeAct(env)
-    else:
+    resolved_name = str(official_agent_name or "").strip() or "t3a_gpt4"
+    if resolved_name != "t3a_gpt4":
         raise ValueError(f"Unknown AndroidWorld official agent: {resolved_name}")
+    llm = _OpenAICompatibleMultimodalWrapper()
+    agent = t3a.T3A(env, llm)
+    agent._omniflow_llm_usage_tracker = llm
     agent.name = resolved_name
     return agent
 
@@ -3875,7 +3853,6 @@ def _apply_raw_coordinate_replay(
 ) -> Any:
     """Replay fixed source coordinates through AndroidWorld without relocation."""
 
-    original_reset = getattr(agent, "reset", None)
     original_set_max_steps = getattr(agent, "set_max_steps", None)
     run_log_data = _read_raw_replay_run_log(run_log_json_path)
     source_actions = _raw_replay_step_actions(run_log_data)
@@ -4435,9 +4412,7 @@ def build_parser() -> argparse.ArgumentParser:
             "`external:mobilegpt` delegates one official episode to MobileGPT; "
             "`external:appagent` runs pinned AppAgent deployment; "
             "`external:appagent_teacher` captures one source human demo; "
-            "`official:<name>` runs one upstream AndroidWorld agent directly. "
-            "Examples: `official:m3a_gpt4v`, `official:t3a_gpt4`, "
-            "`official:seeact`."
+            "`official:t3a_gpt4` runs the paper's upstream T3A agent."
         ),
     )
     parser.add_argument(
@@ -4448,10 +4423,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--store-path",
-        "--utg-store-path",
         dest="store_path",
         default=str((OMNIFLOW_ROOT / "runtime" / "omniflow" / "store.json").resolve()),
-        help="Function Store path. --utg-store-path remains as a legacy CLI alias.",
+        help="Function Store path.",
     )
     parser.add_argument(
         "--raw-replay-run-log",
@@ -4477,37 +4451,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--source-action-hint-path",
         default="",
         help=(
-            "Optional sanitized omniflow.m3a_semantic_hint.v1 artifact. With "
-            "--agent official:<name>, its semantic action outline is appended "
+            "Optional sanitized omniflow.t3a_semantic_hint.v1 artifact. With "
+            "--agent official:t3a_gpt4, its semantic action outline is appended "
             "to the task goal; native AndroidWorld observation and action remain in use."
         ),
-    )
-    parser.add_argument(
-        "--oob-device-url",
-        default=os.environ.get("OMNIFLOW_OOB_DEVICE_URL", DEFAULT_OOB_DEVICE_URL),
-        help=(
-            "Optional OOB local device HTTP host used by OOB-backed observe/act "
-            "modes. Defaults to http://127.0.0.1:8910. AndroidWorld still "
-            "handles reset/init/final validation."
-        ),
-    )
-    parser.add_argument(
-        "--oob-observe-backend",
-        choices=["androidworld", "oob"],
-        default=os.environ.get("OMNIFLOW_OBSERVE_BACKEND", "androidworld"),
-        help=(
-            "Observation source for OmniFlow and fixed replay. `androidworld` "
-            "uses the native AndroidWorld env.get_state path; `oob` is an "
-            "explicit debug transport. Official AndroidWorld agents keep their "
-            "upstream native observation path. external:mobilegpt keeps its "
-            "stock MobileGPT client observation transport."
-        ),
-    )
-    parser.add_argument(
-        "--oob-act-backend",
-        choices=["androidworld", "oob"],
-        default=os.environ.get("OMNIFLOW_ACT_BACKEND", ""),
-        help="OmniFlow AndroidWorldHost action backend. Defaults to `androidworld`.",
     )
     parser.add_argument(
         "--planner-provider",
@@ -4563,13 +4510,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         os.environ["OMNIFLOW_PLANNER_TIMEOUT_SEC"] = str(
             float(args.planner_timeout_sec)
         )
-    oob_device_url = str(args.oob_device_url or "").strip().rstrip("/")
-    if oob_device_url:
-        os.environ["OMNIFLOW_OOB_DEVICE_URL"] = oob_device_url
-    if str(args.oob_observe_backend or "").strip():
-        os.environ["OMNIFLOW_OBSERVE_BACKEND"] = str(args.oob_observe_backend).strip()
-    if str(args.oob_act_backend or "").strip():
-        os.environ["OMNIFLOW_ACT_BACKEND"] = str(args.oob_act_backend).strip()
+    os.environ.pop("OMNIFLOW_OOB_DEVICE_URL", None)
+    os.environ["OMNIFLOW_OBSERVE_BACKEND"] = "androidworld"
+    os.environ["OMNIFLOW_ACT_BACKEND"] = "androidworld"
     android_world_root = Path(args.android_world_root).expanduser().resolve()
     run_py = android_world_root / "run.py"
     if not run_py.exists():
@@ -5123,8 +5066,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     try:
                         canonical_run = None
                         canonical_run_id = None
-                        official_transfer_catalog: dict[str, Any] | None = None
-                        official_materialization_error = ""
                         save_run_log = getattr(agent, "save_run_log", None)
                         if selected_agent == MODE_OMNIFLOW and callable(save_run_log):
                             official_success = bool(
@@ -5146,23 +5087,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 run_log = payload.get("run_log")
                                 if isinstance(run_log, dict):
                                     canonical_run = dict(run_log)
-                        elif (
-                            selected_agent.startswith("official:m3a_")
-                            and isinstance(result, dict)
-                        ):
-                            try:
-                                canonical_run, official_transfer_catalog = (
-                                    materialize_m3a_episode_runlog(
-                                        result,
-                                        task_name=task_name,
-                                        goal=goal_text,
-                                    )
-                                )
-                                canonical_run_id = str(
-                                    canonical_run.get("run_id") or ""
-                                ).strip() or None
-                            except Exception as exc:  # noqa: BLE001
-                                official_materialization_error = str(exc)
                         task_success = False
                         validator_reward = 0.0
                         step_count = 0
@@ -5384,42 +5308,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "artifact_ref": artifact_ref,
                             "error": error_text,
                         }
-                        if official_materialization_error:
-                            task_result_record["canonical_run_materialization_error"] = (
-                                official_materialization_error
-                            )
-                        if official_transfer_catalog is not None:
-                            transfer_catalog_path = (
-                                run_output_dir
-                                / "official_source_artifacts"
-                                / _safe_slug(task_name)
-                                / str(canonical_run_id or "unknown_run")
-                                / "transfer_states.json"
-                            )
-                            transfer_catalog_path.parent.mkdir(
-                                parents=True,
-                                exist_ok=True,
-                            )
-                            transfer_catalog_path.write_text(
-                                json.dumps(
-                                    to_serializable(official_transfer_catalog),
-                                    ensure_ascii=False,
-                                    indent=2,
-                                )
-                                + "\n",
-                                encoding="utf-8",
-                            )
-                            task_result_record["transfer_state_catalog"] = str(
-                                transfer_catalog_path
-                            )
-                            task_result_record["canonical_run_materialization"] = {
-                                "schema_version": (
-                                    "omniflow.androidworld_official_runlog_materialization.v1"
-                                ),
-                                "state_backend": "androidworld",
-                                "action_backend": "androidworld",
-                                "native_androidworld_agent_io": True,
-                            }
                         if canonical_run is not None:
                             canonical_diagnostics = canonical_run.get("diagnostics")
                             canonical_diagnostics = (

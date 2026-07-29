@@ -791,6 +791,7 @@ def build_appagent_teacher_source(
     *,
     task_name: str,
     source_seed: int = APPAGENT_SOURCE_SEED,
+    provenance_source_run_log: str | Path | None = None,
 ) -> dict[str, Any]:
     """Build a coordinate-free teacher stream for AppAgent human-demo capture."""
 
@@ -803,6 +804,15 @@ def build_appagent_teacher_source(
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("appagent_source_run_log_object_required")
+    provenance_path = (
+        Path(provenance_source_run_log).expanduser().resolve()
+        if provenance_source_run_log is not None
+        else path
+    )
+    if not provenance_path.is_file():
+        raise FileNotFoundError(
+            f"appagent_source_run_log_missing:{provenance_path}"
+        )
 
     source_app_packages: set[str] = set()
     actions: list[dict[str, Any]] = []
@@ -860,8 +870,10 @@ def build_appagent_teacher_source(
         "task_name": normalized_task_name,
         "source_seed": int(source_seed),
         "source_run_id": str(payload.get("run_id") or ""),
-        "source_run_log": str(path),
-        "source_run_log_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "source_run_log": str(provenance_path),
+        "source_run_log_sha256": hashlib.sha256(
+            provenance_path.read_bytes()
+        ).hexdigest(),
         "official_appagent_revision": APPAGENT_OFFICIAL_REVISION,
         "source_app_package": next(iter(source_app_packages), ""),
         "actions": actions,
@@ -930,6 +942,8 @@ def seal_appagent_demo_memory(
     source_episode_wall_sec: float,
     document_generation_wall_sec: float,
     prep_wall_sec: float,
+    source_method: str,
+    document_generation_model: str,
 ) -> dict[str, Any]:
     """Seal official AppAgent demo docs after one successful source episode."""
 
@@ -937,8 +951,14 @@ def seal_appagent_demo_memory(
     normalized_app = _safe_appagent_name(app_name)
     normalized_demo = _safe_appagent_name(demo_name)
     normalized_task = str(task_name or "").strip()
+    normalized_source_method = str(source_method or "").strip()
+    normalized_document_model = str(document_generation_model or "").strip()
     if not normalized_task:
         raise ValueError("appagent_memory_task_name_required")
+    if not normalized_source_method:
+        raise ValueError("appagent_memory_source_method_required")
+    if not normalized_document_model:
+        raise ValueError("appagent_memory_document_model_required")
     teacher_path = Path(teacher_source).expanduser().resolve()
     teacher = load_appagent_teacher_source(teacher_path)
     if teacher.get("task_name") != normalized_task:
@@ -980,6 +1000,11 @@ def seal_appagent_demo_memory(
     }
     if usage["total_tokens"] <= 0:
         usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
+    if set(usage["models"]) != {normalized_document_model}:
+        raise ValueError(
+            "appagent_document_generation_model_mismatch:"
+            f"expected={normalized_document_model}:actual={usage['models']}"
+        )
     usage["wall_sec"] = round(float(document_generation_wall_sec), 6)
     source_model_calls = int(source_result_row.get("model_calls") or 0)
     source_prompt_tokens = int(source_result_row.get("prompt_tokens") or 0)
@@ -1017,6 +1042,7 @@ def seal_appagent_demo_memory(
         "app_name": normalized_app,
         "demo_name": normalized_demo,
         "source_seed": APPAGENT_SOURCE_SEED,
+        "source_method": normalized_source_method,
         "source_run_id": str(teacher.get("source_run_id") or ""),
         "source_run_log": str(source_run_log.resolve()),
         "source_run_log_sha256": _file_sha256(source_run_log),
@@ -1039,6 +1065,7 @@ def seal_appagent_demo_memory(
         "document_generation_usage_path": str(usage_path),
         "document_generation_usage_sha256": _file_sha256(usage_path),
         "doc_generation_usage": usage,
+        "document_generation_model": normalized_document_model,
         "prep_wall_sec": round(float(prep_wall_sec), 6),
         "demo_docs_root": str(docs_root),
         "demo_docs_sha256": _tree_sha256(docs_root),

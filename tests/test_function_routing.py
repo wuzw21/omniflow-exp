@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from types import SimpleNamespace
 
 from omniflow import (
@@ -211,6 +212,24 @@ def test_rejected_function_enters_gui_planner_without_function_tools(tmp_path) -
     assert planner.visible_function_ids == [()]
 
 
+def test_gui_planner_never_receives_function_tools_without_router(tmp_path) -> None:
+    store_path = tmp_path / "store.json"
+    _store_with_open_settings_function(store_path)
+    planner = FinishingPlanner()
+    flow = OmniFlow(
+        store_path,
+        host=RecordingHost(),
+        planner=planner,
+        installed_apps={"Settings": "com.android.settings"},
+    )
+
+    result = flow.run("Turn bluetooth on")
+
+    assert result.success is True
+    assert result.function_id is None
+    assert planner.visible_function_ids == [()]
+
+
 def test_transfer_failure_falls_back_without_replaying_source_coordinates(
     tmp_path,
 ) -> None:
@@ -317,6 +336,24 @@ def test_vlm_function_router_only_exposes_candidates_and_reject() -> None:
     assert request["messages"][1]["content"] == (
         '{"goal":"Connect Headphones over Bluetooth"}'
     )
+
+
+def test_vlm_function_router_disables_sdk_retries(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def openai_client(**options: object) -> object:
+        captured.update(options)
+        return object()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "openai",
+        SimpleNamespace(OpenAI=openai_client),
+    )
+
+    VLMFunctionRouter(model="test-model")._build_client()
+
+    assert captured["max_retries"] == 0
 
 
 def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:

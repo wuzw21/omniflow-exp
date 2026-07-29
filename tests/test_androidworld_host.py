@@ -20,6 +20,17 @@ def test_androidworld_native_observation_uses_uiautomator() -> None:
     assert _native_androidworld_a11y_method(controller_module) is uiautomator
 
 
+def test_androidworld_host_cannot_be_switched_to_oob(monkeypatch) -> None:
+    monkeypatch.setenv("OMNIFLOW_OBSERVE_BACKEND", "oob")
+    monkeypatch.setenv("OMNIFLOW_ACT_BACKEND", "oob")
+    monkeypatch.setenv("OMNIFLOW_OOB_DEVICE_URL", "http://127.0.0.1:8910")
+
+    host = AndroidWorldHost(SimpleNamespace())
+
+    assert host.observe_backend == "androidworld"
+    assert host.act_backend == "androidworld"
+
+
 def test_observe_keeps_complete_uiautomator_hierarchy() -> None:
     uiautomator_xml = """\
 <hierarchy>

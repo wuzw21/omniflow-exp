@@ -606,6 +606,7 @@ def install_mobilegpt_teacher(
         None,
     )
     original_derive = DeriveAgent.derive
+    finish_name = f"_{MobileGPT.__name__}__finish_task"
 
     def _teacher_example_for_action(
         *,
@@ -733,6 +734,22 @@ def install_mobilegpt_teacher(
                 "failed_action": _teacher_result_payload(failed_result),
             }
         )
+        if str(
+            os.environ.get("MOBILEGPT_TEACHER_FAIL_ON_ACTION_ERROR") or ""
+        ).strip() == "1":
+            teacher.mark_exhausted()
+            writer(
+                {
+                    "event": "mobilegpt_teacher_action_error_fail_closed",
+                    "instruction": getattr(self, "instruction", ""),
+                    "source_run_log": teacher.source_run_log,
+                    "cursor": teacher.cursor,
+                    "teacher_action_count": teacher.action_count,
+                    "reason": str(reason or ""),
+                    "failed_action": _teacher_result_payload(failed_result),
+                }
+            )
+            return getattr(self, finish_name)()
 
         if (
             isinstance(failed_result, TeacherActionResult)
@@ -1412,6 +1429,9 @@ def run_teacher_server(argv: list[str] | None = None) -> int:
     import main as mobilegpt_main  # noqa: F401
     from server import Server
 
+    from src.integrations.mobilegpt_runtime import install_mobilegpt_openai_runtime
+
+    install_mobilegpt_openai_runtime()
     install_mobilegpt_teacher(
         source_run_log=args.source_run_log,
         fallback_to_vlm_on_miss=bool(args.fallback_to_vlm_on_teacher_miss),

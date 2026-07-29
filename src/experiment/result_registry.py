@@ -181,20 +181,11 @@ RUN_RECORD_COLUMNS = [
 ]
 
 MASTER_PROGRESS_METHODS = (
-    "ours",
-    "ours_no_execution_transfer",
     "fixed_replay",
-    "mobilegpt",
-    "mobilegpt_baseline",
+    "ours",
     "mobilegpt_offline_retrieval",
-    "m3a_official",
-    "m3a_hint",
-    "m3a_retrieval",
-    "t3a_official",
-    "t3a_hint",
-    "t3a_retrieval",
-    "appagent_baseline",
     "appagent_demo",
+    "t3a_hint",
 )
 MASTER_PROGRESS_COMMON_FIELDS = (
     "sr",
@@ -206,8 +197,6 @@ MASTER_PROGRESS_COMMON_FIELDS = (
     "total_tokens",
 )
 MOBILEGPT_PROGRESS_METHODS = (
-    "mobilegpt",
-    "mobilegpt_baseline",
     "mobilegpt_offline_retrieval",
 )
 MOBILEGPT_PROGRESS_FIELDS = (
@@ -252,23 +241,12 @@ MASTER_PROGRESS_COLUMNS = [
 
 METHOD_LABELS = {
     "fixed_replay": "Fixed source-action replay / deterministic replay",
-    "mobilegpt": "Legacy MobileGPT result (ambiguous method ID)",
-    "mobilegpt_baseline": "Stock MobileGPT native cold + warm baseline",
     "mobilegpt_offline_retrieval": (
-        "Stock MobileGPT native source memory + stock warm retrieval"
+        "MobileGPT native memory from the frozen ours source demonstration "
+        "+ stock warm retrieval"
     ),
     "ours": "OmniFlow native E2E / persistent-function path",
-    "ours_no_execution_transfer": "OmniFlow without execution transfer ablation",
-    "ours_raw_replay": "OmniFlow raw source-runlog replay ablation",
-    "ours_no_source_xml_enhance": "OmniFlow no-source-XML enhancement ablation",
-    "oob_replay_no_enhance": "OOB replay without source enhancement ablation",
-    "m3a_official": "AndroidWorld upstream M3A baseline",
-    "m3a_hint": "AndroidWorld upstream M3A with source trace hint",
-    "m3a_retrieval": "AndroidWorld upstream M3A with OmniFlow retrieval",
-    "t3a_official": "AndroidWorld upstream T3A baseline",
     "t3a_hint": "AndroidWorld upstream T3A with source trace hint",
-    "t3a_retrieval": "AndroidWorld upstream T3A with OmniFlow retrieval",
-    "appagent_baseline": "Pinned stock AppAgent deployment without docs",
     "appagent_demo": "Pinned stock AppAgent with native human-demo UI docs",
 }
 
@@ -613,6 +591,56 @@ def _row_from_summary(
     return {column: out.get(column, "") for column in METHOD_MATRIX_COLUMNS}
 
 
+def _load_verified_registered_result(summary_path: Path) -> dict[str, Any]:
+    summary = _load_json(summary_path)
+    if (
+        not isinstance(summary, dict)
+        or summary.get("schema_version")
+        != "omniflow.androidworld_registered_result.v1"
+    ):
+        raise ValueError(f"registered result schema invalid: {summary_path}")
+    manifest_path = summary_path.with_name("registration_manifest.json")
+    recorded_manifest = Path(
+        str(summary.get("registration_manifest") or "")
+    ).expanduser()
+    if not recorded_manifest.is_absolute():
+        recorded_manifest = (summary_path.parent / recorded_manifest).resolve()
+    else:
+        recorded_manifest = recorded_manifest.resolve()
+    if recorded_manifest != manifest_path.resolve():
+        raise ValueError(
+            f"registered result manifest path mismatch: {summary_path}"
+        )
+    manifest = _load_json(manifest_path)
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("schema_version")
+        != "omniflow.androidworld_result_registration.v1"
+        or manifest.get("immutable") is not True
+    ):
+        raise ValueError(f"registration manifest invalid: {manifest_path}")
+    expected_sha256 = str(manifest.get("registered_result_sha256") or "")
+    if not expected_sha256 or _sha256(summary_path) != expected_sha256:
+        raise ValueError(f"registered result checksum mismatch: {summary_path}")
+    for field in ("registration_id", "attempt_id", "task_name"):
+        if str(summary.get(field) or "") != str(manifest.get(field) or ""):
+            raise ValueError(
+                f"registered result {field} mismatch: {summary_path}"
+            )
+    rows = [row for row in summary.get("rows") or [] if isinstance(row, dict)]
+    if len(rows) != 1:
+        raise ValueError(
+            f"registered result must contain exactly one row: {summary_path}"
+        )
+    row = rows[0]
+    if (
+        str(row.get("method") or "") != str(manifest.get("method") or "")
+        or str(row.get("device") or "") != str(manifest.get("device") or "")
+    ):
+        raise ValueError(f"registered result cell mismatch: {summary_path}")
+    return summary
+
+
 def load_summary_rows(
     runs_root: Path,
     source_index: dict[str, Any],
@@ -620,21 +648,8 @@ def load_summary_rows(
 ) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     registered_paths = sorted(runs_root.rglob("registered_result.json"))
-    registered_sources: set[Path] = set()
-    for registered_path in registered_paths:
-        registered = _load_json(registered_path)
-        source_summary = str(registered.get("source_summary") or "").strip()
-        if source_summary:
-            registered_sources.add(Path(source_summary).expanduser().resolve())
-    legacy_paths = [
-        path
-        for path in sorted(runs_root.rglob("one_task_summary.json"))
-        if path.resolve() not in registered_sources
-    ]
-    for summary_path in [*registered_paths, *legacy_paths]:
-        summary = _load_json(summary_path)
-        if not isinstance(summary, dict):
-            continue
+    for summary_path in registered_paths:
+        summary = _load_verified_registered_result(summary_path)
         for source_row in summary.get("rows") or []:
             if not isinstance(source_row, dict):
                 continue
@@ -965,9 +980,9 @@ def update_manifest(
                 "script": "src/experiment/result_registry.py",
                 "source": _path_cell(DEFAULT_RUNS_ROOT),
                 "policy": (
-                    "Task-local one_task_summary.json rows are canonical for synced "
-                    "task/method/device results; older rows for the same key are kept "
-                    "with is_latest_for_task_method=false."
+                    "Only immutable registered_result.json rows are canonical for "
+                    "synced task/method/device results; older registered rows for "
+                    "the same key are kept with is_latest_for_task_method=false."
                 ),
             },
         }

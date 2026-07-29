@@ -1,0 +1,293 @@
+"""Deterministic source-only grounding for baseline asset preparation."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+import xml.etree.ElementTree as ET
+
+from omniflow.core.trajectory import canonicalize_run_log
+from omniflow.transfer.runtime import load_transfer_state_catalog
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _require_frozen_file(
+    value: str | Path,
+    *,
+    expected_sha256: str,
+    label: str,
+) -> Path:
+    path = Path(value).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"{label}_missing:{path}")
+    actual = _sha256(path)
+    if not expected_sha256 or actual != str(expected_sha256):
+        raise ValueError(
+            f"{label}_hash_mismatch:"
+            f"expected={expected_sha256 or 'missing'}:actual={actual}"
+        )
+    return path
+
+
+def _index_reference(index_path: str | Path, value: Any, *, label: str) -> Path:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"source_index_{label}_required")
+    path = Path(text).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    index = Path(index_path).expanduser().resolve()
+    candidates = [index.parent / path]
+    candidates.extend(parent / path for parent in index.parents)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    return candidates[0].resolve()
+
+
+def _identity(value: dict[str, Any]) -> dict[str, str]:
+    aliases = {
+        "text": ("text", "label"),
+        "content_desc": (
+            "content_desc",
+            "content-desc",
+            "description",
+        ),
+        "resource_id": ("resource_id", "resource-id"),
+    }
+    result: dict[str, str] = {}
+    for output_key, input_keys in aliases.items():
+        for input_key in input_keys:
+            text = str(value.get(input_key) or "").strip()
+            if text:
+                result[output_key] = text
+                break
+    return result
+
+
+def _node_identity(node: ET.Element) -> dict[str, str]:
+    return _identity(
+        {
+            "text": node.attrib.get("text"),
+            "content_desc": node.attrib.get("content-desc"),
+            "resource_id": node.attrib.get("resource-id"),
+        }
+    )
+
+
+def _bounds(node: ET.Element) -> tuple[float, float, float, float] | None:
+    value = str(node.attrib.get("bounds") or "")
+    try:
+        left_top, right_bottom = value.split("][")
+        left, top = left_top.lstrip("[").split(",")
+        right, bottom = right_bottom.rstrip("]").split(",")
+        return float(left), float(top), float(right), float(bottom)
+    except (TypeError, ValueError):
+        return None
+
+
+def _identity_at_action_point(
+    xml_text: str,
+    *,
+    action_args: dict[str, Any],
+    display: dict[str, Any],
+) -> dict[str, str]:
+    try:
+        x = float(action_args["x"])
+        y = float(action_args["y"])
+        width = float(display["width"])
+        height = float(display["height"])
+        root = ET.fromstring(xml_text)
+    except (KeyError, TypeError, ValueError, ET.ParseError):
+        return {}
+    if 0 <= x <= 1000 and 0 <= y <= 1000:
+        x = x * width / 1000.0
+        y = y * height / 1000.0
+    candidates: list[tuple[float, int, dict[str, str]]] = []
+    for depth, node in enumerate(root.iter()):
+        bounds = _bounds(node)
+        identity = _node_identity(node)
+        if bounds is None or not identity:
+            continue
+        left, top, right, bottom = bounds
+        if left <= x <= right and top <= y <= bottom:
+            area = max(1.0, (right - left) * (bottom - top))
+            candidates.append((area, -depth, identity))
+    return min(candidates, default=(0.0, 0, {}))[2]
+
+
+def _unique_editable_identity(xml_text: str) -> dict[str, str]:
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return {}
+    nodes = [
+        node
+        for node in root.iter()
+        if str(node.attrib.get("editable") or "").lower() == "true"
+        or str(node.attrib.get("class") or "") == "android.widget.EditText"
+    ]
+    identities = [_node_identity(node) for node in nodes]
+    identities = [identity for identity in identities if identity]
+    return identities[0] if len(identities) == 1 else {}
+
+
+def build_grounded_teacher_run_log(
+    *,
+    source_run_log: str | Path,
+    source_state_catalog: str | Path,
+    provenance_manifest: str | Path,
+    expected_source_run_log_sha256: str,
+    expected_source_state_catalog_sha256: str,
+    expected_provenance_sha256: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Join frozen source actions with frozen source UI identities.
+
+    This reads no target task input, target observation, or validator state.
+    It keeps the canonical source action sequence unchanged and adds only
+    source-side semantic evidence consumed by baseline teacher adapters.
+    """
+
+    source_path = _require_frozen_file(
+        source_run_log,
+        expected_sha256=expected_source_run_log_sha256,
+        label="source_run_log",
+    )
+    catalog_path = _require_frozen_file(
+        source_state_catalog,
+        expected_sha256=expected_source_state_catalog_sha256,
+        label="source_state_catalog",
+    )
+    provenance_path = _require_frozen_file(
+        provenance_manifest,
+        expected_sha256=expected_provenance_sha256,
+        label="source_provenance",
+    )
+    raw = json.loads(source_path.read_text(encoding="utf-8"))
+    canonical = canonicalize_run_log(raw)
+    states = load_transfer_state_catalog(catalog_path)
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    source_target_audit = provenance.get("source_target_audit")
+    if not isinstance(source_target_audit, dict) or source_target_audit.get(
+        "source_target_audit_complete"
+    ) is not True:
+        raise ValueError("source_target_audit_incomplete")
+    targets_by_state: dict[str, dict[str, str]] = {}
+    targets_by_step: dict[int, dict[str, str]] = {}
+    for record in source_target_audit.get("source_targets") or []:
+        if not isinstance(record, dict):
+            continue
+        target = _identity(
+            record.get("target")
+            if isinstance(record.get("target"), dict)
+            else {}
+        )
+        if not target:
+            continue
+        state_id = str(record.get("source_state_id") or "").strip()
+        if state_id:
+            targets_by_state[state_id] = target
+        try:
+            targets_by_step[int(record["step_index"])] = target
+        except (KeyError, TypeError, ValueError):
+            pass
+
+    grounded = json.loads(json.dumps(canonical, ensure_ascii=False))
+    semantic_action_count = 0
+    for step_index, step in enumerate(grounded["steps"]):
+        state_id = str(step.get("before_state_id") or "").strip()
+        state = states.get(state_id)
+        if not isinstance(state, dict):
+            raise ValueError(f"source_state_missing:{state_id}")
+        xml_text = str(state.get("xml") or "").strip()
+        if not xml_text:
+            raise ValueError(f"source_state_xml_missing:{state_id}")
+        action = step.get("action")
+        if not isinstance(action, dict):
+            continue
+        args = action.get("args")
+        if not isinstance(args, dict):
+            args = {}
+        action_type = str(action.get("tool") or "").strip()
+        target = (
+            targets_by_state.get(state_id)
+            or targets_by_step.get(step_index)
+            or {}
+        )
+        if not target and action_type in {"click", "long_press"}:
+            target = _identity_at_action_point(
+                xml_text,
+                action_args=args,
+                display=(
+                    state.get("display")
+                    if isinstance(state.get("display"), dict)
+                    else {}
+                ),
+            )
+        if not target and action_type == "input_text":
+            target = _unique_editable_identity(xml_text)
+        source_context: dict[str, Any] = {"page": xml_text}
+        package_name = str(state.get("package_name") or "").strip()
+        if package_name:
+            source_context["package_name"] = package_name
+        if target:
+            source_context["element"] = target
+            semantic_action_count += 1
+        args["source_context"] = source_context
+        action["args"] = args
+        step["observation_before_act"] = {
+            "xml": xml_text,
+            "package_name": package_name,
+        }
+
+    return grounded, {
+        "schema_version": "omniflow.source-teacher-grounding.v1",
+        "source_run_log": str(source_path),
+        "source_run_log_sha256": _sha256(source_path),
+        "source_state_catalog": str(catalog_path),
+        "source_state_catalog_sha256": _sha256(catalog_path),
+        "provenance_manifest": str(provenance_path),
+        "provenance_sha256": _sha256(provenance_path),
+        "source_state_count": len(states),
+        "semantic_action_count": semantic_action_count,
+        "target_inputs_read": False,
+        "target_observations_read": False,
+        "validator_state_read": False,
+    }
+
+
+def build_grounded_teacher_run_log_from_item(
+    *,
+    index_path: str | Path,
+    item: Any,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Resolve one archive-index row and ground it from frozen source evidence."""
+
+    meta = item.meta
+    return build_grounded_teacher_run_log(
+        source_run_log=item.source_run_log,
+        source_state_catalog=_index_reference(
+            index_path,
+            meta.get("source_state_catalog"),
+            label="source_state_catalog",
+        ),
+        provenance_manifest=_index_reference(
+            index_path,
+            meta.get("store_provenance"),
+            label="store_provenance",
+        ),
+        expected_source_run_log_sha256=str(
+            meta.get("source_run_log_sha256") or ""
+        ),
+        expected_source_state_catalog_sha256=str(
+            meta.get("source_state_catalog_sha256") or ""
+        ),
+        expected_provenance_sha256=str(
+            meta.get("store_provenance_sha256") or ""
+        ),
+    )

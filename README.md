@@ -24,25 +24,86 @@ OMNITRANSFER_ROOT=/absolute/path/to/versioned/omnitransfer \
 bash scripts/exp/run_androidworld.sh
 ```
 
-To fill one missing method/device column across the canonical 116 tasks with
-automatic resume, keep the same environment and run:
+To run the canonical 116-task matrix in formal task-major order, keep the same
+environment and run:
 
 ```bash
-OMNIFLOW_SINGLE_TASK_METHODS=t3a_hint \
-OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS=fold5564:emulator-5564:5564 \
 bash scripts/exp/run_androidworld.sh --all-tasks
 ```
 
-Batch mode accepts exactly one method and one device, skips immutable cells
-that are already registered, continues after validator failures, and stops on
-an execution or environment failure.
+Before launching, the same command can validate the entire selected matrix
+without starting an emulator or creating an asset, attempt, log, preflight, or
+result directory:
 
-The scheduler is task-major: one task, all five methods, then SmallPhone and
-the unfolded Pixel Fold cells. It does not launch a method-major campaign.
-The same entry point validates all static task assets before touching a device,
-then starts or repairs the configured AVDs, waits for adb and emulator gRPC,
-forces the Pixel Fold to state `2`, and runs every required runtime preflight
-before claiming the immutable experiment attempt.
+```bash
+bash scripts/exp/run_androidworld.sh --check-only --all-tasks
+```
+
+When frozen T3A results are imported separately, run the remaining four
+methods on both devices as the eight-cell phase:
+
+```bash
+bash scripts/exp/run_androidworld.sh --all-tasks --eight-cells
+```
+
+To run a bounded task-major slice through the same entry point:
+
+```bash
+bash scripts/exp/run_androidworld.sh --all-tasks --eight-cells \
+  --tasks AudioRecorderRecordAudio,AudioRecorderRecordAudioWithFileName,FilesMoveFile
+```
+
+For a bounded slice, set `OMNIFLOW_SINGLE_TASK_SOURCE_INDEX` to the immutable
+index containing exactly those selected tasks. Keep
+`OMNIFLOW_MASTER_SOURCE_INDEX` pointed at the full 116-task inventory used by
+result registration. When the frozen Function Stores do not use the default
+layout, set `OMNIFLOW_OURS_STORE_INDEX` to their immutable hash-bound JSON
+index.
+
+The same `--eight-cells` flag without `--all-tasks` runs the selected single
+task. It excludes only `t3a_hint`; it does not change any of the four method
+implementations.
+
+Batch mode requires both devices and either the exact five-method set or the
+exact four-method eight-cell set. It skips a task only when every expected
+immutable cell is registered, and stops for audit if a task is only partially
+registered or an execution/environment failure occurs.
+It performs one read-only static pass over every remaining selected task before
+creating any batch directory. If any task fails, the whole batch stops before
+source generation or target execution. Before it creates an attempt or starts
+an emulator, it requires:
+
+- exactly 116 indexed canonical RunLogs from source seed `111`, each
+  marked as an AndroidWorld official-validator success, non-empty, and bound to
+  its retained RunLog by a matching SHA-256;
+- one immutable `ours` Function Store and complete referenced
+  `transfer_states.json` catalog for the selected task;
+- the hash-bound source state catalog and complete source-target provenance
+  needed to ground every MobileGPT and AppAgent teacher action; and
+- valid frozen baseline assets when they already exist.
+
+The entry point does not synthesize or relabel missing RunLogs or Functions.
+It preserves the recorded generating method, including an explicit
+`unrecorded` value for legacy records without that field. Source assets are
+authored once and frozen. The entry point may create the method-native
+MobileGPT and AppAgent assets once from the same valid source RunLog; failed or
+partial creation is immutable and is never retried.
+Their shared grounding check uses source-only UI evidence, does not mutate the
+canonical RunLog, and verifies that every teacher action can be grounded before
+the immutable asset directory is claimed.
+Environment setup and preflight logs are written to a separate unique external
+preflight directory. A device or dependency failure therefore does not create
+or consume the formal immutable task attempt.
+
+The scheduler is task-major: it completes all ten method/device cells for one
+task before starting the next task. It does not launch a method-major campaign.
+The same entry point validates the frozen ours assets, then starts or
+repairs the configured AVDs, waits for adb and emulator gRPC, forces the Pixel
+Fold to state `2`, and runs every required runtime preflight. If the versioned
+MobileGPT or AppAgent source memory is absent, the entry point creates it once
+on the source-only `emulator-5560` from the task's shared official-success
+RunLog, audits the exact `qwen3-vl-plus` model, and freezes it before target
+execution.
 
 ## Repository contents
 
@@ -54,7 +115,9 @@ before claiming the immutable experiment attempt.
   - `vlm/`: VLM planning, prompt construction, model adaptation, UI projection, and accounting.
   - `bridge.py`: external JSON-line bridge entry point.
   - `vlm_coordinates.py`: shared-contract owner for VLM coordinate conversion.
-- `omnitransfer/`: the real OmniTransfer runtime code; learned checkpoints stay external.
+- OmniTransfer is loaded only from `OMNITRANSFER_ROOT` or the canonical
+  `~/Projects/Omni/OmniTransfer` checkout; no transfer implementation is
+  vendored here.
 - `src/experiment/`: formal task-major orchestration and immutable result registration.
 - `src/integrations/`: AndroidWorld, baseline adapters, and their runtime helpers.
 - `scripts/exp/run_androidworld.sh`: the only experiment script and public one-command entry point.

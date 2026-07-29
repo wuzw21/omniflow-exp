@@ -5,7 +5,6 @@ import argparse
 from dataclasses import asdict, dataclass
 import hashlib
 import importlib
-import importlib.metadata
 import json
 import os
 from pathlib import Path
@@ -17,14 +16,10 @@ import subprocess
 import sys
 import time
 from typing import Any
-from urllib import parse, request
+
+from omniflow.core.trajectory import canonicalize_run_log
 
 APPAGENT_OFFICIAL_REVISION = "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
-MOBILE_AGENT_V3_OFFICIAL_REVISION = "11cea575561fb7800b5fb6b6cafa56f7a91de11f"
-GUI_OWL_7B_MODEL_REVISION = "7c1644c0288da07435a485701d0fea0ac353f38a"
-QWEN_VL_UTILS_VERSION = "0.0.14"
-TORCH_VERSION = "2.9.0+cpu"
-TORCHVISION_VERSION = "0.24.0+cpu"
 
 
 @dataclass
@@ -77,7 +72,7 @@ def _stale_processes(serial: str) -> list[str]:
             "-af",
             (
                 "src.experiment.androidworld|androidworld.py|"
-                "mobile_agent_v3_runner.py|python main.py"
+                "python main.py"
             ),
         ],
         timeout=3,
@@ -295,193 +290,6 @@ def _port_is_free(port: int) -> bool:
     return True
 
 
-def _oob_healthy(url: str) -> bool:
-    try:
-        with request.urlopen(url.rstrip("/") + "/health", timeout=3) as response:
-            return 200 <= int(response.status) < 300
-    except Exception:
-        return False
-
-
-def _openai_model_endpoint(
-    base_url: str,
-    api_key: str,
-    model: str,
-) -> tuple[bool, str]:
-    url = f"{base_url.rstrip('/')}/models"
-    try:
-        endpoint_request = request.Request(
-            url,
-            headers={"Authorization": f"Bearer {api_key}"},
-        )
-        with request.urlopen(endpoint_request, timeout=10) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        models = [
-            str(item.get("id") or "")
-            for item in list(payload.get("data") or [])
-            if isinstance(item, dict)
-        ]
-        return model in models, json.dumps(
-            {"url": url, "requested": model, "available": models},
-            sort_keys=True,
-        )
-    except Exception as error:  # noqa: BLE001 - rendered into deterministic gate
-        return False, f"{error.__class__.__name__}: {error}"
-
-
-def _restore_oob_http(
-    adb: str,
-    serial: str,
-    package: str,
-    activity: str,
-    url: str,
-    receiver: str = ".DebugGetStateReceiver",
-    accessibility_service: str = (
-        "com.google.android.accessibility.selecttospeak.SelectToSpeakService"
-    ),
-) -> tuple[bool, str]:
-    parsed = parse.urlparse(url)
-    port = int(parsed.port or 8910)
-    component = activity if "/" in activity else f"{package}/{activity}"
-    service_component = (
-        accessibility_service
-        if "/" in accessibility_service
-        else f"{package}/{accessibility_service}"
-    )
-    current = _run(
-        [
-            adb,
-            "-s",
-            serial,
-            "shell",
-            "settings",
-            "get",
-            "secure",
-            "enabled_accessibility_services",
-        ],
-        timeout=10,
-    )
-    services = [
-        item
-        for item in current.stdout.strip().split(":")
-        if item and item != "null"
-    ]
-    reset = None
-    if service_component in services:
-        reset = _run(
-            [
-                adb,
-                "-s",
-                serial,
-                "shell",
-                "settings",
-                "put",
-                "secure",
-                "enabled_accessibility_services",
-                ":".join(item for item in services if item != service_component),
-            ],
-            timeout=10,
-        )
-    if service_component not in services:
-        services.append(service_component)
-    bind_commands = [
-        [
-            adb,
-            "-s",
-            serial,
-            "shell",
-            "settings",
-            "put",
-            "secure",
-            "enabled_accessibility_services",
-            ":".join(services),
-        ],
-        [
-            adb,
-            "-s",
-            serial,
-            "shell",
-            "settings",
-            "put",
-            "secure",
-            "accessibility_enabled",
-            "1",
-        ],
-    ]
-    bind_results = [_run(command, timeout=10) for command in bind_commands]
-    commands = [
-        [adb, "-s", serial, "forward", "--remove", f"tcp:{port}"],
-        [adb, "-s", serial, "forward", f"tcp:{port}", f"tcp:{port}"],
-        [adb, "-s", serial, "shell", "am", "start", "-n", component],
-    ]
-    results = [_run(command, timeout=15) for command in commands]
-    required = [current, *([] if reset is None else [reset]), *bind_results, *results[1:]]
-    if any(result.returncode != 0 for result in required):
-        detail = next(
-            (
-                result.stdout.strip()
-                for result in required
-                if result.returncode != 0 and result.stdout.strip()
-            ),
-            "adb forward or activity start failed",
-        )
-        return False, detail
-    for _ in range(20):
-        if _oob_healthy(url):
-            return True, f"http:{url}"
-        time.sleep(0.5)
-    receiver_component = (
-        f"{package}/{receiver}"
-        if receiver.startswith(".")
-        else receiver
-        if "/" in receiver
-        else f"{package}/{receiver}"
-    )
-    result_path = "files/debug-get-state-result.json"
-    _run(
-        [adb, "-s", serial, "shell", "run-as", package, "rm", "-f", result_path],
-        timeout=10,
-    )
-    broadcast = _run(
-        [
-            adb,
-            "-s",
-            serial,
-            "shell",
-            "am",
-            "broadcast",
-            "-a",
-            f"{package}.RUN_GET_STATE",
-            "-n",
-            receiver_component,
-            "--ez",
-            "includeXml",
-            "false",
-            "--ez",
-            "includeScreenshot",
-            "false",
-        ],
-        timeout=30,
-    )
-    if broadcast.returncode != 0:
-        return False, broadcast.stdout.strip() or "OOB receiver broadcast failed"
-    for _ in range(40):
-        result = _run(
-            [adb, "-s", serial, "shell", "run-as", package, "cat", result_path],
-            timeout=10,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            try:
-                payload = json.loads(result.stdout)
-            except json.JSONDecodeError as error:
-                return False, f"invalid OOB receiver JSON: {error}"
-            if payload.get("success") is True:
-                return True, f"receiver:{receiver_component}"
-            return False, str(payload.get("error_message") or payload.get("error") or "OOB receiver failed")
-        time.sleep(0.5)
-    return False, f"HTTP and receiver unavailable after starting {component}"
-
-
 def _xml_resource_center(screen: str, resource_id: str) -> tuple[int, int] | None:
     match = re.search(
         rf'resource-id="{re.escape(resource_id)}"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
@@ -575,61 +383,6 @@ def _permission_is_fixed_denied(
     return {"USER_FIXED", "USER_SET"}.issubset(flags)
 
 
-def _validate_function_manifest(manifest_path: Path, repo: Path) -> dict[str, Any]:
-    resolved_manifest = manifest_path.expanduser().resolve()
-    if not resolved_manifest.is_file():
-        raise ValueError(f"function_manifest_missing:{resolved_manifest}")
-    try:
-        resolved_manifest.relative_to(repo)
-    except ValueError as error:
-        raise ValueError("function_manifest_outside_repo") from error
-    payload = json.loads(resolved_manifest.read_text(encoding="utf-8"))
-    if payload.get("schema_version") != "omniflow.androidworld.agent-function-suite.v1":
-        raise ValueError("function_manifest_schema_invalid")
-    tasks = payload.get("tasks")
-    if not isinstance(tasks, list) or not tasks:
-        raise ValueError("function_manifest_tasks_required")
-    if str(repo) not in sys.path:
-        sys.path.insert(0, str(repo))
-    from omniflow.functions.store import FunctionStore
-
-    task_names = set()
-    store_paths = []
-    function_count = 0
-    for row in tasks:
-        if not isinstance(row, dict):
-            raise ValueError("function_manifest_task_invalid")
-        task_name = str(row.get("task_name") or "").strip()
-        if not task_name or task_name in task_names:
-            raise ValueError(f"function_manifest_task_duplicate_or_empty:{task_name}")
-        task_names.add(task_name)
-        enhancement_value = str(row.get("enhancement_root") or "").strip()
-        if not enhancement_value:
-            raise ValueError(f"function_manifest_enhancement_missing:{task_name}")
-        enhancement_root = Path(enhancement_value)
-        if not enhancement_root.is_absolute():
-            enhancement_root = repo / enhancement_root
-        enhancement_root = enhancement_root.resolve()
-        try:
-            enhancement_root.relative_to(repo)
-        except ValueError as error:
-            raise ValueError(
-                f"function_manifest_enhancement_outside_repo:{task_name}"
-            ) from error
-        store_path = enhancement_root / "store.json"
-        store = FunctionStore(store_path)
-        functions = store.list_functions(limit=500)
-        if not functions:
-            raise ValueError(f"function_store_empty:{task_name}")
-        store_paths.append(store_path)
-        function_count += len(functions)
-    return {
-        "task_count": len(tasks),
-        "function_count": function_count,
-        "files": [resolved_manifest, *store_paths],
-    }
-
-
 def _validate_source_index(
     index_path: Path,
     *,
@@ -645,13 +398,55 @@ def _validate_source_index(
     run_logs: list[Path] = []
     invalid: list[str] = []
     for task, metadata in payload.items():
-        if not isinstance(metadata, dict) or metadata.get("replay_seed") != 111:
+        if not isinstance(metadata, dict):
             invalid.append(str(task))
             continue
-        run_log = Path(str(metadata.get("retained_source_run_log") or "")).expanduser()
+        source_seed = metadata.get("source_seed", metadata.get("replay_seed"))
+        if (
+            source_seed != 111
+            or metadata.get("latest_official_success_source") is not True
+            or str(metadata.get("source_kind") or "").strip()
+            != "androidworld_validator_success_source_runlog"
+        ):
+            invalid.append(str(task))
+            continue
+        run_log_value = str(
+            metadata.get("retained_source_run_log")
+            or metadata.get("source_run_log")
+            or ""
+        ).strip()
+        if not run_log_value:
+            invalid.append(str(task))
+            continue
+        run_log = Path(run_log_value).expanduser()
         if not run_log.is_absolute():
-            run_log = (source_root / run_log).resolve()
+            index_relative = (resolved_index.parent / run_log).resolve()
+            source_relative = (source_root / run_log).resolve()
+            run_log = (
+                index_relative if index_relative.is_file() else source_relative
+            )
         if not run_log.is_file():
+            invalid.append(str(task))
+            continue
+        expected_sha256 = str(
+            metadata.get("source_run_log_sha256") or ""
+        ).strip()
+        actual_sha256 = hashlib.sha256(run_log.read_bytes()).hexdigest()
+        if not expected_sha256 or expected_sha256 != actual_sha256:
+            invalid.append(str(task))
+            continue
+        try:
+            canonical = canonicalize_run_log(
+                json.loads(run_log.read_text(encoding="utf-8"))
+            )
+        except (OSError, ValueError, json.JSONDecodeError):
+            invalid.append(str(task))
+            continue
+        if (
+            canonical.get("status") != "succeeded"
+            or canonical.get("success") is not True
+            or not canonical.get("steps")
+        ):
             invalid.append(str(task))
             continue
         run_logs.append(run_log)
@@ -679,12 +474,10 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[
             "mobilegpt",
             "appagent",
-            "function",
             "androidworld_native",
-            "mobile_agent_v3",
         ],
         default="",
-        help="Runtime dependency profile. Function mode is inferred from --function-manifest.",
+        help="Runtime dependency profile for one of the formal paper methods.",
     )
     parser.add_argument("--serial", default="emulator-5554")
     parser.add_argument("--expected-tasks", type=int)
@@ -694,48 +487,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-memory-tasks", type=int)
     parser.add_argument("--appagent-root")
     parser.add_argument("--appagent-demo-memory-root")
-    parser.add_argument("--mobile-agent-v3-root")
-    parser.add_argument("--mobile-agent-v3-model-root")
-    parser.add_argument(
-        "--mobile-agent-v3-official-revision",
-        default=MOBILE_AGENT_V3_OFFICIAL_REVISION,
-    )
-    parser.add_argument(
-        "--mobile-agent-v3-model-revision",
-        default=GUI_OWL_7B_MODEL_REVISION,
-    )
-    parser.add_argument("--mobile-agent-v3-model", default="GUI-Owl-7B")
-    parser.add_argument(
-        "--mobile-agent-v3-base-url",
-        default="http://127.0.0.1:4243/v1",
-    )
-    parser.add_argument("--mobile-agent-v3-api-key", default="local-vllm")
-    parser.add_argument("--function-manifest")
     parser.add_argument("--minimum-free-gb", type=float, default=40.0)
     parser.add_argument("--server-port", type=int, default=12345)
-    parser.add_argument("--oob-url", default=os.getenv("OMNIFLOW_OOB_DEVICE_URL", "http://127.0.0.1:8910"))
-    parser.add_argument(
-        "--oob-package",
-        default=os.getenv("OMNIFLOW_OOB_PACKAGE", "cn.com.omnimind.bot.debug"),
-    )
-    parser.add_argument(
-        "--oob-activity",
-        default=os.getenv(
-            "OMNIFLOW_OOB_ACTIVITY",
-            "cn.com.omnimind.bot.activity.LauncherActivity",
-        ),
-    )
-    parser.add_argument(
-        "--oob-receiver",
-        default=os.getenv("OMNIFLOW_OOB_GET_STATE_RECEIVER", ".DebugGetStateReceiver"),
-    )
-    parser.add_argument(
-        "--oob-accessibility-service",
-        default=os.getenv(
-            "OMNIFLOW_OOB_ACCESSIBILITY_SERVICE",
-            "com.google.android.accessibility.selecttospeak.SelectToSpeakService",
-        ),
-    )
     parser.add_argument("--require-kvm", action="store_true")
     parser.add_argument("--require-device", action="store_true")
     parser.add_argument("--require-contacts-ready", action="store_true")
@@ -744,13 +497,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _required_files(profile: str) -> list[str]:
-    if profile == "function":
-        return [
-            "omniflow/functions/artifact.py",
-            "omniflow/functions/store.py",
-            "skills/androidworld-runlog-harvester/scripts/run_4090_function_campaign.py",
-            "runtime/external/droidrun-android-world/android_world/android_world/env/setup_device/apps.py",
-        ]
     if profile == "appagent":
         return [
             "src/experiment/androidworld.py",
@@ -764,12 +510,6 @@ def _required_files(profile: str) -> list[str]:
             "src/experiment/androidworld.py",
             "src/integrations/android_world/launch.py",
             "runtime/external/droidrun-android-world/android_world/android_world/env/setup_device/apps.py",
-        ]
-    if profile == "mobile_agent_v3":
-        return [
-            "src/experiment/androidworld.py",
-            "src/integrations/mobile_agent_v3_runner.py",
-            "src/integrations/mobile_agent_v3_adapter.py",
         ]
     if profile == "mobilegpt":
         return [
@@ -788,23 +528,13 @@ def main(argv: list[str] | None = None) -> int:
     code_root = Path(args.code_root or repo).expanduser().resolve()
     checks: list[Check] = []
     requested_profile = str(args.profile or "").strip()
-    function_mode = requested_profile == "function" or bool(
-        str(args.function_manifest or "").strip()
-    )
     appagent_mode = requested_profile == "appagent"
     native_mode = requested_profile == "androidworld_native"
-    mobile_agent_v3_mode = requested_profile == "mobile_agent_v3"
-    if function_mode and appagent_mode:
-        raise ValueError("preflight_profile_conflicts_with_function_manifest")
     profile = (
-        "function"
-        if function_mode
-        else "appagent"
+        "appagent"
         if appagent_mode
         else "androidworld_native"
         if native_mode
-        else "mobile_agent_v3"
-        if mobile_agent_v3_mode
         else "mobilegpt"
     )
 
@@ -836,87 +566,6 @@ def main(argv: list[str] | None = None) -> int:
             and actual_revision == APPAGENT_OFFICIAL_REVISION,
             actual_revision or "unavailable",
         )
-    if mobile_agent_v3_mode:
-        official_root_value = str(
-            args.mobile_agent_v3_root
-            or os.getenv("MOBILE_AGENT_V3_ROOT", "")
-        ).strip()
-        official_root = (
-            Path(official_root_value).expanduser().resolve()
-            if official_root_value
-            else Path("/__missing_mobile_agent_v3_root__")
-        )
-        official_code_root = official_root / "Mobile-Agent-v3" / "android_world_v3"
-        official_files = (
-            "run_ma3.py",
-            "android_world/agents/infer_ma3.py",
-            "android_world/agents/mobile_agent_v3.py",
-            "android_world/agents/mobile_agent_v3_agent.py",
-            "android_world/agents/new_json_action.py",
-            "android_world/suite_utils.py",
-        )
-        add(
-            "mobile_agent_v3_root",
-            official_root.is_dir()
-            and all((official_code_root / relative).is_file() for relative in official_files),
-            str(official_root),
-        )
-        revision = _run(
-            ["git", "-C", str(official_root), "rev-parse", "HEAD"],
-            timeout=10,
-        )
-        actual_revision = revision.stdout.strip()
-        add(
-            "mobile_agent_v3_revision",
-            revision.returncode == 0
-            and actual_revision == str(args.mobile_agent_v3_official_revision),
-            actual_revision or "unavailable",
-        )
-        tracked_status = _run(
-            [
-                "git", "-C", str(official_root), "status", "--short",
-                "--untracked-files=no",
-            ],
-            timeout=10,
-        )
-        add(
-            "mobile_agent_v3_tracked_checkout_clean",
-            tracked_status.returncode == 0 and not tracked_status.stdout.strip(),
-            tracked_status.stdout.strip() or "clean",
-        )
-        model_root_value = str(args.mobile_agent_v3_model_root or "").strip()
-        try:
-            if str(code_root) not in sys.path:
-                sys.path.insert(0, str(code_root))
-            from src.integrations.mobile_agent_v3_adapter import inspect_gui_owl_model
-
-            model_audit = inspect_gui_owl_model(
-                model_root_value,
-                revision=str(args.mobile_agent_v3_model_revision),
-            )
-        except Exception as error:  # noqa: BLE001 - deterministic preflight row
-            add("gui_owl_model_snapshot", False, str(error))
-        else:
-            add(
-                "gui_owl_model_snapshot",
-                bool(model_audit.get("revision_metadata_complete")),
-                json.dumps(
-                    {
-                        "root": model_audit.get("model_root"),
-                        "revision": model_audit.get("revision"),
-                        "required_file_count": model_audit.get("required_file_count"),
-                        "total_bytes": model_audit.get("total_bytes"),
-                    },
-                    sort_keys=True,
-                ),
-            )
-        endpoint_ready, endpoint_detail = _openai_model_endpoint(
-            str(args.mobile_agent_v3_base_url),
-            str(args.mobile_agent_v3_api_key),
-            str(args.mobile_agent_v3_model),
-        )
-        add("gui_owl_model_endpoint", endpoint_ready, endpoint_detail)
-
     source_memory_value = str(
         args.source_memory_root or os.getenv("MOBILEGPT_SOURCE_MEMORY_ROOT", "")
     ).strip()
@@ -927,43 +576,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     memory_files: list[Path] = []
     memory_tasks: list[Path] = []
-    function_files: list[Path] = []
-    if function_mode:
-        try:
-            function_validation = _validate_function_manifest(
-                Path(args.function_manifest),
-                repo,
-            )
-        except (OSError, ValueError, json.JSONDecodeError) as error:
-            add("function_manifest", False, str(error))
-            add("function_validation", False, str(error))
-        else:
-            task_count = int(function_validation["task_count"])
-            expected_tasks = args.expected_tasks or task_count
-            add(
-                "function_manifest",
-                task_count == expected_tasks,
-                f"{task_count}/{expected_tasks}",
-            )
-            add(
-                "function_validation",
-                int(function_validation["function_count"]) > 0,
-                json.dumps(
-                    {
-                        "task_count": task_count,
-                        "function_count": function_validation["function_count"],
-                    }
-                ),
-            )
-            function_files = list(function_validation["files"])
-    elif appagent_mode:
+    if appagent_mode:
         memory_root = None
         demo_memory_value = str(
             args.appagent_demo_memory_root
             or os.getenv("APPAGENT_DEMO_MEMORY_ROOT", "")
         ).strip()
         if not demo_memory_value:
-            add("appagent_demo_memory", True, "not required for appagent_baseline")
+            add("appagent_demo_memory", True, "not supplied for source preparation")
         else:
             demo_memory = Path(demo_memory_value).expanduser().resolve()
             manifest = demo_memory / "appagent_demo_manifest.json"
@@ -983,7 +603,7 @@ def main(argv: list[str] | None = None) -> int:
                     if path.is_file() and "__pycache__" not in path.parts
                 ]
                 memory_root = demo_memory
-    elif native_mode or mobile_agent_v3_mode:
+    elif native_mode:
         memory_root = None
         expected_tasks = args.expected_tasks or 116
         source_index_value = str(args.source_index or "").strip()
@@ -1076,10 +696,7 @@ def main(argv: list[str] | None = None) -> int:
         "openai",
         "pandas",
     ]
-    if mobile_agent_v3_mode:
-        module_names.append("qwen_vl_utils")
-    if not function_mode:
-        module_names.append("uiautomator2")
+    module_names.append("uiautomator2")
     for module_name in module_names:
         try:
             importlib.import_module(module_name)
@@ -1087,31 +704,13 @@ def main(argv: list[str] | None = None) -> int:
             add(f"python_module:{module_name}", False, str(error))
         else:
             add(f"python_module:{module_name}", True, "importable")
-    if mobile_agent_v3_mode:
-        for distribution, expected_version in (
-            ("qwen-vl-utils", QWEN_VL_UTILS_VERSION),
-            ("torch", TORCH_VERSION),
-            ("torchvision", TORCHVISION_VERSION),
-        ):
-            try:
-                actual_version = importlib.metadata.version(distribution)
-            except importlib.metadata.PackageNotFoundError:
-                actual_version = "missing"
-            add(
-                f"package_version:{distribution}",
-                actual_version == expected_version,
-                f"actual={actual_version}; expected={expected_version}",
-            )
-    if appagent_mode or native_mode or mobile_agent_v3_mode:
+    if appagent_mode or native_mode:
         add("jq", True, f"not required by {profile} profile")
     else:
         add("jq", bool(shutil.which("jq")), shutil.which("jq") or "missing")
     add("java", bool(shutil.which("java")), shutil.which("java") or "missing")
-    if mobile_agent_v3_mode:
-        add("model_key", True, "not required by local GUI-Owl endpoint")
-    else:
-        add("model_key", bool(os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY")), "configured" if os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY") else "missing")
-    if appagent_mode or native_mode or mobile_agent_v3_mode:
+    add("model_key", bool(os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY")), "configured" if os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY") else "missing")
+    if appagent_mode or native_mode:
         add("server_port", True, f"not required by {profile} profile")
     else:
         add("server_port", _port_is_free(args.server_port), f"127.0.0.1:{args.server_port}")
@@ -1147,15 +746,13 @@ def main(argv: list[str] | None = None) -> int:
                 not crash_dialog_present,
                 "present" if crash_dialog_present else "none",
             )
-            if function_mode:
-                required_packages = (args.oob_package, "com.google.android.contacts")
-            elif appagent_mode:
+            if appagent_mode:
                 required_packages = (
                     ("com.google.android.contacts",)
                     if args.require_contacts_ready
                     else ()
                 )
-            elif native_mode or mobile_agent_v3_mode:
+            elif native_mode:
                 required_packages = (
                     ("com.google.android.contacts",)
                     if args.require_contacts_ready
@@ -1221,10 +818,6 @@ def main(argv: list[str] | None = None) -> int:
                     if contacts_notification_fixed
                     else "notification permission not fixed denied",
                 )
-                _run(
-                    [adb, "-s", args.serial, "shell", "am", "force-stop", args.oob_package],
-                    timeout=10,
-                )
                 screen = ""
                 for _ in range(3):
                     _run([adb, "-s", args.serial, "shell", "am", "start", "-n", "com.google.android.contacts/com.android.contacts.activities.PeopleActivity"], timeout=10)
@@ -1268,30 +861,10 @@ def main(argv: list[str] | None = None) -> int:
                 add("contacts_ready", contacts_ready, contacts_detail)
                 _run([adb, "-s", args.serial, "shell", "am", "force-stop", "com.google.android.contacts"], timeout=5)
 
-    if native_mode or mobile_agent_v3_mode:
-        add("oob_health", True, f"not required by {profile} profile")
-    elif args.oob_url and adb and args.require_device:
-        restored, detail = _restore_oob_http(
-            adb,
-            args.serial,
-            args.oob_package,
-            args.oob_activity,
-            args.oob_url,
-            args.oob_receiver,
-            args.oob_accessibility_service,
-        )
-        add("oob_health", restored, detail)
-    elif args.oob_url:
-        add("oob_health", _oob_healthy(args.oob_url), args.oob_url)
-
     failures = [check for check in checks if check.status == "fail"]
     warnings = [check for check in checks if check.status == "warning"]
-    fingerprint_files = (
-        [path for path in function_files if path.is_file()]
-        if function_mode
-        else memory_files
-    )
-    fingerprint_root = repo if function_mode or memory_root is None else memory_root
+    fingerprint_files = memory_files
+    fingerprint_root = repo if memory_root is None else memory_root
     report = {
         "schema_version": "omniflow.androidworld_runtime_preflight.v1",
         "ready": not failures,
@@ -1302,9 +875,7 @@ def main(argv: list[str] | None = None) -> int:
         "serial": args.serial,
         "profile": profile,
         "initial_memory_condition": (
-            "function_suite"
-            if function_mode
-            else "appagent_demo_memory"
+            "appagent_demo_memory"
             if appagent_mode and memory_root is not None
             else "native_memory"
             if memory_root is not None

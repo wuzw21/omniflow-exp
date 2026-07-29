@@ -20,10 +20,17 @@ def compile_runlog_to_store(
     client: Any | None = None,
     prompt: str | None = None,
     timeout: float = 120.0,
+    source_states: str | Path | dict[str, Any] | None = None,
+    state_loader: Any | None = None,
 ) -> dict[str, Any]:
-    """Register strict v2 Functions from a RunLog's successful actions."""
+    """Register strict v2 Functions and their referenced source states."""
     from omniflow.functions.artifact import bind_function, parse_function_artifact
     from omniflow.functions.store import FunctionStore
+    from omniflow.transfer.runtime import (
+        TRANSFER_STATE_CATALOG_FILENAME,
+        TRANSFER_STATE_CATALOG_VERSION,
+        load_transfer_state_catalog,
+    )
 
     root = Path(output_root).expanduser().resolve()
     if root.exists() and any(root.iterdir()):
@@ -300,11 +307,77 @@ Set checker_rules=[] in every generated Function.
             raise ValueError("function_bundle_source_arguments_invalid")
         bind_function(function, arguments)
 
+    if source_states is not None and state_loader is not None:
+        raise ValueError("function_source_state_provider_ambiguous")
+    referenced_state_ids = _referenced_source_state_ids(functions)
+    states: dict[str, dict[str, Any]]
+    source_catalog_run_id = facts["run_id"]
+    if source_states is not None:
+        if isinstance(source_states, (str, Path)):
+            source_catalog_path = Path(source_states).expanduser().resolve()
+            raw_catalog = json.loads(source_catalog_path.read_text(encoding="utf-8"))
+            if not isinstance(raw_catalog, dict):
+                raise ValueError("function_source_state_catalog_invalid")
+            source_catalog_run_id = str(raw_catalog.get("run_id") or "").strip()
+            states = load_transfer_state_catalog(source_catalog_path)
+        elif isinstance(source_states, dict):
+            raw_states = source_states.get("states")
+            if raw_states is None:
+                raw_states = source_states
+            elif source_states.get("schema_version") != (
+                TRANSFER_STATE_CATALOG_VERSION
+            ):
+                raise ValueError("function_source_state_catalog_invalid")
+            if not isinstance(raw_states, dict):
+                raise ValueError("function_source_state_catalog_invalid")
+            source_catalog_run_id = str(
+                source_states.get("run_id") or facts["run_id"]
+            ).strip()
+            states = {
+                str(state_id): _normalize_source_state(value, str(state_id))
+                for state_id, value in raw_states.items()
+            }
+        else:
+            raise ValueError("function_source_state_catalog_invalid")
+    elif callable(state_loader):
+        states = {
+            state_id: _normalize_source_state(state_loader(state_id), state_id)
+            for state_id in referenced_state_ids
+        }
+    else:
+        raise ValueError("function_source_states_required")
+    if source_catalog_run_id != facts["run_id"]:
+        raise ValueError("function_source_state_run_id_mismatch")
+    missing_state_ids = [
+        state_id for state_id in referenced_state_ids if state_id not in states
+    ]
+    if missing_state_ids:
+        raise ValueError(
+            "function_source_states_missing:" + ",".join(missing_state_ids)
+        )
+    frozen_states = {
+        state_id: states[state_id] for state_id in referenced_state_ids
+    }
+
     root.mkdir(parents=True, exist_ok=True)
     store_path = root / "store.json"
     store = FunctionStore(store_path)
     for function in functions:
         store.put_function(function)
+    transfer_state_catalog_path = root / TRANSFER_STATE_CATALOG_FILENAME
+    transfer_state_catalog_path.write_text(
+        json.dumps(
+            {
+                "schema_version": TRANSFER_STATE_CATALOG_VERSION,
+                "run_id": facts["run_id"],
+                "states": frozen_states,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     report = {
         "schema_version": "omniflow.androidworld.function-gate.v2",
         "success": True,
@@ -318,6 +391,8 @@ Set checker_rules=[] in every generated Function.
             else None
         ),
         "store_path": str(store_path),
+        "transfer_state_catalog": str(transfer_state_catalog_path),
+        "transfer_state_count": len(frozen_states),
         "function_ids": function_ids,
         "function_count": len(function_ids),
     }
@@ -325,6 +400,78 @@ Set checker_rules=[] in every generated Function.
         json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     )
     return report
+
+
+def _referenced_source_state_ids(functions: list[Any]) -> list[str]:
+    state_ids: list[str] = []
+    for function in functions:
+        for item in (*function.steps, *function.checker_rules):
+            if isinstance(item, dict):
+                state_id = str(item.get("source_state_id") or "").strip()
+            else:
+                state_id = str(getattr(item, "source_state_id", "") or "").strip()
+            if state_id and state_id not in state_ids:
+                state_ids.append(state_id)
+    if not state_ids:
+        raise ValueError("function_source_state_references_required")
+    return state_ids
+
+
+def _normalize_source_state(value: Any, expected_state_id: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"function_source_state_invalid:{expected_state_id}")
+    extra = value.get("extra") if isinstance(value.get("extra"), dict) else {}
+    state_id = str(
+        value.get("state_id") or extra.get("state_id") or expected_state_id
+    ).strip()
+    if state_id != expected_state_id:
+        raise ValueError(f"function_source_state_id_mismatch:{expected_state_id}")
+    state: dict[str, Any] = {"state_id": state_id}
+    aliases = {
+        "xml": ("xml", "page", "observation_xml"),
+        "package_name": ("package_name", "packageName"),
+        "activity_name": ("activity_name", "activityName"),
+    }
+    for output, names in aliases.items():
+        item = next(
+            (
+                source[name]
+                for source in (value, extra)
+                for name in names
+                if source.get(name) is not None
+            ),
+            None,
+        )
+        if item is not None:
+            if not isinstance(item, str):
+                raise ValueError(
+                    f"function_source_state_{output}_invalid:{state_id}"
+                )
+            state[output] = item
+    display = value.get("display") or extra.get("display")
+    if not isinstance(display, dict):
+        width = value.get("width") or value.get("display_width")
+        height = value.get("height") or value.get("display_height")
+        if width is None:
+            width = extra.get("width") or extra.get("display_width")
+        if height is None:
+            height = extra.get("height") or extra.get("display_height")
+        if width is not None or height is not None:
+            display = {"width": width, "height": height}
+    if display is not None:
+        if not isinstance(display, dict) or set(display) != {"width", "height"}:
+            raise ValueError(f"function_source_state_display_invalid:{state_id}")
+        try:
+            width = int(display["width"])
+            height = int(display["height"])
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"function_source_state_display_invalid:{state_id}"
+            ) from error
+        if width <= 0 or height <= 0:
+            raise ValueError(f"function_source_state_display_invalid:{state_id}")
+        state["display"] = {"width": width, "height": height}
+    return state
 
 
 def _validate_checker_evidence(
@@ -373,7 +520,7 @@ def _default_bundle(
     recovery_examples: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
     source_steps = list(facts.get("steps") or ())
-    if not source_steps:
+    if len(source_steps) < 2:
         return None
     steps = [
         {

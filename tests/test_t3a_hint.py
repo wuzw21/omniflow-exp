@@ -1,14 +1,83 @@
 from pathlib import Path
 
+import pytest
+
+from omniflow.core.model import Action, Function, FunctionStep
+from omniflow.functions.artifact import FUNCTION_ARTIFACT_VERSION
+from omniflow.functions.store import FunctionStore
 from src.experiment.androidworld import (
     ArchivedRunLog,
     _parse_one_task_methods,
+    _select_complete_function,
     build_official_androidworld_command,
 )
 
 
+def test_formal_one_task_method_set_is_exact() -> None:
+    assert _parse_one_task_methods("all") == [
+        "fixed_replay",
+        "ours",
+        "mobilegpt_offline_retrieval",
+        "appagent_demo",
+        "t3a_hint",
+    ]
+    with pytest.raises(ValueError, match="Unsupported one-task method"):
+        _parse_one_task_methods("mobile_agent_v3")
+
+
 def test_t3a_hint_is_a_supported_one_task_method() -> None:
     assert _parse_one_task_methods("t3a_hint") == ["t3a_hint"]
+
+
+def _put_function(
+    store: FunctionStore,
+    function_id: str,
+    tools: tuple[str, ...],
+) -> None:
+    store.put_function(
+        Function(
+            function_id=function_id,
+            name=function_id.replace("_", " "),
+            description=f"Complete {function_id}.",
+            steps=tuple(
+                FunctionStep(
+                    step_index=index,
+                    source_state_id=f"{function_id}_state_{index}",
+                    action=Action(
+                        tool,
+                        (
+                            {"package_name": "com.android.settings"}
+                            if tool == "open_app"
+                            else {"duration_ms": 100}
+                        ),
+                    ),
+                )
+                for index, tool in enumerate(tools)
+            ),
+            schema_version=FUNCTION_ARTIFACT_VERSION,
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": False,
+            },
+            checker_rules=(),
+            agent_visible=True,
+        )
+    )
+
+
+def test_t3a_hint_selects_unique_function_containing_all_subtraces(
+    tmp_path: Path,
+) -> None:
+    store_path = tmp_path / "store.json"
+    store = FunctionStore(store_path)
+    _put_function(store, "partial_wait", ("wait",))
+    _put_function(store, "complete_run_settings", ("open_app", "wait"))
+
+    selected = _select_complete_function(store_path)
+
+    assert selected.id == "complete_run_settings"
 
 
 def test_t3a_hint_uses_official_t3a_with_source_trace(tmp_path: Path) -> None:

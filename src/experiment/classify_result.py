@@ -7,7 +7,6 @@ from pathlib import Path
 import re
 from typing import Any
 
-
 ENVIRONMENT_PATTERNS = {
     "app_setup_failed": r"Failed to automatically setup app|manually setup the app",
     "task_start_timeout": r"waited for task_started: timeout",

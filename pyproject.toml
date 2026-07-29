@@ -40,8 +40,6 @@ include-package-data = false
 include = [
     "omniflow",
     "omniflow.*",
-    "omnitransfer",
-    "omnitransfer.*",
     "src",
     "src.*",
 ]

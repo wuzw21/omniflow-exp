@@ -121,17 +121,13 @@ def _canonicalize_transfer_state(value: Any) -> dict[str, Any]:
 
 
 def load_omnitransfer() -> Any:
-    configured_root = os.environ.get("OMNITRANSFER_ROOT")
-    if configured_root:
-        return _load_omnitransfer_from_root(Path(configured_root))
-    try:
-        return importlib.import_module("omnitransfer")
-    except ModuleNotFoundError as error:
-        if error.name != "omnitransfer":
-            raise
-    return _load_omnitransfer_from_root(
-        Path.home() / "Projects" / "Omni" / "OmniTransfer"
+    configured_root = str(os.environ.get("OMNITRANSFER_ROOT") or "").strip()
+    root = (
+        Path(configured_root)
+        if configured_root
+        else Path.home() / "Projects" / "Omni" / "OmniTransfer"
     )
+    return _load_omnitransfer_from_root(root)
 
 
 def _load_omnitransfer_from_root(root: Path) -> Any:

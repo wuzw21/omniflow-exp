@@ -4,14 +4,11 @@ import base64
 import importlib
 import inspect
 import io
-import json
 import os
 import subprocess
 import time
 from types import SimpleNamespace
 from typing import Any
-import urllib.parse
-import urllib.request
 import xml.etree.ElementTree as ET
 
 from omniflow import Action, ActionResult, Observation
@@ -19,27 +16,6 @@ from src.integrations.android_world.accessibility import (
     xml_covers_screen,
     xml_with_screen_size,
 )
-
-_OOB_FIELDS_OUTSIDE_EXTRA = {
-    "image",
-    "image_base64",
-    "indexed_context",
-    "pixels",
-    "screenshot",
-    "screenshot_base64",
-    "xml",
-}
-
-
-def normalize_oob_get_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    state = payload.get("state")
-    if not isinstance(state, dict):
-        return payload
-    normalized = dict(payload)
-    for key, value in state.items():
-        if value is not None or key not in normalized:
-            normalized[key] = value
-    return normalized
 
 
 def _read(value: Any, name: str, default: Any = None) -> Any:
@@ -229,14 +205,8 @@ class AndroidWorldHost:
             else float(open_app_ready_timeout_seconds)
         )
         self.open_app_ready_timeout_seconds = max(0.0, ready_timeout)
-        self.oob_url = str(os.environ.get("OMNIFLOW_OOB_DEVICE_URL") or "").rstrip("/")
-        self.oob_device_url = self.oob_url
-        self.observe_backend = str(
-            os.environ.get("OMNIFLOW_OBSERVE_BACKEND") or "androidworld"
-        ).strip().lower()
-        self.act_backend = str(
-            os.environ.get("OMNIFLOW_ACT_BACKEND") or "androidworld"
-        ).lower()
+        self.observe_backend = "androidworld"
+        self.act_backend = "androidworld"
 
     def _adb(self, *args: str, timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
         command = [self.adb_path]
@@ -264,25 +234,6 @@ class AndroidWorldHost:
             for line in str(result.stdout or "").splitlines()
             if line.startswith("package:") and line.removeprefix("package:").strip()
         }
-
-    def _request(
-        self,
-        method: str,
-        path: str,
-        payload: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        if not self.oob_url:
-            raise RuntimeError("OMNIFLOW_OOB_DEVICE_URL is not configured")
-        data = None if payload is None else json.dumps(payload).encode("utf-8")
-        request = urllib.request.Request(
-            f"{self.oob_url}{path}",
-            data=data,
-            headers={"Content-Type": "application/json"} if data else {},
-            method=method,
-        )
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(request, timeout=45) as response:
-            return json.loads(response.read().decode("utf-8"))
 
     def _fresh_uiautomator_xml(self) -> str:
         if not self.adb_serial:
@@ -315,113 +266,6 @@ class AndroidWorldHost:
             except (OSError, subprocess.SubprocessError):
                 pass
 
-    def _oob_request(
-        self,
-        method: str,
-        path: str,
-        payload: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        return self._request(method, path, payload)
-
-    def _read_oob_debug_receiver_state(
-        self,
-        *,
-        xml: bool,
-        screenshot: bool,
-    ) -> dict[str, Any]:
-        package = str(
-            os.environ.get("OMNIFLOW_OOB_PACKAGE") or "cn.com.omnimind.bot.debug"
-        )
-        receiver = str(
-            os.environ.get("OMNIFLOW_OOB_GET_STATE_RECEIVER")
-            or ".DebugGetStateReceiver"
-        )
-        component = f"{package}/{receiver}" if receiver.startswith(".") else receiver
-        result_path = "files/debug-get-state-result.json"
-        self._adb("shell", "run-as", package, "rm", "-f", result_path, timeout=10)
-        broadcast = self._adb(
-            "shell",
-            "am",
-            "broadcast",
-            "-a",
-            f"{package}.RUN_GET_STATE",
-            "-n",
-            component,
-            "--ez",
-            "includeXml",
-            str(bool(xml)).lower(),
-            "--ez",
-            "includeScreenshot",
-            str(bool(screenshot)).lower(),
-            "--ez",
-            "includeIndexedContext",
-            "false",
-            "--ei",
-            "maxXmlChars",
-            "0",
-            timeout=30,
-        )
-        if broadcast.returncode != 0:
-            return {"success": False, "error": broadcast.stderr.strip()}
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            result = self._adb(
-                "shell", "run-as", package, "cat", result_path, timeout=10
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return json.loads(result.stdout)
-            time.sleep(0.5)
-        return {"success": False, "error": "OOB get_state result timeout"}
-
-    def _observe_oob(self, *, xml: bool, screenshot: bool, app_info: bool) -> Observation:
-        include_indexed = str(
-            os.environ.get("OMNIFLOW_OOB_INCLUDE_INDEXED_CONTEXT") or ""
-        ).lower() in {"1", "true", "yes", "on"}
-        query = urllib.parse.urlencode(
-            {
-                "includeXml": str(bool(xml)).lower(),
-                "includeScreenshot": str(bool(screenshot)).lower(),
-                "includeIndexedContext": str(include_indexed).lower(),
-                "maxXmlChars": "0",
-                "filterOverlay": "true",
-            }
-        )
-        raw = (
-            self._oob_request("GET", f"/get_state?{query}")
-            if self.oob_url
-            else self._read_oob_debug_receiver_state(xml=xml, screenshot=screenshot)
-        )
-        raw = normalize_oob_get_state_payload(raw)
-        if raw.get("success") is False:
-            raise RuntimeError(str(raw.get("error") or "OOB get_state failed"))
-        image = raw.get("screenshot") if isinstance(raw.get("screenshot"), dict) else {}
-        indexed = raw.get("indexed_context")
-        raw_state = {
-            key: value
-            for key, value in raw.items()
-            if key not in _OOB_FIELDS_OUTSIDE_EXTRA
-        }
-        display_width, display_height = self._screen_size()
-        extra: dict[str, Any] = {
-            "observe_backend": "oob",
-            "oob_device_url": self.oob_url,
-            "include_indexed_context": include_indexed,
-            "display": {
-                "width": int(display_width),
-                "height": int(display_height),
-            },
-            "raw_state": raw_state,
-        }
-        if include_indexed:
-            extra["indexed_context"] = indexed
-        return Observation(
-            xml=str(raw.get("xml") or "") or None if xml else None,
-            package_name=str(raw.get("package_name") or "") or None if app_info else None,
-            activity_name=str(raw.get("activity_name") or "") or None if app_info else None,
-            image_base64=str(image.get("data") or image.get("data_uri") or "") or None,
-            extra=extra,
-        )
-
     def observe(
         self,
         *,
@@ -430,8 +274,6 @@ class AndroidWorldHost:
         app_info: bool = True,
         **_: Any,
     ) -> Observation:
-        if self.observe_backend.startswith("oob"):
-            return self._observe_oob(xml=xml, screenshot=screenshot, app_info=app_info)
         try:
             state = self.env.get_state()
         except Exception:
@@ -585,7 +427,6 @@ class AndroidWorldHost:
         if action.tool == "finished":
             return ActionResult(True)
         try:
-            settled_by_oob = False
             open_app_package = (
                 str(action.args.get("package_name") or "").strip()
                 if action.tool == "open_app"
@@ -601,19 +442,7 @@ class AndroidWorldHost:
                 controller = getattr(self.env, "controller", self.env)
                 adb_utils.set_clipboard_contents(text, controller)
                 return ActionResult(True)
-            if self.act_backend.startswith("oob") and self.oob_url:
-                raw = self._request(
-                    "POST",
-                    "/act",
-                    {
-                        "action": action.to_dict(),
-                        "settle_delay_ms": int(self.post_action_wait_seconds * 1000),
-                    },
-                )
-                if raw.get("success") is not True:
-                    return ActionResult(False, str(raw.get("error") or "OOB act failed"))
-                settled_by_oob = True
-            elif action.tool in {"click", "long_press"} and self.adb_serial and all(
+            if action.tool in {"click", "long_press"} and self.adb_serial and all(
                 action.args.get(key) is not None for key in ("x", "y")
             ):
                 width, height = self._screen_size()
@@ -720,7 +549,7 @@ class AndroidWorldHost:
             wait_after_s = float(
                 action.args.get("wait_after_s", self.post_action_wait_seconds) or 0.0
             )
-            if wait_after_s > 0 and not settled_by_oob:
+            if wait_after_s > 0:
                 time.sleep(wait_after_s)
             return ActionResult(True)
         except Exception as error:
@@ -742,5 +571,4 @@ __all__ = [
     "androidworld_elements_xml",
     "capture_adapter_state",
     "make_agent_result",
-    "normalize_oob_get_state_payload",
 ]

@@ -10,7 +10,6 @@ from typing import Any
 
 from src.integrations.android_world.host import make_agent_result
 
-
 MOBILEGPT_PACKAGE = "com.example.MobileGPT"
 MOBILEGPT_ACTIVITY = "com.example.MobileGPT/.MainActivity"
 MOBILEGPT_SERVICE = (

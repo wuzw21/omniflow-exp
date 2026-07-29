@@ -4,7 +4,6 @@ import json
 import time
 from typing import Any
 
-
 _EQUIVALENT_SETUP_LABELS: dict[str, tuple[str, ...]] = {
     "Accept & continue": ("Use without an account",),
     "Don't allow": ("Don’t allow",),

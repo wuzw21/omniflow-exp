@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import json
 from pathlib import Path
 import sys
@@ -446,7 +447,15 @@ class JsonLineBridge:
 
         try:
             with tempfile.TemporaryDirectory(prefix="omniflow-compile-") as output_root:
-                report = compile_runlog_to_store(run_log, output_root)
+                report = compile_runlog_to_store(
+                    run_log,
+                    output_root,
+                    state_loader=lambda state_id: self.host_call(
+                        request_id,
+                        "get_state",
+                        {"state_id": state_id},
+                    ),
+                )
                 compiled = OmniFlow(Path(output_root) / "store.json")
                 function_id = next(iter(report["function_ids"]), "")
                 function = compiled.store.get_function(function_id)
@@ -1345,9 +1354,12 @@ def _bridge_identity() -> dict[str, Any]:
             properties[key.strip()] = value.strip()
     transfer = {"ready": False, "backend": "unavailable"}
     try:
-        from omnitransfer.runtime import runtime_preflight
+        from omniflow.transfer.runtime import load_omnitransfer
 
-        transfer = runtime_preflight()
+        transfer_runtime = importlib.import_module(
+            f"{load_omnitransfer().__name__}.runtime"
+        )
+        transfer = transfer_runtime.runtime_preflight()
     except (ImportError, RuntimeError, ValueError):
         pass
     operations: list[str] = []

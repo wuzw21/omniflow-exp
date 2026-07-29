@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+import sys
+
 from omniflow import Action, Observation
 from omniflow.runtime import execution
+from omniflow.transfer.runtime import load_omnitransfer
 
 SOURCE_XML = """\
 <hierarchy width="720" height="1280">
@@ -31,6 +35,28 @@ TARGET_XML = """\
   </node>
 </hierarchy>
 """
+
+
+def test_omnitransfer_loads_only_from_configured_canonical_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "OmniTransfer"
+    package = root / "src" / "omnitransfer"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text(
+        "CANONICAL_TEST_MARKER = 'configured-root'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OMNITRANSFER_ROOT", str(root))
+    try:
+        module = load_omnitransfer()
+        assert module.CANONICAL_TEST_MARKER == "configured-root"
+        assert Path(module.__file__).resolve().is_relative_to(package.resolve())
+    finally:
+        for name in tuple(sys.modules):
+            if name == "omnitransfer" or name.startswith("omnitransfer."):
+                sys.modules.pop(name, None)
 
 
 def test_transfer_rejects_semantically_conflicting_row_match(monkeypatch) -> None:

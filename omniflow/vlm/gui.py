@@ -371,7 +371,6 @@ def _turn_text(
         context = dict(extra)
         context.pop("installed_apps", None)
         execution_history = str(context.pop("execution_history", "") or "").strip()
-        recent_actions = context.get("recent_actions")
         if has_successful_function_action(context):
             lines.append(
                 "A recalled Function selected for the complete goal finished all "

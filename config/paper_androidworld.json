@@ -23,7 +23,6 @@
     "planner_provider": "openai",
     "model": "qwen3-vl-plus",
     "planner_timeout_sec": 60.0,
-    "ours_observe_backend": "androidworld",
     "perform_emulator_setup": true,
     "mobilegpt_root": "runtime/external/mobilegpt",
     "mobilegpt_server_host": "0.0.0.0",
@@ -33,13 +32,9 @@
     "mobilegpt_rebroadcast_on_start_timeout": 1,
     "mobilegpt_episode_wait_timeout_sec": 120.0,
     "mobilegpt_open_target_app": "",
-    "mobilegpt_source_memory_root": "runtime/evals/androidworld_single_task_assets/source_seed_111/SystemBluetoothTurnOn/mobilegpt_offline_retrieval/native_source_r2/memory",
-    "mobilegpt_offline_source_memory_root": "",
-    "mobilegpt_task_function_id": "",
-    "mobilegpt_no_patch_stats": false,
+    "mobilegpt_source_memory_root": "runtime/evals/androidworld_single_task_assets/source_seed_111/SystemBluetoothTurnOn/mobilegpt_offline_retrieval/native_source_r3/memory",
     "save_success_source_runlog": false,
-    "appagent_demo_memory_root": "runtime/evals/androidworld_single_task_assets/source_seed_111/SystemBluetoothTurnOn/appagent_demo/native_source_r2",
-    "mobile_agent_v3_model_root": "/home/wuzewen/models/GUI-Owl-7B-7c1644c0288da07435a485701d0fea0ac353f38a",
+    "appagent_demo_memory_root": "runtime/evals/androidworld_single_task_assets/source_seed_111/SystemBluetoothTurnOn/appagent_demo/native_source_r3",
     "dry_run": false,
     "fail_fast": false
   }

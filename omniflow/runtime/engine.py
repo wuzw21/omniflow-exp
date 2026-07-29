@@ -120,7 +120,10 @@ class OmniFlow:
             router_usage = _take_llm_usage(self.function_router)
             merge_usage(llm_usage, router_usage, component="function_router")
             model_calls += _usage_model_calls(router_usage, fallback=1)
-            planner_functions = ()
+        # Function selection belongs exclusively to the small semantic router.
+        # The GUI planner must never receive Function tools, including when a
+        # caller omitted the router or the router rejected/failed.
+        planner_functions = ()
 
         selected_function: Function | None = None
         resolved_arguments: dict[str, Any] = {}

@@ -22,8 +22,6 @@ import sys
 import tempfile
 import time
 from typing import Any, Iterable, Sequence
-import urllib.parse
-import urllib.request
 import xml.etree.ElementTree as ET
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -31,15 +29,9 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from omniflow.core.trajectory import canonicalize_run_log
+from omniflow.functions.store import FunctionStore
 from src.experiment.result_registry import register_attempt_summary
 from src.integrations.appagent_adapter import validate_appagent_demo_memory
-from src.integrations.mobile_agent_v3_adapter import (
-    GUI_OWL_7B_MODEL_REVISION,
-    MOBILE_AGENT_V3_OFFICIAL_REVISION,
-)
-from src.integrations.mobilegpt_memory import (
-    select_complete_function,
-)
 
 DEFAULT_ARCHIVE_INDEX = (
     REPO_ROOT
@@ -57,14 +49,12 @@ DEFAULT_OUTPUT_ROOT = (
     REPO_ROOT / "runtime" / "evals" / "androidworld_validator" / "runs"
 )
 DEFAULT_MOBILEGPT_ROOT = REPO_ROOT / "runtime" / "external" / "mobilegpt"
-DEFAULT_MOBILE_AGENT_V3_ROOT = REPO_ROOT / "runtime" / "external" / "mobileagent"
 DEFAULT_MOBILEGPT_STATS_JSONL = (
     DEFAULT_OUTPUT_ROOT / "_mobilegpt_stats" / "mobilegpt_stats.jsonl"
 )
 DEFAULT_MOBILEGPT_STATS_SUMMARY = (
     DEFAULT_OUTPUT_ROOT / "_mobilegpt_stats" / "mobilegpt_stats_summary.json"
 )
-DEFAULT_OOB_DEVICE_URL = ""
 MOBILEGPT_PACKAGE = "com.example.MobileGPT"
 MOBILEGPT_MAIN_ACTIVITY = "com.example.MobileGPT/.MainActivity"
 MOBILEGPT_ACCESSIBILITY_SERVICE = (
@@ -78,7 +68,9 @@ DEFAULT_CONTACTS_PERMISSION_GRANTS = (
     "android.permission.WRITE_CONTACTS",
     "android.permission.POST_NOTIFICATIONS",
 )
-DEFAULT_DEVICE_TARGETS = "target5554:emulator-5554:5554,source5556:emulator-5556:5556"
+DEFAULT_DEVICE_TARGETS = (
+    "small5554:emulator-5554:5554,fold5564:emulator-5564:5564"
+)
 DEFAULT_MOBILEGPT_WAIT_START_TIMEOUT_SEC = 60.0
 DEFAULT_MOBILEGPT_EPISODE_WAIT_TIMEOUT_SEC = 120.0
 DEFAULT_EVAL_TASK_RANDOM_SEED = 113
@@ -316,22 +308,6 @@ def _default_e2e_store_path(
         / "omniflow"
         / "store.json"
     )
-
-
-def _default_oob_device_url() -> str:
-    return (
-        str(os.environ.get("OMNIFLOW_OOB_DEVICE_URL") or DEFAULT_OOB_DEVICE_URL)
-        .strip()
-        .rstrip("/")
-    )
-
-
-def _append_default_oob_observe_args(argv: list[str]) -> str:
-    oob_device_url = _default_oob_device_url()
-    if oob_device_url:
-        argv.extend(["--oob-device-url", oob_device_url])
-    argv.extend(["--oob-observe-backend", "oob"])
-    return oob_device_url
 
 
 def _local_dotenv_env(*, repo_root: Path = REPO_ROOT) -> dict[str, str]:
@@ -848,7 +824,7 @@ def complete_androidworld_task_params(
     goal: str,
     params: dict[str, Any],
 ) -> dict[str, Any]:
-    """Fill legacy flat archived params needed by AndroidWorld validators."""
+    """Normalize archived source params for AndroidWorld validators."""
 
     completed = dict(params)
     if task.startswith("RecipeAdd") and "row_objects" not in completed:
@@ -941,7 +917,8 @@ def load_archive_index(
             str(task), str(raw_meta.get("goal") or ""), params
         )
         seed = _coerce_int(
-            raw_meta.get("replay_seed")
+            raw_meta.get("source_seed")
+            or raw_meta.get("replay_seed")
             or raw_meta.get("collect_seed")
             or raw_meta.get("task_random_seed"),
             30,
@@ -1684,7 +1661,6 @@ def build_fixed_replay_command(
         argv.extend(["--planner-provider", planner_provider.strip()])
     if model.strip():
         argv.extend(["--model", model.strip()])
-    argv.extend(["--oob-observe-backend", "androidworld"])
     return CommandSpec(
         label=f"fixed_replay:{item.task}",
         argv=argv,
@@ -1731,8 +1707,8 @@ def build_official_androidworld_command(
     *,
     android_world_root: str | Path = DEFAULT_ANDROID_WORLD_ROOT,
     output_root: str | Path = DEFAULT_OUTPUT_ROOT,
-    method_name: str = "m3a_official",
-    official_agent_name: str = "m3a_gpt4v",
+    method_name: str = "t3a_hint",
+    official_agent_name: str = "t3a_gpt4",
     source_action_hint_path: str | Path | None = None,
     device_label: str = "",
     serial: str = "",
@@ -1753,8 +1729,8 @@ def build_official_androidworld_command(
         serial=serial,
         console_port=console_port,
     )
-    resolved_method = _safe_stem(method_name, fallback="m3a_official")
-    resolved_agent = str(official_agent_name or "m3a_gpt4v").strip() or "m3a_gpt4v"
+    resolved_method = _safe_stem(method_name, fallback="t3a_hint")
+    resolved_agent = str(official_agent_name or "t3a_gpt4").strip() or "t3a_gpt4"
     resolved_output = _experiment_run_dir(
         output_root,
         task=item.task,
@@ -1794,8 +1770,6 @@ def build_official_androidworld_command(
         str(int(max_steps)),
         "--output-path",
         str(resolved_output),
-        "--oob-observe-backend",
-        "androidworld",
     ]
     if fixed_task_params:
         params_json = json.dumps(
@@ -1889,8 +1863,6 @@ def build_e2e_command(
     planner_timeout_sec: float | None = None,
     store_path: str | Path | None = None,
     omnitransfer_root: str | Path | None = None,
-    disable_action_transfer: bool = False,
-    oob_observe_backend: str = "androidworld",
     python_executable: str = sys.executable,
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
@@ -1951,8 +1923,6 @@ def build_e2e_command(
     )
     if resolved_omnitransfer_root is not None:
         env["OMNITRANSFER_ROOT"] = str(resolved_omnitransfer_root)
-    if disable_action_transfer:
-        env["OMNIFLOW_DISABLE_ACTION_TRANSFER"] = "1"
     effective_params = (
         dict(task_params_override) if task_params_override is not None else item.params
     )
@@ -1997,15 +1967,6 @@ def build_e2e_command(
             argv.extend(["--planner-timeout-sec", str(float(planner_timeout_sec))])
     if adb_path.strip():
         argv.extend(["--adb-path", adb_path.strip()])
-    observe_backend = str(oob_observe_backend or "oob").strip().lower()
-    if observe_backend == "oob":
-        oob_device_url = _append_default_oob_observe_args(argv)
-        state_backend = "oob_get_state"
-    else:
-        argv.extend(["--oob-observe-backend", "androidworld"])
-        oob_device_url = ""
-        state_backend = "androidworld"
-
     return CommandSpec(
         label=f"e2e:{item.task}",
         argv=argv,
@@ -2045,13 +2006,11 @@ def build_e2e_command(
             ),
             "planner_provider": planner_provider,
             "model": model,
-            "state_backend": state_backend,
+            "state_backend": "androidworld",
             "action_backend": "androidworld",
-            "native_androidworld_agent_io": state_backend == "androidworld",
-            "oob_device_url": oob_device_url,
+            "native_androidworld_agent_io": True,
             "include_indexed_context": False,
-            "uses_action_transfer": not bool(disable_action_transfer),
-            "action_transfer_ablation": bool(disable_action_transfer),
+            "uses_action_transfer": True,
         },
     )
 
@@ -2104,131 +2063,6 @@ def validate_ours_transfer_assets(
         **coverage,
         **source_target_audit,
     }
-
-
-def check_oob_get_state_ready(
-    *,
-    oob_url: str = "",
-    serial: str = "",
-    console_port: int = 0,
-    adb_path: str = "",
-    timeout_sec: float = 12.0,
-) -> dict[str, Any]:
-    from src.integrations.android_world import launch as aw_launch
-
-    resolved_url = str(oob_url or _default_oob_device_url()).strip().rstrip("/")
-    parsed = urllib.parse.urlparse(resolved_url)
-    port = int(parsed.port or 0)
-    diagnostics: dict[str, Any] = {
-        "enabled": True,
-        "success": False,
-        "url": resolved_url,
-        "serial": str(serial or "").strip(),
-        "console_port": int(console_port or 0),
-        "forward_port": port,
-    }
-    if not resolved_url:
-        diagnostics["mode"] = "oob_debug_receiver"
-        prepare = aw_launch._prepare_oob_device_host_for_replay(
-            adb_serial=str(serial or "").strip()
-        )
-        diagnostics.update(
-            {
-                "success": bool(prepare.get("success")),
-                "prepare": prepare,
-                "state": prepare.get("app_state_ready")
-                or prepare.get("state_ready")
-                or prepare.get("post_start_state_ready"),
-                "error": prepare.get("error"),
-            }
-        )
-        return diagnostics
-    if port > 0:
-        adb = str(adb_path or "").strip() or os.environ.get("ADB_PATH") or "adb"
-        adb_base = [adb]
-        if str(serial or "").strip():
-            adb_base.extend(["-s", str(serial).strip()])
-        for args in (
-            ["forward", "--remove", f"tcp:{port}"],
-            ["forward", f"tcp:{port}", f"tcp:{port}"],
-        ):
-            completed = subprocess.run(
-                [*adb_base, *args],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=False,
-                timeout=10,
-            )
-            diagnostics.setdefault("adb_forward", []).append(
-                {
-                    "args": args,
-                    "returncode": completed.returncode,
-                    "stdout_tail": completed.stdout[-500:],
-                    "stderr_tail": completed.stderr[-500:],
-                }
-            )
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    deadline = time.monotonic() + max(1.0, float(timeout_sec or 0))
-    last_error = ""
-    health_payload: Any = None
-    while time.monotonic() < deadline:
-        try:
-            with opener.open(f"{resolved_url}/health", timeout=3) as response:
-                health_payload = json.loads(response.read().decode("utf-8"))
-            diagnostics["health"] = health_payload
-            if (
-                isinstance(health_payload, dict)
-                and health_payload.get("success") is not True
-            ):
-                last_error = str(health_payload)
-                time.sleep(0.5)
-                continue
-            query = urllib.parse.urlencode(
-                {
-                    "includeXml": "true",
-                    "includeScreenshot": "false",
-                    "includeIndexedContext": "false",
-                    "maxXmlChars": "1000",
-                    "filterOverlay": "true",
-                }
-            )
-            with opener.open(
-                f"{resolved_url}/get_state?{query}", timeout=5
-            ) as response:
-                state_payload = json.loads(response.read().decode("utf-8"))
-            state_payload = aw_launch.normalize_oob_get_state_payload(state_payload)
-            diagnostics["state"] = {
-                "success": state_payload.get("success"),
-                "package_name": state_payload.get("package_name"),
-                "activity_name": state_payload.get("activity_name"),
-                "xml_chars": state_payload.get("xml_chars"),
-                "error": state_payload.get("error")
-                or state_payload.get("error_message"),
-            }
-            package_name = str(state_payload.get("package_name") or "").strip()
-            activity_name = str(state_payload.get("activity_name") or "").strip()
-            xml_chars = _coerce_int(state_payload.get("xml_chars"))
-            xml_text = str(state_payload.get("xml") or "").strip()
-            if (
-                state_payload.get("success") is not False
-                and package_name
-                and activity_name
-                and (xml_chars > 0 or xml_text)
-            ):
-                diagnostics["success"] = True
-                return diagnostics
-            last_error = str(diagnostics["state"])
-        except Exception as exc:  # noqa: BLE001
-            last_error = f"{exc.__class__.__name__}: {exc}"
-        time.sleep(0.5)
-    diagnostics["error"] = last_error or "OOB get_state readiness check failed"
-    return diagnostics
-
-
-def _requires_oob_ready(spec: CommandSpec) -> bool:
-    metadata = spec.metadata if isinstance(spec.metadata, dict) else {}
-    return str(metadata.get("state_backend") or "").strip() == "oob_get_state"
 
 
 def _command_line(spec: CommandSpec) -> str:
@@ -3228,9 +3062,28 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
             for row in teacher_rows
             if row.get("event") == "mobilegpt_teacher_forced_select"
         ),
+        "teacher_action_error_count": sum(
+            1
+            for row in teacher_rows
+            if row.get("event") == "mobilegpt_teacher_action_error"
+        ),
         "chat_model_calls": len(chat_rows),
         "embedding_model_calls": len(embedding_rows),
         "model_calls": model_calls,
+        "chat_models": sorted(
+            {
+                str(row.get("model") or "").strip()
+                for row in chat_rows
+                if str(row.get("model") or "").strip()
+            }
+        ),
+        "embedding_models": sorted(
+            {
+                str(row.get("model") or "").strip()
+                for row in embedding_rows
+                if str(row.get("model") or "").strip()
+            }
+        ),
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
@@ -3309,6 +3162,12 @@ def _mobilegpt_stats_row_fields(
 ) -> dict[str, Any]:
     return {
         f"{prefix}_model_calls": _coerce_int(stats.get("model_calls")),
+        f"{prefix}_chat_model_calls": _coerce_int(stats.get("chat_model_calls")),
+        f"{prefix}_embedding_model_calls": _coerce_int(
+            stats.get("embedding_model_calls")
+        ),
+        f"{prefix}_chat_models": list(stats.get("chat_models") or []),
+        f"{prefix}_embedding_models": list(stats.get("embedding_models") or []),
         f"{prefix}_prompt_tokens": _coerce_int(stats.get("prompt_tokens")),
         f"{prefix}_completion_tokens": _coerce_int(stats.get("completion_tokens")),
         f"{prefix}_total_tokens": _coerce_int(stats.get("total_tokens")),
@@ -3470,6 +3329,8 @@ def validate_mobilegpt_adapted_memory(
     task_name: str,
     source_seed: int,
     source_run_log: str | Path,
+    expected_model: str = "",
+    expected_source_method: str = "",
 ) -> dict[str, Any]:
     """Validate one sealed native MobileGPT source-cold memory tree."""
 
@@ -3493,6 +3354,15 @@ def validate_mobilegpt_adapted_memory(
         raise ValueError("mobilegpt_cold_memory_source_seed_mismatch")
     if int(source_seed) != 111:
         raise ValueError("mobilegpt_cold_memory_requires_source_seed_111")
+    normalized_expected_source_method = str(expected_source_method or "").strip()
+    if normalized_expected_source_method and str(
+        manifest.get("source_method") or ""
+    ).strip() != normalized_expected_source_method:
+        raise ValueError(
+            "mobilegpt_cold_memory_source_method_mismatch:"
+            f"expected={normalized_expected_source_method}:"
+            f"actual={str(manifest.get('source_method') or '').strip() or 'missing'}"
+        )
 
     provenance = manifest.get("provenance")
     if not isinstance(provenance, dict):
@@ -3572,6 +3442,25 @@ def validate_mobilegpt_adapted_memory(
         label="source_stats",
     )
     stats_summary = summarize_mobilegpt_stats(source_stats_path)
+    normalized_expected_model = str(expected_model or "").strip()
+    if normalized_expected_model:
+        manifest_model = str(manifest.get("source_model") or "").strip()
+        if manifest_model != normalized_expected_model:
+            raise ValueError(
+                "mobilegpt_cold_memory_manifest_model_mismatch:"
+                f"expected={normalized_expected_model}:"
+                f"actual={manifest_model or 'missing'}"
+            )
+        source_models = {
+            str(model or "").strip()
+            for model in stats_summary.get("chat_models") or []
+            if str(model or "").strip()
+        }
+        if source_models != {normalized_expected_model}:
+            raise ValueError(
+                "mobilegpt_cold_memory_model_mismatch:"
+                f"expected={normalized_expected_model}:actual={sorted(source_models)}"
+            )
     official_result = manifest.get("official_source_result")
     official_result_path = _mobilegpt_manifest_evidence_path(
         bundle_root,
@@ -3635,12 +3524,22 @@ def build_mobilegpt_teacher_source(
     *,
     task_name: str,
     source_seed: int = 111,
+    provenance_source_run_log: str | Path | None = None,
 ) -> dict[str, Any]:
     """Build a coordinate-free audit artifact for the native teacher stream."""
 
     if int(source_seed) != 111:
         raise ValueError("mobilegpt_teacher_source_requires_seed_111")
     source_path = _repo_path(source_run_log)
+    provenance_path = (
+        _repo_path(provenance_source_run_log)
+        if provenance_source_run_log is not None
+        else source_path
+    )
+    if not provenance_path.is_file():
+        raise FileNotFoundError(
+            f"mobilegpt_source_run_log_missing:{provenance_path}"
+        )
     from src.integrations.mobilegpt_teacher import (
         load_teacher_actions,
         preflight_teacher_source_run_log,
@@ -3701,7 +3600,9 @@ def build_mobilegpt_teacher_source(
         "schema_version": "omniflow.mobilegpt-teacher-source.v1",
         "task_name": str(task_name),
         "source_seed": int(source_seed),
-        "source_run_log_sha256": _file_sha256(source_path),
+        "source_run_log": str(provenance_path),
+        "source_run_log_sha256": _file_sha256(provenance_path),
+        "grounded_teacher_run_log_sha256": _file_sha256(source_path),
         "action_count": len(actions),
         "groundable_action_count": int(
             teacher_preflight["groundable_action_count"]
@@ -3751,6 +3652,8 @@ def seal_mobilegpt_adapted_memory(
     target_package: str = "",
     target_app: str = "",
     source_wall_sec: float = 0.0,
+    source_method: str = "",
+    source_model: str = "",
 ) -> dict[str, Any]:
     """Seal a successful native MobileGPT source-cold episode for warm recall."""
 
@@ -3828,6 +3731,8 @@ def seal_mobilegpt_adapted_memory(
         "schema_version": MOBILEGPT_COLD_MEMORY_SCHEMA,
         "task_name": str(task_name),
         "source_seed": int(source_seed),
+        "source_method": str(source_method or "").strip(),
+        "source_model": str(source_model or "").strip(),
         "target_package": str(target_package),
         "target_app": str(target_app or target_package),
         "memory": {
@@ -3857,6 +3762,8 @@ def seal_mobilegpt_adapted_memory(
             ),
             "task_finished_count": int(write_status["task_finished_count"]),
             "model_calls": _coerce_int(stats_summary.get("model_calls")),
+            "chat_models": list(stats_summary.get("chat_models") or []),
+            "embedding_models": list(stats_summary.get("embedding_models") or []),
             "prompt_tokens": _coerce_int(stats_summary.get("prompt_tokens")),
             "completion_tokens": _coerce_int(
                 stats_summary.get("completion_tokens")
@@ -4692,18 +4599,9 @@ def _task_result_path_context(path: Path) -> dict[str, str]:
     known_methods = {
         "fixed_replay",
         "ours",
-        "ours_no_execution_transfer",
-        "mobilegpt_baseline",
         "mobilegpt_offline_retrieval",
-        "m3a_official",
-        "m3a_hint",
-        "m3a_retrieval",
-        "t3a_official",
         "t3a_hint",
-        "t3a_retrieval",
-        "appagent_baseline",
         "appagent_demo",
-        "mobile_agent_v3",
     }
     stage = ""
     run_dir = path.parent
@@ -4959,6 +4857,12 @@ def _success_source_archive_entry(
     index_root: Path,
     source_run_log: Path,
 ) -> dict[str, Any]:
+    source_seed = _coerce_int(
+        record.get("source_seed")
+        or record.get("replay_seed")
+        or record.get("task_random_seed"),
+        DEFAULT_EVAL_TASK_RANDOM_SEED,
+    )
     return {
         "schema_version": "omniflow.androidworld_success_source_runlog_index.v1",
         "source_kind": "androidworld_validator_success_source_runlog",
@@ -4968,6 +4872,8 @@ def _success_source_archive_entry(
         else {},
         "retained_source_run_log": _path_ref_from(index_root, source_run_log),
         "source_run_log": _path_ref_from(index_root, source_run_log),
+        "source_run_log_sha256": _file_sha256(source_run_log),
+        "source_seed": source_seed,
         "replay_seed": _coerce_int(
             record.get("replay_seed") or record.get("task_random_seed"),
             DEFAULT_EVAL_TASK_RANDOM_SEED,
@@ -5312,15 +5218,7 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
         row_actions_executed = _coerce_int(row.get("actions_executed"))
         if row_actions_executed <= 0 and (
             str(row.get("agent") or "").startswith("official:")
-            or str(method or "")
-            in {
-                "m3a_official",
-                "m3a_hint",
-                "m3a_retrieval",
-                "t3a_official",
-                "t3a_hint",
-                "t3a_retrieval",
-            }
+            or str(method or "") == "t3a_hint"
         ):
             row_actions_executed = max(
                 row_actions_executed,
@@ -5598,22 +5496,13 @@ def cmd_inspect(args: argparse.Namespace) -> int:
 ONE_TASK_ALL_METHODS = (
     "fixed_replay",
     "ours",
-    "mobilegpt_baseline",
-)
-ONE_TASK_SUPPORTED_METHODS = ONE_TASK_ALL_METHODS + (
     "mobilegpt_offline_retrieval",
-    "ours_no_execution_transfer",
-    "m3a_official",
-    "m3a_hint",
-    "t3a_official",
-    "t3a_hint",
-    "appagent_baseline",
     "appagent_demo",
-    "mobile_agent_v3",
+    "t3a_hint",
 )
-MOBILEGPT_METHODS = frozenset({"mobilegpt_baseline", "mobilegpt_offline_retrieval"})
-APPAGENT_METHODS = frozenset({"appagent_baseline", "appagent_demo"})
-MOBILE_AGENT_V3_METHODS = frozenset({"mobile_agent_v3"})
+ONE_TASK_SUPPORTED_METHODS = ONE_TASK_ALL_METHODS
+MOBILEGPT_METHODS = frozenset({"mobilegpt_offline_retrieval"})
+APPAGENT_METHODS = frozenset({"appagent_demo"})
 _ONE_TASK_NON_EXECUTED_STATUSES = {
     "INVALID_MEMORY_LEAKAGE",
     "env_failed",
@@ -5638,11 +5527,6 @@ def _parse_one_task_methods(raw_methods: str) -> list[str]:
         return list(ONE_TASK_ALL_METHODS)
     methods = [_safe_stem(item, fallback="") for item in raw.split(",")]
     methods = [method for method in methods if method]
-    if "mobilegpt" in methods:
-        raise ValueError(
-            "Legacy one-task method 'mobilegpt' is ambiguous; use "
-            "'mobilegpt_baseline' or 'mobilegpt_offline_retrieval'"
-        )
     invalid = [method for method in methods if method not in ONE_TASK_SUPPORTED_METHODS]
     if invalid:
         raise ValueError(f"Unsupported one-task method(s): {', '.join(invalid)}")
@@ -5681,7 +5565,7 @@ def _task_params_override_from_args(args: argparse.Namespace) -> dict[str, Any] 
     return dict(decoded)
 
 
-def _m3a_hint_forbidden_values(params: dict[str, Any]) -> tuple[str, ...]:
+def _t3a_hint_forbidden_values(params: dict[str, Any]) -> tuple[str, ...]:
     values: set[str] = set()
 
     def collect(value: Any) -> None:
@@ -5703,7 +5587,7 @@ def _m3a_hint_forbidden_values(params: dict[str, Any]) -> tuple[str, ...]:
     return tuple(sorted(values, key=len, reverse=True))
 
 
-def _m3a_hint_text(
+def _t3a_hint_text(
     value: Any,
     *,
     forbidden_values: Sequence[str],
@@ -5736,7 +5620,7 @@ def _m3a_hint_text(
     return text
 
 
-def _m3a_hint_step_action(step: Any) -> tuple[str, dict[str, Any]]:
+def _t3a_hint_step_action(step: Any) -> tuple[str, dict[str, Any]]:
     if not isinstance(step, dict):
         return "", {}
     for key in ("tool_call", "action", "selected_action"):
@@ -5775,7 +5659,7 @@ def _m3a_hint_step_action(step: Any) -> tuple[str, dict[str, Any]]:
     return "", {}
 
 
-def _m3a_hint_target(
+def _t3a_hint_target(
     params: dict[str, Any],
     *,
     forbidden_values: Sequence[str],
@@ -5787,7 +5671,7 @@ def _m3a_hint_target(
         "content_desc",
         "contentDescription",
     ):
-        text = _m3a_hint_text(
+        text = _t3a_hint_text(
             params.get(key),
             forbidden_values=forbidden_values,
         )
@@ -5798,7 +5682,7 @@ def _m3a_hint_target(
         if not isinstance(container, dict):
             continue
         for key in ("target_description", "label", "text", "content_desc"):
-            text = _m3a_hint_text(
+            text = _t3a_hint_text(
                 container.get(key),
                 forbidden_values=forbidden_values,
             )
@@ -5807,23 +5691,23 @@ def _m3a_hint_target(
     return ""
 
 
-def _m3a_semantic_hint_step(
+def _t3a_semantic_hint_step(
     step: Any,
     *,
     forbidden_values: Sequence[str],
 ) -> dict[str, str] | None:
-    name, params = _m3a_hint_step_action(step)
+    name, params = _t3a_hint_step_action(step)
     action = name.strip().lower()
     if not action or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", action):
         return None
     if action in {"status", "finish", "done"}:
         return None
     semantic: dict[str, str] = {"action": action}
-    target = _m3a_hint_target(params, forbidden_values=forbidden_values)
+    target = _t3a_hint_target(params, forbidden_values=forbidden_values)
     if target:
         semantic["target"] = target
     if action in {"open_app", "launch_app"}:
-        app = _m3a_hint_text(
+        app = _t3a_hint_text(
             params.get("app_name")
             or params.get("app")
             or params.get("package_name")
@@ -5834,7 +5718,7 @@ def _m3a_semantic_hint_step(
         if app:
             semantic["app"] = app
     if action in {"swipe", "scroll"}:
-        direction = _m3a_hint_text(
+        direction = _t3a_hint_text(
             params.get("direction"),
             forbidden_values=forbidden_values,
             max_len=24,
@@ -5842,7 +5726,7 @@ def _m3a_semantic_hint_step(
         if direction:
             semantic["direction"] = direction
     if action in {"press_key", "key_event"}:
-        key = _m3a_hint_text(
+        key = _t3a_hint_text(
             params.get("key") or params.get("key_name"),
             forbidden_values=forbidden_values,
             max_len=24,
@@ -5852,12 +5736,59 @@ def _m3a_semantic_hint_step(
     return semantic
 
 
+def _select_complete_function(store_path: str | Path):
+    store = FunctionStore(_repo_path(store_path))
+    if store.load_errors:
+        raise ValueError(
+            "t3a_hint_function_store_invalid:"
+            + ",".join(sorted(store.load_errors))
+        )
+    functions = [
+        function
+        for function in store.list_functions(limit=500)
+        if re.match(r"^action_\d{3}_", function.id) is None
+    ]
+    if not functions:
+        raise ValueError("t3a_hint_semantic_functions_required")
+    if len(functions) == 1:
+        return functions[0]
+
+    def action_tools(function: Any) -> tuple[str, ...]:
+        return tuple(action.tool for action in function.actions)
+
+    def contains(complete: tuple[str, ...], subsequence: tuple[str, ...]) -> bool:
+        if not subsequence or len(subsequence) > len(complete):
+            return False
+        return any(
+            complete[start : start + len(subsequence)] == subsequence
+            for start in range(len(complete) - len(subsequence) + 1)
+        )
+
+    candidates = [
+        candidate
+        for candidate in functions
+        if all(
+            other is candidate
+            or contains(action_tools(candidate), action_tools(other))
+            for other in functions
+        )
+    ]
+    maximum = max((len(action_tools(item)) for item in candidates), default=0)
+    candidates = [
+        candidate
+        for candidate in candidates
+        if len(action_tools(candidate)) == maximum
+    ]
+    if len(candidates) != 1:
+        raise ValueError("t3a_hint_complete_function_ambiguous")
+    return candidates[0]
+
+
 def _source_action_hint_path_for_item(
     item: ArchivedRunLog,
     *,
     output_root: str | Path,
     store_path: str | Path | None = None,
-    task_function_id: str = "",
     repo_root: Path = REPO_ROOT,
 ) -> Path:
     payload, _, profile, _ = canonicalize_source_run_log(
@@ -5865,17 +5796,14 @@ def _source_action_hint_path_for_item(
         repo_root=repo_root,
         write_materialized=False,
     )
-    forbidden_values = _m3a_hint_forbidden_values(item.params)
+    forbidden_values = _t3a_hint_forbidden_values(item.params)
     source_steps = list(payload.get("steps") or [])
     semantic_source = "source_run_log"
     semantic_input_steps = source_steps
     store_alignment_mode = "not_applicable"
     if store_path is not None:
         resolved_store_path = _repo_path(store_path, repo_root=repo_root)
-        task_function = select_complete_function(
-            resolved_store_path,
-            task_function_id=task_function_id,
-        )
+        task_function = _select_complete_function(resolved_store_path)
         raw_store = _read_json(resolved_store_path)
         raw_functions = raw_store.get("functions")
         raw_function = (
@@ -5888,13 +5816,13 @@ def _source_action_hint_path_for_item(
         )
         if not isinstance(raw_function_steps, list):
             raise ValueError(
-                f"m3a_hint_complete_function_raw_steps_missing:{task_function.id}"
+                f"t3a_hint_complete_function_raw_steps_missing:{task_function.id}"
             )
         semantic_input_steps = []
         alignment_modes: list[str] = []
         source_cursor = 0
         for function_step in raw_function_steps:
-            function_action, _ = _m3a_hint_step_action(function_step)
+            function_action, _ = _t3a_hint_step_action(function_step)
             function_state_id = str(
                 function_step.get("source_state_id")
                 if isinstance(function_step, dict)
@@ -5904,7 +5832,7 @@ def _source_action_hint_path_for_item(
             alignment_mode = "state_identity"
             for source_index in range(source_cursor, len(source_steps)):
                 source_step = source_steps[source_index]
-                source_action, _ = _m3a_hint_step_action(source_step)
+                source_action, _ = _t3a_hint_step_action(source_step)
                 source_state_id = str(
                     source_step.get("before_state_id")
                     if isinstance(source_step, dict)
@@ -5919,13 +5847,13 @@ def _source_action_hint_path_for_item(
             if aligned_index is None:
                 alignment_mode = "ordered_action"
                 for source_index in range(source_cursor, len(source_steps)):
-                    source_action, _ = _m3a_hint_step_action(source_steps[source_index])
+                    source_action, _ = _t3a_hint_step_action(source_steps[source_index])
                     if source_action.strip().lower() == function_action.strip().lower():
                         aligned_index = source_index
                         break
             if aligned_index is None:
                 raise ValueError(
-                    "m3a_hint_function_runlog_action_mismatch:"
+                    "t3a_hint_function_runlog_action_mismatch:"
                     f"{function_state_id}:{function_action}"
                 )
             semantic_input_steps.append(function_step)
@@ -5940,7 +5868,7 @@ def _source_action_hint_path_for_item(
     semantic_steps = [
         semantic
         for semantic in (
-            _m3a_semantic_hint_step(
+            _t3a_semantic_hint_step(
                 step,
                 forbidden_values=forbidden_values,
             )
@@ -5949,9 +5877,9 @@ def _source_action_hint_path_for_item(
         if semantic is not None
     ]
     if not semantic_steps:
-        raise ValueError(f"source runlog produced no safe M3A hints: {item.task}")
+        raise ValueError(f"source runlog produced no safe T3A hints: {item.task}")
     hint_payload = {
-        "schema_version": "omniflow.m3a_semantic_hint.v1",
+        "schema_version": "omniflow.t3a_semantic_hint.v1",
         "task": item.task,
         "source_format": profile.replay_format,
         "semantic_source": semantic_source,
@@ -6370,6 +6298,9 @@ def _mobilegpt_memory_write_status(
     teacher_forced_select_count = _coerce_int(
         stats_summary.get("teacher_forced_select_count")
     )
+    teacher_action_error_count = _coerce_int(
+        stats_summary.get("teacher_action_error_count")
+    )
     has_useful_actions = bool(memory_inventory.get("has_useful_actions"))
     has_recallable_subtasks = bool(memory_inventory.get("has_recallable_subtasks"))
     reasons: list[str] = []
@@ -6387,6 +6318,8 @@ def _mobilegpt_memory_write_status(
         reasons.append("incomplete_source_actions")
     if teacher_miss_count > 0 or teacher_failed_finish_count > 0:
         reasons.append("teacher_grounding_failed")
+    if teacher_action_error_count > 0:
+        reasons.append("teacher_action_failed")
     if teacher_forced_select_count > 0:
         reasons.append("non_native_select_override")
     return {
@@ -6402,6 +6335,7 @@ def _mobilegpt_memory_write_status(
         "teacher_miss_count": teacher_miss_count,
         "teacher_failed_finish_count": teacher_failed_finish_count,
         "teacher_forced_select_count": teacher_forced_select_count,
+        "teacher_action_error_count": teacher_action_error_count,
     }
 
 
@@ -6621,7 +6555,6 @@ _ONE_TASK_METADATA_ROW_KEYS = (
     "uses_source_action_hints",
     "uses_function_retrieval",
     "function_reference_catalog_path",
-    "oob_device_url",
     "perform_emulator_setup",
 )
 
@@ -6652,26 +6585,6 @@ def _promote_one_task_metadata_to_row(
         ):
             if row.get(row_key) in (None, "", {}, []):
                 row[row_key] = init_audit.get(source_key)
-    oob_ready = row.get("oob_ready")
-    if not isinstance(oob_ready, dict):
-        for record in records:
-            metadata = (
-                record.get("metadata")
-                if isinstance(record.get("metadata"), dict)
-                else {}
-            )
-            value = metadata.get("oob_ready")
-            if isinstance(value, dict):
-                oob_ready = value
-                break
-    if isinstance(oob_ready, dict):
-        for source_key, row_key in (
-            ("success", "oob_ready"),
-            ("error", "oob_ready_error"),
-            ("state", "oob_ready_state"),
-        ):
-            if row.get(row_key) in (None, "", {}, []):
-                row[row_key] = oob_ready.get(source_key)
 
 
 def _record_wall_sec(record: dict[str, Any]) -> float:
@@ -6979,6 +6892,12 @@ def _one_task_summary_rows(
                     **episode_fields,
                     "episode_stats_scope": "task_device",
                     "shared_model_calls": episode_fields["episode_model_calls"],
+                    "chat_model_calls": episode_fields["episode_chat_model_calls"],
+                    "embedding_model_calls": episode_fields[
+                        "episode_embedding_model_calls"
+                    ],
+                    "chat_models": episode_fields["episode_chat_models"],
+                    "embedding_models": episode_fields["episode_embedding_models"],
                     "shared_tokens": episode_fields["episode_total_tokens"],
                     "shared_prompt_tokens": episode_fields["episode_prompt_tokens"],
                     "shared_completion_tokens": episode_fields[
@@ -7202,7 +7121,6 @@ def _write_one_task_summary(
         ("status", "status"),
         ("initialized", "initialized"),
         ("init_audit_status", "init"),
-        ("oob_ready", "oob"),
         ("success", "success"),
         ("model_calls", "calls"),
         ("fallback_steps", "fallback"),
@@ -7253,7 +7171,6 @@ def _print_one_task_summary(summary: dict[str, Any]) -> None:
         ("status", "status"),
         ("initialized", "initialized"),
         ("init_audit_status", "init"),
-        ("oob_ready", "oob"),
         ("success", "success"),
         ("model_calls", "calls"),
         ("fallback_steps", "fallback"),
@@ -7329,7 +7246,6 @@ def build_mobilegpt_androidworld_command(
         fixed_task_params=fixed_task_params,
         task_params_override=task_params_override,
         perform_emulator_setup=perform_emulator_setup,
-        oob_observe_backend="androidworld",
         repo_root=repo_root,
     )
     return CommandSpec(
@@ -7408,7 +7324,6 @@ def build_appagent_androidworld_command(
         fixed_task_params=fixed_task_params,
         task_params_override=task_params_override,
         perform_emulator_setup=perform_emulator_setup,
-        oob_observe_backend="androidworld",
         python_executable=python_executable,
         repo_root=repo_root,
     )
@@ -7465,135 +7380,6 @@ def build_appagent_androidworld_command(
     )
 
 
-def build_mobile_agent_v3_androidworld_command(
-    item: ArchivedRunLog,
-    *,
-    target: DeviceTarget,
-    output_root: str | Path,
-    mobile_agent_v3_root: str | Path,
-    model: str,
-    model_root: str | Path,
-    model_revision: str,
-    base_url: str,
-    api_key: str,
-    task_random_seed: int | None,
-    fixed_task_seed: bool,
-    perform_emulator_setup: bool,
-    adb_path: str,
-    max_steps: int,
-    timeout_sec: int,
-    task_params_override: dict[str, Any] | None = None,
-    fixed_task_params: bool = True,
-    official_revision: str = MOBILE_AGENT_V3_OFFICIAL_REVISION,
-    python_executable: str = sys.executable,
-    repo_root: Path = REPO_ROOT,
-) -> CommandSpec:
-    """Build an official Mobile-Agent-V3 AndroidWorld episode.
-
-    The external checkout owns the AndroidWorld environment, agent loop, actions,
-    and validator.  This command only adapts its output to the immutable OmniFlow
-    result schema and records complete per-request accounting.
-    """
-
-    resolved_method = "mobile_agent_v3"
-    resolved_output = _experiment_run_dir(
-        output_root,
-        task=item.task,
-        method=resolved_method,
-        device=target.label,
-        serial=target.serial,
-        console_port=target.console_port,
-        repo_root=repo_root,
-    )
-    resolved_root = _repo_path(mobile_agent_v3_root, repo_root=repo_root)
-    resolved_task_seed = int(
-        item.replay_seed if task_random_seed is None else task_random_seed
-    )
-    effective_params = (
-        dict(task_params_override) if task_params_override is not None else item.params
-    )
-    runner = repo_root / "src" / "integrations" / "mobile_agent_v3_runner.py"
-    argv = [
-        python_executable,
-        str(runner),
-        "--mobile-agent-v3-root",
-        str(resolved_root),
-        "--official-revision",
-        str(official_revision),
-        "--model",
-        str(model),
-        "--model-root",
-        str(model_root),
-        "--model-revision",
-        str(model_revision),
-        "--base-url",
-        str(base_url),
-        "--api-key",
-        str(api_key),
-        "--task",
-        item.task,
-        "--task-random-seed",
-        str(resolved_task_seed),
-        "--console-port",
-        str(int(target.console_port)),
-        "--output-path",
-        str(resolved_output),
-        "--max-steps",
-        str(int(max_steps)),
-    ]
-    if fixed_task_params:
-        argv.extend(
-            [
-                "--task-params-json",
-                json.dumps(effective_params, ensure_ascii=False, separators=(",", ":")),
-            ]
-        )
-    if fixed_task_seed:
-        argv.append("--fixed-task-seed")
-    if perform_emulator_setup:
-        argv.append("--perform-emulator-setup")
-    if adb_path.strip():
-        argv.extend(["--adb-path", adb_path.strip()])
-    return CommandSpec(
-        label=f"mobile_agent_v3:warm:{target.label}",
-        argv=argv,
-        env={"ANDROID_SERIAL": target.serial},
-        cwd=repo_root,
-        output_path=resolved_output,
-        timeout_sec=float(timeout_sec) if timeout_sec and timeout_sec > 0 else None,
-        metadata={
-            "mode": "official_mobile_agent_v3_androidworld",
-            "agent": "official:mobile_agent_v3",
-            "method": resolved_method,
-            "device": target.label,
-            "serial": target.serial,
-            "console_port": int(target.console_port),
-            "run_dir": str(resolved_output),
-            "mobile_agent_v3_root": str(resolved_root),
-            "official_mobile_agent_v3_revision": str(official_revision),
-            "model": str(model),
-            "model_root": str(model_root),
-            "model_revision": str(model_revision),
-            "model_base_url": str(base_url),
-            "task_random_seed": resolved_task_seed,
-            "fixed_task_seed": bool(fixed_task_seed),
-            "fixed_task_params": bool(fixed_task_params),
-            "task_params": dict(effective_params) if fixed_task_params else None,
-            "perform_emulator_setup": bool(perform_emulator_setup),
-            "max_steps": int(max_steps),
-            "uses_source_runlog": False,
-            "uses_omniflow_function": False,
-            "uses_source_action_hints": False,
-            "official_lifecycle": True,
-            "state_backend": "androidworld_official_mobile_agent_v3_fork",
-            "action_backend": "androidworld_official_mobile_agent_v3_fork",
-            "androidworld_lifecycle_backend": "androidworld",
-            "native_androidworld_agent_io": True,
-            "execution_backend": "official_mobile_agent_v3",
-        },
-    )
-
-
 def _run_one_task_mobilegpt(
     *,
     args: argparse.Namespace,
@@ -7611,11 +7397,15 @@ def _run_one_task_mobilegpt(
         raise ValueError("mobilegpt_device_target_required")
 
     offline_retrieval = method == "mobilegpt_offline_retrieval"
+    if offline_retrieval:
+        source_method = str(item.meta.get("method") or "").strip()
+        if item.meta.get("latest_official_success_source") is not True:
+            raise ValueError(
+                "mobilegpt_offline_retrieval_requires_official_success_source:"
+                f"task={item.task}"
+            )
     source_memory_value = str(
-        (
-            getattr(args, "mobilegpt_offline_source_memory_root", "")
-            or getattr(args, "mobilegpt_source_memory_root", "")
-        )
+        getattr(args, "mobilegpt_source_memory_root", "")
         if offline_retrieval
         else ""
     ).strip()
@@ -7636,6 +7426,8 @@ def _run_one_task_mobilegpt(
             task_name=item.task,
             source_seed=item.replay_seed,
             source_run_log=item.source_run_log,
+            expected_model=str(args.model or ""),
+            expected_source_method=source_method or "unrecorded",
         )
 
     memory_root = _method_memory_root(output_root, item.task, method)
@@ -7758,7 +7550,7 @@ def _run_one_task_mobilegpt(
         },
     )
 
-    if not args.dry_run and not bool(args.mobilegpt_no_patch_stats):
+    if not args.dry_run:
         for path in _patch_mobilegpt_stats(mobilegpt_root=args.mobilegpt_root):
             print(f"[mobilegpt:patch-stats] {path}", flush=True)
     if not args.dry_run:
@@ -7871,6 +7663,18 @@ def _run_one_task_mobilegpt(
                 target_app=target_app,
                 runtime_serial_file=active_oob_serial_file,
             )
+            if str(args.model or "").strip():
+                server_spec = replace(
+                    server_spec,
+                    env={
+                        **server_spec.env,
+                        "MOBILEGPT_CHAT_MODEL": str(args.model).strip(),
+                    },
+                    metadata={
+                        **server_spec.metadata,
+                        "model": str(args.model).strip(),
+                    },
+                )
             browser_task_url = str(browser_task_prepare.get("url") or "").strip()
             if browser_task_url:
                 server_spec = replace(
@@ -7953,6 +7757,7 @@ def _run_one_task_mobilegpt(
                             if frozen_memory is not None
                             else "isolated_attempt_empty_memory"
                         ),
+                        "model": str(args.model or "").strip(),
                     }
                 )
                 returncode = run_command(
@@ -8129,10 +7934,7 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                 break
             continue
 
-        if method in {
-            "ours",
-            "ours_no_execution_transfer",
-        }:
+        if method == "ours":
             store_text = str(args.store_path or "").strip()
             if not store_text:
                 raise ValueError(
@@ -8142,12 +7944,12 @@ def cmd_one_task(args: argparse.Namespace) -> int:
         else:
             store_path = memory_root / "unused-store.json"
 
-        if method in {"ours", "ours_no_execution_transfer"}:
+        if method == "ours":
             transfer_asset_audit: dict[str, Any] = {}
             if not args.dry_run:
                 transfer_asset_audit = validate_ours_transfer_assets(
                     store_path,
-                    require_action_transfer=(method == "ours"),
+                    require_action_transfer=True,
                 )
             _write_method_memory_manifest(
                 memory_root=memory_root,
@@ -8273,38 +8075,6 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                 ),
                 artifacts=artifacts,
             )
-        if method in MOBILE_AGENT_V3_METHODS:
-            if not str(args.mobile_agent_v3_model_root or "").strip():
-                raise ValueError(
-                    "mobile_agent_v3 requires --mobile-agent-v3-model-root"
-                )
-            _write_method_memory_manifest(
-                memory_root=memory_root,
-                task=item.task,
-                method=method,
-                memory_mode="none",
-                source_seed=None,
-                evaluation_seed=task_seed,
-                attempt_id=attempt_id,
-                artifacts={
-                    "official_mobile_agent_v3_revision": str(
-                        args.mobile_agent_v3_official_revision
-                    ),
-                    "official_model": str(args.mobile_agent_v3_model),
-                    "official_model_revision": str(
-                        args.mobile_agent_v3_model_revision
-                    ),
-                    "uses_source_runlog": False,
-                    "uses_omniflow_function": False,
-                    "uses_source_action_hints": False,
-                    "official_roles": [
-                        "manager",
-                        "executor",
-                        "action_reflector",
-                        "notetaker",
-                    ],
-                },
-            )
         if method == "fixed_replay":
             replay_run_log, replay_materialization, replay_profile = (
                 _materialize_replay_run_log_for_memory(
@@ -8331,10 +8101,8 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                     "replay_memory_root": str(memory_root),
                 },
             )
-        elif method in {"m3a_hint", "t3a_hint"}:
-            official_agent_name = (
-                "t3a_gpt4" if method == "t3a_hint" else "m3a_gpt4v"
-            )
+        elif method == "t3a_hint":
+            official_agent_name = "t3a_gpt4"
             source_hint_store_path = (
                 _repo_path(str(args.store_path))
                 if str(args.store_path or "").strip()
@@ -8344,9 +8112,6 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                 item,
                 output_root=memory_root,
                 store_path=source_hint_store_path,
-                task_function_id=str(
-                    getattr(args, "mobilegpt_task_function_id", "") or ""
-                ).strip(),
             )
             _write_method_memory_manifest(
                 memory_root=memory_root,
@@ -8378,24 +8143,6 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                     "uses_source_action_hints": True,
                     "hint_mode": "official_goal_reference_trace",
                     "state_backend": "androidworld_official",
-                },
-            )
-        elif method in {"m3a_official", "t3a_official"}:
-            official_agent_name = (
-                "t3a_gpt4" if method == "t3a_official" else "m3a_gpt4v"
-            )
-            _write_method_memory_manifest(
-                memory_root=memory_root,
-                task=item.task,
-                method=method,
-                memory_mode="none",
-                source_seed=None,
-                evaluation_seed=task_seed,
-                attempt_id=attempt_id,
-                artifacts={
-                    "official_agent_name": official_agent_name,
-                    "uses_omniflow_agent": False,
-                    "uses_source_action_hints": False,
                 },
             )
         for target in targets:
@@ -8437,41 +8184,13 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                     perform_emulator_setup=bool(args.perform_emulator_setup),
                     adb_path=args.adb_path,
                 )
-            elif method in MOBILE_AGENT_V3_METHODS:
-                spec = build_mobile_agent_v3_androidworld_command(
-                    item,
-                    target=target,
-                    output_root=output_root,
-                    mobile_agent_v3_root=args.mobile_agent_v3_root,
-                    model=args.mobile_agent_v3_model,
-                    model_root=args.mobile_agent_v3_model_root,
-                    model_revision=args.mobile_agent_v3_model_revision,
-                    base_url=args.mobile_agent_v3_base_url,
-                    api_key=args.mobile_agent_v3_api_key,
-                    task_random_seed=task_seed,
-                    fixed_task_seed=not bool(args.no_fixed_task_seed),
-                    fixed_task_params=not bool(args.no_fixed_task_params),
-                    task_params_override=task_params_override,
-                    perform_emulator_setup=bool(args.perform_emulator_setup),
-                    adb_path=args.adb_path,
-                    max_steps=int(args.max_steps or 20),
-                    timeout_sec=int(args.timeout_sec or 0),
-                    official_revision=args.mobile_agent_v3_official_revision,
-                )
-            elif method in {
-                "m3a_official",
-                "m3a_hint",
-                "t3a_official",
-                "t3a_hint",
-            }:
+            elif method == "t3a_hint":
                 spec = build_official_androidworld_command(
                     item,
                     android_world_root=args.android_world_root,
                     output_root=output_root,
                     method_name=method,
-                    official_agent_name=(
-                        "t3a_gpt4" if method.startswith("t3a_") else "m3a_gpt4v"
-                    ),
+                    official_agent_name="t3a_gpt4",
                     source_action_hint_path=source_action_hint_path,
                     device_label=target.label,
                     serial=target.serial,
@@ -8507,47 +8226,10 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                     planner_timeout_sec=args.planner_timeout_sec,
                     store_path=store_path,
                     omnitransfer_root=args.omnitransfer_root,
-                    disable_action_transfer=(method == "ours_no_execution_transfer"),
-                    oob_observe_backend=args.ours_observe_backend,
                 )
             spec.metadata["memory_root"] = str(memory_root)
             if appagent_prep:
                 spec.metadata["appagent_prep"] = dict(appagent_prep)
-            oob_ready: dict[str, Any] = {}
-            if not args.dry_run and _requires_oob_ready(spec):
-                oob_ready = check_oob_get_state_ready(
-                    oob_url=str(spec.metadata.get("oob_device_url") or ""),
-                    serial=target.serial,
-                    console_port=target.console_port,
-                    timeout_sec=12.0,
-                )
-                spec.metadata["oob_ready"] = oob_ready
-                if not bool(oob_ready.get("success")):
-                    failed += 1
-                    command_records.append(
-                        {
-                            "task": item.task,
-                            "method": method,
-                            "device": target.label,
-                            "status": "env_failed",
-                            "returncode": 1,
-                            "output_path": str(spec.output_path or ""),
-                            "command": _command_line(spec),
-                            "error": (
-                                "OOB /get_state not ready before run: "
-                                + str(oob_ready.get("error") or oob_ready)
-                            ),
-                            "summary_exclude": False,
-                            "metadata": {
-                                **dict(spec.metadata),
-                                "device_target": target.to_dict(),
-                                "memory_root": str(memory_root),
-                            },
-                        }
-                    )
-                    if args.fail_fast:
-                        break
-                    continue
             returncode = run_command(spec, dry_run=args.dry_run)
             status = "completed" if returncode == 0 else "command_failed"
             command_records.append(
@@ -8884,10 +8566,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="all",
         help=(
             "Comma-separated methods or `all`: fixed_replay, ours, "
-            "mobilegpt_baseline; "
-            "m3a_official, m3a_hint, t3a_official, t3a_hint, appagent_baseline, "
-            "and appagent_demo are available "
-            "explicitly."
+            "mobilegpt_offline_retrieval, appagent_demo, and t3a_hint."
         ),
     )
     one_task_parser.add_argument(
@@ -8946,15 +8625,6 @@ def build_parser() -> argparse.ArgumentParser:
     one_task_parser.add_argument("--planner-provider", default="")
     one_task_parser.add_argument("--model", default="")
     one_task_parser.add_argument("--planner-timeout-sec", type=float, default=60.0)
-    one_task_parser.add_argument(
-        "--ours-observe-backend",
-        choices=["androidworld", "oob"],
-        default="androidworld",
-        help=(
-            "Observation backend for ours methods. Formal evaluation uses "
-            "AndroidWorld's native collector; oob is retained for explicit debug runs."
-        ),
-    )
     _add_androidworld_setup_args(one_task_parser)
     one_task_parser.add_argument(
         "--mobilegpt-root", default=str(DEFAULT_MOBILEGPT_ROOT)
@@ -8968,39 +8638,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help=(
             "Sealed source-111 AppAgent human-demo workspace required by "
-            "appagent_demo. appagent_baseline ignores it."
+            "appagent_demo."
         ),
-    )
-    one_task_parser.add_argument(
-        "--mobile-agent-v3-root",
-        default=str(DEFAULT_MOBILE_AGENT_V3_ROOT),
-        help="Pinned official X-PLUG/MobileAgent checkout.",
-    )
-    one_task_parser.add_argument(
-        "--mobile-agent-v3-official-revision",
-        default=MOBILE_AGENT_V3_OFFICIAL_REVISION,
-    )
-    one_task_parser.add_argument(
-        "--mobile-agent-v3-model",
-        default="GUI-Owl-7B",
-        help="Model identifier exposed by the local vLLM OpenAI endpoint.",
-    )
-    one_task_parser.add_argument(
-        "--mobile-agent-v3-model-root",
-        default="",
-        help="Local pinned GUI-Owl snapshot used by the model server.",
-    )
-    one_task_parser.add_argument(
-        "--mobile-agent-v3-model-revision",
-        default=GUI_OWL_7B_MODEL_REVISION,
-    )
-    one_task_parser.add_argument(
-        "--mobile-agent-v3-base-url",
-        default="http://127.0.0.1:4243/v1",
-    )
-    one_task_parser.add_argument(
-        "--mobile-agent-v3-api-key",
-        default="local-vllm",
     )
     one_task_parser.add_argument("--mobilegpt-server-host", default="0.0.0.0")
     one_task_parser.add_argument("--mobilegpt-port", type=int, default=12345)
@@ -9044,24 +8683,6 @@ def build_parser() -> argparse.ArgumentParser:
             "it starts warm from an immutable snapshot."
         ),
     )
-    one_task_parser.add_argument(
-        "--mobilegpt-offline-source-memory-root",
-        default="",
-        help=(
-            "Deprecated alias for a separate source-only native MobileGPT "
-            "memory bundle used by mobilegpt_offline_retrieval."
-        ),
-    )
-    one_task_parser.add_argument("--mobilegpt-task-function-id", default="")
-    one_task_parser.add_argument("--mobilegpt-cold-task-name", default="")
-    one_task_parser.add_argument(
-        "--mobilegpt-subtask-placement",
-        action="append",
-        default=[],
-        metavar="FUNCTION_ID:START",
-        help="Resolve one ambiguous semantic Function alignment after native cold.",
-    )
-    one_task_parser.add_argument("--mobilegpt-no-patch-stats", action="store_true")
     one_task_parser.add_argument(
         "--save-success-source-runlog",
         action="store_true",
