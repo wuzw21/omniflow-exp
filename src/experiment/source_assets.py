@@ -265,29 +265,95 @@ def build_grounded_teacher_run_log_from_item(
     *,
     index_path: str | Path,
     item: Any,
+    store_index_path: str | Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Resolve one archive-index row and ground it from frozen source evidence."""
 
     meta = item.meta
+    store_row: dict[str, Any] = {}
+    if store_index_path is not None:
+        resolved_store_index = Path(store_index_path).expanduser().resolve()
+        if not resolved_store_index.is_file():
+            raise FileNotFoundError(
+                f"store_index_missing:{resolved_store_index}"
+            )
+        store_payload = json.loads(
+            resolved_store_index.read_text(encoding="utf-8")
+        )
+        candidate = (
+            store_payload.get(str(item.task))
+            if isinstance(store_payload, dict)
+            else None
+        )
+        if not isinstance(candidate, dict):
+            raise ValueError(f"store_index_task_missing:{item.task}")
+        store_row = candidate
+
+    state_catalog_value = (
+        meta.get("source_state_catalog")
+        or store_row.get("transfer_states_path")
+    )
+    state_catalog_sha256 = (
+        meta.get("source_state_catalog_sha256")
+        or store_row.get("transfer_states_sha256")
+    )
+    provenance_value = (
+        meta.get("store_provenance")
+        or store_row.get("provenance_path")
+    )
+    provenance_sha256 = (
+        meta.get("store_provenance_sha256")
+        or store_row.get("provenance_sha256")
+    )
+    if store_row:
+        store_catalog = _index_reference(
+            store_index_path,
+            store_row.get("transfer_states_path"),
+            label="transfer_states_path",
+        )
+        source_catalog = _index_reference(
+            index_path,
+            state_catalog_value,
+            label="source_state_catalog",
+        )
+        if source_catalog != store_catalog or str(
+            state_catalog_sha256 or ""
+        ) != str(store_row.get("transfer_states_sha256") or ""):
+            raise ValueError("source_store_index_catalog_mismatch")
+        store_provenance = _index_reference(
+            store_index_path,
+            store_row.get("provenance_path"),
+            label="provenance_path",
+        )
+        source_provenance = _index_reference(
+            index_path,
+            provenance_value,
+            label="store_provenance",
+        )
+        if source_provenance != store_provenance or str(
+            provenance_sha256 or ""
+        ) != str(store_row.get("provenance_sha256") or ""):
+            raise ValueError("source_store_index_provenance_mismatch")
+
     return build_grounded_teacher_run_log(
         source_run_log=item.source_run_log,
         source_state_catalog=_index_reference(
             index_path,
-            meta.get("source_state_catalog"),
+            state_catalog_value,
             label="source_state_catalog",
         ),
         provenance_manifest=_index_reference(
             index_path,
-            meta.get("store_provenance"),
+            provenance_value,
             label="store_provenance",
         ),
         expected_source_run_log_sha256=str(
             meta.get("source_run_log_sha256") or ""
         ),
         expected_source_state_catalog_sha256=str(
-            meta.get("source_state_catalog_sha256") or ""
+            state_catalog_sha256 or ""
         ),
         expected_provenance_sha256=str(
-            meta.get("store_provenance_sha256") or ""
+            provenance_sha256 or ""
         ),
     )

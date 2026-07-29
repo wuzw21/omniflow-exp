@@ -293,10 +293,12 @@ def _preflight_appagent_teacher(
     *,
     index_path: str | Path,
     item: pipeline.ArchivedRunLog,
+    store_index_path: str | Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     grounded, grounding_audit = build_grounded_teacher_run_log_from_item(
         index_path=index_path,
         item=item,
+        store_index_path=store_index_path,
     )
     with tempfile.TemporaryDirectory(
         prefix="omniflow-appagent-preflight-"
@@ -349,6 +351,7 @@ def preflight_appagent_source(
     *,
     index_path: str | Path,
     task_name: str,
+    store_index_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Validate one source asset without creating a persistent output."""
 
@@ -356,6 +359,7 @@ def preflight_appagent_source(
     _, grounding_audit, teacher_source = _preflight_appagent_teacher(
         index_path=index_path,
         item=item,
+        store_index_path=store_index_path,
     )
     return {
         "schema_version": "omniflow.appagent-source-preflight.v1",
@@ -377,6 +381,7 @@ def prepare_appagent_demo_memory(
     android_world_root: str | Path,
     memory_root: str | Path,
     model: str,
+    store_index_path: str | Path | None = None,
     serial: str = "emulator-5560",
     console_port: int = 5560,
     adb_path: str = "",
@@ -398,6 +403,7 @@ def prepare_appagent_demo_memory(
         _preflight_appagent_teacher(
             index_path=index_path,
             item=item,
+            store_index_path=store_index_path,
         )
     )
 
@@ -575,6 +581,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--android-world-root", required=True)
     prepare.add_argument("--memory-root", required=True)
     prepare.add_argument("--model", required=True)
+    prepare.add_argument("--store-index", default="")
     prepare.add_argument("--serial", default="emulator-5560")
     prepare.add_argument("--console-port", type=int, default=5560)
     prepare.add_argument("--adb-path", default="")
@@ -591,6 +598,7 @@ def build_parser() -> argparse.ArgumentParser:
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument("--index", required=True)
     preflight.add_argument("--task", required=True)
+    preflight.add_argument("--store-index", default="")
     return parser
 
 
@@ -605,6 +613,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 android_world_root=args.android_world_root,
                 memory_root=args.memory_root,
                 model=args.model,
+                store_index_path=args.store_index or None,
                 serial=args.serial,
                 console_port=args.console_port,
                 adb_path=args.adb_path,
@@ -623,6 +632,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = preflight_appagent_source(
                 index_path=args.index,
                 task_name=args.task,
+                store_index_path=args.store_index or None,
             )
     except BaseException as error:
         if args.command == "prepare":

@@ -3,11 +3,15 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from src.experiment import androidworld as pipeline
-from src.experiment.source_assets import build_grounded_teacher_run_log
+from src.experiment.source_assets import (
+    build_grounded_teacher_run_log,
+    build_grounded_teacher_run_log_from_item,
+)
 from src.integrations.appagent_adapter import build_appagent_teacher_source
 from src.integrations.mobilegpt_teacher import (
     preflight_teacher_source_run_log,
@@ -167,3 +171,51 @@ def test_grounding_rejects_changed_frozen_catalog(tmp_path: Path) -> None:
                 provenance.read_bytes()
             ).hexdigest(),
         )
+
+
+def test_source_and_store_indexes_join_without_rewriting_frozen_assets(
+    tmp_path: Path,
+) -> None:
+    source, states, provenance = _write_source_bundle(tmp_path)
+    store_index = tmp_path / "store_index.json"
+    store_index.write_text(
+        json.dumps(
+            {
+                "RecordWithName": {
+                    "transfer_states_path": str(states),
+                    "transfer_states_sha256": hashlib.sha256(
+                        states.read_bytes()
+                    ).hexdigest(),
+                    "provenance_path": str(provenance),
+                    "provenance_sha256": hashlib.sha256(
+                        provenance.read_bytes()
+                    ).hexdigest(),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    item = SimpleNamespace(
+        task="RecordWithName",
+        source_run_log=source,
+        meta={
+            "source_run_log_sha256": hashlib.sha256(
+                source.read_bytes()
+            ).hexdigest(),
+            "store_provenance": str(provenance),
+            "store_provenance_sha256": hashlib.sha256(
+                provenance.read_bytes()
+            ).hexdigest(),
+        },
+    )
+
+    grounded, audit = build_grounded_teacher_run_log_from_item(
+        index_path=tmp_path / "source_index.json",
+        item=item,
+        store_index_path=store_index,
+    )
+
+    assert grounded["steps"][0]["action"]["args"]["source_context"][
+        "element"
+    ]["text"] == "Save"
+    assert audit["source_state_catalog"] == str(states)
