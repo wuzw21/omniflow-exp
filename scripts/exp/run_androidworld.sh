@@ -847,6 +847,7 @@ PY
     child_static_args=(--check-only)
     echo "[batch:static] check task=$batch_task methods=$pending_task_methods completed=$completed_cells pending=$pending_cells"
     (
+      export OMNIFLOW_BATCH_CHILD=1
       export OMNIFLOW_SINGLE_TASK_TASK="$batch_task"
       export OMNIFLOW_SINGLE_TASK_METHODS="$pending_task_methods"
       export OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT="$task_output_root"
