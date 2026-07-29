@@ -921,7 +921,7 @@ task_name = sys.argv[2]
 expected_seed = int(sys.argv[3])
 sys.path.insert(0, str(Path(sys.argv[4]).resolve()))
 asset_root = Path(sys.argv[5]).expanduser().resolve()
-from omniflow.core.trajectory import canonicalize_run_log
+from src.integrations.runlog import import_run_log
 
 payload = json.loads(index_path.read_text(encoding="utf-8"))
 row = payload.get(task_name) if isinstance(payload, dict) else None
@@ -966,7 +966,7 @@ if not expected_sha256 or expected_sha256 != actual_sha256:
         f"expected={expected_sha256 or 'missing'}:actual={actual_sha256}"
     )
 try:
-    canonical = canonicalize_run_log(
+    canonical = import_run_log(
         json.loads(run_log.read_text(encoding="utf-8"))
     )
 except (OSError, ValueError, json.JSONDecodeError) as error:

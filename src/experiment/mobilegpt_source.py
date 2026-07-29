@@ -16,6 +16,7 @@ from src.experiment import androidworld as pipeline
 from src.experiment.source_assets import (
     build_grounded_teacher_run_log_from_item,
 )
+from src.integrations.runlog import import_run_log
 
 SOURCE_SEED = 111
 _IGNORED_SOURCE_PACKAGES = {
@@ -59,7 +60,10 @@ def load_canonical_source_item(
         raise ValueError(
             f"mobilegpt_source_official_success_required:task={task_name}"
         )
-    if source_kind != "androidworld_validator_success_source_runlog":
+    if (
+        source_kind
+        and source_kind != "androidworld_validator_success_source_runlog"
+    ):
         raise ValueError(
             "mobilegpt_source_kind_invalid:"
             f"task={task_name}:actual={source_kind or 'missing'}"
@@ -69,14 +73,16 @@ def load_canonical_source_item(
             f"mobilegpt_source_runlog_missing:{item.source_run_log}"
         )
     expected_sha256 = str(
-        item.meta.get("source_run_log_sha256") or ""
+        item.meta.get("retained_source_run_log_sha256")
+        or item.meta.get("source_run_log_sha256")
+        or ""
     ).strip()
     actual_sha256 = pipeline._file_sha256(item.source_run_log)
     if not expected_sha256 or expected_sha256 != actual_sha256:
         raise ValueError(
             f"mobilegpt_source_runlog_hash_mismatch:task={task_name}"
         )
-    canonical = pipeline.canonicalize_run_log(
+    canonical = import_run_log(
         json.loads(item.source_run_log.read_text(encoding="utf-8"))
     )
     if (

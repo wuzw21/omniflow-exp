@@ -51,21 +51,26 @@ def test_check_only_is_read_only_before_any_runtime_output(
     source_run_log.write_text(
         json.dumps(
             {
-                "schema_version": "omniflow.canonical_run_log.v1",
+                "schema_version": "omniflow.run_log.v1",
                 "run_id": "source",
                 "goal": "Turn Bluetooth on.",
-                "status": "succeeded",
+                "completed": True,
                 "success": True,
                 "steps": [
                     {
                         "step_index": 0,
-                        "before_state_id": "before",
-                        "action": {
-                            "tool": "click",
-                            "args": {"x": 500, "y": 500},
+                        "observation_before_act": {
+                            "state_id": "before",
+                            "width": 1000,
+                            "height": 1000,
                         },
-                        "result": {"success": True},
-                        "after_state_id": "after",
+                        "executed_actions": [
+                            {
+                                "type": "click",
+                                "params": {"x": 500, "y": 500},
+                            }
+                        ],
+                        "success": True,
                     }
                 ],
             }

@@ -156,6 +156,60 @@ def test_frozen_source_evidence_grounds_both_baseline_teachers(
     assert hashlib.sha256(source.read_bytes()).hexdigest() == source_sha256
 
 
+def test_frozen_historical_source_is_imported_before_grounding(
+    tmp_path: Path,
+) -> None:
+    source, states, provenance = _write_source_bundle(tmp_path)
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.run_log.v1",
+                "run_id": "historical-source",
+                "goal": "Save the recording as Example.",
+                "completed": True,
+                "success": True,
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "observation_before_act": {
+                            "state_id": "button-state",
+                            "width": 100,
+                            "height": 100,
+                        },
+                        "executed_actions": [
+                            {
+                                "type": "click",
+                                "params": {"x": 50, "y": 50},
+                            }
+                        ],
+                        "success": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    grounded, audit = build_grounded_teacher_run_log(
+        source_run_log=source,
+        source_state_catalog=states,
+        provenance_manifest=provenance,
+        expected_source_run_log_sha256=hashlib.sha256(
+            source.read_bytes()
+        ).hexdigest(),
+        expected_source_state_catalog_sha256=hashlib.sha256(
+            states.read_bytes()
+        ).hexdigest(),
+        expected_provenance_sha256=hashlib.sha256(
+            provenance.read_bytes()
+        ).hexdigest(),
+    )
+
+    assert grounded["schema_version"] == "omniflow.canonical_run_log.v1"
+    assert grounded["steps"][0]["before_state_id"] == "button-state"
+    assert audit["semantic_action_count"] == 1
+
+
 def test_grounding_rejects_changed_frozen_catalog(tmp_path: Path) -> None:
     source, states, provenance = _write_source_bundle(tmp_path)
 

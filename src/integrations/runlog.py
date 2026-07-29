@@ -31,6 +31,16 @@ def import_run_log_evidence(
     """Import one source RunLog and its source-only transfer state catalog."""
     payload = _map(value.get("payload")) or value
     payload = _map(payload.get("run_log")) or payload
+    if payload.get("schema_version") == CANONICAL_RUN_LOG_SCHEMA_VERSION:
+        canonical = canonicalize_run_log(payload)
+        return (
+            canonical,
+            {
+                "schema_version": "omniflow.transfer-state-catalog.v1",
+                "run_id": canonical["run_id"],
+                "states": {},
+            },
+        )
     run_id = str(payload.get("run_id") or value.get("run_id") or "imported-run")
     raw_steps = payload.get("steps") or payload.get("cards") or []
     raw_step_values = raw_steps if isinstance(raw_steps, list) else []

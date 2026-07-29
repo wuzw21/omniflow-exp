@@ -17,7 +17,7 @@ import sys
 import time
 from typing import Any
 
-from omniflow.core.trajectory import canonicalize_run_log
+from src.integrations.runlog import import_run_log
 
 APPAGENT_OFFICIAL_REVISION = "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
 
@@ -402,11 +402,15 @@ def _validate_source_index(
             invalid.append(str(task))
             continue
         source_seed = metadata.get("source_seed", metadata.get("replay_seed"))
+        source_kind = str(metadata.get("source_kind") or "").strip()
         if (
             source_seed != 111
             or metadata.get("latest_official_success_source") is not True
-            or str(metadata.get("source_kind") or "").strip()
-            != "androidworld_validator_success_source_runlog"
+            or (
+                source_kind
+                and source_kind
+                != "androidworld_validator_success_source_runlog"
+            )
         ):
             invalid.append(str(task))
             continue
@@ -429,14 +433,16 @@ def _validate_source_index(
             invalid.append(str(task))
             continue
         expected_sha256 = str(
-            metadata.get("source_run_log_sha256") or ""
+            metadata.get("retained_source_run_log_sha256")
+            or metadata.get("source_run_log_sha256")
+            or ""
         ).strip()
         actual_sha256 = hashlib.sha256(run_log.read_bytes()).hexdigest()
         if not expected_sha256 or expected_sha256 != actual_sha256:
             invalid.append(str(task))
             continue
         try:
-            canonical = canonicalize_run_log(
+            canonical = import_run_log(
                 json.loads(run_log.read_text(encoding="utf-8"))
             )
         except (OSError, ValueError, json.JSONDecodeError):

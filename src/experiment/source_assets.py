@@ -9,8 +9,8 @@ import re
 from typing import Any
 import xml.etree.ElementTree as ET
 
-from omniflow.core.trajectory import canonicalize_run_log
 from omniflow.transfer.runtime import load_transfer_state_catalog
+from src.integrations.runlog import import_run_log
 
 
 def select_source_asset_revision(
@@ -210,7 +210,7 @@ def build_grounded_teacher_run_log(
         label="source_provenance",
     )
     raw = json.loads(source_path.read_text(encoding="utf-8"))
-    canonical = canonicalize_run_log(raw)
+    canonical = import_run_log(raw)
     states = load_transfer_state_catalog(catalog_path)
     provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
     source_target_audit = provenance.get("source_target_audit")
@@ -389,7 +389,9 @@ def build_grounded_teacher_run_log_from_item(
             label="store_provenance",
         ),
         expected_source_run_log_sha256=str(
-            meta.get("source_run_log_sha256") or ""
+            meta.get("retained_source_run_log_sha256")
+            or meta.get("source_run_log_sha256")
+            or ""
         ),
         expected_source_state_catalog_sha256=str(
             state_catalog_sha256 or ""

@@ -169,6 +169,57 @@ def test_mobilegpt_source_accepts_successful_canonical_seed111(
     assert mobilegpt_source.source_method_label(item) == "fixed_replay"
 
 
+def test_mobilegpt_source_accepts_registered_historical_runlog(
+    tmp_path: Path,
+) -> None:
+    index, source_run_log = _write_source_index(tmp_path / "historical")
+    source_run_log.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.run_log.v1",
+                "run_id": "historical-source",
+                "goal": "Turn Bluetooth on.",
+                "completed": True,
+                "success": True,
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "observation_before_act": {
+                            "state_id": "state-0",
+                            "width": 100,
+                            "height": 100,
+                        },
+                        "executed_actions": [
+                            {
+                                "type": "click",
+                                "params": {"x": 50, "y": 50},
+                            }
+                        ],
+                        "success": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    payload = json.loads(index.read_text(encoding="utf-8"))
+    row = payload["SystemBluetoothTurnOn"]
+    row.pop("source_kind")
+    row.pop("source_run_log_sha256")
+    row["retained_source_run_log_sha256"] = hashlib.sha256(
+        source_run_log.read_bytes()
+    ).hexdigest()
+    index.write_text(json.dumps(payload), encoding="utf-8")
+
+    item = mobilegpt_source.load_canonical_source_item(
+        index,
+        task_name="SystemBluetoothTurnOn",
+    )
+
+    assert item.source_run_log == source_run_log
+    assert item.replay_seed == 111
+
+
 def test_mobilegpt_preflight_resolves_target_from_frozen_source_states(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
