@@ -534,7 +534,7 @@ PY
         if [[ -n "$indexed_store_path" ]]; then
           export OMNIFLOW_SINGLE_TASK_STORE_PATH="$indexed_store_path"
         fi
-        "$0"
+        "$0" </dev/null
       ) 2>&1 | tee "$task_log"; then
         status=0
       else
