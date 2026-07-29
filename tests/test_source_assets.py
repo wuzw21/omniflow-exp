@@ -280,6 +280,128 @@ def test_source_and_store_indexes_join_without_rewriting_frozen_assets(
     assert audit["source_state_catalog"] == str(states)
 
 
+def test_baseline_grounding_uses_complete_states_embedded_in_source_runlog(
+    tmp_path: Path,
+) -> None:
+    xml = (
+        '<hierarchy><node class="android.widget.Button" text="Continue" '
+        'resource-id="app:id/continue" clickable="true" '
+        'bounds="[0,0][100,100]" /></hierarchy>'
+    )
+    source = tmp_path / "source.run_log.json"
+    source.write_text(
+        json.dumps(
+            {
+                "run_id": "complete-source",
+                "goal": "Open the app and continue.",
+                "success": True,
+                "steps": [
+                    {
+                        "observation_before_act": {
+                            "state_id": "launcher-state",
+                            "xml": xml,
+                            "package_name": "com.android.launcher",
+                            "display_width": 100,
+                            "display_height": 100,
+                        },
+                        "action": {
+                            "tool": "open_app",
+                            "args": {"package_name": "com.example.app"},
+                        },
+                        "result": {"success": True},
+                    },
+                    {
+                        "observation_before_act": {
+                            "state_id": "complete-state",
+                            "xml": xml,
+                            "package_name": "com.example.app",
+                            "display_width": 100,
+                            "display_height": 100,
+                        },
+                        "action": {
+                            "tool": "click",
+                            "args": {"x": 500, "y": 500},
+                        },
+                        "result": {"success": True},
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    function_states = tmp_path / "function_transfer_states.json"
+    function_states.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.transfer-state-catalog.v1",
+                "run_id": "complete-source",
+                "states": {
+                    "launcher-state": {
+                        "state_id": "launcher-state",
+                        "xml": xml,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    provenance = tmp_path / "provenance_manifest.json"
+    provenance.write_text(
+        json.dumps(
+            {
+                "source_run_log_sha256": source_sha256,
+                "source_target_audit": {
+                    "source_target_audit_complete": True,
+                    "source_targets": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    store_index = tmp_path / "store_index.json"
+    store_index.write_text(
+        json.dumps(
+            {
+                "CompleteTask": {
+                    "source_run_log_path": str(source),
+                    "source_run_log_sha256": source_sha256,
+                    "transfer_states_path": str(function_states),
+                    "transfer_states_sha256": hashlib.sha256(
+                        function_states.read_bytes()
+                    ).hexdigest(),
+                    "provenance_path": str(provenance),
+                    "provenance_sha256": hashlib.sha256(
+                        provenance.read_bytes()
+                    ).hexdigest(),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    item = SimpleNamespace(
+        task="CompleteTask",
+        source_run_log=source,
+        meta={"retained_source_run_log_sha256": source_sha256},
+    )
+
+    grounded, audit = build_grounded_teacher_run_log_from_item(
+        index_path=tmp_path / "source_index.json",
+        item=item,
+        store_index_path=store_index,
+    )
+
+    assert len(grounded["steps"]) == 2
+    assert grounded["steps"][1]["action"]["args"]["source_context"][
+        "element"
+    ] == {
+        "text": "Continue",
+        "resource_id": "app:id/continue",
+    }
+    assert audit["source_state_catalog_source"] == "embedded_source_run_log"
+    assert audit["source_state_count"] == 2
+
+
 def test_source_revision_reuses_frozen_asset_or_advances_past_failures(
     tmp_path: Path,
 ) -> None:

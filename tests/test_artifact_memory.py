@@ -138,6 +138,59 @@ def test_refresh_deduplicates_runlogs_and_keeps_indexed_source_as_canonical(
     assert Path(current["by_task_root"], "RecordWithName.json").is_file()
 
 
+def test_refresh_materializes_indexed_source_state_catalog(
+    tmp_path: Path,
+) -> None:
+    source = _write_json(
+        tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
+        {
+            "schema_version": "omniflow.canonical_run_log.v1",
+            "run_id": "source-run",
+            "goal": "Record audio and save it.",
+            "status": "succeeded",
+            "success": True,
+            "steps": [{"step_index": 0}],
+        },
+    )
+    states = _write_json(
+        tmp_path / "evidence" / "RecordWithName" / "transfer_states.json",
+        {
+            "schema_version": "omniflow.transfer-state-catalog.v1",
+            "run_id": "source-run",
+            "states": {},
+        },
+    )
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+                "transfer_state_catalog": str(states),
+            }
+        },
+    )
+
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(source.parent,),
+        result_roots=(),
+    )
+
+    memory_source_index = json.loads(
+        Path(report["indexes"]["source_index"]).read_text(encoding="utf-8")
+    )
+    row = memory_source_index["RecordWithName"]
+    assert "transfer_state_catalog" not in row
+    assert row["source_state_catalog_sha256"] == _sha256(states)
+    materialized = Path(row["source_state_catalog"])
+    assert materialized.is_file()
+    assert materialized.read_bytes() == states.read_bytes()
+    assert not materialized.stat().st_mode & stat.S_IWUSR
+
+
 def test_refresh_classifies_case_normalized_task_directory_exactly(
     tmp_path: Path,
 ) -> None:

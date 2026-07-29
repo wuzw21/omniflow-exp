@@ -10,7 +10,7 @@ from typing import Any
 import xml.etree.ElementTree as ET
 
 from omniflow.transfer.runtime import load_transfer_state_catalog
-from src.integrations.runlog import import_run_log
+from src.integrations.runlog import import_run_log, import_run_log_evidence
 
 
 def select_source_asset_revision(
@@ -237,46 +237,20 @@ def _unique_editable_identity(xml_text: str) -> dict[str, str]:
     return identities[0] if len(identities) == 1 else {}
 
 
-def build_grounded_teacher_run_log(
-    *,
-    source_run_log: str | Path,
-    source_state_catalog: str | Path,
-    provenance_manifest: str | Path,
-    expected_source_run_log_sha256: str,
-    expected_source_state_catalog_sha256: str,
-    expected_provenance_sha256: str,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Join frozen source actions with frozen source UI identities.
-
-    This reads no target task input, target observation, or validator state.
-    It keeps the canonical source action sequence unchanged and adds only
-    source-side semantic evidence consumed by baseline teacher adapters.
-    """
-
-    source_path = _require_frozen_file(
-        source_run_log,
-        expected_sha256=expected_source_run_log_sha256,
-        label="source_run_log",
-    )
-    catalog_path = _require_frozen_file(
-        source_state_catalog,
-        expected_sha256=expected_source_state_catalog_sha256,
-        label="source_state_catalog",
-    )
-    provenance_path = _require_frozen_file(
-        provenance_manifest,
-        expected_sha256=expected_provenance_sha256,
-        label="source_provenance",
-    )
-    raw = json.loads(source_path.read_text(encoding="utf-8"))
-    canonical = import_run_log(raw)
-    states = load_transfer_state_catalog(catalog_path)
-    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+def _source_target_audit(provenance: dict[str, Any]) -> dict[str, Any]:
     source_target_audit = provenance.get("source_target_audit")
     if not isinstance(source_target_audit, dict) or source_target_audit.get(
         "source_target_audit_complete"
     ) is not True:
         raise ValueError("source_target_audit_incomplete")
+    return source_target_audit
+
+
+def _ground_source_actions(
+    canonical: dict[str, Any],
+    states: dict[str, dict[str, Any]],
+    source_target_audit: dict[str, Any],
+) -> tuple[dict[str, Any], int]:
     targets_by_state: dict[str, dict[str, str]] = {}
     targets_by_step: dict[int, dict[str, str]] = {}
     for record in source_target_audit.get("source_targets") or []:
@@ -344,6 +318,49 @@ def build_grounded_teacher_run_log(
             "xml": xml_text,
             "package_name": package_name,
         }
+    return grounded, semantic_action_count
+
+
+def build_grounded_teacher_run_log(
+    *,
+    source_run_log: str | Path,
+    source_state_catalog: str | Path,
+    provenance_manifest: str | Path,
+    expected_source_run_log_sha256: str,
+    expected_source_state_catalog_sha256: str,
+    expected_provenance_sha256: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Join frozen source actions with frozen source UI identities.
+
+    This reads no target task input, target observation, or validator state.
+    It keeps the canonical source action sequence unchanged and adds only
+    source-side semantic evidence consumed by baseline teacher adapters.
+    """
+
+    source_path = _require_frozen_file(
+        source_run_log,
+        expected_sha256=expected_source_run_log_sha256,
+        label="source_run_log",
+    )
+    catalog_path = _require_frozen_file(
+        source_state_catalog,
+        expected_sha256=expected_source_state_catalog_sha256,
+        label="source_state_catalog",
+    )
+    provenance_path = _require_frozen_file(
+        provenance_manifest,
+        expected_sha256=expected_provenance_sha256,
+        label="source_provenance",
+    )
+    raw = json.loads(source_path.read_text(encoding="utf-8"))
+    canonical = import_run_log(raw)
+    states = load_transfer_state_catalog(catalog_path)
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    grounded, semantic_action_count = _ground_source_actions(
+        canonical,
+        states,
+        _source_target_audit(provenance),
+    )
 
     return grounded, {
         "schema_version": "omniflow.source-teacher-grounding.v1",
@@ -351,6 +368,60 @@ def build_grounded_teacher_run_log(
         "source_run_log_sha256": _sha256(source_path),
         "source_state_catalog": str(catalog_path),
         "source_state_catalog_sha256": _sha256(catalog_path),
+        "source_state_catalog_source": "frozen_catalog",
+        "provenance_manifest": str(provenance_path),
+        "provenance_sha256": _sha256(provenance_path),
+        "source_state_count": len(states),
+        "semantic_action_count": semantic_action_count,
+        "target_inputs_read": False,
+        "target_observations_read": False,
+        "validator_state_read": False,
+    }
+
+
+def _build_grounded_teacher_run_log_from_embedded_source(
+    *,
+    source_run_log: str | Path,
+    provenance_manifest: str | Path,
+    expected_source_run_log_sha256: str,
+    expected_provenance_sha256: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    source_path = _require_frozen_file(
+        source_run_log,
+        expected_sha256=expected_source_run_log_sha256,
+        label="source_run_log",
+    )
+    provenance_path = _require_frozen_file(
+        provenance_manifest,
+        expected_sha256=expected_provenance_sha256,
+        label="source_provenance",
+    )
+    canonical, source_states = import_run_log_evidence(
+        json.loads(source_path.read_text(encoding="utf-8")),
+        evidence_root=source_path.parent,
+    )
+    states = source_states["states"]
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    provenance_source_sha256 = str(
+        provenance.get("source_run_log_sha256") or ""
+    ).strip()
+    if (
+        provenance_source_sha256
+        and provenance_source_sha256 != expected_source_run_log_sha256
+    ):
+        raise ValueError("source_provenance_run_log_mismatch")
+    grounded, semantic_action_count = _ground_source_actions(
+        canonical,
+        states,
+        _source_target_audit(provenance),
+    )
+    return grounded, {
+        "schema_version": "omniflow.source-teacher-grounding.v1",
+        "source_run_log": str(source_path),
+        "source_run_log_sha256": _sha256(source_path),
+        "source_state_catalog": str(source_path),
+        "source_state_catalog_sha256": _sha256(source_path),
+        "source_state_catalog_source": "embedded_source_run_log",
         "provenance_manifest": str(provenance_path),
         "provenance_sha256": _sha256(provenance_path),
         "source_state_count": len(states),
@@ -389,17 +460,9 @@ def build_grounded_teacher_run_log_from_item(
             raise ValueError(f"store_index_task_missing:{item.task}")
         store_row = candidate
 
-    state_catalog_value = (
-        meta.get("source_state_catalog")
-        or store_row.get("transfer_states_path")
-    )
-    state_catalog_sha256 = (
-        meta.get("source_state_catalog_sha256")
-        or store_row.get("transfer_states_sha256")
-    )
-    provenance_value = (
-        meta.get("store_provenance")
-        or store_row.get("provenance_path")
+    source_provenance_value = meta.get("store_provenance")
+    provenance_value = source_provenance_value or store_row.get(
+        "provenance_path"
     )
     provenance_sha256 = (
         meta.get("store_provenance_sha256")
@@ -415,55 +478,73 @@ def build_grounded_teacher_run_log_from_item(
         or meta.get("source_run_log_sha256")
         or ""
     )
-    if store_row:
-        store_catalog = _index_reference(
-            store_index_path,
-            store_row.get("transfer_states_path"),
-            label="transfer_states_path",
+    indexed_source_sha256 = str(
+        meta.get("retained_source_run_log_sha256")
+        or meta.get("source_run_log_sha256")
+        or ""
+    ).strip()
+    store_source_sha256 = str(
+        store_row.get("source_run_log_sha256") or ""
+    ).strip()
+    if (
+        indexed_source_sha256
+        and store_source_sha256
+        and indexed_source_sha256 != store_source_sha256
+    ):
+        raise ValueError("source_store_index_run_log_mismatch")
+    provenance_path = _index_reference(
+        index_path if source_provenance_value else store_index_path,
+        provenance_value,
+        label="store_provenance",
+    )
+    explicit_state_catalog = (
+        meta.get("source_state_catalog")
+        or meta.get("transfer_state_catalog")
+    )
+    if explicit_state_catalog:
+        state_catalog_sha256 = str(
+            meta.get("source_state_catalog_sha256")
+            or meta.get("transfer_state_catalog_sha256")
+            or ""
+        ).strip()
+        return build_grounded_teacher_run_log(
+            source_run_log=source_run_log_value,
+            source_state_catalog=_index_reference(
+                index_path,
+                explicit_state_catalog,
+                label="source_state_catalog",
+            ),
+            provenance_manifest=provenance_path,
+            expected_source_run_log_sha256=str(source_run_log_sha256),
+            expected_source_state_catalog_sha256=state_catalog_sha256,
+            expected_provenance_sha256=str(provenance_sha256 or ""),
         )
-        source_catalog = _index_reference(
-            index_path,
-            state_catalog_value,
-            label="source_state_catalog",
-        )
-        if source_catalog != store_catalog or str(
-            state_catalog_sha256 or ""
-        ) != str(store_row.get("transfer_states_sha256") or ""):
-            raise ValueError("source_store_index_catalog_mismatch")
-        store_provenance = _index_reference(
-            store_index_path,
-            store_row.get("provenance_path"),
-            label="provenance_path",
-        )
-        source_provenance = _index_reference(
-            index_path,
-            provenance_value,
-            label="store_provenance",
-        )
-        if source_provenance != store_provenance or str(
-            provenance_sha256 or ""
-        ) != str(store_row.get("provenance_sha256") or ""):
-            raise ValueError("source_store_index_provenance_mismatch")
 
+    try:
+        return _build_grounded_teacher_run_log_from_embedded_source(
+            source_run_log=source_run_log_value,
+            provenance_manifest=provenance_path,
+            expected_source_run_log_sha256=str(source_run_log_sha256),
+            expected_provenance_sha256=str(provenance_sha256 or ""),
+        )
+    except ValueError as error:
+        if not str(error).startswith(
+            ("source_state_missing:", "source_state_xml_missing:")
+        ) or not store_row:
+            raise
     return build_grounded_teacher_run_log(
         source_run_log=source_run_log_value,
         source_state_catalog=_index_reference(
-            index_path,
-            state_catalog_value,
-            label="source_state_catalog",
+            store_index_path,
+            store_row.get("transfer_states_path"),
+            label="transfer_states_path",
         ),
-        provenance_manifest=_index_reference(
-            index_path,
-            provenance_value,
-            label="store_provenance",
-        ),
+        provenance_manifest=provenance_path,
         expected_source_run_log_sha256=str(source_run_log_sha256),
         expected_source_state_catalog_sha256=str(
-            state_catalog_sha256 or ""
+            store_row.get("transfer_states_sha256") or ""
         ),
-        expected_provenance_sha256=str(
-            provenance_sha256 or ""
-        ),
+        expected_provenance_sha256=str(provenance_sha256 or ""),
     )
 
 

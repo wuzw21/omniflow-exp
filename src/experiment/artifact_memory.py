@@ -727,6 +727,39 @@ def _refresh_artifact_memory_unlocked(
         item["retained_source_run_log_sha256"] = canonical_sources[str(task)][
             "sha256"
         ]
+        source_state_catalog = raw_item.get(
+            "source_state_catalog"
+        ) or raw_item.get("transfer_state_catalog")
+        if source_state_catalog:
+            catalog_path = _resolve_index_reference(
+                index_path,
+                source_state_catalog,
+            )
+            if not catalog_path.is_file():
+                raise FileNotFoundError(
+                    f"indexed_source_state_catalog_missing:{task}:{catalog_path}"
+                )
+            catalog_digest = _sha256(catalog_path)
+            expected_catalog_digest = str(
+                raw_item.get("source_state_catalog_sha256")
+                or raw_item.get("transfer_state_catalog_sha256")
+                or ""
+            ).strip()
+            if (
+                expected_catalog_digest
+                and expected_catalog_digest != catalog_digest
+            ):
+                raise ValueError(
+                    "indexed_source_state_catalog_hash_mismatch:"
+                    f"{task}:expected={expected_catalog_digest}:"
+                    f"actual={catalog_digest}"
+                )
+            item.pop("transfer_state_catalog", None)
+            item.pop("transfer_state_catalog_sha256", None)
+            item["source_state_catalog"] = str(
+                _materialize_object(root, catalog_path, catalog_digest)
+            )
+            item["source_state_catalog_sha256"] = catalog_digest
         memory_source_index[str(task)] = item
     memory_source_index_path, memory_source_index_hash = _publish_index(
         root,
