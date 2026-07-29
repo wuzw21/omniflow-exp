@@ -163,9 +163,19 @@ printf 'apk-%s\n' "$(wc -l < "$MOBILEGPT_BUILD_LOG")" > app/build/outputs/apk/de
     )
     gradlew.chmod(0o755)
     build_log = tmp_path / "build.log"
+    java_home = tmp_path / "jdk17"
+    java_bin = java_home / "bin" / "java"
+    java_bin.parent.mkdir(parents=True)
+    java_bin.write_text(
+        "#!/bin/sh\nprintf '%s\\n' 'openjdk version \"17.0.19\"' >&2\n",
+        encoding="utf-8",
+    )
+    java_bin.chmod(0o755)
     environment = {
         **os.environ,
+        "JAVA_HOME": str(java_home),
         "MOBILEGPT_BUILD_LOG": str(build_log),
+        "PATH": f"{java_bin.parent}:{os.environ.get('PATH', '')}",
         "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
     }
     base_command = [
@@ -223,6 +233,21 @@ printf 'apk-%s\n' "$(wc -l < "$MOBILEGPT_BUILD_LOG")" > app/build/outputs/apk/de
     assert audit.returncode == 0, audit.stderr
     assert build_log.read_text(encoding="utf-8").splitlines() == ["build"]
     assert "[mobilegpt:client] reuse" in second.stdout
+    receipt = json.loads(
+        (
+            mobilegpt_root
+            / "App"
+            / "app"
+            / "build"
+            / "outputs"
+            / "apk"
+            / "debug"
+            / "omniflow-client-build.v1.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert receipt["java_home"] == str(java_home)
+    assert receipt["java_version"] == 'openjdk version "17.0.19"'
+    assert receipt["java_sha256"] == hashlib.sha256(java_bin.read_bytes()).hexdigest()
 
     apk = (
         mobilegpt_root

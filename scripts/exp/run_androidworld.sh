@@ -528,6 +528,48 @@ if ! python_bin="$(command -v "$python_bin")"; then
   echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
   exit 1
 fi
+java_home="${OMNIFLOW_JAVA_HOME:-}"
+if [[ -z "$java_home" ]]; then
+  for java_candidate in \
+    /home/wuzewen/Android/jdk17 \
+    /home/wuzewen/.local/jdks/temurin-17 \
+    /home/wuzewen/.local/jdks/corretto-17; do
+    if [[ -x "$java_candidate/bin/java" ]]; then
+      java_home="$java_candidate"
+      break
+    fi
+  done
+fi
+if [[ -n "$java_home" ]]; then
+  if [[ "$java_home" != /* ]]; then
+    echo "OMNIFLOW_JAVA_HOME must be an absolute path: $java_home" >&2
+    exit 2
+  fi
+  java_bin="$java_home/bin/java"
+else
+  java_bin="$(command -v java || true)"
+  if [[ -n "$java_bin" ]]; then
+    java_home="$(cd "$(dirname "$java_bin")/.." && pwd)"
+  fi
+fi
+if [[ -z "$java_bin" || ! -x "$java_bin" ]]; then
+  echo "Java runtime missing; set OMNIFLOW_JAVA_HOME to JDK 17 or newer." >&2
+  exit 1
+fi
+java_version_line="$({ "$java_bin" -version 2>&1 || true; } | head -1)"
+if [[ "$java_version_line" =~ version\ \"([0-9]+) ]]; then
+  java_major="${BASH_REMATCH[1]}"
+else
+  echo "Unable to determine Java version from $java_bin: $java_version_line" >&2
+  exit 1
+fi
+if (( java_major < 17 )); then
+  echo "Java 17 or newer is required: java=$java_bin version=$java_version_line" >&2
+  exit 1
+fi
+export JAVA_HOME="$java_home"
+export PATH="$java_home/bin:$PATH"
+echo "[java] home=$java_home major=$java_major version=$java_version_line"
 select_source_asset_revision() {
   "$python_bin" - "$repo" "$1" "$2" "$ours_store_index" "$3" <<'PY'
 import json
@@ -1111,7 +1153,7 @@ require_file "experiment_config" "$config"
 require_file "runtime_preflight" "$preflight"
 require_file "androidworld_setup" "$android_world_root/android_world/env/setup_device/apps.py"
 require_file "adb" "$adb_bin"
-require_command "java" "java"
+require_file "java" "$java_bin"
 if [[ "$manage_emulators" -eq 1 ]]; then
   require_file "emulator" "$emulator_bin"
 fi

@@ -121,10 +121,15 @@ def test_check_only_is_read_only_before_any_runtime_output(
     setup_file.write_text("", encoding="utf-8")
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    for name in ("adb", "java"):
-        executable = fake_bin / name
-        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        executable.chmod(0o755)
+    fake_adb = fake_bin / "adb"
+    fake_adb.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_adb.chmod(0o755)
+    fake_java = fake_bin / "java"
+    fake_java.write_text(
+        "#!/bin/sh\nprintf '%s\\n' 'openjdk version \"17.0.19\"' >&2\n",
+        encoding="utf-8",
+    )
+    fake_java.chmod(0o755)
     results = tmp_path / "results-never-created"
     memory_root = tmp_path / "memory"
     refresh_artifact_memory(
@@ -145,7 +150,7 @@ def test_check_only_is_read_only_before_any_runtime_output(
         "OMNIFLOW_MASTER_SOURCE_INDEX": str(source_index),
         "OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS": "1",
         "OMNIFLOW_ANDROID_WORLD_ROOT": str(android_world),
-        "OMNIFLOW_ADB_PATH": str(fake_bin / "adb"),
+        "OMNIFLOW_ADB_PATH": str(fake_adb),
         "OMNIFLOW_SINGLE_TASK_MANAGE_EMULATORS": "0",
         "OMNIFLOW_SINGLE_TASK_METHODS": "fixed_replay",
         "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_root / "current.json"),
@@ -162,6 +167,23 @@ def test_check_only_is_read_only_before_any_runtime_output(
 
     assert completed.returncode == 0, completed.stderr
     assert "[static] ready" in completed.stdout
+    assert not results.exists()
+
+    fake_java.write_text(
+        "#!/bin/sh\nprintf '%s\\n' 'openjdk version \"11.0.31\"' >&2\n",
+        encoding="utf-8",
+    )
+    unsupported_java = subprocess.run(
+        ["bash", str(SCRIPT), "--check-only"],
+        cwd=REPO,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert unsupported_java.returncode != 0
+    assert "Java 17 or newer is required" in unsupported_java.stderr
     assert not results.exists()
 
 
@@ -329,7 +351,10 @@ exit 0
     )
     fake_adb.chmod(0o755)
     fake_java = fake_bin / "java"
-    fake_java.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_java.write_text(
+        "#!/bin/sh\nprintf '%s\\n' 'openjdk version \"17.0.19\"' >&2\n",
+        encoding="utf-8",
+    )
     fake_java.chmod(0o755)
     fake_jq = fake_bin / "jq"
     fake_jq.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")

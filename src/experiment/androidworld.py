@@ -2962,12 +2962,48 @@ def _mobilegpt_client_build_state(
     input_sha256, input_file_count = _mobilegpt_client_input_digest(
         paths["app_root"]
     )
+    configured_java_home = str(os.environ.get("JAVA_HOME") or "").strip()
+    if configured_java_home:
+        java_home = Path(configured_java_home).expanduser().resolve()
+        java_executable = java_home / "bin" / "java"
+    else:
+        discovered_java = shutil.which("java")
+        if not discovered_java:
+            raise FileNotFoundError("Java executable not found for MobileGPT build")
+        java_executable = Path(discovered_java).resolve()
+        java_home = java_executable.parent.parent
+    if not java_executable.is_file():
+        raise FileNotFoundError(
+            f"Java executable not found for MobileGPT build: {java_executable}"
+        )
+    java_result = subprocess.run(
+        [str(java_executable), "-version"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    java_version = next(
+        (
+            line.strip()
+            for line in (java_result.stderr + "\n" + java_result.stdout).splitlines()
+            if line.strip()
+        ),
+        "",
+    )
+    if java_result.returncode != 0 or not java_version:
+        raise ValueError(
+            f"Unable to identify Java runtime for MobileGPT build: {java_executable}"
+        )
     return {
         "schema_version": "omniflow.mobilegpt_client_build.v1",
         "build_command": ["./gradlew", ":app:assembleDebug"],
         "host_ip": host_ip,
         "input_tree_sha256": input_sha256,
         "input_file_count": input_file_count,
+        "java_home": str(java_home),
+        "java_executable": str(java_executable),
+        "java_version": java_version,
+        "java_sha256": _file_sha256(java_executable),
         "apk_relative_path": paths["apk"].relative_to(paths["root"]).as_posix(),
         "apk_sha256": _file_sha256(paths["apk"]),
     }
