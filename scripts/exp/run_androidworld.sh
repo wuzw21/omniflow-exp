@@ -93,7 +93,8 @@ Required external roots:
 
 Optional runtime overrides:
   PYTHON_BIN, OMNIFLOW_ENV_FILE, OMNIFLOW_SINGLE_TASK_SOURCE_INDEX,
-  OMNIFLOW_MASTER_SOURCE_INDEX, OMNIFLOW_OURS_STORE_INDEX.
+  OMNIFLOW_MASTER_SOURCE_INDEX, OMNIFLOW_OURS_STORE_INDEX,
+  OMNIFLOW_ANDROID_SDK_ROOT, OMNIFLOW_JAVA_HOME.
 
 Asset conversion inputs:
   OMNIFLOW_OURS_SOURCE_ASSET_INDEX Source RunLog index; defaults to the master
@@ -528,6 +529,16 @@ if ! python_bin="$(command -v "$python_bin")"; then
   echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
   exit 1
 fi
+android_sdk_root="${OMNIFLOW_ANDROID_SDK_ROOT:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/home/wuzewen/Android/Sdk}}}"
+if [[ "$android_sdk_root" != /* ]]; then
+  echo "Android SDK root must be an absolute path: $android_sdk_root" >&2
+  exit 2
+fi
+export ANDROID_SDK_ROOT="$android_sdk_root"
+export ANDROID_HOME="$android_sdk_root"
+adb_bin="${OMNIFLOW_ADB_PATH:-$android_sdk_root/platform-tools/adb}"
+emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$android_sdk_root/emulator/emulator}"
+export PATH="/home/wuzewen/.local/bin:$android_sdk_root/platform-tools:$PATH"
 java_home="${OMNIFLOW_JAVA_HOME:-}"
 if [[ -z "$java_home" ]]; then
   for java_candidate in \
@@ -629,6 +640,10 @@ if [[ "$requires_mobilegpt_source_memory" -eq 1 \
   && "$check_only" -eq 0 \
   && "$dry_run" -eq 0 \
   && "${OMNIFLOW_MOBILEGPT_CLIENT_PREPARED:-0}" != "1" ]]; then
+  if [[ ! -d "$android_sdk_root" ]]; then
+    echo "Android SDK root missing for MobileGPT client build: $android_sdk_root" >&2
+    exit 1
+  fi
   prepare_mobilegpt_client
   export OMNIFLOW_MOBILEGPT_CLIENT_PREPARED=1
 fi
@@ -1122,10 +1137,6 @@ export OMNITRANSFER_ROOT="$omnitransfer_root"
 unset OMNIFLOW_OOB_DEVICE_URL
 export OMNIFLOW_OBSERVE_BACKEND="androidworld"
 export OMNIFLOW_ACT_BACKEND="androidworld"
-android_sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/home/wuzewen/Android/Sdk}}"
-adb_bin="${OMNIFLOW_ADB_PATH:-$android_sdk_root/platform-tools/adb}"
-emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$android_sdk_root/emulator/emulator}"
-export PATH="/home/wuzewen/.local/bin:$android_sdk_root/platform-tools:$PATH"
 missing_assets=()
 require_file() {
   local label="$1"

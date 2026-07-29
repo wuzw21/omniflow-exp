@@ -294,6 +294,11 @@ if [ "$1" = "-m" ] && [ "$2" = "src.experiment.function_assets" ]; then
   exit 0
 fi
 if [ "$1" = "-m" ] && [ "$2" = "src.experiment.androidworld" ]; then
+  if [ "$3" = "mobilegpt" ] && [ "$4" = "prepare-client" ]; then
+    if [ "$ANDROID_SDK_ROOT" != "$EXPECTED_ANDROID_SDK_ROOT" ] || [ "$ANDROID_HOME" != "$EXPECTED_ANDROID_SDK_ROOT" ]; then
+      exit 42
+    fi
+  fi
   : > "$REPLAYED_MARKER"
   exit 0
 fi
@@ -335,6 +340,8 @@ exit 0
     fake_python.chmod(0o755)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
+    android_sdk_root = assets / "android-sdk"
+    android_sdk_root.mkdir()
     fake_adb = fake_bin / "adb"
     fake_adb.write_text(
         """#!/bin/sh
@@ -392,11 +399,13 @@ exit 0
         "STORE_INDEX": str(store_index),
         "STORE_PATH": str(store_path),
         "CONFIG_PATH": str(REPO / "config" / "paper_androidworld.json"),
+        "EXPECTED_ANDROID_SDK_ROOT": str(android_sdk_root),
         "OMNIFLOW_EXP_ASSET_ROOT": str(assets),
         "OMNIFLOW_EXP_RESULTS_ROOT": str(results),
         "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_index),
         "OMNIFLOW_ENV_FILE": str(env_file),
         "OMNIFLOW_ANDROID_WORLD_ROOT": str(android_world),
+        "OMNIFLOW_ANDROID_SDK_ROOT": str(android_sdk_root),
         "OMNIFLOW_ADB_PATH": str(fake_adb),
         "OMNITRANSFER_ROOT": str(omnitransfer),
         "OMNIFLOW_OURS_CONVERTED_ASSET_ROOT": str(converted_root),
