@@ -38,6 +38,7 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "OMNIFLOW_EXP_ASSET_ROOT" in completed.stdout
     assert "OMNIFLOW_EXP_MEMORY_ROOT" in completed.stdout
     assert completed.stderr == ""
+    assert SCRIPT.read_text(encoding="utf-8").count('bash "$0"') == 2
 
 
 def test_check_only_is_read_only_before_any_runtime_output(
