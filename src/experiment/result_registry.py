@@ -641,6 +641,60 @@ def _load_verified_registered_result(summary_path: Path) -> dict[str, Any]:
     return summary
 
 
+def registered_cell_plan(
+    *,
+    runs_root: Path,
+    task_name: str,
+    methods: tuple[str, ...],
+    devices: tuple[str, ...],
+) -> dict[str, list[tuple[str, str]]]:
+    """Return completed and pending formal cells in protocol order.
+
+    A cell is completed once at least one immutable registered result verifies.
+    Official success is deliberately not required: a verified failure is still
+    a formal conclusion and must not be rerun by the batch launcher.
+    """
+
+    root = runs_root.expanduser().resolve()
+    expected = [(method, device) for method in methods for device in devices]
+    completed: list[tuple[str, str]] = []
+    for method, device in expected:
+        cell_root = root / task_name / method / device
+        paths = sorted(cell_root.glob("*/registered_result.json"))
+        cell_completed = False
+        for path in paths:
+            summary = _load_verified_registered_result(path)
+            row = summary["rows"][0]
+            if (
+                str(summary.get("task_name") or "") != task_name
+                or str(row.get("method") or "") != method
+                or str(row.get("device") or "") != device
+            ):
+                raise ValueError(
+                    f"registered result does not match expected cell: {path}"
+                )
+            try:
+                validator_task_count = float(
+                    row.get("official_validator_task_count") or 0
+                )
+                validator_coverage = float(
+                    row.get("official_validator_coverage_rate") or 0
+                )
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    f"registered validator coverage is invalid: {path}"
+                ) from error
+            cell_completed = cell_completed or (
+                validator_task_count > 0 or validator_coverage > 0
+            )
+        if cell_completed:
+            completed.append((method, device))
+    return {
+        "completed": completed,
+        "pending": [cell for cell in expected if cell not in completed],
+    }
+
+
 def load_summary_rows(
     runs_root: Path,
     source_index: dict[str, Any],

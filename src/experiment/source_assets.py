@@ -5,11 +5,52 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
 from typing import Any
 import xml.etree.ElementTree as ET
 
 from omniflow.core.trajectory import canonicalize_run_log
 from omniflow.transfer.runtime import load_transfer_state_catalog
+
+
+def select_source_asset_revision(
+    base_root: str | Path,
+    *,
+    manifest_name: str,
+    initial_revision: int = 3,
+) -> Path:
+    """Reuse the first frozen source asset or allocate a fresh revision path.
+
+    Failed and incomplete revision directories are immutable evidence. When no
+    frozen manifest exists, the returned path advances beyond every existing
+    revision instead of overwriting one.
+    """
+
+    if initial_revision < 1:
+        raise ValueError("initial_revision must be positive")
+    manifest = str(manifest_name).strip()
+    if not manifest or Path(manifest).name != manifest:
+        raise ValueError("manifest_name must be one file name")
+    base = Path(base_root).expanduser().resolve()
+    revisions: list[tuple[int, Path]] = []
+    if base.is_dir():
+        for candidate in base.iterdir():
+            match = re.fullmatch(r"native_source_r([1-9][0-9]*)", candidate.name)
+            if candidate.is_dir() and match:
+                revision = int(match.group(1))
+                if revision >= initial_revision:
+                    revisions.append((revision, candidate.resolve()))
+    frozen = sorted(
+        (revision, candidate)
+        for revision, candidate in revisions
+        if (candidate / manifest).is_file()
+    )
+    if frozen:
+        return frozen[0][1]
+    next_revision = max(
+        [initial_revision - 1, *(revision for revision, _ in revisions)]
+    ) + 1
+    return base / f"native_source_r{next_revision}"
 
 
 def _sha256(path: Path) -> str:

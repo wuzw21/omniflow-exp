@@ -30,9 +30,9 @@ store_path="${OMNIFLOW_SINGLE_TASK_STORE_PATH:-}"
 ours_store_index="${OMNIFLOW_OURS_STORE_INDEX:-}"
 mobilegpt_root="${OMNIFLOW_MOBILEGPT_ROOT:-${asset_root:+$asset_root/runtime/external/mobilegpt}}"
 mobilegpt_apk="${OMNIFLOW_MOBILEGPT_APK:-${mobilegpt_root:+$mobilegpt_root/App/app/build/outputs/apk/debug/app-debug.apk}}"
-mobilegpt_source_memory_root="${OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT:-${asset_root:+$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111/$task/mobilegpt_offline_retrieval/native_source_r3/memory}}"
+mobilegpt_source_memory_root="${OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT:-}"
 appagent_root="${OMNIFLOW_APPAGENT_ROOT:-${asset_root:+$asset_root/runtime/external/appagent}}"
-appagent_demo_memory_root="${OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT:-${asset_root:+$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111/$task/appagent_demo/native_source_r3}}"
+appagent_demo_memory_root="${OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT:-}"
 source_device="${OMNIFLOW_SOURCE_DEVICE:-source5560:emulator-5560:5560}"
 preflight_profile="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_PROFILE:-}"
 preflight_serials="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_SERIALS:-}"
@@ -225,6 +225,43 @@ if [[ -n "$ours_store_index" && "$ours_store_index" != /* ]]; then
   echo "OMNIFLOW_OURS_STORE_INDEX must be an absolute path." >&2
   exit 2
 fi
+if ! python_bin="$(command -v "$python_bin")"; then
+  echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
+  exit 1
+fi
+select_source_asset_revision() {
+  "$python_bin" - "$repo" "$1" "$2" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
+from src.experiment.source_assets import select_source_asset_revision
+
+print(
+    select_source_asset_revision(
+        sys.argv[2],
+        manifest_name=sys.argv[3],
+    )
+)
+PY
+}
+if [[ -z "$mobilegpt_source_memory_root" ]]; then
+  mobilegpt_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111/$task/mobilegpt_offline_retrieval"
+  mobilegpt_source_bundle="$(
+    select_source_asset_revision \
+      "$mobilegpt_source_base" \
+      "cold_memory_manifest.json"
+  )"
+  mobilegpt_source_memory_root="$mobilegpt_source_bundle/memory"
+fi
+if [[ -z "$appagent_demo_memory_root" ]]; then
+  appagent_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111/$task/appagent_demo"
+  appagent_demo_memory_root="$(
+    select_source_asset_revision \
+      "$appagent_source_base" \
+      "appagent_demo_manifest.json"
+  )"
+fi
 for external_path in \
   "$env_file" \
   "$master_source_index" \
@@ -244,10 +281,6 @@ done
 if [[ "$requires_omnitransfer" -eq 1 && ( "$omnitransfer_root" != /* || "$store_path" != /* ) ]]; then
   echo "OmniTransfer root and ours store must be absolute paths." >&2
   exit 2
-fi
-if ! python_bin="$(command -v "$python_bin")"; then
-  echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
-  exit 1
 fi
 if [[ "$all_tasks" -eq 1 ]]; then
   if [[ "$eight_cells" -eq 1 ]]; then
@@ -347,7 +380,7 @@ PY
   fi
   batch_output_root="${OMNIFLOW_BATCH_OUTPUT_ROOT:-$results_root/attempts}"
   batch_log_root="${OMNIFLOW_BATCH_LOG_ROOT:-$results_root/logs}"
-  registration_state_for_task() {
+  registration_plan_for_task() {
     "$python_bin" - \
       "$repo" \
       "$results_root/androidworld_validator/runs" \
@@ -358,56 +391,28 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
-from src.experiment.result_registry import _load_verified_registered_result
+from src.experiment.result_registry import registered_cell_plan
 
 runs_root = Path(sys.argv[2]).expanduser().resolve()
 task = sys.argv[3]
-methods = sys.argv[4].split(",")
-devices = [spec.split(":", 1)[0] for spec in sys.argv[5].split(",")]
-expected = [
-    (
-        runs_root
-        / task
-        / method
-        / device,
-        method,
-        device,
-    )
-    for method in methods
-    for device in devices
-]
-present = []
-invalid = []
-for cell_root, method, device in expected:
-    paths = sorted(cell_root.glob("iteration_*/registered_result.json"))
-    if not paths:
-        continue
-    cell_valid = False
-    for path in paths:
-        try:
-            summary = _load_verified_registered_result(path)
-            row = summary["rows"][0]
-            if (
-                str(summary.get("task_name") or "") != task
-                or str(row.get("method") or "") != method
-                or str(row.get("device") or "") != device
-            ):
-                raise ValueError("registered result does not match expected cell")
-            cell_valid = True
-        except (KeyError, TypeError, ValueError, OSError) as error:
-            invalid.append((path, error))
-    if cell_valid:
-        present.append((method, device))
-if invalid:
-    for path, error in invalid:
-        print(f"Invalid registered cell: {path}: {error}", file=sys.stderr)
-    print(f"invalid:{len(invalid)}/{len(expected)}")
-elif len(present) == len(expected):
-    print("complete")
-elif present:
-    print(f"partial:{len(present)}/{len(expected)}")
-else:
-    print("empty")
+methods = tuple(sys.argv[4].split(","))
+device_specs = {}
+for raw in sys.argv[5].split(","):
+    fields = raw.split(":")
+    if len(fields) != 3:
+        raise SystemExit(f"invalid_device_target:{raw}")
+    device_specs[fields[0]] = fields
+devices = tuple(device_specs)
+plan = registered_cell_plan(
+    runs_root=runs_root,
+    task_name=task,
+    methods=methods,
+    devices=devices,
+)
+print(f"summary\t{len(plan['completed'])}\t{len(plan['pending'])}")
+for method, device in plan["pending"]:
+    label, serial, port = device_specs[device]
+    print(f"pending\t{method}\t{label}\t{serial}\t{port}")
 PY
   }
   indexed_store_path_for_task() {
@@ -452,48 +457,33 @@ print(store_path)
 PY
   }
 
-  batch_registration_states=()
+  batch_registration_plans=()
   batch_store_paths=()
-  pending_task_count=0
+  pending_cell_count=0
   for batch_index in "${!batch_tasks[@]}"; do
     batch_task="${batch_tasks[$batch_index]}"
-    registration_state="$(registration_state_for_task "$batch_task")"
-    batch_registration_states[$batch_index]="$registration_state"
-    case "$registration_state" in
-      complete)
-        batch_store_paths[$batch_index]=""
-        echo "[batch:static] already-complete task=$batch_task cells=$batch_cell_count/$batch_cell_count"
-        continue
-        ;;
-      partial:*)
-        echo "Partially registered task requires audit before resume: task=$batch_task state=$registration_state" >&2
-        exit 1
-        ;;
-      invalid:*)
-        echo "Invalid registered task requires audit before resume: task=$batch_task state=$registration_state" >&2
-        exit 1
-        ;;
-      empty)
-        pending_task_count="$((pending_task_count + 1))"
-        ;;
-      *)
-        echo "Unexpected registration state: task=$batch_task state=$registration_state" >&2
-        exit 1
-        ;;
-    esac
-    task_output_root="$batch_output_root/$batch_task/iteration_01"
-    task_log="$batch_log_root/$batch_task/$attempt_id.log"
-    if [[ -e "$task_output_root" ]]; then
-      echo "Unregistered immutable task artifacts require audit before resume: task=$batch_task output=$task_output_root" >&2
+    registration_plan="$(registration_plan_for_task "$batch_task")"
+    batch_registration_plans[$batch_index]="$registration_plan"
+    registration_header="${registration_plan%%$'\n'*}"
+    IFS=$'\t' read -r header_kind completed_cells pending_cells <<< "$registration_header"
+    if [[ "$header_kind" != "summary" || ! "$completed_cells" =~ ^[0-9]+$ || ! "$pending_cells" =~ ^[0-9]+$ ]]; then
+      echo "Invalid registration plan: task=$batch_task header=$registration_header" >&2
       exit 1
     fi
+    if [[ "$pending_cells" -eq 0 ]]; then
+      batch_store_paths[$batch_index]=""
+      echo "[batch:static] already-complete task=$batch_task cells=$completed_cells/$batch_cell_count"
+      continue
+    fi
+    pending_cell_count="$((pending_cell_count + pending_cells))"
     indexed_store_path="$(indexed_store_path_for_task "$batch_task")"
     batch_store_paths[$batch_index]="$indexed_store_path"
+    task_output_root="$batch_output_root/$batch_task/$attempt_id/static"
     child_static_args=(--check-only)
     if [[ "$eight_cells" -eq 1 ]]; then
       child_static_args+=(--eight-cells)
     fi
-    echo "[batch:static] check task=$batch_task"
+    echo "[batch:static] check task=$batch_task completed=$completed_cells pending=$pending_cells"
     (
       export OMNIFLOW_SINGLE_TASK_TASK="$batch_task"
       export OMNIFLOW_SINGLE_TASK_METHODS="$batch_methods"
@@ -509,55 +499,68 @@ PY
   if [[ "$check_only" -eq 1 ]]; then
     exit 0
   fi
-  if [[ "$pending_task_count" -eq 0 ]]; then
-    echo "[batch] complete completed=0 skipped=$batch_task_count total=$batch_task_count"
+  if [[ "$pending_cell_count" -eq 0 ]]; then
+    echo "[batch] complete completed=0 skipped=$((batch_task_count * batch_cell_count)) total=$((batch_task_count * batch_cell_count))"
     exit 0
   fi
 
   mkdir -p "$batch_output_root" "$batch_log_root"
   completed=0
-  skipped=0
+  skipped="$((batch_task_count * batch_cell_count - pending_cell_count))"
   for batch_index in "${!batch_tasks[@]}"; do
     batch_task="${batch_tasks[$batch_index]}"
-    registration_state="${batch_registration_states[$batch_index]}"
-    if [[ "$registration_state" == "complete" ]]; then
+    registration_plan="${batch_registration_plans[$batch_index]}"
+    registration_header="${registration_plan%%$'\n'*}"
+    IFS=$'\t' read -r _ completed_cells pending_cells <<< "$registration_header"
+    if [[ "$pending_cells" -eq 0 ]]; then
       echo "[batch] skip complete task=$batch_task cells=$batch_cell_count/$batch_cell_count"
-      skipped="$((skipped + 1))"
       continue
     fi
-    task_output_root="$batch_output_root/$batch_task/iteration_01"
-    task_log="$batch_log_root/$batch_task/$attempt_id.log"
     indexed_store_path="${batch_store_paths[$batch_index]}"
-    mkdir -p "$(dirname "$task_log")"
-    child_run_args=()
-    if [[ "$eight_cells" -eq 1 ]]; then
-      child_run_args+=(--eight-cells)
-    fi
-    echo "[batch] start task=$batch_task cells=$batch_cell_count methods=$batch_method_count devices=2"
-    if (
-      export OMNIFLOW_SINGLE_TASK_TASK="$batch_task"
-      export OMNIFLOW_SINGLE_TASK_METHODS="$batch_methods"
-      export OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT="$task_output_root"
-      export OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS="$source_index_task_count"
-      if [[ -n "$indexed_store_path" ]]; then
-        export OMNIFLOW_SINGLE_TASK_STORE_PATH="$indexed_store_path"
+    while IFS=$'\t' read -r row_kind cell_method cell_device cell_serial cell_port; do
+      if [[ "$row_kind" != "pending" ]]; then
+        continue
       fi
-      "$0" "${child_run_args[@]}"
-    ) 2>&1 | tee "$task_log"; then
-      registration_state="$(registration_state_for_task "$batch_task")"
-      if [[ "$registration_state" != "complete" ]]; then
-        echo "Task command returned successfully without $batch_cell_count valid registered cells: task=$batch_task state=$registration_state" >&2
-        exit 1
+      task_output_root="$batch_output_root/$batch_task/$attempt_id/$cell_method/$cell_device/$attempt_id"
+      task_log="$batch_log_root/$batch_task/$attempt_id/$cell_method-$cell_device.log"
+      mkdir -p "$(dirname "$task_log")"
+      echo "[batch] start task=$batch_task method=$cell_method device=$cell_device completed=$completed skipped=$skipped"
+      if (
+        export OMNIFLOW_SINGLE_TASK_TASK="$batch_task"
+        export OMNIFLOW_SINGLE_TASK_METHODS="$cell_method"
+        export OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS="$cell_device:$cell_serial:$cell_port"
+        export OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT="$task_output_root"
+        export OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS="$source_index_task_count"
+        if [[ -n "$indexed_store_path" ]]; then
+          export OMNIFLOW_SINGLE_TASK_STORE_PATH="$indexed_store_path"
+        fi
+        "$0"
+      ) 2>&1 | tee "$task_log"; then
+        status=0
+      else
+        status="$?"
+      fi
+      updated_plan="$(registration_plan_for_task "$batch_task")"
+      pending_line=$'pending\t'"$cell_method"$'\t'"$cell_device"$'\t'"$cell_serial"$'\t'"$cell_port"
+      if grep -Fqx "$pending_line" <<< "$updated_plan"; then
+        echo "[batch] stopped task=$batch_task method=$cell_method device=$cell_device status=$status log=$task_log" >&2
+        if [[ "$status" -eq 0 ]]; then
+          exit 1
+        fi
+        exit "$status"
       fi
       completed="$((completed + 1))"
-      echo "[batch] registered task=$batch_task completed=$completed skipped=$skipped total=$batch_task_count"
-    else
-      status="$?"
-      echo "[batch] stopped task=$batch_task status=$status log=$task_log" >&2
-      exit "$status"
+      echo "[batch] registered task=$batch_task method=$cell_method device=$cell_device status=$status completed=$completed skipped=$skipped total=$((batch_task_count * batch_cell_count))"
+    done <<< "$registration_plan"
+    final_plan="$(registration_plan_for_task "$batch_task")"
+    final_header="${final_plan%%$'\n'*}"
+    IFS=$'\t' read -r _ final_completed final_pending <<< "$final_header"
+    if [[ "$final_pending" -ne 0 ]]; then
+      echo "Task resume ended with pending cells: task=$batch_task completed=$final_completed pending=$final_pending" >&2
+      exit 1
     fi
   done
-  echo "[batch] complete completed=$completed skipped=$skipped total=$batch_task_count"
+  echo "[batch] complete completed=$completed skipped=$skipped total=$((batch_task_count * batch_cell_count))"
   exit 0
 fi
 "$python_bin" - "$task_iteration" "$attempt_series_root" "$(dirname "$output_root")" <<'PY'

@@ -11,6 +11,7 @@ from src.experiment import androidworld as pipeline
 from src.experiment.source_assets import (
     build_grounded_teacher_run_log,
     build_grounded_teacher_run_log_from_item,
+    select_source_asset_revision,
 )
 from src.integrations.appagent_adapter import build_appagent_teacher_source
 from src.integrations.mobilegpt_teacher import (
@@ -219,3 +220,31 @@ def test_source_and_store_indexes_join_without_rewriting_frozen_assets(
         "element"
     ]["text"] == "Save"
     assert audit["source_state_catalog"] == str(states)
+
+
+def test_source_revision_reuses_frozen_asset_or_advances_past_failures(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "appagent_demo"
+    failed = base / "native_source_r3"
+    failed.mkdir(parents=True)
+    (failed / "prep_failure.json").write_text("{}", encoding="utf-8")
+
+    assert select_source_asset_revision(
+        base,
+        manifest_name="appagent_demo_manifest.json",
+    ) == base / "native_source_r4"
+
+    frozen = base / "native_source_r4"
+    frozen.mkdir()
+    (frozen / "appagent_demo_manifest.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+    incomplete = base / "native_source_r5"
+    incomplete.mkdir()
+
+    assert select_source_asset_revision(
+        base,
+        manifest_name="appagent_demo_manifest.json",
+    ) == frozen
