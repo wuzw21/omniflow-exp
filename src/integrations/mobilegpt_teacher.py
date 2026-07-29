@@ -448,10 +448,16 @@ class MobileGPTTeacher:
         record = self._actions[self._cursor]
         action = dict(record["action"])
         source_type = str(action.get("type") or "").strip()
+        current_screen_package = _screen_package(screen)
+        current_app_package = (
+            current_screen_package
+            or _adb_foreground_package()
+            or str(self.task.get("app") or "").strip()
+        )
         app_switch = _source_app_switch_preflight(
             action,
             screen,
-            current_app_package=str(self.task.get("app") or ""),
+            current_app_package=current_app_package,
         )
         if app_switch is not None:
             return TeacherActionResult(
@@ -1052,18 +1058,17 @@ def _source_app_switch_preflight(
     if not source_package:
         return None
     current_package = _screen_package(current_screen)
-    if current_package:
-        if current_package == source_package:
-            return None
-    else:
-        task_package = str(current_app_package or "").strip()
-        if not task_package or task_package == source_package:
-            return None
+    effective_current_package = current_package or str(current_app_package or "").strip()
+    if not effective_current_package or effective_current_package == source_package:
+        return None
     if _screen_contains_source_target(source_action, current_screen):
         return None
     return {
         "package_name": source_package,
-        "reason": f"source_package:{source_package}:current_package:{current_package or 'unknown'}",
+        "reason": (
+            f"source_package:{source_package}:"
+            f"current_package:{effective_current_package}"
+        ),
     }
 
 
@@ -1224,6 +1229,36 @@ def _screen_package(screen: str) -> str:
         cleaned = package.rstrip(".,;:'\")(")
         if cleaned and cleaned != "com.example.MobileGPT":
             return cleaned
+    return ""
+
+
+def _adb_foreground_package() -> str:
+    adb_path = str(os.getenv("OMNIFLOW_MOBILEGPT_ADB_PATH") or "adb").strip() or "adb"
+    serial = str(os.getenv("ANDROID_SERIAL") or "").strip()
+    argv = [adb_path]
+    if serial:
+        argv.extend(["-s", serial])
+    argv.extend(["shell", "dumpsys", "activity", "activities"])
+    try:
+        completed = subprocess.run(
+            argv,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if completed.returncode != 0:
+        return ""
+    for marker in ("topResumedActivity", "mResumedActivity", "mFocusedApp"):
+        match = re.search(
+            rf"{marker}[^\n]*?\bu\d+\s+([A-Za-z][A-Za-z0-9_.]*)/",
+            completed.stdout,
+        )
+        if match:
+            return match.group(1)
     return ""
 
 
