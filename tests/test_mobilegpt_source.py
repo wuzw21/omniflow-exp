@@ -155,6 +155,8 @@ def test_mobilegpt_source_accepts_successful_canonical_seed111(
     )
     assert item.source_run_log == source_run_log
     assert item.replay_seed == 111
+    item.meta.pop("method")
+    assert mobilegpt_source.source_method_label(item) == "fixed_replay"
 
     rejected_root = tmp_path / "rejected"
     rejected_root.mkdir()

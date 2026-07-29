@@ -622,7 +622,13 @@ def _load_verified_registered_result(summary_path: Path) -> dict[str, Any]:
     expected_sha256 = str(manifest.get("registered_result_sha256") or "")
     if not expected_sha256 or _sha256(summary_path) != expected_sha256:
         raise ValueError(f"registered result checksum mismatch: {summary_path}")
-    for field in ("registration_id", "attempt_id", "task_name"):
+    for field in (
+        "registration_id",
+        "attempt_id",
+        "task_name",
+        "source_seed",
+        "evaluation_seed",
+    ):
         if str(summary.get(field) or "") != str(manifest.get(field) or ""):
             raise ValueError(
                 f"registered result {field} mismatch: {summary_path}"
@@ -647,6 +653,8 @@ def registered_cell_plan(
     task_name: str,
     methods: tuple[str, ...],
     devices: tuple[str, ...],
+    source_seed: int,
+    evaluation_seed: int,
 ) -> dict[str, list[tuple[str, str]]]:
     """Return completed and pending formal cells in protocol order.
 
@@ -673,6 +681,11 @@ def registered_cell_plan(
                 raise ValueError(
                     f"registered result does not match expected cell: {path}"
                 )
+            if (
+                summary.get("source_seed") != source_seed
+                or summary.get("evaluation_seed") != evaluation_seed
+            ):
+                continue
             try:
                 validator_task_count = float(
                     row.get("official_validator_task_count") or 0

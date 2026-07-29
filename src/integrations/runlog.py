@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from omniflow.core.trajectory import (
     CANONICAL_RUN_LOG_SCHEMA_VERSION,
@@ -17,9 +17,16 @@ _EXECUTION_TIMING_ARGS = {
 }
 
 
-def import_run_log(value: dict[str, Any]) -> dict[str, Any]:
+def import_run_log(
+    value: dict[str, Any],
+    *,
+    package_resolver: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
     """Convert historical OOB/AndroidWorld data at the integration boundary."""
-    run_log, _source_states = import_run_log_evidence(value)
+    run_log, _source_states = import_run_log_evidence(
+        value,
+        package_resolver=package_resolver,
+    )
     return run_log
 
 
@@ -27,11 +34,15 @@ def import_run_log_evidence(
     value: dict[str, Any],
     *,
     evidence_root: str | Path | None = None,
+    package_resolver: Callable[[str], str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Import one source RunLog and its source-only transfer state catalog."""
     payload = _map(value.get("payload")) or value
     payload = _map(payload.get("run_log")) or payload
-    if payload.get("schema_version") == CANONICAL_RUN_LOG_SCHEMA_VERSION:
+    if (
+        payload.get("schema_version") == CANONICAL_RUN_LOG_SCHEMA_VERSION
+        and "status" in payload
+    ):
         canonical = canonicalize_run_log(payload)
         return (
             canonical,
@@ -89,6 +100,7 @@ def import_run_log_evidence(
                 raw_action or raw_step.get("tool_call") or raw_step,
                 source_state=before_state,
                 inferred_package_name=inferred_package_name,
+                package_resolver=package_resolver,
             )
             for action in actions:
                 index = len(steps)
@@ -176,6 +188,7 @@ def _actions(
     *,
     source_state: dict[str, Any] | None = None,
     inferred_package_name: str = "",
+    package_resolver: Callable[[str], str] | None = None,
 ) -> list[dict[str, Any]]:
     raw = _map(value)
     function = _map(raw.get("function"))
@@ -220,9 +233,15 @@ def _actions(
                 key = "delete"
             args = {"key": key}
         elif tool in {"open_app", "start_activity"}:
+            app_name = str(
+                args.get("app_name") or args.get("app") or ""
+            ).strip()
             package_name = str(
                 args.get("package_name") or inferred_package_name
             ).strip()
+            if not package_name and app_name:
+                resolver = package_resolver or _default_package_resolver
+                package_name = str(resolver(app_name) or "").strip()
             tool = "open_app"
             args = {"package_name": package_name} if package_name else {}
         elif tool == "answer":
@@ -260,6 +279,17 @@ def _actions(
                 {"tool": "input_text", "args": args},
             ]
     return [{"tool": tool, "args": args}] if tool else []
+
+
+def _default_package_resolver(app_name: str) -> str:
+    try:
+        from src.integrations.android_world.apps import (
+            resolve_androidworld_package,
+        )
+
+        return resolve_androidworld_package(app_name)
+    except (ImportError, KeyError, ValueError):
+        return ""
 
 
 def _normalize_historical_coordinates(

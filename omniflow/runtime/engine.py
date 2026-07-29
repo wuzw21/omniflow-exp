@@ -298,7 +298,8 @@ class OmniFlow:
                     final_state=observation,
                     planner_diagnostics=planner_diagnostics,
                 )
-            observation = await self._observe(screenshot=True)
+            if not observation.image_base64:
+                observation = await self._observe(screenshot=True)
             recent_actions = _recent_actions(trace)
             execution_history = (
                 _execution_history(trace, completed_function=completed_function)
@@ -518,6 +519,7 @@ class OmniFlow:
                 previous_action = None
                 continue
             if planned.tool == "get_state":
+                observation = await self._observe(screenshot=True)
                 previous_action_error = None
                 previous_action = None
                 continue

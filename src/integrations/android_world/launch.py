@@ -2233,7 +2233,7 @@ def _patch_contacts_draft_success_eval(
 
 
 def _native_androidworld_a11y_method(android_world_controller: Any) -> Any:
-    return android_world_controller.A11yMethod.UIAUTOMATOR
+    return android_world_controller.A11yMethod.A11Y_FORWARDER_APP
 
 
 def _patch_androidworld_ui_debug_settings(

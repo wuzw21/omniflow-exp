@@ -11,8 +11,10 @@ master_source_index="${OMNIFLOW_MASTER_SOURCE_INDEX:-${asset_root:+$asset_root/r
 source_index="${OMNIFLOW_SINGLE_TASK_SOURCE_INDEX:-$master_source_index}"
 source_index_expected_tasks="${OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS:-116}"
 expected_source_seed="${OMNIFLOW_SINGLE_TASK_SOURCE_SEED:-111}"
+evaluation_seed="${OMNIFLOW_SINGLE_TASK_EVALUATION_SEED:-113}"
 omnitransfer_root="${OMNITRANSFER_ROOT:-}"
 android_world_root="${OMNIFLOW_ANDROID_WORLD_ROOT:-${asset_root:+$asset_root/runtime/external/droidrun-android-world/android_world}}"
+export PYTHONPATH="$repo:$repo/src${android_world_root:+:$android_world_root}${PYTHONPATH:+:$PYTHONPATH}"
 config="$repo/config/paper_androidworld.json"
 preflight="$repo/src/experiment/preflight.py"
 task="${OMNIFLOW_SINGLE_TASK_TASK:-SystemBluetoothTurnOn}"
@@ -339,6 +341,7 @@ if not isinstance(row, dict):
     raise SystemExit(3)
 fields = (
     ("store_path", "store_sha256"),
+    ("source_run_log_path", "source_run_log_sha256"),
     ("transfer_states_path", "transfer_states_sha256"),
     ("provenance_path", "provenance_sha256"),
 )
@@ -473,6 +476,14 @@ if [[ ! "$source_index_expected_tasks" =~ ^[1-9][0-9]*$ ]]; then
   echo "OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS must be a positive integer." >&2
   exit 2
 fi
+if [[ ! "$expected_source_seed" =~ ^[0-9]+$ ]]; then
+  echo "OMNIFLOW_SINGLE_TASK_SOURCE_SEED must be a non-negative integer." >&2
+  exit 2
+fi
+if [[ ! "$evaluation_seed" =~ ^[0-9]+$ ]]; then
+  echo "OMNIFLOW_SINGLE_TASK_EVALUATION_SEED must be a non-negative integer." >&2
+  exit 2
+fi
 if [[ ! "$manage_emulators" =~ ^[01]$ ]]; then
   echo "OMNIFLOW_SINGLE_TASK_MANAGE_EMULATORS must be 0 or 1." >&2
   exit 2
@@ -546,36 +557,52 @@ if ! python_bin="$(command -v "$python_bin")"; then
   exit 1
 fi
 select_source_asset_revision() {
-  "$python_bin" - "$repo" "$1" "$2" <<'PY'
+  "$python_bin" - "$repo" "$1" "$2" "$ours_store_index" "$3" <<'PY'
+import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
 from src.experiment.source_assets import select_source_asset_revision
 
+store_index = json.loads(
+    Path(sys.argv[4]).read_text(encoding="utf-8")
+)
+source_row = store_index.get(sys.argv[5])
+if not isinstance(source_row, dict):
+    raise SystemExit(f"source_store_task_missing:{sys.argv[5]}")
+source_sha256 = str(
+    source_row.get("source_run_log_sha256")
+    or ""
+).strip()
+if not source_sha256:
+    raise SystemExit(f"source_asset_run_log_hash_missing:{sys.argv[5]}")
 print(
     select_source_asset_revision(
         sys.argv[2],
         manifest_name=sys.argv[3],
+        expected_source_sha256=source_sha256,
     )
 )
 PY
 }
-if [[ -z "$mobilegpt_source_memory_root" ]]; then
+if [[ "$all_tasks" -eq 0 && "$requires_mobilegpt_source_memory" -eq 1 && -z "$mobilegpt_source_memory_root" ]]; then
   mobilegpt_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111/$task/mobilegpt_offline_retrieval"
   mobilegpt_source_attempt_root="$(
     select_source_asset_revision \
       "$mobilegpt_source_base" \
-      "cold_memory_manifest.json"
+      "cold_memory_manifest.json" \
+      "$task"
   )"
   mobilegpt_source_memory_root="$mobilegpt_source_attempt_root/memory"
 fi
-if [[ -z "$appagent_demo_memory_root" ]]; then
+if [[ "$all_tasks" -eq 0 && "$requires_appagent_source_memory" -eq 1 && -z "$appagent_demo_memory_root" ]]; then
   appagent_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111/$task/appagent_demo"
   appagent_demo_memory_root="$(
     select_source_asset_revision \
       "$appagent_source_base" \
-      "appagent_demo_manifest.json"
+      "appagent_demo_manifest.json" \
+      "$task"
   )"
 fi
 for external_path in \
@@ -586,14 +613,22 @@ for external_path in \
   "$output_root" \
   "$preflight_output_root" \
   "$mobilegpt_root" \
-  "$mobilegpt_source_memory_root" \
-  "$appagent_root" \
-  "$appagent_demo_memory_root"; do
+  "$appagent_root"; do
   if [[ "$external_path" != /* ]]; then
     echo "Experiment runtime paths must be absolute: $external_path" >&2
     exit 2
   fi
 done
+if [[ "$all_tasks" -eq 0 ]]; then
+  if [[ "$requires_mobilegpt_source_memory" -eq 1 && "$mobilegpt_source_memory_root" != /* ]]; then
+    echo "Experiment task asset paths must be absolute: $mobilegpt_source_memory_root" >&2
+    exit 2
+  fi
+  if [[ "$requires_appagent_source_memory" -eq 1 && "$appagent_demo_memory_root" != /* ]]; then
+    echo "Experiment task asset paths must be absolute: $appagent_demo_memory_root" >&2
+    exit 2
+  fi
+fi
 if [[ "$requires_omnitransfer" -eq 1 && "$omnitransfer_root" != /* ]]; then
   echo "OmniTransfer root must be an absolute path." >&2
   exit 2
@@ -710,7 +745,9 @@ PY
       "$memory_index" \
       "$1" \
       "$batch_methods" \
-      "$formal_device_targets" <<'PY'
+      "$formal_device_targets" \
+      "$expected_source_seed" \
+      "$evaluation_seed" <<'PY'
 import sys
 from pathlib import Path
 
@@ -729,17 +766,23 @@ for raw in sys.argv[6].split(","):
         raise SystemExit(f"invalid_device_target:{raw}")
     device_specs[fields[0]] = fields
 devices = tuple(device_specs)
+source_seed = int(sys.argv[7])
+evaluation_seed = int(sys.argv[8])
 live_plan = registered_cell_plan(
     runs_root=runs_root,
     task_name=task,
     methods=methods,
     devices=devices,
+    source_seed=source_seed,
+    evaluation_seed=evaluation_seed,
 )
 memory_plan = registered_cell_plan_from_memory(
     memory_index=memory_index,
     task_name=task,
     methods=methods,
     devices=devices,
+    source_seed=source_seed,
+    evaluation_seed=evaluation_seed,
 )
 expected = [(method, device) for method in methods for device in devices]
 completed_set = {
@@ -775,21 +818,37 @@ PY
       continue
     fi
     pending_cell_count="$((pending_cell_count + pending_cells))"
-    if [[ "$batch_task_count" -eq 1 && "$requires_function_asset" -eq 1 ]]; then
+    pending_task_methods=""
+    for candidate_method in ${batch_methods//,/ }; do
+      if grep -Fq $'pending\t'"$candidate_method"$'\t' <<< "$registration_plan"; then
+        pending_task_methods="${pending_task_methods:+$pending_task_methods,}$candidate_method"
+      fi
+    done
+    if [[ -z "$pending_task_methods" ]]; then
+      echo "Registration plan contains no pending methods: task=$batch_task" >&2
+      exit 1
+    fi
+    task_requires_function_asset=0
+    case ",$pending_task_methods," in
+      *,ours,*|*,mobilegpt_offline_retrieval,*|*,appagent_demo,*|*,t3a_hint,*)
+        task_requires_function_asset=1
+        ;;
+    esac
+    if [[ "$check_only" -eq 0 && "$task_requires_function_asset" -eq 1 ]]; then
       prepared_store_path=""
       prepare_function_asset_for_task "$batch_task"
     fi
-    indexed_store_path="$(indexed_store_path_for_task "$batch_task")"
+    indexed_store_path=""
+    if [[ "$task_requires_function_asset" -eq 1 ]]; then
+      indexed_store_path="$(indexed_store_path_for_task "$batch_task")"
+    fi
     batch_store_paths[$batch_index]="$indexed_store_path"
     task_output_root="$batch_output_root/$batch_task/$attempt_id/static"
     child_static_args=(--check-only)
-    if [[ "$eight_cells" -eq 1 ]]; then
-      child_static_args+=(--eight-cells)
-    fi
-    echo "[batch:static] check task=$batch_task completed=$completed_cells pending=$pending_cells"
+    echo "[batch:static] check task=$batch_task methods=$pending_task_methods completed=$completed_cells pending=$pending_cells"
     (
       export OMNIFLOW_SINGLE_TASK_TASK="$batch_task"
-      export OMNIFLOW_SINGLE_TASK_METHODS="$batch_methods"
+      export OMNIFLOW_SINGLE_TASK_METHODS="$pending_task_methods"
       export OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT="$task_output_root"
       export OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS="$source_index_task_count"
       if [[ -n "$indexed_store_path" ]]; then
@@ -829,6 +888,7 @@ PY
       mkdir -p "$(dirname "$task_log")"
       echo "[batch] start task=$batch_task method=$cell_method device=$cell_device completed=$completed skipped=$skipped"
       if (
+        export OMNIFLOW_BATCH_CHILD=1
         export OMNIFLOW_SINGLE_TASK_TASK="$batch_task"
         export OMNIFLOW_SINGLE_TASK_METHODS="$cell_method"
         export OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS="$cell_device:$cell_serial:$cell_port"
@@ -866,6 +926,7 @@ PY
   echo "[batch] complete completed=$completed skipped=$skipped total=$((batch_task_count * batch_cell_count))"
   exit 0
 fi
+if [[ "${OMNIFLOW_BATCH_CHILD:-0}" != "1" ]]; then
 "$python_bin" - "$task_iteration" "$attempt_series_root" "$(dirname "$output_root")" <<'PY'
 import json
 import sys
@@ -893,6 +954,7 @@ if matches:
         f"iteration={iteration}:manifests={','.join(sorted(matches))}"
     )
 PY
+fi
 if [[ ! -f "$env_file" ]]; then
   echo "Model environment file missing: $env_file" >&2
   exit 1
@@ -921,6 +983,7 @@ task_name = sys.argv[2]
 expected_seed = int(sys.argv[3])
 sys.path.insert(0, str(Path(sys.argv[4]).resolve()))
 asset_root = Path(sys.argv[5]).expanduser().resolve()
+from src.integrations.android_world.apps import resolve_androidworld_package
 from src.integrations.runlog import import_run_log
 
 payload = json.loads(index_path.read_text(encoding="utf-8"))
@@ -967,7 +1030,8 @@ if not expected_sha256 or expected_sha256 != actual_sha256:
     )
 try:
     canonical = import_run_log(
-        json.loads(run_log.read_text(encoding="utf-8"))
+        json.loads(run_log.read_text(encoding="utf-8")),
+        package_resolver=resolve_androidworld_package,
     )
 except (OSError, ValueError, json.JSONDecodeError) as error:
     raise SystemExit(
@@ -1024,8 +1088,6 @@ android_sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/home/wuzewen/Android/Sdk}
 adb_bin="${OMNIFLOW_ADB_PATH:-$android_sdk_root/platform-tools/adb}"
 emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$android_sdk_root/emulator/emulator}"
 export PATH="/home/wuzewen/.local/bin:$android_sdk_root/platform-tools:$PATH"
-export PYTHONPATH="$repo:$repo/src:$android_world_root${PYTHONPATH:+:$PYTHONPATH}"
-
 missing_assets=()
 require_file() {
   local label="$1"
@@ -1129,7 +1191,8 @@ if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
       --index "$source_index" \
       --task "$task" \
       --memory-root "$mobilegpt_source_memory_root" \
-      --model "$paper_model"
+      --model "$paper_model" \
+      --store-index "$ours_store_index"
   fi
 fi
 if [[ "$requires_appagent_source_memory" -eq 1 ]]; then
@@ -1143,7 +1206,8 @@ if [[ "$requires_appagent_source_memory" -eq 1 ]]; then
       --index "$source_index" \
       --task "$task" \
       --memory-root "$appagent_demo_memory_root" \
-      --model "$paper_model"
+      --model "$paper_model" \
+      --store-index "$ours_store_index"
   fi
 fi
 if [[ "$check_only" -eq 1 ]]; then
@@ -1493,6 +1557,7 @@ command=(
   --timeout-sec "$timeout_sec"
   --max-steps "$max_steps"
   --max-fallback-steps "$max_fallback_steps"
+  --task-random-seed "$evaluation_seed"
   --model "$paper_model"
 )
 if [[ -n "$baseline_environment_repair" ]]; then

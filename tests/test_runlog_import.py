@@ -82,6 +82,68 @@ def test_import_run_log_evidence_normalizes_historical_pixels_by_full_display() 
     }
 
 
+def test_import_run_log_evidence_adapts_legacy_canonical_schema_without_status() -> None:
+    run_log, _source_states = import_run_log_evidence(
+        {
+            "schema_version": "omniflow.canonical_run_log.v1",
+            "run_id": "legacy-canonical",
+            "goal": "Tap the setting.",
+            "completed": True,
+            "success": True,
+            "steps": [
+                {
+                    "observation_before_act": {
+                        "width": 720,
+                        "height": 1280,
+                    },
+                    "executed_actions": [
+                        {
+                            "type": "click",
+                            "params": {"x": 360, "y": 640},
+                        }
+                    ],
+                    "success": True,
+                }
+            ],
+        }
+    )
+
+    assert run_log["status"] == "succeeded"
+    assert run_log["steps"][0]["action"] == {
+        "tool": "click",
+        "args": {"x": 500, "y": 500},
+    }
+
+
+def test_import_run_log_evidence_resolves_historical_open_app_name() -> None:
+    run_log, _source_states = import_run_log_evidence(
+        {
+            "run_id": "historical-open-app",
+            "goal": "Record audio.",
+            "success": True,
+            "steps": [
+                {
+                    "executed_actions": [
+                        {
+                            "type": "open_app",
+                            "params": {"app_name": "audio recorder"},
+                        }
+                    ],
+                    "success": True,
+                }
+            ],
+        },
+        package_resolver=lambda name: (
+            "com.dimowner.audiorecorder" if name == "audio recorder" else ""
+        ),
+    )
+
+    assert run_log["steps"][0]["action"] == {
+        "tool": "open_app",
+        "args": {"package_name": "com.dimowner.audiorecorder"},
+    }
+
+
 def test_import_run_log_evidence_adapts_historical_actions_before_compiling() -> None:
     run_log, _source_states = import_run_log_evidence(
         {

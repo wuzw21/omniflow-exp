@@ -17,6 +17,7 @@ from omniflow.transfer.runtime import (
     load_transfer_state_catalog,
     transfer_state_coverage,
 )
+from src.integrations.android_world.apps import resolve_androidworld_package
 from src.integrations.runlog import import_run_log_evidence
 
 CATALOG_SCHEMA = "omniflow.function-asset-catalog.v1"
@@ -223,6 +224,7 @@ def _convert_runlog_to_function_asset(
     run_log, source_states = import_run_log_evidence(
         _read_object(source_path),
         evidence_root=source_path.parent,
+        package_resolver=resolve_androidworld_package,
     )
 
     compile_result = compile_runlog_to_store(

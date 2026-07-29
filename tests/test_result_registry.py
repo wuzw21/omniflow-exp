@@ -34,6 +34,8 @@ def _write_registered_cell(
     success: bool,
     validator_task_count: int = 1,
     validator_used: bool = True,
+    source_seed: int = 111,
+    evaluation_seed: int = 113,
 ) -> None:
     cell = runs_root / task / method / device / "iteration_01"
     result_path = cell / "registered_result.json"
@@ -43,6 +45,8 @@ def _write_registered_cell(
         "registration_id": f"{task}.{method}.{device}",
         "attempt_id": "iteration_01",
         "task_name": task,
+        "source_seed": source_seed,
+        "evaluation_seed": evaluation_seed,
         "registration_manifest": str(manifest_path),
         "rows": [
             {
@@ -67,6 +71,8 @@ def _write_registered_cell(
             "task_name": task,
             "method": method,
             "device": device,
+            "source_seed": source_seed,
+            "evaluation_seed": evaluation_seed,
             "immutable": True,
             "registered_result_sha256": hashlib.sha256(
                 result_path.read_bytes()
@@ -171,6 +177,8 @@ def test_registered_cell_plan_skips_any_cell_with_a_verified_conclusion(
         task_name=task,
         methods=("fixed_replay", "ours"),
         devices=("small5554", "fold5564"),
+        source_seed=111,
+        evaluation_seed=113,
     )
 
     assert plan["completed"] == [
@@ -181,6 +189,34 @@ def test_registered_cell_plan_skips_any_cell_with_a_verified_conclusion(
         ("fixed_replay", "fold5564"),
         ("ours", "small5554"),
     ]
+
+
+def test_registered_cell_plan_does_not_skip_a_different_evaluation_seed(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "runs"
+    task = "AudioRecorderRecordAudioWithFileName"
+    _write_registered_cell(
+        runs_root,
+        task=task,
+        method="ours",
+        device="small5554",
+        success=True,
+        source_seed=111,
+        evaluation_seed=113,
+    )
+
+    plan = registered_cell_plan(
+        runs_root=runs_root,
+        task_name=task,
+        methods=("ours",),
+        devices=("small5554",),
+        source_seed=111,
+        evaluation_seed=114,
+    )
+
+    assert plan["completed"] == []
+    assert plan["pending"] == [("ours", "small5554")]
 
 
 def test_registered_cell_plan_retries_rows_without_validator_coverage(
@@ -203,6 +239,8 @@ def test_registered_cell_plan_retries_rows_without_validator_coverage(
         task_name=task,
         methods=("ours",),
         devices=("small5554",),
+        source_seed=111,
+        evaluation_seed=113,
     )
 
     assert plan["completed"] == []
@@ -229,6 +267,8 @@ def test_registered_cell_plan_accepts_per_episode_validator_conclusion(
         task_name=task,
         methods=("fixed_replay",),
         devices=("small5554",),
+        source_seed=111,
+        evaluation_seed=113,
     )
 
     assert plan["completed"] == [("fixed_replay", "small5554")]
@@ -305,5 +345,7 @@ def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
 
     assert registration["artifact_memory_updated"] is True
     memory = load_artifact_memory(memory_root / "current.json")
-    cell = memory["canonical"]["result_cells"]["TaskOne|ours|small5554"]
+    cell = memory["canonical"]["result_cells"][
+        "TaskOne|ours|small5554|111|113"
+    ]
     assert cell["official_validator_success"] is False

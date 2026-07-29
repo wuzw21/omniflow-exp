@@ -26,8 +26,10 @@ class RecordingHost:
     def __init__(self) -> None:
         self.package_name = "com.android.launcher"
         self.actions: list[Action] = []
+        self.observe_requests: list[dict[str, object]] = []
 
     def observe(self, **kwargs: object) -> Observation:
+        self.observe_requests.append(dict(kwargs))
         return Observation(
             package_name=self.package_name,
             activity_name="MainActivity",
@@ -184,6 +186,10 @@ def test_run_routes_recalled_function_before_gui_planner(tmp_path) -> None:
     assert len(router.calls) == 1
     assert planner.visible_function_ids == [()]
     assert planner.observations[0].image_base64 == "final-screenshot"
+    assert [request.get("screenshot") for request in host.observe_requests] == [
+        False,
+        True,
+    ]
     assert "Function `complete_run_turn_bluetooth_on`" in str(
         planner.observations[0].extra.get("execution_history")
     )

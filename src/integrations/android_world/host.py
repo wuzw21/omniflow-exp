@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 
 from omniflow import Action, ActionResult, Observation
 from src.integrations.android_world.accessibility import (
+    androidworld_forest_xml,
     xml_covers_screen,
     xml_with_screen_size,
 )
@@ -297,14 +298,33 @@ class AndroidWorldHost:
         auxiliaries = getattr(state, "auxiliaries", None)
         if not xml_text and isinstance(auxiliaries, dict):
             xml_text = str(auxiliaries.get("xml") or "")
+        graph_source = "state_xml" if xml_text else ""
+        forest = getattr(state, "forest", None)
+        if xml and not xml_text and forest is not None:
+            forest_xml = androidworld_forest_xml(
+                forest,
+                screen_size=(display_width, display_height),
+            )
+            if forest_xml and xml_covers_screen(
+                forest_xml,
+                package_name=package,
+                screen_size=(display_width, display_height),
+            ):
+                xml_text = forest_xml
+                graph_source = "androidworld_accessibility_forest"
         if xml and not xml_text:
             xml_text = self._fresh_uiautomator_xml()
+            if xml_text:
+                graph_source = "uiautomator"
         if not xml_text:
             xml_text = _native_androidworld_xml(self.env)
+            if xml_text:
+                graph_source = "androidworld_native_xml"
         if xml and not xml_text:
             xml_text = _elements_xml(elements)
+            if xml_text:
+                graph_source = "androidworld_elements"
         package = package or _package_from_xml(xml_text)
-        graph_source = "uiautomator"
         if xml and xml_text and not xml_covers_screen(
             xml_text,
             package_name=package,
@@ -324,6 +344,8 @@ class AndroidWorldHost:
                 "observe_backend": "androidworld",
                 "ui_element_count": len(elements),
                 "ui_graph_source": graph_source,
+                "ui_graph_complete": bool(xml_text)
+                and not graph_source.endswith("_partial"),
                 "display": {
                     "width": int(display_width),
                     "height": int(display_height),

@@ -237,6 +237,10 @@ def test_source_and_store_indexes_join_without_rewriting_frozen_assets(
         json.dumps(
             {
                 "RecordWithName": {
+                    "source_run_log_path": str(source),
+                    "source_run_log_sha256": hashlib.sha256(
+                        source.read_bytes()
+                    ).hexdigest(),
                     "transfer_states_path": str(states),
                     "transfer_states_sha256": hashlib.sha256(
                         states.read_bytes()
@@ -302,3 +306,37 @@ def test_source_revision_reuses_frozen_asset_or_advances_past_failures(
         base,
         manifest_name="appagent_demo_manifest.json",
     ) == frozen
+
+
+def test_source_revision_is_stable_for_one_exact_source_hash(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "mobilegpt_offline_retrieval"
+    old = base / "native_source_r3"
+    old.mkdir(parents=True)
+    (old / "cold_memory_manifest.json").write_text(
+        json.dumps(
+            {
+                "source_run_log": {
+                    "sha256": "1" * 64,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    expected = "2" * 64
+    selected = base / f"source_{expected[:12]}"
+
+    assert select_source_asset_revision(
+        base,
+        manifest_name="cold_memory_manifest.json",
+        expected_source_sha256=expected,
+    ) == selected
+
+    selected.mkdir()
+    (selected / "generation_failure.json").write_text("{}", encoding="utf-8")
+    assert select_source_asset_revision(
+        base,
+        manifest_name="cold_memory_manifest.json",
+        expected_source_sha256=expected,
+    ) == selected

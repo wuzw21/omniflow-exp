@@ -491,8 +491,12 @@ exit 1
 
     assert completed.returncode == 0, completed.stderr
     assert "already-complete" in completed.stdout
-    assert "src.experiment.function_assets" not in call_log.read_text(
-        encoding="utf-8"
+    calls = call_log.read_text(encoding="utf-8")
+    assert "src.experiment.function_assets" not in calls
+    assert any(
+        line.startswith(f"- {REPO} ")
+        and line.endswith(" 111 113")
+        for line in calls.splitlines()
     )
 
 

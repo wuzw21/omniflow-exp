@@ -15,8 +15,8 @@ import shutil
 import tempfile
 from typing import Any, Iterable, Sequence
 
-MEMORY_SCHEMA = "omniflow.androidworld-artifact-memory.v1"
-CURRENT_SCHEMA = "omniflow.androidworld-artifact-memory-pointer.v1"
+MEMORY_SCHEMA = "omniflow.androidworld-artifact-memory.v2"
+CURRENT_SCHEMA = "omniflow.androidworld-artifact-memory-pointer.v2"
 RESULT_FILE_NAMES = (
     "one_task_commands.jsonl",
     "one_task_summary.json",
@@ -294,7 +294,13 @@ def _verified_registered_result(path: Path) -> dict[str, Any]:
         raise ValueError("registration_manifest_invalid")
     if str(manifest.get("registered_result_sha256") or "") != _sha256(path):
         raise ValueError("registered_result_hash_mismatch")
-    for field in ("registration_id", "attempt_id", "task_name"):
+    for field in (
+        "registration_id",
+        "attempt_id",
+        "task_name",
+        "source_seed",
+        "evaluation_seed",
+    ):
         if str(payload.get(field) or "") != str(manifest.get(field) or ""):
             raise ValueError(f"registered_result_{field}_mismatch")
     rows = [row for row in payload.get("rows") or [] if isinstance(row, dict)]
@@ -426,6 +432,13 @@ def _load_results(
         method = str(result_row["method"])
         registered_device_label = str(result_row["device"])
         device = _formal_device_label(registered_device_label)
+        source_seed = result_payload.get("source_seed")
+        evaluation_seed = result_payload.get("evaluation_seed")
+        if not all(
+            isinstance(seed, int) and not isinstance(seed, bool)
+            for seed in (source_seed, evaluation_seed)
+        ):
+            continue
         manifest_path = verified["manifest_path"]
         manifest_digest = _sha256(manifest_path)
         manifest_object = _materialize_object(
@@ -437,6 +450,8 @@ def _load_results(
             "task": task,
             "method": method,
             "device": device,
+            "source_seed": source_seed,
+            "evaluation_seed": evaluation_seed,
             "registered_device_label": registered_device_label,
             "registration_id": str(result_payload.get("registration_id") or ""),
             "attempt_id": str(result_payload.get("attempt_id") or ""),
@@ -453,7 +468,10 @@ def _load_results(
                 "earliest_verified_official_validator_conclusion"
             ),
         }
-        cell = f"{task}|{method}|{device}"
+        cell = (
+            f"{task}|{method}|{device}|"
+            f"{source_seed}|{evaluation_seed}"
+        )
         candidates.setdefault(cell, []).append(
             (
                 candidate["registered_at"],
@@ -500,6 +518,11 @@ def _load_function_stores(
                 raise ValueError(f"function_catalog_target_inputs_read:{task}")
             if raw_item.get("target_observations_read") is not False:
                 raise ValueError(f"function_catalog_target_observations_read:{task}")
+            source_run_log = _require_hashed_file(
+                raw_item.get("source_run_log"),
+                raw_item.get("source_run_log_sha256"),
+                label=f"function_source_run_log:{task}",
+            )
             store = _require_hashed_file(
                 raw_item.get("store_path"),
                 raw_item.get("store_sha256"),
@@ -525,11 +548,22 @@ def _load_function_stores(
             store_hash = _sha256(store)
             transfer_hash = _sha256(transfer)
             provenance_hash = _sha256(provenance)
+            source_run_log_hash = _sha256(source_run_log)
             identity = hashlib.sha256(
                 "\0".join(
-                    (store_hash, transfer_hash, provenance_hash)
+                    (
+                        source_run_log_hash,
+                        store_hash,
+                        transfer_hash,
+                        provenance_hash,
+                    )
                 ).encode("utf-8")
             ).hexdigest()
+            source_run_log_object = _materialize_object(
+                memory_root,
+                source_run_log,
+                source_run_log_hash,
+            )
             store_object = _materialize_object(memory_root, store, store_hash)
             transfer_object = _materialize_object(
                 memory_root,
@@ -548,6 +582,8 @@ def _load_function_stores(
                     "tasks": [],
                     "catalog_aliases": [],
                     "function_count": len(store_payload["functions"]),
+                    "source_run_log_path": str(source_run_log_object),
+                    "source_run_log_sha256": source_run_log_hash,
                     **_materialize_function_store(
                         memory_root,
                         store_object=store_object,
@@ -703,6 +739,8 @@ def _refresh_artifact_memory_unlocked(
             for key in (
                 "store_path",
                 "store_sha256",
+                "source_run_log_path",
+                "source_run_log_sha256",
                 "transfer_states_path",
                 "transfer_states_sha256",
                 "provenance_path",
@@ -936,6 +974,8 @@ def registered_cell_plan_from_memory(
     task_name: str,
     methods: Sequence[str],
     devices: Sequence[str],
+    source_seed: int,
+    evaluation_seed: int,
 ) -> dict[str, list[tuple[str, str]]]:
     """Resolve completed formal cells without rescanning historical results."""
 
@@ -945,7 +985,11 @@ def registered_cell_plan_from_memory(
     completed = [
         (method, device)
         for method, device in expected
-        if f"{task_name}|{method}|{device}" in cells
+        if (
+            f"{task_name}|{method}|{device}|"
+            f"{source_seed}|{evaluation_seed}"
+        )
+        in cells
     ]
     return {
         "completed": completed,

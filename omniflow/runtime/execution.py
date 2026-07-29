@@ -475,7 +475,9 @@ async def _dispatch_prepared(
             result=action_result,
             error=action_result.error or "action_failed",
         )
-    after = Observation.from_value(await _await(host.observe(xml=True, app_info=True)))
+    after = Observation.from_value(
+        await _await(host.observe(xml=True, screenshot=True, app_info=True))
+    )
     if action.tool == "open_app":
         expected_package = str(action.args.get("package_name") or "").strip()
         observed_package = str(after.package_name or "").strip()
@@ -617,6 +619,8 @@ def default_transfer(
     target_xml = str(observation.xml or "")
     if not target_xml:
         return TransferResult(None, reason="omnitransfer_missing_target_page")
+    if str(observation.extra.get("ui_graph_source") or "").endswith("_partial"):
+        return TransferResult(None, reason="omnitransfer_target_graph_incomplete")
     elements = _elements(target_xml)
     display_size = _display_size(observation, elements)
     if display_size is None:
@@ -644,8 +648,18 @@ def default_transfer(
     except (KeyError, TypeError, ValueError):
         return TransferResult(None, reason="omnitransfer_invalid_source_point")
     source_title = _source_semantic_title(source_xml, source_point)
-    if source_title and source_title in _document_titles(target_xml):
+    if source_title:
         request["source_element"] = {"text": source_title}
+        target_titles = _document_titles(target_xml)
+        if source_title not in target_titles:
+            return TransferResult(
+                None,
+                reason="omnitransfer_target_semantic_missing",
+                detail={
+                    "source_title": source_title,
+                    "target_titles": sorted(target_titles),
+                },
+            )
     try:
         result = transfer_action(**request)
     except Exception as exc:
@@ -655,6 +669,12 @@ def default_transfer(
         return TransferResult(
             None,
             reason=f"omnitransfer_{reason}",
+            detail=_transfer_detail(result),
+        )
+    if _is_full_screen_candidate(result.get("target_bbox"), display_size):
+        return TransferResult(
+            None,
+            reason="omnitransfer_invalid_root_candidate",
             detail=_transfer_detail(result),
         )
     semantic_conflict = _semantic_transfer_conflict(
@@ -1004,7 +1024,22 @@ def _source_semantic_title(
     source = _actionable_element_at_point(root, source_point)
     if source is None or _element_has_stable_identity(source):
         return ""
-    return _element_title(source)
+    title = _element_title(source)
+    if title:
+        return title
+    return next(
+        (
+            label
+            for descendant in source.iter()
+            if (
+                label := _text(
+                    descendant.attrib.get("text")
+                    or descendant.attrib.get("content-desc")
+                )
+            )
+        ),
+        "",
+    )
 
 
 def _document_titles(xml_text: str) -> set[str]:
@@ -1115,6 +1150,22 @@ def _numeric_bounds(value: Any) -> tuple[float, float, float, float] | None:
     except (TypeError, ValueError):
         return None
     return bounds if bounds[2] > bounds[0] and bounds[3] > bounds[1] else None
+
+
+def _is_full_screen_candidate(
+    value: Any,
+    display_size: tuple[float, float],
+) -> bool:
+    bounds = _numeric_bounds(value)
+    if bounds is None:
+        return False
+    width, height = display_size
+    return (
+        bounds[0] <= width * 0.01
+        and bounds[1] <= height * 0.01
+        and bounds[2] >= width * 0.95
+        and bounds[3] >= height * 0.95
+    )
 
 
 def _text(value: Any) -> str:

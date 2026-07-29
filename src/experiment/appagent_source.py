@@ -24,6 +24,7 @@ from src.experiment.mobilegpt_source import (
 )
 from src.experiment.source_assets import (
     build_grounded_teacher_run_log_from_item,
+    resolve_store_source_run_log,
 )
 from src.integrations.appagent_adapter import (
     APPAGENT_DEMO_MANIFEST,
@@ -262,13 +263,22 @@ def validate_appagent_source_memory(
     task_name: str,
     memory_root: str | Path,
     model: str,
+    store_index_path: str | Path | None = None,
 ) -> dict[str, Any]:
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_method = source_method_label(item)
+    source_run_log = (
+        resolve_store_source_run_log(
+            store_index_path,
+            task_name=item.task,
+        )[0]
+        if store_index_path is not None
+        else item.source_run_log
+    )
     manifest = validate_appagent_demo_memory(
         memory_root,
         task_name=item.task,
-        source_run_log=item.source_run_log,
+        source_run_log=source_run_log,
     )
     if str(manifest.get("source_method") or "") != source_method:
         raise ValueError("appagent_demo_memory_source_method_invalid")
@@ -312,7 +322,7 @@ def _preflight_appagent_teacher(
             grounded_path,
             task_name=item.task,
             source_seed=SOURCE_SEED,
-            provenance_source_run_log=item.source_run_log,
+            provenance_source_run_log=grounding_audit["source_run_log"],
         )
     grounded_steps = {
         int(step.get("step_index", index)): step
@@ -366,7 +376,7 @@ def preflight_appagent_source(
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
         "source_method": source_method_label(item),
-        "source_run_log": str(item.source_run_log),
+        "source_run_log": str(grounding_audit["source_run_log"]),
         "action_count": int(teacher_source["action_count"]),
         "grounding": grounding_audit,
         "ready": True,
@@ -406,6 +416,7 @@ def prepare_appagent_demo_memory(
             store_index_path=store_index_path,
         )
     )
+    source_run_log = Path(grounding_audit["source_run_log"]).resolve()
 
     root.mkdir(parents=True)
     prep_started = time.monotonic()
@@ -453,9 +464,9 @@ def prepare_appagent_demo_memory(
                 "task_params": item.params,
                 "source_seed": SOURCE_SEED,
                 "source_method": source_method,
-                "source_run_log": str(item.source_run_log),
+                "source_run_log": str(source_run_log),
                 "source_run_log_sha256": pipeline._file_sha256(
-                    item.source_run_log
+                    source_run_log
                 ),
                 "grounded_teacher_run_log": str(grounded_source_path),
                 "grounded_teacher_run_log_sha256": pipeline._file_sha256(
@@ -533,7 +544,7 @@ def prepare_appagent_demo_memory(
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
         "source_method": source_method,
-        "source_run_log": str(item.source_run_log),
+        "source_run_log": str(source_run_log),
         "model": normalized_model,
         "memory_root": str(root),
         "source_result": str(source_result),
@@ -594,6 +605,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--task", required=True)
     validate.add_argument("--memory-root", required=True)
     validate.add_argument("--model", required=True)
+    validate.add_argument("--store-index", default="")
 
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument("--index", required=True)
@@ -627,6 +639,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 task_name=args.task,
                 memory_root=args.memory_root,
                 model=args.model,
+                store_index_path=args.store_index or None,
             )
         else:
             result = preflight_appagent_source(

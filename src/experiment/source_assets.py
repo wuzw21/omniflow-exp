@@ -18,6 +18,7 @@ def select_source_asset_revision(
     *,
     manifest_name: str,
     initial_revision: int = 3,
+    expected_source_sha256: str = "",
 ) -> Path:
     """Reuse the first frozen source asset or allocate a fresh revision path.
 
@@ -31,7 +32,33 @@ def select_source_asset_revision(
     manifest = str(manifest_name).strip()
     if not manifest or Path(manifest).name != manifest:
         raise ValueError("manifest_name must be one file name")
+    source_sha256 = str(expected_source_sha256 or "").strip().lower()
+    if source_sha256 and not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
+        raise ValueError("expected_source_sha256 must be one SHA-256 digest")
     base = Path(base_root).expanduser().resolve()
+    if source_sha256:
+        matches: list[Path] = []
+        if base.is_dir():
+            for candidate in base.iterdir():
+                manifest_path = candidate / manifest
+                if not candidate.is_dir() or not manifest_path.is_file():
+                    continue
+                try:
+                    payload = json.loads(
+                        manifest_path.read_text(encoding="utf-8")
+                    )
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if _manifest_source_sha256(payload) == source_sha256:
+                    matches.append(candidate.resolve())
+        if len(matches) > 1:
+            raise ValueError(
+                "source_asset_revision_ambiguous:"
+                + ",".join(str(path) for path in sorted(matches))
+            )
+        if matches:
+            return matches[0]
+        return base / f"source_{source_sha256[:12]}"
     revisions: list[tuple[int, Path]] = []
     if base.is_dir():
         for candidate in base.iterdir():
@@ -51,6 +78,21 @@ def select_source_asset_revision(
         [initial_revision - 1, *(revision for revision, _ in revisions)]
     ) + 1
     return base / f"native_source_r{next_revision}"
+
+
+def _manifest_source_sha256(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ""
+    source_record = value.get("source_run_log")
+    nested = (
+        str(source_record.get("sha256") or "").strip()
+        if isinstance(source_record, dict)
+        else ""
+    )
+    return (
+        nested
+        or str(value.get("source_run_log_sha256") or "").strip()
+    ).lower()
 
 
 def _sha256(path: Path) -> str:
@@ -346,6 +388,16 @@ def build_grounded_teacher_run_log_from_item(
         meta.get("store_provenance_sha256")
         or store_row.get("provenance_sha256")
     )
+    source_run_log_value = (
+        store_row.get("source_run_log_path")
+        or item.source_run_log
+    )
+    source_run_log_sha256 = (
+        store_row.get("source_run_log_sha256")
+        or meta.get("retained_source_run_log_sha256")
+        or meta.get("source_run_log_sha256")
+        or ""
+    )
     if store_row:
         store_catalog = _index_reference(
             store_index_path,
@@ -377,7 +429,7 @@ def build_grounded_teacher_run_log_from_item(
             raise ValueError("source_store_index_provenance_mismatch")
 
     return build_grounded_teacher_run_log(
-        source_run_log=item.source_run_log,
+        source_run_log=source_run_log_value,
         source_state_catalog=_index_reference(
             index_path,
             state_catalog_value,
@@ -388,11 +440,7 @@ def build_grounded_teacher_run_log_from_item(
             provenance_value,
             label="store_provenance",
         ),
-        expected_source_run_log_sha256=str(
-            meta.get("retained_source_run_log_sha256")
-            or meta.get("source_run_log_sha256")
-            or ""
-        ),
+        expected_source_run_log_sha256=str(source_run_log_sha256),
         expected_source_state_catalog_sha256=str(
             state_catalog_sha256 or ""
         ),
@@ -400,3 +448,21 @@ def build_grounded_teacher_run_log_from_item(
             provenance_sha256 or ""
         ),
     )
+
+
+def resolve_store_source_run_log(
+    store_index_path: str | Path,
+    *,
+    task_name: str,
+) -> tuple[Path, str]:
+    index_path = Path(store_index_path).expanduser().resolve()
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+    row = payload.get(str(task_name)) if isinstance(payload, dict) else None
+    if not isinstance(row, dict):
+        raise ValueError(f"store_index_task_missing:{task_name}")
+    source_path = _require_frozen_file(
+        row.get("source_run_log_path"),
+        expected_sha256=str(row.get("source_run_log_sha256") or ""),
+        label=f"store_source_run_log:{task_name}",
+    )
+    return source_path, str(row["source_run_log_sha256"])

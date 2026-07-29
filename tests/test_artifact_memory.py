@@ -75,6 +75,8 @@ def _write_registered_result(
             "method": "ours",
             "device": device,
             "attempt_id": attempt,
+            "source_seed": 111,
+            "evaluation_seed": 113,
             "registered_at": registered_at,
             "registered_result_sha256": _sha256(result_path),
         },
@@ -246,6 +248,8 @@ def test_refresh_keeps_one_verified_runtime_store_from_duplicate_catalogs(
                 "task": "RecordWithName",
                 "status": "converted",
                 "function_count": 1,
+                "source_run_log": str(source),
+                "source_run_log_sha256": _sha256(source),
                 "store_path": str(store),
                 "store_sha256": _sha256(store),
                 "transfer_states_path": str(transfer),
@@ -288,6 +292,8 @@ def test_refresh_keeps_one_verified_runtime_store_from_duplicate_catalogs(
         row["store_path"]
     ).with_name("transfer_states.json")
     assert Path(row["provenance_path"]).read_bytes() == provenance.read_bytes()
+    assert Path(row["source_run_log_path"]).read_bytes() == source.read_bytes()
+    assert row["source_run_log_sha256"] == _sha256(source)
 
 
 def test_refresh_keeps_earliest_formal_result_without_success_cherry_picking(
@@ -342,7 +348,7 @@ def test_refresh_keeps_earliest_formal_result_without_success_cherry_picking(
     assert report["counts"]["result_paths"] == 4
     assert report["counts"]["canonical_result_cells"] == 1
     canonical = report["canonical"]["result_cells"][
-        "RecordWithName|ours|small5554"
+        "RecordWithName|ours|small5554|111|113"
     ]
     assert canonical["official_validator_success"] is False
     assert canonical["registered_result_aliases"] == [str(first)]
@@ -355,9 +361,22 @@ def test_refresh_keeps_earliest_formal_result_without_success_cherry_picking(
         task_name="RecordWithName",
         methods=("ours",),
         devices=("small5554", "fold5564"),
+        source_seed=111,
+        evaluation_seed=113,
     ) == {
         "completed": [("ours", "small5554")],
         "pending": [("ours", "fold5564")],
+    }
+    assert registered_cell_plan_from_memory(
+        memory_index=pointer,
+        task_name="RecordWithName",
+        methods=("ours",),
+        devices=("small5554",),
+        source_seed=111,
+        evaluation_seed=114,
+    ) == {
+        "completed": [],
+        "pending": [("ours", "small5554")],
     }
 
     first_pointer = json.loads(pointer.read_text(encoding="utf-8"))
@@ -412,7 +431,7 @@ def test_refresh_normalizes_legacy_target_device_labels(
     )
 
     cell = report["canonical"]["result_cells"][
-        "RecordWithName|ours|small5554"
+        "RecordWithName|ours|small5554|111|113"
     ]
     assert cell["device"] == "small5554"
     assert cell["registered_device_label"] == "target5554"

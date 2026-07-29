@@ -15,6 +15,7 @@ from typing import Any
 from src.experiment import androidworld as pipeline
 from src.experiment.source_assets import (
     build_grounded_teacher_run_log_from_item,
+    resolve_store_source_run_log,
 )
 from src.integrations.runlog import import_run_log
 
@@ -27,9 +28,9 @@ _IGNORED_SOURCE_PACKAGES = {
 
 
 def source_method_label(item: pipeline.ArchivedRunLog) -> str:
-    """Preserve recorded provenance without inventing a generating method."""
+    """Use the recorded method or the protocol's source replay method."""
 
-    return str(item.meta.get("method") or "").strip() or "unrecorded"
+    return str(item.meta.get("method") or "").strip() or "fixed_replay"
 
 
 def load_canonical_source_item(
@@ -102,14 +103,23 @@ def validate_mobilegpt_source_memory(
     task_name: str,
     memory_root: str | Path,
     model: str,
+    store_index_path: str | Path | None = None,
 ) -> dict[str, Any]:
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_method = source_method_label(item)
+    source_run_log = (
+        resolve_store_source_run_log(
+            store_index_path,
+            task_name=item.task,
+        )[0]
+        if store_index_path is not None
+        else item.source_run_log
+    )
     validated = pipeline.validate_mobilegpt_adapted_memory(
         memory_root,
         task_name=item.task,
         source_seed=SOURCE_SEED,
-        source_run_log=item.source_run_log,
+        source_run_log=source_run_log,
         expected_model=str(model),
         expected_source_method=source_method,
     )
@@ -118,7 +128,7 @@ def validate_mobilegpt_source_memory(
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
         "source_method": source_method,
-        "source_run_log": str(item.source_run_log),
+        "source_run_log": str(source_run_log),
         "model": str(model),
         "validated": validated,
     }
@@ -165,7 +175,7 @@ def _preflight_mobilegpt_teacher(
             grounded_path,
             task_name=item.task,
             source_seed=SOURCE_SEED,
-            provenance_source_run_log=item.source_run_log,
+            provenance_source_run_log=grounding_audit["source_run_log"],
         )
     target_info = _mobilegpt_source_target(item=item, grounded=grounded)
     return grounded, grounding_audit, teacher_payload, target_info
@@ -234,7 +244,7 @@ def preflight_mobilegpt_source(
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
         "source_method": source_method_label(item),
-        "source_run_log": str(item.source_run_log),
+        "source_run_log": str(grounding_audit["source_run_log"]),
         "action_count": int(teacher_payload["action_count"]),
         "target_package": target_info["target_package"],
         "target_source": target_info["target_source"],
@@ -282,6 +292,7 @@ def prepare_mobilegpt_source_memory(
             store_index_path=store_index_path,
         )
     )
+    source_run_log = Path(grounding_audit["source_run_log"]).resolve()
 
     target_package = str(target_info.get("target_package") or "").strip()
     if not target_package:
@@ -419,9 +430,9 @@ def prepare_mobilegpt_source_memory(
                 "episode_retries": 0,
                 "server_command": pipeline._command_line(server_spec),
                 "episode_command": pipeline._command_line(episode_spec),
-                "source_run_log": str(item.source_run_log),
+                "source_run_log": str(source_run_log),
                 "source_run_log_sha256": pipeline._file_sha256(
-                    item.source_run_log
+                    source_run_log
                 ),
                 "teacher_source": str(teacher_source_path),
                 "teacher_source_sha256": pipeline._file_sha256(
@@ -488,7 +499,7 @@ def prepare_mobilegpt_source_memory(
     sealed = pipeline.seal_mobilegpt_adapted_memory(
         memory_root=memory_root,
         teacher_source=teacher_source_path,
-        source_run_log=item.source_run_log,
+        source_run_log=source_run_log,
         source_stats=stats_path,
         official_source_result=result_path,
         task_name=item.task,
@@ -504,7 +515,7 @@ def prepare_mobilegpt_source_memory(
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
         "source_method": source_method,
-        "source_run_log": str(item.source_run_log),
+        "source_run_log": str(source_run_log),
         "model": normalized_model,
         "memory_root": str(memory_root),
         "teacher_source": str(teacher_source_path),
@@ -570,6 +581,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--task", required=True)
     validate.add_argument("--memory-root", required=True)
     validate.add_argument("--model", required=True)
+    validate.add_argument("--store-index", default="")
 
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument("--index", required=True)
@@ -607,6 +619,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 task_name=args.task,
                 memory_root=args.memory_root,
                 model=args.model,
+                store_index_path=args.store_index or None,
             )
         else:
             result = preflight_mobilegpt_source(

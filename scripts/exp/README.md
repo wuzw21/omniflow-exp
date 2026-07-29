@@ -37,6 +37,8 @@ All data paths are absolute and outside the repository.
 | `OMNIFLOW_EXP_MEMORY_ROOT` | Content-addressed long-term-memory root |
 | `PYTHON_BIN` | Python executable containing the project dependencies |
 | `OMNITRANSFER_ROOT` | Canonical OmniTransfer checkout |
+| `OMNIFLOW_SINGLE_TASK_SOURCE_SEED` | Source RunLog seed; formal value is `111` |
+| `OMNIFLOW_SINGLE_TASK_EVALUATION_SEED` | Target evaluation seed; formal value is `113` |
 | `OMNIFLOW_OURS_CONVERTED_ASSET_ROOT` | A new, empty conversion version directory |
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
 | `OMNIFLOW_OURS_CONVERSION_MODEL` | Fixed conversion model; defaults to the paper config |
@@ -66,9 +68,10 @@ The default method set contains all five methods. Set
 canonical `ours` Store is missing, the command creates and registers it before
 preparing MobileGPT and AppAgent assets; then the same process continues to
 target replay. `--tasks` implies task-major scheduling and skips every result
-cell already registered with an official-validator conclusion. There is no
-model retry. A failed target execution never rebuilds or replaces frozen source
-assets.
+cell with the same task, method, device, source seed, and evaluation seed that
+is already registered with an official-validator conclusion. A result from a
+different seed never causes a skip. There is no model retry. A failed target
+execution never rebuilds or replaces frozen source assets.
 
 `--check-only` is deliberately read-only. It validates existing assets but
 will fail rather than create a missing method asset:
@@ -137,3 +140,9 @@ Entries point to screenshots under `observations/objects/` with exact SHA-256
 and dimensions. Repeated observations keep separate indices while identical
 images share one object. A missing or invalid screenshot is reported on that
 observation instead of being silently omitted.
+
+Each observation uses one AndroidWorld `get_state()` call for pixels and the
+native accessibility forest. The Host converts a complete forest to
+hierarchical XML locally and does not issue another UI dump. An incomplete
+Fold hierarchy is marked explicitly and cannot enter OmniTransfer; normal VLM
+fallback receives the saved screenshot instead.
