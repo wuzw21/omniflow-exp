@@ -6,8 +6,13 @@ from pathlib import Path
 
 import pytest
 
+from src.experiment.artifact_memory import (
+    load_artifact_memory,
+    refresh_artifact_memory,
+)
 from src.experiment.result_registry import (
     load_summary_rows,
+    register_attempt_summary,
     registered_cell_plan,
 )
 
@@ -228,3 +233,77 @@ def test_registered_cell_plan_accepts_per_episode_validator_conclusion(
 
     assert plan["completed"] == [("fixed_replay", "small5554")]
     assert plan["pending"] == []
+
+
+def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
+    source_run_log = tmp_path / "evidence" / "TaskOne" / "source.run_log.json"
+    _write_json(
+        source_run_log,
+        {
+            "schema_version": "omniflow.run_log.v1",
+            "run_id": "source-run",
+            "goal": "Complete task one.",
+            "success": True,
+            "steps": [{"step_index": 0}],
+        },
+    )
+    source_index = tmp_path / "source_index.json"
+    _write_json(
+        source_index,
+        {
+            "TaskOne": {
+                "task": "TaskOne",
+                "retained_source_run_log": str(source_run_log),
+            }
+        },
+    )
+    memory_root = tmp_path / "memory"
+    refresh_artifact_memory(
+        memory_root=memory_root,
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "evidence",),
+        result_roots=(),
+    )
+    results_root = tmp_path / "results"
+    summary = results_root / "attempts" / "TaskOne" / "one_task_summary.json"
+    _write_json(
+        summary,
+        {
+            "task_name": "TaskOne",
+            "rows": [
+                {
+                    "task_name": "TaskOne",
+                    "method": "ours",
+                    "device": "small5554",
+                    "official_validator_used": True,
+                    "official_validator_success": False,
+                    "official_validator_task_count": 1,
+                }
+            ],
+        },
+    )
+    attempt_manifest = summary.parent / "attempt_manifest.json"
+    _write_json(
+        attempt_manifest,
+        {
+            "immutable": True,
+            "attempt_id": "iteration_01",
+            "source_seed": 111,
+            "evaluation_seed": 113,
+        },
+    )
+
+    registration = register_attempt_summary(
+        summary_path=summary,
+        attempt_manifest_path=attempt_manifest,
+        runs_root=results_root / "androidworld_validator" / "runs",
+        master_root=results_root / "androidworld_validator" / "master_progress",
+        source_index_path=source_index,
+        artifact_memory_index=memory_root / "current.json",
+    )
+
+    assert registration["artifact_memory_updated"] is True
+    memory = load_artifact_memory(memory_root / "current.json")
+    cell = memory["canonical"]["result_cells"]["TaskOne|ours|small5554"]
+    assert cell["official_validator_success"] is False

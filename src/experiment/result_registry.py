@@ -1111,6 +1111,7 @@ def register_attempt_summary(
     runs_root: Path,
     master_root: Path,
     source_index_path: Path,
+    artifact_memory_index: Path | None = None,
 ) -> dict[str, Any]:
     summary_path = summary_path.expanduser().resolve()
     attempt_manifest_path = attempt_manifest_path.expanduser().resolve()
@@ -1271,12 +1272,27 @@ def register_attempt_summary(
             _lock_held=True,
         )
 
+    artifact_memory_updated = False
+    if artifact_memory_index is not None:
+        from src.experiment.artifact_memory import (
+            refresh_artifact_memory_from_pointer,
+        )
+
+        experiment_results_root = runs_root.parent.parent
+        refresh_artifact_memory_from_pointer(
+            memory_index=artifact_memory_index,
+            additional_runlog_roots=(experiment_results_root,),
+            additional_result_roots=(experiment_results_root,),
+        )
+        artifact_memory_updated = True
+
     return {
         "task_name": task_name,
         "attempt_id": attempt_id,
         "registered_cells": len(registered_paths),
         "ledger_records_appended": appended,
         "registered_results": registered_paths,
+        "artifact_memory_updated": artifact_memory_updated,
         "sync": sync_summary,
     }
 
@@ -1374,6 +1390,11 @@ def main() -> int:
         default="",
         help="Immutable attempt_manifest.json used with --register-summary.",
     )
+    parser.add_argument(
+        "--artifact-memory-index",
+        default="",
+        help="Optional long-term-memory current.json updated after registration.",
+    )
     args = parser.parse_args()
     if args.register_summary:
         if args.dry_run:
@@ -1386,6 +1407,9 @@ def main() -> int:
             runs_root=Path(args.runs_root),
             master_root=Path(args.master_root),
             source_index_path=Path(args.source_index),
+            artifact_memory_index=Path(args.artifact_memory_index)
+            if args.artifact_memory_index
+            else None,
         )
     else:
         summary = sync(

@@ -8292,6 +8292,11 @@ def cmd_one_task(args: argparse.Namespace) -> int:
             source_index_path=_repo_path(
                 str(getattr(args, "master_source_index", "") or args.index)
             ),
+            artifact_memory_index=Path(
+                os.environ["OMNIFLOW_EXP_MEMORY_INDEX"]
+            ).expanduser()
+            if os.environ.get("OMNIFLOW_EXP_MEMORY_INDEX")
+            else None,
         )
     _print_one_task_summary(summary)
     print(

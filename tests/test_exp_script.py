@@ -7,6 +7,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from src.experiment.artifact_memory import refresh_artifact_memory
+
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "exp" / "run_androidworld.sh"
 
@@ -32,7 +34,9 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "--eight-cells" in completed.stdout
     assert "--tasks" in completed.stdout
     assert "--convert-ours-assets" in completed.stdout
+    assert "--refresh-memory" in completed.stdout
     assert "OMNIFLOW_EXP_ASSET_ROOT" in completed.stdout
+    assert "OMNIFLOW_EXP_MEMORY_ROOT" in completed.stdout
     assert completed.stderr == ""
 
 
@@ -108,6 +112,14 @@ def test_check_only_is_read_only_before_any_runtime_output(
         executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         executable.chmod(0o755)
     results = tmp_path / "results-never-created"
+    memory_root = tmp_path / "memory"
+    refresh_artifact_memory(
+        memory_root=memory_root,
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(assets,),
+        result_roots=(),
+    )
 
     environment = {
         **os.environ,
@@ -122,6 +134,7 @@ def test_check_only_is_read_only_before_any_runtime_output(
         "OMNIFLOW_ADB_PATH": str(fake_bin / "adb"),
         "OMNIFLOW_SINGLE_TASK_MANAGE_EMULATORS": "0",
         "OMNIFLOW_SINGLE_TASK_METHODS": "fixed_replay",
+        "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_root / "current.json"),
         "PYTHON_BIN": sys.executable,
     }
     completed = subprocess.run(
@@ -148,6 +161,8 @@ def test_asset_conversion_routes_through_the_only_script(
     source_index = tmp_path / "source-index.json"
     source_index.write_text("{}", encoding="utf-8")
     output_root = tmp_path / "converted"
+    memory_index = tmp_path / "current.json"
+    memory_index.write_text("{}", encoding="utf-8")
     captured = tmp_path / "python-args.txt"
     fake_python = tmp_path / "python"
     fake_python.write_text(
@@ -164,6 +179,7 @@ def test_asset_conversion_routes_through_the_only_script(
         ),
         "OMNIFLOW_OURS_SOURCE_ASSET_INDEX": str(source_index),
         "OMNIFLOW_OURS_CONVERTED_ASSET_ROOT": str(output_root),
+        "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_index),
     }
 
     completed = subprocess.run(
@@ -183,8 +199,67 @@ def test_asset_conversion_routes_through_the_only_script(
         str(source_index),
         "--output-root",
         str(output_root),
+        "--memory-index",
+        str(memory_index),
         "--legacy-root",
         str(legacy_v1),
         "--legacy-root",
         str(legacy_v2),
+    ]
+
+
+def test_memory_refresh_routes_all_evidence_through_the_only_script(
+    tmp_path: Path,
+) -> None:
+    runlogs = tmp_path / "runlogs"
+    results = tmp_path / "results"
+    runlogs.mkdir()
+    results.mkdir()
+    source_index = tmp_path / "source-index.json"
+    source_index.write_text("{}", encoding="utf-8")
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text("{}", encoding="utf-8")
+    memory_root = tmp_path / "memory"
+    captured = tmp_path / "python-args.txt"
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    environment = {
+        **os.environ,
+        "PYTHON_BIN": str(fake_python),
+        "CAPTURE_ARGS": str(captured),
+        "OMNIFLOW_EXP_MEMORY_ROOT": str(memory_root),
+        "OMNIFLOW_MASTER_SOURCE_INDEX": str(source_index),
+        "OMNIFLOW_MEMORY_RUNLOG_ROOTS": str(runlogs),
+        "OMNIFLOW_MEMORY_RESULT_ROOTS": str(results),
+        "OMNIFLOW_MEMORY_FUNCTION_CATALOGS": str(catalog),
+    }
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT), "--refresh-memory"],
+        cwd=REPO,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert captured.read_text(encoding="utf-8").splitlines() == [
+        "-m",
+        "src.experiment.artifact_memory",
+        "refresh",
+        "--memory-root",
+        str(memory_root),
+        "--source-index",
+        str(source_index),
+        "--runlog-root",
+        str(runlogs),
+        "--result-root",
+        str(results),
+        "--function-catalog",
+        str(catalog),
     ]

@@ -715,23 +715,41 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--source-asset-index", required=True)
     parser.add_argument("--output-root", required=True)
+    parser.add_argument(
+        "--memory-index",
+        required=True,
+        help=(
+            "Existing AndroidWorld artifact-memory current.json. The frozen "
+            "conversion catalog is registered here before success is reported."
+        ),
+    )
     args = parser.parse_args(argv)
     report = convert_function_assets(
         legacy_roots=args.legacy_root,
         source_asset_index=args.source_asset_index,
         output_root=args.output_root,
     )
-    _freeze_tree(Path(args.output_root).expanduser().resolve())
+    output_root = Path(args.output_root).expanduser().resolve()
+    _freeze_tree(output_root)
+    from src.experiment.artifact_memory import (
+        refresh_artifact_memory_from_pointer,
+    )
+
+    memory = refresh_artifact_memory_from_pointer(
+        memory_index=args.memory_index,
+        additional_function_catalogs=(output_root / "catalog.json",),
+    )
     print(
         json.dumps(
             {
-                "catalog": str(
-                    Path(args.output_root).expanduser().resolve() / "catalog.json"
+                "catalog": str(output_root / "catalog.json"),
+                "store_index": str(output_root / "store_index.json"),
+                "memory_index": str(
+                    Path(args.memory_index).expanduser().resolve()
                 ),
-                "store_index": str(
-                    Path(args.output_root).expanduser().resolve()
-                    / "store_index.json"
-                ),
+                "memory_function_store_tasks": memory["counts"][
+                    "function_store_tasks"
+                ],
                 "tasks": report["task_count"],
                 "converted": report["converted_task_count"],
                 "catalogued": report["catalogued_task_count"],

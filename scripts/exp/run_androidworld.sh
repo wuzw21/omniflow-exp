@@ -31,6 +31,14 @@ ours_store_index="${OMNIFLOW_OURS_STORE_INDEX:-}"
 legacy_function_roots="${OMNIFLOW_LEGACY_FUNCTION_ROOTS:-}"
 ours_source_asset_index="${OMNIFLOW_OURS_SOURCE_ASSET_INDEX:-}"
 ours_converted_asset_root="${OMNIFLOW_OURS_CONVERTED_ASSET_ROOT:-}"
+memory_root="${OMNIFLOW_EXP_MEMORY_ROOT:-${asset_root:+$asset_root/androidworld_memory}}"
+memory_index="${OMNIFLOW_EXP_MEMORY_INDEX:-${memory_root:+$memory_root/current.json}}"
+memory_function_catalogs="${OMNIFLOW_MEMORY_FUNCTION_CATALOGS:-}"
+memory_runlog_roots="${OMNIFLOW_MEMORY_RUNLOG_ROOTS:-${asset_root:+$asset_root/runtime/evals}}"
+memory_result_roots="${OMNIFLOW_MEMORY_RESULT_ROOTS:-${asset_root:+$asset_root/runtime/evals}}"
+if [[ -n "$results_root" && ":$memory_result_roots:" != *":$results_root:"* ]]; then
+  memory_result_roots="${memory_result_roots:+$memory_result_roots:}$results_root"
+fi
 mobilegpt_root="${OMNIFLOW_MOBILEGPT_ROOT:-${asset_root:+$asset_root/runtime/external/mobilegpt}}"
 mobilegpt_apk="${OMNIFLOW_MOBILEGPT_APK:-${mobilegpt_root:+$mobilegpt_root/App/app/build/outputs/apk/debug/app-debug.apk}}"
 mobilegpt_source_memory_root="${OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT:-}"
@@ -52,6 +60,7 @@ all_tasks=0
 eight_cells=0
 batch_task_filter=""
 convert_ours_assets=0
+refresh_memory=0
 
 usage() {
   cat <<'EOF'
@@ -66,12 +75,16 @@ Options:
   --eight-cells             Run the four non-T3A methods on both devices.
   --tasks TASK1,TASK2,...   Limit --all-tasks to an ordered task subset.
   --convert-ours-assets     Deduplicate legacy authored Functions by task and
-                            convert available current source evidence.
+                            convert available current source evidence, then
+                            register the frozen catalog in long-term memory.
+  --refresh-memory          Deduplicate and index all configured RunLogs,
+                            Function assets, and existing results.
   -h, --help                Show this help and exit.
 
 Required external roots:
   OMNIFLOW_EXP_ASSET_ROOT   Absolute root containing frozen experiment assets.
   OMNIFLOW_EXP_RESULTS_ROOT Absolute root for immutable results.
+  OMNIFLOW_EXP_MEMORY_ROOT  Absolute content-addressed long-term-memory root.
   OMNITRANSFER_ROOT         Canonical/versioned OmniTransfer checkout.
 
 Optional runtime overrides:
@@ -82,9 +95,16 @@ Asset conversion inputs:
   OMNIFLOW_LEGACY_FUNCTION_ROOTS    Colon-separated read-only bundle roots.
   OMNIFLOW_OURS_SOURCE_ASSET_INDEX Current frozen source asset index.
   OMNIFLOW_OURS_CONVERTED_ASSET_ROOT New immutable conversion output root.
+  OMNIFLOW_EXP_MEMORY_INDEX          Existing memory current.json.
+
+Long-term-memory refresh inputs:
+  OMNIFLOW_MEMORY_RUNLOG_ROOTS       Colon-separated evidence roots.
+  OMNIFLOW_MEMORY_RESULT_ROOTS       Colon-separated result roots.
+  OMNIFLOW_MEMORY_FUNCTION_CATALOGS  Colon-separated Function catalogs.
 
 Examples:
   bash scripts/exp/run_androidworld.sh --convert-ours-assets
+  bash scripts/exp/run_androidworld.sh --refresh-memory
   bash scripts/exp/run_androidworld.sh --check-only --all-tasks --eight-cells
   bash scripts/exp/run_androidworld.sh --all-tasks --eight-cells \
     --tasks AudioRecorderRecordAudioWithFileName,SystemCopyToClipboard
@@ -112,6 +132,9 @@ while [[ "$#" -gt 0 ]]; do
     --convert-ours-assets)
       convert_ours_assets=1
       ;;
+    --refresh-memory)
+      refresh_memory=1
+      ;;
     --tasks)
       shift
       if [[ "$#" -eq 0 || -z "$1" ]]; then
@@ -127,13 +150,73 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
+if [[ "$refresh_memory" -eq 1 ]]; then
+  if [[ "$convert_ours_assets" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$batch_task_filter" ]]; then
+    echo "--refresh-memory cannot be combined with conversion or experiment run options." >&2
+    exit 2
+  fi
+  if [[ -z "$memory_root" || "$memory_root" != /* ]]; then
+    echo "Set OMNIFLOW_EXP_MEMORY_ROOT to an absolute path." >&2
+    exit 2
+  fi
+  if [[ ! -f "$master_source_index" ]]; then
+    echo "Canonical master source index missing: $master_source_index" >&2
+    exit 2
+  fi
+  if [[ -z "$memory_runlog_roots" ]]; then
+    echo "OMNIFLOW_MEMORY_RUNLOG_ROOTS must contain at least one root." >&2
+    exit 2
+  fi
+  if ! python_bin="$(command -v "$python_bin")"; then
+    echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
+    exit 1
+  fi
+  memory_args=(
+    -m src.experiment.artifact_memory
+    refresh
+    --memory-root "$memory_root"
+    --source-index "$master_source_index"
+  )
+  IFS=':' read -r -a configured_runlog_roots <<< "$memory_runlog_roots"
+  for configured_root in "${configured_runlog_roots[@]}"; do
+    if [[ "$configured_root" != /* || ! -d "$configured_root" ]]; then
+      echo "Memory RunLog root must be an existing absolute directory: $configured_root" >&2
+      exit 2
+    fi
+    memory_args+=(--runlog-root "$configured_root")
+  done
+  IFS=':' read -r -a configured_result_roots <<< "$memory_result_roots"
+  for configured_root in "${configured_result_roots[@]}"; do
+    if [[ -z "$configured_root" ]]; then
+      continue
+    fi
+    if [[ "$configured_root" != /* || ! -d "$configured_root" ]]; then
+      echo "Memory result root must be an existing absolute directory: $configured_root" >&2
+      exit 2
+    fi
+    memory_args+=(--result-root "$configured_root")
+  done
+  IFS=':' read -r -a configured_function_catalogs <<< "$memory_function_catalogs"
+  for configured_catalog in "${configured_function_catalogs[@]}"; do
+    if [[ -z "$configured_catalog" ]]; then
+      continue
+    fi
+    if [[ "$configured_catalog" != /* || ! -f "$configured_catalog" ]]; then
+      echo "Memory Function catalog must be an existing absolute file: $configured_catalog" >&2
+      exit 2
+    fi
+    memory_args+=(--function-catalog "$configured_catalog")
+  done
+  cd "$repo"
+  exec "$python_bin" "${memory_args[@]}"
+fi
 if [[ "$convert_ours_assets" -eq 1 ]]; then
   if [[ "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$batch_task_filter" ]]; then
     echo "--convert-ours-assets cannot be combined with experiment run options." >&2
     exit 2
   fi
-  if [[ -z "$legacy_function_roots" || -z "$ours_source_asset_index" || -z "$ours_converted_asset_root" ]]; then
-    echo "Asset conversion requires OMNIFLOW_LEGACY_FUNCTION_ROOTS, OMNIFLOW_OURS_SOURCE_ASSET_INDEX, and OMNIFLOW_OURS_CONVERTED_ASSET_ROOT." >&2
+  if [[ -z "$legacy_function_roots" || -z "$ours_source_asset_index" || -z "$ours_converted_asset_root" || -z "$memory_index" ]]; then
+    echo "Asset conversion requires legacy roots, source index, output root, and OMNIFLOW_EXP_MEMORY_INDEX." >&2
     exit 2
   fi
   if [[ "$ours_source_asset_index" != /* || "$ours_converted_asset_root" != /* ]]; then
@@ -144,10 +227,15 @@ if [[ "$convert_ours_assets" -eq 1 ]]; then
     echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
     exit 1
   fi
+  if [[ "$memory_index" != /* || ! -f "$memory_index" ]]; then
+    echo "Long-term-memory index must be an existing absolute file: $memory_index" >&2
+    exit 2
+  fi
   conversion_args=(
     -m src.experiment.function_assets
     --source-asset-index "$ours_source_asset_index"
     --output-root "$ours_converted_asset_root"
+    --memory-index "$memory_index"
   )
   IFS=':' read -r -a conversion_roots <<< "$legacy_function_roots"
   for conversion_root in "${conversion_roots[@]}"; do
@@ -160,6 +248,41 @@ if [[ "$convert_ours_assets" -eq 1 ]]; then
   cd "$repo"
   exec "$python_bin" "${conversion_args[@]}"
 fi
+if [[ -z "$memory_index" || "$memory_index" != /* || ! -f "$memory_index" ]]; then
+  echo "Long-term-memory index missing; run --refresh-memory first: $memory_index" >&2
+  exit 2
+fi
+if ! python_bin="$(command -v "$python_bin")"; then
+  echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
+  exit 1
+fi
+memory_paths="$(
+  "$python_bin" - "$repo" "$memory_index" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
+from src.experiment.artifact_memory import load_artifact_memory
+
+index_path = Path(sys.argv[2]).expanduser().resolve()
+load_artifact_memory(index_path)
+pointer = json.loads(index_path.read_text(encoding="utf-8"))
+print(
+    "\t".join(
+        (
+            str(pointer["source_index"]),
+            str(pointer["ours_store_index"]),
+        )
+    )
+)
+PY
+)"
+IFS=$'\t' read -r memory_source_index memory_store_index <<< "$memory_paths"
+master_source_index="$memory_source_index"
+source_index="$memory_source_index"
+ours_store_index="$memory_store_index"
+export OMNIFLOW_EXP_MEMORY_INDEX="$memory_index"
 if [[ "$all_tasks" -eq 1 && "$dry_run" -eq 1 ]]; then
   echo "--dry-run cannot be combined with --all-tasks." >&2
   exit 2
@@ -432,6 +555,7 @@ PY
     "$python_bin" - \
       "$repo" \
       "$results_root/androidworld_validator/runs" \
+      "$memory_index" \
       "$1" \
       "$batch_methods" \
       "$formal_device_targets" <<'PY'
@@ -439,24 +563,41 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
+from src.experiment.artifact_memory import registered_cell_plan_from_memory
 from src.experiment.result_registry import registered_cell_plan
 
 runs_root = Path(sys.argv[2]).expanduser().resolve()
-task = sys.argv[3]
-methods = tuple(sys.argv[4].split(","))
+memory_index = Path(sys.argv[3]).expanduser().resolve()
+task = sys.argv[4]
+methods = tuple(sys.argv[5].split(","))
 device_specs = {}
-for raw in sys.argv[5].split(","):
+for raw in sys.argv[6].split(","):
     fields = raw.split(":")
     if len(fields) != 3:
         raise SystemExit(f"invalid_device_target:{raw}")
     device_specs[fields[0]] = fields
 devices = tuple(device_specs)
-plan = registered_cell_plan(
+live_plan = registered_cell_plan(
     runs_root=runs_root,
     task_name=task,
     methods=methods,
     devices=devices,
 )
+memory_plan = registered_cell_plan_from_memory(
+    memory_index=memory_index,
+    task_name=task,
+    methods=methods,
+    devices=devices,
+)
+expected = [(method, device) for method in methods for device in devices]
+completed_set = {
+    *live_plan["completed"],
+    *memory_plan["completed"],
+}
+plan = {
+    "completed": [cell for cell in expected if cell in completed_set],
+    "pending": [cell for cell in expected if cell not in completed_set],
+}
 print(f"summary\t{len(plan['completed'])}\t{len(plan['pending'])}")
 for method, device in plan["pending"]:
     label, serial, port = device_specs[device]

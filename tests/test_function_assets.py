@@ -8,6 +8,10 @@ import stat
 import pytest
 
 from omniflow.functions.store import FunctionStore
+from src.experiment.artifact_memory import (
+    load_artifact_memory,
+    refresh_artifact_memory,
+)
 from src.experiment.function_assets import convert_function_assets, main
 
 
@@ -270,6 +274,27 @@ def test_conversion_cli_freezes_the_completed_asset_root(
         _legacy_bundle(),
     )
     output_root = tmp_path / "converted"
+    conversion_source_index = _source_assets(tmp_path / "source")
+    source_item = json.loads(
+        conversion_source_index.read_text(encoding="utf-8")
+    )["assets"]["RecordWithName"]
+    master_source_index = _write_json(
+        tmp_path / "master_source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": source_item["source_run_log"],
+            }
+        },
+    )
+    memory_root = tmp_path / "memory"
+    refresh_artifact_memory(
+        memory_root=memory_root,
+        source_index=master_source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "source",),
+        result_roots=(),
+    )
 
     assert (
         main(
@@ -277,13 +302,17 @@ def test_conversion_cli_freezes_the_completed_asset_root(
                 "--legacy-root",
                 str(legacy_root),
                 "--source-asset-index",
-                str(_source_assets(tmp_path / "source")),
+                str(conversion_source_index),
                 "--output-root",
                 str(output_root),
+                "--memory-index",
+                str(memory_root / "current.json"),
             ]
         )
         == 0
     )
+    memory = load_artifact_memory(memory_root / "current.json")
+    assert list(memory["canonical"]["function_stores"]) == ["RecordWithName"]
 
     paths = [output_root, *output_root.rglob("*")]
     assert all(

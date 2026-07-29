@@ -1,0 +1,300 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+import stat
+
+from src.experiment.artifact_memory import (
+    load_artifact_memory,
+    refresh_artifact_memory,
+    refresh_artifact_memory_from_pointer,
+    registered_cell_plan_from_memory,
+)
+
+
+def _write_json(path: Path, value: object) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value), encoding="utf-8")
+    return path
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_registered_result(
+    root: Path,
+    *,
+    attempt: str,
+    registered_at: str,
+    success: bool,
+) -> Path:
+    cell_root = root / "RecordWithName" / "ours" / "small5554" / attempt
+    result_path = cell_root / "registered_result.json"
+    manifest_path = cell_root / "registration_manifest.json"
+    registration_id = f"RecordWithName.ours.small5554.{attempt}"
+    result = {
+        "schema_version": "omniflow.androidworld_registered_result.v1",
+        "registration_id": registration_id,
+        "attempt_id": attempt,
+        "task_name": "RecordWithName",
+        "source_seed": 111,
+        "evaluation_seed": 113,
+        "registration_manifest": str(manifest_path),
+        "rows": [
+            {
+                "task_name": "RecordWithName",
+                "method": "ours",
+                "device": "small5554",
+                "official_validator_used": True,
+                "official_validator_success": success,
+                "official_validator_task_count": 1,
+            }
+        ],
+    }
+    _write_json(result_path, result)
+    _write_json(
+        manifest_path,
+        {
+            "schema_version": "omniflow.androidworld_result_registration.v1",
+            "registration_id": registration_id,
+            "immutable": True,
+            "task_name": "RecordWithName",
+            "method": "ours",
+            "device": "small5554",
+            "attempt_id": attempt,
+            "registered_at": registered_at,
+            "registered_result_sha256": _sha256(result_path),
+        },
+    )
+    return result_path
+
+
+def test_refresh_deduplicates_runlogs_and_keeps_indexed_source_as_canonical(
+    tmp_path: Path,
+) -> None:
+    source = _write_json(
+        tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
+        {
+            "schema_version": "omniflow.run_log.v1",
+            "run_id": "source-run",
+            "goal": "Record audio and save it.",
+            "success": True,
+            "steps": [{"step_index": 0}],
+        },
+    )
+    duplicate = tmp_path / "other" / "RecordWithName" / "copy.run_log.json"
+    duplicate.parent.mkdir(parents=True)
+    duplicate.write_bytes(source.read_bytes())
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "collect_seed": 111,
+                "androidworld_success": True,
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "evidence", tmp_path / "other"),
+        result_roots=(),
+    )
+
+    assert report["counts"]["run_log_paths"] == 2
+    assert report["counts"]["unique_run_logs"] == 1
+    canonical = report["canonical"]["source_run_logs"]["RecordWithName"]
+    assert canonical["sha256"] == _sha256(source)
+    assert canonical["aliases"] == sorted([str(source), str(duplicate)])
+    object_path = Path(canonical["object_path"])
+    assert object_path.is_file()
+    assert object_path.read_bytes() == source.read_bytes()
+    assert source.stat().st_mode & stat.S_IWUSR
+    assert not object_path.stat().st_mode & stat.S_IWUSR
+    current = json.loads(
+        (tmp_path / "memory" / "current.json").read_text(encoding="utf-8")
+    )
+    assert Path(current["registry_path"]).is_file()
+    assert Path(current["by_task_root"], "RecordWithName.json").is_file()
+
+
+def test_refresh_keeps_one_verified_runtime_store_from_duplicate_catalogs(
+    tmp_path: Path,
+) -> None:
+    source = _write_json(
+        tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
+        {
+            "schema_version": "omniflow.run_log.v1",
+            "run_id": "source-run",
+            "goal": "Record audio and save it.",
+            "success": True,
+            "steps": [{"step_index": 0}],
+        },
+    )
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    store = _write_json(
+        tmp_path / "converted" / "function_store" / "store.json",
+        {
+            "schema_version": "omniflow.store.v2",
+            "functions": {"record_with_name": {"function_id": "record_with_name"}},
+        },
+    )
+    transfer = _write_json(
+        store.with_name("transfer_states.json"),
+        {
+            "schema_version": "omniflow.transfer-state-catalog.v1",
+            "states": {"state-1": {"state_id": "state-1"}},
+        },
+    )
+    provenance = _write_json(
+        tmp_path / "converted" / "provenance_manifest.json",
+        {"schema_version": "test.provenance.v1"},
+    )
+    catalog_payload = {
+        "schema_version": "omniflow.function-asset-catalog.v1",
+        "task_count": 1,
+        "converted_task_count": 1,
+        "tasks": {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "status": "converted",
+                "function_count": 1,
+                "store_path": str(store),
+                "store_sha256": _sha256(store),
+                "transfer_states_path": str(transfer),
+                "transfer_states_sha256": _sha256(transfer),
+                "provenance_path": str(provenance),
+                "provenance_sha256": _sha256(provenance),
+                "target_inputs_read": False,
+                "target_observations_read": False,
+            }
+        },
+    }
+    catalogs = [
+        _write_json(tmp_path / revision / "catalog.json", catalog_payload)
+        for revision in ("v4", "v4-copy")
+    ]
+
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=catalogs,
+        runlog_roots=(tmp_path / "evidence",),
+        result_roots=(),
+    )
+
+    assert report["counts"]["function_catalog_paths"] == 2
+    assert report["counts"]["unique_function_stores"] == 1
+    assert report["counts"]["function_store_tasks"] == 1
+    canonical = report["canonical"]["function_stores"]["RecordWithName"]
+    assert canonical["store_sha256"] == _sha256(store)
+    assert canonical["catalog_aliases"] == sorted(str(path) for path in catalogs)
+    current = json.loads(
+        (tmp_path / "memory" / "current.json").read_text(encoding="utf-8")
+    )
+    store_index = json.loads(
+        Path(current["ours_store_index"]).read_text(encoding="utf-8")
+    )
+    row = store_index["RecordWithName"]
+    assert Path(row["store_path"]).read_bytes() == store.read_bytes()
+    assert Path(row["transfer_states_path"]) == Path(
+        row["store_path"]
+    ).with_name("transfer_states.json")
+    assert Path(row["provenance_path"]).read_bytes() == provenance.read_bytes()
+
+
+def test_refresh_keeps_earliest_formal_result_without_success_cherry_picking(
+    tmp_path: Path,
+) -> None:
+    source = _write_json(
+        tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
+        {
+            "schema_version": "omniflow.run_log.v1",
+            "run_id": "source-run",
+            "goal": "Record audio and save it.",
+            "success": True,
+            "steps": [{"step_index": 0}],
+        },
+    )
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    runs = tmp_path / "runs"
+    first = _write_registered_result(
+        runs,
+        attempt="attempt_001",
+        registered_at="2026-07-20T00:00:00+00:00",
+        success=False,
+    )
+    _write_registered_result(
+        runs,
+        attempt="attempt_002",
+        registered_at="2026-07-21T00:00:00+00:00",
+        success=True,
+    )
+
+    refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "evidence",),
+        result_roots=(),
+    )
+    pointer = tmp_path / "memory" / "current.json"
+    report = refresh_artifact_memory_from_pointer(
+        memory_index=pointer,
+        additional_result_roots=(runs,),
+    )
+
+    assert report["counts"]["result_paths"] == 4
+    assert report["counts"]["canonical_result_cells"] == 1
+    canonical = report["canonical"]["result_cells"][
+        "RecordWithName|ours|small5554"
+    ]
+    assert canonical["official_validator_success"] is False
+    assert canonical["registered_result_aliases"] == [str(first)]
+    assert (
+        canonical["selection_reason"]
+        == "earliest_verified_official_validator_conclusion"
+    )
+    assert registered_cell_plan_from_memory(
+        memory_index=pointer,
+        task_name="RecordWithName",
+        methods=("ours",),
+        devices=("small5554", "fold5564"),
+    ) == {
+        "completed": [("ours", "small5554")],
+        "pending": [("ours", "fold5564")],
+    }
+
+    first_pointer = json.loads(pointer.read_text(encoding="utf-8"))
+    refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "evidence",),
+        result_roots=(runs,),
+    )
+    second_pointer = json.loads(pointer.read_text(encoding="utf-8"))
+    assert second_pointer == first_pointer
+    assert load_artifact_memory(pointer)["canonical"] == report["canonical"]

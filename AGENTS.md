@@ -50,3 +50,33 @@ such assets must be supplied through explicit absolute paths.
 
 OmniTransfer failures must return to the normal OmniFlow fallback path. Never
 replay source-device coordinates directly on a target device.
+
+## Long-term experiment memory
+
+- `OMNIFLOW_EXP_MEMORY_ROOT/current.json` is the only canonical entry point for
+  existing AndroidWorld RunLogs, converted Function assets, and registered
+  results. The experiment script must resolve source and Store indexes from it
+  before preflight or execution.
+- Maintain the memory only through
+  `scripts/exp/run_androidworld.sh --refresh-memory`. Function conversion must
+  update the same memory before reporting success, and result registration must
+  update it immediately after writing an immutable formal result.
+- Store immutable evidence by exact SHA-256. Identical content has one object
+  and any additional locations are aliases; never copy it into another
+  logical version or regenerate it.
+- Keep every original attempt immutable. Deduplication changes only canonical
+  indexes and content-addressed storage; it never deletes or rewrites evidence.
+- Classify memory by AndroidWorld task. Preserve unclassified evidence in the
+  registry instead of dropping it or guessing a task.
+- The master source index is authoritative for the canonical source RunLog.
+  A converted Function Store is canonical only when the v2 Store, transfer
+  states, provenance hashes, and no-target-input audit all verify. Equal-quality
+  conflicting Stores are an error and must not be selected silently.
+- For a task/method/device result cell, use the earliest immutable registered
+  result with an official-validator conclusion. Never rank or replace results
+  by success, token count, duration, or a later retry.
+- If `current.json` already contains a canonical asset or formal result, reuse
+  it or skip the completed cell. Do not call a model, rebuild an asset, rerun a
+  completed cell, or reason about which historical directory to use.
+- A missing, corrupt, or ambiguous memory entry is a preflight failure. Report
+  it explicitly; do not fall back to path guessing or automatic generation.
