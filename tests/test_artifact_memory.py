@@ -148,6 +148,17 @@ def test_refresh_classifies_case_normalized_task_directory_exactly(
             "steps": [{"step_index": 0}],
         },
     )
+    campaign = _write_json(
+        tmp_path
+        / "record_with_name_source_raw_20260723"
+        / "source.replay.run_log.json",
+        {
+            "schema_version": "omniflow.run_log.v1",
+            "run_id": "campaign-run",
+            "success": True,
+            "steps": [{"step_index": 0}],
+        },
+    )
     source_index = _write_json(
         tmp_path / "source_index.json",
         {
@@ -162,12 +173,16 @@ def test_refresh_classifies_case_normalized_task_directory_exactly(
         memory_root=tmp_path / "memory",
         source_index=source_index,
         function_catalogs=(),
-        runlog_roots=(tmp_path / "evidence", historical.parents[2]),
+        runlog_roots=(
+            tmp_path / "evidence",
+            historical.parents[2],
+            campaign.parent,
+        ),
         result_roots=(),
     )
 
     task = report["by_task"]["RecordWithName"]
-    assert len(task["run_log_sha256s"]) == 2
+    assert len(task["run_log_sha256s"]) == 3
     assert report["unclassified"]["run_log_sha256s"] == []
 
 

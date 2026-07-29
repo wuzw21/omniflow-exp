@@ -224,11 +224,28 @@ def _task_from_path(path: Path, task_names: Sequence[str]) -> str:
         for normalized, tasks in tasks_by_normalized_name.items()
         if normalized in normalized_parts and len(tasks) == 1
     }
-    return (
-        sorted(normalized_matches, key=lambda task: (-len(task), task))[0]
-        if len(normalized_matches) == 1
-        else ""
-    )
+    if len(normalized_matches) == 1:
+        return next(iter(normalized_matches))
+    snake_names = {
+        task: re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", task).lower()
+        for task in task_names
+    }
+    prefix_matches = {
+        task
+        for task, snake_name in snake_names.items()
+        if any(
+            part.lower() == snake_name
+            or part.lower().startswith(f"{snake_name}_")
+            for part in path.parts
+        )
+    }
+    if not prefix_matches:
+        return ""
+    longest = max(len(snake_names[task]) for task in prefix_matches)
+    longest_matches = {
+        task for task in prefix_matches if len(snake_names[task]) == longest
+    }
+    return next(iter(longest_matches)) if len(longest_matches) == 1 else ""
 
 
 def _first_result_row(payload: Any) -> dict[str, Any]:
