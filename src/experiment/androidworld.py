@@ -5291,6 +5291,17 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
                 "model_base_url": row.get("model_base_url"),
                 "artifact_kind": row.get("artifact_kind"),
                 "artifact_ref": row.get("artifact_ref"),
+                "target_run_log_path": row.get("target_run_log_path"),
+                "target_run_log_sha256": row.get("target_run_log_sha256"),
+                "target_transfer_states_path": row.get(
+                    "target_transfer_states_path"
+                ),
+                "target_transfer_states_sha256": row.get(
+                    "target_transfer_states_sha256"
+                ),
+                "target_transfer_state_audit": row.get(
+                    "target_transfer_state_audit"
+                ),
                 "relocation_diagnostic_count": len(relocation_diagnostics),
                 "relocation_diagnostics": relocation_diagnostics,
                 "error": row.get("error"),

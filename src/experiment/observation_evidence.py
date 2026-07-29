@@ -12,6 +12,9 @@ from typing import Any, Callable
 
 from PIL import Image
 
+from omniflow.core.trajectory import canonicalize_run_log
+from omniflow.transfer.runtime import TRANSFER_STATE_CATALOG_VERSION
+
 
 class ObservationArchive:
     """Transparent ``get_state`` adapter with ordered screenshot persistence."""
@@ -85,6 +88,68 @@ class ObservationArchive:
         return records
 
 
+def persist_target_run_evidence(
+    output_dir: str | Path,
+    *,
+    run_log: dict[str, Any],
+    captured_transfer_states: dict[str, dict[str, Any]],
+    transfer_state_audit: dict[str, Any],
+) -> dict[str, Any]:
+    root = Path(output_dir).expanduser().resolve()
+    canonical_run = canonicalize_run_log(run_log)
+    run_id = str(canonical_run["run_id"]).strip()
+    states = {
+        str(state_id): dict(state)
+        for state_id, state in sorted(captured_transfer_states.items())
+    }
+    for state_id, state in states.items():
+        if str(state.get("state_id") or "").strip() != state_id:
+            raise ValueError(f"target_transfer_state_key_mismatch:{state_id}")
+    referenced_state_ids = sorted(
+        {
+            state_id
+            for step in canonical_run["steps"]
+            for field in ("before_state_id", "after_state_id")
+            if (state_id := str(step.get(field) or "").strip())
+        }
+    )
+    captured_state_ids = sorted(states)
+    missing_state_ids = sorted(set(referenced_state_ids) - set(captured_state_ids))
+    expected_audit = {
+        "referenced_state_ids": referenced_state_ids,
+        "captured_state_ids": captured_state_ids,
+        "missing_state_ids": missing_state_ids,
+        "referenced_state_count": len(referenced_state_ids),
+        "captured_state_count": len(captured_state_ids),
+        "missing_state_count": len(missing_state_ids),
+        "complete": not missing_state_ids,
+    }
+    if transfer_state_audit != expected_audit:
+        raise ValueError("target_transfer_state_audit_mismatch")
+
+    run_log_path = root / "target.run_log.json"
+    transfer_states_path = root / "target.transfer_states.json"
+    run_log_bytes = _stable_json_bytes(canonical_run)
+    transfer_states_bytes = _stable_json_bytes(
+        {
+            "schema_version": TRANSFER_STATE_CATALOG_VERSION,
+            "run_id": run_id,
+            "states": states,
+        }
+    )
+    _write_immutable(run_log_path, run_log_bytes)
+    _write_immutable(transfer_states_path, transfer_states_bytes)
+    return {
+        "target_run_log_path": str(run_log_path),
+        "target_run_log_sha256": hashlib.sha256(run_log_bytes).hexdigest(),
+        "target_transfer_states_path": str(transfer_states_path),
+        "target_transfer_states_sha256": hashlib.sha256(
+            transfer_states_bytes
+        ).hexdigest(),
+        "target_transfer_state_audit": expected_audit,
+    }
+
+
 def _snapshot_observation(
     state: Any,
     *,
@@ -140,6 +205,12 @@ def _read(value: Any, key: str) -> Any:
     return getattr(value, key, None)
 
 
+def _stable_json_bytes(value: Any) -> bytes:
+    return (
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+
+
 def _write_immutable(path: Path, content: bytes) -> None:
     try:
         with path.open("xb") as handle:
@@ -149,4 +220,4 @@ def _write_immutable(path: Path, content: bytes) -> None:
             raise ValueError(f"observation_evidence_hash_collision:{path}")
 
 
-__all__ = ["ObservationArchive"]
+__all__ = ["ObservationArchive", "persist_target_run_evidence"]

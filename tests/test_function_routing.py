@@ -563,3 +563,69 @@ def test_androidworld_agent_installs_function_router(tmp_path) -> None:
     )
 
     assert flow.function_router is router
+
+
+def test_androidworld_agent_returns_target_states_when_source_catalog_exists(
+    tmp_path,
+) -> None:
+    store_path = tmp_path / "store.json"
+    source_catalog = tmp_path / "transfer_states.json"
+    source_catalog.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.transfer-state-catalog.v1",
+                "run_id": "source-run",
+                "states": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    original_source_catalog = source_catalog.read_bytes()
+    flow = build_agent(env=SimpleNamespace(), store_path=str(store_path))
+    flow.host.state.update(
+        last_result=SimpleNamespace(success=True),
+        last_run_log={
+            "schema_version": "omniflow.canonical_run_log.v1",
+            "run_id": "target-run",
+            "goal": "Open Settings.",
+            "status": "succeeded",
+            "success": True,
+            "steps": [
+                {
+                    "step_index": 0,
+                    "before_state_id": "target-before",
+                    "action": {
+                        "tool": "open_app",
+                        "args": {"package_name": "com.android.settings"},
+                    },
+                    "result": {"success": True},
+                    "after_state_id": "target-after",
+                }
+            ],
+        },
+        captured_transfer_states={
+            "target-before": {
+                "state_id": "target-before",
+                "xml": "<hierarchy />",
+            }
+        },
+    )
+
+    payload = flow.save_run_log(success=True)
+
+    assert source_catalog.read_bytes() == original_source_catalog
+    assert payload["captured_transfer_states"] == {
+        "target-before": {
+            "state_id": "target-before",
+            "xml": "<hierarchy />",
+        }
+    }
+    assert payload["transfer_state_audit"] == {
+        "referenced_state_ids": ["target-after", "target-before"],
+        "captured_state_ids": ["target-before"],
+        "missing_state_ids": ["target-after"],
+        "referenced_state_count": 2,
+        "captured_state_count": 1,
+        "missing_state_count": 1,
+        "complete": False,
+    }

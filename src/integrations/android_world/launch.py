@@ -25,7 +25,10 @@ import urllib.parse
 import urllib.request
 
 from omniflow.vlm.usage import token_usage_status
-from src.experiment.observation_evidence import ObservationArchive
+from src.experiment.observation_evidence import (
+    ObservationArchive,
+    persist_target_run_evidence,
+)
 from src.integrations.android_world.agent import (
     MODE_OMNIFLOW,
     build_agent,
@@ -5119,6 +5122,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     try:
                         canonical_run = None
                         canonical_run_id = None
+                        run_log_payload: dict[str, Any] | None = None
                         observation_evidence: list[dict[str, Any]] | None = None
                         if observation_archive is not None:
                             try:
@@ -5142,6 +5146,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                     raise
                                 payload = save_run_log()
                             if isinstance(payload, dict):
+                                run_log_payload = payload
                                 canonical_run_id = (
                                     str(payload.get("run_id") or "").strip() or None
                                 )
@@ -5395,6 +5400,35 @@ def main(argv: Sequence[str] | None = None) -> int:
                             task_result_record["canonical_run"] = to_serializable(
                                 canonical_run
                             )
+                            if selected_agent == MODE_OMNIFLOW:
+                                if not isinstance(run_log_payload, dict):
+                                    raise RuntimeError(
+                                        "target_run_evidence_payload_missing"
+                                    )
+                                captured_transfer_states = run_log_payload.get(
+                                    "captured_transfer_states"
+                                )
+                                transfer_state_audit = run_log_payload.get(
+                                    "transfer_state_audit"
+                                )
+                                if not isinstance(captured_transfer_states, dict):
+                                    raise RuntimeError(
+                                        "target_transfer_states_missing"
+                                    )
+                                if not isinstance(transfer_state_audit, dict):
+                                    raise RuntimeError(
+                                        "target_transfer_state_audit_missing"
+                                    )
+                                task_result_record.update(
+                                    persist_target_run_evidence(
+                                        run_output_dir,
+                                        run_log=canonical_run,
+                                        captured_transfer_states=(
+                                            captured_transfer_states
+                                        ),
+                                        transfer_state_audit=transfer_state_audit,
+                                    )
+                                )
                             relocation_diagnostics = _extract_relocation_diagnostics(
                                 canonical_run
                             )

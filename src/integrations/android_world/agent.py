@@ -231,22 +231,41 @@ def build_agent(
         )
         run_log["diagnostics"] = diagnostics
         run_log = canonicalize_run_log(run_log)
-        if success and not state["transfer_catalog_preexisting"]:
-            referenced_state_ids = {
-                str(step[field])
+        referenced_state_ids = sorted(
+            {
+                state_id
                 for step in run_log["steps"]
                 for field in ("before_state_id", "after_state_id")
+                if (state_id := str(step.get(field) or "").strip())
             }
-            captured = state["captured_transfer_states"]
+        )
+        captured = state["captured_transfer_states"]
+        captured_transfer_states = {
+            state_id: captured[state_id]
+            for state_id in sorted(captured)
+        }
+        missing_state_ids = sorted(
+            set(referenced_state_ids) - set(captured_transfer_states)
+        )
+        transfer_state_audit = {
+            "referenced_state_ids": referenced_state_ids,
+            "captured_state_ids": sorted(captured_transfer_states),
+            "missing_state_ids": missing_state_ids,
+            "referenced_state_count": len(referenced_state_ids),
+            "captured_state_count": len(captured_transfer_states),
+            "missing_state_count": len(missing_state_ids),
+            "complete": not missing_state_ids,
+        }
+        if success and not state["transfer_catalog_preexisting"]:
             catalog_states = {
-                state_id: captured[state_id]
-                for state_id in sorted(referenced_state_ids)
-                if state_id in captured
+                state_id: captured_transfer_states[state_id]
+                for state_id in referenced_state_ids
+                if state_id in captured_transfer_states
             }
-            missing = sorted(referenced_state_ids - set(catalog_states))
-            if missing:
+            if missing_state_ids:
                 raise RuntimeError(
-                    "captured_transfer_states_incomplete:" + ",".join(missing)
+                    "captured_transfer_states_incomplete:"
+                    + ",".join(missing_state_ids)
                 )
             transfer_state_path.parent.mkdir(parents=True, exist_ok=True)
             with transfer_state_path.open("x", encoding="utf-8") as handle:
@@ -276,6 +295,8 @@ def build_agent(
                 "done_reason": diagnostics["done_reason"] or None,
             },
             "run_log": run_log,
+            "captured_transfer_states": captured_transfer_states,
+            "transfer_state_audit": transfer_state_audit,
         }
         return payload
 
