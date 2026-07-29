@@ -2,13 +2,256 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
 from src.experiment import androidworld as pipeline
 from src.experiment import mobilegpt_source
 from src.integrations.mobilegpt_runtime import _mobilegpt_chat_model
+
+
+def test_mobilegpt_client_patch_supports_cross_package_windows(
+    tmp_path: Path,
+) -> None:
+    java_root = (
+        tmp_path
+        / "mobilegpt"
+        / "App"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "example"
+        / "MobileGPT"
+    )
+    java_root.mkdir(parents=True)
+    service = java_root / "MobileGPTAccessibilityService.java"
+    service.write_text(
+        """
+public class MobileGPTAccessibilityService {
+    public void onServiceConnected() {
+        AccessibilityServiceInfo info = new AccessibilityServiceInfo();
+        info.packageNames = getAppList();
+        setServiceInfo(info);
+        mExecutorService.execute(()->mClient.sendAppList(info.packageNames));
+    }
+
+    public void handleResponse(String action) {
+        if (action.equals("speak")) {
+            return;
+        } else if (MobileGPTGlobal.AVAILABLE_ACTIONS.contains(action)){
+            return;
+        }
+    }
+
+    private AccessibilityNodeInfo getRootForActiveApp(){
+        List<AccessibilityWindowInfo> windows = getWindows();
+
+        for (AccessibilityWindowInfo window : windows) {
+            AccessibilityNodeInfo root = window.getRoot();
+            if (root.getPackageName().equals(targetPackageName)) {
+                return root;
+            }
+        }
+        Log.d(TAG, "No Appropriate Root found in this screen.");
+        return null;
+    }
+
+    private void saveCurrScreen() {
+        return;
+    }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    global_java = java_root / "MobileGPTGlobal.java"
+    global_java.write_text(
+        'public static final List<String> AVAILABLE_ACTIONS = '
+        'Arrays.asList("click", "input", "scroll", "long-click", "go-back");\n',
+        encoding="utf-8",
+    )
+
+    patched = pipeline._patch_mobilegpt_client_runtime(
+        mobilegpt_root=tmp_path / "mobilegpt",
+    )
+
+    assert service in patched
+    service_text = service.read_text(encoding="utf-8")
+    assert "String[] launchablePackages = getAppList();" in service_text
+    assert "info.packageNames = null;" in service_text
+    assert "mClient.sendAppList(launchablePackages)" in service_text
+    assert "getRootInActiveWindow()" in service_text
+    assert '"com.example.MobileGPT".equals' in service_text
+    assert '"back", "go-back"' in global_java.read_text(encoding="utf-8")
+
+
+def test_mobilegpt_client_prepare_is_content_addressed_and_auditable(
+    tmp_path: Path,
+) -> None:
+    mobilegpt_root = tmp_path / "mobilegpt"
+    java_root = (
+        mobilegpt_root
+        / "App"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "example"
+        / "MobileGPT"
+    )
+    java_root.mkdir(parents=True)
+    (java_root / "MobileGPTAccessibilityService.java").write_text(
+        """
+public class MobileGPTAccessibilityService {
+    public void onServiceConnected() {
+        AccessibilityServiceInfo info = new AccessibilityServiceInfo();
+        info.packageNames = getAppList();
+        setServiceInfo(info);
+        mExecutorService.execute(()->mClient.sendAppList(info.packageNames));
+    }
+
+    public void handleResponse(String action) {
+        if (action.equals("speak")) {
+            return;
+        } else if (MobileGPTGlobal.AVAILABLE_ACTIONS.contains(action)){
+            return;
+        }
+    }
+
+    private AccessibilityNodeInfo getRootForActiveApp(){
+        List<AccessibilityWindowInfo> windows = getWindows();
+        for (AccessibilityWindowInfo window : windows) {
+            AccessibilityNodeInfo root = window.getRoot();
+            if (root.getPackageName().equals(targetPackageName)) {
+                return root;
+            }
+        }
+        Log.d(TAG, "No Appropriate Root found in this screen.");
+        return null;
+    }
+
+    private void saveCurrScreen() {
+        return;
+    }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    (java_root / "MobileGPTGlobal.java").write_text(
+        'public static final String HOST_IP = "127.0.0.1";\n'
+        'public static final List<String> AVAILABLE_ACTIONS = '
+        'Arrays.asList("click", "input", "scroll", "long-click", "go-back");\n',
+        encoding="utf-8",
+    )
+    gradlew = mobilegpt_root / "App" / "gradlew"
+    gradlew.write_text(
+        """#!/bin/sh
+set -eu
+printf 'build\n' >> "$MOBILEGPT_BUILD_LOG"
+mkdir -p app/build/outputs/apk/debug
+printf 'apk-%s\n' "$(wc -l < "$MOBILEGPT_BUILD_LOG")" > app/build/outputs/apk/debug/app-debug.apk
+""",
+        encoding="utf-8",
+    )
+    gradlew.chmod(0o755)
+    build_log = tmp_path / "build.log"
+    environment = {
+        **os.environ,
+        "MOBILEGPT_BUILD_LOG": str(build_log),
+        "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
+    }
+    base_command = [
+        sys.executable,
+        "-m",
+        "src.experiment.androidworld",
+        "mobilegpt",
+    ]
+
+    first = subprocess.run(
+        [
+            *base_command,
+            "prepare-client",
+            "--mobilegpt-root",
+            str(mobilegpt_root),
+            "--host-ip",
+            "10.0.2.2",
+        ],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    second = subprocess.run(
+        [
+            *base_command,
+            "prepare-client",
+            "--mobilegpt-root",
+            str(mobilegpt_root),
+            "--host-ip",
+            "10.0.2.2",
+        ],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    audit = subprocess.run(
+        [
+            *base_command,
+            "audit-client",
+            "--mobilegpt-root",
+            str(mobilegpt_root),
+            "--host-ip",
+            "10.0.2.2",
+        ],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+    assert audit.returncode == 0, audit.stderr
+    assert build_log.read_text(encoding="utf-8").splitlines() == ["build"]
+    assert "[mobilegpt:client] reuse" in second.stdout
+
+    apk = (
+        mobilegpt_root
+        / "App"
+        / "app"
+        / "build"
+        / "outputs"
+        / "apk"
+        / "debug"
+        / "app-debug.apk"
+    )
+    apk.write_text("tampered\n", encoding="utf-8")
+    stale = subprocess.run(
+        [
+            *base_command,
+            "audit-client",
+            "--mobilegpt-root",
+            str(mobilegpt_root),
+            "--host-ip",
+            "10.0.2.2",
+        ],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert stale.returncode != 0
+    assert "APK SHA-256 mismatch" in stale.stderr
 
 
 def _write_source_index(

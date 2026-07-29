@@ -5,6 +5,7 @@ import argparse
 from dataclasses import asdict, dataclass
 import hashlib
 import importlib
+import importlib.metadata
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,7 @@ from typing import Any
 from src.integrations.runlog import import_run_log
 
 APPAGENT_OFFICIAL_REVISION = "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
+REQUIRED_DISTRIBUTION_VERSIONS = {"android-env": "1.2.3"}
 
 
 @dataclass
@@ -724,6 +726,21 @@ def main(argv: list[str] | None = None) -> int:
             add(f"python_module:{module_name}", False, str(error))
         else:
             add(f"python_module:{module_name}", True, "importable")
+    for distribution_name, expected_version in REQUIRED_DISTRIBUTION_VERSIONS.items():
+        try:
+            installed_version = importlib.metadata.version(distribution_name)
+        except importlib.metadata.PackageNotFoundError:
+            add(
+                f"python_distribution:{distribution_name}",
+                False,
+                f"missing; require {expected_version}",
+            )
+        else:
+            add(
+                f"python_distribution:{distribution_name}",
+                installed_version == expected_version,
+                f"{installed_version}; require {expected_version}",
+            )
     if appagent_mode or native_mode:
         add("jq", True, f"not required by {profile} profile")
     else:

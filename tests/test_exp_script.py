@@ -8,9 +8,19 @@ import subprocess
 import sys
 
 from src.experiment.artifact_memory import refresh_artifact_memory
+from src.experiment.preflight import REQUIRED_DISTRIBUTION_VERSIONS
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "exp" / "run_androidworld.sh"
+
+
+def test_android_env_version_is_locked_and_preflight_enforced() -> None:
+    assert REQUIRED_DISTRIBUTION_VERSIONS == {"android-env": "1.2.3"}
+    assert '"android-env==1.2.3"' in (REPO / "pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+    lock_text = (REPO / "uv.lock").read_text(encoding="utf-8")
+    assert 'name = "android-env"\nversion = "1.2.3"' in lock_text
 
 
 def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
@@ -310,6 +320,8 @@ if [ "$1" = "devices" ]; then
   printf 'List of devices attached\nemulator-5554\tdevice\nemulator-5560\tdevice\n'
 elif [ "$1" = "-s" ] && [ "$3" = "shell" ] && [ "$4" = "pm" ]; then
   printf 'package:/data/app/mobilegpt.apk\n'
+elif [ "$1" = "-s" ] && [ "$3" = "shell" ] && [ "$4" = "sha256sum" ]; then
+  printf '%s  %s\n' "$MOBILEGPT_APK_SHA" "$5"
 fi
 exit 0
 """,
@@ -341,6 +353,7 @@ exit 0
         "CONVERTED_MARKER": str(converted_marker),
         "REPLAYED_MARKER": str(replayed_marker),
         "MOBILEGPT_MARKER": str(mobilegpt_marker),
+        "MOBILEGPT_APK_SHA": hashlib.sha256(b"").hexdigest(),
         "APPAGENT_MARKER": str(appagent_marker),
         "MOBILEGPT_MANIFEST": str(
             assets / "mobilegpt-source" / "cold_memory_manifest.json"
@@ -421,6 +434,24 @@ exit 0
     ) == 1
     assert repeated_calls.count("src.experiment.appagent_source prepare") == 1
     assert repeated_calls.count("src.experiment.androidworld one-task") == 2
+
+    checked = subprocess.run(
+        ["bash", str(SCRIPT), "--check-only"],
+        cwd=REPO,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert checked.returncode == 0, checked.stderr
+    checked_calls = call_log.read_text(encoding="utf-8")
+    assert checked_calls.count(
+        "src.experiment.androidworld mobilegpt audit-client"
+    ) == 3
+    assert checked_calls.count(
+        "src.experiment.androidworld mobilegpt prepare-client"
+    ) == 2
 
 
 def test_task_major_completed_cells_skip_before_asset_generation(

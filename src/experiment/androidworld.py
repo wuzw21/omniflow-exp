@@ -2727,6 +2727,317 @@ def _patch_mobilegpt_host_ip(
     return global_java
 
 
+def _patch_mobilegpt_client_runtime(
+    *,
+    mobilegpt_root: str | Path = DEFAULT_MOBILEGPT_ROOT,
+    repo_root: Path = REPO_ROOT,
+) -> list[Path]:
+    root = _repo_path(mobilegpt_root, repo_root=repo_root)
+    java_root = (
+        root
+        / "App"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "example"
+        / "MobileGPT"
+    )
+    service_java = java_root / "MobileGPTAccessibilityService.java"
+    global_java = java_root / "MobileGPTGlobal.java"
+    for path in (service_java, global_java):
+        if not path.is_file():
+            raise FileNotFoundError(f"MobileGPT client source not found: {path}")
+
+    patched_paths: list[Path] = []
+    service_text = service_java.read_text(encoding="utf-8")
+    patched_service = service_text
+    if "String[] launchablePackages = getAppList();" not in patched_service:
+        patched_service = patched_service.replace(
+            "        info.packageNames = getAppList();\n",
+            "        String[] launchablePackages = getAppList();\n"
+            "        info.packageNames = null;\n",
+            1,
+        )
+    patched_service = patched_service.replace(
+        "mClient.sendAppList(info.packageNames)",
+        "mClient.sendAppList(launchablePackages)",
+    )
+    if 'action.equals("back") || action.equals("go-back")' not in patched_service:
+        def _back_branch(match: re.Match[str]) -> str:
+            indent = str(match.group("indent") or "")
+            body_indent = indent + "    "
+            return "\n".join(
+                [
+                    f'{indent}}} else if (action.equals("back") || action.equals("go-back")) {{',
+                    f"{body_indent}action_success = performGlobalAction(GLOBAL_ACTION_BACK);",
+                    f'{body_indent}Log.d(TAG, "back success=" + action_success);',
+                    f"{body_indent}screenNeedUpdate = true;",
+                    f"{body_indent}xmlPending = true;",
+                    f'{body_indent}setActionFailedRunnable("There is no change in the screen. Try other approach.", 10000);',
+                    "",
+                    f"{indent}}} else if (MobileGPTGlobal.AVAILABLE_ACTIONS.contains(action)){{",
+                ]
+            )
+
+        patched_service, back_replacements = re.subn(
+            r"(?m)^(?P<indent>\s*)\} else if \(MobileGPTGlobal\.AVAILABLE_ACTIONS\.contains\(action\)\)\{",
+            _back_branch,
+            patched_service,
+            count=1,
+        )
+        if back_replacements != 1:
+            raise ValueError(f"Unable to patch MobileGPT back action: {service_java}")
+    active_root_method = """    private AccessibilityNodeInfo getRootForActiveApp(){
+        AccessibilityNodeInfo activeRoot = getRootInActiveWindow();
+        if (activeRoot != null) {
+            CharSequence activePackage = activeRoot.getPackageName();
+            if (activePackage != null &&
+                    !"com.example.MobileGPT".equals(String.valueOf(activePackage))) {
+                return activeRoot;
+            }
+        }
+
+        List<AccessibilityWindowInfo> windows = getWindows();
+        for (AccessibilityWindowInfo window : windows) {
+            AccessibilityNodeInfo root = window.getRoot();
+            if (root == null || root.getPackageName() == null) {
+                continue;
+            }
+            if (String.valueOf(root.getPackageName()).equals(targetPackageName)) {
+                return root;
+            }
+        }
+        Log.d(TAG, "No Appropriate Root found in this screen.");
+        return null;
+    }
+"""
+    patched_service, replacements = re.subn(
+        r"    private AccessibilityNodeInfo getRootForActiveApp\(\)\{.*?\n    \}\n+(?=    private void saveCurrScreen\()",
+        active_root_method,
+        patched_service,
+        count=1,
+        flags=re.DOTALL,
+    )
+    required_service_markers = (
+        "String[] launchablePackages = getAppList();",
+        "info.packageNames = null;",
+        "mClient.sendAppList(launchablePackages)",
+        "getRootInActiveWindow()",
+        '"com.example.MobileGPT".equals',
+        'action.equals("back") || action.equals("go-back")',
+    )
+    if replacements != 1 or any(
+        marker not in patched_service for marker in required_service_markers
+    ):
+        raise ValueError(
+            f"Unable to patch MobileGPT cross-package client runtime: {service_java}"
+        )
+    if patched_service != service_text:
+        service_java.write_text(patched_service, encoding="utf-8")
+        patched_paths.append(service_java)
+
+    global_text = global_java.read_text(encoding="utf-8")
+    patched_global = global_text.replace(
+        '"long-click", "go-back"',
+        '"long-click", "back", "go-back"',
+    )
+    if '"back", "go-back"' not in patched_global:
+        raise ValueError(f"Unable to patch MobileGPT back action: {global_java}")
+    if patched_global != global_text:
+        global_java.write_text(patched_global, encoding="utf-8")
+        patched_paths.append(global_java)
+    return patched_paths
+
+
+def _mobilegpt_client_paths(
+    *,
+    mobilegpt_root: str | Path = DEFAULT_MOBILEGPT_ROOT,
+    repo_root: Path = REPO_ROOT,
+) -> dict[str, Path]:
+    root = _repo_path(mobilegpt_root, repo_root=repo_root)
+    app_root = root / "App"
+    java_root = (
+        app_root
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "example"
+        / "MobileGPT"
+    )
+    output_root = app_root / "app" / "build" / "outputs" / "apk" / "debug"
+    return {
+        "root": root,
+        "app_root": app_root,
+        "service_java": java_root / "MobileGPTAccessibilityService.java",
+        "global_java": java_root / "MobileGPTGlobal.java",
+        "apk": output_root / "app-debug.apk",
+        "receipt": output_root / "omniflow-client-build.v1.json",
+    }
+
+
+def _mobilegpt_client_input_digest(app_root: Path) -> tuple[str, int]:
+    if not app_root.is_dir():
+        raise FileNotFoundError(f"MobileGPT App root not found: {app_root}")
+    excluded_directories = {".git", ".gradle", ".idea", "build"}
+    excluded_files = {"local.properties"}
+    digest = hashlib.sha256()
+    file_count = 0
+    for path in sorted(item for item in app_root.rglob("*") if item.is_file()):
+        relative = path.relative_to(app_root)
+        if relative.name in excluded_files or any(
+            part in excluded_directories for part in relative.parts[:-1]
+        ):
+            continue
+        digest.update(relative.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(f"{path.stat().st_mode & 0o777:o}".encode("ascii"))
+        digest.update(b"\0")
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        digest.update(b"\0")
+        file_count += 1
+    if file_count == 0:
+        raise ValueError(f"MobileGPT App build input tree is empty: {app_root}")
+    return digest.hexdigest(), file_count
+
+
+def _validate_mobilegpt_client_source(
+    *,
+    mobilegpt_root: str | Path = DEFAULT_MOBILEGPT_ROOT,
+    host_ip: str,
+    repo_root: Path = REPO_ROOT,
+) -> dict[str, Path]:
+    paths = _mobilegpt_client_paths(
+        mobilegpt_root=mobilegpt_root,
+        repo_root=repo_root,
+    )
+    for label in ("service_java", "global_java"):
+        path = paths[label]
+        if not path.is_file():
+            raise FileNotFoundError(f"MobileGPT client source not found: {path}")
+    service_text = paths["service_java"].read_text(encoding="utf-8")
+    required_service_markers = (
+        "String[] launchablePackages = getAppList();",
+        "info.packageNames = null;",
+        "mClient.sendAppList(launchablePackages)",
+        "getRootInActiveWindow()",
+        '"com.example.MobileGPT".equals',
+        'action.equals("back") || action.equals("go-back")',
+    )
+    missing_markers = [
+        marker for marker in required_service_markers if marker not in service_text
+    ]
+    global_text = paths["global_java"].read_text(encoding="utf-8")
+    if '"back", "go-back"' not in global_text:
+        missing_markers.append('"back", "go-back"')
+    expected_host = f'public static final String HOST_IP = "{host_ip}";'
+    if expected_host not in global_text:
+        missing_markers.append(expected_host)
+    if missing_markers:
+        raise ValueError(
+            "MobileGPT client source patch audit failed: "
+            + ", ".join(missing_markers)
+        )
+    return paths
+
+
+def _mobilegpt_client_build_state(
+    *,
+    mobilegpt_root: str | Path = DEFAULT_MOBILEGPT_ROOT,
+    host_ip: str,
+    repo_root: Path = REPO_ROOT,
+) -> dict[str, Any]:
+    paths = _validate_mobilegpt_client_source(
+        mobilegpt_root=mobilegpt_root,
+        host_ip=host_ip,
+        repo_root=repo_root,
+    )
+    if not paths["apk"].is_file():
+        raise FileNotFoundError(f"MobileGPT client APK not found: {paths['apk']}")
+    input_sha256, input_file_count = _mobilegpt_client_input_digest(
+        paths["app_root"]
+    )
+    return {
+        "schema_version": "omniflow.mobilegpt_client_build.v1",
+        "build_command": ["./gradlew", ":app:assembleDebug"],
+        "host_ip": host_ip,
+        "input_tree_sha256": input_sha256,
+        "input_file_count": input_file_count,
+        "apk_relative_path": paths["apk"].relative_to(paths["root"]).as_posix(),
+        "apk_sha256": _file_sha256(paths["apk"]),
+    }
+
+
+def _write_mobilegpt_client_build_receipt(
+    *,
+    mobilegpt_root: str | Path = DEFAULT_MOBILEGPT_ROOT,
+    host_ip: str,
+    repo_root: Path = REPO_ROOT,
+) -> tuple[Path, dict[str, Any]]:
+    paths = _mobilegpt_client_paths(
+        mobilegpt_root=mobilegpt_root,
+        repo_root=repo_root,
+    )
+    state = _mobilegpt_client_build_state(
+        mobilegpt_root=mobilegpt_root,
+        host_ip=host_ip,
+        repo_root=repo_root,
+    )
+    paths["receipt"].write_text(
+        json.dumps(state, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return paths["receipt"], state
+
+
+def _audit_mobilegpt_client_build(
+    *,
+    mobilegpt_root: str | Path = DEFAULT_MOBILEGPT_ROOT,
+    host_ip: str,
+    repo_root: Path = REPO_ROOT,
+) -> dict[str, Any]:
+    paths = _mobilegpt_client_paths(
+        mobilegpt_root=mobilegpt_root,
+        repo_root=repo_root,
+    )
+    if not paths["receipt"].is_file():
+        raise FileNotFoundError(
+            f"MobileGPT client build receipt not found: {paths['receipt']}"
+        )
+    receipt = json.loads(paths["receipt"].read_text(encoding="utf-8"))
+    if not isinstance(receipt, dict):
+        raise ValueError(f"MobileGPT client build receipt must be an object: {paths['receipt']}")
+    current = _mobilegpt_client_build_state(
+        mobilegpt_root=mobilegpt_root,
+        host_ip=host_ip,
+        repo_root=repo_root,
+    )
+    if receipt.get("apk_sha256") != current["apk_sha256"]:
+        raise ValueError(
+            "MobileGPT client APK SHA-256 mismatch: "
+            f"receipt={receipt.get('apk_sha256')} current={current['apk_sha256']}"
+        )
+    if receipt != current:
+        differing = sorted(
+            key
+            for key in set(receipt) | set(current)
+            if receipt.get(key) != current.get(key)
+        )
+        raise ValueError(
+            "MobileGPT client build receipt mismatch: " + ",".join(differing)
+        )
+    return {
+        **current,
+        "receipt": str(paths["receipt"]),
+        "apk": str(paths["apk"]),
+    }
+
+
 def _patch_mobilegpt_server_runtime_context(
     *,
     mobilegpt_root: str | Path = DEFAULT_MOBILEGPT_ROOT,
@@ -8373,6 +8684,87 @@ def cmd_one_task(args: argparse.Namespace) -> int:
 
 
 def cmd_mobilegpt(args: argparse.Namespace) -> int:
+    if args.mobilegpt_action in {"prepare-client", "audit-client"}:
+        host_ip = str(args.host_ip or "").strip()
+        if not host_ip:
+            print(
+                f"mobilegpt {args.mobilegpt_action} requires --host-ip",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 2
+        if args.mobilegpt_action == "audit-client":
+            try:
+                audit = _audit_mobilegpt_client_build(
+                    mobilegpt_root=args.mobilegpt_root,
+                    host_ip=host_ip,
+                )
+            except (FileNotFoundError, ValueError, json.JSONDecodeError) as error:
+                print(f"[mobilegpt:client] audit-failed: {error}", file=sys.stderr)
+                return 1
+            print(
+                "[mobilegpt:client] audit "
+                + json.dumps(audit, sort_keys=True),
+                flush=True,
+            )
+            return 0
+        if bool(args.dry_run):
+            print(
+                "mobilegpt prepare-client does not support --dry-run",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 2
+        patched_host = _patch_mobilegpt_host_ip(
+            mobilegpt_root=args.mobilegpt_root,
+            host_ip=host_ip,
+        )
+        print(f"[mobilegpt:patch-host-ip] {patched_host}", flush=True)
+        patched_client = _patch_mobilegpt_client_runtime(
+            mobilegpt_root=args.mobilegpt_root,
+        )
+        for path in patched_client:
+            print(f"[mobilegpt:patch-client-runtime] {path}", flush=True)
+        try:
+            audit = _audit_mobilegpt_client_build(
+                mobilegpt_root=args.mobilegpt_root,
+                host_ip=host_ip,
+            )
+        except (FileNotFoundError, ValueError, json.JSONDecodeError) as error:
+            print(f"[mobilegpt:client] rebuild reason={error}", flush=True)
+        else:
+            print(
+                "[mobilegpt:client] reuse "
+                + json.dumps(audit, sort_keys=True),
+                flush=True,
+            )
+            return 0
+        spec = build_mobilegpt_command(
+            "build",
+            mobilegpt_root=args.mobilegpt_root,
+            host_ip=host_ip,
+        )
+        returncode = run_command(spec, dry_run=False)
+        if returncode != 0:
+            return returncode
+        receipt, state = _write_mobilegpt_client_build_receipt(
+            mobilegpt_root=args.mobilegpt_root,
+            host_ip=host_ip,
+        )
+        audit = _audit_mobilegpt_client_build(
+            mobilegpt_root=args.mobilegpt_root,
+            host_ip=host_ip,
+        )
+        print(
+            "[mobilegpt:client] built "
+            + json.dumps(
+                {**state, "receipt": str(receipt), "apk": audit["apk"]},
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+        return 0
+
     if args.mobilegpt_action in {"server", "teach-server"}:
         patched_server = _patch_mobilegpt_server_runtime_context(
             mobilegpt_root=args.mobilegpt_root,
@@ -8388,6 +8780,13 @@ def cmd_mobilegpt(args: argparse.Namespace) -> int:
             host_ip=args.host_ip,
         )
         print(f"[mobilegpt:patch-host-ip] {patched}", flush=True)
+
+    if bool(args.patch_client_runtime):
+        patched_client = _patch_mobilegpt_client_runtime(
+            mobilegpt_root=args.mobilegpt_root,
+        )
+        for path in patched_client:
+            print(f"[mobilegpt:patch-client-runtime] {path}", flush=True)
 
     if bool(args.patch_stats):
         patched_stats = _patch_mobilegpt_stats(mobilegpt_root=args.mobilegpt_root)
@@ -8766,6 +9165,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[
             "server",
             "teach-server",
+            "prepare-client",
+            "audit-client",
             "build",
             "install",
             "launch",
@@ -8777,6 +9178,8 @@ def build_parser() -> argparse.ArgumentParser:
             "`server` starts MobileGPT Server/main.py; `teach-server` starts "
             "MobileGPT cold-start learning with AndroidWorld source actions as "
             "native teacher-forced DeriveAgent outputs; `build` builds the Android app; "
+            "`prepare-client` content-addresses the patched client build; "
+            "`audit-client` verifies its source/APK build receipt without writes; "
             "`install` installs app-debug.apk; `launch` opens the app; `run` "
             "broadcasts one instruction to the accessibility service; `stats` "
             "aggregates the patched server JSONL stats."
@@ -8850,6 +9253,14 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Patch MobileGPT Server utils/mobilegpt modules to write OpenAI usage "
             "and task finish events to --stats-jsonl."
+        ),
+    )
+    mobilegpt_parser.add_argument(
+        "--patch-client-runtime",
+        action="store_true",
+        help=(
+            "Patch the pinned MobileGPT Android client to observe active "
+            "cross-package windows while preserving its launchable app list."
         ),
     )
     mobilegpt_parser.add_argument("--dry-run", action="store_true")

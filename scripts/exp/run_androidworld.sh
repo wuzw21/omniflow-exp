@@ -577,6 +577,19 @@ if [[ "$all_tasks" -eq 0 && "$requires_appagent_source_memory" -eq 1 && -z "$app
       "$task"
   )"
 fi
+prepare_mobilegpt_client() {
+  echo "[mobilegpt] prepare-client root=$mobilegpt_root"
+  "$python_bin" -m src.experiment.androidworld mobilegpt prepare-client \
+    --mobilegpt-root "$mobilegpt_root" \
+    --host-ip 10.0.2.2
+}
+if [[ "$requires_mobilegpt_source_memory" -eq 1 \
+  && "$check_only" -eq 0 \
+  && "$dry_run" -eq 0 \
+  && "${OMNIFLOW_MOBILEGPT_CLIENT_PREPARED:-0}" != "1" ]]; then
+  prepare_mobilegpt_client
+  export OMNIFLOW_MOBILEGPT_CLIENT_PREPARED=1
+fi
 for external_path in \
   "$env_file" \
   "$master_source_index" \
@@ -1108,6 +1121,10 @@ if [[ "$requires_omnitransfer" -eq 1 ]]; then
 fi
 if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
   require_command "jq" "jq"
+  if ! command -v sha256sum >/dev/null 2>&1 \
+    && ! command -v shasum >/dev/null 2>&1; then
+    missing_assets+=("sha256=command:sha256sum-or-shasum")
+  fi
   require_file "mobilegpt_server" "$mobilegpt_root/Server/main.py"
   require_file "mobilegpt_apk" "$mobilegpt_apk"
 fi
@@ -1118,6 +1135,11 @@ if [[ ${#missing_assets[@]} -gt 0 ]]; then
   echo "Static experiment asset preflight failed before device startup:" >&2
   printf '  - %s\n' "${missing_assets[@]}" >&2
   exit 1
+fi
+if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
+  "$python_bin" -m src.experiment.androidworld mobilegpt audit-client \
+    --mobilegpt-root "$mobilegpt_root" \
+    --host-ip 10.0.2.2
 fi
 if [[ "$requires_omnitransfer" -eq 1 ]]; then
   "$python_bin" - "$store_path" <<'PY'
@@ -1353,16 +1375,49 @@ ensure_emulator() {
 
 ensure_mobilegpt_package() {
   local serial="$1"
-  if "$adb_bin" -s "$serial" shell pm path com.example.MobileGPT 2>/dev/null \
-    | grep -q '^package:'; then
-    echo "[mobilegpt] reuse-apk serial=$serial"
+  local expected_sha installed_path installed_sha
+  if command -v sha256sum >/dev/null 2>&1; then
+    expected_sha="$(sha256sum "$mobilegpt_apk" | awk '{print $1}')"
+  else
+    expected_sha="$(shasum -a 256 "$mobilegpt_apk" | awk '{print $1}')"
+  fi
+  installed_path="$(
+    "$adb_bin" -s "$serial" shell pm path com.example.MobileGPT 2>/dev/null \
+      | sed -n 's/^package://p' \
+      | tr -d '\r' \
+      | head -1 \
+      || true
+  )"
+  installed_sha=""
+  if [[ -n "$installed_path" ]]; then
+    installed_sha="$(
+      "$adb_bin" -s "$serial" shell sha256sum "$installed_path" 2>/dev/null \
+        | awk '{print $1}' \
+        | tr -d '\r' \
+        || true
+    )"
+  fi
+  if [[ -n "$installed_sha" && "$installed_sha" == "$expected_sha" ]]; then
+    echo "[mobilegpt] reuse-apk serial=$serial sha256=$expected_sha"
     return 0
   fi
-  echo "[mobilegpt] install-apk serial=$serial apk=$mobilegpt_apk"
+  echo "[mobilegpt] install-apk serial=$serial apk=$mobilegpt_apk sha256=$expected_sha"
   "$adb_bin" -s "$serial" install -r "$mobilegpt_apk"
-  if ! "$adb_bin" -s "$serial" shell pm path com.example.MobileGPT 2>/dev/null \
-    | grep -q '^package:'; then
-    echo "MobileGPT APK installation did not register its package: serial=$serial" >&2
+  installed_path="$(
+    "$adb_bin" -s "$serial" shell pm path com.example.MobileGPT 2>/dev/null \
+      | sed -n 's/^package://p' \
+      | tr -d '\r' \
+      | head -1 \
+      || true
+  )"
+  installed_sha="$(
+    "$adb_bin" -s "$serial" shell sha256sum "$installed_path" 2>/dev/null \
+      | awk '{print $1}' \
+      | tr -d '\r' \
+      || true
+  )"
+  if [[ -z "$installed_path" || "$installed_sha" != "$expected_sha" ]]; then
+    echo "MobileGPT APK verification failed on $serial: expected=$expected_sha installed=${installed_sha:-missing}" >&2
     return 1
   fi
 }

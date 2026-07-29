@@ -10,6 +10,7 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
 dependencies = [
+    "android-env==1.2.3",
     "json-repair==0.61.7",
     "jsonschema>=4.23",
     "numpy==1.26.4",
