@@ -68,7 +68,7 @@ def select_source_asset_revision(
                     revisions.append(1)
                     continue
                 match = re.fullmatch(
-                    rf"{re.escape(prefix)}_r([2-9][0-9]*)",
+                    rf"{re.escape(prefix)}_r([2-9]|[1-9][0-9]+)",
                     candidate.name,
                 )
                 if match:

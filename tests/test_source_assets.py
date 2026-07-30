@@ -479,3 +479,22 @@ def test_source_revision_is_stable_for_one_exact_source_hash(
         manifest_name="cold_memory_manifest.json",
         expected_source_sha256=expected,
     ) == revision_two
+
+
+def test_source_revision_advances_beyond_two_digit_failure_revision(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "mobilegpt_offline_retrieval"
+    expected = "2" * 64
+    prefix = f"source_{expected[:12]}"
+    for revision in range(1, 11):
+        suffix = "" if revision == 1 else f"_r{revision}"
+        attempt = base / f"{prefix}{suffix}"
+        attempt.mkdir(parents=True)
+        (attempt / "prep_failure.json").write_text("{}", encoding="utf-8")
+
+    assert select_source_asset_revision(
+        base,
+        manifest_name="cold_memory_manifest.json",
+        expected_source_sha256=expected,
+    ) == base / f"{prefix}_r11"
