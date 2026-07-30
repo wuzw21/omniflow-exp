@@ -97,7 +97,7 @@ Options:
                             immutable offline authoring manifest, then validate,
                             freeze, and register the assets.
   --convert-source-runlogs  Convert the indexed legacy source RunLogs once to
-                            omniflow.androidworld.run_log.v1.
+                            omniflow.run_log.v1.
   --refresh-memory          Deduplicate and index all configured RunLogs,
                             Function assets, and existing results.
   -h, --help                Show this help and exit.

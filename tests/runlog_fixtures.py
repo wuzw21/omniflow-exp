@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from omniflow.core.trajectory import ANDROIDWORLD_RUN_LOG_SCHEMA_VERSION
+from omniflow.core.trajectory import OMNIFLOW_RUN_LOG_SCHEMA_VERSION
 
 
 def androidworld_state(
@@ -62,7 +62,7 @@ def androidworld_run_log(
     if len(states) != len(actions):
         raise ValueError("fixture_observation_count_mismatch")
     return {
-        "schema_version": ANDROIDWORLD_RUN_LOG_SCHEMA_VERSION,
+        "schema_version": OMNIFLOW_RUN_LOG_SCHEMA_VERSION,
         "run_id": run_id,
         "task_name": task_name,
         "goal": goal,

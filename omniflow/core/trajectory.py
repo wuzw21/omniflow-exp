@@ -6,9 +6,9 @@ from pathlib import Path
 import re
 from typing import Any
 
-from omniflow.core.schemas import load_androidworld_run_log_schema
+from omniflow.core.schemas import load_omniflow_run_log_schema
 
-ANDROIDWORLD_RUN_LOG_SCHEMA_VERSION = "omniflow.androidworld.run_log.v1"
+OMNIFLOW_RUN_LOG_SCHEMA_VERSION = "omniflow.run_log.v1"
 _ACTION_TYPES = {
     "answer",
     "click",
@@ -42,7 +42,7 @@ _ACTION_FIELDS = {
 
 def canonicalize_run_log(value: dict[str, Any]) -> dict[str, Any]:
     """Validate and copy the only RunLog accepted by OmniFlow runtime code."""
-    schema = load_androidworld_run_log_schema()
+    schema = load_omniflow_run_log_schema()
     _validate_schema(value, schema, schema, "run_log")
     canonical = _copy(value)
     canonical["steps"] = [canonicalize_run_log_step(step) for step in value["steps"]]
@@ -67,7 +67,7 @@ def canonicalize_run_log(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def canonicalize_run_log_step(value: Any) -> dict[str, Any]:
-    schema = load_androidworld_run_log_schema()
+    schema = load_omniflow_run_log_schema()
     step_schema = {"$ref": "#/$defs/step"}
     _validate_schema(value, step_schema, schema, "run_log_step")
     canonical = _copy(value)
@@ -125,21 +125,12 @@ def canonicalize_androidworld_action(value: Any) -> dict[str, Any]:
 
 
 def require_complete_source_run_log(value: dict[str, Any]) -> dict[str, Any]:
-    """Require a successful official-validator source with complete pixels refs."""
+    """Require a successful official-validator source with executable steps."""
     run_log = canonicalize_run_log(value)
     if run_log["status"] != "succeeded" or run_log["success"] is not True:
         raise ValueError("androidworld_source_run_log_success_required")
     if not run_log["steps"]:
         raise ValueError("androidworld_source_run_log_steps_required")
-    missing = [
-        str(step["step_index"])
-        for step in run_log["steps"]
-        if step["observation"].get("pixels") is None
-    ]
-    if missing:
-        raise ValueError(
-            "androidworld_source_run_log_screenshot_required:" + ",".join(missing)
-        )
     return run_log
 
 
@@ -307,7 +298,7 @@ def _copy(value: Any) -> Any:
 
 
 __all__ = [
-    "ANDROIDWORLD_RUN_LOG_SCHEMA_VERSION",
+    "OMNIFLOW_RUN_LOG_SCHEMA_VERSION",
     "canonicalize_androidworld_action",
     "canonicalize_run_log",
     "canonicalize_run_log_step",

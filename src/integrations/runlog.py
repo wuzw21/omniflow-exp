@@ -10,7 +10,7 @@ from PIL import Image
 
 from omniflow.core.schemas import canonicalize_action
 from omniflow.core.trajectory import (
-    ANDROIDWORLD_RUN_LOG_SCHEMA_VERSION,
+    OMNIFLOW_RUN_LOG_SCHEMA_VERSION,
     canonicalize_run_log,
     observation_display,
     state_id,
@@ -216,7 +216,7 @@ def convert_legacy_run_log(
     success = _success(payload, default=_success(value, default=False))
     source_schema = str(payload.get("schema_version") or "unknown")
     converted: dict[str, Any] = {
-        "schema_version": ANDROIDWORLD_RUN_LOG_SCHEMA_VERSION,
+        "schema_version": OMNIFLOW_RUN_LOG_SCHEMA_VERSION,
         "run_id": str(
             payload.get("run_id") or value.get("run_id") or f"legacy_{task}"
         ),
@@ -555,13 +555,15 @@ def _legacy_actions(step: dict[str, Any]) -> list[Any]:
 def _legacy_before_observation(step: dict[str, Any]) -> dict[str, Any]:
     source_context = _map(step.get("source_context"))
     source_context = _map(source_context.get("src_ctx")) or source_context
-    return _legacy_observation(
+    observation = _legacy_observation(
         step.get("state")
         or step.get("observation")
         or step.get("observation_before_act")
         or step.get("before")
-        or source_context
     )
+    for key, value in source_context.items():
+        observation.setdefault(key, value)
+    return observation
 
 
 def _legacy_after_observation(step: dict[str, Any]) -> dict[str, Any]:

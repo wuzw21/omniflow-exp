@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://omnimind.ai/schemas/oob/omniflow_androidworld_run_log.v1.json",
-  "title": "OmniFlow AndroidWorld RunLog",
+  "$id": "https://omnimind.ai/schemas/oob/omniflow_run_log.v1.json",
+  "title": "OmniFlow RunLog",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -18,7 +18,7 @@
     "steps"
   ],
   "properties": {
-    "schema_version": {"const": "omniflow.androidworld.run_log.v1"},
+    "schema_version": {"const": "omniflow.run_log.v1"},
     "run_id": {"type": "string", "minLength": 1},
     "task_name": {"type": "string", "minLength": 1},
     "goal": {"type": "string"},

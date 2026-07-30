@@ -64,6 +64,17 @@ def test_production_import_rejects_legacy_schema() -> None:
         )
 
 
+def test_production_import_rejects_retired_androidworld_schema_name() -> None:
+    run_log = androidworld_run_log([{"action_type": "wait"}])
+    run_log["schema_version"] = "omniflow.androidworld.run_log.v1"
+
+    with pytest.raises(
+        ValueError,
+        match="run_log_schema_invalid:run_log.schema_version:const",
+    ):
+        import_run_log(run_log)
+
+
 def test_explicit_converter_emits_only_omniflow_schema(tmp_path: Path) -> None:
     source = tmp_path / "legacy.run_log.json"
     payload = {
@@ -102,7 +113,7 @@ def test_explicit_converter_emits_only_omniflow_schema(tmp_path: Path) -> None:
         ),
     )
 
-    assert converted["schema_version"] == "omniflow.androidworld.run_log.v1"
+    assert converted["schema_version"] == "omniflow.run_log.v1"
     assert converted["task_name"] == "WifiTask"
     assert converted["task_parameters"] == {"enabled": True}
     assert [step["action"] for step in converted["steps"]] == [
@@ -124,7 +135,9 @@ def test_explicit_converter_records_screenshot_reference(tmp_path: Path) -> None
                 "observation_before_act": {
                     "width": 32,
                     "height": 48,
-                    "screenshot_path": str(screenshot),
+                },
+                "source_context": {
+                    "src_ctx": {"screenshot_path": str(screenshot)}
                 },
                 "action": {"type": "wait", "params": {}},
                 "success": True,
@@ -148,6 +161,41 @@ def test_explicit_converter_records_screenshot_reference(tmp_path: Path) -> None
         "height": 48,
         "mime_type": "image/png",
     }
+
+
+def test_explicit_converter_marks_unavailable_screenshot_as_null(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "legacy.run_log.json"
+    payload = {
+        "run_id": "legacy-source",
+        "goal": "Wait.",
+        "success": True,
+        "steps": [
+            {
+                "observation_before_act": {"width": 32, "height": 48},
+                "source_context": {
+                    "src_ctx": {
+                        "screenshot_path": str(tmp_path / "missing.png")
+                    }
+                },
+                "action": {"type": "wait", "params": {}},
+                "success": True,
+            }
+        ],
+    }
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    converted = convert_legacy_run_log(
+        payload,
+        task_name="WaitTask",
+        task_parameters={},
+        seed=111,
+        source_path=source,
+        require_screenshots=False,
+    )
+
+    assert converted["steps"][0]["observation"]["pixels"] is None
 
 
 def test_explicit_converter_rejects_private_action(tmp_path: Path) -> None:

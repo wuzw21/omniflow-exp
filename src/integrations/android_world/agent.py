@@ -18,7 +18,7 @@ from omniflow import (
 )
 from omniflow.core.config import Experiment
 from omniflow.core.trajectory import (
-    ANDROIDWORLD_RUN_LOG_SCHEMA_VERSION,
+    OMNIFLOW_RUN_LOG_SCHEMA_VERSION,
     canonicalize_run_log,
     state_id,
 )
@@ -202,7 +202,7 @@ def build_agent(
         )
         run_log = canonicalize_run_log(
             {
-                "schema_version": ANDROIDWORLD_RUN_LOG_SCHEMA_VERSION,
+                "schema_version": OMNIFLOW_RUN_LOG_SCHEMA_VERSION,
                 "run_id": run_id,
                 "task_name": task_name,
                 "goal": goal_text,

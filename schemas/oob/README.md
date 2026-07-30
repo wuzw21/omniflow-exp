@@ -4,7 +4,7 @@ These files are the wire contracts shared by OpenOmniBot and OmniFlow. Copies
 in both repositories must remain byte-for-byte identical.
 
 - `oob_canonical_actions.v1.json`: executable actions as `{tool, args}`.
-- `omniflow_androidworld_run_log.v1.json`: AndroidWorld-native observations and
+- `omniflow_run_log.v1.json`: AndroidWorld-native observations and
   `JSONAction` values. `State.pixels` is an immutable screenshot reference.
 - `omniflow_function.v2.json`: reusable Functions with `function_id`,
   `input_schema`, `bindings`, and `steps`; each step references
@@ -22,7 +22,7 @@ Function files never embed XML or screenshots. The Bridge resolves
 OmniTransfer mapping fails; source coordinates must never pass through.
 
 Production writers, compilers, stores, and replay code accept only the
-`omniflow.androidworld.run_log.v1` RunLog. Historical AndroidWorld data is
+`omniflow.run_log.v1` RunLog. Historical AndroidWorld data is
 converted once by the explicit offline converter, never inside the runtime.
 
 Canonical Actions use `0..1000` relative coordinates, but the VLM wire boundary

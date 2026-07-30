@@ -21,7 +21,7 @@ from omniflow.core.model import (
     ToolCall,
 )
 from omniflow.core.trajectory import (
-    ANDROIDWORLD_RUN_LOG_SCHEMA_VERSION,
+    OMNIFLOW_RUN_LOG_SCHEMA_VERSION,
     canonicalize_run_log,
     canonicalize_run_log_step,
 )
@@ -44,7 +44,7 @@ from omniflow.transfer.memory import (
 __all__ = [
     "Action",
     "ActionResult",
-    "ANDROIDWORLD_RUN_LOG_SCHEMA_VERSION",
+    "OMNIFLOW_RUN_LOG_SCHEMA_VERSION",
     "CheckerContext",
     "ElementEmbedding",
     "EncoderWeights",

@@ -64,7 +64,7 @@ def convert_source_index(
                 seed=_source_seed(raw_item),
                 source_path=source_path,
                 screenshot_roots=screenshot_roots,
-                require_screenshots=True,
+                require_screenshots=False,
             )
             require_complete_source_run_log(run_log)
             converted[str(task)] = (run_log, dict(raw_item))
@@ -123,6 +123,7 @@ def convert_source_index(
         "output_index_sha256": hashlib.sha256(index_path_out.read_bytes()).hexdigest(),
         "task_count": len(index),
         "unique_object_count": len(object_payloads),
+        **_screenshot_coverage(converted),
         "screenshot_roots": [
             str(Path(root).expanduser().resolve()) for root in screenshot_roots
         ],
@@ -133,6 +134,32 @@ def convert_source_index(
         **manifest,
         "manifest": str(manifest_path),
         "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+    }
+
+
+def _screenshot_coverage(
+    converted: dict[str, tuple[dict[str, Any], dict[str, Any]]],
+) -> dict[str, Any]:
+    observation_count = 0
+    screenshot_reference_count = 0
+    tasks_with_missing_screenshots: list[str] = []
+    for task, (run_log, _) in sorted(converted.items()):
+        task_missing = False
+        for step in run_log["steps"]:
+            observation_count += 1
+            if step["observation"].get("pixels") is None:
+                task_missing = True
+            else:
+                screenshot_reference_count += 1
+        if task_missing:
+            tasks_with_missing_screenshots.append(task)
+    return {
+        "observation_count": observation_count,
+        "screenshot_reference_count": screenshot_reference_count,
+        "missing_screenshot_reference_count": (
+            observation_count - screenshot_reference_count
+        ),
+        "tasks_with_missing_screenshot_references": tasks_with_missing_screenshots,
     }
 
 
