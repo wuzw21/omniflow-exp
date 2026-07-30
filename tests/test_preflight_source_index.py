@@ -3,10 +3,72 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
-from src.experiment.preflight import _validate_source_index
+from src.experiment.preflight import (
+    _dismiss_known_accessibility_crash_dialog,
+    _validate_source_index,
+)
+
+
+def test_preflight_dismisses_known_accessibility_crash_dialog(monkeypatch) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], timeout: float = 10.0):
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=(
+                "Window launcher isVisible=true"
+                if command[-4:] == ["shell", "dumpsys", "window", "windows"]
+                else "Broadcast completed: result=0"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("src.experiment.preflight._run", fake_run)
+    monkeypatch.setattr("src.experiment.preflight.time.sleep", lambda _: None)
+
+    refreshed = _dismiss_known_accessibility_crash_dialog(
+        "/sdk/adb",
+        "emulator-5560",
+        "Window Application Error: com.google.androidenv.accessibilityforwarder",
+    )
+
+    assert refreshed == "Window launcher isVisible=true"
+    assert commands[0] == [
+        "/sdk/adb",
+        "-s",
+        "emulator-5560",
+        "shell",
+        "am",
+        "broadcast",
+        "-a",
+        "android.intent.action.CLOSE_SYSTEM_DIALOGS",
+    ]
+    assert commands[1][-4:] == ["shell", "dumpsys", "window", "windows"]
+
+
+def test_preflight_preserves_unknown_crash_dialog(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.experiment.preflight._run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("unknown crash dialogs must not be dismissed")
+        ),
+    )
+    focused_windows = "Window Application Error: com.example.app"
+
+    assert (
+        _dismiss_known_accessibility_crash_dialog(
+            "/sdk/adb",
+            "emulator-5560",
+            focused_windows,
+        )
+        == focused_windows
+    )
 
 
 def _write_index(

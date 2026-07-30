@@ -314,6 +314,36 @@ def _system_crash_dialog_present(*texts: str) -> bool:
     return "keeps stopping" in combined or "application error:" in combined
 
 
+def _dismiss_known_accessibility_crash_dialog(
+    adb: str,
+    serial: str,
+    focused_windows: str,
+) -> str:
+    marker = "application error: com.google.androidenv.accessibilityforwarder"
+    if marker not in str(focused_windows or "").casefold():
+        return focused_windows
+    dismissed = _run(
+        [
+            adb,
+            "-s",
+            serial,
+            "shell",
+            "am",
+            "broadcast",
+            "-a",
+            "android.intent.action.CLOSE_SYSTEM_DIALOGS",
+        ],
+        timeout=10,
+    )
+    if dismissed.returncode != 0:
+        return focused_windows
+    time.sleep(0.2)
+    return _run(
+        [adb, "-s", serial, "shell", "dumpsys", "window", "windows"],
+        timeout=10,
+    ).stdout
+
+
 def _contacts_home_ready(screen: str) -> bool:
     contacts_package = 'package="com.google.android.contacts"' in screen
     onboarding = 'text="Skip"' in screen or 'text="Sign in"' in screen
@@ -777,6 +807,11 @@ def main(argv: list[str] | None = None) -> int:
                 [adb, "-s", args.serial, "shell", "dumpsys", "window", "windows"],
                 timeout=10,
             ).stdout
+            focused_windows = _dismiss_known_accessibility_crash_dialog(
+                adb,
+                args.serial,
+                focused_windows,
+            )
             crash_dialog_present = _system_crash_dialog_present(focused_windows)
             add(
                 "system_crash_dialog",
