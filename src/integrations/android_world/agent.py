@@ -20,6 +20,7 @@ from omniflow.core.config import Experiment
 from omniflow.core.trajectory import (
     OMNIFLOW_RUN_LOG_SCHEMA_VERSION,
     canonicalize_run_log,
+    observation_display,
     state_id,
 )
 from omniflow.transfer.runtime import (
@@ -49,16 +50,27 @@ class _TaskHost:
 
     def observe(self, **kwargs: Any) -> Observation:
         observation = Observation.from_value(self.host.observe(**kwargs))
-        transfer_state = _transfer_state(observation)
-        self.state["captured_transfer_states"][transfer_state["state_id"]] = (
-            transfer_state
-        )
+        official_state = observation.extra.get("androidworld_state")
+        if not isinstance(official_state, dict) or set(official_state) != {
+            "pixels",
+            "forest",
+            "ui_elements",
+            "auxiliaries",
+        }:
+            raise ValueError("androidworld_state_snapshot_required")
+        official_state = _json_copy(official_state)
+        official_state_id = state_id(official_state)
         identified = Observation.from_value(
             {
                 **observation.to_dict(),
-                "state_id": transfer_state["state_id"],
+                "state_id": official_state_id,
             }
         )
+        transfer_state = _transfer_state(identified)
+        self.state["captured_transfer_states"][transfer_state["state_id"]] = (
+            transfer_state
+        )
+        self.state["captured_androidworld_states"][official_state_id] = official_state
         return identified
 
     def act(self, action: Any):
@@ -81,6 +93,7 @@ def build_agent(
     adb_path: str = "",
     post_action_wait_seconds: float = 0.0,
     task_seed: int | None = None,
+    evidence_root: str | Path | None = None,
 ) -> OmniFlow:
     if env is None:
         raise TypeError("build_agent requires env parameter")
@@ -95,6 +108,7 @@ def build_agent(
         adb_serial=adb_serial,
         adb_path=adb_path,
         post_action_wait_seconds=post_action_wait_seconds,
+        evidence_root=evidence_root,
     )
     state: dict[str, Any] = {
         "task_name": "",
@@ -105,6 +119,7 @@ def build_agent(
         "last_run_id": "",
         "last_run_log": None,
         "captured_transfer_states": {},
+        "captured_androidworld_states": {},
         "transfer_catalog_preexisting": transfer_state_path.is_file(),
     }
     transfer_states = load_transfer_state_catalog(transfer_state_path)
@@ -145,6 +160,7 @@ def build_agent(
             last_run_id="",
             last_run_log=None,
             captured_transfer_states={},
+            captured_androidworld_states={},
         )
         raw_host.reset(go_home=go_home)
 
@@ -198,7 +214,7 @@ def build_agent(
             raise ValueError("androidworld_task_name_required")
         steps = _androidworld_run_log_steps(
             trace,
-            state["captured_transfer_states"],
+            state["captured_androidworld_states"],
         )
         run_log = canonicalize_run_log(
             {
@@ -361,10 +377,10 @@ def _androidworld_run_log_steps(
         before = captured_states.get(before_id)
         after = captured_states.get(after_id)
         if not isinstance(before, dict):
-            raise ValueError(f"captured_transfer_state_missing:{before_id}")
+            raise ValueError(f"captured_androidworld_state_missing:{before_id}")
         if not isinstance(after, dict):
-            raise ValueError(f"captured_transfer_state_missing:{after_id}")
-        observation = _androidworld_state_from_transfer_state(before)
+            raise ValueError(f"captured_androidworld_state_missing:{after_id}")
+        observation = _json_copy(before)
         result = raw_step.get("result")
         if not isinstance(result, dict) or not isinstance(
             result.get("success"), bool
@@ -387,31 +403,12 @@ def _androidworld_run_log_steps(
             },
         }
         if after_id != before_id:
-            projected["next_observation"] = _androidworld_state_from_transfer_state(
-                after
-            )
+            projected["next_observation"] = _json_copy(after)
         metadata = raw_step.get("metadata")
         if isinstance(metadata, dict) and metadata:
             projected["metadata"] = _json_copy(metadata)
         steps.append(projected)
     return steps
-
-
-def _androidworld_state_from_transfer_state(
-    value: dict[str, Any],
-) -> dict[str, Any]:
-    auxiliaries = {
-        key: _json_copy(value[key])
-        for key in ("state_id", "package_name", "activity_name", "display")
-        if value.get(key) is not None
-    }
-    return {
-        "pixels": None,
-        "forest": value.get("xml"),
-        "ui_elements": [],
-        "auxiliaries": auxiliaries or None,
-    }
-
 
 def _omniflow_action_to_androidworld(
     value: Any,
@@ -424,15 +421,13 @@ def _omniflow_action_to_androidworld(
     args = value.get("args")
     if not isinstance(args, dict):
         raise ValueError("omniflow_trace_action_args_invalid")
-    display = observation.get("auxiliaries")
-    display = display.get("display") if isinstance(display, dict) else None
+    display = observation_display(observation)
 
     def pixel_point() -> dict[str, int]:
-        if not isinstance(display, dict):
+        if display is None:
             raise ValueError("omniflow_trace_action_display_required")
         try:
-            width = int(display["width"])
-            height = int(display["height"])
+            width, height = display
             x = float(args["x"])
             y = float(args["y"])
         except (KeyError, TypeError, ValueError) as error:

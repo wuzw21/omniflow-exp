@@ -5,6 +5,7 @@ import importlib
 import inspect
 import io
 import os
+from pathlib import Path
 import subprocess
 import time
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ from src.integrations.android_world.accessibility import (
     xml_covers_screen,
     xml_with_screen_size,
 )
+from src.integrations.android_world.state import snapshot_androidworld_state
 
 
 def _read(value: Any, name: str, default: Any = None) -> Any:
@@ -89,11 +91,6 @@ def androidworld_elements_xml(elements: list[Any]) -> str:
     return _elements_xml(elements)
 
 
-def _native_androidworld_xml(env: Any) -> str:
-    controller = getattr(env, "controller", None)
-    return str(getattr(controller, "_omniflow_last_ui_xml", "") or "").strip()
-
-
 def _image_base64(pixels: Any) -> str | None:
     if pixels is None:
         return None
@@ -124,43 +121,6 @@ def _package_from_xml(xml_text: str) -> str:
     ]
     non_system = [item for item in packages if item != "com.android.systemui"]
     return (non_system or packages or [""])[-1]
-
-
-def capture_adapter_state(
-    *,
-    env: Any,
-    adb_serial: str = "",
-    include_pixels: bool = True,
-) -> Any | None:
-    del adb_serial
-    controller = getattr(env, "controller", None)
-    if controller is None:
-        return None
-    elements: list[Any] = []
-    get_elements = getattr(controller, "get_ui_elements", None)
-    if callable(get_elements):
-        try:
-            elements = list(get_elements() or ())
-        except Exception:
-            elements = []
-    xml_text = _native_androidworld_xml(env)
-    pixels = None
-    if include_pixels:
-        screenshot = getattr(controller, "get_screenshot", None)
-        if callable(screenshot):
-            try:
-                pixels = screenshot()
-            except Exception:
-                pixels = None
-    activity = str(getattr(env, "foreground_activity_name", "") or "")
-    package = activity.split("/", 1)[0] if activity else ""
-    return SimpleNamespace(
-        pixels=pixels,
-        ui_elements=elements,
-        xml=xml_text or (_elements_xml(elements) if elements else ""),
-        activity_name=activity,
-        package_name=package,
-    )
 
 
 def _agent_result_class() -> Any | None:
@@ -195,11 +155,17 @@ class AndroidWorldHost:
         adb_path: str = "",
         post_action_wait_seconds: float = 0.0,
         open_app_ready_timeout_seconds: float | None = None,
+        evidence_root: str | Path | None = None,
     ):
         self.env = env
         self.adb_serial = str(adb_serial or "")
         self.adb_path = str(adb_path or os.environ.get("ADB_PATH") or "adb")
         self.post_action_wait_seconds = max(0.0, float(post_action_wait_seconds))
+        self.evidence_root = (
+            Path(evidence_root).expanduser().resolve()
+            if evidence_root is not None
+            else None
+        )
         ready_timeout = (
             float(os.environ.get("OMNIFLOW_OPEN_APP_READY_TIMEOUT_SEC") or 5.0)
             if open_app_ready_timeout_seconds is None
@@ -236,37 +202,6 @@ class AndroidWorldHost:
             if line.startswith("package:") and line.removeprefix("package:").strip()
         }
 
-    def _fresh_uiautomator_xml(self) -> str:
-        if not self.adb_serial:
-            return ""
-        remote_path = f"/sdcard/omniflow-window-{os.getpid()}-{id(self):x}.xml"
-        try:
-            self._adb("shell", "rm", "-f", remote_path, timeout=5)
-            dumped = self._adb(
-                "shell",
-                "uiautomator",
-                "dump",
-                remote_path,
-                timeout=20,
-            )
-            if dumped.returncode != 0:
-                return ""
-            read = self._adb("exec-out", "cat", remote_path, timeout=10)
-            if read.returncode != 0:
-                return ""
-            xml_text = str(read.stdout or "").strip()
-            if not xml_text:
-                return ""
-            ET.fromstring(xml_text)
-            return xml_text
-        except (ET.ParseError, OSError, subprocess.SubprocessError):
-            return ""
-        finally:
-            try:
-                self._adb("shell", "rm", "-f", remote_path, timeout=5)
-            except (OSError, subprocess.SubprocessError):
-                pass
-
     def observe(
         self,
         *,
@@ -275,55 +210,45 @@ class AndroidWorldHost:
         app_info: bool = True,
         **_: Any,
     ) -> Observation:
-        try:
-            state = self.env.get_state()
-        except Exception:
-            state = capture_adapter_state(
-                env=self.env,
-                adb_serial=self.adb_serial,
-                include_pixels=screenshot,
-            )
-            if state is None:
-                raise
+        state = self.env.get_state()
+        official_state = snapshot_androidworld_state(
+            state,
+            evidence_root=self.evidence_root,
+        )
         elements = list(getattr(state, "ui_elements", ()) or ())
+        auxiliaries = getattr(state, "auxiliaries", None)
         activity = str(
-            getattr(state, "activity_name", "")
+            (
+                auxiliaries.get("activity_name")
+                if isinstance(auxiliaries, dict)
+                else ""
+            )
             or getattr(self.env, "foreground_activity_name", "")
             or ""
         )
-        package = str(getattr(state, "package_name", "") or "")
+        package = str(
+            (
+                auxiliaries.get("package_name")
+                if isinstance(auxiliaries, dict)
+                else ""
+            )
+            or ""
+        )
         package = package or (activity.split("/", 1)[0] if activity else "")
         display_width, display_height = self._screen_size()
-        xml_text = str(getattr(state, "xml", "") or "")
-        auxiliaries = getattr(state, "auxiliaries", None)
-        if not xml_text and isinstance(auxiliaries, dict):
-            xml_text = str(auxiliaries.get("xml") or "")
-        graph_source = "state_xml" if xml_text else ""
+        xml_text = ""
+        graph_source = ""
         forest = getattr(state, "forest", None)
-        if xml and not xml_text and forest is not None:
-            forest_xml = androidworld_forest_xml(
+        if xml and forest is not None:
+            xml_text = androidworld_forest_xml(
                 forest,
                 screen_size=(display_width, display_height),
             )
-            if forest_xml and xml_covers_screen(
-                forest_xml,
-                package_name=package,
-                screen_size=(display_width, display_height),
-            ):
-                xml_text = forest_xml
-                graph_source = "androidworld_accessibility_forest"
-        if xml and not xml_text:
-            xml_text = self._fresh_uiautomator_xml()
             if xml_text:
-                graph_source = "uiautomator"
-        if not xml_text:
-            xml_text = _native_androidworld_xml(self.env)
-            if xml_text:
-                graph_source = "androidworld_native_xml"
-        if xml and not xml_text:
+                graph_source = "androidworld_state_forest"
+        if xml and not xml_text and elements:
             xml_text = _elements_xml(elements)
-            if xml_text:
-                graph_source = "androidworld_elements"
+            graph_source = "androidworld_state_ui_elements"
         package = package or _package_from_xml(xml_text)
         if xml and xml_text and not xml_covers_screen(
             xml_text,
@@ -334,7 +259,7 @@ class AndroidWorldHost:
                 xml_text,
                 screen_size=(display_width, display_height),
             )
-            graph_source = "uiautomator_partial"
+            graph_source = f"{graph_source}_partial"
         return Observation(
             xml=xml_text or None if xml else None,
             package_name=package or None if app_info else None,
@@ -342,6 +267,7 @@ class AndroidWorldHost:
             image_base64=_image_base64(getattr(state, "pixels", None)) if screenshot else None,
             extra={
                 "observe_backend": "androidworld",
+                "androidworld_state": official_state,
                 "ui_element_count": len(elements),
                 "ui_graph_source": graph_source,
                 "ui_graph_complete": bool(xml_text)
@@ -586,6 +512,5 @@ def _relative_pixel(value: object, extent: float) -> int:
 __all__ = [
     "AndroidWorldHost",
     "androidworld_elements_xml",
-    "capture_adapter_state",
     "make_agent_result",
 ]

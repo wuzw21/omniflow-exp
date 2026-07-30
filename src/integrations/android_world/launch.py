@@ -33,10 +33,7 @@ from src.integrations.android_world.agent import (
     MODE_OMNIFLOW,
     build_agent,
 )
-from src.integrations.android_world.host import (
-    capture_adapter_state,
-    make_agent_result,
-)
+from src.integrations.android_world.host import make_agent_result
 from src.integrations.android_world.setup_compat import (
     patch_androidworld_setup_click_retry,
     patch_androidworld_setup_fail_closed,
@@ -2055,188 +2052,6 @@ def _assert_existing_emulator_ready(
         ) from exc
 
 
-def _patch_contacts_draft_success_eval(
-    suite: Any,
-    *,
-    adb_serial: str,
-) -> None:
-    """Patch Contacts draft success checks when AndroidWorld drops a11y forest.
-
-    Args:
-        suite: AndroidWorld suite object returned by `suite_utils.create_suite(...)`.
-            The helper mutates matching task instances in-place before evaluation.
-        adb_serial: Device serial used when OmniFlow falls back to its direct
-            adapter XML/UI capture for the final success check.
-    """
-
-    try:
-        contacts_module = importlib.import_module(
-            "android_world.task_evals.single.contacts"
-        )
-    except Exception:
-        return
-    draft_cls = getattr(contacts_module, "ContactsNewContactDraft", None)
-    contact_info_is_entered = getattr(contacts_module, "_contact_info_is_entered", None)
-    if draft_cls is None or not callable(contact_info_is_entered):
-        return
-
-    def _field_value(element: object, name: str) -> object:
-        if isinstance(element, dict):
-            return element.get(name)
-        return getattr(element, name, None)
-
-    def _text_matches(value: object, expected: str) -> bool:
-        value_text = str(value or "").strip().lower()
-        expected_text = str(expected or "").strip().lower()
-        return bool(expected_text) and (
-            value_text == expected_text
-            or expected_text in value_text
-            or value_text in expected_text
-        )
-
-    def _mobile_contact_info_is_entered(
-        *,
-        first: str,
-        last: str,
-        phone: str,
-        ui_elements: list[object],
-    ) -> bool:
-        first_seen = False
-        last_seen = False
-        phone_seen = False
-        expected_phone_digits = re.sub(r"\D", "", str(phone or ""))
-        for element in ui_elements:
-            text = _field_value(element, "text")
-            hint_text = str(_field_value(element, "hint_text") or "")
-            if (
-                not first_seen
-                and _text_matches(text, first)
-                and (not hint_text or hint_text == "First name")
-            ):
-                first_seen = True
-            if (
-                not last_seen
-                and _text_matches(text, last)
-                and (not hint_text or hint_text == "Last name")
-            ):
-                last_seen = True
-            if not phone_seen and (not hint_text or hint_text == "Phone"):
-                actual_digits = re.sub(r"\D", "", str(text or ""))
-                phone_seen = bool(expected_phone_digits and actual_digits == expected_phone_digits)
-        return first_seen and last_seen and phone_seen
-
-    def _contacts_state_read_failed(exc: Exception) -> bool:
-        text = str(exc)
-        return (
-            isinstance(exc, AttributeError)
-            and "windows" in text
-        ) or any(
-            marker in text
-            for marker in (
-                "Emulator stub has not been initialized",
-                "env has been closed",
-                "Environment has been closed",
-                "get_state",
-            )
-        )
-
-    def _oob_contacts_ui_elements() -> list[object]:
-        oob_url = str(os.environ.get("OMNIFLOW_OOB_DEVICE_URL") or "").strip().rstrip("/")
-        if not oob_url:
-            return []
-        try:
-            from android_world.env import representation_utils
-
-            query = urllib.parse.urlencode(
-                {
-                    "includeXml": "true",
-                    "includeScreenshot": "false",
-                    "includeIndexedContext": "false",
-                    "maxXmlChars": "200000",
-                    "filterOverlay": "true",
-                }
-            )
-            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-            with opener.open(f"{oob_url}/get_state?{query}", timeout=10) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            xml_text = str(payload.get("xml") or "").strip()
-            if not xml_text:
-                return []
-            return list(representation_utils.xml_dump_to_ui_elements(xml_text) or [])
-        except Exception as exc:  # noqa: BLE001
-            logging.warning("ContactsNewContactDraft OOB state fallback failed: %s", exc)
-            return []
-
-    def _contacts_fallback_ui_elements(env: Any) -> list[object]:
-        try:
-            state = env.get_state()
-            ui_elements = list(getattr(state, "ui_elements", []) or [])
-            if ui_elements:
-                return ui_elements
-        except Exception:
-            pass
-        fallback_state = capture_adapter_state(
-            env=env,
-            adb_serial=adb_serial,
-        )
-        ui_elements = list(getattr(fallback_state, "ui_elements", []) or [])
-        if ui_elements:
-            return ui_elements
-        return _oob_contacts_ui_elements()
-
-    for task_instances in list(getattr(suite, "values", lambda: [])() or []):
-        for task in list(task_instances or []):
-            if not isinstance(task, draft_cls):
-                continue
-            original_is_successful = getattr(task, "is_successful", None)
-            if not callable(original_is_successful):
-                continue
-            if getattr(task, "_omniflow_contacts_draft_patch", False):
-                continue
-
-            def _patched_is_successful(self, env, _original=original_is_successful):
-                try:
-                    return _original(env)
-                except Exception as exc:
-                    if not _contacts_state_read_failed(exc):
-                        raise
-                    ui_elements = _contacts_fallback_ui_elements(env)
-                    if not ui_elements:
-                        raise
-                    logging.warning(
-                        "ContactsNewContactDraft success check fell back to ui_elements because AndroidWorld state was unavailable."
-                    )
-                    first = str((self.params or {}).get("first") or "")
-                    last = str((self.params or {}).get("last") or "")
-                    phone = str((self.params or {}).get("phone") or "")
-                    phone_label = str((self.params or {}).get("phone_label") or "")
-                    if phone_label == "Mobile":
-                        return (
-                            1.0
-                            if _mobile_contact_info_is_entered(
-                                first=first,
-                                last=last,
-                                phone=phone,
-                                ui_elements=ui_elements,
-                            )
-                            else 0.0
-                        )
-                    return (
-                        1.0
-                        if contact_info_is_entered(
-                            first=first,
-                            last=last,
-                            phone=phone,
-                            phone_label=phone_label,
-                            ui_elements=ui_elements,
-                        )
-                        else 0.0
-                    )
-
-            task.is_successful = types.MethodType(_patched_is_successful, task)
-            task._omniflow_contacts_draft_patch = True
-
-
 def _native_androidworld_a11y_method(android_world_controller: Any) -> Any:
     return android_world_controller.A11yMethod.A11Y_FORWARDER_APP
 
@@ -2523,362 +2338,6 @@ def _wrap_task_initialize_for_observation_runtime(
 
     task.initialize_task = _initialize_task_with_ready_runtime
     task._omniflow_observation_runtime_wrapped = True
-
-
-def _patch_androidworld_controller_ui_dump_fallback(
-    android_world_controller: Any,
-    *,
-    adb_serial: str,
-    adb_path: str = "",
-) -> None:
-    """Patch AndroidWorld UI dump to fall back to the local direct adapter.
-
-    Args:
-        android_world_controller: Imported upstream AndroidWorld controller module.
-            The patch rewrites `AndroidWorldController.get_ui_elements(...)` in
-            place for the current launcher process only.
-        adb_serial: Target device serial forwarded to the direct adapter fallback.
-            This lets the fallback prefer the same local `uiautomator2` channel
-            already used by OmniFlow's AndroidWorld host.
-    """
-
-    controller_cls = getattr(android_world_controller, "AndroidWorldController", None)
-    if controller_cls is None:
-        return
-    original_get_ui_elements = getattr(controller_cls, "get_ui_elements", None)
-    if not callable(original_get_ui_elements):
-        return
-    if getattr(controller_cls, "_omniflow_ui_dump_fallback_patch", False):
-        return
-
-    def _oob_ui_elements() -> list[Any]:
-        oob_url = str(os.environ.get("OMNIFLOW_OOB_DEVICE_URL") or "").strip().rstrip("/")
-        try:
-            from android_world.env import representation_utils
-
-            if oob_url:
-                query = urllib.parse.urlencode(
-                    {
-                        "includeXml": "true",
-                        "includeScreenshot": "false",
-                        "includeIndexedContext": "false",
-                        "maxXmlChars": "200000",
-                        "filterOverlay": "true",
-                    }
-                )
-                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-                last_error = ""
-                payload: dict[str, Any] = {}
-                parsed_oob_url = urllib.parse.urlparse(oob_url)
-                oob_port = int(parsed_oob_url.port or 8910)
-                adb = str(adb_path or _default_adb_path() or "adb").strip() or "adb"
-                for _ in range(20):
-                    try:
-                        request = urllib.request.Request(
-                            f"{oob_url}/get_state?{query}",
-                            method="GET",
-                        )
-                        with opener.open(request, timeout=10) as response:
-                            payload = json.loads(response.read().decode("utf-8"))
-                        if payload.get("success") is not False:
-                            break
-                        last_error = str(payload.get("error") or payload)
-                    except Exception as exc:  # noqa: BLE001
-                        last_error = f"{exc.__class__.__name__}: {exc}"
-                        try:
-                            command = [adb]
-                            if adb_serial:
-                                command.extend(["-s", adb_serial])
-                            command.extend(["forward", "--remove", f"tcp:{oob_port}"])
-                            subprocess.run(
-                                command,
-                                text=True,
-                                stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL,
-                                check=False,
-                                timeout=5,
-                            )
-                            command = [adb]
-                            if adb_serial:
-                                command.extend(["-s", adb_serial])
-                            command.extend(
-                                [
-                                    "forward",
-                                    f"tcp:{oob_port}",
-                                    f"tcp:{oob_port}",
-                                ]
-                            )
-                            subprocess.run(
-                                command,
-                                text=True,
-                                stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL,
-                                check=False,
-                                timeout=5,
-                            )
-                        except Exception:
-                            pass
-                    time.sleep(0.5)
-                else:
-                    logging.warning(
-                        "OOB /get_state UI element fallback failed: %s", last_error
-                    )
-                    return []
-            else:
-                payload = _read_oob_debug_get_state_payload(
-                    adb_serial=adb_serial,
-                    adb_path=adb_path,
-                    max_xml_chars=200000,
-                )
-                if not _oob_state_has_visible_page(payload):
-                    logging.warning(
-                        "OOB /get_state UI element fallback failed: %s", payload
-                    )
-                    return []
-            xml_text = str(payload.get("xml") or "").strip()
-            if not xml_text:
-                return []
-            return list(representation_utils.xml_dump_to_ui_elements(xml_text) or [])
-        except Exception as fallback_exc:
-            logging.warning("OOB /get_state UI element fallback failed: %s", fallback_exc)
-            return []
-
-    def _direct_adapter_ui_elements(self) -> list[Any]:
-        fallback_state = capture_adapter_state(
-            env=types.SimpleNamespace(
-                controller=types.SimpleNamespace(env=getattr(self, "_env", None)),
-                foreground_activity_name=str(
-                    getattr(
-                        getattr(self, "_original_env", None),
-                        "foreground_activity_name",
-                        "",
-                    )
-                    or ""
-                ).strip(),
-            ),
-            adb_serial=adb_serial,
-        )
-        return list(getattr(fallback_state, "ui_elements", []) or [])
-
-    def _direct_native_uiautomator_xml() -> str:
-        dump_path = f"/sdcard/omniflow_window_dump_{os.getpid()}.xml"
-        _run_adb_command(
-            adb_serial=adb_serial,
-            adb_path=adb_path,
-            adb_args=["shell", "rm", "-f", dump_path],
-            timeout_sec=10,
-            capture_stdout=True,
-        )
-        dump_result = _run_adb_command(
-            adb_serial=adb_serial,
-            adb_path=adb_path,
-            adb_args=["shell", "uiautomator", "dump", dump_path],
-            timeout_sec=35,
-            capture_stdout=True,
-        )
-        last_read: dict[str, Any] = {}
-        try:
-            for read_attempt in range(10):
-                last_read = _run_adb_command(
-                    adb_serial=adb_serial,
-                    adb_path=adb_path,
-                    adb_args=["shell", "cat", dump_path],
-                    timeout_sec=10,
-                    capture_stdout=True,
-                )
-                xml_text = str(last_read.get("stdout") or "").strip()
-                if last_read.get("returncode") == 0 and "<hierarchy" in xml_text:
-                    return xml_text
-                if read_attempt < 9:
-                    time.sleep(0.2)
-        finally:
-            _run_adb_command(
-                adb_serial=adb_serial,
-                adb_path=adb_path,
-                adb_args=["shell", "rm", "-f", dump_path],
-                timeout_sec=10,
-                capture_stdout=True,
-            )
-        raise RuntimeError(
-            "direct_native_uiautomator_dump_failed:"
-            f"dump_returncode={dump_result.get('returncode')}:"
-            f"dump_stderr={str(dump_result.get('stderr') or '').strip()[-500:]}:"
-            f"read_returncode={last_read.get('returncode')}:"
-            f"read_stderr={str(last_read.get('stderr') or '').strip()[-500:]}"
-        )
-
-    def _patched_get_ui_elements(self):
-        self._omniflow_last_ui_xml = ""
-        if _use_oob_observe_backend():
-            ui_elements = _oob_ui_elements()
-            if ui_elements:
-                return ui_elements
-            ui_elements = _direct_adapter_ui_elements(self)
-            if ui_elements:
-                logging.warning(
-                    "AndroidWorldController.get_ui_elements fell back to direct adapter because OOB /get_state was unavailable."
-                )
-                return ui_elements
-        try:
-            if getattr(self, "_a11y_method", None) == getattr(
-                android_world_controller.A11yMethod,
-                "UIAUTOMATOR",
-                None,
-            ):
-                xml_text = ""
-                for dump_attempt in range(2):
-                    try:
-                        xml_text = android_world_controller.adb_utils.uiautomator_dump(
-                            getattr(self, "_env", None)
-                        )
-                        break
-                    except Exception as dump_exc:
-                        message = str(dump_exc or "").lower()
-                        missing_temp_xml = (
-                            "/sdcard/window_dump.xml" in message
-                            and (
-                                "no such file" in message
-                                or "not found" in message
-                            )
-                        )
-                        if dump_attempt == 0 and missing_temp_xml:
-                            logging.warning(
-                                "AndroidWorld uiautomator dump did not create its temporary XML; retrying the dump once: %s",
-                                dump_exc,
-                            )
-                            time.sleep(0.5)
-                            continue
-                        raise
-                self._omniflow_last_ui_xml = str(xml_text or "")
-                ui_elements = list(
-                    android_world_controller.representation_utils.xml_dump_to_ui_elements(
-                        xml_text
-                    )
-                    or []
-                )
-                if ui_elements:
-                    return ui_elements
-                raise RuntimeError("androidworld_uiautomator_ui_elements_empty")
-            ui_elements = list(original_get_ui_elements(self) or [])
-            if ui_elements:
-                return ui_elements
-            raise RuntimeError("androidworld_accessibility_ui_elements_empty")
-        except Exception as exc:
-            try:
-                xml_text = _direct_native_uiautomator_xml()
-                ui_elements = list(
-                    android_world_controller.representation_utils.xml_dump_to_ui_elements(
-                        xml_text
-                    )
-                    or []
-                )
-                if ui_elements:
-                    self._omniflow_last_ui_xml = xml_text
-                    logging.warning(
-                        "AndroidWorldController.get_ui_elements recovered with a direct native uiautomator dump after the upstream dump failed: %s",
-                        exc,
-                    )
-                    return ui_elements
-            except Exception as native_exc:
-                logging.warning(
-                    "Direct native AndroidWorld uiautomator fallback failed: %s",
-                    native_exc,
-                )
-            ui_elements = _direct_adapter_ui_elements(self)
-            if ui_elements:
-                logging.warning(
-                    "AndroidWorldController.get_ui_elements fell back to direct adapter because uiautomator dump failed: %s",
-                    exc,
-                )
-                return ui_elements
-            if _use_oob_observe_backend():
-                ui_elements = _oob_ui_elements()
-                if ui_elements:
-                    logging.warning(
-                        "AndroidWorldController.get_ui_elements fell back to OOB /get_state because AndroidWorld UI dump failed: %s",
-                        exc,
-                    )
-                    return ui_elements
-                if str(os.environ.get("OMNIFLOW_OOB_DEVICE_URL") or "").strip():
-                    logging.warning(
-                        "AndroidWorldController.get_ui_elements returning empty elements in OOB replay mode after dump failure: %s",
-                        exc,
-                    )
-                    return []
-            raise
-
-    controller_cls.get_ui_elements = _patched_get_ui_elements
-    controller_cls._omniflow_ui_dump_fallback_patch = True
-
-
-def _patch_androidworld_env_get_state_fallback(
-    env: Any,
-    *,
-    adb_serial: str,
-    adb_path: str = "",
-) -> None:
-    """Patch env.get_state so flaky AndroidWorld UI dumps do not abort a task.
-
-    Android uiautomator can write /sdcard/window_dump.xml and still exit with
-    137. Upstream android_env treats that as fatal before callers can use the
-    generated hierarchy. This fallback keeps AndroidWorld task logic intact but
-    swaps the state transport to the same read-only direct/OOB adapters used by
-    OmniFlow when the upstream state call fails.
-    """
-
-    original_get_state = getattr(env, "get_state", None)
-    if not callable(original_get_state):
-        return
-    if bool(getattr(env, "_omniflow_get_state_fallback_patch", False)):
-        return
-
-    def _patched_get_state(*args, **kwargs):
-        oob_url = str(os.environ.get("OMNIFLOW_OOB_DEVICE_URL") or "").strip().rstrip("/")
-        if _use_oob_observe_backend():
-            oob_state = _read_oob_androidworld_state(
-                oob_url=oob_url,
-                adb_serial=adb_serial,
-                adb_path=adb_path,
-            )
-            if oob_state is not None:
-                return oob_state
-            logger.warning(
-                "AndroidWorld env.get_state could not read OOB /get_state; "
-                "falling back to direct/AndroidWorld state."
-            )
-        try:
-            return original_get_state(*args, **kwargs)
-        except Exception as exc:
-            fallback_state = capture_adapter_state(
-                env=env,
-                adb_serial=adb_serial,
-                include_pixels=True,
-            )
-            if fallback_state is not None:
-                logger.warning(
-                    "AndroidWorld env.get_state fell back to direct adapter after "
-                    "upstream state dump failed: %s",
-                    exc,
-                )
-                return fallback_state
-
-            if _use_oob_observe_backend() and oob_url:
-                fallback_state = _read_oob_androidworld_state(
-                    oob_url=oob_url,
-                    adb_serial=adb_serial,
-                    adb_path=adb_path,
-                )
-                if fallback_state is not None:
-                    logger.warning(
-                        "AndroidWorld env.get_state fell back to OOB /get_state "
-                        "after upstream state dump failed: %s",
-                        exc,
-                    )
-                    return fallback_state
-            raise
-
-    env.get_state = _patched_get_state
-    env._omniflow_get_state_fallback_patch = True
 
 
 def _patch_androidworld_settings_get_output(adb_utils_module: Any) -> Any | None:
@@ -4150,6 +3609,7 @@ def _build_launch_agent(
     appagent_demo_name: str = "",
     appagent_output_root: str = "",
     task_seed: int | None = None,
+    evidence_root: str = "",
 ) -> Any:
     """Build the launcher-facing AndroidWorld agent for one explicit selector.
 
@@ -4207,6 +3667,7 @@ def _build_launch_agent(
             "adb_serial": adb_serial,
             "adb_path": adb_path,
             "task_seed": task_seed,
+            "evidence_root": evidence_root or None,
         }
         if planner is not None:
             build_kwargs["planner"] = planner
@@ -4272,29 +3733,6 @@ def _build_launch_agent(
             raise ValueError(
                 "--agent official:<name> requires one upstream AndroidWorld agent name"
             )
-        original_get_state = getattr(env, "get_state", None)
-        if callable(original_get_state) and not bool(
-            getattr(env, "_omniflow_official_get_state_patch", False)
-        ):
-
-            def _patched_get_state(*args, **kwargs):
-                try:
-                    return original_get_state(*args, **kwargs)
-                except Exception as exc:
-                    fallback_state = capture_adapter_state(
-                        env=env,
-                        adb_serial=adb_serial,
-                    )
-                    if fallback_state is None:
-                        raise
-                    logger.warning(
-                        "AndroidWorld official agent get_state fell back to direct adapter after env.get_state failed: %s",
-                        exc,
-                    )
-                    return fallback_state
-
-            env.get_state = _patched_get_state
-            env._omniflow_official_get_state_patch = True
         return _build_official_androidworld_agent(
             env=env,
             official_agent_name=official_agent_name,
@@ -4793,24 +4231,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             os.environ.get("ANDROID_SERIAL") or f"emulator-{int(args.console_port)}"
         ).strip()
         _patch_androidworld_ui_debug_settings(android_world_controller)
-        if not native_appagent:
-            _patch_androidworld_controller_ui_dump_fallback(
-                android_world_controller,
-                adb_serial=target_adb_serial,
-                adb_path=str(args.adb_path or ""),
-            )
         env = env_launcher.load_and_setup_env(
             console_port=int(args.console_port),
             emulator_setup=False,
             adb_path=str(args.adb_path or ""),
             grpc_port=int(args.console_port) + 3000,
         )
-        if not native_appagent:
-            _patch_androidworld_env_get_state_fallback(
-                env,
-                adb_serial=target_adb_serial,
-                adb_path=str(args.adb_path or ""),
-            )
         if _use_oob_observe_backend():
             oob_prepare = _prepare_oob_device_host_for_replay(
                 adb_serial=target_adb_serial,
@@ -4858,13 +4284,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             ]
         suite.suite_family = args.suite_family
-        _patch_contacts_draft_success_eval(
-            suite,
-            adb_serial=str(
-                os.environ.get("ANDROID_SERIAL") or f"emulator-{int(args.console_port)}"
-            ).strip(),
-        )
-
         run_output_dir = Path(args.output_path).expanduser().resolve()
         run_output_dir.mkdir(parents=True, exist_ok=True)
         os.environ.setdefault(
@@ -4892,6 +4311,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             appagent_demo_name=str(args.appagent_demo_name or ""),
             appagent_output_root=str(run_output_dir / "appagent_runtime"),
             task_seed=int(args.task_random_seed),
+            evidence_root=str(run_output_dir),
         )
 
         checkpoint_dir = (

@@ -1,67 +1,134 @@
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
 from types import SimpleNamespace
 import xml.etree.ElementTree as ET
 
+from PIL import Image
+import pytest
+
 from omniflow import Action
 from src.integrations.android_world.host import AndroidWorldHost
-from src.integrations.android_world import launch
-from src.integrations.android_world.launch import (
-    _native_androidworld_a11y_method,
-    _patch_androidworld_controller_ui_dump_fallback,
-)
+from src.integrations.android_world.launch import _native_androidworld_a11y_method
 
 
-def test_androidworld_ui_elements_fall_back_when_accessibility_is_empty(
-    monkeypatch,
-) -> None:
-    xml = """\
-<hierarchy>
-  <node package="com.android.chrome" bounds="[0,0][720,1280]">
-    <node text="Use without an account" package="com.android.chrome"
-          clickable="true" bounds="[48,967][672,1063]" />
-  </node>
-</hierarchy>
-"""
-    native_elements = [SimpleNamespace(text="Use without an account")]
-    uiautomator_method = object()
+def _official_state(**overrides):
+    values = {
+        "pixels": None,
+        "forest": None,
+        "ui_elements": [],
+        "auxiliaries": {},
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
 
-    class Controller:
-        _a11y_method = object()
 
-        def __init__(self) -> None:
-            self._env = object()
-
-        def get_ui_elements(self):
-            return []
-
-    controller_module = SimpleNamespace(
-        AndroidWorldController=Controller,
-        A11yMethod=SimpleNamespace(UIAUTOMATOR=uiautomator_method),
-        representation_utils=SimpleNamespace(
-            xml_dump_to_ui_elements=lambda actual_xml: (
-                native_elements if actual_xml.strip() == xml.strip() else []
-            )
+def _ui_element(
+    text: str = "Settings",
+    bounds: tuple[int, int, int, int] = (0, 0, 4, 3),
+):
+    return SimpleNamespace(
+        text=text,
+        package_name="com.android.settings",
+        bbox_pixels=SimpleNamespace(
+            x_min=bounds[0],
+            y_min=bounds[1],
+            x_max=bounds[2],
+            y_max=bounds[3],
         ),
     )
 
-    def fake_adb_command(**kwargs):
-        adb_args = kwargs["adb_args"]
-        return {
-            "returncode": 0,
-            "stdout": xml if adb_args[:2] == ["shell", "cat"] else "",
-            "stderr": "",
-        }
 
-    monkeypatch.setattr(launch, "_run_adb_command", fake_adb_command)
-    monkeypatch.setenv("OMNIFLOW_OBSERVE_BACKEND", "androidworld")
-    _patch_androidworld_controller_ui_dump_fallback(
-        controller_module,
-        adb_serial="emulator-5560",
-        adb_path="/sdk/adb",
+def test_observe_preserves_one_official_androidworld_state(tmp_path) -> None:
+    state = _official_state(
+        pixels=Image.new("RGB", (4, 3), color="blue"),
+        forest={"source": "official-forest"},
+        ui_elements=[_ui_element()],
+        auxiliaries={"source": "androidworld"},
     )
 
-    assert Controller().get_ui_elements() == native_elements
+    class Env:
+        device_screen_size = (4, 3)
+        logical_screen_size = (4, 3)
+        foreground_activity_name = "com.android.settings/.Settings"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_state(self):
+            self.calls += 1
+            return state
+
+    env = Env()
+    observation = AndroidWorldHost(env, evidence_root=tmp_path).observe(
+        xml=True,
+        screenshot=True,
+        app_info=True,
+    )
+
+    assert env.calls == 1
+    saved = observation.extra["androidworld_state"]
+    assert set(saved) == {"pixels", "forest", "ui_elements", "auxiliaries"}
+    assert saved["forest"] == {"source": "official-forest"}
+    assert saved["ui_elements"] == [
+        {
+            "text": "Settings",
+            "package_name": "com.android.settings",
+            "bbox_pixels": {
+                "x_min": 0,
+                "y_min": 0,
+                "x_max": 4,
+                "y_max": 3,
+            },
+        }
+    ]
+    assert saved["auxiliaries"] == {"source": "androidworld"}
+    screenshot_path = Path(saved["pixels"]["path"])
+    assert screenshot_path.is_file()
+    assert screenshot_path.is_absolute()
+    assert hashlib.sha256(screenshot_path.read_bytes()).hexdigest() == saved["pixels"][
+        "sha256"
+    ]
+    assert saved["pixels"]["width"] == 4
+    assert saved["pixels"]["height"] == 3
+    assert observation.package_name == "com.android.settings"
+    assert "Settings" in str(observation.xml)
+
+
+def test_observe_does_not_replace_failed_official_state() -> None:
+    class Env:
+        controller = SimpleNamespace(
+            get_ui_elements=lambda: [_ui_element("fallback")],
+            get_screenshot=lambda: Image.new("RGB", (1, 1)),
+        )
+
+        def get_state(self):
+            raise RuntimeError("official state unavailable")
+
+    with pytest.raises(RuntimeError, match="official state unavailable"):
+        AndroidWorldHost(Env()).observe()
+
+
+def test_observe_requires_all_official_state_fields() -> None:
+    incomplete = SimpleNamespace(pixels=None, forest=None, ui_elements=[])
+
+    with pytest.raises(
+        ValueError,
+        match="androidworld_state_fields_missing:auxiliaries",
+    ):
+        AndroidWorldHost(SimpleNamespace(get_state=lambda: incomplete)).observe()
+
+
+def test_observe_ignores_non_official_xml_field() -> None:
+    state = _official_state(xml="<hierarchy><node text='custom'/></hierarchy>")
+    observation = AndroidWorldHost(
+        SimpleNamespace(get_state=lambda: state)
+    ).observe()
+
+    assert observation.xml is None
+    assert observation.extra["ui_graph_source"] == ""
+    assert observation.extra["ui_graph_complete"] is False
 
 
 def test_androidworld_native_observation_uses_accessibility_forest() -> None:
@@ -87,85 +154,8 @@ def test_androidworld_host_cannot_be_switched_to_oob(monkeypatch) -> None:
     assert host.act_backend == "androidworld"
 
 
-def test_observe_keeps_complete_uiautomator_hierarchy() -> None:
-    uiautomator_xml = """\
-<hierarchy>
-  <node package="com.android.settings" bounds="[0,0][1080,2400]">
-    <node class="android.widget.TextView" text="Bluetooth"
-          resource-id="android:id/title" package="com.android.settings"
-          bounds="[24,200][1000,280]" />
-  </node>
-</hierarchy>
-"""
-    state = SimpleNamespace(
-        ui_elements=[],
-        xml="",
-        auxiliaries={},
-        pixels=None,
-        activity_name="com.android.settings/.Settings",
-        package_name="com.android.settings",
-    )
-    env = SimpleNamespace(
-        get_state=lambda: state,
-        device_screen_size=(1080, 2400),
-        logical_screen_size=(1080, 2400),
-        foreground_activity_name="com.android.settings/.Settings",
-    )
-    host = AndroidWorldHost(env)
-    host._fresh_uiautomator_xml = lambda: uiautomator_xml
-
-    observation = host.observe(xml=True, screenshot=False, app_info=True)
-
-    assert observation.xml == uiautomator_xml
-    assert observation.extra["ui_graph_source"] == "uiautomator"
-
-
-def test_observe_places_partial_window_xml_on_full_device_canvas() -> None:
-    partial_xml = """\
-<hierarchy>
-  <node package="com.android.settings" bounds="[802,0][2208,1840]">
-    <node class="android.widget.TextView" text="Bluetooth"
-          package="com.android.settings" bounds="[850,500][2160,620]" />
-  </node>
-</hierarchy>
-"""
-    state = SimpleNamespace(
-        ui_elements=[],
-        xml="",
-        auxiliaries={},
-        pixels=None,
-        activity_name="com.android.settings/.SubSettings",
-        package_name="com.android.settings",
-    )
-    env = SimpleNamespace(
-        get_state=lambda: state,
-        device_screen_size=(2208, 1840),
-        logical_screen_size=(1080, 2092),
-        foreground_activity_name="com.android.settings/.SubSettings",
-    )
-    host = AndroidWorldHost(env)
-    host._fresh_uiautomator_xml = lambda: partial_xml
-
-    observation = host.observe(xml=True, screenshot=False, app_info=True)
-
-    root = ET.fromstring(observation.xml or "")
-    assert root.attrib["bounds"] == "[0,0][2208,1840]"
-    assert root.attrib["width"] == "2208"
-    assert root.attrib["height"] == "1840"
-    assert observation.extra["ui_graph_source"] == "uiautomator_partial"
-
-
-def test_observe_prefers_complete_androidworld_accessibility_forest() -> None:
-    def node(
-        unique_id,
-        bounds,
-        *,
-        child_ids=(),
-        text="",
-        resource_id="",
-        class_name="android.widget.LinearLayout",
-        clickable=False,
-    ):
+def test_observe_derives_internal_xml_from_official_forest() -> None:
+    def node(unique_id, bounds, *, child_ids=(), text=""):
         return SimpleNamespace(
             unique_id=unique_id,
             bounds_in_screen=SimpleNamespace(
@@ -177,15 +167,15 @@ def test_observe_prefers_complete_androidworld_accessibility_forest() -> None:
             child_ids=list(child_ids),
             text=text,
             content_description="",
-            view_id_resource_name=resource_id,
+            view_id_resource_name="",
             package_name="com.android.settings",
-            class_name=class_name,
+            class_name="android.widget.TextView",
             is_checkable=False,
             is_checked=False,
-            is_clickable=clickable,
+            is_clickable=False,
             is_editable=False,
             is_enabled=True,
-            is_focusable=clickable,
+            is_focusable=False,
             is_focused=False,
             is_long_clickable=False,
             is_password=False,
@@ -201,97 +191,37 @@ def test_observe_prefers_complete_androidworld_accessibility_forest() -> None:
                 title="Settings",
                 tree=SimpleNamespace(
                     nodes=[
-                        node(1, (0, 0, 2208, 1840), child_ids=(2, 3)),
-                        node(2, (0, 0, 802, 1840)),
-                        node(3, (802, 0, 2208, 1840), child_ids=(4, 5)),
-                        node(
-                            4,
-                            (802, 544, 2208, 750),
-                            child_ids=(6,),
-                            clickable=True,
-                        ),
-                        node(
-                            5,
-                            (802, 750, 2208, 956),
-                            child_ids=(7,),
-                            clickable=True,
-                        ),
-                        node(
-                            6,
-                            (991, 586, 1171, 657),
-                            text="Internet",
-                            resource_id="android:id/title",
-                            class_name="android.widget.TextView",
-                        ),
-                        node(
-                            7,
-                            (991, 792, 1275, 863),
-                            text="Calls & SMS",
-                            resource_id="android:id/title",
-                            class_name="android.widget.TextView",
-                        ),
+                        node(1, (0, 0, 2208, 1840), child_ids=(2,)),
+                        node(2, (991, 586, 1171, 657), text="Internet"),
                     ]
                 ),
             )
         ]
     )
-    state = SimpleNamespace(
-        forest=forest,
-        ui_elements=[],
-        xml="",
-        auxiliaries={},
-        pixels=None,
-        activity_name="com.android.settings/.Settings$NetworkDashboardActivity",
-        package_name="com.android.settings",
-    )
     env = SimpleNamespace(
-        get_state=lambda: state,
+        get_state=lambda: _official_state(forest=forest),
         device_screen_size=(2208, 1840),
         logical_screen_size=(1080, 2092),
-        foreground_activity_name=(
-            "com.android.settings/.Settings$NetworkDashboardActivity"
-        ),
-    )
-    host = AndroidWorldHost(env)
-    host._fresh_uiautomator_xml = lambda: (_ for _ in ()).throw(
-        AssertionError("complete forest must not trigger another UI dump")
+        foreground_activity_name="com.android.settings/.Settings",
     )
 
-    observation = host.observe(xml=True, screenshot=False, app_info=True)
+    observation = AndroidWorldHost(env).observe()
 
-    assert observation.extra["ui_graph_source"] == "androidworld_accessibility_forest"
+    assert observation.extra["ui_graph_source"] == "androidworld_state_forest"
     assert observation.extra["ui_graph_complete"] is True
     root = ET.fromstring(observation.xml or "")
     internet = next(
         element for element in root.iter() if element.attrib.get("text") == "Internet"
     )
-    calls = next(
-        element
-        for element in root.iter()
-        if element.attrib.get("text") == "Calls & SMS"
-    )
     assert internet.attrib["bounds"] == "[991,586][1171,657]"
-    assert calls.attrib["bounds"] == "[991,792][1275,863]"
 
 
-def test_open_app_accepts_matching_package_with_incomplete_fold_xml() -> None:
-    partial_xml = """\
-<hierarchy>
-  <node package="com.android.settings" bounds="[802,0][2208,1840]" />
-</hierarchy>
-"""
-    state = SimpleNamespace(
-        ui_elements=[],
-        xml="",
-        auxiliaries={},
-        pixels=None,
-        activity_name="com.android.settings/.Settings",
-        package_name="com.android.settings",
-    )
+def test_open_app_waits_on_the_official_state() -> None:
+    state = _official_state(ui_elements=[_ui_element()])
     env = SimpleNamespace(
         get_state=lambda: state,
-        device_screen_size=(2208, 1840),
-        logical_screen_size=(1080, 2092),
+        device_screen_size=(4, 3),
+        logical_screen_size=(4, 3),
         foreground_activity_name="com.android.settings/.Settings",
     )
     host = AndroidWorldHost(
@@ -299,7 +229,6 @@ def test_open_app_accepts_matching_package_with_incomplete_fold_xml() -> None:
         adb_serial="emulator-5564",
         open_app_ready_timeout_seconds=0.01,
     )
-    host._fresh_uiautomator_xml = lambda: partial_xml
     host._adb = lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stderr="")
 
     result = host.act(Action("open_app", {"package_name": "com.android.settings"}))

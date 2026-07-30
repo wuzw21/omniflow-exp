@@ -14,12 +14,17 @@ from omniflow import (
     ToolCall,
 )
 from omniflow.core.model import FunctionStep
+from omniflow.core.trajectory import state_id
 from omniflow.functions.artifact import FUNCTION_ARTIFACT_VERSION
 from omniflow.functions.store import FunctionStore
 from omniflow.vlm.function_router import VLMFunctionRouter
 from omniflow.vlm.gui import build_model_turn_request
 from omniflow.vlm.planner import VLMPlanner
-from src.integrations.android_world.agent import build_agent
+from src.integrations.android_world.agent import (
+    _TaskHost,
+    _androidworld_run_log_steps,
+    build_agent,
+)
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 
@@ -71,6 +76,52 @@ class RejectingRouter(AcceptingRouter):
     ) -> None:
         self.calls.append((goal, functions))
         return None
+
+
+def test_androidworld_trace_keeps_the_captured_official_state() -> None:
+    official_state = androidworld_state(
+        "ignored-derived-id",
+        forest={"source": "official"},
+        ui_elements=[{"text": "Settings"}],
+        with_pixels=True,
+    )
+    official_state["auxiliaries"].pop("state_id")
+    identifier = state_id(official_state)
+    raw_host = SimpleNamespace(
+        observe=lambda **_: Observation(
+            xml="<hierarchy />",
+            package_name="com.android.settings",
+            extra={
+                "androidworld_state": official_state,
+                "display": {"width": 1000, "height": 1000},
+            },
+        ),
+        act=lambda action: ActionResult(True),
+    )
+    runtime_state = {
+        "captured_transfer_states": {},
+        "captured_androidworld_states": {},
+    }
+    host = _TaskHost(raw_host, runtime_state, {})
+
+    observation = host.observe(xml=True, screenshot=True, app_info=True)
+    steps = _androidworld_run_log_steps(
+        [
+            {
+                "before_state_id": identifier,
+                "after_state_id": identifier,
+                "action": {"tool": "wait", "args": {"duration_ms": 1000}},
+                "result": {"success": True},
+            }
+        ],
+        runtime_state["captured_androidworld_states"],
+    )
+
+    assert observation.extra["state_id"] == identifier
+    assert runtime_state["captured_androidworld_states"] == {
+        identifier: official_state
+    }
+    assert steps[0]["observation"] == official_state
 
 
 class FinishingPlanner:
