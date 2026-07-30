@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from omniflow.core.trajectory import state_id as observation_state_id
 from omniflow.transfer.runtime import load_transfer_state_catalog
 from src.integrations.runlog import (
+    convert_legacy_run_log,
     import_run_log,
     import_run_log_evidence,
     project_androidworld_step_actions,
@@ -342,6 +343,171 @@ def _source_target_audit(provenance: dict[str, Any]) -> dict[str, Any]:
     return source_target_audit
 
 
+def _normalized_semantic_text(value: Any) -> str:
+    return " ".join(str(value or "").casefold().split())
+
+
+def _unique_xml_identity_for_claim(
+    xml_text: str,
+    claim: dict[str, Any],
+) -> dict[str, str]:
+    expected = _identity(claim)
+    if not expected:
+        return {}
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return {}
+    matches: list[dict[str, str]] = []
+    for node in root.iter():
+        identity = _node_identity(node)
+        if identity and all(
+            _normalized_semantic_text(identity.get(key))
+            == _normalized_semantic_text(value)
+            for key, value in expected.items()
+        ):
+            matches.append(identity)
+    return matches[0] if len(matches) == 1 else {}
+
+
+def _unique_xml_identity_for_description(
+    xml_text: str,
+    description: Any,
+) -> dict[str, str]:
+    expected = _normalized_semantic_text(description)
+    if not expected:
+        return {}
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return {}
+    matches: list[dict[str, str]] = []
+    for node in root.iter():
+        identity = _node_identity(node)
+        if identity and expected in {
+            _normalized_semantic_text(value)
+            for value in identity.values()
+            if str(value).strip()
+        }:
+            matches.append(identity)
+    return matches[0] if len(matches) == 1 else {}
+
+
+def _verified_target_from_evidence(
+    xml_text: str,
+    evidence: Any,
+) -> dict[str, str]:
+    if not isinstance(evidence, dict) or not xml_text:
+        return {}
+    for key in ("element", "target"):
+        claim = evidence.get(key)
+        if isinstance(claim, dict):
+            identity = _unique_xml_identity_for_claim(xml_text, claim)
+            if identity:
+                return identity
+    return _unique_xml_identity_for_description(
+        xml_text,
+        evidence.get("target_description"),
+    )
+
+
+def _target_audit_from_embedded_evidence(
+    canonical: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    source_targets: list[dict[str, Any]] = []
+    evidence_count = 0
+    for step_index, step in enumerate(canonical["steps"]):
+        metadata = step.get("metadata")
+        evidence = (
+            metadata.get("source_target_evidence")
+            if isinstance(metadata, dict)
+            else None
+        )
+        if not isinstance(evidence, dict):
+            continue
+        evidence_count += 1
+        identity = _verified_target_from_evidence(
+            str(step["observation"].get("forest") or ""),
+            evidence,
+        )
+        if identity:
+            source_targets.append(
+                {"step_index": step_index, "target": identity}
+            )
+    return {
+        "source_targets": source_targets,
+    }, {
+        "source_target_evidence_source": (
+            "embedded_source_run_log" if evidence_count else "none"
+        ),
+        "source_target_evidence_count": evidence_count,
+        "verified_source_target_count": len(source_targets),
+    }
+
+
+def _target_audit_from_legacy_provenance(
+    canonical: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    provenance = canonical.get("provenance")
+    if not isinstance(provenance, dict) or provenance.get("kind") != "legacy_import":
+        return {"source_targets": []}, {
+            "source_target_evidence_source": "none",
+            "source_target_evidence_count": 0,
+            "verified_source_target_count": 0,
+        }
+    source_path = Path(str(provenance.get("source_path") or "")).expanduser()
+    if not source_path.is_file():
+        return {"source_targets": []}, {
+            "source_target_evidence_source": "legacy_provenance_unavailable",
+            "source_target_evidence_count": 0,
+            "verified_source_target_count": 0,
+        }
+    expected_sha256 = str(provenance.get("source_sha256") or "").strip()
+    actual_sha256 = _sha256(source_path)
+    if not expected_sha256 or actual_sha256 != expected_sha256:
+        raise ValueError(
+            "source_legacy_provenance_hash_mismatch:"
+            f"expected={expected_sha256 or 'missing'}:actual={actual_sha256}"
+        )
+    raw = json.loads(source_path.read_text(encoding="utf-8"))
+    reconverted = convert_legacy_run_log(
+        raw,
+        task_name=str(canonical["task_name"]),
+        task_parameters=dict(canonical.get("task_parameters") or {}),
+        seed=canonical.get("seed"),
+        source_path=source_path,
+        require_screenshots=False,
+    )
+    if len(reconverted["steps"]) != len(canonical["steps"]):
+        raise ValueError("source_legacy_provenance_step_count_mismatch")
+    for step_index, (source_step, canonical_step) in enumerate(
+        zip(reconverted["steps"], canonical["steps"], strict=True)
+    ):
+        if source_step["action"] != canonical_step["action"]:
+            raise ValueError(
+                f"source_legacy_provenance_action_mismatch:{step_index}"
+            )
+        if str(source_step["observation"].get("forest") or "") != str(
+            canonical_step["observation"].get("forest") or ""
+        ):
+            raise ValueError(
+                f"source_legacy_provenance_observation_mismatch:{step_index}"
+            )
+    source_targets, audit = _target_audit_from_embedded_evidence(reconverted)
+    audit["source_target_evidence_source"] = "verified_legacy_provenance"
+    audit["source_target_evidence_sha256"] = actual_sha256
+    return source_targets, audit
+
+
+def _canonical_source_target_audit(
+    canonical: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    source_targets, audit = _target_audit_from_embedded_evidence(canonical)
+    if audit["source_target_evidence_count"]:
+        return source_targets, audit
+    return _target_audit_from_legacy_provenance(canonical)
+
+
 def _ground_source_actions(
     canonical: dict[str, Any],
     states: dict[str, dict[str, Any]],
@@ -600,10 +766,13 @@ def _build_grounded_teacher_run_log_from_canonical_source(
         evidence_root=source_path.parent,
     )
     states = source_states["states"]
+    source_target_audit, target_evidence_audit = (
+        _canonical_source_target_audit(canonical)
+    )
     grounded, semantic_action_count = _ground_source_actions(
         canonical,
         states,
-        {"source_targets": []},
+        source_target_audit,
     )
     return grounded, {
         "schema_version": "omniflow.source-teacher-grounding.v1",
@@ -615,6 +784,7 @@ def _build_grounded_teacher_run_log_from_canonical_source(
         "source_state_count": len(states),
         "semantic_action_count": semantic_action_count,
         "grounding_source": "canonical_androidworld_run_log",
+        **target_evidence_audit,
         "target_inputs_read": False,
         "target_observations_read": False,
         "validator_state_read": False,

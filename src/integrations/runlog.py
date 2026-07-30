@@ -242,7 +242,10 @@ def convert_legacy_run_log(
             }
             if next_observation is not None:
                 step["next_observation"] = next_observation
-            metadata = _legacy_step_metadata(raw_step)
+            metadata = _legacy_step_metadata(
+                raw_step,
+                raw_action=raw_action,
+            )
             if action["action_type"] == "unknown":
                 metadata["legacy_action"] = json.loads(
                     json.dumps(raw_action, ensure_ascii=False, default=str)
@@ -727,13 +730,64 @@ def _legacy_display(observation: dict[str, Any]) -> tuple[float, float]:
     return converted
 
 
-def _legacy_step_metadata(step: dict[str, Any]) -> dict[str, Any]:
+def _legacy_step_metadata(
+    step: dict[str, Any],
+    *,
+    raw_action: Any,
+) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     source = _map(step.get("metadata")) or _map(step.get("diagnostics"))
     for key in ("thinking", "summary", "action_description", "origin"):
         if _present(source.get(key)):
             metadata[key] = source[key]
+    target_evidence = _legacy_action_target_evidence(raw_action)
+    if target_evidence:
+        metadata["source_target_evidence"] = target_evidence
     return metadata
+
+
+def _legacy_action_target_evidence(value: Any) -> dict[str, Any]:
+    raw = _map(value)
+    function = _map(raw.get("function"))
+    args = _map(
+        raw.get("args")
+        or raw.get("arguments")
+        or raw.get("params")
+        or function.get("arguments")
+    )
+    evidence: dict[str, Any] = {}
+    target_description = str(args.get("target_description") or "").strip()
+    if target_description:
+        evidence["target_description"] = target_description
+    source_context = _map(args.get("source_context"))
+    element = _legacy_semantic_identity(source_context.get("element"))
+    if element:
+        evidence["element"] = element
+    target = _legacy_semantic_identity(args.get("target_evidence"))
+    if target:
+        evidence["target"] = target
+    return evidence
+
+
+def _legacy_semantic_identity(value: Any) -> dict[str, str]:
+    raw = _map(value)
+    aliases = {
+        "text": ("text", "label"),
+        "content_desc": (
+            "content_desc",
+            "content-desc",
+            "description",
+        ),
+        "resource_id": ("resource_id", "resource-id"),
+    }
+    identity: dict[str, str] = {}
+    for output_key, input_keys in aliases.items():
+        for input_key in input_keys:
+            text = str(raw.get(input_key) or "").strip()
+            if text:
+                identity[output_key] = text
+                break
+    return identity
 
 
 def _screenshot_path(observation: dict[str, Any]) -> str:

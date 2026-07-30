@@ -156,6 +156,69 @@ def test_explicit_converter_emits_only_omniflow_schema(tmp_path: Path) -> None:
     ]
 
 
+def test_explicit_converter_preserves_filtered_source_target_evidence(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "legacy-target.run_log.json"
+    payload = {
+        "run_id": "legacy-target",
+        "success": True,
+        "steps": [
+            {
+                "observation_before_act": {
+                    "xml": '<hierarchy><node text="Continue" /></hierarchy>',
+                    "width": 100,
+                    "height": 100,
+                },
+                "action": {
+                    "type": "click",
+                    "params": {
+                        "x": 50,
+                        "y": 50,
+                        "target_description": "Continue",
+                        "source_context": {
+                            "element": {
+                                "text": "Continue",
+                                "resource_id": "app:id/continue",
+                                "bounds": [0, 0, 100, 100],
+                            }
+                        },
+                        "target_evidence": {
+                            "label": "Continue",
+                            "resource-id": "app:id/continue",
+                            "x": 50,
+                            "y": 50,
+                        },
+                    },
+                },
+                "success": True,
+            }
+        ],
+    }
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    converted = convert_legacy_run_log(
+        payload,
+        task_name="TargetTask",
+        task_parameters={},
+        seed=111,
+        source_path=source,
+        require_screenshots=False,
+    )
+
+    assert converted["steps"][0]["metadata"]["source_target_evidence"] == {
+        "target_description": "Continue",
+        "element": {
+            "text": "Continue",
+            "resource_id": "app:id/continue",
+        },
+        "target": {
+            "text": "Continue",
+            "resource_id": "app:id/continue",
+        },
+    }
+
+
 def test_explicit_converter_records_screenshot_reference(tmp_path: Path) -> None:
     screenshot = tmp_path / "screen.png"
     Image.new("RGB", (32, 48), color="white").save(screenshot)
