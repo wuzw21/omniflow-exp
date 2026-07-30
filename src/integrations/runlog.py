@@ -210,6 +210,10 @@ def convert_legacy_run_log(
             if next_observation is not None:
                 step["next_observation"] = next_observation
             metadata = _legacy_step_metadata(raw_step)
+            if action["action_type"] == "unknown":
+                metadata["legacy_action"] = json.loads(
+                    json.dumps(raw_action, ensure_ascii=False, default=str)
+                )
             if metadata:
                 step["metadata"] = metadata
             converted_steps.append(step)
@@ -504,13 +508,17 @@ def _legacy_action_to_androidworld(
     if tool in {"press_key", "key_event", "presskey"}:
         key = str(args.get("key") or args.get("keycode") or "").strip().upper()
         key = key.removeprefix("KEYCODE_")
+        key = {"DELETE": "DEL"}.get(key, key)
         if key in {"BACK", "NAVIGATE_BACK", "PRESS_BACK"}:
             return {"action_type": "navigate_back"}
         if key in {"HOME", "NAVIGATE_HOME", "PRESS_HOME"}:
             return {"action_type": "navigate_home"}
         if key in {"ENTER", "KEYBOARD_ENTER", "PRESS_ENTER"}:
             return {"action_type": "keyboard_enter"}
-        raise ValueError(f"legacy_action_unsupported:{tool}")
+        return {
+            "action_type": "unknown",
+            **({"keycode": f"KEYCODE_{key}"} if key else {}),
+        }
     if tool in {"wait", "sleep"}:
         return {"action_type": "wait"}
     if tool in {"finished", "finish", "done", "status"}:
@@ -522,7 +530,7 @@ def _legacy_action_to_androidworld(
         )
     if tool == "answer":
         return {"action_type": "answer", "text": str(args.get("text") or "")}
-    raise ValueError(f"legacy_action_unsupported:{tool or 'missing'}")
+    return {"action_type": "unknown"}
 
 
 def _legacy_actions(step: dict[str, Any]) -> list[Any]:
@@ -539,6 +547,10 @@ def _legacy_actions(step: dict[str, Any]) -> list[Any]:
     tool_name = str(step.get("tool_name") or "").strip()
     if tool_name:
         return [{"tool": tool_name, "args": _map(step.get("params"))}]
+    provider_detail = _map(step.get("provider_detail"))
+    online_action = provider_detail.get("online_action")
+    if isinstance(online_action, dict):
+        return [online_action]
     return []
 
 

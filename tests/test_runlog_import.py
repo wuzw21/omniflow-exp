@@ -230,7 +230,9 @@ def test_explicit_converter_marks_unavailable_screenshot_as_null(
     assert converted["steps"][0]["observation"]["pixels"] is None
 
 
-def test_explicit_converter_rejects_private_action(tmp_path: Path) -> None:
+def test_explicit_converter_preserves_private_action_as_unknown(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "legacy.run_log.json"
     payload = {
         "run_id": "legacy-private-action",
@@ -246,18 +248,23 @@ def test_explicit_converter_rejects_private_action(tmp_path: Path) -> None:
     }
     source.write_text(json.dumps(payload), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="legacy_action_unsupported:set_clipboard"):
-        convert_legacy_run_log(
-            payload,
-            task_name="ClipboardTask",
-            task_parameters={},
-            seed=111,
-            source_path=source,
-            require_screenshots=False,
-        )
+    converted = convert_legacy_run_log(
+        payload,
+        task_name="ClipboardTask",
+        task_parameters={},
+        seed=111,
+        source_path=source,
+        require_screenshots=False,
+    )
+
+    assert converted["steps"][0]["action"] == {"action_type": "unknown"}
+    assert converted["steps"][0]["metadata"]["legacy_action"] == {
+        "type": "set_clipboard",
+        "params": {"text": "secret"},
+    }
 
 
-def test_explicit_converter_rejects_nonofficial_keyboard_action(
+def test_explicit_converter_preserves_nonofficial_keyboard_action(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "legacy.run_log.json"
@@ -273,15 +280,54 @@ def test_explicit_converter_rejects_nonofficial_keyboard_action(
     }
     source.write_text(json.dumps(payload), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="legacy_action_unsupported:press_key"):
-        convert_legacy_run_log(
-            payload,
-            task_name="KeyboardTask",
-            task_parameters={},
-            seed=111,
-            source_path=source,
-            require_screenshots=False,
-        )
+    converted = convert_legacy_run_log(
+        payload,
+        task_name="KeyboardTask",
+        task_parameters={},
+        seed=111,
+        source_path=source,
+        require_screenshots=False,
+    )
+
+    assert converted["steps"][0]["action"] == {
+        "action_type": "unknown",
+        "keycode": "KEYCODE_DEL",
+    }
+    assert converted["steps"][0]["metadata"]["legacy_action"] == {
+        "type": "press_key",
+        "params": {"key": "delete"},
+    }
+
+
+def test_explicit_converter_uses_provider_online_action(tmp_path: Path) -> None:
+    source = tmp_path / "legacy.run_log.json"
+    payload = {
+        "run_id": "legacy-online-action",
+        "success": True,
+        "steps": [
+            {
+                "goal_completed": True,
+                "provider_detail": {
+                    "online_action": {"type": "finished", "params": {}}
+                },
+            }
+        ],
+    }
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    converted = convert_legacy_run_log(
+        payload,
+        task_name="FinishedTask",
+        task_parameters={},
+        seed=111,
+        source_path=source,
+        require_screenshots=False,
+    )
+
+    assert converted["steps"][0]["action"] == {
+        "action_type": "status",
+        "goal_status": "complete",
+    }
 
 
 def test_fixed_replay_accepts_only_omniflow_run_log() -> None:
