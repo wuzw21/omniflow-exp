@@ -46,6 +46,7 @@ memory_index="${OMNIFLOW_EXP_MEMORY_INDEX:-${memory_root:+$memory_root/current.j
 memory_function_catalogs="${OMNIFLOW_MEMORY_FUNCTION_CATALOGS:-}"
 memory_runlog_roots="${OMNIFLOW_MEMORY_RUNLOG_ROOTS:-${asset_root:+$asset_root/runtime/evals}}"
 memory_result_roots="${OMNIFLOW_MEMORY_RESULT_ROOTS:-${asset_root:+$asset_root/runtime/evals}}"
+source_selection_manifest="${OMNIFLOW_SOURCE_SELECTION_MANIFEST:-}"
 if [[ -n "$results_root" && ":$memory_result_roots:" != *":$results_root:"* ]]; then
   memory_result_roots="${memory_result_roots:+$memory_result_roots:}$results_root"
 fi
@@ -126,6 +127,8 @@ Long-term-memory refresh inputs:
   OMNIFLOW_MEMORY_RUNLOG_ROOTS       Colon-separated evidence roots.
   OMNIFLOW_MEMORY_RESULT_ROOTS       Colon-separated result roots.
   OMNIFLOW_MEMORY_FUNCTION_CATALOGS  Colon-separated Function catalogs.
+  OMNIFLOW_SOURCE_SELECTION_MANIFEST Optional audited exact-SHA source repairs.
+  OMNIFLOW_SOURCE_SCREENSHOT_ROOTS   Optional screenshot roots for legacy repairs.
 
 Source RunLog conversion inputs:
   OMNIFLOW_SOURCE_RUNLOG_OUTPUT_ROOT Absolute immutable output root.
@@ -227,14 +230,16 @@ if [[ "$convert_source_runlogs" -eq 1 ]]; then
     --source-index "$master_source_index"
     --output-root "$source_runlog_output_root"
   )
-  IFS=':' read -r -a configured_screenshot_roots <<< "$source_screenshot_roots"
-  for configured_root in "${configured_screenshot_roots[@]}"; do
-    if [[ "$configured_root" != /* || ! -d "$configured_root" ]]; then
-      echo "Screenshot root must be an existing absolute directory: $configured_root" >&2
-      exit 2
-    fi
-    source_conversion_args+=(--screenshot-root "$configured_root")
-  done
+  if [[ -n "$source_screenshot_roots" ]]; then
+    IFS=':' read -r -a configured_screenshot_roots <<< "$source_screenshot_roots"
+    for configured_root in "${configured_screenshot_roots[@]}"; do
+      if [[ "$configured_root" != /* || ! -d "$configured_root" ]]; then
+        echo "Screenshot root must be an existing absolute directory: $configured_root" >&2
+        exit 2
+      fi
+      source_conversion_args+=(--screenshot-root "$configured_root")
+    done
+  fi
   if [[ -n "$batch_task_filter" ]]; then
     IFS=',' read -r -a conversion_tasks <<< "$batch_task_filter"
     for conversion_task in "${conversion_tasks[@]}"; do
@@ -271,6 +276,23 @@ if [[ "$refresh_memory" -eq 1 ]]; then
     --memory-root "$memory_root"
     --source-index "$master_source_index"
   )
+  if [[ -n "$source_selection_manifest" ]]; then
+    if [[ "$source_selection_manifest" != /* || ! -f "$source_selection_manifest" ]]; then
+      echo "Source selection manifest must be an existing absolute file: $source_selection_manifest" >&2
+      exit 2
+    fi
+    memory_args+=(--source-selection-manifest "$source_selection_manifest")
+  fi
+  if [[ -n "$source_screenshot_roots" ]]; then
+    IFS=':' read -r -a configured_screenshot_roots <<< "$source_screenshot_roots"
+    for configured_root in "${configured_screenshot_roots[@]}"; do
+      if [[ "$configured_root" != /* || ! -d "$configured_root" ]]; then
+        echo "Screenshot root must be an existing absolute directory: $configured_root" >&2
+        exit 2
+      fi
+      memory_args+=(--source-screenshot-root "$configured_root")
+    done
+  fi
   IFS=':' read -r -a configured_runlog_roots <<< "$memory_runlog_roots"
   for configured_root in "${configured_runlog_roots[@]}"; do
     if [[ "$configured_root" != /* || ! -d "$configured_root" ]]; then

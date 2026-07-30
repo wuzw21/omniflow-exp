@@ -69,9 +69,7 @@ DEFAULT_CONTACTS_PERMISSION_GRANTS = (
     "android.permission.WRITE_CONTACTS",
     "android.permission.POST_NOTIFICATIONS",
 )
-DEFAULT_DEVICE_TARGETS = (
-    "small5554:emulator-5554:5554,fold5564:emulator-5564:5564"
-)
+DEFAULT_DEVICE_TARGETS = "small5554:emulator-5554:5554,fold5564:emulator-5564:5564"
 DEFAULT_MOBILEGPT_WAIT_START_TIMEOUT_SEC = 60.0
 DEFAULT_MOBILEGPT_EPISODE_WAIT_TIMEOUT_SEC = 120.0
 DEFAULT_EVAL_TASK_RANDOM_SEED = 113
@@ -605,9 +603,7 @@ def _claim_one_task_attempt(
         "evaluation_seed": evaluation_seed,
         "task_iteration": int(task_iteration),
         "max_task_iterations": 3,
-        "baseline_environment_repair": str(
-            baseline_environment_repair or ""
-        ).strip(),
+        "baseline_environment_repair": str(baseline_environment_repair or "").strip(),
         "dry_run": bool(dry_run),
         "immutable": True,
         "provenance": provenance,
@@ -1835,11 +1831,7 @@ def build_official_androidworld_command(
             "uses_omniflow_agent": False,
             "uses_source_action_hints": bool(hint_path_text),
             "source_action_hint_path": hint_path_text,
-            "hint_mode": (
-                "official_goal_reference_trace"
-                if hint_path_text
-                else ""
-            ),
+            "hint_mode": ("official_goal_reference_trace" if hint_path_text else ""),
             "include_indexed_context": False,
         },
     )
@@ -1920,9 +1912,7 @@ def build_e2e_command(
     if serial.strip():
         env["ANDROID_SERIAL"] = serial.strip()
     if resolved_agent == "omniflow" and max_fallback_steps is not None:
-        env["OMNIFLOW_MAX_FALLBACK_STEPS"] = str(
-            max(0, int(max_fallback_steps))
-        )
+        env["OMNIFLOW_MAX_FALLBACK_STEPS"] = str(max(0, int(max_fallback_steps)))
     resolved_omnitransfer_root = (
         _repo_path(omnitransfer_root, repo_root=repo_root)
         if omnitransfer_root
@@ -2744,15 +2734,7 @@ def _patch_mobilegpt_client_runtime(
 ) -> list[Path]:
     root = _repo_path(mobilegpt_root, repo_root=repo_root)
     java_root = (
-        root
-        / "App"
-        / "app"
-        / "src"
-        / "main"
-        / "java"
-        / "com"
-        / "example"
-        / "MobileGPT"
+        root / "App" / "app" / "src" / "main" / "java" / "com" / "example" / "MobileGPT"
     )
     service_java = java_root / "MobileGPTAccessibilityService.java"
     global_java = java_root / "MobileGPTGlobal.java"
@@ -2804,6 +2786,7 @@ def _patch_mobilegpt_client_runtime(
                 f"Unable to guard MobileGPT app-list connection: {service_java}"
             )
     if 'action.equals("back") || action.equals("go-back")' not in patched_service:
+
         def _back_branch(match: re.Match[str]) -> str:
             indent = str(match.group("indent") or "")
             body_indent = indent + "    "
@@ -2899,14 +2882,7 @@ def _mobilegpt_client_paths(
     root = _repo_path(mobilegpt_root, repo_root=repo_root)
     app_root = root / "App"
     java_root = (
-        app_root
-        / "app"
-        / "src"
-        / "main"
-        / "java"
-        / "com"
-        / "example"
-        / "MobileGPT"
+        app_root / "app" / "src" / "main" / "java" / "com" / "example" / "MobileGPT"
     )
     output_root = app_root / "app" / "build" / "outputs" / "apk" / "debug"
     return {
@@ -2985,8 +2961,7 @@ def _validate_mobilegpt_client_source(
         missing_markers.append(expected_host)
     if missing_markers:
         raise ValueError(
-            "MobileGPT client source patch audit failed: "
-            + ", ".join(missing_markers)
+            "MobileGPT client source patch audit failed: " + ", ".join(missing_markers)
         )
     return paths
 
@@ -3004,9 +2979,7 @@ def _mobilegpt_client_build_state(
     )
     if not paths["apk"].is_file():
         raise FileNotFoundError(f"MobileGPT client APK not found: {paths['apk']}")
-    input_sha256, input_file_count = _mobilegpt_client_input_digest(
-        paths["app_root"]
-    )
+    input_sha256, input_file_count = _mobilegpt_client_input_digest(paths["app_root"])
     configured_java_home = str(os.environ.get("JAVA_HOME") or "").strip()
     if configured_java_home:
         java_home = Path(configured_java_home).expanduser().resolve()
@@ -3092,7 +3065,9 @@ def _audit_mobilegpt_client_build(
         )
     receipt = json.loads(paths["receipt"].read_text(encoding="utf-8"))
     if not isinstance(receipt, dict):
-        raise ValueError(f"MobileGPT client build receipt must be an object: {paths['receipt']}")
+        raise ValueError(
+            f"MobileGPT client build receipt must be an object: {paths['receipt']}"
+        )
     current = _mobilegpt_client_build_state(
         mobilegpt_root=mobilegpt_root,
         host_ip=host_ip,
@@ -3383,8 +3358,8 @@ def write_omniflow_mobilegpt_event(event: dict):
             server_text = server_text.replace(
                 "def _omniflow_send_action(client_socket, action):\n",
                 "def _omniflow_send_action(client_socket, action):\n"
-                "    action_name = (str(action.get(\"name\") or \"\").strip()\n"
-                "                   if isinstance(action, dict) else \"\")\n"
+                '    action_name = (str(action.get("name") or "").strip()\n'
+                '                   if isinstance(action, dict) else "")\n'
                 "    write_omniflow_mobilegpt_event({\n"
                 '        "event": "mobilegpt_action_sent",\n'
                 '        "action_name": action_name,\n'
@@ -3413,9 +3388,7 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
         if str(row.get("event") or "").startswith("mobilegpt_teacher_")
     ]
     memory_rows = [row for row in rows if row.get("event") == "memory_lookup"]
-    action_rows = [
-        row for row in rows if row.get("event") == "mobilegpt_action_sent"
-    ]
+    action_rows = [row for row in rows if row.get("event") == "mobilegpt_action_sent"]
     device_action_rows = [
         row for row in action_rows if row.get("is_device_action") is True
     ]
@@ -3445,9 +3418,7 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
         1 for row in memory_rows if row.get("result") == "derive_fallback"
     )
     prompt_tokens = sum(_coerce_int(row.get("prompt_tokens")) for row in rows)
-    completion_tokens = sum(
-        _coerce_int(row.get("completion_tokens")) for row in rows
-    )
+    completion_tokens = sum(_coerce_int(row.get("completion_tokens")) for row in rows)
     total_tokens = sum(_coerce_int(row.get("total_tokens")) for row in rows)
     model_calls = len(chat_rows) + len(embedding_rows)
     return {
@@ -3585,9 +3556,7 @@ def _mobilegpt_stats_row_fields(
         f"{prefix}_prompt_tokens": _coerce_int(stats.get("prompt_tokens")),
         f"{prefix}_completion_tokens": _coerce_int(stats.get("completion_tokens")),
         f"{prefix}_total_tokens": _coerce_int(stats.get("total_tokens")),
-        f"{prefix}_token_usage_status": str(
-            stats.get("token_usage_status") or ""
-        ),
+        f"{prefix}_token_usage_status": str(stats.get("token_usage_status") or ""),
         f"{prefix}_chat_latency_sec": _coerce_float(stats.get("chat_latency_sec")),
         f"{prefix}_embedding_latency_sec": _coerce_float(
             stats.get("embedding_latency_sec")
@@ -3605,15 +3574,9 @@ def _mobilegpt_stats_row_fields(
         f"{prefix}_derive_fallback_count": _coerce_int(
             stats.get("derive_fallback_count")
         ),
-        f"{prefix}_action_sent_count": _coerce_int(
-            stats.get("action_sent_count")
-        ),
-        f"{prefix}_actions_executed": _coerce_int(
-            stats.get("actions_executed")
-        ),
-        f"{prefix}_action_name_counts": dict(
-            stats.get("action_name_counts") or {}
-        ),
+        f"{prefix}_action_sent_count": _coerce_int(stats.get("action_sent_count")),
+        f"{prefix}_actions_executed": _coerce_int(stats.get("actions_executed")),
+        f"{prefix}_action_name_counts": dict(stats.get("action_name_counts") or {}),
         f"{prefix}_event_count": _coerce_int(stats.get("event_count")),
         f"{prefix}_stats_jsonl": str(stats.get("stats_path") or ""),
         f"{prefix}_stats_summary": str(stats.get("summary_path") or ""),
@@ -3726,9 +3689,7 @@ def _mobilegpt_manifest_evidence_path(
     try:
         path.relative_to(bundle_root)
     except ValueError as error:
-        raise ValueError(
-            f"mobilegpt_cold_memory_{label}_outside_bundle"
-        ) from error
+        raise ValueError(f"mobilegpt_cold_memory_{label}_outside_bundle") from error
     if not path.is_file():
         raise ValueError(f"mobilegpt_cold_memory_{label}_missing:{path}")
     expected_sha256 = str(record.get("sha256") or "").strip()
@@ -3769,9 +3730,11 @@ def validate_mobilegpt_adapted_memory(
     if int(source_seed) != 111:
         raise ValueError("mobilegpt_cold_memory_requires_source_seed_111")
     normalized_expected_source_method = str(expected_source_method or "").strip()
-    if normalized_expected_source_method and str(
-        manifest.get("source_method") or ""
-    ).strip() != normalized_expected_source_method:
+    if (
+        normalized_expected_source_method
+        and str(manifest.get("source_method") or "").strip()
+        != normalized_expected_source_method
+    ):
         raise ValueError(
             "mobilegpt_cold_memory_source_method_mismatch:"
             f"expected={normalized_expected_source_method}:"
@@ -3804,7 +3767,9 @@ def validate_mobilegpt_adapted_memory(
     memory_record = manifest.get("memory")
     if not isinstance(memory_record, dict):
         raise ValueError("mobilegpt_cold_memory_record_missing")
-    expected_memory_path = (root.parent / str(memory_record.get("relative_path") or "")).resolve()
+    expected_memory_path = (
+        root.parent / str(memory_record.get("relative_path") or "")
+    ).resolve()
     if expected_memory_path != root:
         raise ValueError("mobilegpt_cold_memory_path_mismatch")
     actual_digest, actual_file_count = _mobilegpt_memory_digest(root)
@@ -3826,9 +3791,11 @@ def validate_mobilegpt_adapted_memory(
         label="teacher_source",
     )
     teacher_payload = json.loads(teacher_source_path.read_text(encoding="utf-8"))
-    if not isinstance(teacher_payload, dict) or teacher_payload.get(
-        "schema_version"
-    ) != "omniflow.mobilegpt-teacher-source.v1":
+    if (
+        not isinstance(teacher_payload, dict)
+        or teacher_payload.get("schema_version")
+        != "omniflow.mobilegpt-teacher-source.v1"
+    ):
         raise ValueError("mobilegpt_cold_memory_teacher_source_invalid")
     if str(teacher_payload.get("task_name") or "") != str(task_name):
         raise ValueError("mobilegpt_cold_memory_teacher_source_task_mismatch")
@@ -3894,17 +3861,14 @@ def validate_mobilegpt_adapted_memory(
     )
     if not write_status["memory_written"]:
         raise ValueError(
-            "mobilegpt_cold_memory_incomplete:"
-            + ",".join(write_status["reasons"])
+            "mobilegpt_cold_memory_incomplete:" + ",".join(write_status["reasons"])
         )
     expected_teacher_count = int(teacher_payload.get("action_count") or 0)
     if expected_teacher_count != int(write_status["teacher_expected_action_count"]):
         raise ValueError("mobilegpt_cold_memory_teacher_source_action_count_mismatch")
     manifest_count_pairs = {
         "teacher_action_count": write_status["teacher_action_count"],
-        "teacher_expected_action_count": write_status[
-            "teacher_expected_action_count"
-        ],
+        "teacher_expected_action_count": write_status["teacher_expected_action_count"],
         "teacher_consumed_count": write_status["teacher_consumed_action_count"],
         "task_finished_count": write_status["task_finished_count"],
     }
@@ -3951,9 +3915,7 @@ def build_mobilegpt_teacher_source(
         else source_path
     )
     if not provenance_path.is_file():
-        raise FileNotFoundError(
-            f"mobilegpt_source_run_log_missing:{provenance_path}"
-        )
+        raise FileNotFoundError(f"mobilegpt_source_run_log_missing:{provenance_path}")
     from src.integrations.mobilegpt_teacher import (
         load_teacher_actions,
         preflight_teacher_source_run_log,
@@ -3995,7 +3957,16 @@ def build_mobilegpt_teacher_source(
             sanitized_params["source_element"] = {
                 key: value
                 for key, value in element.items()
-                if key in {"text", "description", "resource_id", "content_desc"}
+                if key
+                in {
+                    "container_anchor",
+                    "content_desc",
+                    "description",
+                    "relation",
+                    "resource_id",
+                    "role",
+                    "text",
+                }
             }
         package_name = str(source_context.get("package_name") or "").strip()
         if package_name:
@@ -4018,9 +3989,7 @@ def build_mobilegpt_teacher_source(
         "source_run_log_sha256": _file_sha256(provenance_path),
         "grounded_teacher_run_log_sha256": _file_sha256(source_path),
         "action_count": len(actions),
-        "groundable_action_count": int(
-            teacher_preflight["groundable_action_count"]
-        ),
+        "groundable_action_count": int(teacher_preflight["groundable_action_count"]),
         "actions": actions,
         "contains_source_coordinates": False,
         "contains_task_or_subtask_semantics": False,
@@ -4115,8 +4084,7 @@ def seal_mobilegpt_adapted_memory(
     )
     if not write_status["memory_written"]:
         raise ValueError(
-            "mobilegpt_cold_memory_incomplete:"
-            + ",".join(write_status["reasons"])
+            "mobilegpt_cold_memory_incomplete:" + ",".join(write_status["reasons"])
         )
     if int(teacher.get("action_count") or 0) != int(
         write_status["teacher_expected_action_count"]
@@ -4179,13 +4147,9 @@ def seal_mobilegpt_adapted_memory(
             "chat_models": list(stats_summary.get("chat_models") or []),
             "embedding_models": list(stats_summary.get("embedding_models") or []),
             "prompt_tokens": _coerce_int(stats_summary.get("prompt_tokens")),
-            "completion_tokens": _coerce_int(
-                stats_summary.get("completion_tokens")
-            ),
+            "completion_tokens": _coerce_int(stats_summary.get("completion_tokens")),
             "total_tokens": _coerce_int(stats_summary.get("total_tokens")),
-            "task_elapsed_sec": _coerce_float(
-                stats_summary.get("task_elapsed_sec")
-            ),
+            "task_elapsed_sec": _coerce_float(stats_summary.get("task_elapsed_sec")),
             "wall_sec": float(source_wall_sec or 0.0),
         },
         "official_source_result": {
@@ -5684,15 +5648,11 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
                 "artifact_ref": row.get("artifact_ref"),
                 "target_run_log_path": row.get("target_run_log_path"),
                 "target_run_log_sha256": row.get("target_run_log_sha256"),
-                "target_transfer_states_path": row.get(
-                    "target_transfer_states_path"
-                ),
+                "target_transfer_states_path": row.get("target_transfer_states_path"),
                 "target_transfer_states_sha256": row.get(
                     "target_transfer_states_sha256"
                 ),
-                "target_transfer_state_audit": row.get(
-                    "target_transfer_state_audit"
-                ),
+                "target_transfer_state_audit": row.get("target_transfer_state_audit"),
                 "relocation_diagnostic_count": len(relocation_diagnostics),
                 "relocation_diagnostics": relocation_diagnostics,
                 "error": row.get("error"),
@@ -6164,8 +6124,7 @@ def _select_complete_function(store_path: str | Path):
     store = FunctionStore(_repo_path(store_path))
     if store.load_errors:
         raise ValueError(
-            "t3a_hint_function_store_invalid:"
-            + ",".join(sorted(store.load_errors))
+            "t3a_hint_function_store_invalid:" + ",".join(sorted(store.load_errors))
         )
     functions = [
         function
@@ -6192,16 +6151,13 @@ def _select_complete_function(store_path: str | Path):
         candidate
         for candidate in functions
         if all(
-            other is candidate
-            or contains(action_tools(candidate), action_tools(other))
+            other is candidate or contains(action_tools(candidate), action_tools(other))
             for other in functions
         )
     ]
     maximum = max((len(action_tools(item)) for item in candidates), default=0)
     candidates = [
-        candidate
-        for candidate in candidates
-        if len(action_tools(candidate)) == maximum
+        candidate for candidate in candidates if len(action_tools(candidate)) == maximum
     ]
     if len(candidates) != 1:
         raise ValueError("t3a_hint_complete_function_ambiguous")
@@ -6493,10 +6449,7 @@ def _mobilegpt_action_package(action: Any) -> str:
     if not isinstance(action, dict):
         return ""
     action_type = str(
-        action.get("action_type")
-        or action.get("type")
-        or action.get("tool")
-        or ""
+        action.get("action_type") or action.get("type") or action.get("tool") or ""
     ).strip()
     params = (
         dict(action.get("params") or {})
@@ -7213,15 +7166,11 @@ def _one_task_summary_rows(
                 {
                     "prep_type": str(mobilegpt_prep.get("type") or ""),
                     "prep_duration_sec": prep_fields["prep_task_elapsed_sec"],
-                    "prep_wall_sec": _coerce_float(
-                        mobilegpt_prep.get("wall_sec")
-                    ),
+                    "prep_wall_sec": _coerce_float(mobilegpt_prep.get("wall_sec")),
                     "prep_official_validator_success": mobilegpt_prep.get(
                         "official_validator_success"
                     ),
-                    "prep_manifest": str(
-                        mobilegpt_prep.get("manifest_path") or ""
-                    ),
+                    "prep_manifest": str(mobilegpt_prep.get("manifest_path") or ""),
                     "prep_manifest_sha256": str(
                         mobilegpt_prep.get("manifest_sha256") or ""
                     ),
@@ -7246,27 +7195,19 @@ def _one_task_summary_rows(
             row.update(
                 {
                     "prep_type": str(appagent_prep.get("type") or ""),
-                    "prep_model_calls": _coerce_int(
-                        appagent_prep.get("model_calls")
-                    ),
+                    "prep_model_calls": _coerce_int(appagent_prep.get("model_calls")),
                     "prep_prompt_tokens": _coerce_int(
                         appagent_prep.get("prompt_tokens")
                     ),
                     "prep_completion_tokens": _coerce_int(
                         appagent_prep.get("completion_tokens")
                     ),
-                    "prep_total_tokens": _coerce_int(
-                        appagent_prep.get("total_tokens")
-                    ),
+                    "prep_total_tokens": _coerce_int(appagent_prep.get("total_tokens")),
                     "prep_token_usage_status": str(
                         appagent_prep.get("token_usage_status") or ""
                     ),
-                    "prep_duration_sec": _coerce_float(
-                        appagent_prep.get("wall_sec")
-                    ),
-                    "prep_wall_sec": _coerce_float(
-                        appagent_prep.get("wall_sec")
-                    ),
+                    "prep_duration_sec": _coerce_float(appagent_prep.get("wall_sec")),
+                    "prep_wall_sec": _coerce_float(appagent_prep.get("wall_sec")),
                     "prep_source_episode_duration_sec": _coerce_float(
                         appagent_prep.get("source_episode_duration_sec")
                     ),
@@ -7279,15 +7220,11 @@ def _one_task_summary_rows(
                     "prep_official_validator_success": appagent_prep.get(
                         "official_validator_success"
                     ),
-                    "prep_manifest": str(
-                        appagent_prep.get("manifest_path") or ""
-                    ),
+                    "prep_manifest": str(appagent_prep.get("manifest_path") or ""),
                     "prep_manifest_sha256": str(
                         appagent_prep.get("manifest_sha256") or ""
                     ),
-                    "prep_demo_sha256": str(
-                        appagent_prep.get("demo_sha256") or ""
-                    ),
+                    "prep_demo_sha256": str(appagent_prep.get("demo_sha256") or ""),
                     "prep_demo_docs_sha256": str(
                         appagent_prep.get("demo_docs_sha256") or ""
                     ),
@@ -7436,8 +7373,7 @@ def _aggregate_normalized_one_task_rows(
         _coerce_int(row.get("actions_executed")) for row in canonical_rows
     )
     replay_step_completed = sum(
-        _coerce_int(row.get("replay_step_completed_count"))
-        for row in canonical_rows
+        _coerce_int(row.get("replay_step_completed_count")) for row in canonical_rows
     )
     replay_step_total = sum(
         _coerce_int(row.get("replay_step_total")) for row in canonical_rows
@@ -7498,8 +7434,7 @@ def _aggregate_normalized_one_task_rows(
                 _coerce_int(row.get("prompt_tokens")) for row in canonical_rows
             ),
             "completion_tokens": sum(
-                _coerce_int(row.get("completion_tokens"))
-                for row in canonical_rows
+                _coerce_int(row.get("completion_tokens")) for row in canonical_rows
             ),
             "total_tokens": sum(
                 _coerce_int(row.get("total_tokens")) for row in canonical_rows
@@ -7848,8 +7783,7 @@ def _run_one_task_mobilegpt(
     offline_retrieval = method == "mobilegpt_offline_retrieval"
     if offline_retrieval:
         source_method = (
-            str(item.meta.get("method") or "").strip()
-            or DEFAULT_SOURCE_METHOD
+            str(item.meta.get("method") or "").strip() or DEFAULT_SOURCE_METHOD
         )
         if item.meta.get("latest_official_success_source") is not True:
             raise ValueError(
@@ -7857,9 +7791,7 @@ def _run_one_task_mobilegpt(
                 f"task={item.task}"
             )
     source_memory_value = str(
-        getattr(args, "mobilegpt_source_memory_root", "")
-        if offline_retrieval
-        else ""
+        getattr(args, "mobilegpt_source_memory_root", "") if offline_retrieval else ""
     ).strip()
     source_memory_root = (
         _repo_path(source_memory_value) if source_memory_value else None
@@ -7915,9 +7847,7 @@ def _run_one_task_mobilegpt(
         else str(source_target.get("target_source") or "unresolved")
     )
     memory_condition = (
-        "adapted_native_memory"
-        if source_memory_root is not None
-        else "empty_memory"
+        "adapted_native_memory" if source_memory_root is not None else "empty_memory"
     )
     source_memory_digest = ""
     source_memory_file_count = 0
@@ -7929,14 +7859,10 @@ def _run_one_task_mobilegpt(
         dict(adapted_memory.get("manifest") or {}) if adapted_memory else {}
     )
     adapted_source_stats = (
-        dict(adapted_memory.get("source_stats_summary") or {})
-        if adapted_memory
-        else {}
+        dict(adapted_memory.get("source_stats_summary") or {}) if adapted_memory else {}
     )
     adapted_source_stats_record = (
-        dict(adapted_manifest.get("source_stats") or {})
-        if adapted_manifest
-        else {}
+        dict(adapted_manifest.get("source_stats") or {}) if adapted_manifest else {}
     )
     adapted_official_result = (
         dict(adapted_manifest.get("official_source_result") or {})
@@ -7952,9 +7878,7 @@ def _run_one_task_mobilegpt(
                 "official_validator_success"
             ),
             "manifest_path": str(adapted_memory.get("manifest_path") or ""),
-            "manifest_sha256": str(
-                adapted_memory.get("manifest_sha256") or ""
-            ),
+            "manifest_sha256": str(adapted_memory.get("manifest_sha256") or ""),
             "memory_sha256": str(adapted_memory.get("memory_sha256") or ""),
             "shared_across_targets": True,
         }
@@ -8342,8 +8266,7 @@ def cmd_one_task(args: argparse.Namespace) -> int:
     targets = parse_device_targets(args.device_targets)
     source_memory_run_log = item.source_run_log
     if any(
-        _is_mobilegpt_method(method) or method == "appagent_demo"
-        for method in methods
+        _is_mobilegpt_method(method) or method == "appagent_demo" for method in methods
     ):
         store_index_text = str(getattr(args, "store_index", "") or "").strip()
         if store_index_text:
@@ -8455,9 +8378,7 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                     source_run_log=source_memory_run_log,
                 )
                 appagent_docs_root = Path(provenance["demo_docs_root"]).resolve()
-                appagent_action_source = Path(
-                    provenance["teacher_source"]
-                ).resolve()
+                appagent_action_source = Path(provenance["teacher_source"]).resolve()
                 source_metrics = dict(provenance["source_episode_metrics"])
                 document_usage = dict(provenance["doc_generation_usage"])
                 prep_model_calls = _coerce_int(
@@ -8498,9 +8419,7 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                     "manifest_path": str(source_memory_manifest),
                     "manifest_sha256": _file_sha256(source_memory_manifest),
                     "demo_sha256": str(provenance.get("demo_sha256") or ""),
-                    "demo_docs_sha256": str(
-                        provenance.get("demo_docs_sha256") or ""
-                    ),
+                    "demo_docs_sha256": str(provenance.get("demo_docs_sha256") or ""),
                     "shared_across_targets": True,
                 }
                 memory_mode = "appagent_native_demo_docs"
@@ -8541,9 +8460,7 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                 evaluation_seed=task_seed,
                 attempt_id=attempt_id,
                 source_run_log=(
-                    source_memory_run_log
-                    if method == "appagent_demo"
-                    else None
+                    source_memory_run_log if method == "appagent_demo" else None
                 ),
                 artifacts=artifacts,
             )
@@ -8815,8 +8732,7 @@ def cmd_mobilegpt(args: argparse.Namespace) -> int:
                 print(f"[mobilegpt:client] audit-failed: {error}", file=sys.stderr)
                 return 1
             print(
-                "[mobilegpt:client] audit "
-                + json.dumps(audit, sort_keys=True),
+                "[mobilegpt:client] audit " + json.dumps(audit, sort_keys=True),
                 flush=True,
             )
             return 0
@@ -8846,8 +8762,7 @@ def cmd_mobilegpt(args: argparse.Namespace) -> int:
             print(f"[mobilegpt:client] rebuild reason={error}", flush=True)
         else:
             print(
-                "[mobilegpt:client] reuse "
-                + json.dumps(audit, sort_keys=True),
+                "[mobilegpt:client] reuse " + json.dumps(audit, sort_keys=True),
                 flush=True,
             )
             return 0
@@ -9139,9 +9054,7 @@ def build_parser() -> argparse.ArgumentParser:
     one_task_parser.add_argument(
         "--store-path",
         default="",
-        help=(
-            "Validated omniflow.store.v2 required by the OmniFlow methods."
-        ),
+        help=("Validated omniflow.store.v2 required by the OmniFlow methods."),
     )
     one_task_parser.add_argument(
         "--store-index",
@@ -9209,8 +9122,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--appagent-demo-memory-root",
         default="",
         help=(
-            "Sealed source-111 AppAgent human-demo workspace required by "
-            "appagent_demo."
+            "Sealed source-111 AppAgent human-demo workspace required by appagent_demo."
         ),
     )
     one_task_parser.add_argument("--mobilegpt-server-host", default="0.0.0.0")

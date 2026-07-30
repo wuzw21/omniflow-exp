@@ -109,9 +109,7 @@ def test_frozen_source_evidence_grounds_both_baseline_teachers(
         expected_source_state_catalog_sha256=hashlib.sha256(
             states.read_bytes()
         ).hexdigest(),
-        expected_provenance_sha256=hashlib.sha256(
-            provenance.read_bytes()
-        ).hexdigest(),
+        expected_provenance_sha256=hashlib.sha256(provenance.read_bytes()).hexdigest(),
     )
     grounded_path = tmp_path / "grounded.teacher.run_log.json"
     grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
@@ -243,9 +241,7 @@ def test_source_and_store_indexes_join_without_rewriting_frozen_assets(
         task="RecordWithName",
         source_run_log=source,
         meta={
-            "source_run_log_sha256": hashlib.sha256(
-                source.read_bytes()
-            ).hexdigest(),
+            "source_run_log_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
             "store_provenance": str(provenance),
             "store_provenance_sha256": hashlib.sha256(
                 provenance.read_bytes()
@@ -259,9 +255,9 @@ def test_source_and_store_indexes_join_without_rewriting_frozen_assets(
         store_index_path=store_index,
     )
 
-    assert grounded["steps"][0]["metadata"]["source_context"]["element"][
-        "text"
-    ] == "Save"
+    assert (
+        grounded["steps"][0]["metadata"]["source_context"]["element"]["text"] == "Save"
+    )
     assert audit["source_state_catalog"] == str(source)
     assert audit["source_state_catalog_source"] == "embedded_source_run_log"
 
@@ -508,9 +504,7 @@ def test_canonical_grounding_recovers_unique_verified_legacy_target(
         "text": "Continue",
         "resource_id": "app:id/continue",
     }
-    assert audit["source_target_evidence_source"] == (
-        "verified_legacy_provenance"
-    )
+    assert audit["source_target_evidence_source"] == ("verified_legacy_provenance")
     assert audit["source_target_evidence_count"] == 1
     assert audit["verified_source_target_count"] == 1
 
@@ -680,6 +674,234 @@ def test_canonical_grounding_uses_input_text_action_point(
     assert audit["semantic_action_count"] == 1
 
 
+def test_canonical_grounding_uses_unique_structural_child_target(
+    tmp_path: Path,
+) -> None:
+    xml = (
+        '<hierarchy><node clickable="true" bounds="[0,0][100,50]">'
+        '<node text="Dreamer&apos;s Awake" bounds="[0,0][70,50]" />'
+        '<node clickable="true" bounds="[70,0][100,50]" />'
+        "</node></hierarchy>"
+    )
+    source = tmp_path / "anonymous-child.run_log.json"
+    source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [{"action_type": "click", "x": 85, "y": 25}],
+                observations=[
+                    androidworld_state(
+                        "anonymous-child",
+                        forest=xml,
+                        width=100,
+                        height=50,
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    item = SimpleNamespace(
+        task="AnonymousChildTask",
+        source_run_log=source,
+        meta={"retained_source_run_log_sha256": source_sha256},
+    )
+
+    grounded, audit = build_grounded_teacher_run_log_from_item(
+        index_path=tmp_path / "source_index.json",
+        item=item,
+    )
+
+    assert grounded["steps"][0]["metadata"]["source_context"]["element"] == {
+        "relation": "unique_actionable_descendant",
+        "container_anchor": {"text": "Dreamer's Awake"},
+    }
+    grounded_path = tmp_path / "grounded-anonymous-child.run_log.json"
+    grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
+    preflight = preflight_teacher_source_run_log(grounded_path)
+    assert (
+        preflight["groundable_action_count"] == preflight["teacher_action_count"] == 1
+    )
+    assert audit["semantic_action_count"] == 1
+
+
+def test_canonical_grounding_uses_unique_anonymous_editable_role(
+    tmp_path: Path,
+) -> None:
+    xml = (
+        '<hierarchy><node bounds="[0,0][100,100]">'
+        '<node text="Select time" bounds="[0,0][100,50]" />'
+        '<node class="android.widget.EditText" editable="true" '
+        'focused="true" bounds="[0,50][100,100]" />'
+        "</node></hierarchy>"
+    )
+    source = tmp_path / "anonymous-input.run_log.json"
+    source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [
+                    {
+                        "action_type": "input_text",
+                        "text": "Example",
+                        "x": 50,
+                        "y": 75,
+                    }
+                ],
+                observations=[
+                    androidworld_state(
+                        "anonymous-input",
+                        forest=xml,
+                        width=100,
+                        height=100,
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    item = SimpleNamespace(
+        task="AnonymousInputTask",
+        source_run_log=source,
+        meta={"retained_source_run_log_sha256": source_sha256},
+    )
+
+    grounded, audit = build_grounded_teacher_run_log_from_item(
+        index_path=tmp_path / "source_index.json",
+        item=item,
+    )
+
+    assert grounded["steps"][0]["metadata"]["source_context"]["element"] == {
+        "role": "editable"
+    }
+    grounded_path = tmp_path / "grounded-anonymous-input.run_log.json"
+    grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
+    preflight = preflight_teacher_source_run_log(grounded_path)
+    assert (
+        preflight["groundable_action_count"] == preflight["teacher_action_count"] == 2
+    )
+    assert audit["semantic_action_count"] == 1
+
+
+def test_canonical_grounding_inherits_adjacent_unique_editable_target(
+    tmp_path: Path,
+) -> None:
+    full_xml = (
+        '<hierarchy><node bounds="[0,0][720,1280]">'
+        '<node text="Name" bounds="[32,80][688,120]" />'
+        '<node text=".md" editable="true" clickable="true" '
+        'bounds="[433,124][592,207]" />'
+        "</node></hierarchy>"
+    )
+    degraded_xml = '<hierarchy><node bounds="[492,185][572,265]" /></hierarchy>'
+    source = tmp_path / "adjacent-editable.run_log.json"
+    source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [
+                    {"action_type": "click", "x": 512, "y": 165},
+                    {
+                        "action_type": "input_text",
+                        "clear_text": True,
+                        "text": ".txt",
+                    },
+                ],
+                observations=[
+                    androidworld_state(
+                        "editable-before",
+                        forest=full_xml,
+                        package_name="net.example.editor",
+                        width=720,
+                        height=1280,
+                    ),
+                    androidworld_state(
+                        "editable-degraded",
+                        forest=degraded_xml,
+                        package_name="net.example.editor",
+                        width=720,
+                        height=1280,
+                    ),
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    item = SimpleNamespace(
+        task="AdjacentEditableTask",
+        source_run_log=source,
+        meta={"retained_source_run_log_sha256": source_sha256},
+    )
+
+    grounded, audit = build_grounded_teacher_run_log_from_item(
+        index_path=tmp_path / "source_index.json",
+        item=item,
+    )
+
+    for step in grounded["steps"]:
+        assert step["metadata"]["source_context"]["element"] == {"text": ".md"}
+    grounded_path = tmp_path / "grounded-adjacent-editable.run_log.json"
+    grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
+    preflight = preflight_teacher_source_run_log(grounded_path)
+    assert (
+        preflight["groundable_action_count"] == preflight["teacher_action_count"] == 2
+    )
+    assert audit["semantic_action_count"] == 2
+
+
+def test_canonical_grounding_does_not_inherit_editable_across_packages(
+    tmp_path: Path,
+) -> None:
+    full_xml = (
+        '<hierarchy><node bounds="[0,0][100,100]">'
+        '<node text="Name" editable="true" clickable="true" '
+        'bounds="[0,0][100,100]" />'
+        "</node></hierarchy>"
+    )
+    source = tmp_path / "cross-package-editable.run_log.json"
+    source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [
+                    {"action_type": "click", "x": 50, "y": 50},
+                    {"action_type": "input_text", "text": "unsafe"},
+                ],
+                observations=[
+                    androidworld_state(
+                        "package-a",
+                        forest=full_xml,
+                        package_name="com.example.a",
+                        width=100,
+                        height=100,
+                    ),
+                    androidworld_state(
+                        "package-b",
+                        forest="<hierarchy />",
+                        package_name="com.example.b",
+                        width=100,
+                        height=100,
+                    ),
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    item = SimpleNamespace(
+        task="CrossPackageEditableTask",
+        source_run_log=source,
+        meta={"retained_source_run_log_sha256": source_sha256},
+    )
+
+    grounded, audit = build_grounded_teacher_run_log_from_item(
+        index_path=tmp_path / "source_index.json",
+        item=item,
+    )
+
+    assert "element" not in grounded["steps"][1]["metadata"]["source_context"]
+    assert audit["semantic_action_count"] == 1
+
+
 def test_canonical_grounding_recovers_source_display_from_xml(
     tmp_path: Path,
 ) -> None:
@@ -728,9 +950,9 @@ def test_canonical_grounding_recovers_source_display_from_xml(
     }
     grounded_path = tmp_path / "grounded-missing-display.run_log.json"
     grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
-    assert preflight_teacher_source_run_log(grounded_path)[
-        "groundable_action_count"
-    ] == 1
+    assert (
+        preflight_teacher_source_run_log(grounded_path)["groundable_action_count"] == 1
+    )
     assert audit["semantic_action_count"] == 1
 
 
@@ -830,10 +1052,13 @@ def test_source_revision_reuses_frozen_asset_or_advances_past_failures(
     failed.mkdir(parents=True)
     (failed / "prep_failure.json").write_text("{}", encoding="utf-8")
 
-    assert select_source_asset_revision(
-        base,
-        manifest_name="appagent_demo_manifest.json",
-    ) == base / "native_source_r4"
+    assert (
+        select_source_asset_revision(
+            base,
+            manifest_name="appagent_demo_manifest.json",
+        )
+        == base / "native_source_r4"
+    )
 
     frozen = base / "native_source_r4"
     frozen.mkdir()
@@ -844,10 +1069,13 @@ def test_source_revision_reuses_frozen_asset_or_advances_past_failures(
     incomplete = base / "native_source_r5"
     incomplete.mkdir()
 
-    assert select_source_asset_revision(
-        base,
-        manifest_name="appagent_demo_manifest.json",
-    ) == frozen
+    assert (
+        select_source_asset_revision(
+            base,
+            manifest_name="appagent_demo_manifest.json",
+        )
+        == frozen
+    )
 
 
 def test_source_revision_is_stable_for_one_exact_source_hash(
@@ -869,31 +1097,40 @@ def test_source_revision_is_stable_for_one_exact_source_hash(
     expected = "2" * 64
     selected = base / f"source_{expected[:12]}"
 
-    assert select_source_asset_revision(
-        base,
-        manifest_name="cold_memory_manifest.json",
-        expected_source_sha256=expected,
-    ) == selected
+    assert (
+        select_source_asset_revision(
+            base,
+            manifest_name="cold_memory_manifest.json",
+            expected_source_sha256=expected,
+        )
+        == selected
+    )
 
     selected.mkdir()
     (selected / "generation_failure.json").write_text("{}", encoding="utf-8")
     revision_two = base / f"source_{expected[:12]}_r2"
-    assert select_source_asset_revision(
-        base,
-        manifest_name="cold_memory_manifest.json",
-        expected_source_sha256=expected,
-    ) == revision_two
+    assert (
+        select_source_asset_revision(
+            base,
+            manifest_name="cold_memory_manifest.json",
+            expected_source_sha256=expected,
+        )
+        == revision_two
+    )
 
     revision_two.mkdir()
     (revision_two / "cold_memory_manifest.json").write_text(
         json.dumps({"source_run_log_sha256": expected}),
         encoding="utf-8",
     )
-    assert select_source_asset_revision(
-        base,
-        manifest_name="cold_memory_manifest.json",
-        expected_source_sha256=expected,
-    ) == revision_two
+    assert (
+        select_source_asset_revision(
+            base,
+            manifest_name="cold_memory_manifest.json",
+            expected_source_sha256=expected,
+        )
+        == revision_two
+    )
 
 
 def test_source_revision_rejects_terminal_failure_for_exact_source_hash(
@@ -942,14 +1179,17 @@ def test_source_revision_allows_audited_environment_repair(
         encoding="utf-8",
     )
 
-    assert select_source_asset_revision(
-        base,
-        manifest_name="appagent_demo_manifest.json",
-        expected_source_sha256=expected,
-        environment_repair_reason=(
-            "launch_source_app_package_from_teacher_contract@7709f60"
-        ),
-    ) == base / f"source_{expected[:12]}_r2"
+    assert (
+        select_source_asset_revision(
+            base,
+            manifest_name="appagent_demo_manifest.json",
+            expected_source_sha256=expected,
+            environment_repair_reason=(
+                "launch_source_app_package_from_teacher_contract@7709f60"
+            ),
+        )
+        == base / f"source_{expected[:12]}_r2"
+    )
 
 
 def test_source_revision_advances_beyond_two_digit_failure_revision(
@@ -964,8 +1204,11 @@ def test_source_revision_advances_beyond_two_digit_failure_revision(
         attempt.mkdir(parents=True)
         (attempt / "prep_failure.json").write_text("{}", encoding="utf-8")
 
-    assert select_source_asset_revision(
-        base,
-        manifest_name="cold_memory_manifest.json",
-        expected_source_sha256=expected,
-    ) == base / f"{prefix}_r11"
+    assert (
+        select_source_asset_revision(
+            base,
+            manifest_name="cold_memory_manifest.json",
+            expected_source_sha256=expected,
+        )
+        == base / f"{prefix}_r11"
+    )

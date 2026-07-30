@@ -6,6 +6,7 @@ from pathlib import Path
 import stat
 
 import pytest
+from runlog_fixtures import androidworld_run_log
 
 from src.experiment.artifact_memory import (
     load_artifact_memory,
@@ -14,7 +15,7 @@ from src.experiment.artifact_memory import (
     registered_cell_plan_from_memory,
 )
 from src.experiment.artifact_memory import main as artifact_memory_main
-from runlog_fixtures import androidworld_run_log
+from src.integrations.runlog import adapt_source_run_log
 
 
 def _write_json(path: Path, value: object) -> Path:
@@ -25,6 +26,12 @@ def _write_json(path: Path, value: object) -> Path:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _canonical_json_bytes(value: object) -> bytes:
+    return (
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
 
 
 def _write_source_run_log(tmp_path: Path) -> Path:
@@ -81,9 +88,7 @@ def _write_registered_result(
                     else "emulator-5564"
                 ),
                 "console_port": (
-                    5554
-                    if device in {"small5554", "target5554"}
-                    else 5564
+                    5554 if device in {"small5554", "target5554"} else 5564
                 ),
                 "official_validator_used": True,
                 "official_validator_success": success,
@@ -168,6 +173,257 @@ def test_refresh_deduplicates_runlogs_and_keeps_indexed_source_as_canonical(
     )
     assert Path(current["registry_path"]).is_file()
     assert Path(current["by_task_root"], "RecordWithName.json").is_file()
+
+
+def test_refresh_applies_explicit_sha256_source_selection(
+    tmp_path: Path,
+) -> None:
+    source = _write_source_run_log(tmp_path)
+    selected = _write_json(
+        tmp_path / "other" / "RecordWithName" / "selected.run_log.json",
+        androidworld_run_log(
+            [
+                {"action_type": "click", "x": 10, "y": 10},
+                {"action_type": "wait"},
+            ],
+            task_name="RecordWithName",
+            goal="Record selected audio.",
+            seed=113,
+            with_pixels=True,
+        ),
+    )
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "goal": "Record original audio.",
+                "params": {"file_name": "original.m4a"},
+                "source_seed": 111,
+                "step_count": 1,
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    selection_manifest = _write_json(
+        tmp_path / "source_selection.json",
+        {
+            "schema_version": "omniflow.androidworld-source-selection.v1",
+            "selections": {
+                "RecordWithName": {
+                    "expected_source_run_log_sha256": _sha256(source),
+                    "selected_source_run_log_sha256": _sha256(selected),
+                    "reason": "Selected trajectory preserves the complete UI path.",
+                }
+            },
+        },
+    )
+
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        source_selection_manifest=selection_manifest,
+        function_catalogs=(),
+        runlog_roots=(source.parent, selected.parent),
+        result_roots=(),
+    )
+
+    canonical = report["canonical"]["source_run_logs"]["RecordWithName"]
+    assert canonical["sha256"] == _sha256(selected)
+    assert canonical["selection"]["expected_source_run_log_sha256"] == _sha256(source)
+    assert report["counts"]["source_selection_tasks"] == 1
+    source_index_payload = json.loads(
+        Path(report["indexes"]["source_index"]).read_text(encoding="utf-8")
+    )
+    row = source_index_payload["RecordWithName"]
+    assert row["retained_source_run_log_sha256"] == _sha256(selected)
+    assert row["goal"] == "Record selected audio."
+    assert row["source_seed"] == 113
+    assert row["step_count"] == 2
+    assert row["canonical_source_selection"]["reason"].startswith("Selected")
+
+
+def test_refresh_rejects_stale_source_selection(tmp_path: Path) -> None:
+    source = _write_source_run_log(tmp_path)
+    selected = _write_json(
+        tmp_path / "other" / "RecordWithName" / "selected.run_log.json",
+        androidworld_run_log(
+            [{"action_type": "wait"}],
+            task_name="RecordWithName",
+        ),
+    )
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    selection_manifest = _write_json(
+        tmp_path / "source_selection.json",
+        {
+            "schema_version": "omniflow.androidworld-source-selection.v1",
+            "selections": {
+                "RecordWithName": {
+                    "expected_source_run_log_sha256": "f" * 64,
+                    "selected_source_run_log_sha256": _sha256(selected),
+                    "reason": "Stale selection must not silently apply.",
+                }
+            },
+        },
+    )
+
+    with pytest.raises(ValueError, match="source_selection_stale"):
+        refresh_artifact_memory(
+            memory_root=tmp_path / "memory",
+            source_index=source_index,
+            source_selection_manifest=selection_manifest,
+            function_catalogs=(),
+            runlog_roots=(source.parent, selected.parent),
+            result_roots=(),
+        )
+
+
+def _write_legacy_selection_fixture(
+    tmp_path: Path,
+) -> tuple[Path, Path, Path, str]:
+    source = _write_source_run_log(tmp_path)
+    legacy_payload = {
+        "run_id": "legacy-selected-source",
+        "goal": "Tap the selected control.",
+        "success": True,
+        "steps": [
+            {
+                "observation_before_act": {
+                    "hierarchy_xml": (
+                        '<hierarchy><node text="Selected" /></hierarchy>'
+                    ),
+                    "width": 100,
+                    "height": 200,
+                },
+                "action": {"type": "click", "params": {"x": 50, "y": 100}},
+                "success": True,
+            }
+        ],
+    }
+    legacy = _write_json(
+        tmp_path / "legacy" / "RecordWithName" / "legacy.run_log.json",
+        legacy_payload,
+    )
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    evidence_sha256 = _sha256(legacy)
+    evidence_object = (
+        tmp_path
+        / "memory"
+        / "objects"
+        / "sha256"
+        / evidence_sha256[:2]
+        / f"{evidence_sha256}.json"
+    )
+    evidence_object.parent.mkdir(parents=True, exist_ok=True)
+    evidence_object.write_bytes(legacy.read_bytes())
+    converted = adapt_source_run_log(
+        legacy_payload,
+        task_name="RecordWithName",
+        task_parameters={"file_name": "selected.m4a"},
+        seed=111,
+        source_path=evidence_object,
+        require_screenshots=False,
+    )
+    converted_sha256 = hashlib.sha256(_canonical_json_bytes(converted)).hexdigest()
+    return source, legacy, source_index, converted_sha256
+
+
+def test_refresh_converts_selected_legacy_evidence_to_official_run_log(
+    tmp_path: Path,
+) -> None:
+    source, legacy, source_index, converted_sha256 = _write_legacy_selection_fixture(
+        tmp_path
+    )
+    selection_manifest = _write_json(
+        tmp_path / "source_selection.json",
+        {
+            "schema_version": "omniflow.androidworld-source-selection.v1",
+            "selections": {
+                "RecordWithName": {
+                    "expected_source_run_log_sha256": _sha256(source),
+                    "selected_source_evidence_sha256": _sha256(legacy),
+                    "expected_converted_source_run_log_sha256": converted_sha256,
+                    "source_seed": 111,
+                    "task_parameters": {"file_name": "selected.m4a"},
+                    "reason": "Legacy evidence contains the complete UI path.",
+                }
+            },
+        },
+    )
+
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        source_selection_manifest=selection_manifest,
+        function_catalogs=(),
+        runlog_roots=(source.parent, legacy.parent),
+        result_roots=(),
+    )
+
+    canonical = report["canonical"]["source_run_logs"]["RecordWithName"]
+    assert canonical["sha256"] == converted_sha256
+    conversion = canonical["selection"]["conversion"]
+    assert conversion["selected_source_evidence_sha256"] == _sha256(legacy)
+    converted = json.loads(Path(canonical["object_path"]).read_text())
+    assert converted["schema_version"] == "omniflow.run_log.v1"
+    assert converted["steps"][0]["observation"]["forest"].startswith("<hierarchy>")
+    assert converted["steps"][0]["observation"]["pixels"] is None
+    assert converted["task_parameters"] == {"file_name": "selected.m4a"}
+    assert converted["seed"] == 111
+
+
+def test_refresh_rejects_wrong_expected_legacy_conversion_hash(
+    tmp_path: Path,
+) -> None:
+    source, legacy, source_index, converted_sha256 = _write_legacy_selection_fixture(
+        tmp_path
+    )
+    wrong_sha256 = "0" * 64 if converted_sha256 != "0" * 64 else "1" * 64
+    selection_manifest = _write_json(
+        tmp_path / "source_selection.json",
+        {
+            "schema_version": "omniflow.androidworld-source-selection.v1",
+            "selections": {
+                "RecordWithName": {
+                    "expected_source_run_log_sha256": _sha256(source),
+                    "selected_source_evidence_sha256": _sha256(legacy),
+                    "expected_converted_source_run_log_sha256": wrong_sha256,
+                    "source_seed": 111,
+                    "task_parameters": {"file_name": "selected.m4a"},
+                    "reason": "A wrong conversion hash must stop refresh.",
+                }
+            },
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="source_selection_converted_hash_mismatch",
+    ):
+        refresh_artifact_memory(
+            memory_root=tmp_path / "memory",
+            source_index=source_index,
+            source_selection_manifest=selection_manifest,
+            function_catalogs=(),
+            runlog_roots=(source.parent, legacy.parent),
+            result_roots=(),
+        )
 
 
 def test_refresh_materializes_indexed_source_state_catalog(
@@ -347,28 +603,29 @@ def test_refresh_keeps_one_verified_runtime_store_from_duplicate_catalogs(
     )
     row = store_index["RecordWithName"]
     assert Path(row["store_path"]).read_bytes() == store.read_bytes()
-    assert Path(row["transfer_states_path"]) == Path(
-        row["store_path"]
-    ).with_name("transfer_states.json")
+    assert Path(row["transfer_states_path"]) == Path(row["store_path"]).with_name(
+        "transfer_states.json"
+    )
     assert Path(row["provenance_path"]).read_bytes() == provenance.read_bytes()
     assert Path(row["source_run_log_path"]).read_bytes() == source.read_bytes()
     assert row["source_run_log_sha256"] == _sha256(source)
 
-    assert artifact_memory_main(
-        [
-            "refresh",
-            "--memory-root",
-            str(tmp_path / "memory"),
-            "--source-index",
-            str(source_index),
-            "--runlog-root",
-            str(tmp_path / "evidence"),
-        ]
-    ) == 0
+    assert (
+        artifact_memory_main(
+            [
+                "refresh",
+                "--memory-root",
+                str(tmp_path / "memory"),
+                "--source-index",
+                str(source_index),
+                "--runlog-root",
+                str(tmp_path / "evidence"),
+            ]
+        )
+        == 0
+    )
     refreshed = load_artifact_memory(tmp_path / "memory" / "current.json")
-    assert list(refreshed["canonical"]["function_stores"]) == [
-        "RecordWithName"
-    ]
+    assert list(refreshed["canonical"]["function_stores"]) == ["RecordWithName"]
 
 
 def test_refresh_keeps_earliest_formal_result_without_success_cherry_picking(
@@ -488,9 +745,7 @@ def test_refresh_normalizes_legacy_target_device_labels(
         result_roots=(runs,),
     )
 
-    cell = report["canonical"]["result_cells"][
-        "RecordWithName|ours|small5554|111|113"
-    ]
+    cell = report["canonical"]["result_cells"]["RecordWithName|ours|small5554|111|113"]
     assert cell["device"] == "small5554"
     assert cell["registered_device_label"] == "target5554"
 

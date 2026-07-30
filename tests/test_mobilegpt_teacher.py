@@ -6,6 +6,7 @@ import sys
 from types import ModuleType
 
 from runlog_fixtures import androidworld_run_log, androidworld_state
+
 from src.integrations import mobilegpt_teacher
 from src.integrations.mobilegpt_teacher import install_mobilegpt_teacher
 
@@ -116,6 +117,91 @@ def test_teacher_uses_foreground_package_when_parsed_xml_omits_it(
     assert result.consumed_source_action is True
 
 
+def test_teacher_matches_unique_actionable_child_inside_semantic_container() -> None:
+    source_action = {
+        "type": "click",
+        "params": {
+            "source_context": {
+                "element": {
+                    "relation": "unique_actionable_descendant",
+                    "container_anchor": {"text": "Dreamer's Awake"},
+                }
+            }
+        },
+    }
+    current_screen = (
+        '<div><button index="10"><p>Dreamer&apos;s Awake</p>'
+        '<p>Martin</p><button index="11" /></button>'
+        '<button index="20"><p>Golden Days</p>'
+        '<button index="21" /></button></div>'
+    )
+
+    migrated = mobilegpt_teacher.migrate_source_action_to_mobilegpt(
+        source_action,
+        current_screen,
+    )
+
+    assert migrated["action"] == {
+        "name": "click",
+        "parameters": {"index": "11"},
+    }
+    assert migrated["match_reason"] == "unique_actionable_descendant"
+
+
+def test_teacher_rejects_ambiguous_structural_child_target() -> None:
+    source_action = {
+        "type": "click",
+        "params": {
+            "source_context": {
+                "element": {
+                    "relation": "unique_actionable_descendant",
+                    "container_anchor": {"text": "Dreamer's Awake"},
+                }
+            }
+        },
+    }
+    current_screen = (
+        '<div><button index="10"><p>Dreamer&apos;s Awake</p>'
+        '<button index="11" /><button index="12" /></button></div>'
+    )
+
+    assert (
+        mobilegpt_teacher._best_current_screen_match(
+            source_action,
+            current_screen,
+        )
+        is None
+    )
+
+
+def test_teacher_matches_only_unique_input_for_editable_role() -> None:
+    source_action = {
+        "type": "input_text",
+        "params": {
+            "text": "Example",
+            "source_context": {"element": {"role": "editable"}},
+        },
+    }
+
+    migrated = mobilegpt_teacher.migrate_source_action_to_mobilegpt(
+        source_action,
+        '<div><input index="7" /></div>',
+    )
+
+    assert migrated["action"] == {
+        "name": "input",
+        "parameters": {"index": "7", "input_text": "Example"},
+    }
+    assert migrated["match_reason"] == "unique_editable"
+    assert (
+        mobilegpt_teacher._best_current_screen_match(
+            source_action,
+            '<div><input index="7" /><input index="8" /></div>',
+        )
+        is None
+    )
+
+
 def test_adb_foreground_package_reads_top_resumed_activity(monkeypatch) -> None:
     monkeypatch.setenv("OMNIFLOW_MOBILEGPT_ADB_PATH", "/sdk/adb")
     monkeypatch.setenv("ANDROID_SERIAL", "emulator-5560")
@@ -161,14 +247,19 @@ def test_teacher_does_not_treat_content_provider_uri_as_foreground_package() -> 
         "</input></div>"
     )
 
-    assert mobilegpt_teacher._source_app_switch_preflight(
-        source_action,
-        current_screen,
-        current_app_package="com.android.chrome",
-    ) is None
+    assert (
+        mobilegpt_teacher._source_app_switch_preflight(
+            source_action,
+            current_screen,
+            current_app_package="com.android.chrome",
+        )
+        is None
+    )
 
 
-def test_teacher_handles_chrome_search_provider_prompt_without_consuming_source() -> None:
+def test_teacher_handles_chrome_search_provider_prompt_without_consuming_source() -> (
+    None
+):
     result = mobilegpt_teacher._target_preflight_action(
         '<div><p text="Search with Sogou" index="9" />'
         '<button text="Keep Google" index="12" /></div>'
@@ -221,13 +312,19 @@ def test_teacher_reenters_external_intent_after_target_setup(
     )
     teacher = mobilegpt_teacher.MobileGPTTeacher(source_run_log)
 
-    assert teacher.next_action(
-        '<button id="com.google.android.documentsui:id/file" '
-        'text="task.html" index="38" />'
-    ).consumed_source_action is True
-    assert teacher.next_action(
-        '<button text="Just once" index="9" />'
-    ).consumed_source_action is True
+    assert (
+        teacher.next_action(
+            '<button id="com.google.android.documentsui:id/file" '
+            'text="task.html" index="38" />'
+        ).consumed_source_action
+        is True
+    )
+    assert (
+        teacher.next_action(
+            '<button text="Just once" index="9" />'
+        ).consumed_source_action
+        is True
+    )
     setup = teacher.next_action(
         '<button id="com.android.chrome:id/terms_accept" '
         'text="Accept &amp; continue" index="18" />'
@@ -244,9 +341,7 @@ def test_teacher_reenters_external_intent_after_target_setup(
     assert reopen_file.consumed_source_action is False
     assert teacher.cursor == 2
 
-    choose_browser = teacher.next_action(
-        '<button text="Just once" index="9" />'
-    )
+    choose_browser = teacher.next_action('<button text="Just once" index="9" />')
     assert choose_browser.action == {"name": "click", "parameters": {"index": "9"}}
     assert choose_browser.source_action_type == "target_preflight_reentry"
     assert choose_browser.consumed_source_action is False
@@ -274,9 +369,7 @@ def test_teacher_reentry_rejects_ambiguous_cross_package_matches(tmp_path) -> No
                     'bounds="[0,0][100,100]" /></hierarchy>'
                 ),
             )
-            for index, package_name in enumerate(
-                ("android", "com.example.resolver")
-            )
+            for index, package_name in enumerate(("android", "com.example.resolver"))
         ],
     )
     teacher = mobilegpt_teacher.MobileGPTTeacher(source_run_log)
@@ -345,9 +438,7 @@ def test_teacher_migration_miss_uses_native_vlm_fallback(
     agent.instruction = "Complete the color challenge."
     agent.subtask = {}
 
-    action, example = agent.derive(
-        '<div><button text="Unlabeled" index="20" /></div>'
-    )
+    action, example = agent.derive('<div><button text="Unlabeled" index="20" /></div>')
 
     assert action == {"name": "click", "parameters": {"index": "20"}}
     assert example == {}

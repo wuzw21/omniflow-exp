@@ -53,9 +53,7 @@ def select_source_asset_revision(
                 if not candidate.is_dir() or not manifest_path.is_file():
                     continue
                 try:
-                    payload = json.loads(
-                        manifest_path.read_text(encoding="utf-8")
-                    )
+                    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
                 except (OSError, json.JSONDecodeError):
                     continue
                 if _manifest_source_sha256(payload) == source_sha256:
@@ -81,9 +79,7 @@ def select_source_asset_revision(
                     candidate.name,
                 )
                 if match:
-                    revisions.append(
-                        (int(match.group(1)), candidate.resolve())
-                    )
+                    revisions.append((int(match.group(1)), candidate.resolve()))
         if not revisions:
             return base / prefix
         _reject_forbidden_source_retry(
@@ -111,9 +107,9 @@ def select_source_asset_revision(
         revisions,
         environment_repair_reason=repair_reason,
     )
-    next_revision = max(
-        [initial_revision - 1, *(revision for revision, _ in revisions)]
-    ) + 1
+    next_revision = (
+        max([initial_revision - 1, *(revision for revision, _ in revisions)]) + 1
+    )
     return base / f"native_source_r{next_revision}"
 
 
@@ -147,10 +143,7 @@ def _manifest_source_sha256(value: Any) -> str:
         if isinstance(source_record, dict)
         else ""
     )
-    return (
-        nested
-        or str(value.get("source_run_log_sha256") or "").strip()
-    ).lower()
+    return (nested or str(value.get("source_run_log_sha256") or "").strip()).lower()
 
 
 def _sha256(path: Path) -> str:
@@ -221,6 +214,45 @@ def _node_identity(node: ET.Element) -> dict[str, str]:
     )
 
 
+def _node_is_actionable(node: ET.Element) -> bool:
+    return any(
+        str(node.attrib.get(key) or "").lower() == "true"
+        for key in ("clickable", "editable", "long-clickable")
+    )
+
+
+def _node_is_editable(node: ET.Element) -> bool:
+    return (
+        str(node.attrib.get("editable") or "").lower() == "true"
+        or str(node.attrib.get("class") or "") == "android.widget.EditText"
+    )
+
+
+def _unique_container_anchor(
+    root: ET.Element,
+    container: ET.Element,
+    *,
+    excluded: ET.Element,
+) -> dict[str, str]:
+    page_identities = [_node_identity(node) for node in root.iter()]
+    for node in container.iter():
+        if node is excluded:
+            continue
+        identity = _node_identity(node)
+        for key in ("text", "content_desc", "resource_id"):
+            value = str(identity.get(key) or "").strip()
+            if not value:
+                continue
+            normalized = _normalized_semantic_text(value)
+            matches = sum(
+                _normalized_semantic_text(candidate.get(key)) == normalized
+                for candidate in page_identities
+            )
+            if matches == 1:
+                return {key: value}
+    return {}
+
+
 def _bounds(node: ET.Element) -> tuple[float, float, float, float] | None:
     value = str(node.attrib.get("bounds") or "")
     try:
@@ -275,7 +307,7 @@ def _identity_at_action_point(
     *,
     action_args: dict[str, Any],
     display: dict[str, Any],
-) -> dict[str, str]:
+) -> dict[str, Any]:
     try:
         x = float(action_args["x"])
         y = float(action_args["y"])
@@ -287,30 +319,108 @@ def _identity_at_action_point(
     if 0 <= x <= 1000 and 0 <= y <= 1000:
         x = x * width / 1000.0
         y = y * height / 1000.0
-    candidates: list[tuple[float, int, dict[str, str]]] = []
+    candidates: list[tuple[float, int, ET.Element]] = []
     for depth, node in enumerate(root.iter()):
         bounds = _bounds(node)
-        identity = _node_identity(node)
-        if bounds is None or not identity:
+        if bounds is None:
             continue
         left, top, right, bottom = bounds
         if left <= x <= right and top <= y <= bottom:
             area = max(1.0, (right - left) * (bottom - top))
-            candidates.append((area, -depth, identity))
-    return min(candidates, default=(0.0, 0, {}))[2]
+            candidates.append((area, -depth, node))
+    semantic_candidates = [
+        (area, depth, node) for area, depth, node in candidates if _node_identity(node)
+    ]
+    if semantic_candidates:
+        return _node_identity(
+            min(semantic_candidates, key=lambda item: (item[0], item[1]))[2]
+        )
+    actionable_candidates = [
+        (area, depth, node)
+        for area, depth, node in candidates
+        if _node_is_actionable(node)
+    ]
+    if not actionable_candidates:
+        return {}
+    target = min(
+        actionable_candidates,
+        key=lambda item: (item[0], item[1]),
+    )[2]
+    parents = {child: parent for parent in root.iter() for child in list(parent)}
+    container = parents.get(target)
+    if container is None:
+        return {}
+    anonymous_actionable_children = [
+        child
+        for child in list(container)
+        if _node_is_actionable(child) and not _node_identity(child)
+    ]
+    if anonymous_actionable_children != [target]:
+        return {}
+    anchor = _unique_container_anchor(
+        root,
+        container,
+        excluded=target,
+    )
+    if not anchor:
+        return {}
+    return {
+        "relation": "unique_actionable_descendant",
+        "container_anchor": anchor,
+    }
 
 
-def _unique_editable_identity(xml_text: str) -> dict[str, str]:
+def _editable_identity_at_action_point(
+    xml_text: str,
+    *,
+    action_args: dict[str, Any],
+    display: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        x = float(action_args["x"])
+        y = float(action_args["y"])
+        width = float(display["width"])
+        height = float(display["height"])
+        root = ET.fromstring(xml_text)
+    except (KeyError, TypeError, ValueError, ET.ParseError):
+        return {}
+    if 0 <= x <= 1000 and 0 <= y <= 1000:
+        x = x * width / 1000.0
+        y = y * height / 1000.0
+    editable_nodes = [node for node in root.iter() if _node_is_editable(node)]
+    candidates: list[tuple[float, int, ET.Element]] = []
+    for depth, node in enumerate(editable_nodes):
+        bounds = _bounds(node)
+        if bounds is None:
+            continue
+        left, top, right, bottom = bounds
+        if left <= x <= right and top <= y <= bottom:
+            area = max(1.0, (right - left) * (bottom - top))
+            candidates.append((area, -depth, node))
+    if not candidates:
+        return {}
+    target = min(candidates, key=lambda item: (item[0], item[1]))[2]
+    identity = _node_identity(target)
+    if not identity:
+        return {"role": "editable"} if len(editable_nodes) == 1 else {}
+    matches = [
+        node
+        for node in editable_nodes
+        if all(
+            _normalized_semantic_text(_node_identity(node).get(key))
+            == _normalized_semantic_text(value)
+            for key, value in identity.items()
+        )
+    ]
+    return identity if len(matches) == 1 else {}
+
+
+def _unique_editable_identity(xml_text: str) -> dict[str, Any]:
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError:
         return {}
-    nodes = [
-        node
-        for node in root.iter()
-        if str(node.attrib.get("editable") or "").lower() == "true"
-        or str(node.attrib.get("class") or "") == "android.widget.EditText"
-    ]
+    nodes = [node for node in root.iter() if _node_is_editable(node)]
     focused_nodes = [
         node
         for node in nodes
@@ -329,16 +439,17 @@ def _unique_editable_identity(xml_text: str) -> dict[str, str]:
         ]
         if page_nodes:
             nodes = page_nodes
-    identities = [_node_identity(node) for node in nodes]
-    identities = [identity for identity in identities if identity]
-    return identities[0] if len(identities) == 1 else {}
+    if len(nodes) != 1:
+        return {}
+    return _node_identity(nodes[0]) or {"role": "editable"}
 
 
 def _source_target_audit(provenance: dict[str, Any]) -> dict[str, Any]:
     source_target_audit = provenance.get("source_target_audit")
-    if not isinstance(source_target_audit, dict) or source_target_audit.get(
-        "source_target_audit_complete"
-    ) is not True:
+    if (
+        not isinstance(source_target_audit, dict)
+        or source_target_audit.get("source_target_audit_complete") is not True
+    ):
         raise ValueError("source_target_audit_incomplete")
     return source_target_audit
 
@@ -431,9 +542,7 @@ def _target_audit_from_embedded_evidence(
             evidence,
         )
         if identity:
-            source_targets.append(
-                {"step_index": step_index, "target": identity}
-            )
+            source_targets.append({"step_index": step_index, "target": identity})
     return {
         "source_targets": source_targets,
     }, {
@@ -484,9 +593,7 @@ def _target_audit_from_legacy_provenance(
         zip(reconverted["steps"], canonical["steps"], strict=True)
     ):
         if source_step["action"] != canonical_step["action"]:
-            raise ValueError(
-                f"source_legacy_provenance_action_mismatch:{step_index}"
-            )
+            raise ValueError(f"source_legacy_provenance_action_mismatch:{step_index}")
         if str(source_step["observation"].get("forest") or "") != str(
             canonical_step["observation"].get("forest") or ""
         ):
@@ -513,15 +620,13 @@ def _ground_source_actions(
     states: dict[str, dict[str, Any]],
     source_target_audit: dict[str, Any],
 ) -> tuple[dict[str, Any], int]:
-    targets_by_state: dict[str, dict[str, str]] = {}
-    targets_by_step: dict[int, dict[str, str]] = {}
+    targets_by_state: dict[str, dict[str, Any]] = {}
+    targets_by_step: dict[int, dict[str, Any]] = {}
     for record in source_target_audit.get("source_targets") or []:
         if not isinstance(record, dict):
             continue
         target = _identity(
-            record.get("target")
-            if isinstance(record.get("target"), dict)
-            else {}
+            record.get("target") if isinstance(record.get("target"), dict) else {}
         )
         if not target:
             continue
@@ -549,6 +654,7 @@ def _ground_source_actions(
         width, height = next(iter(run_displays))
         shared_display = {"width": width, "height": height}
     semantic_action_count = 0
+    previous_editable_target: tuple[str, dict[str, Any]] | None = None
     for step_index, step in enumerate(grounded["steps"]):
         observation = step["observation"]
         state_identifier = observation_state_id(observation)
@@ -571,6 +677,13 @@ def _ground_source_actions(
             projection_auxiliaries = dict(auxiliaries or {})
             projection_auxiliaries["display"] = display
             observation["auxiliaries"] = projection_auxiliaries
+        package_name = str(
+            state.get("package_name")
+            or (
+                auxiliaries.get("package_name") if isinstance(auxiliaries, dict) else ""
+            )
+            or ""
+        ).strip()
         projected_actions = (
             []
             if action_type in {"answer", "status", "unknown"}
@@ -580,8 +693,6 @@ def _ground_source_actions(
             action["tool"] in {"click", "long_press", "input_text"}
             for action in projected_actions
         )
-        if not xml_text and needs_element_grounding:
-            raise ValueError(f"source_state_xml_missing:{state_identifier}")
         target = (
             targets_by_state.get(state_identifier)
             or targets_by_step.get(step_index)
@@ -607,20 +718,23 @@ def _ground_source_actions(
                     action_args=point_action["args"],
                     display=display,
                 )
-        if not target and action_type == "input_text":
-            target = _unique_editable_identity(xml_text)
+        if action_type == "input_text" and (
+            not target or target.get("relation") == "unique_actionable_descendant"
+        ):
+            current_editable = _unique_editable_identity(xml_text)
+            inherited_editable = (
+                previous_editable_target[1]
+                if previous_editable_target is not None
+                and package_name
+                and previous_editable_target[0] == package_name
+                else {}
+            )
+            target = current_editable or inherited_editable or target
+        if not xml_text and needs_element_grounding and not target:
+            raise ValueError(f"source_state_xml_missing:{state_identifier}")
         source_context: dict[str, Any] = {}
         if xml_text:
             source_context["page"] = xml_text
-        package_name = str(
-            state.get("package_name")
-            or (
-                auxiliaries.get("package_name")
-                if isinstance(auxiliaries, dict)
-                else ""
-            )
-            or ""
-        ).strip()
         if package_name:
             source_context["package_name"] = package_name
         if target:
@@ -629,6 +743,23 @@ def _ground_source_actions(
         metadata = dict(step.get("metadata") or {})
         metadata["source_context"] = source_context
         step["metadata"] = metadata
+        editable_target: dict[str, Any] = {}
+        if action_type in {"click", "double_tap"} and xml_text and display:
+            point_action = next(
+                (action for action in projected_actions if action["tool"] == "click"),
+                None,
+            )
+            if point_action is not None:
+                editable_target = _editable_identity_at_action_point(
+                    xml_text,
+                    action_args=point_action["args"],
+                    display=display,
+                )
+        previous_editable_target = (
+            (package_name, editable_target)
+            if package_name and editable_target
+            else None
+        )
     return grounded, semantic_action_count
 
 
@@ -766,8 +897,8 @@ def _build_grounded_teacher_run_log_from_canonical_source(
         evidence_root=source_path.parent,
     )
     states = source_states["states"]
-    source_target_audit, target_evidence_audit = (
-        _canonical_source_target_audit(canonical)
+    source_target_audit, target_evidence_audit = _canonical_source_target_audit(
+        canonical
     )
     grounded, semantic_action_count = _ground_source_actions(
         canonical,
@@ -814,12 +945,8 @@ def build_grounded_teacher_run_log_from_item(
     if store_index_path is not None:
         resolved_store_index = Path(store_index_path).expanduser().resolve()
         if not resolved_store_index.is_file():
-            raise FileNotFoundError(
-                f"store_index_missing:{resolved_store_index}"
-            )
-        store_payload = json.loads(
-            resolved_store_index.read_text(encoding="utf-8")
-        )
+            raise FileNotFoundError(f"store_index_missing:{resolved_store_index}")
+        store_payload = json.loads(resolved_store_index.read_text(encoding="utf-8"))
         candidate = (
             store_payload.get(str(item.task))
             if isinstance(store_payload, dict)
@@ -830,26 +957,18 @@ def build_grounded_teacher_run_log_from_item(
         store_row = candidate
 
     source_provenance_value = meta.get("store_provenance")
-    provenance_value = source_provenance_value or store_row.get(
-        "provenance_path"
+    provenance_value = source_provenance_value or store_row.get("provenance_path")
+    provenance_sha256 = meta.get("store_provenance_sha256") or store_row.get(
+        "provenance_sha256"
     )
-    provenance_sha256 = (
-        meta.get("store_provenance_sha256")
-        or store_row.get("provenance_sha256")
-    )
-    source_run_log_value = (
-        store_row.get("source_run_log_path")
-        or item.source_run_log
-    )
+    source_run_log_value = store_row.get("source_run_log_path") or item.source_run_log
     source_run_log_sha256 = (
         store_row.get("source_run_log_sha256")
         or meta.get("retained_source_run_log_sha256")
         or meta.get("source_run_log_sha256")
         or ""
     )
-    store_source_sha256 = str(
-        store_row.get("source_run_log_sha256") or ""
-    ).strip()
+    store_source_sha256 = str(store_row.get("source_run_log_sha256") or "").strip()
     if (
         indexed_source_sha256
         and store_source_sha256
@@ -861,9 +980,8 @@ def build_grounded_teacher_run_log_from_item(
         provenance_value,
         label="store_provenance",
     )
-    explicit_state_catalog = (
-        meta.get("source_state_catalog")
-        or meta.get("transfer_state_catalog")
+    explicit_state_catalog = meta.get("source_state_catalog") or meta.get(
+        "transfer_state_catalog"
     )
     if explicit_state_catalog:
         state_catalog_sha256 = str(
@@ -892,9 +1010,12 @@ def build_grounded_teacher_run_log_from_item(
             expected_provenance_sha256=str(provenance_sha256 or ""),
         )
     except ValueError as error:
-        if not str(error).startswith(
-            ("source_state_missing:", "source_state_xml_missing:")
-        ) or not store_row:
+        if (
+            not str(error).startswith(
+                ("source_state_missing:", "source_state_xml_missing:")
+            )
+            or not store_row
+        ):
             raise
     return build_grounded_teacher_run_log(
         source_run_log=source_run_log_value,

@@ -16,9 +16,11 @@ import tempfile
 from typing import Any, Iterable, Sequence
 
 from omniflow.core.trajectory import require_complete_source_run_log
+from src.integrations.runlog import adapt_source_run_log
 
 MEMORY_SCHEMA = "omniflow.androidworld-artifact-memory.v2"
 CURRENT_SCHEMA = "omniflow.androidworld-artifact-memory-pointer.v2"
+SOURCE_SELECTION_SCHEMA = "omniflow.androidworld-source-selection.v1"
 RESULT_FILE_NAMES = (
     "one_task_commands.jsonl",
     "one_task_summary.json",
@@ -107,6 +109,19 @@ def _materialize_object(memory_root: Path, source: Path, digest: str) -> Path:
     return target.resolve()
 
 
+def _materialize_content(memory_root: Path, content: bytes, digest: str) -> Path:
+    target = memory_root / "objects" / "sha256" / digest[:2] / f"{digest}.json"
+    if hashlib.sha256(content).hexdigest() != digest:
+        raise ValueError(f"memory_content_hash_mismatch:{digest}")
+    if target.exists():
+        if not target.is_file() or _sha256(target) != digest:
+            raise ValueError(f"memory_object_hash_mismatch:{target}")
+        return target.resolve()
+    _atomic_write(target, content)
+    target.chmod(0o444)
+    return target.resolve()
+
+
 def _require_hashed_file(value: Any, expected: Any, *, label: str) -> Path:
     path = Path(str(value or "")).expanduser().resolve()
     expected_hash = str(expected or "").strip()
@@ -165,9 +180,7 @@ def _materialize_function_store(
     provenance_sha256: str,
 ) -> dict[str, str]:
     identity = hashlib.sha256(
-        "\0".join(
-            (store_sha256, transfer_sha256, provenance_sha256)
-        ).encode("utf-8")
+        "\0".join((store_sha256, transfer_sha256, provenance_sha256)).encode("utf-8")
     ).hexdigest()
     runtime_root = memory_root / "runtime" / "function_stores" / identity
     store_path = runtime_root / "store.json"
@@ -209,6 +222,194 @@ def _result_paths(roots: Iterable[Path]) -> list[Path]:
     return sorted(paths)
 
 
+def _load_source_selections(
+    manifest_path: str | Path | None,
+    *,
+    memory_root: Path,
+    source_payload: dict[str, Any],
+    index_path: Path,
+    records: dict[str, dict[str, Any]],
+    screenshot_roots: Sequence[Path],
+) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+    if manifest_path is None or not str(manifest_path).strip():
+        return {}, {}
+    path = Path(manifest_path).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"source_selection_manifest_missing:{path}")
+    payload = _load_object(path)
+    raw_selections = payload.get("selections") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != SOURCE_SELECTION_SCHEMA
+        or not isinstance(raw_selections, dict)
+        or not raw_selections
+    ):
+        raise ValueError(f"source_selection_manifest_invalid:{path}")
+    unknown_tasks = sorted(set(raw_selections) - set(source_payload))
+    if unknown_tasks:
+        raise ValueError("source_selection_tasks_unknown:" + ",".join(unknown_tasks))
+    selections: dict[str, dict[str, Any]] = {}
+    for task, raw_selection in sorted(raw_selections.items()):
+        if not isinstance(raw_selection, dict):
+            raise ValueError(f"source_selection_invalid:{task}")
+        expected = (
+            str(raw_selection.get("expected_source_run_log_sha256") or "")
+            .strip()
+            .lower()
+        )
+        selected_run_log_sha256 = (
+            str(raw_selection.get("selected_source_run_log_sha256") or "")
+            .strip()
+            .lower()
+        )
+        selected_evidence_sha256 = (
+            str(raw_selection.get("selected_source_evidence_sha256") or "")
+            .strip()
+            .lower()
+        )
+        expected_converted_sha256 = (
+            str(raw_selection.get("expected_converted_source_run_log_sha256") or "")
+            .strip()
+            .lower()
+        )
+        reason = str(raw_selection.get("reason") or "").strip()
+        if not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise ValueError(f"source_selection_expected_sha256_invalid:{task}")
+        if not reason:
+            raise ValueError(f"source_selection_reason_required:{task}")
+        direct_selection = bool(selected_run_log_sha256)
+        conversion_selection = bool(
+            selected_evidence_sha256 or expected_converted_sha256
+        )
+        if direct_selection == conversion_selection:
+            raise ValueError(f"source_selection_mode_invalid:{task}")
+        raw_item = source_payload[task]
+        if not isinstance(raw_item, dict):
+            raise ValueError(f"source_index_item_invalid:{task}")
+        baseline_path = _resolve_index_reference(
+            index_path,
+            raw_item.get("retained_source_run_log") or raw_item.get("source_run_log"),
+        )
+        baseline = _sha256(baseline_path)
+        if direct_selection:
+            if not re.fullmatch(r"[0-9a-f]{64}", selected_run_log_sha256):
+                raise ValueError(f"source_selection_selected_sha256_invalid:{task}")
+            selected_sha256 = selected_run_log_sha256
+            if expected == selected_sha256:
+                raise ValueError(f"source_selection_noop:{task}")
+            if baseline not in {expected, selected_sha256}:
+                raise ValueError(
+                    f"source_selection_stale:{task}:"
+                    f"expected={expected}:selected={selected_sha256}:"
+                    f"actual={baseline}"
+                )
+            candidate = records.get(selected_sha256)
+            if candidate is None:
+                raise ValueError(
+                    f"source_selection_candidate_unregistered:{task}:{selected_sha256}"
+                )
+            selected_run_log = require_complete_source_run_log(
+                _load_object(Path(candidate["object_path"]))
+            )
+            conversion: dict[str, Any] | None = None
+        else:
+            if not re.fullmatch(r"[0-9a-f]{64}", selected_evidence_sha256):
+                raise ValueError(f"source_selection_evidence_sha256_invalid:{task}")
+            if not re.fullmatch(r"[0-9a-f]{64}", expected_converted_sha256):
+                raise ValueError(f"source_selection_converted_sha256_invalid:{task}")
+            selected_sha256 = expected_converted_sha256
+            if expected == selected_sha256:
+                raise ValueError(f"source_selection_noop:{task}")
+            if baseline not in {expected, selected_sha256}:
+                raise ValueError(
+                    f"source_selection_stale:{task}:"
+                    f"expected={expected}:selected={selected_sha256}:"
+                    f"actual={baseline}"
+                )
+            task_parameters = raw_selection.get("task_parameters")
+            if not isinstance(task_parameters, dict):
+                raise ValueError(f"source_selection_task_parameters_invalid:{task}")
+            source_seed = raw_selection.get("source_seed")
+            if (
+                not isinstance(source_seed, int)
+                or isinstance(source_seed, bool)
+                or source_seed < 0
+            ):
+                raise ValueError(f"source_selection_source_seed_invalid:{task}")
+            evidence = records.get(selected_evidence_sha256)
+            if evidence is None:
+                raise ValueError(
+                    f"source_selection_evidence_unregistered:{task}:"
+                    f"{selected_evidence_sha256}"
+                )
+            evidence_path = Path(evidence["object_path"])
+            selected_run_log = require_complete_source_run_log(
+                adapt_source_run_log(
+                    _load_object(evidence_path),
+                    task_name=task,
+                    task_parameters=task_parameters,
+                    seed=source_seed,
+                    source_path=evidence_path,
+                    screenshot_roots=screenshot_roots,
+                    require_screenshots=False,
+                )
+            )
+            converted_content = _json_bytes(selected_run_log)
+            actual_converted_sha256 = hashlib.sha256(converted_content).hexdigest()
+            if actual_converted_sha256 != expected_converted_sha256:
+                raise ValueError(
+                    "source_selection_converted_hash_mismatch:"
+                    f"{task}:expected={expected_converted_sha256}:"
+                    f"actual={actual_converted_sha256}"
+                )
+            converted_path = _materialize_content(
+                memory_root,
+                converted_content,
+                expected_converted_sha256,
+            )
+            record = records.setdefault(
+                expected_converted_sha256,
+                {
+                    "sha256": expected_converted_sha256,
+                    "object_path": str(converted_path),
+                    "aliases": [],
+                    "tasks": [],
+                    "schema_version": str(selected_run_log["schema_version"]),
+                    "run_id": str(selected_run_log["run_id"]),
+                    "success": selected_run_log["success"],
+                    "step_count": len(selected_run_log["steps"]),
+                },
+            )
+            record["tasks"] = sorted(set(record["tasks"]) | {task})
+            conversion = {
+                "kind": "legacy_evidence_to_official_run_log",
+                "selected_source_evidence_sha256": selected_evidence_sha256,
+                "expected_converted_source_run_log_sha256": (expected_converted_sha256),
+                "source_seed": source_seed,
+                "task_parameters": json.loads(
+                    json.dumps(task_parameters, ensure_ascii=False)
+                ),
+                "screenshot_roots": [str(root) for root in screenshot_roots],
+            }
+        if selected_run_log["task_name"] != task:
+            raise ValueError(
+                "source_selection_task_mismatch:"
+                f"{task}:{selected_run_log['task_name']}:{selected_sha256}"
+            )
+        selections[task] = {
+            "expected_source_run_log_sha256": expected,
+            "selected_source_run_log_sha256": selected_sha256,
+            "reason": reason,
+            "selected_run_log": selected_run_log,
+        }
+        if conversion is not None:
+            selections[task]["conversion"] = conversion
+    return selections, {
+        "path": str(path),
+        "sha256": _sha256(path),
+    }
+
+
 def _task_from_path(path: Path, task_names: Sequence[str]) -> str:
     parts = set(path.parts)
     matches = [task for task in task_names if task in parts]
@@ -218,9 +419,7 @@ def _task_from_path(path: Path, task_names: Sequence[str]) -> str:
     for task in task_names:
         normalized = re.sub(r"[^a-z0-9]", "", task.lower())
         tasks_by_normalized_name.setdefault(normalized, []).append(task)
-    normalized_parts = {
-        re.sub(r"[^a-z0-9]", "", part.lower()) for part in path.parts
-    }
+    normalized_parts = {re.sub(r"[^a-z0-9]", "", part.lower()) for part in path.parts}
     normalized_matches = {
         tasks[0]
         for normalized, tasks in tasks_by_normalized_name.items()
@@ -236,8 +435,7 @@ def _task_from_path(path: Path, task_names: Sequence[str]) -> str:
         task
         for task, snake_name in snake_names.items()
         if any(
-            part.lower() == snake_name
-            or part.lower().startswith(f"{snake_name}_")
+            part.lower() == snake_name or part.lower().startswith(f"{snake_name}_")
             for part in path.parts
         )
     }
@@ -272,8 +470,7 @@ def _verified_registered_result(path: Path) -> dict[str, Any]:
     payload = _load_object(path)
     if (
         not isinstance(payload, dict)
-        or payload.get("schema_version")
-        != "omniflow.androidworld_registered_result.v1"
+        or payload.get("schema_version") != "omniflow.androidworld_registered_result.v1"
     ):
         raise ValueError("registered_result_schema_invalid")
     manifest_path = path.with_name("registration_manifest.json").resolve()
@@ -318,17 +515,15 @@ def _verified_registered_result(path: Path) -> dict[str, Any]:
     official_used = row.get("official_validator_used") is True
     official_success = row.get("official_validator_success")
     try:
-        validator_count = float(
-            row.get("official_validator_task_count") or 0
-        )
-        validator_coverage = float(
-            row.get("official_validator_coverage_rate") or 0
-        )
+        validator_count = float(row.get("official_validator_task_count") or 0)
+        validator_coverage = float(row.get("official_validator_coverage_rate") or 0)
     except (TypeError, ValueError) as error:
         raise ValueError("registered_result_validator_coverage_invalid") from error
     conclusion = (
-        official_used and isinstance(official_success, bool)
-    ) or validator_count > 0 or validator_coverage > 0
+        (official_used and isinstance(official_success, bool))
+        or validator_count > 0
+        or validator_coverage > 0
+    )
     return {
         "payload": payload,
         "manifest": manifest,
@@ -521,9 +716,7 @@ def _load_results(
             "registration_id": str(result_payload.get("registration_id") or ""),
             "attempt_id": str(result_payload.get("attempt_id") or ""),
             "registered_at": str(manifest.get("registered_at") or ""),
-            "official_validator_success": result_row.get(
-                "official_validator_success"
-            ),
+            "official_validator_success": result_row.get("official_validator_success"),
             "registered_result_sha256": digest,
             "registered_result_object_path": record["object_path"],
             "registered_result_aliases": sorted(set(record["aliases"])),
@@ -533,10 +726,7 @@ def _load_results(
                 "earliest_formal_protocol_compliant_validator_conclusion"
             ),
         }
-        cell = (
-            f"{task}|{method}|{device}|"
-            f"{source_seed}|{evaluation_seed}"
-        )
+        cell = f"{task}|{method}|{device}|{source_seed}|{evaluation_seed}"
         candidates.setdefault(cell, []).append(
             (
                 candidate["registered_at"],
@@ -570,8 +760,7 @@ def _load_function_stores(
         payload = _load_object(catalog_path)
         if (
             not isinstance(payload, dict)
-            or payload.get("schema_version")
-            != "omniflow.function-asset-catalog.v1"
+            or payload.get("schema_version") != "omniflow.function-asset-catalog.v1"
             or not isinstance(payload.get("tasks"), dict)
         ):
             raise ValueError(f"function_catalog_invalid:{catalog_path}")
@@ -706,6 +895,8 @@ def _refresh_artifact_memory_unlocked(
     function_catalogs: Sequence[str | Path],
     runlog_roots: Sequence[str | Path],
     result_roots: Sequence[str | Path],
+    source_selection_manifest: str | Path | None = None,
+    source_screenshot_roots: Sequence[str | Path] = (),
 ) -> dict[str, Any]:
     """Import immutable evidence and publish one deterministic canonical index."""
 
@@ -717,6 +908,14 @@ def _refresh_artifact_memory_unlocked(
     if not isinstance(source_payload, dict):
         raise ValueError("source_index_must_be_object")
     task_names = sorted(str(task) for task in source_payload)
+    screenshot_roots = tuple(
+        sorted(
+            {Path(value).expanduser().resolve() for value in source_screenshot_roots}
+        )
+    )
+    for screenshot_root in screenshot_roots:
+        if not screenshot_root.is_dir():
+            raise FileNotFoundError(f"source_screenshot_root_missing:{screenshot_root}")
     indexed_paths: dict[Path, str] = {}
     for task, item in source_payload.items():
         if not isinstance(item, dict):
@@ -773,10 +972,47 @@ def _refresh_artifact_memory_unlocked(
         record["aliases"] = sorted(set(record["aliases"]))
         record["tasks"] = sorted(set(record["tasks"]))
 
+    source_selections, source_selection_manifest_record = _load_source_selections(
+        source_selection_manifest,
+        memory_root=root,
+        source_payload=source_payload,
+        index_path=index_path,
+        records=records,
+        screenshot_roots=screenshot_roots,
+    )
+    if source_selection_manifest_record:
+        selection_path = Path(source_selection_manifest_record["path"])
+        source_selection_manifest_record["object_path"] = str(
+            _materialize_object(
+                root,
+                selection_path,
+                source_selection_manifest_record["sha256"],
+            )
+        )
+
     canonical_sources: dict[str, dict[str, Any]] = {}
     for path, task in sorted(indexed_paths.items(), key=lambda item: item[1]):
-        digest = _sha256(path)
+        baseline_digest = _sha256(path)
+        selection = source_selections.get(task)
+        digest = (
+            str(selection["selected_source_run_log_sha256"])
+            if selection is not None
+            else baseline_digest
+        )
         canonical_sources[task] = dict(records[digest])
+        if selection is not None:
+            canonical_selection = {
+                "expected_source_run_log_sha256": selection[
+                    "expected_source_run_log_sha256"
+                ],
+                "selected_source_run_log_sha256": digest,
+                "reason": selection["reason"],
+                "manifest_sha256": source_selection_manifest_record["sha256"],
+                "manifest_object_path": source_selection_manifest_record["object_path"],
+            }
+            if "conversion" in selection:
+                canonical_selection["conversion"] = selection["conversion"]
+            canonical_sources[task]["selection"] = canonical_selection
 
     catalog_paths = sorted(
         {Path(value).expanduser().resolve() for value in function_catalogs}
@@ -797,13 +1033,36 @@ def _refresh_artifact_memory_unlocked(
     for task, raw_item in source_payload.items():
         item = dict(raw_item)
         item["retained_source_run_log"] = canonical_sources[str(task)]["object_path"]
-        item["retained_source_run_log_sha256"] = canonical_sources[str(task)][
-            "sha256"
-        ]
-        source_state_catalog = raw_item.get(
-            "source_state_catalog"
-        ) or raw_item.get("transfer_state_catalog")
-        if source_state_catalog:
+        item["retained_source_run_log_sha256"] = canonical_sources[str(task)]["sha256"]
+        selection = source_selections.get(str(task))
+        if selection is not None:
+            selected_run_log = selection["selected_run_log"]
+            item["goal"] = selected_run_log["goal"]
+            item["params"] = selected_run_log["task_parameters"]
+            item["source_seed"] = selected_run_log["seed"]
+            item["step_count"] = len(selected_run_log["steps"])
+            item["legacy_index_metadata"] = {
+                "collect_seed": selected_run_log["seed"],
+                "replay_seed": selected_run_log["seed"],
+                "run_id": selected_run_log["run_id"],
+                "task_random_seed": selected_run_log["seed"],
+            }
+            item["canonical_source_selection"] = canonical_sources[str(task)][
+                "selection"
+            ]
+            for stale_key in (
+                "source_state_catalog",
+                "source_state_catalog_sha256",
+                "transfer_state_catalog",
+                "transfer_state_catalog_sha256",
+                "store_provenance",
+                "store_provenance_sha256",
+            ):
+                item.pop(stale_key, None)
+        source_state_catalog = raw_item.get("source_state_catalog") or raw_item.get(
+            "transfer_state_catalog"
+        )
+        if source_state_catalog and selection is None:
             catalog_path = _resolve_index_reference(
                 index_path,
                 source_state_catalog,
@@ -818,10 +1077,7 @@ def _refresh_artifact_memory_unlocked(
                 or raw_item.get("transfer_state_catalog_sha256")
                 or ""
             ).strip()
-            if (
-                expected_catalog_digest
-                and expected_catalog_digest != catalog_digest
-            ):
+            if expected_catalog_digest and expected_catalog_digest != catalog_digest:
                 raise ValueError(
                     "indexed_source_state_catalog_hash_mismatch:"
                     f"{task}:expected={expected_catalog_digest}:"
@@ -870,9 +1126,7 @@ def _refresh_artifact_memory_unlocked(
         by_task[task] = {
             "task": task,
             "run_log_sha256s": sorted(
-                digest
-                for digest, record in records.items()
-                if task in record["tasks"]
+                digest for digest, record in records.items() if task in record["tasks"]
             ),
             "function_store_identity_sha256s": sorted(
                 digest
@@ -895,9 +1149,7 @@ def _refresh_artifact_memory_unlocked(
             },
         }
     unclassified_result_hashes = sorted(
-        digest
-        for digest, record in result_records.items()
-        if not record["tasks"]
+        digest for digest, record in result_records.items() if not record["tasks"]
     )
     unclassified_runlog_hashes = sorted(
         digest for digest, record in records.items() if not record["tasks"]
@@ -907,15 +1159,19 @@ def _refresh_artifact_memory_unlocked(
         "schema_version": MEMORY_SCHEMA,
         "policy": {
             "deduplication": "exact_sha256",
-            "source_run_log": "source_index_authoritative",
-            "result": (
-                "earliest_formal_protocol_compliant_validator_conclusion"
+            "source_run_log": (
+                "source_index_with_explicit_sha256_selections"
+                if source_selections
+                else "source_index_authoritative"
             ),
+            "result": ("earliest_formal_protocol_compliant_validator_conclusion"),
             "success_cherry_picking": False,
         },
         "inputs": {
             "source_index": str(index_path),
             "source_index_sha256": _sha256(index_path),
+            "source_selection_manifest": source_selection_manifest_record,
+            "source_screenshot_roots": [str(path) for path in screenshot_roots],
             "function_catalogs": [str(path) for path in catalog_paths],
             "runlog_roots": sorted(
                 str(Path(value).expanduser().resolve()) for value in runlog_roots
@@ -924,6 +1180,7 @@ def _refresh_artifact_memory_unlocked(
         },
         "counts": {
             "task_count": len(task_names),
+            "source_selection_tasks": len(source_selections),
             "run_log_paths": len(paths),
             "unique_run_logs": len(records),
             "function_catalog_paths": len(catalog_paths),
@@ -948,8 +1205,7 @@ def _refresh_artifact_memory_unlocked(
         "artifacts": {
             "run_logs": {digest: records[digest] for digest in sorted(records)},
             "function_stores": {
-                digest: function_records[digest]
-                for digest in sorted(function_records)
+                digest: function_records[digest] for digest in sorted(function_records)
             },
             "results": {
                 digest: result_records[digest] for digest in sorted(result_records)
@@ -1020,6 +1276,8 @@ def refresh_artifact_memory(
     function_catalogs: Sequence[str | Path],
     runlog_roots: Sequence[str | Path],
     result_roots: Sequence[str | Path],
+    source_selection_manifest: str | Path | None = None,
+    source_screenshot_roots: Sequence[str | Path] = (),
 ) -> dict[str, Any]:
     """Import immutable evidence and publish one deterministic canonical index."""
 
@@ -1031,6 +1289,8 @@ def refresh_artifact_memory(
             function_catalogs=function_catalogs,
             runlog_roots=runlog_roots,
             result_roots=result_roots,
+            source_selection_manifest=source_selection_manifest,
+            source_screenshot_roots=source_screenshot_roots,
         )
 
 
@@ -1039,16 +1299,11 @@ def load_artifact_memory(memory_index: str | Path) -> dict[str, Any]:
 
     pointer_path = Path(memory_index).expanduser().resolve()
     pointer = _load_object(pointer_path)
-    if (
-        not isinstance(pointer, dict)
-        or pointer.get("schema_version") != CURRENT_SCHEMA
-    ):
+    if not isinstance(pointer, dict) or pointer.get("schema_version") != CURRENT_SCHEMA:
         raise ValueError(f"artifact_memory_pointer_invalid:{pointer_path}")
     registry_path = Path(str(pointer.get("registry_path") or "")).expanduser()
     if not registry_path.is_absolute() or not registry_path.is_file():
-        raise FileNotFoundError(
-            f"artifact_memory_registry_missing:{registry_path}"
-        )
+        raise FileNotFoundError(f"artifact_memory_registry_missing:{registry_path}")
     expected = str(pointer.get("registry_sha256") or "")
     actual = _sha256(registry_path)
     if not expected or actual != expected:
@@ -1074,9 +1329,7 @@ def load_artifact_memory(memory_index: str | Path) -> dict[str, Any]:
                 f"artifact_memory_index_missing:{path_field}:{path}"
             )
         if not expected_hash or _sha256(path) != expected_hash:
-            raise ValueError(
-                f"artifact_memory_index_hash_mismatch:{path_field}:{path}"
-            )
+            raise ValueError(f"artifact_memory_index_hash_mismatch:{path_field}:{path}")
     return registry
 
 
@@ -1097,10 +1350,7 @@ def registered_cell_plan_from_memory(
     expected = [(method, device) for method in methods for device in devices]
     completed: list[tuple[str, str]] = []
     for method, device in expected:
-        cell_key = (
-            f"{task_name}|{method}|{device}|"
-            f"{source_seed}|{evaluation_seed}"
-        )
+        cell_key = f"{task_name}|{method}|{device}|{source_seed}|{evaluation_seed}"
         record = cells.get(cell_key)
         if not isinstance(record, dict):
             continue
@@ -1116,17 +1366,17 @@ def registered_cell_plan_from_memory(
                 or _sha256(object_path) != expected_hash
             ):
                 raise ValueError(
-                    f"artifact_memory_result_object_invalid:{cell_key}:"
-                    f"{object_path}"
+                    f"artifact_memory_result_object_invalid:{cell_key}:{object_path}"
                 )
             payload = _load_object(object_path)
             rows = payload.get("rows") if isinstance(payload, dict) else None
-            if not isinstance(rows, list) or len(rows) != 1 or not isinstance(
-                rows[0], dict
+            if (
+                not isinstance(rows, list)
+                or len(rows) != 1
+                or not isinstance(rows[0], dict)
             ):
                 raise ValueError(
-                    f"artifact_memory_result_payload_invalid:{cell_key}:"
-                    f"{object_path}"
+                    f"artifact_memory_result_payload_invalid:{cell_key}:{object_path}"
                 )
             from src.experiment.result_registry import (
                 validate_formal_result_protocol,
@@ -1151,6 +1401,8 @@ def refresh_artifact_memory_from_pointer(
     *,
     memory_index: str | Path,
     source_index: str | Path | None = None,
+    source_selection_manifest: str | Path | None = None,
+    source_screenshot_roots: Sequence[str | Path] = (),
     additional_function_catalogs: Sequence[str | Path] = (),
     additional_runlog_roots: Sequence[str | Path] = (),
     additional_result_roots: Sequence[str | Path] = (),
@@ -1194,16 +1446,20 @@ def refresh_artifact_memory_from_pointer(
             function_catalogs=function_catalogs,
             runlog_roots=runlog_roots,
             result_roots=result_roots,
+            source_selection_manifest=(
+                source_selection_manifest
+                or (inputs.get("source_selection_manifest") or {}).get("object_path")
+                or (inputs.get("source_selection_manifest") or {}).get("path")
+            ),
+            source_screenshot_roots=(
+                source_screenshot_roots
+                or tuple(inputs.get("source_screenshot_roots") or ())
+            ),
         )
 
 
 def _split_values(values: Sequence[str]) -> list[str]:
-    return [
-        item
-        for value in values
-        for item in value.split(":")
-        if item.strip()
-    ]
+    return [item for value in values for item in value.split(":") if item.strip()]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1217,6 +1473,8 @@ def main(argv: list[str] | None = None) -> int:
     refresh_parser = subparsers.add_parser("refresh")
     refresh_parser.add_argument("--memory-root", required=True)
     refresh_parser.add_argument("--source-index", required=True)
+    refresh_parser.add_argument("--source-selection-manifest")
+    refresh_parser.add_argument("--source-screenshot-root", action="append", default=[])
     refresh_parser.add_argument("--function-catalog", action="append", default=[])
     refresh_parser.add_argument("--runlog-root", action="append", required=True)
     refresh_parser.add_argument("--result-root", action="append", default=[])
@@ -1236,9 +1494,9 @@ def main(argv: list[str] | None = None) -> int:
             report = refresh_artifact_memory_from_pointer(
                 memory_index=pointer_path,
                 source_index=args.source_index,
-                additional_function_catalogs=_split_values(
-                    args.function_catalog
-                ),
+                source_selection_manifest=args.source_selection_manifest,
+                source_screenshot_roots=args.source_screenshot_root,
+                additional_function_catalogs=_split_values(args.function_catalog),
                 additional_runlog_roots=_split_values(args.runlog_root),
                 additional_result_roots=_split_values(args.result_root),
             )
@@ -1246,6 +1504,8 @@ def main(argv: list[str] | None = None) -> int:
             report = refresh_artifact_memory(
                 memory_root=memory_root,
                 source_index=args.source_index,
+                source_selection_manifest=args.source_selection_manifest,
+                source_screenshot_roots=args.source_screenshot_root,
                 function_catalogs=_split_values(args.function_catalog),
                 runlog_roots=_split_values(args.runlog_root),
                 result_roots=_split_values(args.result_root),

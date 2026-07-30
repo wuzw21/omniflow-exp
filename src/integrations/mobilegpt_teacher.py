@@ -68,7 +68,7 @@ def load_teacher_actions(source_run_log: str | Path) -> list[dict[str, Any]]:
                 if isinstance(params, dict) and str(params.get("text") or "") == "":
                     continue
             if action_type == "press_key" and not _is_supported_press_key(action):
-                    continue
+                continue
             action = _ground_source_action_identity(step, action)
             actions.append(
                 {
@@ -149,15 +149,34 @@ def _ground_source_action_identity(
         for key, value in element.items()
         if key
         in {
+            "container_anchor",
             "content-desc",
             "content_desc",
             "description",
             "label",
+            "relation",
             "resource-id",
             "resource_id",
+            "role",
             "text",
         }
     }
+    if isinstance(element.get("container_anchor"), dict):
+        element["container_anchor"] = {
+            key: value
+            for key, value in element["container_anchor"].items()
+            if key
+            in {
+                "content-desc",
+                "content_desc",
+                "description",
+                "label",
+                "resource-id",
+                "resource_id",
+                "text",
+            }
+            and str(value or "").strip()
+        }
     auxiliaries = (
         observation.get("auxiliaries")
         if isinstance(observation.get("auxiliaries"), dict)
@@ -303,7 +322,9 @@ class MobileGPTTeacher:
     def mark_exhausted(self) -> None:
         self._cursor = len(self._actions)
 
-    def reset(self, *, instruction: str = "", task: dict[str, Any] | None = None) -> None:
+    def reset(
+        self, *, instruction: str = "", task: dict[str, Any] | None = None
+    ) -> None:
         self._cursor = 0
         self.instruction = str(instruction or "")
         self.task = dict(task or {})
@@ -451,7 +472,10 @@ def migrate_source_action_to_mobilegpt(
                 f"{_source_action_label(source_action)!r}"
             )
         if match["index"]:
-            mobile_action = {"name": "click", "parameters": {"index": str(match["index"])}}
+            mobile_action = {
+                "name": "click",
+                "parameters": {"index": str(match["index"])},
+            }
         else:
             mobile_action = {"name": "back", "parameters": {}}
         return {
@@ -577,7 +601,9 @@ def install_mobilegpt_teacher(
         )
         return original_init(self, instruction, task, True)
 
-    def patched_get_next_action(self, parsed_xml=None, hierarchy_xml=None, encoded_xml=None):
+    def patched_get_next_action(
+        self, parsed_xml=None, hierarchy_xml=None, encoded_xml=None
+    ):
         if teacher.exhausted:
             if getattr(self, "_omniflow_teacher_task_finished", False):
                 return None
@@ -607,7 +633,9 @@ def install_mobilegpt_teacher(
             )
         return action
 
-    def patched_teacher_save_subtask(self, subtask: dict, screen: str, response: dict | None):
+    def patched_teacher_save_subtask(
+        self, subtask: dict, screen: str, response: dict | None
+    ):
         if not isinstance(subtask, dict):
             return None
         name = str(subtask.get("name") or "").strip()
@@ -664,9 +692,10 @@ def install_mobilegpt_teacher(
                 "failed_action": _teacher_result_payload(failed_result),
             }
         )
-        if str(
-            os.environ.get("MOBILEGPT_TEACHER_FAIL_ON_ACTION_ERROR") or ""
-        ).strip() == "1":
+        if (
+            str(os.environ.get("MOBILEGPT_TEACHER_FAIL_ON_ACTION_ERROR") or "").strip()
+            == "1"
+        ):
             teacher.mark_exhausted()
             writer(
                 {
@@ -969,7 +998,9 @@ def _source_app_switch_preflight(
     if not source_package:
         return None
     current_package = _screen_package(current_screen)
-    effective_current_package = current_package or str(current_app_package or "").strip()
+    effective_current_package = (
+        current_package or str(current_app_package or "").strip()
+    )
     if not effective_current_package or effective_current_package == source_package:
         return None
     if _screen_contains_source_target(source_action, current_screen):
@@ -1008,7 +1039,9 @@ def _browser_task_url_preflight(
     return {"reason": f"browser_task_url:{task_url}:cursor:{cursor}"}
 
 
-def _looks_like_browser_task_source(source_page: str, source_action: dict[str, Any]) -> bool:
+def _looks_like_browser_task_source(
+    source_page: str, source_action: dict[str, Any]
+) -> bool:
     page_text = _norm(source_page)
     action_label = _norm(_source_action_label(source_action))
     if "maze puzzle" in page_text and action_label in {"up", "down", "left", "right"}:
@@ -1061,7 +1094,11 @@ def _open_browser_task_url(task_url: str) -> None:
 
 
 def _source_action_package(source_action: dict[str, Any]) -> str:
-    params = dict(source_action.get("params") or {}) if isinstance(source_action.get("params"), dict) else {}
+    params = (
+        dict(source_action.get("params") or {})
+        if isinstance(source_action.get("params"), dict)
+        else {}
+    )
     direct = str(
         params.get("package_name")
         or params.get("packageName")
@@ -1217,7 +1254,11 @@ def _write_teacher_miss_artifacts(
         if isinstance(record.get("action"), dict)
         else {}
     )
-    params = dict(action.get("params") or {}) if isinstance(action.get("params"), dict) else {}
+    params = (
+        dict(action.get("params") or {})
+        if isinstance(action.get("params"), dict)
+        else {}
+    )
     source_context = (
         dict(params.get("source_context") or {})
         if isinstance(params.get("source_context"), dict)
@@ -1235,9 +1276,13 @@ def _write_teacher_miss_artifacts(
         if source_xml:
             source_xml_path.write_text(source_xml, encoding="utf-8")
 
-        mobilegpt_log_dir = str(os.getenv("MOBILEGPT_CURRENT_LOG_DIRECTORY") or "").strip()
+        mobilegpt_log_dir = str(
+            os.getenv("MOBILEGPT_CURRENT_LOG_DIRECTORY") or ""
+        ).strip()
         screen_index = str(os.getenv("MOBILEGPT_CURRENT_SCREEN_INDEX") or "").strip()
-        target_paths = _mobilegpt_current_artifact_paths(mobilegpt_log_dir, screen_index)
+        target_paths = _mobilegpt_current_artifact_paths(
+            mobilegpt_log_dir, screen_index
+        )
         payload = {
             "error": str(error),
             "instruction": str(instruction or ""),
@@ -1275,7 +1320,9 @@ def _teacher_artifact_root() -> Path | None:
     return None
 
 
-def _mobilegpt_current_artifact_paths(log_dir: str, screen_index: str) -> dict[str, str]:
+def _mobilegpt_current_artifact_paths(
+    log_dir: str, screen_index: str
+) -> dict[str, str]:
     if not log_dir or not screen_index:
         return {}
     base = Path(log_dir).expanduser()
@@ -1333,6 +1380,14 @@ def _teacher_action_is_groundable(action: dict[str, Any]) -> bool:
             "left",
             "right",
         }
+    selector = _source_element_selector(action)
+    if selector.get("role") == "editable":
+        return action_type in {"click", "input_text", "long_press"}
+    if selector.get("relation") == "unique_actionable_descendant":
+        anchor = selector.get("container_anchor")
+        return action_type in {"click", "long_press"} and bool(
+            _semantic_identity(anchor)
+        )
     identity = _source_identity(action)
     return any(str(value or "").strip() for value in identity.values())
 
@@ -1412,7 +1467,9 @@ def run_teacher_server(argv: list[str] | None = None) -> int:
             "port": int(args.port),
         }
     )
-    Server(host=args.host, port=int(args.port), buffer_size=int(args.buffer_size)).open()
+    Server(
+        host=args.host, port=int(args.port), buffer_size=int(args.buffer_size)
+    ).open()
     return 0
 
 
@@ -1431,6 +1488,15 @@ def _best_current_screen_match(
         return _best_scroll_target_match(root, wanted)
     if wanted_type == "press_key":
         return _best_back_target_match(root)
+    selector = _source_element_selector(source_action)
+    if selector.get("role") == "editable":
+        return _unique_editable_match(root)
+    if selector.get("relation") == "unique_actionable_descendant":
+        return _unique_actionable_descendant_match(
+            root,
+            selector=selector,
+            action_type=wanted_type,
+        )
 
     candidates = []
     for element in root.iter():
@@ -1440,7 +1506,11 @@ def _best_current_screen_match(
         tag = str(element.tag or "").strip().lower()
         if wanted_type == "input_text" and tag != "input":
             continue
-        if wanted_type in {"click", "long_press"} and tag not in {"button", "checker", "input"}:
+        if wanted_type in {"click", "long_press"} and tag not in {
+            "button",
+            "checker",
+            "input",
+        }:
             continue
         score, reason = _score_element(element, wanted)
         if wanted_type in {"click", "long_press"} and tag == "button" and score > 0:
@@ -1453,6 +1523,63 @@ def _best_current_screen_match(
         return None
     candidates.sort(key=lambda item: (-float(item["score"]), int(item["index"])))
     return candidates[0]
+
+
+def _unique_editable_match(root: ET.Element) -> dict[str, Any] | None:
+    candidates = [
+        str(element.attrib.get("index") or "").strip()
+        for element in root.iter()
+        if str(element.tag or "").strip().lower() == "input"
+        and str(element.attrib.get("index") or "").strip()
+    ]
+    if len(candidates) != 1:
+        return None
+    return {
+        "index": candidates[0],
+        "score": 30.0,
+        "reason": "unique_editable",
+    }
+
+
+def _unique_actionable_descendant_match(
+    root: ET.Element,
+    *,
+    selector: dict[str, Any],
+    action_type: str,
+) -> dict[str, Any] | None:
+    anchor = _semantic_identity(selector.get("container_anchor"))
+    if not anchor or action_type not in {"click", "long_press"}:
+        return None
+    anchor_nodes = [
+        element
+        for element in root.iter()
+        if all(
+            _element_own_identity(element).get(key) == value
+            for key, value in anchor.items()
+        )
+    ]
+    if len(anchor_nodes) != 1:
+        return None
+    parents = {child: parent for parent in root.iter() for child in list(parent)}
+    container = anchor_nodes[0]
+    while container is not None:
+        candidates = [
+            element
+            for element in container.iter()
+            if element is not container
+            and str(element.tag or "").strip().lower() in {"button", "checker", "input"}
+            and str(element.attrib.get("index") or "").strip()
+        ]
+        if candidates:
+            if len(candidates) != 1:
+                return None
+            return {
+                "index": str(candidates[0].attrib["index"]),
+                "score": 30.0,
+                "reason": "unique_actionable_descendant",
+            }
+        container = parents.get(container)
+    return None
 
 
 def _best_back_target_match(root: ET.Element) -> dict[str, Any] | None:
@@ -1565,7 +1692,12 @@ def _best_scroll_target_match(
                         "reason": "scrollable_container",
                     }
                 )
-            elif index != "0" and tag in {"div", "recyclerview", "listview", "scrollview"}:
+            elif index != "0" and tag in {
+                "div",
+                "recyclerview",
+                "listview",
+                "scrollview",
+            }:
                 text, description, resource_id = _element_identity(element)
                 combined = _norm(" ".join([text, description, resource_id]))
                 wanted_text = _norm(" ".join(wanted.values()))
@@ -1666,6 +1798,50 @@ def _element_identity(element: ET.Element) -> tuple[str, str, str]:
     )
 
 
+def _element_own_identity(element: ET.Element) -> dict[str, str]:
+    return _semantic_identity(
+        {
+            "text": element.text or element.attrib.get("text"),
+            "description": (
+                element.attrib.get("description") or element.attrib.get("content-desc")
+            ),
+            "resource_id": (
+                element.attrib.get("id") or element.attrib.get("resource-id")
+            ),
+        }
+    )
+
+
+def _semantic_identity(value: Any) -> dict[str, str]:
+    raw = dict(value) if isinstance(value, dict) else {}
+    aliases = {
+        "text": ("text", "label"),
+        "description": ("description", "content_desc", "content-desc"),
+        "resource_id": ("resource_id", "resource-id", "id"),
+    }
+    identity: dict[str, str] = {}
+    for output_key, input_keys in aliases.items():
+        for input_key in input_keys:
+            normalized = _norm(raw.get(input_key))
+            if normalized:
+                identity[output_key] = (
+                    _short_resource_id(normalized)
+                    if output_key == "resource_id"
+                    else normalized
+                )
+                break
+    return identity
+
+
+def _source_element_selector(source_action: dict[str, Any]) -> dict[str, Any]:
+    params = dict(source_action.get("params") or {})
+    source_context = params.get("source_context")
+    if not isinstance(source_context, dict):
+        return {}
+    element = source_context.get("element")
+    return dict(element) if isinstance(element, dict) else {}
+
+
 def _source_identity(source_action: dict[str, Any]) -> dict[str, str]:
     params = dict(source_action.get("params") or {})
     source_context = params.get("source_context")
@@ -1681,7 +1857,9 @@ def _source_identity(source_action: dict[str, Any]) -> dict[str, str]:
         else {}
     )
     return {
-        "target": str(params.get("target_description") or target_evidence.get("label") or ""),
+        "target": str(
+            params.get("target_description") or target_evidence.get("label") or ""
+        ),
         "text": str(element.get("text") or element.get("label") or ""),
         "description": str(
             element.get("description")
@@ -1701,11 +1879,15 @@ def _source_identity(source_action: dict[str, Any]) -> dict[str, str]:
 
 def _source_action_label(source_action: dict[str, Any]) -> str:
     wanted = _source_identity(source_action)
+    selector = _source_element_selector(source_action)
+    anchor = _semantic_identity(selector.get("container_anchor"))
     return (
         wanted.get("target")
         or wanted.get("text")
         or wanted.get("description")
         or wanted.get("resource_id")
+        or next(iter(anchor.values()), "")
+        or str(selector.get("role") or "")
         or str(source_action.get("type") or "")
     )
 
@@ -1722,8 +1904,12 @@ def _source_swipe_direction(params: dict[str, Any]) -> str:
     try:
         x1 = float(params.get("x") if params.get("x") is not None else params.get("x1"))
         y1 = float(params.get("y") if params.get("y") is not None else params.get("y1"))
-        x2 = float(params.get("end_x") if params.get("end_x") is not None else params.get("x2"))
-        y2 = float(params.get("end_y") if params.get("end_y") is not None else params.get("y2"))
+        x2 = float(
+            params.get("end_x") if params.get("end_x") is not None else params.get("x2")
+        )
+        y2 = float(
+            params.get("end_y") if params.get("end_y") is not None else params.get("y2")
+        )
     except Exception:
         return "down"
     dx = x2 - x1
@@ -1734,7 +1920,11 @@ def _source_swipe_direction(params: dict[str, Any]) -> str:
 
 
 def _is_supported_press_key(action: dict[str, Any]) -> bool:
-    params = dict(action.get("params") or {}) if isinstance(action.get("params"), dict) else {}
+    params = (
+        dict(action.get("params") or {})
+        if isinstance(action.get("params"), dict)
+        else {}
+    )
     key = _norm(params.get("key") or params.get("keycode") or params.get("name") or "")
     return key in {"back", "keycode_back", "4"}
 
