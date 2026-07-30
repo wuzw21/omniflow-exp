@@ -1009,21 +1009,59 @@ def registered_cell_plan_from_memory(
     devices: Sequence[str],
     source_seed: int,
     evaluation_seed: int,
+    formal_max_steps: int | None = None,
 ) -> dict[str, list[tuple[str, str]]]:
     """Resolve completed formal cells without rescanning historical results."""
 
     registry = load_artifact_memory(memory_index)
     cells = registry["canonical"]["result_cells"]
     expected = [(method, device) for method in methods for device in devices]
-    completed = [
-        (method, device)
-        for method, device in expected
-        if (
+    completed: list[tuple[str, str]] = []
+    for method, device in expected:
+        cell_key = (
             f"{task_name}|{method}|{device}|"
             f"{source_seed}|{evaluation_seed}"
         )
-        in cells
-    ]
+        record = cells.get(cell_key)
+        if not isinstance(record, dict):
+            continue
+        if formal_max_steps is not None:
+            object_path = Path(
+                str(record.get("registered_result_object_path") or "")
+            ).expanduser()
+            expected_hash = str(record.get("registered_result_sha256") or "")
+            if (
+                not object_path.is_absolute()
+                or not object_path.is_file()
+                or not expected_hash
+                or _sha256(object_path) != expected_hash
+            ):
+                raise ValueError(
+                    f"artifact_memory_result_object_invalid:{cell_key}:"
+                    f"{object_path}"
+                )
+            payload = _load_object(object_path)
+            rows = payload.get("rows") if isinstance(payload, dict) else None
+            if not isinstance(rows, list) or len(rows) != 1 or not isinstance(
+                rows[0], dict
+            ):
+                raise ValueError(
+                    f"artifact_memory_result_payload_invalid:{cell_key}:"
+                    f"{object_path}"
+                )
+            from src.experiment.result_registry import (
+                validate_formal_result_protocol,
+            )
+
+            validate_formal_result_protocol(
+                rows[0],
+                task_name=task_name,
+                method=method,
+                device=device,
+                evaluation_seed=evaluation_seed,
+                max_steps=formal_max_steps,
+            )
+        completed.append((method, device))
     return {
         "completed": completed,
         "pending": [cell for cell in expected if cell not in completed],

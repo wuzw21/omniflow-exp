@@ -1689,6 +1689,8 @@ def build_fixed_replay_command(
             "fixed_task_seed": True,
             "fixed_task_params": bool(fixed_task_params),
             "task_random_seed": resolved_task_seed,
+            "max_steps": step_budget,
+            "timeout_sec": int(timeout_sec),
             "task_params": dict(effective_params) if fixed_task_params else None,
             "task_params_override": (
                 dict(task_params_override) if task_params_override is not None else None
@@ -1823,6 +1825,8 @@ def build_official_androidworld_command(
                 dict(task_params_override) if task_params_override is not None else None
             ),
             "task_random_seed": resolved_task_seed,
+            "max_steps": int(max_steps),
+            "timeout_sec": int(timeout_sec),
             "state_backend": "androidworld",
             "action_backend": "androidworld",
             "native_androidworld_agent_io": True,
@@ -1854,6 +1858,7 @@ def build_e2e_command(
     console_port: int = 5554,
     adb_path: str = "",
     max_steps: int = 20,
+    timeout_sec: int | None = None,
     max_fallback_steps: int | None = None,
     task_random_seed: int | None = None,
     fixed_task_seed: bool = True,
@@ -1975,6 +1980,9 @@ def build_e2e_command(
         env=env,
         cwd=repo_root,
         output_path=resolved_output,
+        timeout_sec=(
+            float(timeout_sec) if timeout_sec is not None and timeout_sec > 0 else None
+        ),
         metadata={
             "mode": "normal_omniflow_e2e"
             if resolved_agent == "omniflow"
@@ -1998,6 +2006,8 @@ def build_e2e_command(
                 dict(task_params_override) if task_params_override is not None else None
             ),
             "task_random_seed": resolved_task_seed,
+            "max_steps": int(max_steps),
+            "timeout_sec": int(timeout_sec or 0),
             "planner_timeout_sec": (
                 float(planner_timeout_sec) if planner_timeout_sec is not None else None
             ),
@@ -6943,6 +6953,10 @@ _ONE_TASK_METADATA_ROW_KEYS = (
     "replay_run_log",
     "store_path",
     "task_random_seed",
+    "max_steps",
+    "max_fallback_steps",
+    "timeout_sec",
+    "planner_timeout_sec",
     "fixed_task_seed",
     "fixed_task_params",
     "task_params",
@@ -6954,6 +6968,8 @@ _ONE_TASK_METADATA_ROW_KEYS = (
     "model",
     "backend",
     "state_backend",
+    "action_backend",
+    "native_androidworld_agent_io",
     "execution_backend",
     "official_agent_name",
     "uses_omniflow_agent",
@@ -7724,6 +7740,7 @@ def build_appagent_androidworld_command(
         console_port=target.console_port,
         adb_path=adb_path,
         max_steps=max_steps,
+        timeout_sec=timeout_sec,
         task_random_seed=task_random_seed,
         fixed_task_seed=fixed_task_seed,
         fixed_task_params=fixed_task_params,
@@ -8638,6 +8655,7 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                     console_port=target.console_port,
                     adb_path=args.adb_path,
                     max_steps=int(args.max_steps or 20),
+                    timeout_sec=int(args.timeout_sec or 0),
                     max_fallback_steps=args.max_fallback_steps,
                     task_random_seed=task_seed,
                     fixed_task_seed=not bool(args.no_fixed_task_seed),

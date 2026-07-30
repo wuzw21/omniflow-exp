@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import tempfile
 from typing import Any
@@ -24,6 +25,10 @@ DEFAULT_SOURCE_INDEX = (
     REPO_ROOT
     / "runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json"
 )
+FORMAL_DEVICE_TARGETS = {
+    "small5554": ("emulator-5554", 5554),
+    "fold5564": ("emulator-5564", 5564),
+}
 
 METHOD_MATRIX_COLUMNS = [
     "task_index",
@@ -647,6 +652,100 @@ def _load_verified_registered_result(summary_path: Path) -> dict[str, Any]:
     return summary
 
 
+def validate_formal_result_protocol(
+    row: dict[str, Any],
+    *,
+    task_name: str,
+    method: str,
+    device: str,
+    evaluation_seed: int,
+    max_steps: int,
+) -> None:
+    """Reject a registered conclusion produced outside the frozen protocol."""
+
+    violations: list[str] = []
+    normalized_device = {
+        "target5554": "small5554",
+        "target5564": "fold5564",
+    }.get(str(row.get("device") or ""), str(row.get("device") or ""))
+    if str(row.get("task_name") or task_name) != task_name:
+        violations.append("task")
+    if str(row.get("method") or "") != method:
+        violations.append("method")
+    if normalized_device != device:
+        violations.append("device")
+    expected_device = FORMAL_DEVICE_TARGETS.get(device)
+    if expected_device is None:
+        violations.append("unsupported_device")
+    elif (
+        str(row.get("serial") or "") != expected_device[0]
+        or row.get("console_port") != expected_device[1]
+    ):
+        violations.append("device_target")
+    if row.get("task_random_seed") != evaluation_seed:
+        violations.append("task_random_seed")
+    if row.get("fixed_task_seed") is not True:
+        violations.append("fixed_task_seed")
+    if row.get("fixed_task_params") is not False:
+        violations.append("fixed_task_params")
+    if row.get("perform_emulator_setup") is not True:
+        violations.append("perform_emulator_setup")
+    if row.get("state_backend") != "androidworld":
+        violations.append("state_backend")
+
+    task_params = row.get("task_params")
+    params_sha256 = str(row.get("task_params_sha256") or "")
+    if not isinstance(task_params, dict) or not re.fullmatch(
+        r"[0-9a-f]{64}", params_sha256
+    ):
+        violations.append("task_params_sha256")
+    elif hashlib.sha256(
+        json.dumps(
+            task_params,
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest() != params_sha256:
+        violations.append("task_params_hash_mismatch")
+
+    try:
+        command = shlex.split(str(row.get("command") or ""))
+    except ValueError:
+        command = []
+        violations.append("command")
+    if any(
+        token == "--oob-observe-backend"
+        or token.startswith("--oob-observe-backend=")
+        for token in command
+    ):
+        violations.append("oob_observe_backend")
+    explicit_max_steps = row.get("max_steps")
+    if explicit_max_steps is not None and explicit_max_steps != max_steps:
+        violations.append("max_steps_metadata")
+    recorded_max_steps_value: str | None = None
+    for index, token in enumerate(command):
+        if token == "--max-steps":
+            if index + 1 < len(command):
+                recorded_max_steps_value = command[index + 1]
+            break
+        if token.startswith("--max-steps="):
+            recorded_max_steps_value = token.partition("=")[2]
+            break
+    try:
+        recorded_max_steps = int(recorded_max_steps_value or "")
+    except ValueError:
+        violations.append("max_steps")
+    else:
+        if recorded_max_steps != max_steps:
+            violations.append("max_steps")
+    if violations:
+        raise ValueError(
+            "formal_result_protocol_mismatch:"
+            f"{task_name}:{method}:{device}:{','.join(violations)}"
+        )
+
+
 def registered_cell_plan(
     *,
     runs_root: Path,
@@ -655,6 +754,7 @@ def registered_cell_plan(
     devices: tuple[str, ...],
     source_seed: int,
     evaluation_seed: int,
+    formal_max_steps: int | None = None,
 ) -> dict[str, list[tuple[str, str]]]:
     """Return completed and pending formal cells in protocol order.
 
@@ -703,11 +803,23 @@ def registered_cell_plan(
                 validator_success,
                 bool,
             )
-            cell_completed = cell_completed or (
+            cell_completed = (
                 validator_conclusion
                 or validator_task_count > 0
                 or validator_coverage > 0
             )
+            if not cell_completed:
+                continue
+            if formal_max_steps is not None:
+                validate_formal_result_protocol(
+                    row,
+                    task_name=task_name,
+                    method=method,
+                    device=device,
+                    evaluation_seed=evaluation_seed,
+                    max_steps=formal_max_steps,
+                )
+            break
         if cell_completed:
             completed.append((method, device))
     return {

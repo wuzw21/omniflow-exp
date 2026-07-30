@@ -588,9 +588,35 @@ exit 1
     assert "src.experiment.function_assets" not in calls
     assert any(
         line.startswith(f"- {REPO} ")
-        and line.endswith(" 111 113")
+        and line.endswith(" 111 113 20")
         for line in calls.splitlines()
     )
+
+    for variable, value in (
+        ("OMNIFLOW_SINGLE_TASK_SOURCE_SEED", "112"),
+        ("OMNIFLOW_SINGLE_TASK_EVALUATION_SEED", "114"),
+        ("OMNIFLOW_SINGLE_TASK_MAX_STEPS", "30"),
+        ("OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS", "4"),
+        ("OMNIFLOW_SINGLE_TASK_FIXED_TASK_PARAMS", "1"),
+        ("OMNIFLOW_SINGLE_TASK_FOLD_STATE", "1"),
+        ("OMNIFLOW_SINGLE_TASK_FOLD_SIZE", "1768x2208"),
+    ):
+        rejected = subprocess.run(
+            [
+                "bash",
+                str(SCRIPT),
+                "--check-only",
+                "--tasks",
+                "AudioRecorderRecordAudio",
+            ],
+            cwd=REPO,
+            env={**environment, variable: value},
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert rejected.returncode == 2
+        assert "--all-tasks requires the frozen formal protocol" in rejected.stderr
 
     missing_store = subprocess.run(
         [
@@ -626,8 +652,6 @@ def test_task_major_terminal_source_failure_continues_later_cells(
     store_index = tmp_path / "memory" / "store_index.json"
     env_file = assets / ".env"
     android_world = assets / "android_world"
-    appagent_root = assets / "appagent"
-    appagent_bundle = assets / "appagent-source" / "BrowserDraw"
     mobilegpt_root = assets / "mobilegpt"
     mobilegpt_bundle = assets / "mobilegpt-source" / "BrowserDraw"
     for path, content in (
@@ -643,8 +667,6 @@ def test_task_major_terminal_source_failure_continues_later_cells(
             / "apps.py",
             "",
         ),
-        (appagent_root / "README.md", ""),
-        (appagent_bundle / "appagent_demo_manifest.json", "{}"),
         (mobilegpt_root / "Server" / "main.py", ""),
         (
             mobilegpt_root
@@ -663,11 +685,9 @@ def test_task_major_terminal_source_failure_continues_later_cells(
 
     state_dir = tmp_path / "state"
     state_dir.mkdir()
-    call_log = tmp_path / "calls.txt"
     fake_python = tmp_path / "python"
     fake_python.write_text(
         """#!/bin/sh
-printf '%s\n' "$*" >> "$CALL_LOG"
 if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ] && [ "$3" = "$MEMORY_INDEX" ]; then
   printf '%s\t%s\n' "$SOURCE_INDEX" "$STORE_INDEX"
   exit 0
@@ -685,28 +705,26 @@ if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ] && [ "$5" = "$STORE_INDEX" ]; then
     printf '%s\n' "$MOBILEGPT_BUNDLE"
     exit 0
   fi
-  printf '%s\n' "$APPAGENT_BUNDLE"
-  exit 0
 fi
 if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ]; then
   completed=6
   pending=4
-  if [ -f "$STATE_DIR/appagent_demo-small5554" ]; then
+  if [ -f "$STATE_DIR/t3a_hint-small5554" ]; then
     completed=$((completed + 1))
     pending=$((pending - 1))
   fi
-  if [ -f "$STATE_DIR/appagent_demo-fold5564" ]; then
+  if [ -f "$STATE_DIR/t3a_hint-fold5564" ]; then
     completed=$((completed + 1))
     pending=$((pending - 1))
   fi
   printf 'summary\t%s\t%s\n' "$completed" "$pending"
   printf 'pending\tmobilegpt_offline_retrieval\tsmall5554\temulator-5554\t5554\n'
   printf 'pending\tmobilegpt_offline_retrieval\tfold5564\temulator-5564\t5564\n'
-  if [ ! -f "$STATE_DIR/appagent_demo-small5554" ]; then
-    printf 'pending\tappagent_demo\tsmall5554\temulator-5554\t5554\n'
+  if [ ! -f "$STATE_DIR/t3a_hint-small5554" ]; then
+    printf 'pending\tt3a_hint\tsmall5554\temulator-5554\t5554\n'
   fi
-  if [ ! -f "$STATE_DIR/appagent_demo-fold5564" ]; then
-    printf 'pending\tappagent_demo\tfold5564\temulator-5564\t5564\n'
+  if [ ! -f "$STATE_DIR/t3a_hint-fold5564" ]; then
+    printf 'pending\tt3a_hint\tfold5564\temulator-5564\t5564\n'
   fi
   exit 0
 fi
@@ -764,13 +782,11 @@ exit 0
         **os.environ,
         "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
         "PYTHON_BIN": str(fake_python),
-        "CALL_LOG": str(call_log),
         "STATE_DIR": str(state_dir),
         "REPO_PATH": str(REPO),
         "MEMORY_INDEX": str(memory_index),
         "SOURCE_INDEX": str(source_index),
         "STORE_INDEX": str(store_index),
-        "APPAGENT_BUNDLE": str(appagent_bundle),
         "MOBILEGPT_BUNDLE": str(mobilegpt_bundle),
         "MOBILEGPT_APK_SHA": hashlib.sha256(b"").hexdigest(),
         "TERMINAL_PHASE": terminal_phase,
@@ -785,7 +801,6 @@ exit 0
         "OMNIFLOW_JAVA_HOME": str(tmp_path),
         "OMNITRANSFER_ROOT": str(assets / "OmniTransfer"),
         "OMNIFLOW_MOBILEGPT_ROOT": str(mobilegpt_root),
-        "OMNIFLOW_APPAGENT_ROOT": str(appagent_root),
         "OMNIFLOW_SINGLE_TASK_MANAGE_EMULATORS": "0",
     }
 
@@ -799,8 +814,8 @@ exit 0
     )
 
     assert completed.returncode != 0
-    assert (state_dir / "appagent_demo-small5554").is_file()
-    assert (state_dir / "appagent_demo-fold5564").is_file()
+    assert (state_dir / "t3a_hint-small5554").is_file()
+    assert (state_dir / "t3a_hint-fold5564").is_file()
     assert not list(state_dir.glob("mobilegpt_offline_retrieval-*"))
     terminal_prefix = (
         "[batch:static]" if terminal_phase == "static" else "[batch]"

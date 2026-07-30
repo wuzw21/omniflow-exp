@@ -10,8 +10,15 @@ env_file="${OMNIFLOW_ENV_FILE:-${asset_root:+$asset_root/.env}}"
 master_source_index="${OMNIFLOW_MASTER_SOURCE_INDEX:-${asset_root:+$asset_root/runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json}}"
 source_index="${OMNIFLOW_SINGLE_TASK_SOURCE_INDEX:-$master_source_index}"
 source_index_expected_tasks="${OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS:-116}"
-expected_source_seed="${OMNIFLOW_SINGLE_TASK_SOURCE_SEED:-111}"
-evaluation_seed="${OMNIFLOW_SINGLE_TASK_EVALUATION_SEED:-113}"
+formal_source_seed=111
+formal_evaluation_seed=113
+formal_max_steps=20
+formal_max_fallback_steps=5
+formal_fixed_task_params=0
+formal_fold_state=2
+formal_fold_size="2208x1840"
+expected_source_seed="${OMNIFLOW_SINGLE_TASK_SOURCE_SEED:-$formal_source_seed}"
+evaluation_seed="${OMNIFLOW_SINGLE_TASK_EVALUATION_SEED:-$formal_evaluation_seed}"
 omnitransfer_root="${OMNITRANSFER_ROOT:-}"
 android_world_root="${OMNIFLOW_ANDROID_WORLD_ROOT:-${asset_root:+$asset_root/runtime/external/droidrun-android-world/android_world}}"
 export PYTHONPATH="$repo:$repo/src${android_world_root:+:$android_world_root}${PYTHONPATH:+:$PYTHONPATH}"
@@ -24,10 +31,10 @@ eight_cell_methods="fixed_replay,ours,mobilegpt_offline_retrieval,appagent_demo"
 baseline_environment_repair="${OMNIFLOW_BASELINE_ENVIRONMENT_REPAIR_REASON:-}"
 formal_device_targets="small5554:emulator-5554:5554,fold5564:emulator-5564:5564"
 device_targets="${OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS:-$formal_device_targets}"
-fixed_task_params="${OMNIFLOW_SINGLE_TASK_FIXED_TASK_PARAMS:-0}"
+fixed_task_params="${OMNIFLOW_SINGLE_TASK_FIXED_TASK_PARAMS:-$formal_fixed_task_params}"
 timeout_sec="${OMNIFLOW_SINGLE_TASK_TIMEOUT_SEC:-600}"
-max_steps="${OMNIFLOW_SINGLE_TASK_MAX_STEPS:-20}"
-max_fallback_steps="${OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS:-5}"
+max_steps="${OMNIFLOW_SINGLE_TASK_MAX_STEPS:-$formal_max_steps}"
+max_fallback_steps="${OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS:-$formal_max_fallback_steps}"
 store_path="${OMNIFLOW_SINGLE_TASK_STORE_PATH:-}"
 ours_store_index="${OMNIFLOW_OURS_STORE_INDEX:-}"
 ours_source_asset_index="${OMNIFLOW_OURS_SOURCE_ASSET_INDEX:-$master_source_index}"
@@ -54,8 +61,8 @@ emulator_avds="${OMNIFLOW_SINGLE_TASK_EMULATOR_AVDS:-emulator-5554=SmallPhone,em
 emulator_gpu="${OMNIFLOW_SINGLE_TASK_EMULATOR_GPU:-swiftshader_indirect}"
 emulator_boot_timeout_sec="${OMNIFLOW_SINGLE_TASK_EMULATOR_BOOT_TIMEOUT_SEC:-240}"
 fold_serial="${OMNIFLOW_SINGLE_TASK_FOLD_SERIAL:-emulator-5564}"
-fold_state="${OMNIFLOW_SINGLE_TASK_FOLD_STATE:-2}"
-fold_size="${OMNIFLOW_SINGLE_TASK_FOLD_SIZE:-2208x1840}"
+fold_state="${OMNIFLOW_SINGLE_TASK_FOLD_STATE:-$formal_fold_state}"
+fold_size="${OMNIFLOW_SINGLE_TASK_FOLD_SIZE:-$formal_fold_size}"
 dry_run=0
 check_only=0
 all_tasks=0
@@ -703,6 +710,16 @@ if [[ "$all_tasks" -eq 1 ]]; then
     echo "--all-tasks requires both formal targets in order: $formal_device_targets" >&2
     exit 2
   fi
+  if [[ "$expected_source_seed" != "$formal_source_seed" \
+    || "$evaluation_seed" != "$formal_evaluation_seed" \
+    || "$max_steps" != "$formal_max_steps" \
+    || "$max_fallback_steps" != "$formal_max_fallback_steps" \
+    || "$fixed_task_params" != "$formal_fixed_task_params" \
+    || "$fold_state" != "$formal_fold_state" \
+    || "$fold_size" != "$formal_fold_size" ]]; then
+    echo "--all-tasks requires the frozen formal protocol: source_seed=$formal_source_seed evaluation_seed=$formal_evaluation_seed max_steps=$formal_max_steps max_fallback_steps=$formal_max_fallback_steps fixed_task_params=$formal_fixed_task_params fold_state=$formal_fold_state fold_size=$formal_fold_size" >&2
+    exit 2
+  fi
   if [[ "$task_iteration" != "1" && -z "$baseline_environment_repair" ]]; then
     echo "--all-tasks iterations after 1 require an audited environment repair reason; resume skips registered cells." >&2
     exit 2
@@ -795,7 +812,8 @@ PY
       "$batch_methods" \
       "$formal_device_targets" \
       "$expected_source_seed" \
-      "$evaluation_seed" <<'PY'
+      "$evaluation_seed" \
+      "$max_steps" <<'PY'
 import sys
 from pathlib import Path
 
@@ -816,6 +834,7 @@ for raw in sys.argv[6].split(","):
 devices = tuple(device_specs)
 source_seed = int(sys.argv[7])
 evaluation_seed = int(sys.argv[8])
+max_steps = int(sys.argv[9])
 live_plan = registered_cell_plan(
     runs_root=runs_root,
     task_name=task,
@@ -823,6 +842,7 @@ live_plan = registered_cell_plan(
     devices=devices,
     source_seed=source_seed,
     evaluation_seed=evaluation_seed,
+    formal_max_steps=max_steps,
 )
 memory_plan = registered_cell_plan_from_memory(
     memory_index=memory_index,
@@ -831,6 +851,7 @@ memory_plan = registered_cell_plan_from_memory(
     devices=devices,
     source_seed=source_seed,
     evaluation_seed=evaluation_seed,
+    formal_max_steps=max_steps,
 )
 expected = [(method, device) for method in methods for device in devices]
 completed_set = {

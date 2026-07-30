@@ -5,13 +5,15 @@ import json
 from pathlib import Path
 import stat
 
+import pytest
+
 from src.experiment.artifact_memory import (
     load_artifact_memory,
-    main as artifact_memory_main,
     refresh_artifact_memory,
     refresh_artifact_memory_from_pointer,
     registered_cell_plan_from_memory,
 )
+from src.experiment.artifact_memory import main as artifact_memory_main
 
 
 def _write_json(path: Path, value: object) -> Path:
@@ -31,11 +33,22 @@ def _write_registered_result(
     registered_at: str,
     success: bool,
     device: str = "small5554",
+    max_steps: int = 20,
+    use_oob: bool = False,
+    include_task_params: bool = True,
 ) -> Path:
     cell_root = root / "RecordWithName" / "ours" / device / attempt
     result_path = cell_root / "registered_result.json"
     manifest_path = cell_root / "registration_manifest.json"
     registration_id = f"RecordWithName.ours.{device}.{attempt}"
+    task_params = {"file_name": "meeting.m4a"}
+    command = (
+        "python -m src.integrations.android_world.launch "
+        f"--task-random-seed 113 --max-steps {max_steps} "
+        "--fixed-task-seed --perform-emulator-setup"
+    )
+    if use_oob:
+        command += " --oob-observe-backend androidworld"
     result = {
         "schema_version": "omniflow.androidworld_registered_result.v1",
         "registration_id": registration_id,
@@ -62,6 +75,21 @@ def _write_registered_result(
                 "official_validator_used": True,
                 "official_validator_success": success,
                 "official_validator_task_count": 1,
+                "task_random_seed": 113,
+                "max_steps": max_steps,
+                "task_params": task_params,
+                "task_params_sha256": (
+                    hashlib.sha256(
+                        json.dumps(task_params, sort_keys=True).encode("utf-8")
+                    ).hexdigest()
+                    if include_task_params
+                    else None
+                ),
+                "state_backend": "androidworld",
+                "fixed_task_seed": True,
+                "fixed_task_params": False,
+                "perform_emulator_setup": True,
+                "command": command,
             }
         ],
     }
@@ -505,3 +533,55 @@ def test_refresh_normalizes_legacy_target_device_labels(
     ]
     assert cell["device"] == "small5554"
     assert cell["registered_device_label"] == "target5554"
+
+
+def test_memory_plan_rejects_incompatible_formal_protocol(
+    tmp_path: Path,
+) -> None:
+    source = _write_json(
+        tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
+        {
+            "schema_version": "omniflow.run_log.v1",
+            "run_id": "source-run",
+            "goal": "Record audio and save it.",
+            "success": True,
+            "steps": [{"step_index": 0}],
+        },
+    )
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    runs = tmp_path / "runs"
+    _write_registered_result(
+        runs,
+        attempt="attempt_001",
+        registered_at="2026-07-20T00:00:00+00:00",
+        success=False,
+        max_steps=30,
+        use_oob=True,
+        include_task_params=False,
+    )
+    refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "evidence",),
+        result_roots=(runs,),
+    )
+
+    with pytest.raises(ValueError, match="formal_result_protocol_mismatch"):
+        registered_cell_plan_from_memory(
+            memory_index=tmp_path / "memory" / "current.json",
+            task_name="RecordWithName",
+            methods=("ours",),
+            devices=("small5554",),
+            source_seed=111,
+            evaluation_seed=113,
+            formal_max_steps=20,
+        )

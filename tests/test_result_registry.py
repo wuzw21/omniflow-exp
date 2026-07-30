@@ -32,18 +32,30 @@ def _write_registered_cell(
     method: str,
     device: str,
     success: bool,
+    attempt: str = "iteration_01",
     validator_task_count: int = 1,
     validator_used: bool = True,
     source_seed: int = 111,
     evaluation_seed: int = 113,
+    max_steps: int = 20,
+    use_oob: bool = False,
+    include_task_params: bool = True,
 ) -> None:
-    cell = runs_root / task / method / device / "iteration_01"
+    cell = runs_root / task / method / device / attempt
     result_path = cell / "registered_result.json"
     manifest_path = cell / "registration_manifest.json"
+    task_params = {"seed": 1859998934}
+    command = (
+        "python -m src.integrations.android_world.launch "
+        f"--task-random-seed {evaluation_seed} --max-steps {max_steps} "
+        "--fixed-task-seed --perform-emulator-setup"
+    )
+    if use_oob:
+        command += " --oob-observe-backend androidworld"
     result = {
         "schema_version": "omniflow.androidworld_registered_result.v1",
-        "registration_id": f"{task}.{method}.{device}",
-        "attempt_id": "iteration_01",
+        "registration_id": f"{task}.{method}.{device}.{attempt}",
+        "attempt_id": attempt,
         "task_name": task,
         "source_seed": source_seed,
         "evaluation_seed": evaluation_seed,
@@ -58,6 +70,31 @@ def _write_registered_cell(
                 "official_validator_coverage_rate": float(
                     validator_task_count > 0
                 ),
+                "task_random_seed": evaluation_seed,
+                "max_steps": max_steps,
+                "task_params": task_params,
+                "task_params_sha256": (
+                    hashlib.sha256(
+                        json.dumps(task_params, sort_keys=True).encode("utf-8")
+                    ).hexdigest()
+                    if include_task_params
+                    else None
+                ),
+                "state_backend": "androidworld",
+                "fixed_task_seed": True,
+                "fixed_task_params": False,
+                "perform_emulator_setup": True,
+                "serial": (
+                    "emulator-5554"
+                    if device in {"small5554", "target5554"}
+                    else "emulator-5564"
+                ),
+                "console_port": (
+                    5554
+                    if device in {"small5554", "target5554"}
+                    else 5564
+                ),
+                "command": command,
             }
         ],
     }
@@ -67,7 +104,7 @@ def _write_registered_cell(
         {
             "schema_version": "omniflow.androidworld_result_registration.v1",
             "registration_id": result["registration_id"],
-            "attempt_id": "iteration_01",
+            "attempt_id": attempt,
             "task_name": task,
             "method": method,
             "device": device,
@@ -179,6 +216,7 @@ def test_registered_cell_plan_skips_any_cell_with_a_verified_conclusion(
         devices=("small5554", "fold5564"),
         source_seed=111,
         evaluation_seed=113,
+        formal_max_steps=20,
     )
 
     assert plan["completed"] == [
@@ -273,6 +311,61 @@ def test_registered_cell_plan_accepts_per_episode_validator_conclusion(
 
     assert plan["completed"] == [("fixed_replay", "small5554")]
     assert plan["pending"] == []
+
+
+def test_registered_cell_plan_rejects_incompatible_formal_protocol(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "runs"
+    task = "BrowserDraw"
+    _write_registered_cell(
+        runs_root,
+        task=task,
+        method="t3a_hint",
+        device="small5554",
+        success=False,
+        max_steps=30,
+        use_oob=True,
+        include_task_params=False,
+    )
+
+    with pytest.raises(ValueError, match="formal_result_protocol_mismatch"):
+        registered_cell_plan(
+            runs_root=runs_root,
+            task_name=task,
+            methods=("t3a_hint",),
+            devices=("small5554",),
+            source_seed=111,
+            evaluation_seed=113,
+            formal_max_steps=20,
+        )
+
+
+def test_registered_cell_plan_uses_earliest_validator_conclusion(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "runs"
+    task = "BrowserDraw"
+    for attempt, max_steps in (("iteration_01", 20), ("iteration_02", 30)):
+        _write_registered_cell(
+            runs_root,
+            task=task,
+            method="t3a_hint",
+            device="small5554",
+            success=False,
+            attempt=attempt,
+            max_steps=max_steps,
+        )
+
+    assert registered_cell_plan(
+        runs_root=runs_root,
+        task_name=task,
+        methods=("t3a_hint",),
+        devices=("small5554",),
+        source_seed=111,
+        evaluation_seed=113,
+        formal_max_steps=20,
+    )["completed"] == [("t3a_hint", "small5554")]
 
 
 def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
