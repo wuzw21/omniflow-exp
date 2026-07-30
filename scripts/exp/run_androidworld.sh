@@ -1782,20 +1782,6 @@ device_state() {
   awk -v wanted="$serial" '$1 == wanted {print $2; exit}' <<< "$devices"
 }
 
-running_emulator_serials() {
-  local devices
-  devices="$("$adb_bin" devices 2>/dev/null || true)"
-  awk '$1 ~ /^emulator-[0-9]+$/ {print $1}' <<< "$devices"
-}
-
-running_avd_for_serial() {
-  local serial="$1"
-  "$adb_bin" -s "$serial" emu avd name 2>/dev/null \
-    | tr -d '\r' \
-    | sed -n '1p' \
-    || true
-}
-
 stop_emulator() {
   local serial="$1"
   local reason="$2"
@@ -1810,21 +1796,6 @@ stop_emulator() {
     fi
     sleep 1
   done
-}
-
-stop_avd_conflicts() {
-  local wanted_avd="$1"
-  local wanted_serial="$2"
-  local running_serial running_avd
-  while IFS= read -r running_serial; do
-    if [[ -z "$running_serial" || "$running_serial" == "$wanted_serial" ]]; then
-      continue
-    fi
-    running_avd="$(running_avd_for_serial "$running_serial")"
-    if [[ "$running_avd" == "$wanted_avd" ]]; then
-      stop_emulator "$running_serial" "avd-conflict:$wanted_avd"
-    fi
-  done < <(running_emulator_serials)
 }
 
 grpc_ready() {
@@ -1895,7 +1866,6 @@ ensure_emulator() {
     echo "Configured AVD is unavailable: serial=$serial avd=$avd" >&2
     return 1
   fi
-  stop_avd_conflicts "$avd" "$serial"
   log_path="$preflight_output_root/emulator_${serial#emulator-}.log"
   echo "[emulator] launch serial=$serial avd=$avd grpc=$grpc_port"
   nohup "$emulator_bin" \
@@ -1905,6 +1875,7 @@ ensure_emulator() {
     -no-window \
     -no-audio \
     -no-boot-anim \
+    -read-only \
     -no-snapshot-load \
     -no-snapshot-save \
     -gpu "$emulator_gpu" \
