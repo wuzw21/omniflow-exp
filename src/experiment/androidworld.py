@@ -6492,7 +6492,12 @@ _MOBILEGPT_IGNORED_TARGET_PACKAGES = {
 def _mobilegpt_action_package(action: Any) -> str:
     if not isinstance(action, dict):
         return ""
-    action_type = str(action.get("type") or action.get("tool") or "").strip()
+    action_type = str(
+        action.get("action_type")
+        or action.get("type")
+        or action.get("tool")
+        or ""
+    ).strip()
     params = (
         dict(action.get("params") or {})
         if isinstance(action.get("params"), dict)
@@ -6504,6 +6509,7 @@ def _mobilegpt_action_package(action: Any) -> str:
         or params.get("app_package")
         or action.get("package_name")
         or action.get("packageName")
+        or action.get("app_name")
         or ""
     ).strip()
     return package_name if action_type == "open_app" else ""
@@ -6551,9 +6557,10 @@ def _infer_mobilegpt_target_from_source_run_log(
     for step in steps:
         if not isinstance(step, dict):
             continue
-        for action in list(step.get("actions") or []) + list(
-            step.get("executed_actions") or []
-        ):
+        actions = [step.get("action")]
+        actions.extend(list(step.get("actions") or []))
+        actions.extend(list(step.get("executed_actions") or []))
+        for action in actions:
             package_name = _mobilegpt_action_package(action)
             if package_name and package_name not in _MOBILEGPT_IGNORED_TARGET_PACKAGES:
                 return {

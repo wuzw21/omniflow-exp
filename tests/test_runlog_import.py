@@ -5,14 +5,16 @@ from pathlib import Path
 
 from PIL import Image
 import pytest
+from runlog_fixtures import androidworld_run_log, androidworld_state
 
+from src.experiment.source_runlogs import convert_source_index
 from src.integrations.android_world.launch import _raw_replay_step_actions
 from src.integrations.runlog import (
+    adapt_source_run_log,
     convert_legacy_run_log,
     import_run_log,
     import_run_log_evidence,
 )
-from runlog_fixtures import androidworld_run_log, androidworld_state
 
 
 def test_production_import_keeps_androidworld_state_and_action() -> None:
@@ -193,6 +195,131 @@ def test_explicit_converter_records_screenshot_reference(tmp_path: Path) -> None
         "height": 48,
         "mime_type": "image/png",
     }
+
+
+def test_source_adapter_keeps_official_xml_and_screenshot_reference(
+    tmp_path: Path,
+) -> None:
+    screenshot = tmp_path / "official.png"
+    Image.new("RGB", (32, 48), color="white").save(screenshot)
+    run_log = androidworld_run_log(
+        [{"action_type": "click", "x": 16, "y": 24}],
+        observations=[
+            androidworld_state(
+                "official-state",
+                forest='<hierarchy><node text="Open" /></hierarchy>',
+                width=32,
+                height=48,
+            )
+        ],
+        task_name="OfficialTask",
+    )
+    run_log["steps"][0]["observation"]["pixels"] = {
+        "path": str(screenshot.resolve()),
+        "sha256": __import__("hashlib").sha256(screenshot.read_bytes()).hexdigest(),
+        "width": 32,
+        "height": 48,
+        "mime_type": "image/png",
+    }
+    source = tmp_path / "official.run_log.json"
+    source.write_text(json.dumps(run_log), encoding="utf-8")
+
+    adapted = adapt_source_run_log(
+        run_log,
+        task_name="OfficialTask",
+        task_parameters={},
+        seed=111,
+        source_path=source,
+        screenshot_roots=(),
+    )
+
+    assert adapted == run_log
+
+
+def test_source_adapter_normalizes_native_xml_and_screenshot_aliases(
+    tmp_path: Path,
+) -> None:
+    screenshot = tmp_path / "native.png"
+    Image.new("RGB", (32, 48), color="white").save(screenshot)
+    source = tmp_path / "native.run_log.json"
+    payload = {
+        "run_id": "native-source",
+        "goal": "Tap Open.",
+        "success": True,
+        "steps": [
+            {
+                "observation_before_act": {
+                    "hierarchy_xml": '<hierarchy><node text="Open" /></hierarchy>',
+                    "screenshot": str(screenshot),
+                    "width": 32,
+                    "height": 48,
+                },
+                "action": {"type": "click", "params": {"x": 16, "y": 24}},
+                "success": True,
+            }
+        ],
+    }
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    adapted = adapt_source_run_log(
+        payload,
+        task_name="NativeTask",
+        task_parameters={},
+        seed=111,
+        source_path=source,
+        screenshot_roots=(),
+    )
+
+    observation = adapted["steps"][0]["observation"]
+    assert observation["forest"] == '<hierarchy><node text="Open" /></hierarchy>'
+    assert observation["pixels"] == {
+        "path": str(screenshot.resolve()),
+        "sha256": __import__("hashlib").sha256(screenshot.read_bytes()).hexdigest(),
+        "width": 32,
+        "height": 48,
+        "mime_type": "image/png",
+    }
+
+
+def test_source_index_accepts_official_runlog_without_screenshot_roots(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "official.run_log.json"
+    run_log = androidworld_run_log(
+        [{"action_type": "wait"}],
+        task_name="OfficialTask",
+    )
+    source.write_text(json.dumps(run_log), encoding="utf-8")
+    index = tmp_path / "source-index.json"
+    index.write_text(
+        json.dumps(
+            {
+                "OfficialTask": {
+                    "retained_source_run_log": str(source),
+                    "params": {},
+                    "task_random_seed": 111,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    converted = convert_source_index(
+        source_index=index,
+        output_root=tmp_path / "converted",
+        screenshot_roots=(),
+    )
+
+    assert converted["task_count"] == 1
+    output_index = json.loads(
+        Path(converted["output_index"]).read_text(encoding="utf-8")
+    )
+    output_run_log = json.loads(
+        Path(output_index["OfficialTask"]["retained_source_run_log"]).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert output_run_log == run_log
 
 
 def test_explicit_converter_marks_unavailable_screenshot_as_null(

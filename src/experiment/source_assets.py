@@ -231,6 +231,44 @@ def _bounds(node: ET.Element) -> tuple[float, float, float, float] | None:
         return None
 
 
+def _display_from_xml(xml_text: str) -> dict[str, int]:
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return {}
+    candidates = []
+    for node in root.iter():
+        bounds = _bounds(node)
+        if bounds is None:
+            continue
+        left, top, right, bottom = bounds
+        if left <= 0 and top <= 0 and right > 0 and bottom > 0:
+            candidates.append((right * bottom, right, bottom))
+    if not candidates:
+        return {}
+    _, width, height = max(candidates)
+    if not width.is_integer() or not height.is_integer():
+        return {}
+    return {"width": int(width), "height": int(height)}
+
+
+def _source_display(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    width = value.get("width")
+    height = value.get("height")
+    if (
+        not isinstance(width, int)
+        or isinstance(width, bool)
+        or width <= 0
+        or not isinstance(height, int)
+        or isinstance(height, bool)
+        or height <= 0
+    ):
+        return {}
+    return {"width": width, "height": height}
+
+
 def _identity_at_action_point(
     xml_text: str,
     *,
@@ -279,6 +317,17 @@ def _unique_editable_identity(xml_text: str) -> dict[str, str]:
     ]
     if focused_nodes:
         nodes = focused_nodes if len(focused_nodes) == 1 else []
+    else:
+        page_nodes = [
+            node
+            for node in nodes
+            if not re.search(
+                r":id/(?:location_bar|omnibox|url_bar)$",
+                str(node.attrib.get("resource-id") or "").lower(),
+            )
+        ]
+        if page_nodes:
+            nodes = page_nodes
     identities = [_node_identity(node) for node in nodes]
     identities = [identity for identity in identities if identity]
     return identities[0] if len(identities) == 1 else {}
@@ -319,6 +368,20 @@ def _ground_source_actions(
             pass
 
     grounded = json.loads(json.dumps(canonical, ensure_ascii=False))
+    run_displays = {
+        (display["width"], display["height"])
+        for state in states.values()
+        if isinstance(state, dict)
+        for display in [
+            _source_display(state.get("display"))
+            or _display_from_xml(str(state.get("xml") or ""))
+        ]
+        if display
+    }
+    shared_display: dict[str, int] = {}
+    if len(run_displays) == 1:
+        width, height = next(iter(run_displays))
+        shared_display = {"width": width, "height": height}
     semantic_action_count = 0
     for step_index, step in enumerate(grounded["steps"]):
         observation = step["observation"]
@@ -326,21 +389,44 @@ def _ground_source_actions(
         state = states.get(state_identifier)
         if not isinstance(state, dict):
             raise ValueError(f"source_state_missing:{state_identifier}")
-        projected_actions = project_androidworld_step_actions(step)
+        action_type = str(step["action"].get("action_type") or "").strip()
         xml_text = str(state.get("xml") or observation.get("forest") or "").strip()
+        auxiliaries = observation.get("auxiliaries")
+        observation_display = _source_display(
+            auxiliaries.get("display") if isinstance(auxiliaries, dict) else None
+        )
+        display = (
+            _source_display(state.get("display"))
+            or observation_display
+            or _display_from_xml(xml_text)
+            or shared_display
+        )
+        if display and not observation_display:
+            projection_auxiliaries = dict(auxiliaries or {})
+            projection_auxiliaries["display"] = display
+            observation["auxiliaries"] = projection_auxiliaries
+        projected_actions = (
+            []
+            if action_type in {"answer", "status", "unknown"}
+            else project_androidworld_step_actions(step)
+        )
         needs_element_grounding = any(
             action["tool"] in {"click", "long_press", "input_text"}
             for action in projected_actions
         )
         if not xml_text and needs_element_grounding:
             raise ValueError(f"source_state_xml_missing:{state_identifier}")
-        action_type = str(step["action"].get("action_type") or "").strip()
         target = (
             targets_by_state.get(state_identifier)
             or targets_by_step.get(step_index)
             or {}
         )
-        if not target and action_type in {"click", "double_tap", "long_press"}:
+        if not target and action_type in {
+            "click",
+            "double_tap",
+            "input_text",
+            "long_press",
+        }:
             point_action = next(
                 (
                     action
@@ -353,18 +439,13 @@ def _ground_source_actions(
                 target = _identity_at_action_point(
                     xml_text,
                     action_args=point_action["args"],
-                    display=(
-                        state.get("display")
-                        if isinstance(state.get("display"), dict)
-                        else {}
-                    ),
+                    display=display,
                 )
         if not target and action_type == "input_text":
             target = _unique_editable_identity(xml_text)
         source_context: dict[str, Any] = {}
         if xml_text:
             source_context["page"] = xml_text
-        auxiliaries = observation.get("auxiliaries")
         package_name = str(
             state.get("package_name")
             or (

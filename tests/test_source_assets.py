@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment import androidworld as pipeline
 from src.experiment.source_assets import (
@@ -17,7 +18,6 @@ from src.integrations.appagent_adapter import build_appagent_teacher_source
 from src.integrations.mobilegpt_teacher import (
     preflight_teacher_source_run_log,
 )
-from runlog_fixtures import androidworld_run_log, androidworld_state
 
 
 def _write_source_bundle(root: Path) -> tuple[Path, Path, Path]:
@@ -432,6 +432,233 @@ def test_canonical_runlog_grounds_mobilegpt_without_ours_store(
     }
     assert audit["grounding_source"] == "canonical_androidworld_run_log"
     assert "provenance_manifest" not in audit
+
+
+@pytest.mark.parametrize("action_type", ["answer", "status", "unknown"])
+def test_canonical_grounding_preserves_non_ui_terminal_actions(
+    tmp_path: Path,
+    action_type: str,
+) -> None:
+    action = {"action_type": action_type}
+    if action_type == "answer":
+        action["text"] = "Done"
+    elif action_type == "status":
+        action["goal_status"] = "complete"
+    source = tmp_path / f"{action_type}.run_log.json"
+    source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [action],
+                observations=[androidworld_state("terminal-state", forest="")],
+            )
+        ),
+        encoding="utf-8",
+    )
+    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    item = SimpleNamespace(
+        task="TerminalTask",
+        source_run_log=source,
+        meta={"retained_source_run_log_sha256": source_sha256},
+    )
+
+    grounded, audit = build_grounded_teacher_run_log_from_item(
+        index_path=tmp_path / "source_index.json",
+        item=item,
+    )
+
+    assert grounded["steps"][0]["action"] == action
+    assert grounded["steps"][0]["metadata"]["source_context"] == {
+        "package_name": "com.example.app"
+    }
+    assert audit["semantic_action_count"] == 0
+
+
+def test_canonical_grounding_uses_input_text_action_point(
+    tmp_path: Path,
+) -> None:
+    xml = (
+        '<hierarchy><node class="android.widget.EditText" text="First" '
+        'resource-id="app:id/first" editable="true" bounds="[0,0][50,100]" />'
+        '<node class="android.widget.EditText" text="Second" '
+        'resource-id="app:id/second" editable="true" bounds="[50,0][100,100]" />'
+        "</hierarchy>"
+    )
+    source = tmp_path / "input-text.run_log.json"
+    source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [{"action_type": "input_text", "text": "Example", "x": 75, "y": 50}],
+                observations=[
+                    androidworld_state(
+                        "input-state",
+                        forest=xml,
+                        width=100,
+                        height=100,
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    item = SimpleNamespace(
+        task="InputTask",
+        source_run_log=source,
+        meta={"retained_source_run_log_sha256": source_sha256},
+    )
+
+    grounded, audit = build_grounded_teacher_run_log_from_item(
+        index_path=tmp_path / "source_index.json",
+        item=item,
+    )
+
+    assert grounded["steps"][0]["metadata"]["source_context"]["element"] == {
+        "text": "Second",
+        "resource_id": "app:id/second",
+    }
+    assert audit["semantic_action_count"] == 1
+
+
+def test_canonical_grounding_recovers_source_display_from_xml(
+    tmp_path: Path,
+) -> None:
+    xml = (
+        '<hierarchy><node bounds="[0,0][1080,2400]">'
+        '<node text="Create folder" resource-id="app:id/create_folder" '
+        'clickable="true" bounds="[900,2000][1040,2200]" />'
+        "</node></hierarchy>"
+    )
+    observation = androidworld_state(
+        "missing-display",
+        forest=xml,
+        width=1080,
+        height=2400,
+    )
+    observation["auxiliaries"].pop("display")
+    source = tmp_path / "missing-display.run_log.json"
+    source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [{"action_type": "click", "x": 964, "y": 2074}],
+                observations=[observation],
+            )
+        ),
+        encoding="utf-8",
+    )
+    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    item = SimpleNamespace(
+        task="MissingDisplayTask",
+        source_run_log=source,
+        meta={"retained_source_run_log_sha256": source_sha256},
+    )
+
+    grounded, audit = build_grounded_teacher_run_log_from_item(
+        index_path=tmp_path / "source_index.json",
+        item=item,
+    )
+
+    assert grounded["steps"][0]["metadata"]["source_context"]["element"] == {
+        "text": "Create folder",
+        "resource_id": "app:id/create_folder",
+    }
+    assert grounded["steps"][0]["observation"]["auxiliaries"]["display"] == {
+        "width": 1080,
+        "height": 2400,
+    }
+    grounded_path = tmp_path / "grounded-missing-display.run_log.json"
+    grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
+    assert preflight_teacher_source_run_log(grounded_path)[
+        "groundable_action_count"
+    ] == 1
+    assert audit["semantic_action_count"] == 1
+
+
+def test_canonical_grounding_reuses_unique_source_display_for_dialog_xml(
+    tmp_path: Path,
+) -> None:
+    full_xml = '<hierarchy><node bounds="[0,0][1080,2400]" /></hierarchy>'
+    dialog_xml = (
+        '<hierarchy><node bounds="[100,500][980,1700]">'
+        '<node text="Create folder" resource-id="app:id/create_folder" '
+        'clickable="true" bounds="[700,1300][900,1500]" />'
+        "</node></hierarchy>"
+    )
+    observations = [
+        androidworld_state("full-state", forest=full_xml, width=1080, height=2400),
+        androidworld_state("dialog-state", forest=dialog_xml, width=1080, height=2400),
+    ]
+    for observation in observations:
+        observation["auxiliaries"].pop("display")
+    source = tmp_path / "dialog-display.run_log.json"
+    source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [
+                    {"action_type": "open_app", "app_name": "com.example.app"},
+                    {"action_type": "click", "x": 800, "y": 1400},
+                ],
+                observations=observations,
+            )
+        ),
+        encoding="utf-8",
+    )
+    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    item = SimpleNamespace(
+        task="DialogDisplayTask",
+        source_run_log=source,
+        meta={"retained_source_run_log_sha256": source_sha256},
+    )
+
+    grounded, audit = build_grounded_teacher_run_log_from_item(
+        index_path=tmp_path / "source_index.json",
+        item=item,
+    )
+
+    assert grounded["steps"][1]["metadata"]["source_context"]["element"] == {
+        "text": "Create folder",
+        "resource_id": "app:id/create_folder",
+    }
+    assert audit["semantic_action_count"] == 1
+
+
+def test_canonical_grounding_distinguishes_page_input_from_browser_chrome(
+    tmp_path: Path,
+) -> None:
+    xml = (
+        '<hierarchy><node class="android.widget.EditText" '
+        'text="Enter the product" resource-id="answer" editable="true" '
+        'bounds="[200,200][500,300]" />'
+        '<node class="android.widget.EditText" text="https://example.test" '
+        'resource-id="com.android.chrome:id/url_bar" editable="true" '
+        'bounds="[100,50][600,150]" /></hierarchy>'
+    )
+    source = tmp_path / "browser-input.run_log.json"
+    source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [{"action_type": "input_text", "text": "1400"}],
+                observations=[androidworld_state("browser-input", forest=xml)],
+            )
+        ),
+        encoding="utf-8",
+    )
+    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    item = SimpleNamespace(
+        task="BrowserInputTask",
+        source_run_log=source,
+        meta={"retained_source_run_log_sha256": source_sha256},
+    )
+
+    grounded, audit = build_grounded_teacher_run_log_from_item(
+        index_path=tmp_path / "source_index.json",
+        item=item,
+    )
+
+    assert grounded["steps"][0]["metadata"]["source_context"]["element"] == {
+        "text": "Enter the product",
+        "resource_id": "answer",
+    }
+    assert audit["semantic_action_count"] == 1
 
 
 def test_source_revision_reuses_frozen_asset_or_advances_past_failures(

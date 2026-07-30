@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from omniflow.core.trajectory import require_complete_source_run_log
-from src.integrations.runlog import convert_legacy_run_log
+from src.integrations.runlog import adapt_source_run_log
 
 SOURCE_INDEX_SCHEMA = "omniflow.androidworld.source_run_log_index.v1"
 CONVERSION_MANIFEST_SCHEMA = "omniflow.androidworld.run_log_conversion.v1"
@@ -57,7 +57,7 @@ def convert_source_index(
                 or raw_item.get("source_run_log"),
             )
             raw_run_log = _load_object(source_path)
-            run_log = convert_legacy_run_log(
+            run_log = adapt_source_run_log(
                 raw_run_log,
                 task_name=str(task),
                 task_parameters=dict(raw_item.get("params") or {}),

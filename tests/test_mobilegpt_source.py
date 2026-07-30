@@ -8,11 +8,11 @@ import subprocess
 import sys
 
 import pytest
+from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment import androidworld as pipeline
 from src.experiment import mobilegpt_source
 from src.integrations.mobilegpt_runtime import _mobilegpt_chat_model
-from runlog_fixtures import androidworld_run_log, androidworld_state
 
 
 def test_mobilegpt_client_patch_supports_cross_package_windows(
@@ -588,6 +588,69 @@ def test_mobilegpt_preflight_resolves_target_from_frozen_source_states(
 
     assert result["target_package"] == "com.android.settings"
     assert result["target_source"] == "frozen_source_states"
+
+
+def test_mobilegpt_preflight_resolves_target_from_official_open_app_action(
+    tmp_path: Path,
+) -> None:
+    index, source_run_log = _write_source_index(tmp_path / "official-action")
+    source_run_log.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [
+                    {
+                        "action_type": "open_app",
+                        "app_name": "com.android.settings",
+                    },
+                    {"action_type": "click", "x": 50, "y": 50},
+                ],
+                observations=[
+                    androidworld_state(
+                        "state-0",
+                        forest="",
+                        package_name="com.google.android.apps.nexuslauncher",
+                    ),
+                    androidworld_state(
+                        "state-1",
+                        forest=(
+                            '<hierarchy><node text="Bluetooth" '
+                            'resource-id="android:id/switch_widget" '
+                            'clickable="true" bounds="[0,0][100,100]" />'
+                            "</hierarchy>"
+                        ),
+                        package_name="com.android.settings",
+                        width=100,
+                        height=100,
+                    ),
+                ],
+                task_name="SystemBluetoothTurnOn",
+                goal="Turn Bluetooth on.",
+            )
+        ),
+        encoding="utf-8",
+    )
+    payload = json.loads(index.read_text(encoding="utf-8"))
+    row = payload["SystemBluetoothTurnOn"]
+    row["source_run_log_sha256"] = hashlib.sha256(
+        source_run_log.read_bytes()
+    ).hexdigest()
+    row["step_count"] = 2
+    for key in (
+        "source_state_catalog",
+        "source_state_catalog_sha256",
+        "store_provenance",
+        "store_provenance_sha256",
+    ):
+        row.pop(key)
+    index.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = mobilegpt_source.preflight_mobilegpt_source(
+        index_path=index,
+        task_name="SystemBluetoothTurnOn",
+    )
+
+    assert result["target_package"] == "com.android.settings"
+    assert result["target_source"] == "source_runlog_open_app"
 
 
 def test_mobilegpt_source_reads_explicit_source_seed(tmp_path: Path) -> None:

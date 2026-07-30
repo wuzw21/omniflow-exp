@@ -102,6 +102,39 @@ def import_run_log(
     return canonicalize_run_log(value)
 
 
+def adapt_source_run_log(
+    value: dict[str, Any],
+    *,
+    task_name: str,
+    task_parameters: dict[str, Any],
+    seed: int | None,
+    source_path: str | Path,
+    screenshot_roots: Iterable[str | Path] = (),
+    require_screenshots: bool = True,
+    package_resolver: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    """Normalize native evidence or validate an existing production RunLog."""
+    if value.get("schema_version") == OMNIFLOW_RUN_LOG_SCHEMA_VERSION:
+        run_log = import_run_log(value)
+        expected_task = str(task_name).strip()
+        if run_log["task_name"] != expected_task:
+            raise ValueError(
+                "source_run_log_task_mismatch:"
+                f"expected={expected_task}:actual={run_log['task_name']}"
+            )
+        return run_log
+    return convert_legacy_run_log(
+        value,
+        task_name=task_name,
+        task_parameters=task_parameters,
+        seed=seed,
+        source_path=source_path,
+        screenshot_roots=screenshot_roots,
+        require_screenshots=require_screenshots,
+        package_resolver=package_resolver,
+    )
+
+
 def import_run_log_evidence(
     value: dict[str, Any],
     *,
@@ -588,7 +621,20 @@ def _androidworld_state(
 ) -> dict[str, Any]:
     forest = value.get("forest")
     if forest is None:
-        forest = _first(value, ("xml", "observation_xml", "page", "source_xml"))
+        forest = _first(
+            value,
+            (
+                "xml",
+                "observation_xml",
+                "hierarchy_xml",
+                "raw_xml",
+                "parsed_xml",
+                "encoded_xml",
+                "html_xml",
+                "page",
+                "source_xml",
+            ),
+        )
     ui_elements = value.get("ui_elements")
     if not isinstance(ui_elements, list):
         ui_elements = []
@@ -692,11 +738,18 @@ def _legacy_step_metadata(step: dict[str, Any]) -> dict[str, Any]:
 
 def _screenshot_path(observation: dict[str, Any]) -> str:
     screenshot = _map(observation.get("screenshot"))
+    pixels = _map(observation.get("pixels"))
+    screenshot_value = observation.get("screenshot")
+    pixels_value = observation.get("pixels")
     return str(
         observation.get("screenshot_path")
         or observation.get("image_path")
+        or (screenshot_value if isinstance(screenshot_value, str) else "")
         or screenshot.get("path")
         or screenshot.get("screenshot_path")
+        or (pixels_value if isinstance(pixels_value, str) else "")
+        or pixels.get("path")
+        or pixels.get("screenshot_path")
         or ""
     ).strip()
 
@@ -782,6 +835,7 @@ def _present(value: Any) -> bool:
 
 __all__ = [
     "ScreenshotResolver",
+    "adapt_source_run_log",
     "convert_legacy_run_log",
     "import_run_log",
     "import_run_log_evidence",

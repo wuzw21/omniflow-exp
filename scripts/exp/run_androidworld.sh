@@ -129,7 +129,7 @@ Long-term-memory refresh inputs:
 
 Source RunLog conversion inputs:
   OMNIFLOW_SOURCE_RUNLOG_OUTPUT_ROOT Absolute immutable output root.
-  OMNIFLOW_SOURCE_SCREENSHOT_ROOTS   Colon-separated screenshot evidence roots.
+  OMNIFLOW_SOURCE_SCREENSHOT_ROOTS   Optional colon-separated screenshot roots.
 
 Examples:
   bash scripts/exp/run_androidworld.sh --tasks AudioRecorderRecordAudio
@@ -216,10 +216,6 @@ if [[ "$convert_source_runlogs" -eq 1 ]]; then
   fi
   if [[ -z "$source_runlog_output_root" || "$source_runlog_output_root" != /* ]]; then
     echo "OMNIFLOW_SOURCE_RUNLOG_OUTPUT_ROOT must be absolute." >&2
-    exit 2
-  fi
-  if [[ -z "$source_screenshot_roots" ]]; then
-    echo "OMNIFLOW_SOURCE_SCREENSHOT_ROOTS must contain at least one root." >&2
     exit 2
   fi
   if ! python_bin="$(command -v "$python_bin")"; then
