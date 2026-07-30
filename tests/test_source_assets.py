@@ -481,6 +481,35 @@ def test_source_revision_is_stable_for_one_exact_source_hash(
     ) == revision_two
 
 
+def test_source_revision_rejects_terminal_failure_for_exact_source_hash(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "mobilegpt_offline_retrieval"
+    expected = "2" * 64
+    failed = base / f"source_{expected[:12]}"
+    failed.mkdir(parents=True)
+    (failed / "prep_failure.json").write_text(
+        json.dumps(
+            {
+                "error": "mobilegpt_cold_memory_official_source_failed",
+                "retry_allowed": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="source_asset_retry_forbidden:.*"
+        "mobilegpt_cold_memory_official_source_failed",
+    ):
+        select_source_asset_revision(
+            base,
+            manifest_name="cold_memory_manifest.json",
+            expected_source_sha256=expected,
+        )
+
+
 def test_source_revision_advances_beyond_two_digit_failure_revision(
     tmp_path: Path,
 ) -> None:

@@ -24,7 +24,8 @@ def select_source_asset_revision(
 
     Failed and incomplete revision directories are immutable evidence. When no
     frozen manifest exists, the returned path advances beyond every existing
-    revision instead of overwriting one.
+    revision instead of overwriting one, unless an attempt explicitly forbids
+    retry.
     """
 
     if initial_revision < 1:
@@ -59,23 +60,27 @@ def select_source_asset_revision(
         if matches:
             return matches[0]
         prefix = f"source_{source_sha256[:12]}"
-        revisions: list[int] = []
+        revisions: list[tuple[int, Path]] = []
         if base.is_dir():
             for candidate in base.iterdir():
                 if not candidate.is_dir():
                     continue
                 if candidate.name == prefix:
-                    revisions.append(1)
+                    revisions.append((1, candidate.resolve()))
                     continue
                 match = re.fullmatch(
                     rf"{re.escape(prefix)}_r([2-9]|[1-9][0-9]+)",
                     candidate.name,
                 )
                 if match:
-                    revisions.append(int(match.group(1)))
+                    revisions.append(
+                        (int(match.group(1)), candidate.resolve())
+                    )
         if not revisions:
             return base / prefix
-        return base / f"{prefix}_r{max(revisions) + 1}"
+        _reject_forbidden_source_retry(revisions)
+        next_revision = max(revision for revision, _ in revisions) + 1
+        return base / f"{prefix}_r{next_revision}"
     revisions: list[tuple[int, Path]] = []
     if base.is_dir():
         for candidate in base.iterdir():
@@ -91,10 +96,28 @@ def select_source_asset_revision(
     )
     if frozen:
         return frozen[0][1]
+    _reject_forbidden_source_retry(revisions)
     next_revision = max(
         [initial_revision - 1, *(revision for revision, _ in revisions)]
     ) + 1
     return base / f"native_source_r{next_revision}"
+
+
+def _reject_forbidden_source_retry(
+    revisions: list[tuple[int, Path]],
+) -> None:
+    for _, candidate in sorted(revisions):
+        marker = candidate / "prep_failure.json"
+        if not marker.is_file():
+            continue
+        try:
+            failure = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(failure, dict) or failure.get("retry_allowed") is not False:
+            continue
+        error = str(failure.get("error") or "terminal_source_failure").strip()
+        raise ValueError(f"source_asset_retry_forbidden:{candidate}:{error}")
 
 
 def _manifest_source_sha256(value: Any) -> str:
