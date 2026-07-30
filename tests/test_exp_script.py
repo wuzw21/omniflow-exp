@@ -59,6 +59,8 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert script_text.count('bash "$0"') == 2
     assert "-no-snapshot-load" in script_text
     assert "-no-snapshot-save" in script_text
+    assert 'emu avd name' in script_text
+    assert '"avd-conflict:$wanted_avd"' in script_text
 
 
 @pytest.mark.parametrize(

@@ -1782,6 +1782,51 @@ device_state() {
   awk -v wanted="$serial" '$1 == wanted {print $2; exit}' <<< "$devices"
 }
 
+running_emulator_serials() {
+  local devices
+  devices="$("$adb_bin" devices 2>/dev/null || true)"
+  awk '$1 ~ /^emulator-[0-9]+$/ {print $1}' <<< "$devices"
+}
+
+running_avd_for_serial() {
+  local serial="$1"
+  "$adb_bin" -s "$serial" emu avd name 2>/dev/null \
+    | tr -d '\r' \
+    | sed -n '1p' \
+    || true
+}
+
+stop_emulator() {
+  local serial="$1"
+  local reason="$2"
+  local stop_deadline
+  echo "[emulator] stop serial=$serial reason=$reason"
+  "$adb_bin" -s "$serial" emu kill >/dev/null 2>&1 || true
+  stop_deadline="$(( $(date +%s) + 30 ))"
+  while [[ -n "$(device_state "$serial")" ]]; do
+    if (( $(date +%s) >= stop_deadline )); then
+      echo "Existing emulator could not be stopped safely: $serial" >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+stop_avd_conflicts() {
+  local wanted_avd="$1"
+  local wanted_serial="$2"
+  local running_serial running_avd
+  while IFS= read -r running_serial; do
+    if [[ -z "$running_serial" || "$running_serial" == "$wanted_serial" ]]; then
+      continue
+    fi
+    running_avd="$(running_avd_for_serial "$running_serial")"
+    if [[ "$running_avd" == "$wanted_avd" ]]; then
+      stop_emulator "$running_serial" "avd-conflict:$wanted_avd"
+    fi
+  done < <(running_emulator_serials)
+}
+
 grpc_ready() {
   local port="$1"
   "$python_bin" - "$port" <<'PY'
@@ -1825,7 +1870,7 @@ ensure_emulator() {
   local serial="$1"
   local console_port="${serial#emulator-}"
   local grpc_port="$(( console_port + 3000 ))"
-  local avd log_path current_state stop_deadline
+  local avd log_path current_state
   current_state="$(device_state "$serial")"
   if [[ "$manage_emulators" -ne 1 ]]; then
     if [[ "$current_state" == "device" ]] && grpc_ready "$grpc_port"; then
@@ -1837,15 +1882,7 @@ ensure_emulator() {
   fi
   if [[ -n "$current_state" ]]; then
     echo "[emulator] cold-restart serial=$serial state=$current_state grpc=$grpc_port"
-    "$adb_bin" -s "$serial" emu kill >/dev/null 2>&1 || true
-    stop_deadline="$(( $(date +%s) + 30 ))"
-    while [[ -n "$(device_state "$serial")" ]]; do
-      if (( $(date +%s) >= stop_deadline )); then
-        echo "Existing emulator could not be stopped safely: $serial" >&2
-        return 1
-      fi
-      sleep 1
-    done
+    stop_emulator "$serial" "cold-restart"
   elif grpc_ready "$grpc_port"; then
     echo "gRPC port is occupied without its emulator: 127.0.0.1:$grpc_port" >&2
     return 1
@@ -1858,6 +1895,7 @@ ensure_emulator() {
     echo "Configured AVD is unavailable: serial=$serial avd=$avd" >&2
     return 1
   fi
+  stop_avd_conflicts "$avd" "$serial"
   log_path="$preflight_output_root/emulator_${serial#emulator-}.log"
   echo "[emulator] launch serial=$serial avd=$avd grpc=$grpc_port"
   nohup "$emulator_bin" \
