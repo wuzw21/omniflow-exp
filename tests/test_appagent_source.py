@@ -3,7 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -11,6 +12,7 @@ import pytest
 from src.experiment import androidworld as pipeline
 from src.experiment import appagent_source
 from src.integrations import appagent_adapter
+from src.integrations.android_world.apps import resolve_androidworld_app_name
 
 
 def _write_appagent_teacher_source(
@@ -58,6 +60,70 @@ def _write_appagent_teacher_source(
         encoding="utf-8",
     )
     return teacher_source
+
+
+def _browser_draw_teacher_agent(
+    tmp_path: Path,
+    env: SimpleNamespace,
+) -> appagent_adapter.AppAgentTeacherAgent:
+    teacher_source = _write_appagent_teacher_source(
+        tmp_path,
+        task_name="BrowserDraw",
+        source_app_package="com.google.android.documentsui",
+        action={
+            "type": "click",
+            "params": {
+                "target_description": "6.50 kB",
+                "source_context": {"element": {"text": "6.50 kB"}},
+            },
+        },
+    )
+    agent = appagent_adapter.AppAgentTeacherAgent(
+        env=env,
+        official_runtime=SimpleNamespace(),
+        teacher_source=teacher_source,
+        workspace_root=tmp_path / "workspace",
+        demo_name="browser_draw",
+        action_factory=lambda **kwargs: kwargs,
+    )
+    agent.set_current_task(
+        "BrowserDraw",
+        "Open task.html and draw.",
+        {"app_names": ["chrome"]},
+    )
+    return agent
+
+
+def test_resolve_androidworld_app_name_uses_installed_official_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = object()
+    adb_utils = SimpleNamespace(
+        get_all_apps=lambda actual_controller: (
+            ["chrome", "files"] if actual_controller is controller else []
+        ),
+        get_adb_activity=lambda app_name: {
+            "chrome": "com.android.chrome/com.google.android.apps.chrome.Main",
+            "files": (
+                "com.google.android.documentsui/"
+                "com.android.documentsui.files.FilesActivity"
+            ),
+        }.get(app_name),
+    )
+    android_world = ModuleType("android_world")
+    android_world_env = ModuleType("android_world.env")
+    android_world_env.adb_utils = adb_utils
+    android_world.env = android_world_env
+    monkeypatch.setitem(sys.modules, "android_world", android_world)
+    monkeypatch.setitem(sys.modules, "android_world.env", android_world_env)
+
+    assert (
+        resolve_androidworld_app_name(
+            "com.google.android.documentsui",
+            controller,
+        )
+        == "files"
+    )
 
 
 def _write_source_index(root: Path) -> Path:
@@ -410,32 +476,10 @@ def test_appagent_teacher_input_replaces_existing_field_text(
 
 
 def test_appagent_teacher_launches_source_app_package(tmp_path: Path) -> None:
-    teacher_source = _write_appagent_teacher_source(
-        tmp_path,
-        task_name="BrowserDraw",
-        source_app_package="com.google.android.documentsui",
-        action={
-            "type": "click",
-            "params": {
-                "target_description": "6.50 kB",
-                "source_context": {"element": {"text": "6.50 kB"}},
-            },
-        },
-    )
     launched: list[dict] = []
-    agent = appagent_adapter.AppAgentTeacherAgent(
+    agent = _browser_draw_teacher_agent(
+        tmp_path,
         env=SimpleNamespace(execute_action=launched.append),
-        official_runtime=SimpleNamespace(),
-        teacher_source=teacher_source,
-        workspace_root=tmp_path / "workspace",
-        demo_name="browser_draw",
-        action_factory=lambda **kwargs: kwargs,
-    )
-
-    agent.set_current_task(
-        "BrowserDraw",
-        "Open task.html and draw.",
-        {"app_names": ["chrome"]},
     )
     agent._ensure_app_started()
 
@@ -446,6 +490,69 @@ def test_appagent_teacher_launches_source_app_package(tmp_path: Path) -> None:
             "app_name": "com.google.android.documentsui",
         }
     ]
+
+
+def test_appagent_teacher_resolves_source_package_to_androidworld_app_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APPAGENT_APP_START_WAIT_SEC", "0")
+    controller = object()
+    monkeypatch.setattr(
+        appagent_adapter,
+        "resolve_androidworld_app_name",
+        lambda package_name, actual_controller: (
+            "files"
+            if package_name == "com.google.android.documentsui"
+            and actual_controller is controller
+            else package_name
+        ),
+    )
+    launched: list[dict] = []
+    agent = _browser_draw_teacher_agent(
+        tmp_path,
+        env=SimpleNamespace(
+            controller=controller,
+            execute_action=launched.append,
+            foreground_activity_name=(
+                "com.google.android.documentsui/"
+                "com.android.documentsui.files.FilesActivity"
+            ),
+        ),
+    )
+
+    agent._ensure_app_started()
+
+    assert launched == [{"action_type": "open_app", "app_name": "files"}]
+
+
+def test_appagent_teacher_rejects_wrong_foreground_package_after_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APPAGENT_APP_START_WAIT_SEC", "0")
+    monkeypatch.setattr(
+        appagent_adapter,
+        "resolve_androidworld_app_name",
+        lambda package_name, _controller: "files",
+    )
+    agent = _browser_draw_teacher_agent(
+        tmp_path,
+        SimpleNamespace(
+            controller=object(),
+            execute_action=lambda _action: None,
+            foreground_activity_name="com.android.chrome/.Main",
+        ),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "appagent_source_app_not_ready:"
+            "expected=com.google.android.documentsui:observed=com.android.chrome"
+        ),
+    ):
+        agent._ensure_app_started()
 
 
 def test_appagent_teacher_retries_partial_a11y_tree_after_launch(

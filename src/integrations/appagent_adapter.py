@@ -20,6 +20,7 @@ import xml.etree.ElementTree as ET
 from PIL import Image
 
 from src.integrations.android_world.accessibility import androidworld_forest_xml
+from src.integrations.android_world.apps import resolve_androidworld_app_name
 from src.integrations.android_world.host import (
     androidworld_elements_xml,
     make_agent_result,
@@ -68,6 +69,23 @@ _SOURCE_COORDINATE_FIELDS = {
     "y1",
     "y2",
 }
+
+
+def _has_foreground_activity(env: Any) -> bool:
+    if "foreground_activity_name" in getattr(env, "__dict__", {}):
+        return True
+    return any(
+        "foreground_activity_name" in parent.__dict__
+        for parent in type(env).__mro__
+    )
+
+
+def _foreground_package(env: Any) -> str:
+    try:
+        activity = str(getattr(env, "foreground_activity_name", "") or "").strip()
+    except Exception:  # noqa: BLE001
+        return ""
+    return activity.split("/", 1)[0].strip()
 
 
 @dataclass(frozen=True)
@@ -680,11 +698,37 @@ class AppAgentTeacherAgent:
         if not self.app_name:
             raise ValueError("appagent_single_task_app_required")
         launch_app = self.source_app_package or self.app_name
+        controller = getattr(self.env, "controller", None)
+        if self.source_app_package and controller is not None:
+            launch_app = resolve_androidworld_app_name(
+                self.source_app_package,
+                controller,
+            )
         self.env.execute_action(
             self._new_action(action_type="open_app", app_name=launch_app)
         )
+        wait_seconds = max(
+            0.0,
+            float(os.environ.get("APPAGENT_APP_START_WAIT_SEC") or 1.0),
+        )
+        if self.source_app_package and _has_foreground_activity(self.env):
+            deadline = time.monotonic() + wait_seconds
+            observed_package = ""
+            while True:
+                observed_package = _foreground_package(self.env)
+                if observed_package == self.source_app_package:
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError(
+                        "appagent_source_app_not_ready:"
+                        f"expected={self.source_app_package}:"
+                        f"observed={observed_package or 'unknown'}"
+                    )
+                time.sleep(min(0.1, remaining))
+        elif wait_seconds > 0:
+            time.sleep(wait_seconds)
         self._app_started = True
-        time.sleep(float(os.environ.get("APPAGENT_APP_START_WAIT_SEC") or 1.0))
 
     def _capture_demo_state(
         self,
