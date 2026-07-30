@@ -18,7 +18,7 @@ import sys
 import time
 from typing import Any
 
-from src.integrations.runlog import import_run_log
+from omniflow.core.trajectory import canonicalize_run_log as import_run_log
 
 APPAGENT_OFFICIAL_REVISION = "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
 REQUIRED_DISTRIBUTION_VERSIONS = {"android-env": "1.2.3"}
