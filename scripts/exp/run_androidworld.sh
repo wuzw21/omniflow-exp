@@ -734,7 +734,7 @@ export JAVA_HOME="$java_home"
 export PATH="$java_home/bin:$PATH"
 echo "[java] home=$java_home major=$java_major version=$java_version_line"
 select_source_asset_revision() {
-  "$python_bin" - "$repo" "$1" "$2" "$ours_store_index" "$3" "${4:-}" <<'PY'
+  "$python_bin" - "$repo" "$1" "$2" "$source_index" "$3" "${4:-}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -742,18 +742,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
 from src.experiment.source_assets import select_source_asset_revision
 
-store_index = json.loads(
+source_index = json.loads(
     Path(sys.argv[4]).read_text(encoding="utf-8")
 )
-source_row = store_index.get(sys.argv[5])
+source_row = source_index.get(sys.argv[5])
 if not isinstance(source_row, dict):
-    raise SystemExit(f"source_store_task_missing:{sys.argv[5]}")
+    raise SystemExit(f"canonical_source_task_missing:{sys.argv[5]}")
 source_sha256 = str(
-    source_row.get("source_run_log_sha256")
+    source_row.get("retained_source_run_log_sha256")
+    or source_row.get("source_run_log_sha256")
     or ""
 ).strip()
 if not source_sha256:
-    raise SystemExit(f"source_asset_run_log_hash_missing:{sys.argv[5]}")
+    raise SystemExit(f"canonical_source_run_log_hash_missing:{sys.argv[5]}")
 try:
     selected = select_source_asset_revision(
         sys.argv[2],
