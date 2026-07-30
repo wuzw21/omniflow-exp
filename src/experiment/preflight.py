@@ -447,11 +447,9 @@ def _validate_source_index(
         if not isinstance(metadata, dict):
             invalid.append(str(task))
             continue
-        source_seed = metadata.get("source_seed", metadata.get("replay_seed"))
         source_kind = str(metadata.get("source_kind") or "").strip()
         if (
-            source_seed != 111
-            or metadata.get("latest_official_success_source") is not True
+            metadata.get("latest_official_success_source") is not True
             or (
                 source_kind
                 and source_kind

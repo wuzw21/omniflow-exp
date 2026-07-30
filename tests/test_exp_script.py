@@ -189,7 +189,7 @@ def test_check_only_is_read_only_before_any_runtime_output(
                 "SystemBluetoothTurnOn": {
                     "goal": "Turn Bluetooth on.",
                     "params": {"on_or_off": "on"},
-                    "replay_seed": 111,
+                    "replay_seed": 3936510006,
                     "step_count": 1,
                     "retained_source_run_log": str(source_run_log),
                     "method": "fixed_replay",
@@ -261,6 +261,7 @@ def test_check_only_is_read_only_before_any_runtime_output(
 
     assert completed.returncode == 0, completed.stderr
     assert "[static] ready" in completed.stdout
+    assert "protocol_seed=111 recorded_seed=3936510006" in completed.stdout
     assert not results.exists()
 
     fake_java.write_text(

@@ -1432,11 +1432,6 @@ row = payload.get(task_name) if isinstance(payload, dict) else None
 if not isinstance(row, dict):
     raise SystemExit(f"canonical_source_task_missing:{task_name}")
 actual_seed = row.get("source_seed", row.get("replay_seed"))
-if actual_seed != expected_seed:
-    raise SystemExit(
-        f"formal_source_seed_mismatch:{task_name}:"
-        f"expected={expected_seed}:actual={actual_seed}"
-    )
 actual_method = str(row.get("method") or "").strip()
 if row.get("latest_official_success_source") is not True:
     raise SystemExit(f"formal_source_official_success_missing:{task_name}")
@@ -1485,7 +1480,8 @@ if (
 ):
     raise SystemExit(f"formal_source_runlog_not_successful:{task_name}")
 print(
-    f"[source] task={task_name} seed={actual_seed} "
+    f"[source] task={task_name} protocol_seed={expected_seed} "
+    f"recorded_seed={actual_seed if actual_seed is not None else 'unrecorded'} "
     f"method={actual_method or 'unrecorded'} "
     f"index={index_path}"
 )

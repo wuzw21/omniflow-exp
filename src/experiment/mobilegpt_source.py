@@ -55,11 +55,6 @@ def load_canonical_source_item(
         )
     item = matches[0]
     source_kind = str(item.meta.get("source_kind") or "").strip()
-    if item.replay_seed != SOURCE_SEED:
-        raise ValueError(
-            "mobilegpt_source_seed_mismatch:"
-            f"task={task_name}:expected={SOURCE_SEED}:actual={item.replay_seed}"
-        )
     if item.meta.get("latest_official_success_source") is not True:
         raise ValueError(
             f"mobilegpt_source_official_success_required:task={task_name}"

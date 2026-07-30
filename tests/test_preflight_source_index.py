@@ -126,6 +126,21 @@ def test_source_index_requires_strict_frozen_provenance(tmp_path: Path) -> None:
     assert result["run_log_count"] == 1
 
 
+def test_source_index_accepts_recorded_seed_outside_protocol(tmp_path: Path) -> None:
+    index = _write_index(tmp_path / "recorded-seed")
+    payload = json.loads(index.read_text(encoding="utf-8"))
+    payload["Task"]["source_seed"] = 3936510006
+    index.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = _validate_source_index(
+        index,
+        source_root=tmp_path,
+        expected_tasks=1,
+    )
+
+    assert result["run_log_count"] == 1
+
+
 def test_source_index_rejects_runlog_changed_after_freeze(
     tmp_path: Path,
 ) -> None:

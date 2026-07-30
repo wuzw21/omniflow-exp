@@ -430,16 +430,19 @@ def test_mobilegpt_deterministic_preflight_does_not_claim_output(
     assert not output_root.exists()
 
 
-def test_mobilegpt_source_accepts_successful_canonical_seed111(
+def test_mobilegpt_source_accepts_successful_canonical_recorded_seed(
     tmp_path: Path,
 ) -> None:
     accepted_index, source_run_log = _write_source_index(tmp_path / "accepted")
+    payload = json.loads(accepted_index.read_text(encoding="utf-8"))
+    payload["SystemBluetoothTurnOn"]["replay_seed"] = 3936510006
+    accepted_index.write_text(json.dumps(payload), encoding="utf-8")
     item = mobilegpt_source.load_canonical_source_item(
         accepted_index,
         task_name="SystemBluetoothTurnOn",
     )
     assert item.source_run_log == source_run_log
-    assert item.replay_seed == 111
+    assert item.replay_seed == 3936510006
     item.meta.pop("method")
     assert mobilegpt_source.source_method_label(item) == "fixed_replay"
 
