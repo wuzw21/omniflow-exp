@@ -65,10 +65,12 @@ bash scripts/exp/run_androidworld.sh \
 ```
 
 The default method set contains all five methods. Set
-`OMNIFLOW_SINGLE_TASK_METHODS` only for an intentional subset. When the
-canonical `ours` Store is missing, the command creates and registers it before
-preparing MobileGPT and AppAgent assets, provided the immutable authoring
-manifest is configured; then the same process continues to
+`--methods`, `--devices`, and `--tasks` independently select ordered subsets;
+their defaults remain all five methods, both formal devices, and every indexed
+task. `OMNIFLOW_SINGLE_TASK_METHODS` remains an internal/runtime override. When
+the canonical `ours` Store is missing, the command creates and registers it
+before preparing MobileGPT and AppAgent assets, provided the immutable
+authoring manifest is configured; then the same process continues to
 target replay. `--tasks` implies task-major scheduling and skips every result
 cell with the same task, method, device, source seed, and evaluation seed that
 is already registered with an official-validator conclusion. A result from a
@@ -96,6 +98,18 @@ Run all five methods, both devices, and every indexed task:
 ```bash
 bash scripts/exp/run_androidworld.sh --all-tasks
 ```
+
+Run only MobileGPT on both formal devices for every indexed task:
+
+```bash
+bash scripts/exp/run_androidworld.sh \
+  --all-tasks \
+  --methods mobilegpt_offline_retrieval
+```
+
+The three axes are independent. For example, select one task, one method, and
+one formal device with `--tasks AudioRecorderRecordAudio`,
+`--methods mobilegpt_offline_retrieval`, and `--devices fold5564`.
 
 Run the four non-T3A methods on both devices for a bounded task slice:
 

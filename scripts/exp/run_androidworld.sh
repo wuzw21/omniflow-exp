@@ -71,6 +71,8 @@ eight_cells=0
 batch_task_filter=""
 convert_ours_assets=0
 refresh_memory=0
+selected_methods_arg=""
+selected_devices_arg=""
 
 usage() {
   cat <<'EOF'
@@ -82,7 +84,9 @@ Options:
                             assets, attempts, result directories, or emulators.
   --dry-run                 Build one task command without executing it.
   --all-tasks               Run the selected task set in task-major order.
-  --eight-cells             Run the four non-T3A methods on both devices.
+  --eight-cells             Select the four non-T3A methods (legacy shorthand).
+  --methods METHOD1,...     Select an ordered subset of the five paper methods.
+  --devices DEVICE1,...     Select small5554 and/or fold5564 independently.
   --tasks TASK1,TASK2,...   Run an ordered task-major subset, or limit
                             --convert-ours-assets. Implies --all-tasks during
                             experiment execution.
@@ -123,6 +127,10 @@ Examples:
   bash scripts/exp/run_androidworld.sh --convert-ours-assets \
     --tasks AudioRecorderRecordAudio
   bash scripts/exp/run_androidworld.sh --refresh-memory
+  bash scripts/exp/run_androidworld.sh --check-only --all-tasks \
+    --methods mobilegpt_offline_retrieval
+  bash scripts/exp/run_androidworld.sh --all-tasks \
+    --methods mobilegpt_offline_retrieval
   bash scripts/exp/run_androidworld.sh --check-only --all-tasks --eight-cells
   bash scripts/exp/run_androidworld.sh --all-tasks --eight-cells \
     --tasks AudioRecorderRecordAudioWithFileName,SystemCopyToClipboard
@@ -147,6 +155,22 @@ while [[ "$#" -gt 0 ]]; do
     --eight-cells)
       eight_cells=1
       ;;
+    --methods)
+      shift
+      if [[ "$#" -eq 0 || -z "$1" ]]; then
+        echo "--methods requires a comma-separated method list." >&2
+        exit 2
+      fi
+      selected_methods_arg="$1"
+      ;;
+    --devices)
+      shift
+      if [[ "$#" -eq 0 || -z "$1" ]]; then
+        echo "--devices requires a comma-separated device list." >&2
+        exit 2
+      fi
+      selected_devices_arg="$1"
+      ;;
     --convert-ours-assets)
       convert_ours_assets=1
       ;;
@@ -169,7 +193,7 @@ while [[ "$#" -gt 0 ]]; do
   shift
 done
 if [[ "$refresh_memory" -eq 1 ]]; then
-  if [[ "$convert_ours_assets" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$batch_task_filter" ]]; then
+  if [[ "$convert_ours_assets" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$batch_task_filter" ]]; then
     echo "--refresh-memory cannot be combined with conversion or experiment run options." >&2
     exit 2
   fi
@@ -229,7 +253,7 @@ if [[ "$refresh_memory" -eq 1 ]]; then
   exec "$python_bin" "${memory_args[@]}"
 fi
 if [[ "$convert_ours_assets" -eq 1 ]]; then
-  if [[ "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 ]]; then
+  if [[ "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" ]]; then
     echo "--convert-ours-assets cannot be combined with experiment run options." >&2
     exit 2
   fi
@@ -285,10 +309,70 @@ if [[ "$task_iteration" == "1" ]]; then
 else
   default_methods="ours"
 fi
-methods="${OMNIFLOW_SINGLE_TASK_METHODS:-$default_methods}"
+methods="${selected_methods_arg:-${OMNIFLOW_SINGLE_TASK_METHODS:-$default_methods}}"
+validate_method_subset() {
+  local raw_methods="$1"
+  local selected_method canonical_method
+  local seen_methods="," canonical_match
+  local -a selected_method_array=()
+  IFS=',' read -r -a selected_method_array <<< "$raw_methods"
+  if [[ "${#selected_method_array[@]}" -eq 0 ]]; then
+    echo "Method selection is empty." >&2
+    return 2
+  fi
+  for selected_method in "${selected_method_array[@]}"; do
+    if [[ -z "$selected_method" ]]; then
+      echo "Method selection contains an empty name: $raw_methods" >&2
+      return 2
+    fi
+    canonical_match=0
+    for canonical_method in ${all_methods//,/ }; do
+      if [[ "$selected_method" == "$canonical_method" ]]; then
+        canonical_match=1
+        break
+      fi
+    done
+    if [[ "$canonical_match" -ne 1 ]]; then
+      echo "Unsupported paper method: $selected_method" >&2
+      return 2
+    fi
+    if [[ "$seen_methods" == *",$selected_method,"* ]]; then
+      echo "Duplicate method in --methods: $selected_method" >&2
+      return 2
+    fi
+    seen_methods+="$selected_method,"
+  done
+}
+validate_method_subset "$methods" || exit "$?"
 if [[ "$eight_cells" -eq 1 && "$methods" != "$eight_cell_methods" ]]; then
   echo "--eight-cells requires exactly: $eight_cell_methods" >&2
   exit 2
+fi
+if [[ -n "$selected_devices_arg" ]]; then
+  device_targets=""
+  selected_device_seen=","
+  selected_device_array=()
+  IFS=',' read -r -a selected_device_array <<< "$selected_devices_arg"
+  for selected_device in "${selected_device_array[@]}"; do
+    if [[ "$selected_device_seen" == *",$selected_device,"* ]]; then
+      echo "Duplicate device in --devices: $selected_device" >&2
+      exit 2
+    fi
+    case "$selected_device" in
+      small5554)
+        selected_device_target="small5554:emulator-5554:5554"
+        ;;
+      fold5564)
+        selected_device_target="fold5564:emulator-5564:5564"
+        ;;
+      *)
+        echo "Unsupported formal device: $selected_device" >&2
+        exit 2
+        ;;
+    esac
+    device_targets="${device_targets:+$device_targets,}$selected_device_target"
+    selected_device_seen+="$selected_device,"
+  done
 fi
 if [[ -z "$memory_index" || "$memory_index" != /* || ! -f "$memory_index" ]]; then
   echo "Long-term-memory index missing; run --refresh-memory first: $memory_index" >&2
@@ -700,21 +784,37 @@ fi
 if [[ "$all_tasks" -eq 1 ]]; then
   if [[ "$eight_cells" -eq 1 ]]; then
     batch_methods="$eight_cell_methods"
-    batch_method_count=4
-    batch_cell_count=8
   else
-    batch_methods="$all_methods"
-    batch_method_count=5
-    batch_cell_count=10
+    batch_methods="$methods"
   fi
-  if [[ "$methods" != "$batch_methods" ]]; then
-    echo "--all-tasks method set mismatch: expected $batch_methods" >&2
+  batch_method_array=()
+  IFS=',' read -r -a batch_method_array <<< "$batch_methods"
+  batch_method_count="${#batch_method_array[@]}"
+  batch_device_array=()
+  IFS=',' read -r -a batch_device_array <<< "$device_targets"
+  batch_device_count="${#batch_device_array[@]}"
+  seen_batch_devices=","
+  for batch_device_target in "${batch_device_array[@]}"; do
+    case "$batch_device_target" in
+      small5554:emulator-5554:5554|fold5564:emulator-5564:5564)
+        ;;
+      *)
+        echo "--all-tasks device selection must use formal targets: $batch_device_target" >&2
+        exit 2
+        ;;
+    esac
+    batch_device_label="${batch_device_target%%:*}"
+    if [[ "$seen_batch_devices" == *",$batch_device_label,"* ]]; then
+      echo "Duplicate formal device target: $batch_device_label" >&2
+      exit 2
+    fi
+    seen_batch_devices+="$batch_device_label,"
+  done
+  if [[ "$batch_device_count" -eq 0 ]]; then
+    echo "--all-tasks device selection is empty." >&2
     exit 2
   fi
-  if [[ "$device_targets" != "$formal_device_targets" ]]; then
-    echo "--all-tasks requires both formal targets in order: $formal_device_targets" >&2
-    exit 2
-  fi
+  batch_cell_count="$((batch_method_count * batch_device_count))"
   if [[ "$expected_source_seed" != "$formal_source_seed" \
     || "$evaluation_seed" != "$formal_evaluation_seed" \
     || "$max_steps" != "$formal_max_steps" \
@@ -815,7 +915,7 @@ PY
       "$memory_index" \
       "$1" \
       "$batch_methods" \
-      "$formal_device_targets" \
+      "$device_targets" \
       "$expected_source_seed" \
       "$evaluation_seed" \
       "$max_steps" <<'PY'

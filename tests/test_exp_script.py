@@ -44,6 +44,8 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "--check-only" in completed.stdout
     assert "--all-tasks" in completed.stdout
     assert "--eight-cells" in completed.stdout
+    assert "--methods" in completed.stdout
+    assert "--devices" in completed.stdout
     assert "--tasks" in completed.stdout
     assert "--convert-ours-assets" in completed.stdout
     assert "--refresh-memory" in completed.stdout
@@ -56,6 +58,107 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert script_text.count('bash "$0"') == 2
     assert "-no-snapshot-load" in script_text
     assert "-no-snapshot-save" in script_text
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (
+            [
+                "--methods",
+                "mobilegpt_offline_retrieval,mobilegpt_offline_retrieval",
+            ],
+            "Duplicate method",
+        ),
+        (["--methods", "unknown_method"], "Unsupported paper method"),
+        (["--devices", "small5554,small5554"], "Duplicate device"),
+        (["--devices", "unknown_device"], "Unsupported formal device"),
+    ],
+)
+def test_experiment_axes_reject_invalid_selections(
+    arguments: list[str],
+    message: str,
+) -> None:
+    completed = subprocess.run(
+        ["bash", str(SCRIPT), *arguments],
+        cwd=REPO,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert message in completed.stderr
+
+
+def test_task_method_and_device_axes_are_independent(tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    results = tmp_path / "results"
+    memory_index = tmp_path / "memory" / "current.json"
+    source_index = tmp_path / "memory" / "source_index.json"
+    store_index = tmp_path / "memory" / "store_index.json"
+    capture = tmp_path / "selection.txt"
+    for path in (memory_index, source_index, store_index):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        """#!/bin/sh
+if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ] && [ "$3" = "$MEMORY_INDEX" ]; then
+  printf '%s\t%s\n' "$SOURCE_INDEX" "$STORE_INDEX"
+  exit 0
+fi
+if [ "$1" = "-" ] && [ "$2" = "$SOURCE_INDEX" ]; then
+  printf '%s\n' 'TaskA'
+  exit 0
+fi
+if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ]; then
+  printf '%s|%s\n' "$6" "$7" > "$CAPTURE"
+  printf 'summary\t1\t0\n'
+  exit 0
+fi
+exit 1
+""",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    environment = {
+        **os.environ,
+        "PYTHON_BIN": str(fake_python),
+        "REPO_PATH": str(REPO),
+        "MEMORY_INDEX": str(memory_index),
+        "SOURCE_INDEX": str(source_index),
+        "STORE_INDEX": str(store_index),
+        "CAPTURE": str(capture),
+        "OMNIFLOW_EXP_ASSET_ROOT": str(assets),
+        "OMNIFLOW_EXP_RESULTS_ROOT": str(results),
+        "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_index),
+    }
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT),
+            "--check-only",
+            "--tasks",
+            "TaskA",
+            "--methods",
+            "mobilegpt_offline_retrieval",
+            "--devices",
+            "fold5564",
+        ],
+        cwd=REPO,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert capture.read_text(encoding="utf-8").strip() == (
+        "mobilegpt_offline_retrieval|fold5564:emulator-5564:5564"
+    )
+    assert "already-complete task=TaskA cells=1/1" in completed.stdout
 
 
 def test_check_only_is_read_only_before_any_runtime_output(
