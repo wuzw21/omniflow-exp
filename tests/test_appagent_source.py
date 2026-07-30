@@ -527,3 +527,125 @@ def test_appagent_teacher_retries_partial_a11y_tree_after_launch(
         ).read_text(encoding="utf-8")
     )
     assert trace["observation_attempts"] == 2
+
+
+def test_appagent_teacher_preserves_native_accessibility_hierarchy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APPAGENT_APP_START_WAIT_SEC", "0")
+    teacher_source = _write_appagent_teacher_source(
+        tmp_path,
+        task_name="BrowserDraw",
+        source_app_package="com.google.android.documentsui",
+        action={
+            "type": "click",
+            "params": {
+                "target_description": "6.50 kB",
+                "source_context": {"element": {"text": "6.50 kB"}},
+            },
+        },
+    )
+
+    def forest_node(
+        node_id: int,
+        bounds: tuple[int, int, int, int],
+        *,
+        child_ids: tuple[int, ...] = (),
+        text: str = "",
+        clickable: bool = False,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            unique_id=node_id,
+            bounds_in_screen=SimpleNamespace(
+                left=bounds[0],
+                top=bounds[1],
+                right=bounds[2],
+                bottom=bounds[3],
+            ),
+            child_ids=child_ids,
+            text=text,
+            package_name="com.google.android.documentsui",
+            is_clickable=clickable,
+            is_visible_to_user=True,
+        )
+
+    forest = SimpleNamespace(
+        windows=[
+            SimpleNamespace(
+                id=1,
+                title="Downloads",
+                tree=SimpleNamespace(
+                    nodes=[
+                        forest_node(1, (0, 0, 220, 100), child_ids=(2, 3)),
+                        forest_node(2, (0, 0, 40, 20), clickable=True),
+                        forest_node(
+                            3,
+                            (40, 20, 200, 90),
+                            child_ids=(4,),
+                            clickable=True,
+                        ),
+                        forest_node(4, (70, 50, 130, 70), text="6.50 kB"),
+                    ]
+                ),
+            )
+        ]
+    )
+    ui_elements = [
+        SimpleNamespace(
+            text="Search",
+            bbox_pixels=SimpleNamespace(
+                x_min=0,
+                y_min=0,
+                x_max=40,
+                y_max=20,
+            ),
+            is_clickable=True,
+            package_name="com.google.android.documentsui",
+        ),
+        SimpleNamespace(
+            text="6.50 kB",
+            bbox_pixels=SimpleNamespace(
+                x_min=70,
+                y_min=50,
+                x_max=130,
+                y_max=70,
+            ),
+            package_name="com.google.android.documentsui",
+        ),
+    ]
+    actions: list[dict] = []
+    env = SimpleNamespace(
+        execute_action=actions.append,
+        get_state=lambda: SimpleNamespace(
+            pixels=np.zeros((100, 220, 3), dtype=np.uint8),
+            forest=forest,
+            ui_elements=ui_elements,
+        ),
+    )
+
+    def draw_elements(source, destination, *_args, **_kwargs):
+        Path(destination).write_bytes(Path(source).read_bytes())
+
+    agent = appagent_adapter.AppAgentTeacherAgent(
+        env=env,
+        official_runtime=SimpleNamespace(
+            min_dist=0.0,
+            request_interval=0.0,
+            draw_elements=draw_elements,
+        ),
+        teacher_source=teacher_source,
+        workspace_root=tmp_path / "workspace",
+        demo_name="browser_draw",
+        action_factory=lambda **kwargs: kwargs,
+    )
+    agent.set_current_task(
+        "BrowserDraw",
+        "Open task.html and draw.",
+        {"app_names": ["chrome"]},
+    )
+
+    result = agent.step("Open task.html and draw.")
+
+    assert result.done is False
+    assert actions[-1] == {"action_type": "click", "x": 120, "y": 55}

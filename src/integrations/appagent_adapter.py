@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 
 from PIL import Image
 
+from src.integrations.android_world.accessibility import androidworld_forest_xml
 from src.integrations.android_world.host import (
     androidworld_elements_xml,
     make_agent_result,
@@ -692,11 +693,32 @@ class AppAgentTeacherAgent:
         if self.demo_root is None:
             raise RuntimeError("appagent_demo_root_not_prepared")
         state = self.env.get_state()
+        pixels = getattr(state, "pixels", None)
         controller = getattr(self.env, "controller", None)
+        if pixels is None and controller is not None:
+            screenshot = getattr(controller, "get_screenshot", None)
+            if callable(screenshot):
+                pixels = screenshot()
+        if pixels is None:
+            raise ValueError("appagent_androidworld_screenshot_missing")
         xml_text = str(getattr(state, "xml", "") or "").strip()
         xml_text = xml_text or str(
             getattr(controller, "_omniflow_last_ui_xml", "") or ""
         ).strip()
+        if not xml_text and getattr(state, "forest", None) is not None:
+            if isinstance(pixels, Image.Image):
+                screen_size = pixels.size
+            else:
+                shape = tuple(getattr(pixels, "shape", ()) or ())
+                screen_size = (
+                    (int(shape[1]), int(shape[0]))
+                    if len(shape) >= 2
+                    else (1, 1)
+                )
+            xml_text = androidworld_forest_xml(
+                state.forest,
+                screen_size=screen_size,
+            )
         if not xml_text:
             xml_text = androidworld_elements_xml(
                 list(getattr(state, "ui_elements", ()) or ())
@@ -706,13 +728,6 @@ class AppAgentTeacherAgent:
         base_name = f"{self.demo_name}_{step_index}"
         xml_path = self.demo_root / "xml" / f"{base_name}.xml"
         xml_path.write_text(xml_text, encoding="utf-8")
-        pixels = getattr(state, "pixels", None)
-        if pixels is None and controller is not None:
-            screenshot = getattr(controller, "get_screenshot", None)
-            if callable(screenshot):
-                pixels = screenshot()
-        if pixels is None:
-            raise ValueError("appagent_androidworld_screenshot_missing")
         image = pixels if isinstance(pixels, Image.Image) else Image.fromarray(pixels)
         raw_path = self.demo_root / "raw_screenshots" / f"{base_name}.png"
         image.convert("RGB").save(raw_path)
