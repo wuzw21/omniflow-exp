@@ -2763,6 +2763,13 @@ def _patch_mobilegpt_client_runtime(
     patched_paths: list[Path] = []
     service_text = service_java.read_text(encoding="utf-8")
     patched_service = service_text
+    patched_service = re.sub(
+        r"(?m)^(\s*)String\[\]\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*"
+        r"getAppList\(\);\s*$",
+        r"\1String[] launchablePackages = getAppList();",
+        patched_service,
+        count=1,
+    )
     if "String[] launchablePackages = getAppList();" not in patched_service:
         patched_service = patched_service.replace(
             "        info.packageNames = getAppList();\n",
@@ -2770,9 +2777,12 @@ def _patch_mobilegpt_client_runtime(
             "        info.packageNames = null;\n",
             1,
         )
-    patched_service = patched_service.replace(
-        "mClient.sendAppList(info.packageNames)",
+    patched_service = re.sub(
+        r"mClient\.sendAppList\((?:info\.packageNames|"
+        r"[A-Za-z_$][A-Za-z0-9_$]*)\)",
         "mClient.sendAppList(launchablePackages)",
+        patched_service,
+        count=1,
     )
     bootstrap_connection = """        if (mClient == null) {
             mExecutorService.execute(this::initNetworkConnection);

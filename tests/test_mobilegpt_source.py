@@ -97,6 +97,19 @@ public class MobileGPTAccessibilityService {
     assert '"com.example.MobileGPT".equals' in service_text
     assert '"back", "go-back"' in global_java.read_text(encoding="utf-8")
 
+    service.write_text(
+        service_text.replace("launchablePackages", "installedPackages"),
+        encoding="utf-8",
+    )
+
+    pipeline._patch_mobilegpt_client_runtime(
+        mobilegpt_root=tmp_path / "mobilegpt",
+    )
+
+    normalized_service = service.read_text(encoding="utf-8")
+    assert "String[] launchablePackages = getAppList();" in normalized_service
+    assert "mClient.sendAppList(launchablePackages)" in normalized_service
+
 
 def test_mobilegpt_client_prepare_is_content_addressed_and_auditable(
     tmp_path: Path,
