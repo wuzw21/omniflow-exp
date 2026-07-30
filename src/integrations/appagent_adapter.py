@@ -88,6 +88,22 @@ def _foreground_package(env: Any) -> str:
     return activity.split("/", 1)[0].strip()
 
 
+def _xml_matches_foreground_package(xml_text: str, env: Any) -> bool:
+    foreground_package = _foreground_package(env)
+    if not foreground_package:
+        return True
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return False
+    observed_packages = {
+        str(element.attrib.get("package") or "").strip()
+        for element in root.iter()
+        if str(element.attrib.get("package") or "").strip()
+    }
+    return not observed_packages or foreground_package in observed_packages
+
+
 @dataclass(frozen=True)
 class AppAgentElement:
     uid: str
@@ -746,9 +762,14 @@ class AppAgentTeacherAgent:
         if pixels is None:
             raise ValueError("appagent_androidworld_screenshot_missing")
         xml_text = str(getattr(state, "xml", "") or "").strip()
-        xml_text = xml_text or str(
+        cached_xml = str(
             getattr(controller, "_omniflow_last_ui_xml", "") or ""
         ).strip()
+        if not xml_text and cached_xml and _xml_matches_foreground_package(
+            cached_xml,
+            self.env,
+        ):
+            xml_text = cached_xml
         if not xml_text and getattr(state, "forest", None) is not None:
             if isinstance(pixels, Image.Image):
                 screen_size = pixels.size

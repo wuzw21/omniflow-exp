@@ -94,6 +94,34 @@ def _browser_draw_teacher_agent(
     return agent
 
 
+def _forest_node(
+    node_id: int,
+    bounds: tuple[int, int, int, int],
+    *,
+    child_ids: tuple[int, ...] = (),
+    text: str = "",
+    clickable: bool = False,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        unique_id=node_id,
+        bounds_in_screen=SimpleNamespace(
+            left=bounds[0],
+            top=bounds[1],
+            right=bounds[2],
+            bottom=bounds[3],
+        ),
+        child_ids=child_ids,
+        text=text,
+        package_name="com.google.android.documentsui",
+        is_clickable=clickable,
+        is_visible_to_user=True,
+    )
+
+
+def _copy_labeled_screenshot(source, destination, *_args, **_kwargs) -> None:
+    Path(destination).write_bytes(Path(source).read_bytes())
+
+
 def test_resolve_androidworld_app_name_uses_installed_official_alias(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -654,29 +682,6 @@ def test_appagent_teacher_preserves_native_accessibility_hierarchy(
         },
     )
 
-    def forest_node(
-        node_id: int,
-        bounds: tuple[int, int, int, int],
-        *,
-        child_ids: tuple[int, ...] = (),
-        text: str = "",
-        clickable: bool = False,
-    ) -> SimpleNamespace:
-        return SimpleNamespace(
-            unique_id=node_id,
-            bounds_in_screen=SimpleNamespace(
-                left=bounds[0],
-                top=bounds[1],
-                right=bounds[2],
-                bottom=bounds[3],
-            ),
-            child_ids=child_ids,
-            text=text,
-            package_name="com.google.android.documentsui",
-            is_clickable=clickable,
-            is_visible_to_user=True,
-        )
-
     forest = SimpleNamespace(
         windows=[
             SimpleNamespace(
@@ -684,15 +689,15 @@ def test_appagent_teacher_preserves_native_accessibility_hierarchy(
                 title="Downloads",
                 tree=SimpleNamespace(
                     nodes=[
-                        forest_node(1, (0, 0, 220, 100), child_ids=(2, 3)),
-                        forest_node(2, (0, 0, 40, 20), clickable=True),
-                        forest_node(
+                        _forest_node(1, (0, 0, 220, 100), child_ids=(2, 3)),
+                        _forest_node(2, (0, 0, 40, 20), clickable=True),
+                        _forest_node(
                             3,
                             (40, 20, 200, 90),
                             child_ids=(4,),
                             clickable=True,
                         ),
-                        forest_node(4, (70, 50, 130, 70), text="6.50 kB"),
+                        _forest_node(4, (70, 50, 130, 70), text="6.50 kB"),
                     ]
                 ),
             )
@@ -731,15 +736,12 @@ def test_appagent_teacher_preserves_native_accessibility_hierarchy(
         ),
     )
 
-    def draw_elements(source, destination, *_args, **_kwargs):
-        Path(destination).write_bytes(Path(source).read_bytes())
-
     agent = appagent_adapter.AppAgentTeacherAgent(
         env=env,
         official_runtime=SimpleNamespace(
             min_dist=0.0,
             request_interval=0.0,
-            draw_elements=draw_elements,
+            draw_elements=_copy_labeled_screenshot,
         ),
         teacher_source=teacher_source,
         workspace_root=tmp_path / "workspace",
@@ -756,3 +758,55 @@ def test_appagent_teacher_preserves_native_accessibility_hierarchy(
 
     assert result.done is False
     assert actions[-1] == {"action_type": "click", "x": 120, "y": 55}
+
+
+def test_appagent_teacher_rejects_stale_cached_xml_from_another_app(
+    tmp_path: Path,
+) -> None:
+    stale_xml = (
+        '<hierarchy><node package="com.android.chrome" '
+        'class="android.widget.TextView" text="New tab" clickable="true" '
+        'bounds="[0,0][220,100]" /></hierarchy>'
+    )
+    forest = SimpleNamespace(
+        windows=[
+            SimpleNamespace(
+                id=1,
+                title="Downloads",
+                tree=SimpleNamespace(
+                    nodes=[
+                        _forest_node(1, (0, 0, 220, 100), child_ids=(2,)),
+                        _forest_node(
+                            2,
+                            (10, 20, 110, 80),
+                            text="6.50 kB",
+                            clickable=True,
+                        ),
+                    ]
+                ),
+            )
+        ]
+    )
+    env = SimpleNamespace(
+        controller=SimpleNamespace(_omniflow_last_ui_xml=stale_xml),
+        foreground_activity_name=(
+            "com.google.android.documentsui/"
+            "com.android.documentsui.files.FilesActivity"
+        ),
+        get_state=lambda: SimpleNamespace(
+            pixels=np.zeros((100, 220, 3), dtype=np.uint8),
+            forest=forest,
+            ui_elements=(),
+        ),
+    )
+    agent = _browser_draw_teacher_agent(tmp_path, env)
+    agent.official_runtime = SimpleNamespace(
+        min_dist=0.0,
+        draw_elements=_copy_labeled_screenshot,
+    )
+
+    saved_xml, elements = agent._capture_demo_state(1)
+
+    assert len(elements) == 1
+    assert "com.google.android.documentsui" in saved_xml
+    assert "com.android.chrome" not in saved_xml
