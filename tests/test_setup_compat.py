@@ -5,9 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.integrations.android_world import launch
 from src.integrations.android_world.setup_compat import (
     patch_androidworld_setup_click_retry,
     patch_androidworld_setup_fail_closed,
+    restore_task_app_snapshots_after_initialize,
 )
 
 
@@ -163,3 +165,83 @@ def test_androidworld_setup_failure_does_not_save_snapshot() -> None:
         setup_module.setup_app(App, env)
 
     assert snapshot_calls == []
+
+
+def test_androidworld_restores_chrome_snapshot_after_task_initialize() -> None:
+    restore_calls: list[tuple[str, object]] = []
+    controller = object()
+
+    def restore_snapshot(app_name: str, actual_controller: object) -> None:
+        restore_calls.append((app_name, actual_controller))
+
+    task = SimpleNamespace(app_names=["chrome"])
+    env = SimpleNamespace(controller=controller)
+
+    restore_task_app_snapshots_after_initialize(restore_snapshot, task, env)
+
+    assert restore_calls == [("chrome", controller)]
+
+
+def test_androidworld_does_not_restore_other_apps_after_task_initialize() -> None:
+    restore_calls: list[str] = []
+    task = SimpleNamespace(app_names=["contacts", "audio recorder"])
+    env = SimpleNamespace(controller=object())
+
+    restore_task_app_snapshots_after_initialize(
+        lambda app_name, controller: restore_calls.append(app_name),
+        task,
+        env,
+    )
+
+    assert restore_calls == []
+
+
+def test_androidworld_post_initialize_snapshot_restore_fails_closed() -> None:
+    def missing_snapshot(app_name: str, controller: object) -> None:
+        raise RuntimeError(f"Snapshot not found for {app_name}")
+
+    with pytest.raises(RuntimeError, match="Snapshot not found for chrome"):
+        restore_task_app_snapshots_after_initialize(
+            missing_snapshot,
+            SimpleNamespace(app_names=["chrome"]),
+            SimpleNamespace(controller=object()),
+        )
+
+
+def test_androidworld_restores_chrome_before_agent_reads_task_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    env = SimpleNamespace(controller=object())
+    task = SimpleNamespace(
+        app_names=["chrome"],
+        initialize_task=lambda actual_env: events.append("task_initialized"),
+    )
+
+    def restore_snapshot(app_name: str, controller: object) -> None:
+        events.append(f"snapshot_restored:{app_name}")
+
+    monkeypatch.setattr(
+        launch,
+        "_prepare_native_androidworld_a11y_runtime",
+        lambda *args, **kwargs: events.append("a11y_ready"),
+    )
+
+    launch._wrap_task_initialize_for_observation_runtime(
+        task,
+        agent=SimpleNamespace(),
+        adb_serial="emulator-5554",
+        adb_path="adb",
+        oob_url="",
+        console_port=5554,
+        restore_app_snapshot=restore_snapshot,
+        after_initialized=lambda initialized_task: events.append("context_updated"),
+    )
+    task.initialize_task(env)
+
+    assert events == [
+        "task_initialized",
+        "snapshot_restored:chrome",
+        "context_updated",
+        "a11y_ready",
+    ]

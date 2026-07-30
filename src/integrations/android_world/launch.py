@@ -40,6 +40,7 @@ from src.integrations.android_world.host import (
 from src.integrations.android_world.setup_compat import (
     patch_androidworld_setup_click_retry,
     patch_androidworld_setup_fail_closed,
+    restore_task_app_snapshots_after_initialize,
 )
 from src.integrations.runlog import extract_canonical_step_actions, import_run_log
 
@@ -2457,6 +2458,7 @@ def _wrap_task_initialize_for_observation_runtime(
     adb_path: str,
     oob_url: str,
     console_port: int,
+    restore_app_snapshot: Any | None = None,
     after_initialized: Any | None = None,
 ) -> None:
     original_initialize_task = getattr(task, "initialize_task", None)
@@ -2484,6 +2486,12 @@ def _wrap_task_initialize_for_observation_runtime(
             *init_args,
             **init_kwargs,
         )
+        if callable(restore_app_snapshot):
+            restore_task_app_snapshots_after_initialize(
+                restore_app_snapshot,
+                task,
+                init_env,
+            )
         if callable(after_initialized):
             after_initialized(task)
         if uses_oob_observe:
@@ -5109,6 +5117,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             os.environ.get("OMNIFLOW_OOB_DEVICE_URL") or ""
                         ).strip().rstrip("/"),
                         console_port=int(args.console_port),
+                        restore_app_snapshot=original_restore_snapshot,
                         after_initialized=_update_context_after_initialize,
                     )
                     reference_text = official_goal_hint_text

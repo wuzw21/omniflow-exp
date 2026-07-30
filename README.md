@@ -165,8 +165,10 @@ or consume the formal immutable task attempt.
 The scheduler is task-major: it completes all ten method/device cells for one
 task before starting the next task. It does not launch a method-major campaign.
 The same entry point validates the frozen ours assets, then starts or
-repairs the configured AVDs, waits for adb and emulator gRPC, forces the Pixel
-Fold to state `2`, and runs every required runtime preflight. If the versioned
+repairs the configured AVDs. Every pending cell cold-restarts its managed AVD
+without loading or saving a Quick Boot snapshot, waits for adb and emulator
+gRPC, forces the Pixel Fold to state `2`, and runs every required runtime
+preflight. If the versioned
 MobileGPT or AppAgent source memory is absent, the entry point creates it once
 on the source-only `emulator-5560` from the task's shared official-success
 RunLog, audits the exact `qwen3-vl-plus` model, and freezes it before target

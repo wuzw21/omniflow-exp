@@ -11,6 +11,7 @@ _EQUIVALENT_SETUP_LABELS: dict[str, tuple[str, ...]] = {
     "No thanks": ("Keep Google",),
     "Skip": ("SKIP",),
 }
+_POST_INITIALIZE_SNAPSHOT_APPS = frozenset({"chrome"})
 
 
 def _visible_setup_elements(controller: Any) -> list[dict[str, str]]:
@@ -83,6 +84,22 @@ def patch_androidworld_setup_fail_closed(
 
     setup_module.setup_app = setup_app_with_retry
     setup_module._omniflow_setup_fail_closed_patch = True
+
+
+def restore_task_app_snapshots_after_initialize(
+    restore_snapshot: Any,
+    task: Any,
+    env: Any,
+) -> None:
+    """Restore app setup that an upstream task clears after base initialization."""
+
+    restored: set[str] = set()
+    for value in tuple(getattr(task, "app_names", ()) or ()):
+        app_name = str(value or "").strip()
+        if app_name not in _POST_INITIALIZE_SNAPSHOT_APPS or app_name in restored:
+            continue
+        restore_snapshot(app_name, env.controller)
+        restored.add(app_name)
 
 
 def patch_androidworld_setup_click_retry(

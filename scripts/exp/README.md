@@ -18,7 +18,8 @@ One normal single-task invocation performs the complete workflow:
    - `appagent_demo`: resolve or create the native demonstration;
    - `t3a_hint`: derive the semantic hint from the same Function and RunLog.
 3. Reuse every already registered or frozen source asset without regeneration.
-4. Prepare the selected target devices and replay each method.
+4. Cold-restart each pending cell's managed AVD without Quick Boot snapshot
+   load/save, run AndroidWorld setup and preflight, and replay the method.
 5. Use the AndroidWorld official validator as the result, recording calls,
    tokens, actions, episode duration, and outer wall time for every cell.
 
@@ -73,6 +74,9 @@ cell with the same task, method, device, source seed, and evaluation seed that
 is already registered with an official-validator conclusion. A result from a
 different seed never causes a skip. There is no model retry. A failed target
 execution never rebuilds or replaces frozen source assets.
+Completed cells are skipped before device startup. Pending cells use the same
+script-owned cold-restart lifecycle on SmallPhone, Pixel Fold, and the
+source-only emulator; no device is prepared manually.
 
 `--check-only` is deliberately read-only. It validates existing assets but
 will fail rather than create a missing method asset:

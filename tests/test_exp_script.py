@@ -50,8 +50,12 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "OMNIFLOW_EXP_ASSET_ROOT" in completed.stdout
     assert "OMNIFLOW_EXP_MEMORY_ROOT" in completed.stdout
     assert "OMNIFLOW_OURS_AUTHORING_MANIFEST" in completed.stdout
+    assert "cold-restarted before every pending cell" in completed.stdout
     assert completed.stderr == ""
-    assert SCRIPT.read_text(encoding="utf-8").count('bash "$0"') == 2
+    script_text = SCRIPT.read_text(encoding="utf-8")
+    assert script_text.count('bash "$0"') == 2
+    assert "-no-snapshot-load" in script_text
+    assert "-no-snapshot-save" in script_text
 
 
 def test_check_only_is_read_only_before_any_runtime_output(

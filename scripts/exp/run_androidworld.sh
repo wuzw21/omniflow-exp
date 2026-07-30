@@ -104,6 +104,7 @@ Optional runtime overrides:
   OMNIFLOW_MASTER_SOURCE_INDEX, OMNIFLOW_OURS_STORE_INDEX,
   OMNIFLOW_ANDROID_SDK_ROOT, OMNIFLOW_JAVA_HOME,
   OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON.
+  Managed emulators are cold-restarted before every pending cell.
 
 Asset conversion inputs:
   OMNIFLOW_OURS_SOURCE_ASSET_INDEX Source RunLog index; defaults to the master
@@ -1608,16 +1609,16 @@ ensure_emulator() {
   local grpc_port="$(( console_port + 3000 ))"
   local avd log_path current_state stop_deadline
   current_state="$(device_state "$serial")"
-  if [[ "$current_state" == "device" ]] && grpc_ready "$grpc_port"; then
-    echo "[emulator] reuse serial=$serial grpc=$grpc_port"
-    return 0
-  fi
   if [[ "$manage_emulators" -ne 1 ]]; then
+    if [[ "$current_state" == "device" ]] && grpc_ready "$grpc_port"; then
+      echo "[emulator] reuse unmanaged serial=$serial grpc=$grpc_port"
+      return 0
+    fi
     echo "Emulator is not ready and automatic management is disabled: serial=$serial grpc=$grpc_port" >&2
     return 1
   fi
   if [[ -n "$current_state" ]]; then
-    echo "[emulator] restart serial=$serial state=$current_state grpc=$grpc_port"
+    echo "[emulator] cold-restart serial=$serial state=$current_state grpc=$grpc_port"
     "$adb_bin" -s "$serial" emu kill >/dev/null 2>&1 || true
     stop_deadline="$(( $(date +%s) + 30 ))"
     while [[ -n "$(device_state "$serial")" ]]; do
@@ -1648,6 +1649,7 @@ ensure_emulator() {
     -no-window \
     -no-audio \
     -no-boot-anim \
+    -no-snapshot-load \
     -no-snapshot-save \
     -gpu "$emulator_gpu" \
     >"$log_path" 2>&1 </dev/null &
