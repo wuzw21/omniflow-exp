@@ -602,13 +602,19 @@ source_sha256 = str(
 ).strip()
 if not source_sha256:
     raise SystemExit(f"source_asset_run_log_hash_missing:{sys.argv[5]}")
-print(
-    select_source_asset_revision(
+try:
+    selected = select_source_asset_revision(
         sys.argv[2],
         manifest_name=sys.argv[3],
         expected_source_sha256=source_sha256,
     )
-)
+except ValueError as error:
+    message = str(error)
+    if message.startswith("source_asset_retry_forbidden:"):
+        print(message, file=sys.stderr)
+        raise SystemExit(75) from error
+    raise
+print(selected)
 PY
 }
 if [[ "$all_tasks" -eq 0 && "$requires_mobilegpt_source_memory" -eq 1 && -z "$mobilegpt_source_memory_root" ]]; then
@@ -842,8 +848,13 @@ for method, device in plan["pending"]:
 PY
   }
   batch_registration_plans=()
+  batch_runnable_plans=()
+  batch_terminal_plans=()
   batch_store_paths=()
+  batch_mobilegpt_source_roots=()
+  batch_appagent_source_roots=()
   pending_cell_count=0
+  terminal_cell_count=0
   for batch_index in "${!batch_tasks[@]}"; do
     batch_task="${batch_tasks[$batch_index]}"
     registration_plan="$(registration_plan_for_task "$batch_task")"
@@ -870,8 +881,90 @@ PY
       echo "Registration plan contains no pending methods: task=$batch_task" >&2
       exit 1
     fi
+    terminal_task_methods=""
+    selected_mobilegpt_source_root=""
+    selected_appagent_source_root=""
+    for source_method in mobilegpt_offline_retrieval appagent_demo; do
+      case ",$pending_task_methods," in
+        *,$source_method,*)
+          ;;
+        *)
+          continue
+          ;;
+      esac
+      case "$source_method" in
+        mobilegpt_offline_retrieval)
+          source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$source_method"
+          source_manifest="cold_memory_manifest.json"
+          ;;
+        appagent_demo)
+          source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$source_method"
+          source_manifest="appagent_demo_manifest.json"
+          ;;
+      esac
+      if selected_source_root="$(
+        select_source_asset_revision \
+          "$source_base" \
+          "$source_manifest" \
+          "$batch_task"
+      )"; then
+        case "$source_method" in
+          mobilegpt_offline_retrieval)
+            selected_mobilegpt_source_root="$selected_source_root/memory"
+            ;;
+          appagent_demo)
+            selected_appagent_source_root="$selected_source_root"
+            ;;
+        esac
+      else
+        source_status="$?"
+        if [[ "$source_status" -ne 75 ]]; then
+          echo "Source asset selection failed: task=$batch_task method=$source_method status=$source_status" >&2
+          exit "$source_status"
+        fi
+        terminal_task_methods="${terminal_task_methods:+$terminal_task_methods,}$source_method"
+        method_pending_count="$(
+          awk -F '\t' -v method="$source_method" \
+            '$1 == "pending" && $2 == method {count += 1} END {print count + 0}' \
+            <<< "$registration_plan"
+        )"
+        terminal_cell_count="$((terminal_cell_count + method_pending_count))"
+        echo "[batch:static] terminal task=$batch_task method=$source_method pending=$method_pending_count"
+      fi
+    done
+    batch_mobilegpt_source_roots[$batch_index]="$selected_mobilegpt_source_root"
+    batch_appagent_source_roots[$batch_index]="$selected_appagent_source_root"
+    runnable_task_methods=""
+    for candidate_method in ${batch_methods//,/ }; do
+      if ! grep -Fq $'pending\t'"$candidate_method"$'\t' <<< "$registration_plan"; then
+        continue
+      fi
+      case ",$terminal_task_methods," in
+        *,$candidate_method,*)
+          continue
+          ;;
+      esac
+      runnable_task_methods="${runnable_task_methods:+$runnable_task_methods,}$candidate_method"
+    done
+    runnable_plan=""
+    terminal_plan=""
+    while IFS=$'\t' read -r row_kind cell_method cell_device cell_serial cell_port; do
+      if [[ "$row_kind" != "pending" ]]; then
+        continue
+      fi
+      case ",$terminal_task_methods," in
+        *,$cell_method,*)
+          terminal_plan+="${terminal_plan:+$'\n'}terminal"$'\t'"$cell_method"$'\t'"$cell_device"$'\t'"$cell_serial"$'\t'"$cell_port"
+          ;;
+        *)
+          runnable_plan+="${runnable_plan:+$'\n'}pending"$'\t'"$cell_method"$'\t'"$cell_device"$'\t'"$cell_serial"$'\t'"$cell_port"
+          ;;
+      esac
+    done <<< "$registration_plan"
+    batch_runnable_plans[$batch_index]="$runnable_plan"
+    batch_terminal_plans[$batch_index]="$terminal_plan"
     task_requires_function_asset=0
-    case ",$pending_task_methods," in
+    case ",$runnable_task_methods," in
       *,ours,*)
         task_requires_function_asset=1
         ;;
@@ -895,15 +988,27 @@ PY
       fi
     fi
     batch_store_paths[$batch_index]="$indexed_store_path"
+    if [[ -z "$runnable_task_methods" ]]; then
+      echo "[batch:static] no-runnable-cells task=$batch_task completed=$completed_cells pending=$pending_cells"
+      continue
+    fi
     task_output_root="$batch_output_root/$batch_task/$attempt_id/static"
     child_static_args=(--check-only)
-    echo "[batch:static] check task=$batch_task methods=$pending_task_methods completed=$completed_cells pending=$pending_cells"
+    echo "[batch:static] check task=$batch_task methods=$runnable_task_methods completed=$completed_cells pending=$pending_cells"
     (
       export OMNIFLOW_BATCH_CHILD=1
       export OMNIFLOW_SINGLE_TASK_TASK="$batch_task"
-      export OMNIFLOW_SINGLE_TASK_METHODS="$pending_task_methods"
+      export OMNIFLOW_SINGLE_TASK_METHODS="$runnable_task_methods"
       export OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT="$task_output_root"
       export OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS="$source_index_task_count"
+      unset OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT
+      unset OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT
+      if [[ -n "$selected_mobilegpt_source_root" ]]; then
+        export OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT="$selected_mobilegpt_source_root"
+      fi
+      if [[ -n "$selected_appagent_source_root" ]]; then
+        export OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT="$selected_appagent_source_root"
+      fi
       if [[ -n "$indexed_store_path" ]]; then
         export OMNIFLOW_SINGLE_TASK_STORE_PATH="$indexed_store_path"
       fi
@@ -912,6 +1017,10 @@ PY
   done
   echo "[batch:static] ready tasks=$batch_task_count; no persistent output created"
   if [[ "$check_only" -eq 1 ]]; then
+    if [[ "$terminal_cell_count" -ne 0 ]]; then
+      echo "[batch:static] incomplete terminal=$terminal_cell_count pending=$pending_cell_count total=$((batch_task_count * batch_cell_count))" >&2
+      exit 1
+    fi
     exit 0
   fi
   if [[ "$pending_cell_count" -eq 0 ]]; then
@@ -931,9 +1040,17 @@ PY
       echo "[batch] skip complete task=$batch_task cells=$batch_cell_count/$batch_cell_count"
       continue
     fi
+    runnable_plan="${batch_runnable_plans[$batch_index]}"
+    terminal_plan="${batch_terminal_plans[$batch_index]}"
     indexed_store_path="${batch_store_paths[$batch_index]}"
+    selected_mobilegpt_source_root="${batch_mobilegpt_source_roots[$batch_index]}"
+    selected_appagent_source_root="${batch_appagent_source_roots[$batch_index]}"
     while IFS=$'\t' read -r row_kind cell_method cell_device cell_serial cell_port; do
       if [[ "$row_kind" != "pending" ]]; then
+        continue
+      fi
+      terminal_line=$'terminal\t'"$cell_method"$'\t'"$cell_device"$'\t'"$cell_serial"$'\t'"$cell_port"
+      if grep -Fqx "$terminal_line" <<< "$terminal_plan"; then
         continue
       fi
       task_output_root="$batch_output_root/$batch_task/$attempt_id/$cell_method/$cell_device/$attempt_id"
@@ -947,6 +1064,14 @@ PY
         export OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS="$cell_device:$cell_serial:$cell_port"
         export OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT="$task_output_root"
         export OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS="$source_index_task_count"
+        unset OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT
+        unset OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT
+        if [[ -n "$selected_mobilegpt_source_root" ]]; then
+          export OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT="$selected_mobilegpt_source_root"
+        fi
+        if [[ -n "$selected_appagent_source_root" ]]; then
+          export OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT="$selected_appagent_source_root"
+        fi
         if [[ -n "$indexed_store_path" ]]; then
           export OMNIFLOW_SINGLE_TASK_STORE_PATH="$indexed_store_path"
         fi
@@ -959,6 +1084,55 @@ PY
       updated_plan="$(registration_plan_for_task "$batch_task")"
       pending_line=$'pending\t'"$cell_method"$'\t'"$cell_device"$'\t'"$cell_serial"$'\t'"$cell_port"
       if grep -Fqx "$pending_line" <<< "$updated_plan"; then
+        runtime_terminal=0
+        if [[ "$status" -ne 0 ]]; then
+          case "$cell_method" in
+            mobilegpt_offline_retrieval)
+              source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$cell_method"
+              source_manifest="cold_memory_manifest.json"
+              ;;
+            appagent_demo)
+              source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$cell_method"
+              source_manifest="appagent_demo_manifest.json"
+              ;;
+            *)
+              source_base=""
+              source_manifest=""
+              ;;
+          esac
+          if [[ -n "$source_base" ]]; then
+            if select_source_asset_revision \
+              "$source_base" \
+              "$source_manifest" \
+              "$batch_task" \
+              >/dev/null; then
+              :
+            else
+              source_status="$?"
+              if [[ "$source_status" -eq 75 ]]; then
+                runtime_terminal=1
+              fi
+            fi
+          fi
+        fi
+        if [[ "$runtime_terminal" -eq 1 ]]; then
+          newly_terminal=0
+          while IFS=$'\t' read -r pending_kind pending_method pending_device pending_serial pending_port; do
+            if [[ "$pending_kind" != "pending" || "$pending_method" != "$cell_method" ]]; then
+              continue
+            fi
+            terminal_line=$'terminal\t'"$pending_method"$'\t'"$pending_device"$'\t'"$pending_serial"$'\t'"$pending_port"
+            if grep -Fqx "$terminal_line" <<< "$terminal_plan"; then
+              continue
+            fi
+            terminal_plan+="${terminal_plan:+$'\n'}$terminal_line"
+            newly_terminal="$((newly_terminal + 1))"
+          done <<< "$updated_plan"
+          batch_terminal_plans[$batch_index]="$terminal_plan"
+          terminal_cell_count="$((terminal_cell_count + newly_terminal))"
+          echo "[batch] terminal task=$batch_task method=$cell_method pending=$newly_terminal"
+          continue
+        fi
         echo "[batch] stopped task=$batch_task method=$cell_method device=$cell_device status=$status log=$task_log" >&2
         if [[ "$status" -eq 0 ]]; then
           exit 1
@@ -967,15 +1141,36 @@ PY
       fi
       completed="$((completed + 1))"
       echo "[batch] registered task=$batch_task method=$cell_method device=$cell_device status=$status completed=$completed skipped=$skipped total=$((batch_task_count * batch_cell_count))"
-    done <<< "$registration_plan"
+    done <<< "$runnable_plan"
     final_plan="$(registration_plan_for_task "$batch_task")"
     final_header="${final_plan%%$'\n'*}"
     IFS=$'\t' read -r _ final_completed final_pending <<< "$final_header"
     if [[ "$final_pending" -ne 0 ]]; then
-      echo "Task resume ended with pending cells: task=$batch_task completed=$final_completed pending=$final_pending" >&2
-      exit 1
+      while IFS=$'\t' read -r row_kind cell_method cell_device cell_serial cell_port; do
+        if [[ "$row_kind" != "pending" ]]; then
+          continue
+        fi
+        terminal_line=$'terminal\t'"$cell_method"$'\t'"$cell_device"$'\t'"$cell_serial"$'\t'"$cell_port"
+        if ! grep -Fqx "$terminal_line" <<< "$terminal_plan"; then
+          echo "Task resume ended with unexpected pending cell: task=$batch_task method=$cell_method device=$cell_device" >&2
+          exit 1
+        fi
+      done <<< "$final_plan"
     fi
   done
+  if [[ "$terminal_cell_count" -ne 0 ]]; then
+    for batch_index in "${!batch_tasks[@]}"; do
+      batch_task="${batch_tasks[$batch_index]}"
+      terminal_plan="${batch_terminal_plans[$batch_index]}"
+      while IFS=$'\t' read -r row_kind cell_method cell_device _; do
+        if [[ "$row_kind" == "terminal" ]]; then
+          echo "[batch] unresolved task=$batch_task method=$cell_method device=$cell_device reason=source_asset_retry_forbidden" >&2
+        fi
+      done <<< "$terminal_plan"
+    done
+    echo "[batch] incomplete completed=$completed skipped=$skipped terminal=$terminal_cell_count pending=$terminal_cell_count total=$((batch_task_count * batch_cell_count))" >&2
+    exit 1
+  fi
   echo "[batch] complete completed=$completed skipped=$skipped total=$((batch_task_count * batch_cell_count))"
   exit 0
 fi

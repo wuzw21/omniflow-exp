@@ -7,6 +7,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 from src.experiment.artifact_memory import refresh_artifact_memory
 from src.experiment.preflight import REQUIRED_DISTRIBUTION_VERSIONS
 
@@ -610,6 +612,214 @@ exit 1
         "Canonical Function asset missing for "
         "task=AudioRecorderRecordAudio"
     ) in missing_store.stderr
+
+
+@pytest.mark.parametrize("terminal_phase", ["static", "runtime"])
+def test_task_major_terminal_source_failure_continues_later_cells(
+    tmp_path: Path,
+    terminal_phase: str,
+) -> None:
+    assets = tmp_path / "assets"
+    results = tmp_path / "results"
+    memory_index = tmp_path / "memory" / "current.json"
+    source_index = tmp_path / "memory" / "source_index.json"
+    store_index = tmp_path / "memory" / "store_index.json"
+    env_file = assets / ".env"
+    android_world = assets / "android_world"
+    appagent_root = assets / "appagent"
+    appagent_bundle = assets / "appagent-source" / "BrowserDraw"
+    mobilegpt_root = assets / "mobilegpt"
+    mobilegpt_bundle = assets / "mobilegpt-source" / "BrowserDraw"
+    for path, content in (
+        (memory_index, "{}"),
+        (source_index, "{}"),
+        (store_index, "{}"),
+        (env_file, ""),
+        (
+            android_world
+            / "android_world"
+            / "env"
+            / "setup_device"
+            / "apps.py",
+            "",
+        ),
+        (appagent_root / "README.md", ""),
+        (appagent_bundle / "appagent_demo_manifest.json", "{}"),
+        (mobilegpt_root / "Server" / "main.py", ""),
+        (
+            mobilegpt_root
+            / "App"
+            / "app"
+            / "build"
+            / "outputs"
+            / "apk"
+            / "debug"
+            / "app-debug.apk",
+            "",
+        ),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    call_log = tmp_path / "calls.txt"
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        """#!/bin/sh
+printf '%s\n' "$*" >> "$CALL_LOG"
+if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ] && [ "$3" = "$MEMORY_INDEX" ]; then
+  printf '%s\t%s\n' "$SOURCE_INDEX" "$STORE_INDEX"
+  exit 0
+fi
+if [ "$1" = "-" ] && [ "$2" = "$SOURCE_INDEX" ] && [ "$#" -eq 3 ]; then
+  printf '%s\n' 'BrowserDraw'
+  exit 0
+fi
+if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ] && [ "$5" = "$STORE_INDEX" ]; then
+  if [ "$4" = "cold_memory_manifest.json" ]; then
+    if [ "$TERMINAL_PHASE" = "static" ] || [ -f "$STATE_DIR/mobilegpt-terminal" ]; then
+      printf '%s\n' 'source_asset_retry_forbidden:/immutable/mobilegpt:official_source_failed' >&2
+      exit 75
+    fi
+    printf '%s\n' "$MOBILEGPT_BUNDLE"
+    exit 0
+  fi
+  printf '%s\n' "$APPAGENT_BUNDLE"
+  exit 0
+fi
+if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ]; then
+  completed=6
+  pending=4
+  if [ -f "$STATE_DIR/appagent_demo-small5554" ]; then
+    completed=$((completed + 1))
+    pending=$((pending - 1))
+  fi
+  if [ -f "$STATE_DIR/appagent_demo-fold5564" ]; then
+    completed=$((completed + 1))
+    pending=$((pending - 1))
+  fi
+  printf 'summary\t%s\t%s\n' "$completed" "$pending"
+  printf 'pending\tmobilegpt_offline_retrieval\tsmall5554\temulator-5554\t5554\n'
+  printf 'pending\tmobilegpt_offline_retrieval\tfold5564\temulator-5564\t5564\n'
+  if [ ! -f "$STATE_DIR/appagent_demo-small5554" ]; then
+    printf 'pending\tappagent_demo\tsmall5554\temulator-5554\t5554\n'
+  fi
+  if [ ! -f "$STATE_DIR/appagent_demo-fold5564" ]; then
+    printf 'pending\tappagent_demo\tfold5564\temulator-5564\t5564\n'
+  fi
+  exit 0
+fi
+if [ "$1" = "-" ] && [ "$2" = "$CONFIG_PATH" ]; then
+  printf '%s\n' 'qwen3-vl-plus'
+  exit 0
+fi
+if [ "$1" = "-m" ] && [ "$2" = "src.experiment.androidworld" ] && [ "$3" = "one-task" ]; then
+  device="${OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS%%:*}"
+  : > "$STATE_DIR/${OMNIFLOW_SINGLE_TASK_METHODS}-${device}"
+  exit 0
+fi
+if [ "$1" = "-m" ] && [ "$2" = "src.experiment.mobilegpt_source" ] && [ "$3" = "prepare" ]; then
+  : > "$STATE_DIR/mobilegpt-terminal"
+  exit 9
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_adb = fake_bin / "adb"
+    fake_adb.write_text(
+        """#!/bin/sh
+if [ "$1" = "devices" ]; then
+  printf 'List of devices attached\nemulator-5554\tdevice\nemulator-5560\tdevice\nemulator-5564\tdevice\n'
+elif [ "$1" = "-s" ] && [ "$3" = "shell" ] && [ "$4" = "pm" ]; then
+  printf 'package:/data/app/mobilegpt.apk\n'
+elif [ "$1" = "-s" ] && [ "$3" = "shell" ] && [ "$4" = "sha256sum" ]; then
+  printf '%s  %s\n' "$MOBILEGPT_APK_SHA" "$5"
+elif [ "$1" = "-s" ] && [ "$2" = "emulator-5564" ] && [ "$6" = "print-state" ]; then
+  printf '2\n'
+elif [ "$1" = "-s" ] && [ "$2" = "emulator-5564" ] && [ "$4" = "wm" ]; then
+  printf 'Physical size: 2208x1840\n'
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    fake_adb.chmod(0o755)
+    fake_java = fake_bin / "java"
+    fake_java.write_text(
+        "#!/bin/sh\nprintf '%s\\n' 'openjdk version \"17.0.19\"' >&2\n",
+        encoding="utf-8",
+    )
+    fake_java.chmod(0o755)
+    fake_jq = fake_bin / "jq"
+    fake_jq.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_jq.chmod(0o755)
+    android_sdk_root = assets / "android-sdk"
+    android_sdk_root.mkdir()
+    environment = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        "PYTHON_BIN": str(fake_python),
+        "CALL_LOG": str(call_log),
+        "STATE_DIR": str(state_dir),
+        "REPO_PATH": str(REPO),
+        "MEMORY_INDEX": str(memory_index),
+        "SOURCE_INDEX": str(source_index),
+        "STORE_INDEX": str(store_index),
+        "APPAGENT_BUNDLE": str(appagent_bundle),
+        "MOBILEGPT_BUNDLE": str(mobilegpt_bundle),
+        "MOBILEGPT_APK_SHA": hashlib.sha256(b"").hexdigest(),
+        "TERMINAL_PHASE": terminal_phase,
+        "CONFIG_PATH": str(REPO / "config" / "paper_androidworld.json"),
+        "OMNIFLOW_EXP_ASSET_ROOT": str(assets),
+        "OMNIFLOW_EXP_RESULTS_ROOT": str(results),
+        "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_index),
+        "OMNIFLOW_ENV_FILE": str(env_file),
+        "OMNIFLOW_ANDROID_WORLD_ROOT": str(android_world),
+        "OMNIFLOW_ANDROID_SDK_ROOT": str(android_sdk_root),
+        "OMNIFLOW_ADB_PATH": str(fake_adb),
+        "OMNIFLOW_JAVA_HOME": str(tmp_path),
+        "OMNITRANSFER_ROOT": str(assets / "OmniTransfer"),
+        "OMNIFLOW_MOBILEGPT_ROOT": str(mobilegpt_root),
+        "OMNIFLOW_APPAGENT_ROOT": str(appagent_root),
+        "OMNIFLOW_SINGLE_TASK_MANAGE_EMULATORS": "0",
+    }
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT), "--tasks", "BrowserDraw"],
+        cwd=REPO,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert (state_dir / "appagent_demo-small5554").is_file()
+    assert (state_dir / "appagent_demo-fold5564").is_file()
+    assert not list(state_dir.glob("mobilegpt_offline_retrieval-*"))
+    terminal_prefix = (
+        "[batch:static]" if terminal_phase == "static" else "[batch]"
+    )
+    assert (
+        f"{terminal_prefix} terminal task=BrowserDraw "
+        "method=mobilegpt_offline_retrieval pending=2"
+    ) in completed.stdout
+    assert (
+        "[batch] unresolved task=BrowserDraw "
+        "method=mobilegpt_offline_retrieval device=small5554"
+    ) in completed.stderr
+    assert (
+        "[batch] unresolved task=BrowserDraw "
+        "method=mobilegpt_offline_retrieval device=fold5564"
+    ) in completed.stderr
+    assert (
+        "[batch] incomplete completed=2 skipped=6 terminal=2 pending=2 total=10"
+    ) in completed.stderr
 
 
 def test_memory_refresh_routes_all_evidence_through_the_only_script(
