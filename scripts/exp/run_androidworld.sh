@@ -29,6 +29,7 @@ task_iteration="${OMNIFLOW_SINGLE_TASK_ITERATION:-1}"
 all_methods="fixed_replay,ours,mobilegpt_offline_retrieval,appagent_demo,t3a_hint"
 eight_cell_methods="fixed_replay,ours,mobilegpt_offline_retrieval,appagent_demo"
 baseline_environment_repair="${OMNIFLOW_BASELINE_ENVIRONMENT_REPAIR_REASON:-}"
+mobilegpt_source_environment_repair="${OMNIFLOW_MOBILEGPT_SOURCE_ENVIRONMENT_REPAIR_REASON:-}"
 appagent_source_environment_repair="${OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON:-}"
 formal_device_targets="small5554:emulator-5554:5554,fold5564:emulator-5564:5564"
 device_targets="${OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS:-$formal_device_targets}"
@@ -114,6 +115,7 @@ Optional runtime overrides:
   PYTHON_BIN, OMNIFLOW_ENV_FILE, OMNIFLOW_SINGLE_TASK_SOURCE_INDEX,
   OMNIFLOW_MASTER_SOURCE_INDEX, OMNIFLOW_OURS_STORE_INDEX,
   OMNIFLOW_ANDROID_SDK_ROOT, OMNIFLOW_JAVA_HOME,
+  OMNIFLOW_MOBILEGPT_SOURCE_ENVIRONMENT_REPAIR_REASON,
   OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON.
   Managed emulators are cold-restarted before every pending cell.
 
@@ -797,7 +799,8 @@ if [[ "$all_tasks" -eq 0 && "$requires_mobilegpt_source_memory" -eq 1 && -z "$mo
     select_source_asset_revision \
       "$mobilegpt_source_base" \
       "cold_memory_manifest.json" \
-      "$task"
+      "$task" \
+      "$mobilegpt_source_environment_repair"
   )"
   mobilegpt_source_memory_root="$mobilegpt_source_attempt_root/memory"
 fi
@@ -1101,6 +1104,7 @@ PY
         mobilegpt_offline_retrieval)
           source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$source_method"
           source_manifest="cold_memory_manifest.json"
+          source_repair_reason="$mobilegpt_source_environment_repair"
           ;;
         appagent_demo)
           source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$source_method"
@@ -1108,9 +1112,6 @@ PY
           source_repair_reason="$appagent_source_environment_repair"
           ;;
       esac
-      if [[ "$source_method" != "appagent_demo" ]]; then
-        source_repair_reason=""
-      fi
       if selected_source_root="$(
         select_source_asset_revision \
           "$source_base" \
@@ -1300,6 +1301,7 @@ PY
             mobilegpt_offline_retrieval)
               source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$cell_method"
               source_manifest="cold_memory_manifest.json"
+              source_repair_reason="$mobilegpt_source_environment_repair"
               ;;
             appagent_demo)
               source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$cell_method"

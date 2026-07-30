@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
@@ -12,6 +13,18 @@ from src.experiment.preflight import (
     _validate_source_index,
 )
 from runlog_fixtures import androidworld_run_log
+
+
+def test_mobilegpt_teacher_imports_in_clean_process() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-c", "import src.integrations.mobilegpt_teacher"],
+        cwd=Path(__file__).resolve().parents[1],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_preflight_dismisses_known_accessibility_crash_dialog(monkeypatch) -> None:
