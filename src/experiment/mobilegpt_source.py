@@ -15,7 +15,6 @@ from typing import Any
 from src.experiment import androidworld as pipeline
 from src.experiment.source_assets import (
     build_grounded_teacher_run_log_from_item,
-    resolve_store_source_run_log,
 )
 from src.integrations.runlog import import_run_log
 
@@ -101,18 +100,10 @@ def validate_mobilegpt_source_memory(
     task_name: str,
     memory_root: str | Path,
     model: str,
-    store_index_path: str | Path | None = None,
 ) -> dict[str, Any]:
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_method = source_method_label(item)
-    source_run_log = (
-        resolve_store_source_run_log(
-            store_index_path,
-            task_name=item.task,
-        )[0]
-        if store_index_path is not None
-        else item.source_run_log
-    )
+    source_run_log = item.source_run_log
     validated = pipeline.validate_mobilegpt_adapted_memory(
         memory_root,
         task_name=item.task,
@@ -136,12 +127,10 @@ def _grounded_source_payload(
     *,
     index_path: str | Path,
     item: pipeline.ArchivedRunLog,
-    store_index_path: str | Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     return build_grounded_teacher_run_log_from_item(
         index_path=index_path,
         item=item,
-        store_index_path=store_index_path,
     )
 
 
@@ -149,7 +138,6 @@ def _preflight_mobilegpt_teacher(
     *,
     index_path: str | Path,
     item: pipeline.ArchivedRunLog,
-    store_index_path: str | Path | None = None,
 ) -> tuple[
     dict[str, Any],
     dict[str, Any],
@@ -159,7 +147,6 @@ def _preflight_mobilegpt_teacher(
     grounded, grounding_audit = _grounded_source_payload(
         index_path=index_path,
         item=item,
-        store_index_path=store_index_path,
     )
     with tempfile.TemporaryDirectory(
         prefix="omniflow-mobilegpt-preflight-"
@@ -230,16 +217,14 @@ def preflight_mobilegpt_source(
     *,
     index_path: str | Path,
     task_name: str,
-    store_index_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Validate one source asset without creating a persistent output."""
 
     item = load_canonical_source_item(index_path, task_name=task_name)
     _, grounding_audit, teacher_payload, target_info = (
         _preflight_mobilegpt_teacher(
-        index_path=index_path,
-        item=item,
-        store_index_path=store_index_path,
+            index_path=index_path,
+            item=item,
         )
     )
     return {
@@ -264,7 +249,6 @@ def prepare_mobilegpt_source_memory(
     android_world_root: str | Path,
     output_root: str | Path,
     model: str,
-    store_index_path: str | Path | None = None,
     serial: str = "emulator-5560",
     console_port: int = 5560,
     adb_path: str = "",
@@ -292,7 +276,6 @@ def prepare_mobilegpt_source_memory(
         _preflight_mobilegpt_teacher(
             index_path=index_path,
             item=item,
-            store_index_path=store_index_path,
         )
     )
     source_run_log = Path(grounding_audit["source_run_log"]).resolve()
@@ -567,7 +550,6 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--android-world-root", required=True)
     prepare.add_argument("--output-root", required=True)
     prepare.add_argument("--model", required=True)
-    prepare.add_argument("--store-index", default="")
     prepare.add_argument("--serial", default="emulator-5560")
     prepare.add_argument("--console-port", type=int, default=5560)
     prepare.add_argument("--adb-path", default="")
@@ -584,12 +566,10 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--task", required=True)
     validate.add_argument("--memory-root", required=True)
     validate.add_argument("--model", required=True)
-    validate.add_argument("--store-index", default="")
 
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument("--index", required=True)
     preflight.add_argument("--task", required=True)
-    preflight.add_argument("--store-index", default="")
     return parser
 
 
@@ -604,7 +584,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 android_world_root=args.android_world_root,
                 output_root=args.output_root,
                 model=args.model,
-                store_index_path=args.store_index or None,
                 serial=args.serial,
                 console_port=args.console_port,
                 adb_path=args.adb_path,
@@ -622,13 +601,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 task_name=args.task,
                 memory_root=args.memory_root,
                 model=args.model,
-                store_index_path=args.store_index or None,
             )
         else:
             result = preflight_mobilegpt_source(
                 index_path=args.index,
                 task_name=args.task,
-                store_index_path=args.store_index or None,
             )
     except BaseException as error:
         if args.command == "prepare":

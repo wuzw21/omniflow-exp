@@ -559,6 +559,13 @@ exit 0
         "src.experiment.androidworld"
     )
     assert f"--store-index {store_index}" in calls
+    mobilegpt_source_calls = [
+        line
+        for line in calls.splitlines()
+        if "src.experiment.mobilegpt_source" in line
+    ]
+    assert mobilegpt_source_calls
+    assert all("--store-index" not in line for line in mobilegpt_source_calls)
 
     repeated = subprocess.run(
         ["bash", str(SCRIPT)],

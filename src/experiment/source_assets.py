@@ -326,10 +326,14 @@ def _ground_source_actions(
         state = states.get(state_identifier)
         if not isinstance(state, dict):
             raise ValueError(f"source_state_missing:{state_identifier}")
-        xml_text = str(state.get("xml") or observation.get("forest") or "").strip()
-        if not xml_text:
-            raise ValueError(f"source_state_xml_missing:{state_identifier}")
         projected_actions = project_androidworld_step_actions(step)
+        xml_text = str(state.get("xml") or observation.get("forest") or "").strip()
+        needs_element_grounding = any(
+            action["tool"] in {"click", "long_press", "input_text"}
+            for action in projected_actions
+        )
+        if not xml_text and needs_element_grounding:
+            raise ValueError(f"source_state_xml_missing:{state_identifier}")
         action_type = str(step["action"].get("action_type") or "").strip()
         target = (
             targets_by_state.get(state_identifier)
@@ -357,7 +361,9 @@ def _ground_source_actions(
                 )
         if not target and action_type == "input_text":
             target = _unique_editable_identity(xml_text)
-        source_context: dict[str, Any] = {"page": xml_text}
+        source_context: dict[str, Any] = {}
+        if xml_text:
+            source_context["page"] = xml_text
         auxiliaries = observation.get("auxiliaries")
         package_name = str(
             state.get("package_name")
@@ -498,6 +504,42 @@ def _build_grounded_teacher_run_log_from_embedded_source(
     }
 
 
+def _build_grounded_teacher_run_log_from_canonical_source(
+    *,
+    source_run_log: str | Path,
+    expected_source_run_log_sha256: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    source_path = _require_frozen_file(
+        source_run_log,
+        expected_sha256=expected_source_run_log_sha256,
+        label="source_run_log",
+    )
+    canonical, source_states = import_run_log_evidence(
+        json.loads(source_path.read_text(encoding="utf-8")),
+        evidence_root=source_path.parent,
+    )
+    states = source_states["states"]
+    grounded, semantic_action_count = _ground_source_actions(
+        canonical,
+        states,
+        {"source_targets": []},
+    )
+    return grounded, {
+        "schema_version": "omniflow.source-teacher-grounding.v1",
+        "source_run_log": str(source_path),
+        "source_run_log_sha256": _sha256(source_path),
+        "source_state_catalog": str(source_path),
+        "source_state_catalog_sha256": _sha256(source_path),
+        "source_state_catalog_source": "embedded_source_run_log",
+        "source_state_count": len(states),
+        "semantic_action_count": semantic_action_count,
+        "grounding_source": "canonical_androidworld_run_log",
+        "target_inputs_read": False,
+        "target_observations_read": False,
+        "validator_state_read": False,
+    }
+
+
 def build_grounded_teacher_run_log_from_item(
     *,
     index_path: str | Path,
@@ -507,6 +549,16 @@ def build_grounded_teacher_run_log_from_item(
     """Resolve one archive-index row and ground it from frozen source evidence."""
 
     meta = item.meta
+    indexed_source_sha256 = str(
+        meta.get("retained_source_run_log_sha256")
+        or meta.get("source_run_log_sha256")
+        or ""
+    ).strip()
+    if store_index_path is None and not meta.get("store_provenance"):
+        return _build_grounded_teacher_run_log_from_canonical_source(
+            source_run_log=item.source_run_log,
+            expected_source_run_log_sha256=indexed_source_sha256,
+        )
     store_row: dict[str, Any] = {}
     if store_index_path is not None:
         resolved_store_index = Path(store_index_path).expanduser().resolve()
@@ -544,11 +596,6 @@ def build_grounded_teacher_run_log_from_item(
         or meta.get("source_run_log_sha256")
         or ""
     )
-    indexed_source_sha256 = str(
-        meta.get("retained_source_run_log_sha256")
-        or meta.get("source_run_log_sha256")
-        or ""
-    ).strip()
     store_source_sha256 = str(
         store_row.get("source_run_log_sha256") or ""
     ).strip()

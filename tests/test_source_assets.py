@@ -377,6 +377,63 @@ def test_baseline_grounding_uses_complete_states_embedded_in_source_runlog(
     assert audit["source_state_count"] == 2
 
 
+def test_canonical_runlog_grounds_mobilegpt_without_ours_store(
+    tmp_path: Path,
+) -> None:
+    xml = (
+        '<hierarchy><node class="android.widget.Button" text="Continue" '
+        'resource-id="app:id/continue" clickable="true" '
+        'bounds="[0,0][100,100]" /></hierarchy>'
+    )
+    source = tmp_path / "source.run_log.json"
+    source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [
+                    {"action_type": "open_app", "app_name": "com.example.app"},
+                    {"action_type": "click", "x": 50, "y": 50},
+                ],
+                observations=[
+                    androidworld_state(
+                        "launcher-state",
+                        forest="",
+                        package_name="com.android.launcher",
+                        width=100,
+                        height=100,
+                    ),
+                    androidworld_state(
+                        "state-0",
+                        forest=xml,
+                        package_name="com.example.app",
+                        width=100,
+                        height=100,
+                    ),
+                ],
+                task_name="CompleteTask",
+            )
+        ),
+        encoding="utf-8",
+    )
+    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    item = SimpleNamespace(
+        task="CompleteTask",
+        source_run_log=source,
+        meta={"retained_source_run_log_sha256": source_sha256},
+    )
+
+    grounded, audit = build_grounded_teacher_run_log_from_item(
+        index_path=tmp_path / "source_index.json",
+        item=item,
+    )
+
+    assert grounded["steps"][1]["metadata"]["source_context"]["element"] == {
+        "text": "Continue",
+        "resource_id": "app:id/continue",
+    }
+    assert audit["grounding_source"] == "canonical_androidworld_run_log"
+    assert "provenance_manifest" not in audit
+
+
 def test_source_revision_reuses_frozen_asset_or_advances_past_failures(
     tmp_path: Path,
 ) -> None:

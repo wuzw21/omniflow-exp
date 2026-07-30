@@ -1626,15 +1626,13 @@ if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
   if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
     "$python_bin" -m src.experiment.mobilegpt_source preflight \
       --index "$source_index" \
-      --store-index "$ours_store_index" \
       --task "$task"
   else
     "$python_bin" -m src.experiment.mobilegpt_source validate \
       --index "$source_index" \
       --task "$task" \
       --memory-root "$mobilegpt_source_memory_root" \
-      --model "$paper_model" \
-      --store-index "$ours_store_index"
+      --model "$paper_model"
   fi
 fi
 if [[ "$requires_appagent_source_memory" -eq 1 ]]; then
@@ -1939,7 +1937,6 @@ if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
     --require-contacts-ready
   "$python_bin" -m src.experiment.mobilegpt_source prepare \
     --index "$source_index" \
-    --store-index "$ours_store_index" \
     --task "$task" \
     --mobilegpt-root "$mobilegpt_root" \
     --android-world-root "$android_world_root" \
