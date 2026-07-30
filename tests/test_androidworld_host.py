@@ -5,7 +5,63 @@ import xml.etree.ElementTree as ET
 
 from omniflow import Action
 from src.integrations.android_world.host import AndroidWorldHost
-from src.integrations.android_world.launch import _native_androidworld_a11y_method
+from src.integrations.android_world import launch
+from src.integrations.android_world.launch import (
+    _native_androidworld_a11y_method,
+    _patch_androidworld_controller_ui_dump_fallback,
+)
+
+
+def test_androidworld_ui_elements_fall_back_when_accessibility_is_empty(
+    monkeypatch,
+) -> None:
+    xml = """\
+<hierarchy>
+  <node package="com.android.chrome" bounds="[0,0][720,1280]">
+    <node text="Use without an account" package="com.android.chrome"
+          clickable="true" bounds="[48,967][672,1063]" />
+  </node>
+</hierarchy>
+"""
+    native_elements = [SimpleNamespace(text="Use without an account")]
+    uiautomator_method = object()
+
+    class Controller:
+        _a11y_method = object()
+
+        def __init__(self) -> None:
+            self._env = object()
+
+        def get_ui_elements(self):
+            return []
+
+    controller_module = SimpleNamespace(
+        AndroidWorldController=Controller,
+        A11yMethod=SimpleNamespace(UIAUTOMATOR=uiautomator_method),
+        representation_utils=SimpleNamespace(
+            xml_dump_to_ui_elements=lambda actual_xml: (
+                native_elements if actual_xml.strip() == xml.strip() else []
+            )
+        ),
+    )
+
+    def fake_adb_command(**kwargs):
+        adb_args = kwargs["adb_args"]
+        return {
+            "returncode": 0,
+            "stdout": xml if adb_args[:2] == ["shell", "cat"] else "",
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(launch, "_run_adb_command", fake_adb_command)
+    monkeypatch.setenv("OMNIFLOW_OBSERVE_BACKEND", "androidworld")
+    _patch_androidworld_controller_ui_dump_fallback(
+        controller_module,
+        adb_serial="emulator-5560",
+        adb_path="/sdk/adb",
+    )
+
+    assert Controller().get_ui_elements() == native_elements
 
 
 def test_androidworld_native_observation_uses_accessibility_forest() -> None:

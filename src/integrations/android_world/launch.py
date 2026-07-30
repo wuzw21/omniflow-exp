@@ -2742,13 +2742,19 @@ def _patch_androidworld_controller_ui_dump_fallback(
                             continue
                         raise
                 self._omniflow_last_ui_xml = str(xml_text or "")
-                return list(
+                ui_elements = list(
                     android_world_controller.representation_utils.xml_dump_to_ui_elements(
                         xml_text
                     )
                     or []
                 )
-            return original_get_ui_elements(self)
+                if ui_elements:
+                    return ui_elements
+                raise RuntimeError("androidworld_uiautomator_ui_elements_empty")
+            ui_elements = list(original_get_ui_elements(self) or [])
+            if ui_elements:
+                return ui_elements
+            raise RuntimeError("androidworld_accessibility_ui_elements_empty")
         except Exception as exc:
             try:
                 xml_text = _direct_native_uiautomator_xml()
