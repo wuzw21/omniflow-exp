@@ -148,6 +148,28 @@ def test_adb_foreground_package_reads_top_resumed_activity(monkeypatch) -> None:
     assert mobilegpt_teacher._adb_foreground_package() == "com.android.chrome"
 
 
+def test_teacher_does_not_treat_content_provider_uri_as_foreground_package() -> None:
+    source_action = {
+        "type": "click",
+        "params": {
+            "target_description": "Color Challenge",
+            "source_context": {"package_name": "com.android.chrome"},
+        },
+    }
+    current_screen = (
+        '<div><input id="url_bar" index="50">'
+        "content://com.android.providers.downloads.documents/document/"
+        "raw%3A%2Fstorage%2Femulated%2F0%2FDownload%2Ftask.html"
+        "</input></div>"
+    )
+
+    assert mobilegpt_teacher._source_app_switch_preflight(
+        source_action,
+        current_screen,
+        current_app_package="com.android.chrome",
+    ) is None
+
+
 def test_teacher_handles_chrome_search_provider_prompt_without_consuming_source() -> None:
     result = mobilegpt_teacher._target_preflight_action(
         '<div><p text="Search with Sogou" index="9" />'

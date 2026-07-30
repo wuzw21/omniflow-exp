@@ -1261,6 +1261,19 @@ def _screen_package(screen: str) -> str:
     text = str(screen or "")
     if not text.strip():
         return ""
+    explicit_packages = re.findall(
+        r"\b(?:package|package_name|packageName)=[\"']"
+        r"([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+)[\"']",
+        text,
+    )
+    if explicit_packages:
+        counts = {
+            package: explicit_packages.count(package)
+            for package in set(explicit_packages)
+            if package != "android"
+        }
+        if counts:
+            return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
     packages: dict[str, int] = {}
     for package in re.findall(r"([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+):id/", text):
         if package in {"android"}:
@@ -1268,11 +1281,6 @@ def _screen_package(screen: str) -> str:
         packages[package] = packages.get(package, 0) + 1
     if packages:
         return sorted(packages.items(), key=lambda item: (-item[1], item[0]))[0][0]
-
-    for package in re.findall(r"\b((?:com|net|org)\.[A-Za-z0-9_.]+)\b", text):
-        cleaned = package.rstrip(".,;:'\")(")
-        if cleaned and cleaned != "com.example.MobileGPT":
-            return cleaned
     return ""
 
 
