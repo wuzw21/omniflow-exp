@@ -132,13 +132,11 @@
           "after_state_id"
         ],
         "optional": ["metadata"],
-        "result_schema_ref": "omniflow_canonical_run_log.v1.json#/$defs/result",
         "action_schema_ref": "oob_canonical_actions.v1.json"
       }
     },
     "record_step_response": {
-      "required": ["step"],
-      "step_schema_ref": "omniflow_canonical_run_log.v1.json#/$defs/step"
+      "required": ["step"]
     }
   },
   "invariants": {

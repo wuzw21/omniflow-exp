@@ -15,6 +15,8 @@ import shutil
 import tempfile
 from typing import Any, Iterable, Sequence
 
+from omniflow.core.trajectory import require_complete_source_run_log
+
 MEMORY_SCHEMA = "omniflow.androidworld-artifact-memory.v2"
 CURRENT_SCHEMA = "omniflow.androidworld-artifact-memory-pointer.v2"
 RESULT_FILE_NAMES = (
@@ -739,6 +741,14 @@ def _refresh_artifact_memory_unlocked(
         payload = _load_object(path)
         if not isinstance(payload, dict):
             raise ValueError(f"run_log_must_be_object:{path}")
+        indexed_task = indexed_paths.get(path)
+        if indexed_task:
+            source_run_log = require_complete_source_run_log(payload)
+            if source_run_log["task_name"] != indexed_task:
+                raise ValueError(
+                    "indexed_source_run_log_task_mismatch:"
+                    f"{indexed_task}:{source_run_log['task_name']}:{path}"
+                )
         task = indexed_paths.get(path) or _task_from_path(path, task_names)
         record = records.setdefault(
             digest,

@@ -15,6 +15,7 @@ from src.experiment.artifact_memory import (
     refresh_artifact_memory,
 )
 from src.experiment.function_assets import convert_function_assets, main
+from runlog_fixtures import androidworld_run_log, androidworld_state
 
 
 def _write_json(path: Path, value: object) -> Path:
@@ -42,65 +43,48 @@ def _source_assets(root: Path) -> Path:
     )
     run_log = _write_json(
         root / "RecordWithName" / "source.run_log.json",
-        {
-            "run_id": "human-source",
-            "goal": "Record and save audio as source_name.m4a.",
-            "success": True,
-            "steps": [
+        androidworld_run_log(
+            [
                 {
-                    "observation_before_act": {
-                        "state_id": "state-open",
-                        "package_name": "com.android.launcher",
-                        "display_width": 1000,
-                        "display_height": 1000,
-                    },
-                    "action": {
-                        "tool": "open_app",
-                        "args": {"package_name": "com.example.recorder"},
-                    },
-                    "result": {"success": True},
+                    "action_type": "open_app",
+                    "app_name": "com.example.recorder",
                 },
+                {"action_type": "click", "x": 500, "y": 800},
+                {"action_type": "click", "x": 500, "y": 200},
                 {
-                    "observation_before_act": {
-                        "state_id": "state-menu",
-                        "xml": menu_xml,
-                        "package_name": "com.example.recorder",
-                        "activity_name": ".MainActivity",
-                        "display_width": 1000,
-                        "display_height": 1000,
-                    },
-                    "action": {"tool": "click", "args": {"x": 500, "y": 800}},
-                    "result": {"success": True},
-                },
-                {
-                    "observation_before_act": {
-                        "state_id": "state-input",
-                        "xml": input_xml,
-                        "package_name": "com.example.recorder",
-                        "activity_name": ".MainActivity",
-                        "display_width": 1000,
-                        "display_height": 1000,
-                    },
-                    "action": {"tool": "click", "args": {"x": 500, "y": 200}},
-                    "result": {"success": True},
-                },
-                {
-                    "observation_before_act": {
-                        "state_id": "state-input",
-                        "xml": input_xml,
-                        "package_name": "com.example.recorder",
-                        "activity_name": ".MainActivity",
-                        "display_width": 1000,
-                        "display_height": 1000,
-                    },
-                    "action": {
-                        "tool": "input_text",
-                        "args": {"text": "source_name.m4a"},
-                    },
-                    "result": {"success": True},
+                    "action_type": "input_text",
+                    "text": "source_name.m4a",
                 },
             ],
-        },
+            observations=[
+                androidworld_state(
+                    "state-open",
+                    package_name="com.android.launcher",
+                    with_pixels=True,
+                ),
+                androidworld_state(
+                    "state-menu",
+                    forest=menu_xml,
+                    package_name="com.example.recorder",
+                    with_pixels=True,
+                ),
+                androidworld_state(
+                    "state-input",
+                    forest=input_xml,
+                    package_name="com.example.recorder",
+                    with_pixels=True,
+                ),
+                androidworld_state(
+                    "state-input",
+                    forest=input_xml,
+                    package_name="com.example.recorder",
+                    with_pixels=True,
+                ),
+            ],
+            task_name="RecordWithName",
+            run_id="human-source",
+            goal="Record and save audio as source_name.m4a.",
+        ),
     )
     return _write_json(
         root / "index_by_task.json",
@@ -108,6 +92,8 @@ def _source_assets(root: Path) -> Path:
             "RecordWithName": {
                 "task": "RecordWithName",
                 "collect_seed": 111,
+                "source_seed": 111,
+                "latest_official_success_source": True,
                 "retained_source_run_log": str(run_log),
                 "retained_source_run_log_sha256": _sha256(run_log),
             }
@@ -279,7 +265,7 @@ def test_conversion_rejects_coordinate_function_without_source_ui(
     source_row = index_payload["RecordWithName"]
     run_log_path = Path(source_row["retained_source_run_log"])
     run_log = json.loads(run_log_path.read_text(encoding="utf-8"))
-    run_log["steps"][1]["observation_before_act"].pop("xml")
+    run_log["steps"][1]["observation"]["forest"] = None
     _write_json(run_log_path, run_log)
     source_row["retained_source_run_log_sha256"] = _sha256(run_log_path)
     _write_json(source_index, index_payload)
@@ -295,7 +281,7 @@ def test_conversion_rejects_coordinate_function_without_source_ui(
         )
 
 
-def test_conversion_keeps_safe_prefix_when_historical_action_is_unsupported(
+def test_conversion_rejects_legacy_run_log_at_formal_boundary(
     tmp_path: Path,
 ) -> None:
     source_run_log = _write_json(
@@ -368,21 +354,12 @@ def test_conversion_keeps_safe_prefix_when_historical_action_is_unsupported(
         },
     )
 
-    report = convert_function_assets(
-        source_asset_index=source_index,
-        authoring_manifest=authoring_manifest,
-        output_root=tmp_path / "converted",
-    )
-
-    function = FunctionStore(
-        report["tasks"]["SystemCopyToClipboard"]["store_path"]
-    ).list_functions()[0]
-    assert [step.action.to_dict() for step in function.steps] == [
-        {
-            "tool": "open_app",
-            "args": {"package_name": "ca.zgrs.clipper"},
-        }
-    ]
+    with pytest.raises(ValueError, match="run_log_schema_invalid"):
+        convert_function_assets(
+            source_asset_index=source_index,
+            authoring_manifest=authoring_manifest,
+            output_root=tmp_path / "converted",
+        )
 
 
 def test_conversion_cli_freezes_and_registers_completed_assets(

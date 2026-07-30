@@ -1,45 +1,198 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from pathlib import Path
+import re
 from typing import Any
 
-from omniflow.core.schemas import canonicalize_action, load_canonical_run_log_schema
+from omniflow.core.schemas import load_androidworld_run_log_schema
 
-CANONICAL_RUN_LOG_SCHEMA_VERSION = "omniflow.canonical_run_log.v1"
-_STATE_FIELDS = {
-    "state_id",
-    "package_name",
-    "activity_name",
-    "display",
+ANDROIDWORLD_RUN_LOG_SCHEMA_VERSION = "omniflow.androidworld.run_log.v1"
+_ACTION_TYPES = {
+    "answer",
+    "click",
+    "double_tap",
+    "input_text",
+    "keyboard_enter",
+    "long_press",
+    "navigate_back",
+    "navigate_home",
+    "open_app",
+    "press_keyboard",
+    "scroll",
+    "status",
+    "swipe",
+    "unknown",
+    "wait",
+}
+_ACTION_FIELDS = {
+    "action_type",
+    "index",
+    "x",
+    "y",
+    "text",
+    "direction",
+    "app_name",
+    "goal_status",
+    "keycode",
+    "clear_text",
 }
 
 
 def canonicalize_run_log(value: dict[str, Any]) -> dict[str, Any]:
-    """Validate and copy the single schema-owned RunLog representation."""
-    schema = load_canonical_run_log_schema()
+    """Validate and copy the only RunLog accepted by OmniFlow runtime code."""
+    schema = load_androidworld_run_log_schema()
     _validate_schema(value, schema, schema, "run_log")
     canonical = _copy(value)
     canonical["steps"] = [canonicalize_run_log_step(step) for step in value["steps"]]
+    for step in canonical["steps"]:
+        _validate_screenshot_reference(step["observation"].get("pixels"))
+        if "next_observation" in step:
+            _validate_screenshot_reference(step["next_observation"].get("pixels"))
+    if "final_observation" in canonical:
+        _validate_screenshot_reference(canonical["final_observation"].get("pixels"))
+    provenance = canonical["provenance"]
+    if provenance["kind"] == "legacy_import":
+        required = {"source_path", "source_sha256", "source_schema_version"}
+        missing = sorted(required - set(provenance))
+        if missing:
+            raise ValueError(
+                "run_log_provenance_required:" + ",".join(missing)
+            )
+        if not Path(provenance["source_path"]).is_absolute():
+            raise ValueError("run_log_provenance_source_path_must_be_absolute")
     _validate_schema(canonical, schema, schema, "run_log")
     return canonical
 
 
-def canonicalize_run_log_step(
-    value: Any,
-    *,
-    replayable_only: bool = False,
-) -> dict[str, Any]:
-    schema = load_canonical_run_log_schema()
+def canonicalize_run_log_step(value: Any) -> dict[str, Any]:
+    schema = load_androidworld_run_log_schema()
     step_schema = {"$ref": "#/$defs/step"}
     _validate_schema(value, step_schema, schema, "run_log_step")
     canonical = _copy(value)
-    canonical["action"] = canonicalize_action(
-        value["action"],
-        replayable_only=replayable_only,
-        allow_non_action=True,
-    )
+    canonical["action"] = canonicalize_androidworld_action(value["action"])
     _validate_schema(canonical, step_schema, schema, "run_log_step")
     return canonical
+
+
+def canonicalize_androidworld_action(value: Any) -> dict[str, Any]:
+    """Validate the serializable fields of AndroidWorld ``JSONAction``."""
+    if not isinstance(value, dict):
+        raise ValueError("androidworld_action_must_be_object")
+    unknown = sorted(set(value) - _ACTION_FIELDS)
+    if unknown:
+        raise ValueError("androidworld_action_unknown_fields:" + ",".join(unknown))
+    action = {key: item for key, item in value.items() if item is not None}
+    action_type = str(action.get("action_type") or "").strip()
+    if action_type not in _ACTION_TYPES:
+        raise ValueError(f"androidworld_action_type_invalid:{action_type}")
+    action["action_type"] = action_type
+    if "index" in action:
+        _non_negative_int(action["index"], "androidworld_action_index_invalid")
+        if "x" in action or "y" in action:
+            raise ValueError("androidworld_action_index_or_coordinates_required")
+    for key in ("x", "y"):
+        if key in action:
+            _non_negative_int(
+                action[key], f"androidworld_action_{key}_invalid"
+            )
+    if action_type in {"click", "double_tap", "long_press"}:
+        if "index" not in action and not all(key in action for key in ("x", "y")):
+            raise ValueError(
+                f"androidworld_action_target_required:{action_type}"
+            )
+    if action_type == "input_text" and not isinstance(action.get("text"), str):
+        raise ValueError("androidworld_action_text_required:input_text")
+    if action_type in {"scroll", "swipe"} and action.get("direction") not in {
+        "left",
+        "right",
+        "down",
+        "up",
+    }:
+        raise ValueError(f"androidworld_action_direction_required:{action_type}")
+    if action_type == "open_app" and not str(action.get("app_name") or "").strip():
+        raise ValueError("androidworld_action_app_name_required")
+    if action_type == "status" and not str(
+        action.get("goal_status") or ""
+    ).strip():
+        raise ValueError("androidworld_action_goal_status_required")
+    if action_type == "press_keyboard" and not re.fullmatch(
+        r"KEYCODE_[A-Z0-9_]+", str(action.get("keycode") or "")
+    ):
+        raise ValueError("androidworld_action_keycode_required")
+    return _copy(action)
+
+
+def require_complete_source_run_log(value: dict[str, Any]) -> dict[str, Any]:
+    """Require a successful official-validator source with complete pixels refs."""
+    run_log = canonicalize_run_log(value)
+    if run_log["status"] != "succeeded" or run_log["success"] is not True:
+        raise ValueError("androidworld_source_run_log_success_required")
+    if not run_log["steps"]:
+        raise ValueError("androidworld_source_run_log_steps_required")
+    missing = [
+        str(step["step_index"])
+        for step in run_log["steps"]
+        if step["observation"].get("pixels") is None
+    ]
+    if missing:
+        raise ValueError(
+            "androidworld_source_run_log_screenshot_required:" + ",".join(missing)
+        )
+    return run_log
+
+
+def state_id(observation: dict[str, Any]) -> str:
+    auxiliaries = observation.get("auxiliaries")
+    if isinstance(auxiliaries, dict):
+        explicit = str(auxiliaries.get("state_id") or "").strip()
+        if explicit:
+            return explicit
+    identity = _copy(observation)
+    identity["pixels"] = None
+    encoded = json.dumps(
+        identity,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "state_" + hashlib.sha256(encoded.encode()).hexdigest()[:20]
+
+
+def observation_display(observation: dict[str, Any]) -> tuple[int, int] | None:
+    pixels = observation.get("pixels")
+    if isinstance(pixels, dict):
+        return int(pixels["width"]), int(pixels["height"])
+    auxiliaries = observation.get("auxiliaries")
+    display = auxiliaries.get("display") if isinstance(auxiliaries, dict) else None
+    if isinstance(display, dict):
+        width = display.get("width")
+        height = display.get("height")
+        if (
+            isinstance(width, int)
+            and not isinstance(width, bool)
+            and width > 0
+            and isinstance(height, int)
+            and not isinstance(height, bool)
+            and height > 0
+        ):
+            return width, height
+    return None
+
+
+def _validate_screenshot_reference(value: Any) -> None:
+    if value is None:
+        return
+    path = Path(str(value.get("path") or "")).expanduser()
+    if not path.is_absolute():
+        raise ValueError("run_log_screenshot_path_must_be_absolute")
+
+
+def _non_negative_int(value: Any, error: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(error)
+    return value
 
 
 def _validate_schema(
@@ -50,6 +203,11 @@ def _validate_schema(
 ) -> None:
     if "$ref" in schema:
         _validate_schema(value, _resolve_ref(root_schema, schema["$ref"]), root_schema, path)
+        return
+    any_of = schema.get("anyOf")
+    if isinstance(any_of, list):
+        if not any(_schema_matches(value, item, root_schema) for item in any_of):
+            raise ValueError(f"run_log_schema_invalid:{path}:anyOf")
         return
     _validate_type(value, schema.get("type"), path)
     if "const" in schema and value != schema["const"]:
@@ -80,8 +238,12 @@ def _validate_schema(
         if isinstance(item_schema, dict):
             for index, item in enumerate(value):
                 _validate_schema(item, item_schema, root_schema, f"{path}[{index}]")
-    elif isinstance(value, str) and len(value) < int(schema.get("minLength") or 0):
-        raise ValueError(f"run_log_schema_invalid:{path}:minLength")
+    elif isinstance(value, str):
+        if len(value) < int(schema.get("minLength") or 0):
+            raise ValueError(f"run_log_schema_invalid:{path}:minLength")
+        pattern = schema.get("pattern")
+        if pattern and re.search(str(pattern), value) is None:
+            raise ValueError(f"run_log_schema_invalid:{path}:pattern")
     if (
         isinstance(value, (int, float))
         and not isinstance(value, bool)
@@ -93,7 +255,11 @@ def _validate_schema(
         _validate_schema(value, item_schema, root_schema, path)
     condition = schema.get("if")
     if isinstance(condition, dict):
-        branch = schema.get("then") if _schema_matches(value, condition, root_schema) else schema.get("else")
+        branch = (
+            schema.get("then")
+            if _schema_matches(value, condition, root_schema)
+            else schema.get("else")
+        )
         if isinstance(branch, dict):
             _validate_schema(value, branch, root_schema, path)
 
@@ -136,47 +302,16 @@ def _resolve_ref(root_schema: dict[str, Any], ref: Any) -> dict[str, Any]:
     return resolved
 
 
-def canonicalize_state(value: Any) -> dict[str, Any]:
-    """Validate and copy the one state representation used by every core boundary."""
-    if not isinstance(value, dict):
-        raise ValueError("run_log_state_must_be_object")
-    _reject_unknown(value, _STATE_FIELDS, "run_log_state")
-    state_id = _required_string(value.get("state_id"), "run_log_state_id_required")
-    state = {"state_id": state_id}
-    for key, item in value.items():
-        if key == "state_id":
-            continue
-        if key == "display":
-            if not isinstance(item, dict) or set(item) != {"width", "height"}:
-                raise ValueError("run_log_state_display_invalid")
-            for dimension in ("width", "height"):
-                number = item.get(dimension)
-                if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
-                    raise ValueError("run_log_state_display_invalid")
-        elif not isinstance(item, str):
-            raise ValueError(f"run_log_state_{key}_must_be_string")
-        state[key] = item
-    return state
-
-
-def _reject_unknown(value: dict[str, Any], allowed: set[str], prefix: str) -> None:
-    unknown = sorted(set(value) - allowed)
-    if unknown:
-        raise ValueError(f"{prefix}_unknown_fields:{','.join(unknown)}")
-
-
-def _required_string(value: Any, error: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(error)
-    return value
-
-
 def _copy(value: Any) -> Any:
     return json.loads(json.dumps(value, ensure_ascii=False))
 
 
 __all__ = [
-    "CANONICAL_RUN_LOG_SCHEMA_VERSION",
+    "ANDROIDWORLD_RUN_LOG_SCHEMA_VERSION",
+    "canonicalize_androidworld_action",
     "canonicalize_run_log",
     "canonicalize_run_log_step",
+    "observation_display",
+    "require_complete_source_run_log",
+    "state_id",
 ]

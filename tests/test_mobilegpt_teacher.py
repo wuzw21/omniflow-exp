@@ -5,8 +5,29 @@ import subprocess
 import sys
 from types import ModuleType
 
+from runlog_fixtures import androidworld_run_log, androidworld_state
 from src.integrations import mobilegpt_teacher
 from src.integrations.mobilegpt_teacher import install_mobilegpt_teacher
+
+
+def _write_source_run_log(
+    path,
+    *,
+    observations=None,
+) -> None:
+    actions = [
+        {"action_type": "click", "x": 50, "y": 50}
+        for _ in range(len(observations or [None]))
+    ]
+    path.write_text(
+        json.dumps(
+            androidworld_run_log(
+                actions,
+                observations=observations,
+            )
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_exhausted_teacher_finishes_task_before_subtask_reentry(
@@ -14,21 +35,7 @@ def test_exhausted_teacher_finishes_task_before_subtask_reentry(
     monkeypatch,
 ) -> None:
     source_run_log = tmp_path / "source.run_log.json"
-    source_run_log.write_text(
-        json.dumps(
-            {
-                "steps": [
-                    {
-                        "action": {
-                            "type": "click",
-                            "params": {"x": 1, "y": 1},
-                        }
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_source_run_log(source_run_log)
     calls: list[str] = []
 
     class MobileGPT:
@@ -78,29 +85,20 @@ def test_teacher_uses_foreground_package_when_parsed_xml_omits_it(
     monkeypatch,
 ) -> None:
     source_run_log = tmp_path / "source.run_log.json"
-    source_run_log.write_text(
-        json.dumps(
-            {
-                "steps": [
-                    {
-                        "observation": {
-                            "package_name": "com.android.chrome",
-                            "xml": (
-                                '<hierarchy><node text="Submit" '
-                                'resource-id="com.android.chrome:id/submit" '
-                                'clickable="true" bounds="[0,0][100,100]" />'
-                                "</hierarchy>"
-                            ),
-                        },
-                        "action": {
-                            "type": "click",
-                            "params": {"x": 50, "y": 50},
-                        },
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
+    _write_source_run_log(
+        source_run_log,
+        observations=[
+            androidworld_state(
+                "submit",
+                package_name="com.android.chrome",
+                forest=(
+                    '<hierarchy><node text="Submit" '
+                    'resource-id="com.android.chrome:id/submit" '
+                    'clickable="true" bounds="[0,0][100,100]" />'
+                    "</hierarchy>"
+                ),
+            )
+        ],
     )
     monkeypatch.setattr(
         mobilegpt_teacher,
@@ -186,54 +184,35 @@ def test_teacher_reenters_external_intent_after_target_setup(
     monkeypatch,
 ) -> None:
     source_run_log = tmp_path / "source.run_log.json"
-    source_run_log.write_text(
-        json.dumps(
-            {
-                "steps": [
-                    {
-                        "observation": {
-                            "package_name": "com.google.android.documentsui",
-                            "xml": (
-                                '<hierarchy><node text="task.html" clickable="true" '
-                                'bounds="[0,0][100,100]" /></hierarchy>'
-                            ),
-                        },
-                        "action": {
-                            "type": "click",
-                            "params": {"x": 50, "y": 50},
-                        },
-                    },
-                    {
-                        "observation": {
-                            "package_name": "android",
-                            "xml": (
-                                '<hierarchy><node text="Just once" clickable="true" '
-                                'bounds="[0,0][100,100]" /></hierarchy>'
-                            ),
-                        },
-                        "action": {
-                            "type": "click",
-                            "params": {"x": 50, "y": 50},
-                        },
-                    },
-                    {
-                        "observation": {
-                            "package_name": "com.android.chrome",
-                            "xml": (
-                                '<hierarchy><node text="Color Challenge" '
-                                'clickable="true" bounds="[0,0][100,100]" />'
-                                "</hierarchy>"
-                            ),
-                        },
-                        "action": {
-                            "type": "click",
-                            "params": {"x": 50, "y": 50},
-                        },
-                    },
-                ]
-            }
-        ),
-        encoding="utf-8",
+    _write_source_run_log(
+        source_run_log,
+        observations=[
+            androidworld_state(
+                "file-picker",
+                package_name="com.google.android.documentsui",
+                forest=(
+                    '<hierarchy><node text="task.html" clickable="true" '
+                    'bounds="[0,0][100,100]" /></hierarchy>'
+                ),
+            ),
+            androidworld_state(
+                "intent-resolver",
+                package_name="android",
+                forest=(
+                    '<hierarchy><node text="Just once" clickable="true" '
+                    'bounds="[0,0][100,100]" /></hierarchy>'
+                ),
+            ),
+            androidworld_state(
+                "chrome",
+                package_name="com.android.chrome",
+                forest=(
+                    '<hierarchy><node text="Color Challenge" '
+                    'clickable="true" bounds="[0,0][100,100]" />'
+                    "</hierarchy>"
+                ),
+            ),
+        ],
     )
     monkeypatch.setattr(
         mobilegpt_teacher,
@@ -284,28 +263,21 @@ def test_teacher_reenters_external_intent_after_target_setup(
 
 def test_teacher_reentry_rejects_ambiguous_cross_package_matches(tmp_path) -> None:
     source_run_log = tmp_path / "source.run_log.json"
-    source_run_log.write_text(
-        json.dumps(
-            {
-                "steps": [
-                    {
-                        "observation": {
-                            "package_name": package_name,
-                            "xml": (
-                                '<hierarchy><node text="Just once" clickable="true" '
-                                'bounds="[0,0][100,100]" /></hierarchy>'
-                            ),
-                        },
-                        "action": {
-                            "type": "click",
-                            "params": {"x": 50, "y": 50},
-                        },
-                    }
-                    for package_name in ("android", "com.example.resolver")
-                ]
-            }
-        ),
-        encoding="utf-8",
+    _write_source_run_log(
+        source_run_log,
+        observations=[
+            androidworld_state(
+                f"resolver-{index}",
+                package_name=package_name,
+                forest=(
+                    '<hierarchy><node text="Just once" clickable="true" '
+                    'bounds="[0,0][100,100]" /></hierarchy>'
+                ),
+            )
+            for index, package_name in enumerate(
+                ("android", "com.example.resolver")
+            )
+        ],
     )
     teacher = mobilegpt_teacher.MobileGPTTeacher(source_run_log)
     teacher._cursor = 2
@@ -323,28 +295,19 @@ def test_teacher_migration_miss_uses_native_vlm_fallback(
     monkeypatch,
 ) -> None:
     source_run_log = tmp_path / "source.run_log.json"
-    source_run_log.write_text(
-        json.dumps(
-            {
-                "steps": [
-                    {
-                        "observation": {
-                            "package_name": "com.android.chrome",
-                            "xml": (
-                                '<hierarchy><node text="Color Challenge" '
-                                'clickable="true" bounds="[0,0][100,100]" />'
-                                "</hierarchy>"
-                            ),
-                        },
-                        "action": {
-                            "type": "click",
-                            "params": {"x": 50, "y": 50},
-                        },
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
+    _write_source_run_log(
+        source_run_log,
+        observations=[
+            androidworld_state(
+                "chrome-challenge",
+                package_name="com.android.chrome",
+                forest=(
+                    '<hierarchy><node text="Color Challenge" '
+                    'clickable="true" bounds="[0,0][100,100]" />'
+                    "</hierarchy>"
+                ),
+            )
+        ],
     )
     events: list[dict] = []
 

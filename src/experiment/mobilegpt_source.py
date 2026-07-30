@@ -201,13 +201,18 @@ def _mobilegpt_source_target(
     source_packages: set[str] = set()
     for step in grounded.get("steps") or []:
         observation = (
-            step.get("observation_before_act")
+            step.get("observation")
             if isinstance(step, dict)
             else None
         )
-        package = str(
-            observation.get("package_name")
+        auxiliaries = (
+            observation.get("auxiliaries")
             if isinstance(observation, dict)
+            else None
+        )
+        package = str(
+            auxiliaries.get("package_name")
+            if isinstance(auxiliaries, dict)
             else ""
         ).strip()
         if package and package not in _IGNORED_SOURCE_PACKAGES:

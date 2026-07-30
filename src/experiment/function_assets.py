@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from omniflow import compile_runlog_to_store
+from omniflow.core.trajectory import state_id
 from omniflow.functions.store import FunctionStore
 from omniflow.transfer.runtime import (
     audit_transfer_action_sources,
@@ -16,7 +17,10 @@ from omniflow.transfer.runtime import (
     transfer_state_coverage,
 )
 from src.integrations.android_world.apps import resolve_androidworld_package
-from src.integrations.runlog import import_run_log_evidence
+from src.integrations.runlog import (
+    import_run_log_evidence,
+    project_androidworld_step_actions,
+)
 
 CATALOG_SCHEMA = "omniflow.function-asset-catalog.v1"
 AUTHORING_SCHEMA = "omniflow.function-authoring-manifest.v1"
@@ -379,14 +383,21 @@ def _build_function(
         raise ValueError(
             f"function_authoring_unsuccessful_step_selected:{task_name}:{function_id}"
         )
-    steps = [
-        {
-            "step_index": local_index,
-            "source_state_id": source_step["before_state_id"],
-            "action": json.loads(json.dumps(source_step["action"])),
-        }
-        for local_index, source_step in enumerate(selected_steps)
-    ]
+    steps: list[dict[str, Any]] = []
+    source_to_local: dict[int, list[int]] = {}
+    for source_index, source_step in zip(raw_indexes, selected_steps, strict=True):
+        source_to_local[source_index] = []
+        source_state_id = state_id(source_step["observation"])
+        for action in project_androidworld_step_actions(source_step):
+            local_index = len(steps)
+            source_to_local[source_index].append(local_index)
+            steps.append(
+                {
+                    "step_index": local_index,
+                    "source_state_id": source_state_id,
+                    "action": json.loads(json.dumps(action)),
+                }
+            )
     raw_parameters = raw_function.get("parameters")
     if not isinstance(raw_parameters, list):
         raise ValueError(
@@ -395,10 +406,6 @@ def _build_function(
     properties: dict[str, dict[str, Any]] = {}
     source_arguments: dict[str, Any] = {}
     bindings: list[dict[str, str]] = []
-    source_to_local = {
-        source_index: local_index
-        for local_index, source_index in enumerate(raw_indexes)
-    }
     for raw_parameter in raw_parameters:
         if not isinstance(raw_parameter, dict) or set(raw_parameter) != {
             "name",
@@ -436,13 +443,19 @@ def _build_function(
                 raise ValueError(
                     f"function_authoring_binding_invalid:{task_name}:{function_id}:{name}"
                 )
-            local_index = source_to_local[source_index]
-            action_args = steps[local_index]["action"]["args"]
-            if arg_name not in action_args:
+            local_candidates = [
+                local_index
+                for local_index in source_to_local[source_index]
+                if arg_name in steps[local_index]["action"]["args"]
+            ]
+            if len(local_candidates) != 1:
                 raise ValueError(
-                    f"function_authoring_binding_target_missing:{task_name}:"
-                    f"{function_id}:{source_index}:{arg_name}"
+                    f"function_authoring_binding_target_not_unique:{task_name}:"
+                    f"{function_id}:{source_index}:{arg_name}:"
+                    f"matches={len(local_candidates)}"
                 )
+            local_index = local_candidates[0]
+            action_args = steps[local_index]["action"]["args"]
             parameter_values.append(action_args[arg_name])
             action_args[arg_name] = _empty_json_value(schema)
             bindings.append(

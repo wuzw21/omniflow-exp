@@ -25,7 +25,7 @@ from src.integrations.android_world.host import (
     androidworld_elements_xml,
     make_agent_result,
 )
-from src.integrations.runlog import extract_canonical_step_actions
+from src.integrations.runlog import import_run_log, project_androidworld_step_actions
 
 APPAGENT_OFFICIAL_REVISION = "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
 APPAGENT_SOURCE_SEED = 111
@@ -854,9 +854,7 @@ def build_appagent_teacher_source(
     normalized_task_name = str(task_name or "").strip()
     if not normalized_task_name:
         raise ValueError("appagent_task_name_required")
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError("appagent_source_run_log_object_required")
+    payload = import_run_log(json.loads(path.read_text(encoding="utf-8")))
     provenance_path = (
         Path(provenance_source_run_log).expanduser().resolve()
         if provenance_source_run_log is not None
@@ -1399,15 +1397,7 @@ def ground_appagent_teacher_action(
 
 
 def _source_run_log_steps(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    steps = payload.get("steps")
-    if isinstance(steps, list):
-        return [dict(step) for step in steps if isinstance(step, dict)]
-    wrapped = payload.get("payload")
-    if isinstance(wrapped, dict) and isinstance(wrapped.get("steps"), list):
-        return [
-            dict(step) for step in wrapped["steps"] if isinstance(step, dict)
-        ]
-    return []
+    return list(import_run_log(payload)["steps"])
 
 
 def _traverse_appagent_elements(
@@ -1573,31 +1563,10 @@ def _point_distance(left: tuple[int, int], right: tuple[int, int]) -> float:
 
 
 def _source_actions(step: dict[str, Any]) -> list[dict[str, Any]]:
-    canonical_action = step.get("action")
-    if isinstance(canonical_action, dict):
-        tool = str(
-            canonical_action.get("tool") or canonical_action.get("type") or ""
-        ).strip()
-        args = canonical_action.get("args")
-        if not isinstance(args, dict):
-            args = canonical_action.get("params")
-        return [{"tool": tool, "args": dict(args or {})}]
-    for key in ("actions", "executed_actions"):
-        raw_actions = step.get(key)
-        if not isinstance(raw_actions, list):
-            continue
-        actions = []
-        for raw_action in raw_actions:
-            if not isinstance(raw_action, dict) or raw_action.get("success") is False:
-                continue
-            tool = str(raw_action.get("tool") or raw_action.get("type") or "").strip()
-            args = raw_action.get("args")
-            if not isinstance(args, dict):
-                args = raw_action.get("params")
-            actions.append({"tool": tool, "args": dict(args or {})})
-        if actions:
-            return actions
-    return extract_canonical_step_actions(step)
+    action_type = str(step.get("action", {}).get("action_type") or "")
+    if action_type in {"answer", "status", "unknown"}:
+        return []
+    return project_androidworld_step_actions(step)
 
 
 def _adapter_params(action_type: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -1652,6 +1621,12 @@ def _source_semantic_params(
     params: dict[str, Any],
 ) -> dict[str, Any]:
     enriched = dict(params)
+    metadata = step.get("metadata")
+    source_context = (
+        metadata.get("source_context") if isinstance(metadata, dict) else None
+    )
+    if isinstance(source_context, dict):
+        enriched["source_context"] = dict(source_context)
     if _adapter_params("click", enriched):
         return enriched
     try:
@@ -1663,7 +1638,12 @@ def _source_semantic_params(
     if not isinstance(observation, dict):
         observation = step.get("observation")
     xml_text = str(
-        observation.get("xml") if isinstance(observation, dict) else ""
+        (
+            observation.get("forest") or observation.get("xml")
+            if isinstance(observation, dict)
+            else ""
+        )
+        or ""
     ).strip()
     if not xml_text:
         return enriched

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 import json
 import math
 from typing import Any
@@ -11,24 +10,10 @@ from typing import Any
 import numpy as np
 
 from omniflow.core.model import Observation
+from omniflow.core.trajectory import canonicalize_run_log, state_id
 from omniflow.transfer.embedding import ElementEmbedding, PageEncoder, TreeEmbedding
 
 _POINT_ACTIONS = frozenset({"click", "input_text", "long_press"})
-_ACTION_TOOL_ALIASES = {
-    "back": "press_key",
-    "input": "input_text",
-    "key_event": "press_key",
-    "launch_app": "open_app",
-    "navigate_back": "press_key",
-    "openapp": "open_app",
-    "press_back": "press_key",
-    "presskey": "press_key",
-    "scroll": "swipe",
-    "set_text": "input_text",
-    "tap": "click",
-    "touch": "click",
-    "type_text": "input_text",
-}
 _IGNORED_ACTION_ARGS = frozenset(
     {
         "duration_ms",
@@ -118,6 +103,8 @@ def align_runlogs(
     if not isinstance(left_runlog, dict) or not isinstance(right_runlog, dict):
         raise ValueError("runlogs_must_be_objects")
     encoder = page_encoder or PageEncoder()
+    left_runlog = canonicalize_run_log(left_runlog)
+    right_runlog = canonicalize_run_log(right_runlog)
     left = _runlog_steps(left_runlog, encoder)
     right = _runlog_steps(right_runlog, encoder)
     scores = [
@@ -160,8 +147,8 @@ def _runlog_steps(runlog: dict[str, Any], encoder: PageEncoder) -> tuple[_StepVi
     for position, raw_step in enumerate(raw_steps):
         if not isinstance(raw_step, dict):
             raise ValueError("runlog_step_must_be_object")
-        action = _step_action(raw_step)
         observation = _step_observation(raw_step)
+        action = _step_action(raw_step, observation)
         page = _encode_page(observation, encoder)
         width, height = _page_dimensions(observation, page)
         point = _page_point(action, coordinate_space, width, height)
@@ -174,7 +161,7 @@ def _runlog_steps(runlog: dict[str, Any], encoder: PageEncoder) -> tuple[_StepVi
                 index=step_index,
                 action_tool=action["tool"],
                 action_args=action["args"],
-                package_name=str(observation.get("package_name") or ""),
+                package_name=_observation_string(observation, "package_name"),
                 page=page,
                 action_node=action_node,
                 endpoint=RunlogEndpoint(
@@ -182,9 +169,9 @@ def _runlog_steps(runlog: dict[str, Any], encoder: PageEncoder) -> tuple[_StepVi
                     state_id=state_id,
                     step_index=step_index,
                     action_tool=action["tool"],
-                    page_id=str(observation.get("page_id") or state_id),
-                    package_name=str(observation.get("package_name") or ""),
-                    activity_name=str(observation.get("activity_name") or ""),
+                    page_id=_observation_string(observation, "page_id") or state_id,
+                    package_name=_observation_string(observation, "package_name"),
+                    activity_name=_observation_string(observation, "activity_name"),
                     screenshot_path=_screenshot_path(observation),
                     width=width,
                     height=height,
@@ -196,115 +183,67 @@ def _runlog_steps(runlog: dict[str, Any], encoder: PageEncoder) -> tuple[_StepVi
     return tuple(views)
 
 
-def _step_action(step: dict[str, Any]) -> dict[str, Any]:
-    candidates = step.get("executed_actions") or step.get("actions") or ()
-    raw = candidates[0] if isinstance(candidates, list) and candidates else step.get("action")
-    if not isinstance(raw, dict):
-        return {"tool": "", "args": {}}
-    raw_tool = str(raw.get("tool") or raw.get("type") or raw.get("name") or "")
-    raw_tool = raw_tool.strip().lower().replace("-", "_")
-    tool = _ACTION_TOOL_ALIASES.get(raw_tool, raw_tool)
-    raw_args = raw.get("args") or raw.get("params") or raw.get("arguments") or {}
-    args = dict(raw_args) if isinstance(raw_args, dict) else {}
-    if tool == "press_key":
-        key = args.get("key") or args.get("keycode")
-        if raw_tool in {"back", "navigate_back", "press_back"}:
-            key = "back"
-        return {"tool": tool, "args": {"key": _canonical_key(key)}}
-    if tool == "swipe":
-        return {"tool": tool, "args": _canonical_swipe_args(args)}
-    if tool in _POINT_ACTIONS:
-        return {"tool": tool, "args": _canonical_point_args(tool, args)}
-    if tool == "open_app":
-        package_name = args.get("package_name") or args.get("package") or args.get("app_id")
-        return {"tool": tool, "args": {"package_name": str(package_name or "")}}
-    return {"tool": tool, "args": args}
-
-
-def _canonical_key(value: Any) -> str:
-    key = str(value or "").strip().lower()
-    if key.startswith("keycode_"):
-        key = key.removeprefix("keycode_")
-    return key
-
-
-def _canonical_point_args(tool: str, args: dict[str, Any]) -> dict[str, Any]:
-    canonical: dict[str, Any] = {}
-    for output, aliases in (("x", ("x", "px")), ("y", ("y", "py"))):
-        value = _first_action_arg(args, aliases)
-        if value is not None:
-            canonical[output] = value
-    if tool == "input_text":
-        canonical["text"] = str(
-            _first_action_arg(args, ("text", "input_text", "value")) or ""
-        )
-    if tool == "long_press" and args.get("duration_ms") is not None:
-        canonical["duration_ms"] = args["duration_ms"]
-    return canonical
-
-
-def _canonical_swipe_args(args: dict[str, Any]) -> dict[str, Any]:
-    canonical: dict[str, Any] = {}
-    coordinate_aliases = {
-        "x1": ("x1", "start_x", "from_x"),
-        "y1": ("y1", "start_y", "from_y"),
-        "x2": ("x2", "end_x", "to_x"),
-        "y2": ("y2", "end_y", "to_y"),
+def _step_action(
+    step: dict[str, Any],
+    observation: dict[str, Any],
+) -> dict[str, Any]:
+    action = dict(step["action"])
+    action_type = str(action["action_type"])
+    point = _androidworld_action_point(action, observation)
+    point_args = dict(point or {})
+    if action_type in {"click", "double_tap"}:
+        return {"tool": "click", "args": point_args}
+    if action_type == "long_press":
+        return {"tool": "long_press", "args": point_args}
+    if action_type == "input_text":
+        return {
+            "tool": "input_text",
+            "args": {"text": str(action.get("text") or ""), **point_args},
+        }
+    if action_type in {"scroll", "swipe"}:
+        return {
+            "tool": "swipe",
+            "args": {"direction": str(action.get("direction") or "")},
+        }
+    if action_type == "open_app":
+        return {
+            "tool": "open_app",
+            "args": {"package_name": str(action.get("app_name") or "")},
+        }
+    keys = {
+        "navigate_back": "back",
+        "navigate_home": "home",
+        "keyboard_enter": "enter",
     }
-    for output, aliases in coordinate_aliases.items():
-        value = _first_action_arg(args, aliases)
-        if value is not None:
-            canonical[output] = value
-    direction = str(args.get("direction") or "").strip().lower()
-    if not direction:
-        direction = _direction_from_swipe(canonical)
-    if direction:
-        canonical["direction"] = direction
-    if args.get("duration_ms") is not None:
-        canonical["duration_ms"] = args["duration_ms"]
-    return canonical
-
-
-def _direction_from_swipe(args: dict[str, Any]) -> str:
-    try:
-        delta_x = float(args["x2"]) - float(args["x1"])
-        delta_y = float(args["y2"]) - float(args["y1"])
-    except (KeyError, TypeError, ValueError):
-        return ""
-    if abs(delta_x) > abs(delta_y):
-        return "right" if delta_x > 0 else "left"
-    if delta_y:
-        return "down" if delta_y > 0 else "up"
-    return ""
-
-
-def _first_action_arg(args: dict[str, Any], names: tuple[str, ...]) -> Any:
-    return next((args[name] for name in names if args.get(name) is not None), None)
+    if action_type in keys:
+        return {"tool": "press_key", "args": {"key": keys[action_type]}}
+    if action_type == "press_keyboard":
+        return {
+            "tool": "press_key",
+            "args": {
+                "key": str(action.get("keycode") or "")
+                .removeprefix("KEYCODE_")
+                .lower()
+            },
+        }
+    if action_type == "wait":
+        return {"tool": "wait", "args": {}}
+    return {"tool": "", "args": {}}
 
 
 def _step_observation(step: dict[str, Any]) -> dict[str, Any]:
-    for value in (
-        step.get("observation_before_act"),
-        step.get("observation"),
-        step.get("before"),
-        (step.get("metadata") or {}).get("observation_before_act")
-        if isinstance(step.get("metadata"), dict)
-        else None,
-    ):
-        if isinstance(value, dict):
-            return value
-    return {}
+    return dict(step["observation"])
 
 
 def _encode_page(observation: dict[str, Any], encoder: PageEncoder) -> TreeEmbedding | None:
-    xml = observation.get("xml")
+    xml = observation.get("forest")
     if not isinstance(xml, str) or not xml.strip():
         return None
     embedded = encoder.embed(
         Observation(
             xml=xml,
-            package_name=str(observation.get("package_name") or ""),
-            activity_name=str(observation.get("activity_name") or ""),
+            package_name=_observation_string(observation, "package_name"),
+            activity_name=_observation_string(observation, "activity_name"),
         )
     )
     return embedded if embedded.elements else None
@@ -352,13 +291,7 @@ def _action_node(
 
 
 def _runlog_coordinate_space(runlog: dict[str, Any]) -> str:
-    explicit = str(runlog.get("action_coordinate_space") or "").strip()
-    if explicit:
-        if explicit not in {"page_pixels", "relative_0_1000"}:
-            raise ValueError("runlog_action_coordinate_space_unsupported")
-        return explicit
-    if runlog.get("schema_version") == "omniflow.canonical_run_log.v1":
-        return "relative_0_1000"
+    del runlog
     return "page_pixels"
 
 
@@ -366,31 +299,22 @@ def _page_dimensions(
     observation: dict[str, Any],
     page: TreeEmbedding | None,
 ) -> tuple[float, float]:
-    display = observation.get("display")
     candidates: list[tuple[float, float]] = []
+    pixels = observation.get("pixels")
+    if isinstance(pixels, dict):
+        candidates.append(
+            (
+                _positive_float(pixels.get("width")),
+                _positive_float(pixels.get("height")),
+            )
+        )
+    auxiliaries = observation.get("auxiliaries")
+    display = auxiliaries.get("display") if isinstance(auxiliaries, dict) else None
     if isinstance(display, dict):
         candidates.append(
             (
                 _positive_float(display.get("width")),
                 _positive_float(display.get("height")),
-            )
-        )
-    candidates.append(
-        (
-            _positive_float(
-                observation.get("width") or observation.get("display_width")
-            ),
-            _positive_float(
-                observation.get("height") or observation.get("display_height")
-            ),
-        )
-    )
-    screenshot = observation.get("screenshot")
-    if isinstance(screenshot, dict):
-        candidates.append(
-            (
-                _positive_float(screenshot.get("width")),
-                _positive_float(screenshot.get("height")),
             )
         )
     if page is not None:
@@ -431,38 +355,75 @@ def _step_state_id(
     step: dict[str, Any],
     observation: dict[str, Any],
 ) -> str:
-    explicit = str(
-        step.get("before_state_id") or observation.get("state_id") or ""
-    ).strip()
-    if explicit:
-        return explicit
-    identity = json.dumps(
-        {
-            "run_id": run_id,
-            "step_index": step_index,
-            "xml": observation.get("xml"),
-            "package_name": observation.get("package_name"),
-            "activity_name": observation.get("activity_name"),
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return "state_" + hashlib.sha256(identity.encode()).hexdigest()[:20]
+    del run_id, step_index, step
+    return state_id(observation)
 
 
 def _screenshot_path(observation: dict[str, Any]) -> str:
-    direct = str(
-        observation.get("screenshot_path") or observation.get("image_path") or ""
-    ).strip()
-    if direct:
-        return direct
-    screenshot = observation.get("screenshot")
-    if isinstance(screenshot, dict):
-        return str(
-            screenshot.get("path") or screenshot.get("screenshot_path") or ""
-        ).strip()
+    pixels = observation.get("pixels")
+    if isinstance(pixels, dict):
+        return str(pixels.get("path") or "").strip()
     return ""
+
+
+def _observation_string(observation: dict[str, Any], key: str) -> str:
+    auxiliaries = observation.get("auxiliaries")
+    if not isinstance(auxiliaries, dict):
+        return ""
+    return str(auxiliaries.get(key) or "").strip()
+
+
+def _androidworld_action_point(
+    action: dict[str, Any],
+    observation: dict[str, Any],
+) -> dict[str, float] | None:
+    x = action.get("x")
+    y = action.get("y")
+    if x is None or y is None:
+        index = action.get("index")
+        ui_elements = observation.get("ui_elements")
+        if (
+            not isinstance(index, int)
+            or isinstance(index, bool)
+            or not isinstance(ui_elements, list)
+            or index < 0
+            or index >= len(ui_elements)
+        ):
+            return None
+        bounds = _ui_element_bounds(ui_elements[index])
+        if bounds is None:
+            return None
+        left, top, right, bottom = bounds
+        x = (left + right) / 2.0
+        y = (top + bottom) / 2.0
+    return {"x": float(x), "y": float(y)}
+
+
+def _ui_element_bounds(value: Any) -> tuple[float, float, float, float] | None:
+    if not isinstance(value, dict):
+        return None
+    for bounds in (value.get("bbox_pixels"), value.get("bbox"), value.get("bounds")):
+        if isinstance(bounds, dict):
+            for keys in (
+                ("x_min", "y_min", "x_max", "y_max"),
+                ("left", "top", "right", "bottom"),
+            ):
+                try:
+                    left, top, right, bottom = (
+                        float(bounds[key]) for key in keys
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if right > left and bottom > top:
+                    return left, top, right, bottom
+        if isinstance(bounds, (list, tuple)) and len(bounds) == 4:
+            try:
+                left, top, right, bottom = (float(item) for item in bounds)
+            except (TypeError, ValueError):
+                continue
+            if right > left and bottom > top:
+                return left, top, right, bottom
+    return None
 
 
 def _positive_float(value: Any) -> float:

@@ -5464,13 +5464,12 @@ def save_success_source_runlogs_from_results(
             ).strip()
             params = _success_source_task_params(row)
             task_seed = _success_source_task_seed(row, params)
-            canonical_to_write = dict(canonical)
-            canonical_to_write.setdefault(
-                "schema_version",
-                "omniflow.canonical_run_log.v1",
-            )
-            canonical_to_write.setdefault("goal", row.get("goal") or "")
-            canonical_to_write = canonicalize_run_log(canonical_to_write)
+            canonical_to_write = canonicalize_run_log(canonical)
+            if canonical_to_write["task_name"] != task_name:
+                raise ValueError(
+                    "success_source_run_log_task_mismatch:"
+                    f"{task_name}:{canonical_to_write['task_name']}"
+                )
 
             run_id = str(
                 canonical_to_write.get("run_id") or row.get("artifact_ref") or ""

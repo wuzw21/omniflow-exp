@@ -71,8 +71,11 @@ eight_cells=0
 batch_task_filter=""
 convert_ours_assets=0
 refresh_memory=0
+convert_source_runlogs=0
 selected_methods_arg=""
 selected_devices_arg=""
+source_runlog_output_root="${OMNIFLOW_SOURCE_RUNLOG_OUTPUT_ROOT:-${memory_root:+$memory_root/source_runlogs}}"
+source_screenshot_roots="${OMNIFLOW_SOURCE_SCREENSHOT_ROOTS:-}"
 
 usage() {
   cat <<'EOF'
@@ -93,6 +96,8 @@ Options:
   --convert-ours-assets     Compile human-recorded source RunLogs with an
                             immutable offline authoring manifest, then validate,
                             freeze, and register the assets.
+  --convert-source-runlogs  Convert the indexed legacy source RunLogs once to
+                            omniflow.androidworld.run_log.v1.
   --refresh-memory          Deduplicate and index all configured RunLogs,
                             Function assets, and existing results.
   -h, --help                Show this help and exit.
@@ -122,11 +127,16 @@ Long-term-memory refresh inputs:
   OMNIFLOW_MEMORY_RESULT_ROOTS       Colon-separated result roots.
   OMNIFLOW_MEMORY_FUNCTION_CATALOGS  Colon-separated Function catalogs.
 
+Source RunLog conversion inputs:
+  OMNIFLOW_SOURCE_RUNLOG_OUTPUT_ROOT Absolute immutable output root.
+  OMNIFLOW_SOURCE_SCREENSHOT_ROOTS   Colon-separated screenshot evidence roots.
+
 Examples:
   bash scripts/exp/run_androidworld.sh --tasks AudioRecorderRecordAudio
   bash scripts/exp/run_androidworld.sh --convert-ours-assets \
     --tasks AudioRecorderRecordAudio
   bash scripts/exp/run_androidworld.sh --refresh-memory
+  bash scripts/exp/run_androidworld.sh --convert-source-runlogs
   bash scripts/exp/run_androidworld.sh --check-only --all-tasks \
     --methods mobilegpt_offline_retrieval
   bash scripts/exp/run_androidworld.sh --all-tasks \
@@ -177,6 +187,9 @@ while [[ "$#" -gt 0 ]]; do
     --refresh-memory)
       refresh_memory=1
       ;;
+    --convert-source-runlogs)
+      convert_source_runlogs=1
+      ;;
     --tasks)
       shift
       if [[ "$#" -eq 0 || -z "$1" ]]; then
@@ -192,6 +205,49 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
+if [[ "$convert_source_runlogs" -eq 1 ]]; then
+  if [[ "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" ]]; then
+    echo "--convert-source-runlogs cannot be combined with experiment or other maintenance options." >&2
+    exit 2
+  fi
+  if [[ -z "$master_source_index" || "$master_source_index" != /* || ! -f "$master_source_index" ]]; then
+    echo "Source RunLog conversion requires an existing absolute master source index." >&2
+    exit 2
+  fi
+  if [[ -z "$source_runlog_output_root" || "$source_runlog_output_root" != /* ]]; then
+    echo "OMNIFLOW_SOURCE_RUNLOG_OUTPUT_ROOT must be absolute." >&2
+    exit 2
+  fi
+  if [[ -z "$source_screenshot_roots" ]]; then
+    echo "OMNIFLOW_SOURCE_SCREENSHOT_ROOTS must contain at least one root." >&2
+    exit 2
+  fi
+  if ! python_bin="$(command -v "$python_bin")"; then
+    echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
+    exit 1
+  fi
+  source_conversion_args=(
+    -m src.experiment.source_runlogs
+    --source-index "$master_source_index"
+    --output-root "$source_runlog_output_root"
+  )
+  IFS=':' read -r -a configured_screenshot_roots <<< "$source_screenshot_roots"
+  for configured_root in "${configured_screenshot_roots[@]}"; do
+    if [[ "$configured_root" != /* || ! -d "$configured_root" ]]; then
+      echo "Screenshot root must be an existing absolute directory: $configured_root" >&2
+      exit 2
+    fi
+    source_conversion_args+=(--screenshot-root "$configured_root")
+  done
+  if [[ -n "$batch_task_filter" ]]; then
+    IFS=',' read -r -a conversion_tasks <<< "$batch_task_filter"
+    for conversion_task in "${conversion_tasks[@]}"; do
+      source_conversion_args+=(--task "$conversion_task")
+    done
+  fi
+  cd "$repo"
+  exec "$python_bin" "${source_conversion_args[@]}"
+fi
 if [[ "$refresh_memory" -eq 1 ]]; then
   if [[ "$convert_ours_assets" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$batch_task_filter" ]]; then
     echo "--refresh-memory cannot be combined with conversion or experiment run options." >&2

@@ -336,11 +336,24 @@ def _preflight_appagent_teacher(
             continue
         step_index = int(record.get("source_step_index") or 0)
         step = grounded_steps.get(step_index) or {}
-        observation = step.get("observation_before_act")
+        observation = step.get("observation")
+        metadata = step.get("metadata")
+        source_context = (
+            metadata.get("source_context")
+            if isinstance(metadata, dict)
+            else None
+        )
         xml_text = str(
-            observation.get("xml")
-            if isinstance(observation, dict)
-            else ""
+            (
+                source_context.get("page")
+                if isinstance(source_context, dict)
+                else ""
+            )
+            or (
+                observation.get("forest")
+                if isinstance(observation, dict)
+                else ""
+            )
         ).strip()
         if not xml_text:
             raise ValueError(

@@ -17,41 +17,25 @@ from src.integrations.appagent_adapter import build_appagent_teacher_source
 from src.integrations.mobilegpt_teacher import (
     preflight_teacher_source_run_log,
 )
+from runlog_fixtures import androidworld_run_log, androidworld_state
 
 
 def _write_source_bundle(root: Path) -> tuple[Path, Path, Path]:
     source = root / "source.run_log.json"
     source.write_text(
         json.dumps(
-            {
-                "schema_version": "omniflow.canonical_run_log.v1",
-                "run_id": "source-run",
-                "goal": "Save the recording as Example.",
-                "status": "succeeded",
-                "success": True,
-                "steps": [
-                    {
-                        "step_index": 0,
-                        "before_state_id": "button-state",
-                        "action": {
-                            "tool": "click",
-                            "args": {"x": 500.0, "y": 500.0},
-                        },
-                        "result": {"success": True},
-                        "after_state_id": "input-state",
-                    },
-                    {
-                        "step_index": 1,
-                        "before_state_id": "input-state",
-                        "action": {
-                            "tool": "input_text",
-                            "args": {"text": "Example"},
-                        },
-                        "result": {"success": True},
-                        "after_state_id": "done-state",
-                    },
+            androidworld_run_log(
+                [
+                    {"action_type": "click", "x": 50, "y": 50},
+                    {"action_type": "input_text", "text": "Example"},
                 ],
-            }
+                observations=[
+                    androidworld_state("button-state", width=100, height=100),
+                    androidworld_state("input-state", width=100, height=100),
+                ],
+                task_name="RecordWithName",
+                goal="Save the recording as Example.",
+            )
         ),
         encoding="utf-8",
     )
@@ -159,7 +143,7 @@ def test_frozen_source_evidence_grounds_both_baseline_teachers(
     assert hashlib.sha256(source.read_bytes()).hexdigest() == source_sha256
 
 
-def test_frozen_historical_source_is_imported_before_grounding(
+def test_frozen_historical_source_is_rejected_before_grounding(
     tmp_path: Path,
 ) -> None:
     source, states, provenance = _write_source_bundle(tmp_path)
@@ -193,24 +177,21 @@ def test_frozen_historical_source_is_imported_before_grounding(
         encoding="utf-8",
     )
 
-    grounded, audit = build_grounded_teacher_run_log(
-        source_run_log=source,
-        source_state_catalog=states,
-        provenance_manifest=provenance,
-        expected_source_run_log_sha256=hashlib.sha256(
-            source.read_bytes()
-        ).hexdigest(),
-        expected_source_state_catalog_sha256=hashlib.sha256(
-            states.read_bytes()
-        ).hexdigest(),
-        expected_provenance_sha256=hashlib.sha256(
-            provenance.read_bytes()
-        ).hexdigest(),
-    )
-
-    assert grounded["schema_version"] == "omniflow.canonical_run_log.v1"
-    assert grounded["steps"][0]["before_state_id"] == "button-state"
-    assert audit["semantic_action_count"] == 1
+    with pytest.raises(ValueError, match="run_log_schema_invalid"):
+        build_grounded_teacher_run_log(
+            source_run_log=source,
+            source_state_catalog=states,
+            provenance_manifest=provenance,
+            expected_source_run_log_sha256=hashlib.sha256(
+                source.read_bytes()
+            ).hexdigest(),
+            expected_source_state_catalog_sha256=hashlib.sha256(
+                states.read_bytes()
+            ).hexdigest(),
+            expected_provenance_sha256=hashlib.sha256(
+                provenance.read_bytes()
+            ).hexdigest(),
+        )
 
 
 def test_grounding_rejects_changed_frozen_catalog(tmp_path: Path) -> None:
@@ -277,10 +258,11 @@ def test_source_and_store_indexes_join_without_rewriting_frozen_assets(
         store_index_path=store_index,
     )
 
-    assert grounded["steps"][0]["action"]["args"]["source_context"][
-        "element"
-    ]["text"] == "Save"
-    assert audit["source_state_catalog"] == str(states)
+    assert grounded["steps"][0]["metadata"]["source_context"]["element"][
+        "text"
+    ] == "Save"
+    assert audit["source_state_catalog"] == str(source)
+    assert audit["source_state_catalog_source"] == "embedded_source_run_log"
 
 
 def test_baseline_grounding_uses_complete_states_embedded_in_source_runlog(
@@ -294,41 +276,31 @@ def test_baseline_grounding_uses_complete_states_embedded_in_source_runlog(
     source = tmp_path / "source.run_log.json"
     source.write_text(
         json.dumps(
-            {
-                "run_id": "complete-source",
-                "goal": "Open the app and continue.",
-                "success": True,
-                "steps": [
-                    {
-                        "observation_before_act": {
-                            "state_id": "launcher-state",
-                            "xml": xml,
-                            "package_name": "com.android.launcher",
-                            "display_width": 100,
-                            "display_height": 100,
-                        },
-                        "action": {
-                            "tool": "open_app",
-                            "args": {"package_name": "com.example.app"},
-                        },
-                        "result": {"success": True},
-                    },
-                    {
-                        "observation_before_act": {
-                            "state_id": "complete-state",
-                            "xml": xml,
-                            "package_name": "com.example.app",
-                            "display_width": 100,
-                            "display_height": 100,
-                        },
-                        "action": {
-                            "tool": "click",
-                            "args": {"x": 500, "y": 500},
-                        },
-                        "result": {"success": True},
-                    },
+            androidworld_run_log(
+                [
+                    {"action_type": "open_app", "app_name": "com.example.app"},
+                    {"action_type": "click", "x": 50, "y": 50},
                 ],
-            }
+                observations=[
+                    androidworld_state(
+                        "launcher-state",
+                        forest=xml,
+                        package_name="com.android.launcher",
+                        width=100,
+                        height=100,
+                    ),
+                    androidworld_state(
+                        "complete-state",
+                        forest=xml,
+                        package_name="com.example.app",
+                        width=100,
+                        height=100,
+                    ),
+                ],
+                task_name="CompleteTask",
+                run_id="complete-source",
+                goal="Open the app and continue.",
+            )
         ),
         encoding="utf-8",
     )
@@ -397,9 +369,7 @@ def test_baseline_grounding_uses_complete_states_embedded_in_source_runlog(
     )
 
     assert len(grounded["steps"]) == 2
-    assert grounded["steps"][1]["action"]["args"]["source_context"][
-        "element"
-    ] == {
+    assert grounded["steps"][1]["metadata"]["source_context"]["element"] == {
         "text": "Continue",
         "resource_id": "app:id/continue",
     }

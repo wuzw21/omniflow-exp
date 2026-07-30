@@ -1,42 +1,43 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+from PIL import Image
+import pytest
+
 from src.integrations.android_world.launch import _raw_replay_step_actions
-from src.integrations.runlog import import_run_log_evidence
+from src.integrations.runlog import (
+    convert_legacy_run_log,
+    import_run_log,
+    import_run_log_evidence,
+)
+from runlog_fixtures import androidworld_run_log, androidworld_state
 
 
-def test_import_run_log_evidence_keeps_source_ui_for_each_canonical_step() -> None:
+def test_production_import_keeps_androidworld_state_and_action() -> None:
     xml = (
         '<hierarchy><node text="Record" resource-id="record" '
         'bounds="[400,700][680,900]" /></hierarchy>'
     )
-
-    run_log, source_states = import_run_log_evidence(
-        {
-            "run_id": "source-111",
-            "goal": "Record audio.",
-            "success": True,
-            "steps": [
-                {
-                    "observation_before_act": {
-                        "state_id": "source-state-0",
-                        "xml": xml,
-                        "package_name": "com.example.recorder",
-                        "activity_name": ".MainActivity",
-                        "display_width": 1080,
-                        "display_height": 2400,
-                        "screenshot_path": "/source-only/screen.png",
-                    },
-                    "action": {
-                        "tool": "click",
-                        "args": {"x": 500, "y": 800},
-                    },
-                    "result": {"success": True},
-                }
-            ],
-        }
+    payload = androidworld_run_log(
+        [{"action_type": "click", "x": 500, "y": 800}],
+        observations=[
+            androidworld_state(
+                "source-state-0",
+                forest=xml,
+                package_name="com.example.recorder",
+                width=1080,
+                height=2400,
+            )
+        ],
+        run_id="source-111",
+        goal="Record audio.",
     )
 
-    assert run_log["steps"][0]["before_state_id"] == "source-state-0"
+    run_log, source_states = import_run_log_evidence(payload)
+
+    assert run_log == payload
     assert source_states == {
         "schema_version": "omniflow.transfer-state-catalog.v1",
         "run_id": "source-111",
@@ -52,309 +53,143 @@ def test_import_run_log_evidence_keeps_source_ui_for_each_canonical_step() -> No
     }
 
 
-def test_import_run_log_evidence_normalizes_historical_pixels_by_full_display() -> None:
-    run_log, _source_states = import_run_log_evidence(
-        {
-            "run_id": "source-pixels",
-            "goal": "Tap the record button.",
-            "success": True,
-            "steps": [
-                {
-                    "observation_before_act": {
-                        "width": 720,
-                        "height": 1280,
-                    },
-                    "executed_actions": [
-                        {
-                            "type": "click",
-                            "params": {"x": 360, "y": 1090},
-                        }
-                    ],
-                    "success": True,
-                }
-            ],
-        }
-    )
+def test_production_import_rejects_legacy_schema() -> None:
+    with pytest.raises(ValueError, match="run_log_schema_invalid"):
+        import_run_log(
+            {
+                "schema_version": "omniflow.run_log.v1",
+                "run_id": "legacy",
+                "steps": [],
+            }
+        )
 
-    assert run_log["steps"][0]["action"] == {
-        "tool": "click",
-        "args": {"x": 500, "y": 851.5625},
+
+def test_explicit_converter_emits_only_omniflow_schema(tmp_path: Path) -> None:
+    source = tmp_path / "legacy.run_log.json"
+    payload = {
+        "schema_version": "omniflow.run_log.v1",
+        "run_id": "legacy-source",
+        "goal": "Open settings and tap Wi-Fi.",
+        "success": True,
+        "steps": [
+            {
+                "observation_before_act": {"width": 720, "height": 1280},
+                "executed_actions": [
+                    {"type": "open_app", "params": {"app_name": "settings"}}
+                ],
+                "success": True,
+            },
+            {
+                "observation_before_act": {"width": 720, "height": 1280},
+                "executed_actions": [
+                    {"type": "click", "params": {"x": 360, "y": 640}}
+                ],
+                "success": True,
+            },
+        ],
     }
+    source.write_text(json.dumps(payload), encoding="utf-8")
 
-
-def test_import_run_log_evidence_adapts_legacy_canonical_schema_without_status() -> None:
-    run_log, _source_states = import_run_log_evidence(
-        {
-            "schema_version": "omniflow.canonical_run_log.v1",
-            "run_id": "legacy-canonical",
-            "goal": "Tap the setting.",
-            "completed": True,
-            "success": True,
-            "steps": [
-                {
-                    "observation_before_act": {
-                        "width": 720,
-                        "height": 1280,
-                    },
-                    "executed_actions": [
-                        {
-                            "type": "click",
-                            "params": {"x": 360, "y": 640},
-                        }
-                    ],
-                    "success": True,
-                }
-            ],
-        }
-    )
-
-    assert run_log["status"] == "succeeded"
-    assert run_log["steps"][0]["action"] == {
-        "tool": "click",
-        "args": {"x": 500, "y": 500},
-    }
-
-
-def test_import_canonical_run_log_keeps_minimal_source_state_references() -> None:
-    run_log, source_states = import_run_log_evidence(
-        {
-            "schema_version": "omniflow.canonical_run_log.v1",
-            "run_id": "canonical-source",
-            "goal": "Open Markor.",
-            "status": "succeeded",
-            "success": True,
-            "steps": [
-                {
-                    "step_index": 0,
-                    "before_state_id": "markor-home",
-                    "action": {
-                        "tool": "open_app",
-                        "args": {"package_name": "net.gsantner.markor"},
-                    },
-                    "result": {"success": True},
-                    "after_state_id": "markor-open",
-                }
-            ],
-        }
-    )
-
-    assert run_log["steps"][0]["before_state_id"] == "markor-home"
-    assert source_states == {
-        "schema_version": "omniflow.transfer-state-catalog.v1",
-        "run_id": "canonical-source",
-        "states": {"markor-home": {"state_id": "markor-home"}},
-    }
-
-
-def test_import_run_log_evidence_resolves_historical_open_app_name() -> None:
-    run_log, _source_states = import_run_log_evidence(
-        {
-            "run_id": "historical-open-app",
-            "goal": "Record audio.",
-            "success": True,
-            "steps": [
-                {
-                    "executed_actions": [
-                        {
-                            "type": "open_app",
-                            "params": {"app_name": "audio recorder"},
-                        }
-                    ],
-                    "success": True,
-                }
-            ],
-        },
+    converted = convert_legacy_run_log(
+        payload,
+        task_name="WifiTask",
+        task_parameters={"enabled": True},
+        seed=111,
+        source_path=source,
+        require_screenshots=False,
         package_resolver=lambda name: (
-            "com.dimowner.audiorecorder" if name == "audio recorder" else ""
+            "com.android.settings" if name == "settings" else ""
         ),
     )
 
-    assert run_log["steps"][0]["action"] == {
-        "tool": "open_app",
-        "args": {"package_name": "com.dimowner.audiorecorder"},
+    assert converted["schema_version"] == "omniflow.androidworld.run_log.v1"
+    assert converted["task_name"] == "WifiTask"
+    assert converted["task_parameters"] == {"enabled": True}
+    assert [step["action"] for step in converted["steps"]] == [
+        {"action_type": "open_app", "app_name": "com.android.settings"},
+        {"action_type": "click", "x": 360, "y": 640},
+    ]
+
+
+def test_explicit_converter_records_screenshot_reference(tmp_path: Path) -> None:
+    screenshot = tmp_path / "screen.png"
+    Image.new("RGB", (32, 48), color="white").save(screenshot)
+    source = tmp_path / "legacy.run_log.json"
+    payload = {
+        "run_id": "legacy-source",
+        "goal": "Wait.",
+        "success": True,
+        "steps": [
+            {
+                "observation_before_act": {
+                    "width": 32,
+                    "height": 48,
+                    "screenshot_path": str(screenshot),
+                },
+                "action": {"type": "wait", "params": {}},
+                "success": True,
+            }
+        ],
+    }
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    converted = convert_legacy_run_log(
+        payload,
+        task_name="WaitTask",
+        task_parameters={},
+        seed=111,
+        source_path=source,
+    )
+
+    assert converted["steps"][0]["observation"]["pixels"] == {
+        "path": str(screenshot.resolve()),
+        "sha256": __import__("hashlib").sha256(screenshot.read_bytes()).hexdigest(),
+        "width": 32,
+        "height": 48,
+        "mime_type": "image/png",
     }
 
 
-def test_import_run_log_evidence_adapts_historical_actions_before_compiling() -> None:
-    run_log, _source_states = import_run_log_evidence(
-        {
-            "run_id": "historical-actions",
-            "goal": "Edit an item.",
-            "success": True,
-            "steps": [
-                {
-                    "observation_before_act": {
-                        "width": 720,
-                        "height": 1280,
-                    },
-                    "executed_actions": [
-                        {
-                            "type": "open_app",
-                            "params": {"app_name": "notes"},
-                        }
-                    ],
-                    "success": True,
-                },
-                {
-                    "observation_before_act": {
-                        "package_name": "com.example.notes",
-                        "width": 720,
-                        "height": 1280,
-                    },
-                    "executed_actions": [
-                        {
-                            "type": "input_text",
-                            "params": {
-                                "text": "hello",
-                                "clear_text": True,
-                                "x": 360,
-                                "y": 320,
-                            },
-                        }
-                    ],
-                    "success": True,
-                },
-                {
-                    "observation_before_act": {
-                        "package_name": "com.example.notes",
-                        "width": 720,
-                        "height": 1280,
-                    },
-                    "executed_actions": [
-                        {
-                            "type": "swipe",
-                            "params": {
-                                "start_x": 360,
-                                "start_y": 1000,
-                                "end_x": 360,
-                                "end_y": 200,
-                                "duration_ms": 500,
-                            },
-                        }
-                    ],
-                    "success": True,
-                },
-                {
-                    "observation_before_act": {
-                        "package_name": "com.example.notes",
-                        "width": 720,
-                        "height": 1280,
-                    },
-                    "executed_actions": [
-                        {"type": "press_back", "params": {}},
-                        {"type": "answer", "params": {"text": "done"}},
-                    ],
-                    "success": True,
-                },
-            ],
-        }
+def test_explicit_converter_rejects_private_action(tmp_path: Path) -> None:
+    source = tmp_path / "legacy.run_log.json"
+    payload = {
+        "run_id": "legacy-private-action",
+        "success": True,
+        "steps": [
+            {
+                "executed_actions": [
+                    {"type": "set_clipboard", "params": {"text": "secret"}}
+                ],
+                "success": True,
+            }
+        ],
+    }
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="legacy_action_unsupported:set_clipboard"):
+        convert_legacy_run_log(
+            payload,
+            task_name="ClipboardTask",
+            task_parameters={},
+            seed=111,
+            source_path=source,
+            require_screenshots=False,
+        )
+
+
+def test_fixed_replay_accepts_only_omniflow_run_log() -> None:
+    run_log = androidworld_run_log(
+        [
+            {"action_type": "open_app", "app_name": "com.android.settings"},
+            {"action_type": "click", "x": 360, "y": 640},
+        ],
+        observations=[
+            androidworld_state("launcher", width=720, height=1280),
+            androidworld_state("settings", width=720, height=1280),
+        ],
     )
 
-    assert [step["action"] for step in run_log["steps"]] == [
-        {
-            "tool": "open_app",
-            "args": {"package_name": "com.example.notes"},
-        },
-        {"tool": "click", "args": {"x": 500, "y": 250}},
-        {"tool": "input_text", "args": {"text": "hello"}},
-        {
-            "tool": "swipe",
-            "args": {
-                "direction": "up",
-                "x1": 500,
-                "y1": 781.25,
-                "x2": 500,
-                "y2": 156.25,
-                "duration_ms": 500,
-            },
-        },
-        {"tool": "press_key", "args": {"key": "back"}},
-    ]
-
-
-def test_import_run_log_evidence_omits_unsupported_historical_actions() -> None:
-    run_log, source_states = import_run_log_evidence(
-        {
-            "run_id": "historical-clipboard",
-            "goal": "Copy the requested text to the clipboard.",
-            "success": True,
-            "steps": [
-                {
-                    "observation_before_act": {
-                        "state_id": "clipboard-home",
-                        "package_name": "com.android.launcher",
-                    },
-                    "executed_actions": [
-                        {
-                            "type": "open_app",
-                            "params": {"package_name": "ca.zgrs.clipper"},
-                        }
-                    ],
-                    "success": True,
-                },
-                {
-                    "observation_before_act": {
-                        "state_id": "clipboard-app",
-                        "package_name": "ca.zgrs.clipper",
-                    },
-                    "executed_actions": [
-                        {
-                            "type": "set_clipboard",
-                            "params": {"text": "9876 Pine Ave"},
-                        }
-                    ],
-                    "success": True,
-                },
-            ],
-        }
-    )
-
-    assert [step["action"] for step in run_log["steps"]] == [
-        {
-            "tool": "open_app",
-            "args": {"package_name": "ca.zgrs.clipper"},
-        }
-    ]
-    assert set(source_states["states"]) == {"clipboard-home"}
-
-
-def test_fixed_replay_imports_the_full_runlog_before_extracting_actions() -> None:
-    actions = _raw_replay_step_actions(
-        {
-            "schema_version": "omniflow.run_log.v1",
-            "run_id": "historical-full-context",
-            "goal": "Turn Wi-Fi on.",
-            "completed": True,
-            "success": True,
-            "steps": [
-                {
-                    "executed_actions": [
-                        {
-                            "type": "open_app",
-                            "params": {"app_name": "settings"},
-                        }
-                    ],
-                    "success": True,
-                },
-                {
-                    "observation_before_act": {
-                        "package_name": "com.android.settings",
-                        "width": 720,
-                        "height": 1280,
-                    },
-                    "executed_actions": [
-                        {
-                            "type": "click",
-                            "params": {"x": 360, "y": 640},
-                        }
-                    ],
-                    "success": True,
-                },
-            ],
-        }
-    )
-
-    assert actions == [
+    assert _raw_replay_step_actions(run_log) == [
         {
             "type": "open_app",
             "params": {"package_name": "com.android.settings"},

@@ -14,6 +14,7 @@ from src.experiment.artifact_memory import (
     registered_cell_plan_from_memory,
 )
 from src.experiment.artifact_memory import main as artifact_memory_main
+from runlog_fixtures import androidworld_run_log
 
 
 def _write_json(path: Path, value: object) -> Path:
@@ -24,6 +25,18 @@ def _write_json(path: Path, value: object) -> Path:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_source_run_log(tmp_path: Path) -> Path:
+    return _write_json(
+        tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
+        androidworld_run_log(
+            [{"action_type": "wait"}],
+            task_name="RecordWithName",
+            goal="Record audio and save it.",
+            with_pixels=True,
+        ),
+    )
 
 
 def _write_registered_result(
@@ -116,16 +129,7 @@ def _write_registered_result(
 def test_refresh_deduplicates_runlogs_and_keeps_indexed_source_as_canonical(
     tmp_path: Path,
 ) -> None:
-    source = _write_json(
-        tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
-        {
-            "schema_version": "omniflow.run_log.v1",
-            "run_id": "source-run",
-            "goal": "Record audio and save it.",
-            "success": True,
-            "steps": [{"step_index": 0}],
-        },
-    )
+    source = _write_source_run_log(tmp_path)
     duplicate = tmp_path / "other" / "RecordWithName" / "copy.run_log.json"
     duplicate.parent.mkdir(parents=True)
     duplicate.write_bytes(source.read_bytes())
@@ -169,17 +173,7 @@ def test_refresh_deduplicates_runlogs_and_keeps_indexed_source_as_canonical(
 def test_refresh_materializes_indexed_source_state_catalog(
     tmp_path: Path,
 ) -> None:
-    source = _write_json(
-        tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
-        {
-            "schema_version": "omniflow.canonical_run_log.v1",
-            "run_id": "source-run",
-            "goal": "Record audio and save it.",
-            "status": "succeeded",
-            "success": True,
-            "steps": [{"step_index": 0}],
-        },
-    )
+    source = _write_source_run_log(tmp_path)
     states = _write_json(
         tmp_path / "evidence" / "RecordWithName" / "transfer_states.json",
         {
@@ -222,15 +216,7 @@ def test_refresh_materializes_indexed_source_state_catalog(
 def test_refresh_classifies_case_normalized_task_directory_exactly(
     tmp_path: Path,
 ) -> None:
-    source = _write_json(
-        tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
-        {
-            "schema_version": "omniflow.run_log.v1",
-            "run_id": "source-run",
-            "success": True,
-            "steps": [{"step_index": 0}],
-        },
-    )
+    source = _write_source_run_log(tmp_path)
     historical = _write_json(
         tmp_path
         / "raw_source_artifacts"
@@ -284,16 +270,7 @@ def test_refresh_classifies_case_normalized_task_directory_exactly(
 def test_refresh_keeps_one_verified_runtime_store_from_duplicate_catalogs(
     tmp_path: Path,
 ) -> None:
-    source = _write_json(
-        tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
-        {
-            "schema_version": "omniflow.run_log.v1",
-            "run_id": "source-run",
-            "goal": "Record audio and save it.",
-            "success": True,
-            "steps": [{"step_index": 0}],
-        },
-    )
+    source = _write_source_run_log(tmp_path)
     source_index = _write_json(
         tmp_path / "source_index.json",
         {
@@ -397,16 +374,7 @@ def test_refresh_keeps_one_verified_runtime_store_from_duplicate_catalogs(
 def test_refresh_keeps_earliest_formal_result_without_success_cherry_picking(
     tmp_path: Path,
 ) -> None:
-    source = _write_json(
-        tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
-        {
-            "schema_version": "omniflow.run_log.v1",
-            "run_id": "source-run",
-            "goal": "Record audio and save it.",
-            "success": True,
-            "steps": [{"step_index": 0}],
-        },
-    )
+    source = _write_source_run_log(tmp_path)
     source_index = _write_json(
         tmp_path / "source_index.json",
         {
@@ -493,15 +461,7 @@ def test_refresh_keeps_earliest_formal_result_without_success_cherry_picking(
 def test_refresh_normalizes_legacy_target_device_labels(
     tmp_path: Path,
 ) -> None:
-    source = _write_json(
-        tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
-        {
-            "schema_version": "omniflow.run_log.v1",
-            "run_id": "source-run",
-            "success": True,
-            "steps": [{"step_index": 0}],
-        },
-    )
+    source = _write_source_run_log(tmp_path)
     source_index = _write_json(
         tmp_path / "source_index.json",
         {
@@ -538,16 +498,7 @@ def test_refresh_normalizes_legacy_target_device_labels(
 def test_refresh_preserves_but_does_not_select_incompatible_formal_result(
     tmp_path: Path,
 ) -> None:
-    source = _write_json(
-        tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
-        {
-            "schema_version": "omniflow.run_log.v1",
-            "run_id": "source-run",
-            "goal": "Record audio and save it.",
-            "success": True,
-            "steps": [{"step_index": 0}],
-        },
-    )
+    source = _write_source_run_log(tmp_path)
     source_index = _write_json(
         tmp_path / "source_index.json",
         {

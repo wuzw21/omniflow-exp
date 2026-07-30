@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from omniflow.core.schemas import canonicalize_action
-from omniflow.core.trajectory import canonicalize_run_log
+from omniflow.core.trajectory import canonicalize_run_log, state_id
 from omniflow.runtime.checker import validate_checker_rule
+from src.integrations.runlog import project_androidworld_step_actions
 
 
 def compile_runlog_to_store(
@@ -54,13 +55,26 @@ def compile_runlog_to_store(
         if not isinstance(step, dict):
             continue
         metadata = step.get("metadata") if isinstance(step.get("metadata"), dict) else {}
+        result = step.get("result") if isinstance(step.get("result"), dict) else {}
+        if result.get("success") is not True:
+            continue
+        observation = step["observation"]
+        before_state_id = state_id(observation)
+        next_observation = step.get("next_observation")
+        after_state_id = state_id(
+            next_observation
+            if isinstance(next_observation, dict)
+            else observation
+        )
+        action_type = str(step.get("action", {}).get("action_type") or "")
+        if action_type in {"answer", "status", "unknown"}:
+            continue
+        projected_actions = project_androidworld_step_actions(step)
         if metadata.get("origin") == "checker":
-            result = step.get("result") if isinstance(step.get("result"), dict) else {}
-            value = step.get("action")
-            if result.get("success") is True and isinstance(value, dict):
+            for action in projected_actions:
                 example = {
-                    "source_state_id": str(step.get("before_state_id") or ""),
-                    "action": canonicalize_action(value, replayable_only=True),
+                    "source_state_id": before_state_id,
+                    "action": action,
                     "metadata": {
                         key: metadata[key]
                         for key in ("thinking", "summary")
@@ -72,41 +86,26 @@ def compile_runlog_to_store(
                     example["trigger"] = trigger
                 recovery_examples.append(example)
             continue
-        result = step.get("result") if isinstance(step.get("result"), dict) else {}
-        if result.get("success") is not True:
-            continue
-        value = step.get("action")
-        if not isinstance(value, dict):
-            continue
-        try:
-            action = canonicalize_action(
-                value,
-                replayable_only=True,
-                allow_non_action=True,
-            )
-        except ValueError as error:
-            if str(error).startswith("canonical_action_tool_not_replayable:"):
-                continue
-            raise
         semantic_metadata = {
             key: metadata[key]
             for key in ("summary", "thinking", "action_description")
             if str(metadata.get(key) or "").strip()
         }
-        steps.append(
-            {
-                "step_index": len(steps),
-                "before_state_id": str(step.get("before_state_id") or ""),
-                "action": action,
-                "result": {"success": True},
-                "after_state_id": str(step.get("after_state_id") or ""),
-                "metadata": semantic_metadata,
-            }
-        )
+        for action in projected_actions:
+            steps.append(
+                {
+                    "step_index": len(steps),
+                    "before_state_id": before_state_id,
+                    "action": action,
+                    "result": {"success": True},
+                    "after_state_id": after_state_id,
+                    "metadata": semantic_metadata,
+                }
+            )
     if not steps:
         raise ValueError("successful_source_actions_required")
     facts = {
-        "schema_version": "omniflow.canonical_run_log.v1",
+        "schema_version": "omniflow.function-compilation-facts.v1",
         "run_id": str(payload.get("run_id") or "successful-source"),
         "goal": goal,
         "status": "succeeded",

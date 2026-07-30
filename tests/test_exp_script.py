@@ -10,6 +10,7 @@ import sys
 import pytest
 
 from src.experiment.artifact_memory import refresh_artifact_memory
+from runlog_fixtures import androidworld_run_log
 from src.experiment.preflight import REQUIRED_DISTRIBUTION_VERSIONS
 
 REPO = Path(__file__).resolve().parents[1]
@@ -171,30 +172,13 @@ def test_check_only_is_read_only_before_any_runtime_output(
     source_run_log = assets / "source.run_log.json"
     source_run_log.write_text(
         json.dumps(
-            {
-                "schema_version": "omniflow.run_log.v1",
-                "run_id": "source",
-                "goal": "Turn Bluetooth on.",
-                "completed": True,
-                "success": True,
-                "steps": [
-                    {
-                        "step_index": 0,
-                        "observation_before_act": {
-                            "state_id": "before",
-                            "width": 1000,
-                            "height": 1000,
-                        },
-                        "executed_actions": [
-                            {
-                                "type": "click",
-                                "params": {"x": 500, "y": 500},
-                            }
-                        ],
-                        "success": True,
-                    }
-                ],
-            }
+            androidworld_run_log(
+                [{"action_type": "click", "x": 500, "y": 500}],
+                task_name="SystemBluetoothTurnOn",
+                run_id="source",
+                goal="Turn Bluetooth on.",
+                with_pixels=True,
+            )
         ),
         encoding="utf-8",
     )

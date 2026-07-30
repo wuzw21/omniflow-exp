@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import mimetypes
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
+
+from PIL import Image
 
 from omniflow.core.schemas import canonicalize_action
 from omniflow.core.trajectory import (
-    CANONICAL_RUN_LOG_SCHEMA_VERSION,
+    ANDROIDWORLD_RUN_LOG_SCHEMA_VERSION,
     canonicalize_run_log,
+    observation_display,
+    state_id,
 )
 
 _EXECUTION_TIMING_ARGS = {
@@ -18,17 +23,83 @@ _EXECUTION_TIMING_ARGS = {
 }
 
 
+class ScreenshotResolver:
+    """Resolve immutable screenshot aliases only inside explicit roots."""
+
+    def __init__(self, roots: Iterable[str | Path] = ()):
+        self.roots = tuple(
+            sorted(
+                {
+                    Path(root).expanduser().resolve()
+                    for root in roots
+                    if str(root).strip()
+                }
+            )
+        )
+        for root in self.roots:
+            if not root.is_dir():
+                raise ValueError(f"screenshot_root_invalid:{root}")
+
+    def resolve(
+        self,
+        observation: dict[str, Any],
+        *,
+        task_name: str,
+        step_index: int,
+        phase: str,
+        required: bool,
+    ) -> dict[str, Any] | None:
+        raw_path = _screenshot_path(observation)
+        candidates: set[Path] = set()
+        if raw_path:
+            direct = Path(raw_path).expanduser()
+            if direct.is_absolute() and direct.is_file():
+                candidates.add(direct.resolve())
+            basename = direct.name
+            if basename:
+                candidates.update(self._alias_candidates(task_name, basename))
+        if not candidates:
+            stem = f"step_{int(step_index) + 1:02d}_{phase}"
+            for suffix in (".jpg", ".jpeg", ".png", ".webp"):
+                candidates.update(
+                    self._alias_candidates(task_name, stem + suffix)
+                )
+        if not candidates:
+            if required:
+                raise ValueError(
+                    f"screenshot_reference_unresolved:{task_name}:{step_index}:{phase}"
+                )
+            return None
+        if len(candidates) != 1:
+            joined = ",".join(str(path) for path in sorted(candidates))
+            raise ValueError(
+                f"screenshot_reference_ambiguous:{task_name}:{step_index}:"
+                f"{phase}:{joined}"
+            )
+        return _screenshot_reference(next(iter(candidates)))
+
+    def _alias_candidates(self, task_name: str, basename: str) -> set[Path]:
+        task_dir_name = f"{task_name}.artifacts"
+        candidates: set[Path] = set()
+        for root in self.roots:
+            for candidate in (
+                root / task_dir_name / basename,
+                root / "artifacts" / task_dir_name / basename,
+                root / basename,
+            ):
+                if candidate.is_file():
+                    candidates.add(candidate.resolve())
+        return candidates
+
+
 def import_run_log(
     value: dict[str, Any],
     *,
     package_resolver: Callable[[str], str] | None = None,
 ) -> dict[str, Any]:
-    """Convert historical OOB/AndroidWorld data at the integration boundary."""
-    run_log, _source_states = import_run_log_evidence(
-        value,
-        package_resolver=package_resolver,
-    )
-    return run_log
+    """Load the one production RunLog schema; legacy input is rejected."""
+    del package_resolver
+    return canonicalize_run_log(value)
 
 
 def import_run_log_evidence(
@@ -37,393 +108,655 @@ def import_run_log_evidence(
     evidence_root: str | Path | None = None,
     package_resolver: Callable[[str], str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Import one source RunLog and its source-only transfer state catalog."""
+    """Load a production RunLog and derive its source transfer-state catalog."""
+    del evidence_root, package_resolver
+    run_log = canonicalize_run_log(value)
+    states: dict[str, dict[str, Any]] = {}
+    for step in run_log["steps"]:
+        observation = step["observation"]
+        source_state = _transfer_state(observation)
+        existing = states.get(source_state["state_id"])
+        if existing is not None and existing != source_state:
+            raise ValueError(f"source_state_conflict:{source_state['state_id']}")
+        states[source_state["state_id"]] = source_state
+    return run_log, {
+        "schema_version": "omniflow.transfer-state-catalog.v1",
+        "run_id": run_log["run_id"],
+        "states": states,
+    }
+
+
+def convert_legacy_run_log(
+    value: dict[str, Any],
+    *,
+    task_name: str,
+    task_parameters: dict[str, Any],
+    seed: int | None,
+    source_path: str | Path,
+    screenshot_roots: Iterable[str | Path] = (),
+    require_screenshots: bool = True,
+    package_resolver: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    """Perform the one allowed historical-to-AndroidWorld RunLog conversion."""
+    source = Path(source_path).expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"legacy_run_log_missing:{source}")
+    task = str(task_name or "").strip()
+    if not task:
+        raise ValueError("legacy_run_log_task_required")
     payload = _map(value.get("payload")) or value
     payload = _map(payload.get("run_log")) or payload
-    if (
-        payload.get("schema_version") == CANONICAL_RUN_LOG_SCHEMA_VERSION
-        and "status" in payload
-    ):
-        canonical = canonicalize_run_log(payload)
-        states = {
-            state_id: {"state_id": state_id}
-            for step in canonical["steps"]
-            if (state_id := str(step.get("before_state_id") or "").strip())
-        }
-        return (
-            canonical,
-            {
-                "schema_version": "omniflow.transfer-state-catalog.v1",
-                "run_id": canonical["run_id"],
-                "states": states,
-            },
-        )
-    run_id = str(payload.get("run_id") or value.get("run_id") or "imported-run")
     raw_steps = payload.get("steps") or payload.get("cards") or []
-    raw_step_values = raw_steps if isinstance(raw_steps, list) else []
-    steps: list[dict[str, Any]] = []
-    states: dict[str, dict[str, Any]] = {}
-    for raw_step_index, raw_step in enumerate(raw_step_values):
+    if not isinstance(raw_steps, list) or not raw_steps:
+        raise ValueError(f"legacy_run_log_steps_required:{task}")
+    resolver = ScreenshotResolver(screenshot_roots)
+    converted_steps: list[dict[str, Any]] = []
+    for raw_step_index, raw_step in enumerate(raw_steps):
         if not isinstance(raw_step, dict):
-            continue
-        before_state = _state(
-            raw_step.get("state")
-            or raw_step.get("observation")
-            or raw_step.get("observation_before_act")
-            or raw_step.get("before")
-            or _map(raw_step.get("source_context")).get("src_ctx")
+            raise ValueError(f"legacy_run_log_step_invalid:{task}:{raw_step_index}")
+        before = _legacy_before_observation(raw_step)
+        after = _legacy_after_observation(raw_step)
+        step_index = _integer(raw_step.get("step_index"), raw_step_index)
+        observation = _androidworld_state(
+            before,
+            pixels=resolver.resolve(
+                before,
+                task_name=task,
+                step_index=step_index,
+                phase="before",
+                required=require_screenshots,
+            ),
         )
-        after_state = _state(
-            raw_step.get("after_state")
-            or raw_step.get("next_state")
-            or raw_step.get("observation_after_act")
-            or raw_step.get("after")
+        next_observation = (
+            _androidworld_state(
+                after,
+                pixels=resolver.resolve(
+                    after,
+                    task_name=task,
+                    step_index=step_index,
+                    phase="after",
+                    required=False,
+                ),
+            )
+            if after
+            else None
         )
-        next_state: dict[str, Any] = {}
-        if raw_step_index + 1 < len(raw_step_values):
-            next_raw_step = raw_step_values[raw_step_index + 1]
-            if isinstance(next_raw_step, dict):
-                next_state = _state(
-                    next_raw_step.get("state")
-                    or next_raw_step.get("observation")
-                    or next_raw_step.get("observation_before_act")
-                    or next_raw_step.get("before")
-                    or _map(next_raw_step.get("source_context")).get("src_ctx")
-                )
-        inferred_package_name = str(
-            after_state.get("package_name")
-            or next_state.get("package_name")
-            or ""
-        ).strip()
-        raw_actions = raw_step.get("executed_actions") or raw_step.get("actions")
-        raw_action_values = (
-            raw_actions
-            if isinstance(raw_actions, list)
-            else [raw_step.get("action")]
-        )
-        for raw_action in raw_action_values:
-            actions = _actions(
-                raw_action or raw_step.get("tool_call") or raw_step,
-                source_state=before_state,
-                inferred_package_name=inferred_package_name,
+        raw_actions = _legacy_actions(raw_step)
+        if not raw_actions:
+            raise ValueError(f"legacy_run_log_action_required:{task}:{step_index}")
+        for raw_action in raw_actions:
+            action = _legacy_action_to_androidworld(
+                raw_action,
+                observation=before,
+                inferred_package_name=str(
+                    after.get("package_name") or ""
+                ).strip(),
                 package_resolver=package_resolver,
             )
-            for action in actions:
-                index = len(steps)
-                before_state_id = str(
-                    before_state.get("state_id")
-                    or _state_id(run_id, index, before_state)
-                )
-                _add_source_state(
-                    states,
-                    state_id=before_state_id,
-                    state=before_state,
-                    evidence_root=evidence_root,
-                )
-                after_state_id = str(
-                    after_state.get("state_id")
-                    or raw_step.get("after_state_id")
-                    or _state_id(run_id, index + 1, after_state or before_state)
-                )
-                raw_result = _map(raw_step.get("result"))
-                step_success = _success(
-                    raw_result,
-                    default=_success(raw_step, default=True),
-                )
-                result = {"success": step_success}
-                result_error = str(
-                    raw_result.get("error")
-                    or raw_result.get("error_message")
-                    or ""
-                ).strip()
-                if result_error:
-                    result["error"] = result_error
-                diagnostics = _map(raw_step.get("diagnostics")) or _map(
-                    raw_step.get("metadata")
-                )
-                step = {
-                    "step_index": index,
-                    "before_state_id": before_state_id,
-                    "action": action,
-                    "result": result,
-                    "after_state_id": after_state_id,
-                }
-                if diagnostics:
-                    step["metadata"] = diagnostics
-                steps.append(step)
+            result = {"success": _success(raw_step, default=True)}
+            raw_result = _map(raw_step.get("result"))
+            result["success"] = _success(raw_result, default=result["success"])
+            error = str(
+                raw_result.get("error") or raw_result.get("error_message") or ""
+            ).strip()
+            if error:
+                result["error"] = error
+            step: dict[str, Any] = {
+                "step_index": len(converted_steps),
+                "observation": observation,
+                "action": action,
+                "result": result,
+            }
+            if next_observation is not None:
+                step["next_observation"] = next_observation
+            metadata = _legacy_step_metadata(raw_step)
+            if metadata:
+                step["metadata"] = metadata
+            converted_steps.append(step)
     success = _success(payload, default=_success(value, default=False))
-    canonical = {
-        "schema_version": CANONICAL_RUN_LOG_SCHEMA_VERSION,
-        "run_id": run_id,
-        "goal": str(payload.get("goal") or payload.get("operation_description") or ""),
+    source_schema = str(payload.get("schema_version") or "unknown")
+    converted: dict[str, Any] = {
+        "schema_version": ANDROIDWORLD_RUN_LOG_SCHEMA_VERSION,
+        "run_id": str(
+            payload.get("run_id") or value.get("run_id") or f"legacy_{task}"
+        ),
+        "task_name": task,
+        "goal": str(
+            payload.get("goal") or payload.get("operation_description") or ""
+        ),
+        "task_parameters": json.loads(
+            json.dumps(task_parameters, ensure_ascii=False)
+        ),
+        "seed": seed,
         "status": "succeeded" if success else "failed",
         "success": success,
-        "steps": steps,
-    }
-    error = str(payload.get("error") or payload.get("error_message") or "").strip()
-    if error:
-        canonical["error"] = error
-    diagnostics = _map(payload.get("diagnostics")) or _map(payload.get("metadata"))
-    if diagnostics:
-        canonical["diagnostics"] = diagnostics
-    imported = canonicalize_run_log(canonical)
-    return (
-        imported,
-        {
-            "schema_version": "omniflow.transfer-state-catalog.v1",
-            "run_id": imported["run_id"],
-            "states": states,
+        "validator": {
+            "official": True,
+            "success": success,
+            "reward": _validator_reward(payload, success),
         },
+        "provenance": {
+            "kind": "legacy_import",
+            "source_path": str(source),
+            "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            "source_schema_version": source_schema,
+        },
+        "steps": converted_steps,
+    }
+    for output, aliases in (
+        ("started_at_ms", ("started_at_ms",)),
+        ("finished_at_ms", ("finished_at_ms",)),
+    ):
+        raw_time = _first(payload, aliases)
+        if isinstance(raw_time, int) and not isinstance(raw_time, bool) and raw_time >= 0:
+            converted[output] = raw_time
+    diagnostics = _map(payload.get("diagnostics"))
+    if diagnostics:
+        converted["diagnostics"] = diagnostics
+    return canonicalize_run_log(converted)
+
+
+def project_androidworld_step_actions(value: dict[str, Any]) -> list[dict[str, Any]]:
+    """Project one official RunLog step to OmniFlow Function action fields."""
+    if not isinstance(value, dict) or not isinstance(value.get("observation"), dict):
+        raise ValueError("androidworld_run_log_step_required")
+    action = dict(value.get("action") or {})
+    projected: list[dict[str, Any]] = []
+    if (
+        action.get("action_type") == "input_text"
+        and _androidworld_action_point(action, value["observation"]) is not None
+    ):
+        projected.append(
+            canonicalize_action(
+                {
+                    "tool": "click",
+                    "args": _androidworld_action_point(
+                        action,
+                        value["observation"],
+                    ),
+                },
+                replayable_only=True,
+            )
+        )
+    projected.append(
+        _androidworld_action_to_omniflow(
+            action,
+            observation=value["observation"],
+        )
     )
+    return projected
 
 
-def extract_canonical_step_actions(value: dict[str, Any]) -> list[dict[str, Any]]:
-    imported = import_run_log(
-        {
-            "run_id": "step-adapter",
-            "goal": "",
-            "success": True,
-            "steps": [value],
-        }
-    )
-    return [dict(step["action"]) for step in imported["steps"]]
-
-
-def _actions(
+def _androidworld_action_to_omniflow(
     value: Any,
     *,
-    source_state: dict[str, Any] | None = None,
-    inferred_package_name: str = "",
-    package_resolver: Callable[[str], str] | None = None,
-) -> list[dict[str, Any]]:
+    observation: dict[str, Any],
+) -> dict[str, Any]:
+    action = dict(value) if isinstance(value, dict) else {}
+    action_type = str(action.get("action_type") or "").strip()
+    if action_type in {"click", "double_tap"}:
+        projected = {
+            "tool": "click",
+            "args": _required_androidworld_action_point(action, observation),
+        }
+    elif action_type == "long_press":
+        projected = {
+            "tool": "long_press",
+            "args": _required_androidworld_action_point(action, observation),
+        }
+    elif action_type == "input_text":
+        projected = {"tool": "input_text", "args": {"text": action.get("text", "")}}
+    elif action_type in {"scroll", "swipe"}:
+        projected = {
+            "tool": "swipe",
+            "args": {
+                "direction": str(action.get("direction") or ""),
+                **_androidworld_standard_swipe(
+                    action_type,
+                    str(action.get("direction") or ""),
+                ),
+            },
+        }
+    elif action_type == "open_app":
+        projected = {
+            "tool": "open_app",
+            "args": {"package_name": str(action.get("app_name") or "")},
+        }
+    elif action_type == "navigate_back":
+        projected = {"tool": "press_key", "args": {"key": "back"}}
+    elif action_type == "navigate_home":
+        projected = {"tool": "press_key", "args": {"key": "home"}}
+    elif action_type == "keyboard_enter":
+        projected = {"tool": "press_key", "args": {"key": "enter"}}
+    elif action_type == "press_keyboard":
+        key = str(action.get("keycode") or "").removeprefix("KEYCODE_").lower()
+        projected = {
+            "tool": "press_key",
+            "args": {"key": "delete" if key == "del" else key},
+        }
+    elif action_type == "wait":
+        projected = {"tool": "wait", "args": {"duration_ms": 1000}}
+    else:
+        raise ValueError(f"androidworld_action_not_executable:{action_type}")
+    return canonicalize_action(projected, replayable_only=True, allow_non_action=True)
+
+
+def _required_androidworld_action_point(
+    action: dict[str, Any],
+    observation: dict[str, Any],
+) -> dict[str, float]:
+    point = _androidworld_action_point(action, observation)
+    if point is None:
+        raise ValueError("androidworld_action_point_not_transferable")
+    return point
+
+
+def _androidworld_action_point(
+    action: dict[str, Any],
+    observation: dict[str, Any],
+) -> dict[str, float] | None:
+    x = action.get("x")
+    y = action.get("y")
+    if x is None or y is None:
+        index = action.get("index")
+        elements = observation.get("ui_elements")
+        if (
+            not isinstance(index, int)
+            or isinstance(index, bool)
+            or not isinstance(elements, list)
+            or index < 0
+            or index >= len(elements)
+        ):
+            return None
+        bounds = _ui_element_bounds(elements[index])
+        if bounds is None:
+            return None
+        left, top, right, bottom = bounds
+        x = (left + right) / 2.0
+        y = (top + bottom) / 2.0
+    display = observation_display(observation)
+    if display is None:
+        raise ValueError("androidworld_action_display_required")
+    width, height = display
+    return {
+        "x": float(x) / width * 1000.0,
+        "y": float(y) / height * 1000.0,
+    }
+
+
+def _ui_element_bounds(value: Any) -> tuple[float, float, float, float] | None:
+    element = _map(value)
+    bounds = _map(element.get("bbox_pixels")) or _map(element.get("bbox"))
+    aliases = (
+        ("x_min", "y_min", "x_max", "y_max"),
+        ("left", "top", "right", "bottom"),
+    )
+    for keys in aliases:
+        try:
+            left, top, right, bottom = (float(bounds[key]) for key in keys)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if right > left and bottom > top:
+            return left, top, right, bottom
+    return None
+
+
+def _androidworld_standard_swipe(
+    action_type: str,
+    direction: str,
+) -> dict[str, float]:
+    gestures = {
+        "scroll": {
+            "down": (500.0, 500.0, 500.0, 0.0),
+            "up": (500.0, 500.0, 500.0, 1000.0),
+            "right": (500.0, 500.0, 0.0, 500.0),
+            "left": (500.0, 500.0, 1000.0, 500.0),
+        },
+        "swipe": {
+            "down": (500.0, 0.0, 500.0, 1000.0),
+            "up": (500.0, 1000.0, 500.0, 0.0),
+            "left": (0.0, 500.0, 1000.0, 500.0),
+            "right": (1000.0, 500.0, 0.0, 500.0),
+        },
+    }
+    try:
+        x1, y1, x2, y2 = gestures[action_type][direction]
+    except KeyError as error:
+        raise ValueError(
+            f"androidworld_action_direction_required:{action_type}"
+        ) from error
+    return {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
+
+
+def _legacy_action_to_androidworld(
+    value: Any,
+    *,
+    observation: dict[str, Any],
+    inferred_package_name: str,
+    package_resolver: Callable[[str], str] | None,
+) -> dict[str, Any]:
     raw = _map(value)
     function = _map(raw.get("function"))
     tool = str(
         raw.get("tool")
         or raw.get("type")
+        or raw.get("action_type")
+        or raw.get("tool_name")
         or raw.get("name")
         or function.get("name")
         or ""
-    ).strip()
+    ).strip().lower()
     args = _map(
         raw.get("args")
         or raw.get("arguments")
         or raw.get("params")
         or function.get("arguments")
     )
-    # Historical replay records stored pacing controls beside semantic action
-    # arguments.  They remain available in the raw record to the replay
-    # executor, but are not part of the canonical Action schema.
     for key in _EXECUTION_TIMING_ARGS:
         args.pop(key, None)
-    historical = "type" in raw and "tool" not in raw
     if tool == "android_privileged_action":
-        tool = str(args.pop("tool", "")).strip()
+        tool = str(args.pop("tool", "")).strip().lower()
         args.update(_map(args.pop("arguments", None)))
-    if tool == "wait":
-        if "duration_ms" not in args:
-            if "time_ms" in args:
-                args["duration_ms"] = int(float(args["time_ms"]))
-            elif "time_s" in args:
-                args["duration_ms"] = int(float(args["time_s"]) * 1000)
-        args.pop("time_ms", None)
-        args.pop("time_s", None)
-    if historical:
-        if tool == "press_back":
-            tool = "press_key"
-            args = {"key": "back"}
-        elif tool == "press_key":
-            raw_key = str(args.pop("key", args.pop("keycode", ""))).strip()
-            key = raw_key.lower().removeprefix("keycode_")
-            if key == "del":
-                key = "delete"
-            args = {"key": key}
-        elif tool in {"open_app", "start_activity"}:
-            app_name = str(
-                args.get("app_name") or args.get("app") or ""
-            ).strip()
-            package_name = str(
-                args.get("package_name") or inferred_package_name
-            ).strip()
-            if not package_name and app_name:
-                resolver = package_resolver or _default_package_resolver
-                package_name = str(resolver(app_name) or "").strip()
-            tool = "open_app"
-            args = {"package_name": package_name} if package_name else {}
-        elif tool == "answer":
-            return []
-        if tool == "swipe":
-            aliases = {
-                "start_x": "x1",
-                "start_y": "y1",
-                "end_x": "x2",
-                "end_y": "y2",
-            }
-            for old, new in aliases.items():
-                if new not in args and old in args:
-                    args[new] = args.pop(old)
-            if "direction" not in args and all(
-                key in args for key in ("x1", "y1", "x2", "y2")
-            ):
-                dx = float(args["x2"]) - float(args["x1"])
-                dy = float(args["y2"]) - float(args["y1"])
-                args["direction"] = (
-                    ("right" if dx > 0 else "left")
-                    if abs(dx) >= abs(dy)
-                    else ("down" if dy > 0 else "up")
-                )
-        args.pop("clear_text", None)
-        _normalize_historical_coordinates(
-            tool=tool,
-            args=args,
-            source_state=source_state or {},
+    if tool in {"click", "tap", "double_tap", "long_press", "longpress"}:
+        x, y = _legacy_point(args, observation)
+        return {
+            "action_type": (
+                "double_tap"
+                if tool == "double_tap"
+                else "long_press"
+                if tool in {"long_press", "longpress"}
+                else "click"
+            ),
+            "x": x,
+            "y": y,
+        }
+    if tool in {"input_text", "type_text", "set_text", "type"}:
+        action: dict[str, Any] = {
+            "action_type": "input_text",
+            "text": str(args.get("text") if args.get("text") is not None else ""),
+            "clear_text": bool(args.get("clear_text", True)),
+        }
+        if args.get("x") is not None and args.get("y") is not None:
+            action["x"], action["y"] = _legacy_point(args, observation)
+        return action
+    if tool in {"swipe", "scroll"}:
+        direction = str(args.get("direction") or "").strip().lower()
+        if not direction:
+            direction = _legacy_swipe_direction(args)
+        if direction not in {"left", "right", "down", "up"}:
+            raise ValueError(f"legacy_action_direction_required:{tool}")
+        return {"action_type": tool, "direction": direction}
+    if tool in {"open_app", "start_activity", "launch_app", "openapp"}:
+        app_name = str(args.get("app_name") or args.get("app") or "").strip()
+        package = str(
+            args.get("package_name")
+            or args.get("package")
+            or inferred_package_name
+            or ""
+        ).strip()
+        if not package and app_name:
+            resolver = package_resolver or _default_package_resolver
+            package = str(resolver(app_name) or "").strip()
+        identifier = package or app_name
+        if not identifier:
+            raise ValueError("legacy_action_open_app_identifier_required")
+        return {"action_type": "open_app", "app_name": identifier}
+    if tool in {"press_back", "back", "navigate_back"}:
+        return {"action_type": "navigate_back"}
+    if tool in {"press_home", "home", "navigate_home"}:
+        return {"action_type": "navigate_home"}
+    if tool in {"keyboard_enter", "press_enter"}:
+        return {"action_type": "keyboard_enter"}
+    if tool in {"press_key", "key_event", "presskey"}:
+        key = str(args.get("key") or args.get("keycode") or "").strip().upper()
+        key = key.removeprefix("KEYCODE_")
+        if key in {"BACK", "NAVIGATE_BACK", "PRESS_BACK"}:
+            return {"action_type": "navigate_back"}
+        if key in {"HOME", "NAVIGATE_HOME", "PRESS_HOME"}:
+            return {"action_type": "navigate_home"}
+        if key in {"ENTER", "KEYBOARD_ENTER", "PRESS_ENTER"}:
+            return {"action_type": "keyboard_enter"}
+        if key == "DELETE":
+            key = "DEL"
+        if not key:
+            raise ValueError("legacy_action_keycode_required")
+        return {"action_type": "press_keyboard", "keycode": f"KEYCODE_{key}"}
+    if tool in {"wait", "sleep"}:
+        return {"action_type": "wait"}
+    if tool in {"finished", "finish", "done", "status"}:
+        content = str(args.get("content") or "").strip()
+        return (
+            {"action_type": "answer", "text": content}
+            if content
+            else {"action_type": "status", "goal_status": "complete"}
         )
-        if tool == "input_text" and all(key in args for key in ("x", "y")):
-            click_args = {"x": args.pop("x"), "y": args.pop("y")}
-            actions = [
-                {"tool": "click", "args": click_args},
-                {"tool": "input_text", "args": args},
-            ]
-        else:
-            actions = [{"tool": tool, "args": args}] if tool else []
-        for action in actions:
-            try:
-                canonicalize_action(
-                    action,
-                    replayable_only=True,
-                    allow_non_action=True,
-                )
-            except ValueError as error:
-                if str(error).startswith(
-                    (
-                        "canonical_action_tool_unsupported:",
-                        "canonical_action_tool_not_replayable:",
-                    )
-                ):
-                    return []
-                raise
-        return actions
-    return [{"tool": tool, "args": args}] if tool else []
+    if tool == "answer":
+        return {"action_type": "answer", "text": str(args.get("text") or "")}
+    raise ValueError(f"legacy_action_unsupported:{tool or 'missing'}")
+
+
+def _legacy_actions(step: dict[str, Any]) -> list[Any]:
+    for key in ("executed_actions", "actions"):
+        value = step.get(key)
+        if isinstance(value, list) and value:
+            return list(value)
+    for key in ("action", "tool_call"):
+        value = step.get(key)
+        if isinstance(value, dict):
+            return [value]
+    if any(key in step for key in ("tool", "type", "action_type")):
+        return [step]
+    tool_name = str(step.get("tool_name") or "").strip()
+    if tool_name:
+        return [{"tool": tool_name, "args": _map(step.get("params"))}]
+    return []
+
+
+def _legacy_before_observation(step: dict[str, Any]) -> dict[str, Any]:
+    source_context = _map(step.get("source_context"))
+    source_context = _map(source_context.get("src_ctx")) or source_context
+    return _legacy_observation(
+        step.get("state")
+        or step.get("observation")
+        or step.get("observation_before_act")
+        or step.get("before")
+        or source_context
+    )
+
+
+def _legacy_after_observation(step: dict[str, Any]) -> dict[str, Any]:
+    return _legacy_observation(
+        step.get("after_state")
+        or step.get("next_state")
+        or step.get("observation_after_act")
+        or step.get("after")
+    )
+
+
+def _legacy_observation(value: Any) -> dict[str, Any]:
+    return {"xml": value} if isinstance(value, str) else _map(value)
+
+
+def _androidworld_state(
+    value: dict[str, Any],
+    *,
+    pixels: dict[str, Any] | None,
+) -> dict[str, Any]:
+    forest = value.get("forest")
+    if forest is None:
+        forest = _first(value, ("xml", "observation_xml", "page", "source_xml"))
+    ui_elements = value.get("ui_elements")
+    if not isinstance(ui_elements, list):
+        ui_elements = []
+    auxiliaries = _map(value.get("auxiliaries"))
+    aliases = {
+        "state_id": ("state_id",),
+        "package_name": ("package_name", "packageName"),
+        "activity_name": ("activity_name", "activityName"),
+        "provider": ("provider",),
+    }
+    for output, names in aliases.items():
+        item = _first(value, names)
+        if _present(item):
+            auxiliaries[output] = item
+    width = _first(value, ("display_width", "screen_width", "width"))
+    height = _first(value, ("display_height", "screen_height", "height"))
+    screenshot = _map(value.get("screenshot"))
+    width = width if _present(width) else _first(screenshot, ("width", "display_width"))
+    height = height if _present(height) else _first(screenshot, ("height", "display_height"))
+    if _present(width) and _present(height):
+        auxiliaries["display"] = {"width": int(width), "height": int(height)}
+    return {
+        "pixels": pixels,
+        "forest": forest,
+        "ui_elements": json.loads(json.dumps(ui_elements, ensure_ascii=False, default=str)),
+        "auxiliaries": auxiliaries or None,
+    }
+
+
+def _transfer_state(observation: dict[str, Any]) -> dict[str, Any]:
+    identifier = state_id(observation)
+    state: dict[str, Any] = {"state_id": identifier}
+    forest = observation.get("forest")
+    if isinstance(forest, str) and forest:
+        state["xml"] = forest
+    auxiliaries = observation.get("auxiliaries")
+    if isinstance(auxiliaries, dict):
+        for key in ("package_name", "activity_name"):
+            if _present(auxiliaries.get(key)):
+                state[key] = str(auxiliaries[key])
+        display = auxiliaries.get("display")
+        if isinstance(display, dict) and set(display) == {"width", "height"}:
+            state["display"] = dict(display)
+    return state
+
+
+def _legacy_point(
+    args: dict[str, Any], observation: dict[str, Any]
+) -> tuple[int, int]:
+    x = _number(args, "x", "center_x", "touch_x")
+    y = _number(args, "y", "center_y", "touch_y")
+    if x is None or y is None:
+        raise ValueError("legacy_action_coordinates_required")
+    coordinate_space = str(args.get("coordinate_space") or "").strip()
+    if coordinate_space == "canonical_0_1000":
+        width, height = _legacy_display(observation)
+        x = x / 1000.0 * width
+        y = y / 1000.0 * height
+    return max(0, int(round(x))), max(0, int(round(y)))
+
+
+def _legacy_swipe_direction(args: dict[str, Any]) -> str:
+    x1 = _number(args, "x1", "start_x", "from_x", "touch_x")
+    y1 = _number(args, "y1", "start_y", "from_y", "touch_y")
+    x2 = _number(args, "x2", "end_x", "to_x", "lift_x")
+    y2 = _number(args, "y2", "end_y", "to_y", "lift_y")
+    if None in {x1, y1, x2, y2}:
+        return ""
+    dx = float(x2) - float(x1)
+    dy = float(y2) - float(y1)
+    return (
+        ("right" if dx > 0 else "left")
+        if abs(dx) >= abs(dy)
+        else ("down" if dy > 0 else "up")
+    )
+
+
+def _legacy_display(observation: dict[str, Any]) -> tuple[float, float]:
+    screenshot = _map(observation.get("screenshot"))
+    width = _first(observation, ("display_width", "screen_width", "width"))
+    height = _first(observation, ("display_height", "screen_height", "height"))
+    width = width if _present(width) else _first(screenshot, ("width", "display_width"))
+    height = height if _present(height) else _first(screenshot, ("height", "display_height"))
+    try:
+        converted = float(width), float(height)
+    except (TypeError, ValueError) as error:
+        raise ValueError("legacy_observation_display_required") from error
+    if converted[0] <= 0 or converted[1] <= 0:
+        raise ValueError("legacy_observation_display_required")
+    return converted
+
+
+def _legacy_step_metadata(step: dict[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    source = _map(step.get("metadata")) or _map(step.get("diagnostics"))
+    for key in ("thinking", "summary", "action_description", "origin"):
+        if _present(source.get(key)):
+            metadata[key] = source[key]
+    return metadata
+
+
+def _screenshot_path(observation: dict[str, Any]) -> str:
+    screenshot = _map(observation.get("screenshot"))
+    return str(
+        observation.get("screenshot_path")
+        or observation.get("image_path")
+        or screenshot.get("path")
+        or screenshot.get("screenshot_path")
+        or ""
+    ).strip()
+
+
+def _screenshot_reference(path: Path) -> dict[str, Any]:
+    resolved = path.expanduser().resolve()
+    image_bytes = resolved.read_bytes()
+    with Image.open(resolved) as image:
+        width, height = image.size
+        mime_type = Image.MIME.get(image.format or "")
+    mime_type = mime_type or mimetypes.guess_type(resolved.name)[0] or ""
+    if mime_type not in {"image/jpeg", "image/png", "image/webp"}:
+        raise ValueError(f"screenshot_mime_type_unsupported:{resolved}:{mime_type}")
+    return {
+        "path": str(resolved),
+        "sha256": hashlib.sha256(image_bytes).hexdigest(),
+        "width": int(width),
+        "height": int(height),
+        "mime_type": mime_type,
+    }
 
 
 def _default_package_resolver(app_name: str) -> str:
     try:
-        from src.integrations.android_world.apps import (
-            resolve_androidworld_package,
-        )
+        from src.integrations.android_world.apps import resolve_androidworld_package
 
         return resolve_androidworld_package(app_name)
     except (ImportError, KeyError, ValueError):
         return ""
 
 
-def _normalize_historical_coordinates(
-    *,
-    tool: str,
-    args: dict[str, Any],
-    source_state: dict[str, Any],
-) -> None:
-    try:
-        width = float(source_state["display_width"])
-        height = float(source_state["display_height"])
-    except (KeyError, TypeError, ValueError):
-        return
-    if width <= 0 or height <= 0:
-        return
-    axis_by_key: dict[str, float]
-    if tool in {"click", "input_text", "long_press"}:
-        axis_by_key = {"x": width, "y": height}
-    elif tool == "swipe":
-        axis_by_key = {
-            "x1": width,
-            "y1": height,
-            "x2": width,
-            "y2": height,
-        }
-    else:
-        return
-    for key, extent in axis_by_key.items():
-        value = args.get(key)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            continue
-        args[key] = float(value) / extent * 1000.0
-
-
-def _state(value: Any) -> dict[str, Any]:
-    raw = {"xml": value} if isinstance(value, str) else _map(value)
-    aliases = {
-        "state_id": ("state_id",),
-        "xml": ("xml", "observation_xml", "page", "source_xml"),
-        "xml_path": ("xml_path", "observation_xml_path", "page_path"),
-        "xml_sha256": ("xml_sha256", "observation_xml_sha256", "page_sha256"),
-        "xml_chars": ("xml_chars", "observation_xml_chars", "page_chars"),
-        "xml_bytes": ("xml_bytes", "observation_xml_bytes", "page_bytes"),
-        "screenshot_path": ("screenshot_path", "image_path"),
-        "package_name": ("package_name", "packageName"),
-        "activity_name": ("activity_name", "activityName"),
-        "display_width": ("display_width", "screen_width", "width"),
-        "display_height": ("display_height", "screen_height", "height"),
-    }
-    state = {
-        output: item
-        for output, names in aliases.items()
-        if _present(item := _first(raw, names))
-    }
-    screenshot = _map(raw.get("screenshot"))
-    state.setdefault("screenshot_path", _first(screenshot, ("path", "screenshot_path")))
-    state.setdefault("display_width", _first(screenshot, ("display_width", "width")))
-    state.setdefault("display_height", _first(screenshot, ("display_height", "height")))
-    return {key: item for key, item in state.items() if _present(item)}
-
-
-def _state_id(run_id: str, index: int, state: dict[str, Any]) -> str:
-    identity = json.dumps(
-        {"run_id": run_id, "step_index": index, "state": state},
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return "state_" + hashlib.sha256(identity.encode()).hexdigest()[:20]
-
-
-def _add_source_state(
-    states: dict[str, dict[str, Any]],
-    *,
-    state_id: str,
-    state: dict[str, Any],
-    evidence_root: str | Path | None,
-) -> None:
-    source_state: dict[str, Any] = {"state_id": state_id}
-    xml = state.get("xml")
-    if not _present(xml) and _present(state.get("xml_path")):
-        xml_path = Path(str(state["xml_path"])).expanduser()
-        if not xml_path.is_absolute() and evidence_root is not None:
-            xml_path = Path(evidence_root).expanduser() / xml_path
-        if xml_path.is_file():
-            xml = xml_path.read_text(encoding="utf-8")
-    if _present(xml):
-        source_state["xml"] = str(xml)
-    for key in ("package_name", "activity_name"):
-        if _present(state.get(key)):
-            source_state[key] = str(state[key])
-    width = state.get("display_width")
-    height = state.get("display_height")
-    if _present(width) and _present(height):
-        source_state["display"] = {
-            "width": int(width),
-            "height": int(height),
-        }
-    existing = states.get(state_id)
-    if existing is not None and existing != source_state:
-        raise ValueError(f"source_state_conflict:{state_id}")
-    states[state_id] = source_state
+def _validator_reward(payload: dict[str, Any], success: bool) -> float:
+    for key in ("androidworld_reward", "validator_reward", "reward"):
+        value = payload.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return max(0.0, float(value))
+    return 1.0 if success else 0.0
 
 
 def _success(value: dict[str, Any], *, default: bool) -> bool:
     for key in ("success", "run_success", "androidworld_success"):
         if key in value and value[key] is not None:
-            return str(value[key]).strip().lower() not in {"", "0", "false", "no", "none"}
+            return str(value[key]).strip().lower() not in {
+                "",
+                "0",
+                "false",
+                "no",
+                "none",
+            }
     return default
+
+
+def _number(value: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        item = value.get(key)
+        if isinstance(item, (int, float)) and not isinstance(item, bool):
+            return float(item)
+    return None
+
+
+def _integer(value: Any, default: int) -> int:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return int(default)
 
 
 def _first(value: dict[str, Any], keys: tuple[str, ...]) -> Any:
@@ -444,7 +777,9 @@ def _present(value: Any) -> bool:
 
 
 __all__ = [
-    "extract_canonical_step_actions",
+    "ScreenshotResolver",
+    "convert_legacy_run_log",
     "import_run_log",
     "import_run_log_evidence",
+    "project_androidworld_step_actions",
 ]

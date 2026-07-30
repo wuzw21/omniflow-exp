@@ -11,6 +11,7 @@ from src.experiment.preflight import (
     _dismiss_known_accessibility_crash_dialog,
     _validate_source_index,
 )
+from runlog_fixtures import androidworld_run_log
 
 
 def test_preflight_dismisses_known_accessibility_crash_dialog(monkeypatch) -> None:
@@ -82,25 +83,12 @@ def _write_index(
     run_log = root / "source.run_log.json"
     run_log.write_text(
         json.dumps(
-            {
-                "schema_version": "omniflow.canonical_run_log.v1",
-                "run_id": "source-run",
-                "goal": "Complete Task.",
-                "status": "succeeded",
-                "success": True,
-                "steps": [
-                    {
-                        "step_index": 0,
-                        "before_state_id": "state-0",
-                        "action": {
-                            "tool": "wait",
-                            "args": {"duration_ms": 100},
-                        },
-                        "result": {"success": True},
-                        "after_state_id": "state-1",
-                    }
-                ],
-            }
+            androidworld_run_log(
+                [{"action_type": "wait"}],
+                task_name="Task",
+                goal="Complete Task.",
+                with_pixels=True,
+            )
         ),
         encoding="utf-8",
     )
@@ -190,7 +178,7 @@ def test_source_index_preserves_non_ours_source_method(tmp_path: Path) -> None:
     assert result["run_log_count"] == 1
 
 
-def test_source_index_accepts_registered_historical_runlog(
+def test_source_index_rejects_registered_historical_runlog(
     tmp_path: Path,
 ) -> None:
     index = _write_index(tmp_path / "historical")
@@ -233,13 +221,12 @@ def test_source_index_accepts_registered_historical_runlog(
     ).hexdigest()
     index.write_text(json.dumps(payload), encoding="utf-8")
 
-    result = _validate_source_index(
-        index,
-        source_root=tmp_path,
-        expected_tasks=1,
-    )
-
-    assert result["run_log_count"] == 1
+    with pytest.raises(ValueError, match="source_index_invalid_tasks"):
+        _validate_source_index(
+            index,
+            source_root=tmp_path,
+            expected_tasks=1,
+        )
 
 
 def test_source_index_validates_only_selected_task_for_one_task_run(

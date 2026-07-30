@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omnimind.ai/schemas/oob/omniflow_androidworld_run_log.v1.json",
+  "title": "OmniFlow AndroidWorld RunLog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "task_name",
+    "goal",
+    "task_parameters",
+    "seed",
+    "status",
+    "success",
+    "validator",
+    "provenance",
+    "steps"
+  ],
+  "properties": {
+    "schema_version": {"const": "omniflow.androidworld.run_log.v1"},
+    "run_id": {"type": "string", "minLength": 1},
+    "task_name": {"type": "string", "minLength": 1},
+    "goal": {"type": "string"},
+    "task_parameters": {"$ref": "#/$defs/object"},
+    "seed": {
+      "anyOf": [
+        {"type": "integer", "minimum": 0},
+        {"type": "null"}
+      ]
+    },
+    "status": {"enum": ["succeeded", "failed"]},
+    "success": {"type": "boolean"},
+    "validator": {"$ref": "#/$defs/validator"},
+    "provenance": {"$ref": "#/$defs/provenance"},
+    "started_at_ms": {"type": "integer", "minimum": 0},
+    "finished_at_ms": {"type": "integer", "minimum": 0},
+    "steps": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/step"}
+    },
+    "final_observation": {"$ref": "#/$defs/state"},
+    "diagnostics": {"$ref": "#/$defs/object"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"status": {"const": "succeeded"}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "success": {"const": true},
+          "validator": {
+            "properties": {"success": {"const": true}},
+            "required": ["success"]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "success": {"const": false},
+          "validator": {
+            "properties": {"success": {"const": false}},
+            "required": ["success"]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "object": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "validator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["official", "success", "reward"],
+      "properties": {
+        "official": {"const": true},
+        "success": {"type": "boolean"},
+        "reward": {"type": "number", "minimum": 0}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["runtime", "legacy_import"]},
+        "source_path": {"type": "string", "minLength": 1},
+        "source_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "source_schema_version": {"type": "string"}
+      }
+    },
+    "screenshot_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "width", "height", "mime_type"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1},
+        "mime_type": {"enum": ["image/jpeg", "image/png", "image/webp"]}
+      }
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pixels", "forest", "ui_elements", "auxiliaries"],
+      "properties": {
+        "pixels": {
+          "anyOf": [
+            {"$ref": "#/$defs/screenshot_reference"},
+            {"type": "null"}
+          ]
+        },
+        "forest": {},
+        "ui_elements": {"type": "array"},
+        "auxiliaries": {
+          "anyOf": [
+            {"$ref": "#/$defs/object"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action_type"],
+      "properties": {
+        "action_type": {
+          "enum": [
+            "answer",
+            "click",
+            "double_tap",
+            "input_text",
+            "keyboard_enter",
+            "long_press",
+            "navigate_back",
+            "navigate_home",
+            "open_app",
+            "press_keyboard",
+            "scroll",
+            "status",
+            "swipe",
+            "unknown",
+            "wait"
+          ]
+        },
+        "index": {"type": "integer", "minimum": 0},
+        "x": {"type": "integer", "minimum": 0},
+        "y": {"type": "integer", "minimum": 0},
+        "text": {"type": "string"},
+        "direction": {"enum": ["left", "right", "down", "up"]},
+        "app_name": {"type": "string", "minLength": 1},
+        "goal_status": {"type": "string", "minLength": 1},
+        "keycode": {"type": "string", "pattern": "^KEYCODE_"},
+        "clear_text": {"type": "boolean"}
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["success"],
+      "properties": {
+        "success": {"type": "boolean"},
+        "error": {"type": "string"}
+      }
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_index", "observation", "action", "result"],
+      "properties": {
+        "step_index": {"type": "integer", "minimum": 0},
+        "observation": {"$ref": "#/$defs/state"},
+        "action": {"$ref": "#/$defs/action"},
+        "result": {"$ref": "#/$defs/result"},
+        "next_observation": {"$ref": "#/$defs/state"},
+        "metadata": {"$ref": "#/$defs/object"}
+      }
+    }
+  }
+}

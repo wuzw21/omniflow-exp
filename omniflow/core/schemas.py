@@ -8,7 +8,7 @@ import sysconfig
 from typing import Any
 
 CANONICAL_ACTION_SCHEMA_FILENAME = "oob_canonical_actions.v1.json"
-CANONICAL_RUN_LOG_SCHEMA_FILENAME = "omniflow_canonical_run_log.v1.json"
+ANDROIDWORLD_RUN_LOG_SCHEMA_FILENAME = "omniflow_androidworld_run_log.v1.json"
 CHECKER_RULE_SCHEMA_FILENAME = "omniflow_checker_rule.v1.json"
 VLM_ACTION_TOOL_NAMES = (
     "click",
@@ -32,8 +32,8 @@ def canonical_action_schema_path() -> Path:
     return _schema_path(CANONICAL_ACTION_SCHEMA_FILENAME)
 
 
-def canonical_run_log_schema_path() -> Path:
-    return _schema_path(CANONICAL_RUN_LOG_SCHEMA_FILENAME)
+def androidworld_run_log_schema_path() -> Path:
+    return _schema_path(ANDROIDWORLD_RUN_LOG_SCHEMA_FILENAME)
 
 
 def checker_rule_schema_path() -> Path:
@@ -56,8 +56,8 @@ def load_canonical_action_schema() -> dict[str, Any]:
     return _load_schema(canonical_action_schema_path())
 
 
-def load_canonical_run_log_schema() -> dict[str, Any]:
-    return _load_schema(canonical_run_log_schema_path())
+def load_androidworld_run_log_schema() -> dict[str, Any]:
+    return _load_schema(androidworld_run_log_schema_path())
 
 
 def load_checker_rule_schema() -> dict[str, Any]:
@@ -254,15 +254,15 @@ def _canonical_arg(value: Any, spec: dict[str, Any]) -> Any:
 
 __all__ = [
     "CANONICAL_ACTION_SCHEMA_FILENAME",
-    "CANONICAL_RUN_LOG_SCHEMA_FILENAME",
+    "ANDROIDWORLD_RUN_LOG_SCHEMA_FILENAME",
     "CHECKER_RULE_SCHEMA_FILENAME",
     "VLM_ACTION_TOOL_NAMES",
     "canonical_action_schema_path",
-    "canonical_run_log_schema_path",
+    "androidworld_run_log_schema_path",
     "canonicalize_action",
     "checker_rule_schema_path",
     "load_canonical_action_schema",
-    "load_canonical_run_log_schema",
+    "load_androidworld_run_log_schema",
     "load_checker_rule_schema",
     "openai_action_tools",
     "vlm_action_tools",

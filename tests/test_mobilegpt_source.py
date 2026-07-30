@@ -12,6 +12,7 @@ import pytest
 from src.experiment import androidworld as pipeline
 from src.experiment import mobilegpt_source
 from src.integrations.mobilegpt_runtime import _mobilegpt_chat_model
+from runlog_fixtures import androidworld_run_log, androidworld_state
 
 
 def test_mobilegpt_client_patch_supports_cross_package_windows(
@@ -297,25 +298,20 @@ def _write_source_index(
     source_run_log = root / "source.run_log.json"
     source_run_log.write_text(
         json.dumps(
-            {
-                "schema_version": "omniflow.canonical_run_log.v1",
-                "run_id": "source-run",
-                "goal": "Turn Bluetooth on.",
-                "status": "succeeded",
-                "success": True,
-                "steps": [
-                    {
-                        "step_index": 0,
-                        "before_state_id": "state-0",
-                        "action": {
-                            "tool": "click",
-                            "args": {"x": 500, "y": 500},
-                        },
-                        "result": {"success": True},
-                        "after_state_id": "state-1",
-                    }
+            androidworld_run_log(
+                [{"action_type": "click", "x": 50, "y": 50}],
+                observations=[
+                    androidworld_state(
+                        "state-0",
+                        package_name="com.android.settings",
+                        width=100,
+                        height=100,
+                        with_pixels=True,
+                    )
                 ],
-            }
+                task_name="SystemBluetoothTurnOn",
+                goal="Turn Bluetooth on.",
+            )
         ),
         encoding="utf-8",
     )
@@ -504,7 +500,7 @@ def test_mobilegpt_offline_runner_uses_protocol_source_method_default(
         )
 
 
-def test_mobilegpt_source_accepts_registered_historical_runlog(
+def test_mobilegpt_source_rejects_registered_historical_runlog(
     tmp_path: Path,
 ) -> None:
     index, source_run_log = _write_source_index(tmp_path / "historical")
@@ -546,13 +542,12 @@ def test_mobilegpt_source_accepts_registered_historical_runlog(
     ).hexdigest()
     index.write_text(json.dumps(payload), encoding="utf-8")
 
-    item = mobilegpt_source.load_canonical_source_item(
-        index,
-        task_name="SystemBluetoothTurnOn",
-    )
-
-    assert item.source_run_log == source_run_log
-    assert item.replay_seed == 111
+    with pytest.raises(ValueError, match="run_log_schema_invalid"):
+        pipeline.build_mobilegpt_teacher_source(
+            source_run_log,
+            task_name="SystemBluetoothTurnOn",
+            provenance_source_run_log=source_run_log,
+        )
 
 
 def test_mobilegpt_preflight_resolves_target_from_frozen_source_states(

@@ -22,6 +22,8 @@ import sys
 from typing import Any, Callable
 import xml.etree.ElementTree as ET
 
+from src.integrations.runlog import import_run_log, project_androidworld_step_actions
+
 MOBILEGPT_SUPPORTED_SOURCE_TYPES = {
     "click",
     "input_text",
@@ -51,8 +53,8 @@ def load_teacher_actions(source_run_log: str | Path) -> list[dict[str, Any]]:
     """Load replayable AndroidWorld actions for MobileGPT teacher forcing."""
 
     path = Path(source_run_log).expanduser().resolve()
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    steps = _source_run_log_steps(payload)
+    payload = import_run_log(json.loads(path.read_text(encoding="utf-8")))
+    steps = payload["steps"]
     actions: list[dict[str, Any]] = []
     for step_index, step in enumerate(steps or []):
         if not isinstance(step, dict):
@@ -79,47 +81,17 @@ def load_teacher_actions(source_run_log: str | Path) -> list[dict[str, Any]]:
 
 
 def _teacher_step_actions(step: dict[str, Any]) -> list[dict[str, Any]]:
-    raw_actions = step.get("executed_actions") or step.get("actions")
-    if not isinstance(raw_actions, list):
-        raw_action = step.get("action") or step.get("tool_call")
-        raw_actions = [raw_action] if isinstance(raw_action, dict) else []
-    actions: list[dict[str, Any]] = []
-    for raw_action in raw_actions:
-        if not isinstance(raw_action, dict) or raw_action.get("success") is False:
-            continue
-        function = (
-            dict(raw_action.get("function") or {})
-            if isinstance(raw_action.get("function"), dict)
-            else {}
-        )
-        action_type = str(
-            raw_action.get("type")
-            or raw_action.get("tool")
-            or raw_action.get("name")
-            or function.get("name")
-            or ""
-        ).strip()
-        raw_params = (
-            raw_action.get("params")
-            or raw_action.get("args")
-            or raw_action.get("arguments")
-            or function.get("arguments")
-            or {}
-        )
-        params = dict(raw_params) if isinstance(raw_params, dict) else {}
-        if action_type == "android_privileged_action":
-            action_type = str(params.pop("tool", "") or "").strip()
-            nested = params.pop("arguments", None)
-            if isinstance(nested, dict):
-                params.update(nested)
-        actions.append(
-            {
-                "type": action_type,
-                "params": params,
-                "description": str(raw_action.get("description") or "").strip(),
-            }
-        )
-    return actions
+    action_type = str(step.get("action", {}).get("action_type") or "")
+    if action_type in {"answer", "status", "unknown"}:
+        return []
+    return [
+        {
+            "type": action["tool"],
+            "params": dict(action.get("args") or {}),
+            "description": "",
+        }
+        for action in project_androidworld_step_actions(step)
+    ]
 
 
 _SOURCE_COORDINATE_KEYS = {
@@ -152,8 +124,19 @@ def _ground_source_action_identity(
         if isinstance(params.get("source_context"), dict)
         else {}
     )
+    metadata = step.get("metadata")
+    metadata_context = (
+        metadata.get("source_context") if isinstance(metadata, dict) else None
+    )
+    if isinstance(metadata_context, dict):
+        source_context = {**metadata_context, **source_context}
     observation = _source_step_observation(step)
-    page = str(source_context.get("page") or observation.get("xml") or "").strip()
+    page = str(
+        source_context.get("page")
+        or observation.get("forest")
+        or observation.get("xml")
+        or ""
+    ).strip()
     element = (
         dict(source_context.get("element") or {})
         if isinstance(source_context.get("element"), dict)
@@ -175,10 +158,16 @@ def _ground_source_action_identity(
             "text",
         }
     }
+    auxiliaries = (
+        observation.get("auxiliaries")
+        if isinstance(observation.get("auxiliaries"), dict)
+        else {}
+    )
     package_name = str(
         source_context.get("package_name")
         or observation.get("package_name")
         or observation.get("packageName")
+        or auxiliaries.get("package_name")
         or ""
     ).strip()
     if page:
@@ -256,128 +245,6 @@ def _source_element_at_action_point(
                 "resource_id": resource_id,
             }
     return {}
-
-
-def _source_run_log_steps(payload: Any) -> list[dict[str, Any]]:
-    if not isinstance(payload, dict):
-        return []
-    steps = payload.get("steps")
-    if isinstance(steps, list):
-        return [dict(step) for step in steps if isinstance(step, dict)]
-
-    wrapped_payload = payload.get("payload")
-    if isinstance(wrapped_payload, dict):
-        wrapped_steps = wrapped_payload.get("steps")
-        if isinstance(wrapped_steps, list):
-            return [dict(step) for step in wrapped_steps if isinstance(step, dict)]
-        cards = wrapped_payload.get("cards")
-        if isinstance(cards, list):
-            return [
-                _payload_card_to_step(card)
-                for card in cards
-                if isinstance(card, dict)
-            ]
-    return []
-
-
-def _payload_card_to_step(card: dict[str, Any]) -> dict[str, Any]:
-    tool_call = (
-        dict(card.get("tool_call") or {})
-        if isinstance(card.get("tool_call"), dict)
-        else {}
-    )
-    action_type = str(
-        card.get("action_type")
-        or card.get("tool_name")
-        or card.get("toolName")
-        or tool_call.get("name")
-        or ""
-    ).strip()
-    raw_params = card.get("params")
-    if not isinstance(raw_params, dict):
-        raw_params = tool_call.get("params")
-    if not isinstance(raw_params, dict):
-        raw_params = tool_call.get("arguments")
-    params = dict(raw_params or {}) if isinstance(raw_params, dict) else {}
-
-    source_context = _payload_card_source_context(card, params)
-    if source_context:
-        params.setdefault("source_context", source_context)
-
-    action = {
-        "type": action_type,
-        "params": params,
-        "success": bool(card.get("success", True)),
-        "description": str(card.get("summary") or card.get("title") or "").strip(),
-    }
-    if source_context:
-        action["source_context"] = source_context
-
-    observation_before = {
-        "xml": source_context.get("page", ""),
-        "package_name": str(card.get("package_name") or ""),
-    }
-    return {
-        "step_index": card.get("step_index"),
-        "status": card.get("status"),
-        "success": bool(card.get("success", True)),
-        "tool_call": {
-            "name": action_type,
-            "params": params,
-            "reason": action["description"] or None,
-        },
-        "actions": [action],
-        "executed_actions": [action],
-        "observation_before_act": observation_before,
-        "target_element": source_context.get("element", {}),
-    }
-
-
-def _payload_card_source_context(
-    card: dict[str, Any],
-    params: dict[str, Any],
-) -> dict[str, Any]:
-    raw_context = (
-        dict(card.get("source_context") or {})
-        if isinstance(card.get("source_context"), dict)
-        else {}
-    )
-    src_ctx = (
-        dict(raw_context.get("src_ctx") or {})
-        if isinstance(raw_context.get("src_ctx"), dict)
-        else raw_context
-    )
-    source_context: dict[str, Any] = {}
-    page = str(src_ctx.get("page") or src_ctx.get("xml") or "").strip()
-    if page:
-        source_context["page"] = page
-
-    target_evidence = (
-        dict(params.get("target_evidence") or {})
-        if isinstance(params.get("target_evidence"), dict)
-        else {}
-    )
-    label = str(
-        target_evidence.get("label")
-        or params.get("target_description")
-        or card.get("title")
-        or ""
-    ).strip()
-    resource_id = str(
-        target_evidence.get("resource_id")
-        or target_evidence.get("resource-id")
-        or ""
-    ).strip()
-    if label or resource_id:
-        source_context["element"] = {
-            "text": label,
-            "description": label,
-            "resource_id": resource_id,
-        }
-    package_name = str(card.get("package_name") or "").strip()
-    if package_name:
-        source_context["package_name"] = package_name
-    return source_context
 
 
 class MobileGPTTeacher:

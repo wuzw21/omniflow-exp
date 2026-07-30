@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from PIL import Image
 
-from omniflow.core.trajectory import canonicalize_run_log
+from omniflow.core.trajectory import canonicalize_run_log, state_id
 from omniflow.transfer.runtime import TRANSFER_STATE_CATALOG_VERSION
 
 
@@ -99,18 +99,23 @@ def persist_target_run_evidence(
     canonical_run = canonicalize_run_log(run_log)
     run_id = str(canonical_run["run_id"]).strip()
     states = {
-        str(state_id): dict(state)
-        for state_id, state in sorted(captured_transfer_states.items())
+        str(state_identifier): dict(state)
+        for state_identifier, state in sorted(captured_transfer_states.items())
     }
-    for state_id, state in states.items():
-        if str(state.get("state_id") or "").strip() != state_id:
-            raise ValueError(f"target_transfer_state_key_mismatch:{state_id}")
+    for state_identifier, state in states.items():
+        if str(state.get("state_id") or "").strip() != state_identifier:
+            raise ValueError(
+                f"target_transfer_state_key_mismatch:{state_identifier}"
+            )
     referenced_state_ids = sorted(
         {
-            state_id
+            state_id(observation)
             for step in canonical_run["steps"]
-            for field in ("before_state_id", "after_state_id")
-            if (state_id := str(step.get(field) or "").strip())
+            for observation in (
+                step["observation"],
+                step.get("next_observation"),
+            )
+            if isinstance(observation, dict)
         }
     )
     captured_state_ids = sorted(states)

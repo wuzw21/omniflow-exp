@@ -5,6 +5,7 @@ import importlib
 import json
 import os
 from pathlib import Path
+import time
 from typing import Any
 import uuid
 
@@ -16,7 +17,11 @@ from omniflow import (
     RuntimeSettings,
 )
 from omniflow.core.config import Experiment
-from omniflow.core.trajectory import canonicalize_run_log
+from omniflow.core.trajectory import (
+    ANDROIDWORLD_RUN_LOG_SCHEMA_VERSION,
+    canonicalize_run_log,
+    state_id,
+)
 from omniflow.transfer.runtime import (
     TRANSFER_STATE_CATALOG_FILENAME,
     load_transfer_state_catalog,
@@ -75,6 +80,7 @@ def build_agent(
     adb_serial: str = "",
     adb_path: str = "",
     post_action_wait_seconds: float = 0.0,
+    task_seed: int | None = None,
 ) -> OmniFlow:
     if env is None:
         raise TypeError("build_agent requires env parameter")
@@ -93,6 +99,8 @@ def build_agent(
     state: dict[str, Any] = {
         "task_name": "",
         "goal": "",
+        "task_parameters": {},
+        "seed": task_seed,
         "last_result": None,
         "last_run_id": "",
         "last_run_log": None,
@@ -151,19 +159,25 @@ def build_agent(
         goal: str = "",
         context: dict[str, Any] | None = None,
     ) -> None:
-        del context
+        task_context = dict(context or {})
+        task_parameters = task_context.get("task_parameters")
+        if not isinstance(task_parameters, dict):
+            task_parameters = {}
         state.update(
             task_name=str(task_name or "").strip(),
             goal=str(goal or "").strip(),
+            task_parameters=_json_copy(task_parameters),
         )
 
     def update_current_task_context(task: Any) -> dict[str, Any]:
-        del task
-        return {}
+        raw_parameters = getattr(task, "params", {})
+        parameters = dict(raw_parameters) if isinstance(raw_parameters, dict) else {}
+        return {"task_parameters": _json_copy(parameters)}
 
     def step(goal: str):
         goal_text = str(goal or "").strip()
         state["goal"] = goal_text
+        started_at_ms = int(time.time() * 1000)
         result = flow.run(
             goal_text,
             experiment=Experiment(name="androidworld"),
@@ -179,18 +193,35 @@ def build_agent(
             )
         run_id = f"run_{uuid.uuid4().hex}"
         trace = list(result.detail.get("trace") or ())
+        task_name = str(state.get("task_name") or "").strip()
+        if not task_name:
+            raise ValueError("androidworld_task_name_required")
+        steps = _androidworld_run_log_steps(
+            trace,
+            state["captured_transfer_states"],
+        )
         run_log = canonicalize_run_log(
             {
-                "schema_version": "omniflow.canonical_run_log.v1",
+                "schema_version": ANDROIDWORLD_RUN_LOG_SCHEMA_VERSION,
                 "run_id": run_id,
+                "task_name": task_name,
                 "goal": goal_text,
+                "task_parameters": _json_copy(state["task_parameters"]),
+                "seed": state["seed"],
                 "status": "succeeded" if result.success else "failed",
                 "success": result.success,
-                **({"error": result.error} if result.error else {}),
-                "steps": trace,
+                "validator": {
+                    "official": True,
+                    "success": result.success,
+                    "reward": 1.0 if result.success else 0.0,
+                },
+                "provenance": {"kind": "runtime"},
+                "started_at_ms": started_at_ms,
+                "finished_at_ms": int(time.time() * 1000),
+                "steps": steps,
                 "diagnostics": {
                     "done_reason": result.error or "goal_completed",
-                    "step_count": len(trace),
+                    "step_count": len(steps),
                     "function_id": result.function_id,
                     "execution_summary": result.execution_summary,
                 },
@@ -225,6 +256,11 @@ def build_agent(
         run_log = dict(run_log)
         run_log["success"] = bool(success)
         run_log["status"] = "succeeded" if success else "failed"
+        run_log["validator"] = {
+            "official": True,
+            "success": bool(success),
+            "reward": 1.0 if success else 0.0,
+        }
         diagnostics = dict(run_log.get("diagnostics") or {})
         diagnostics["done_reason"] = str(
             done_reason or diagnostics.get("done_reason") or ""
@@ -233,10 +269,13 @@ def build_agent(
         run_log = canonicalize_run_log(run_log)
         referenced_state_ids = sorted(
             {
-                state_id
+                state_id(observation)
                 for step in run_log["steps"]
-                for field in ("before_state_id", "after_state_id")
-                if (state_id := str(step.get(field) or "").strip())
+                for observation in (
+                    step["observation"],
+                    step.get("next_observation"),
+                )
+                if isinstance(observation, dict)
             }
         )
         captured = state["captured_transfer_states"]
@@ -307,6 +346,156 @@ def build_agent(
     flow.step = step
     flow.save_run_log = save_run_log
     return flow
+
+
+def _androidworld_run_log_steps(
+    trace: list[Any],
+    captured_states: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    steps: list[dict[str, Any]] = []
+    for raw_step in trace:
+        if not isinstance(raw_step, dict):
+            raise ValueError("omniflow_trace_step_invalid")
+        before_id = str(raw_step.get("before_state_id") or "").strip()
+        after_id = str(raw_step.get("after_state_id") or before_id).strip()
+        before = captured_states.get(before_id)
+        after = captured_states.get(after_id)
+        if not isinstance(before, dict):
+            raise ValueError(f"captured_transfer_state_missing:{before_id}")
+        if not isinstance(after, dict):
+            raise ValueError(f"captured_transfer_state_missing:{after_id}")
+        observation = _androidworld_state_from_transfer_state(before)
+        result = raw_step.get("result")
+        if not isinstance(result, dict) or not isinstance(
+            result.get("success"), bool
+        ):
+            raise ValueError("omniflow_trace_result_invalid")
+        projected: dict[str, Any] = {
+            "step_index": len(steps),
+            "observation": observation,
+            "action": _omniflow_action_to_androidworld(
+                raw_step.get("action"),
+                observation=observation,
+            ),
+            "result": {
+                "success": result["success"],
+                **(
+                    {"error": str(result["error"])}
+                    if str(result.get("error") or "").strip()
+                    else {}
+                ),
+            },
+        }
+        if after_id != before_id:
+            projected["next_observation"] = _androidworld_state_from_transfer_state(
+                after
+            )
+        metadata = raw_step.get("metadata")
+        if isinstance(metadata, dict) and metadata:
+            projected["metadata"] = _json_copy(metadata)
+        steps.append(projected)
+    return steps
+
+
+def _androidworld_state_from_transfer_state(
+    value: dict[str, Any],
+) -> dict[str, Any]:
+    auxiliaries = {
+        key: _json_copy(value[key])
+        for key in ("state_id", "package_name", "activity_name", "display")
+        if value.get(key) is not None
+    }
+    return {
+        "pixels": None,
+        "forest": value.get("xml"),
+        "ui_elements": [],
+        "auxiliaries": auxiliaries or None,
+    }
+
+
+def _omniflow_action_to_androidworld(
+    value: Any,
+    *,
+    observation: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("omniflow_trace_action_invalid")
+    tool = str(value.get("tool") or "").strip()
+    args = value.get("args")
+    if not isinstance(args, dict):
+        raise ValueError("omniflow_trace_action_args_invalid")
+    display = observation.get("auxiliaries")
+    display = display.get("display") if isinstance(display, dict) else None
+
+    def pixel_point() -> dict[str, int]:
+        if not isinstance(display, dict):
+            raise ValueError("omniflow_trace_action_display_required")
+        try:
+            width = int(display["width"])
+            height = int(display["height"])
+            x = float(args["x"])
+            y = float(args["y"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("omniflow_trace_action_point_required") from error
+        return {
+            "x": max(0, min(width - 1, int(round(x / 1000.0 * width)))),
+            "y": max(0, min(height - 1, int(round(y / 1000.0 * height)))),
+        }
+
+    if tool == "click":
+        return {"action_type": "click", **pixel_point()}
+    if tool == "long_press":
+        return {"action_type": "long_press", **pixel_point()}
+    if tool == "input_text":
+        action = {
+            "action_type": "input_text",
+            "text": str(args.get("text") or ""),
+            "clear_text": True,
+        }
+        if args.get("x") is not None or args.get("y") is not None:
+            action.update(pixel_point())
+        return action
+    if tool == "swipe":
+        return {
+            "action_type": "scroll",
+            "direction": str(args.get("direction") or ""),
+        }
+    if tool == "open_app":
+        app_name = str(
+            args.get("package_name") or args.get("app_name") or ""
+        ).strip()
+        if not app_name:
+            raise ValueError("omniflow_trace_open_app_identifier_required")
+        return {"action_type": "open_app", "app_name": app_name}
+    if tool in {"press_back", "press_home", "press_enter"}:
+        return {
+            "action_type": {
+                "press_back": "navigate_back",
+                "press_home": "navigate_home",
+                "press_enter": "keyboard_enter",
+            }[tool]
+        }
+    if tool == "press_key":
+        key = str(args.get("keycode") or args.get("key") or "").strip().upper()
+        key = key.removeprefix("KEYCODE_")
+        if key in {"BACK", "NAVIGATE_BACK", "PRESS_BACK"}:
+            return {"action_type": "navigate_back"}
+        if key in {"HOME", "NAVIGATE_HOME", "PRESS_HOME"}:
+            return {"action_type": "navigate_home"}
+        if key in {"ENTER", "KEYBOARD_ENTER", "PRESS_ENTER"}:
+            return {"action_type": "keyboard_enter"}
+        if key == "DELETE":
+            key = "DEL"
+        if not key:
+            raise ValueError("omniflow_trace_keycode_required")
+        return {"action_type": "press_keyboard", "keycode": f"KEYCODE_{key}"}
+    if tool == "wait":
+        return {"action_type": "wait"}
+    raise ValueError(f"omniflow_trace_action_unsupported:{tool or 'missing'}")
+
+
+def _json_copy(value: Any) -> Any:
+    return json.loads(json.dumps(value, ensure_ascii=False, default=str))
 
 
 __all__ = ["MODE_OMNIFLOW", "AndroidWorldHost", "build_agent"]

@@ -42,7 +42,7 @@ from src.integrations.android_world.setup_compat import (
     patch_androidworld_setup_fail_closed,
     restore_task_app_snapshots_after_initialize,
 )
-from src.integrations.runlog import extract_canonical_step_actions, import_run_log
+from src.integrations.runlog import import_run_log, project_androidworld_step_actions
 
 OMNIFLOW_ROOT = Path(__file__).resolve().parents[3]
 SOURCE_RUNLOG_POOL_DIR = (
@@ -3242,171 +3242,53 @@ def _read_raw_replay_run_log(path_text: str) -> dict[str, Any]:
 
 
 def _raw_replay_step_actions(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract replay actions without importing any relocation evidence."""
+    """Project the only accepted RunLog schema to fixed-replay actions."""
 
-    canonical_coordinate_space = (
-        str(data.get("schema_version") or "").strip()
-        == "omniflow.canonical_run_log.v1"
-    )
-
-    def canonical_replay_action(
-        action: dict[str, Any],
-        *,
-        normalized_coordinates: bool = canonical_coordinate_space,
-    ) -> dict[str, Any]:
+    def replay_action(action: dict[str, Any]) -> dict[str, Any]:
         tool = str(action["tool"])
         params = dict(action.get("args") or {})
-        replay_action = {"type": tool, "params": params}
+        projected = {"type": tool, "params": params}
         if (
-            normalized_coordinates
-            and tool in {"click", "long_press", "input_text", "swipe"}
+            tool in {"click", "long_press", "input_text", "swipe"}
             and any(
                 key in params
                 for key in ("x", "y", "x1", "y1", "x2", "y2")
             )
         ):
-            replay_action["coordinate_space"] = "canonical_0_1000"
-        return replay_action
+            projected["coordinate_space"] = "canonical_0_1000"
+        return projected
 
-    raw_cards = data.get("cards")
-    if not list(data.get("steps") or []) and isinstance(raw_cards, list):
-        actions: list[dict[str, Any]] = []
-        for card in raw_cards:
-            if not isinstance(card, dict):
-                continue
-            tool_call = card.get("tool_call")
-            if not isinstance(tool_call, dict):
-                continue
-            tool = str(tool_call.get("name") or "").strip()
-            arguments = tool_call.get("arguments")
-            if tool and isinstance(arguments, dict):
-                actions.append({"type": tool, "params": dict(arguments)})
-        return actions
-
-    if not list(data.get("steps") or []):
-        canonical = import_run_log(data)
-        return [
-            canonical_replay_action(
-                step["action"],
-                normalized_coordinates=True,
-            )
-            for step in canonical["steps"]
-        ]
-
-    raw_steps = list(data.get("steps") or data.get("cards") or [])
-    has_native_replay = any(
-        isinstance(step, dict)
-        and isinstance(step.get("provider_detail"), dict)
-        and isinstance(
-            step["provider_detail"].get("native_runlog_replay"),
-            dict,
-        )
-        for step in raw_steps
-    )
-    if not has_native_replay:
-        canonical = import_run_log(data)
-        return [
-            canonical_replay_action(
-                step["action"],
-                normalized_coordinates=True,
-            )
-            for step in canonical["steps"]
-        ]
-
+    run_log = import_run_log(data)
     actions: list[dict[str, Any]] = []
-    for step in raw_steps:
-        if not isinstance(step, dict):
+    for step in run_log["steps"]:
+        if step["result"]["success"] is not True:
             continue
-        provider_detail = step.get("provider_detail")
-        if isinstance(provider_detail, dict):
-            native_replay = provider_detail.get("native_runlog_replay")
-            if isinstance(native_replay, dict):
-                result = native_replay.get("result")
-                replay = result.get("replay") if isinstance(result, dict) else None
-                step_results = (
-                    replay.get("step_results")
-                    if isinstance(replay, dict)
-                    else None
-                )
-                if isinstance(step_results, list):
-                    for step_result in step_results:
-                        if not isinstance(step_result, dict):
-                            continue
-                        tool = str(
-                            step_result.get("tool")
-                            or step_result.get("action_type")
-                            or ""
-                        ).strip()
-                        args = (
-                            dict(step_result.get("args") or {})
-                            if isinstance(step_result.get("args"), dict)
-                            else {}
-                        )
-                        if tool:
-                            actions.append({"type": tool, "params": args})
-                    continue
+        action_type = str(step["action"].get("action_type") or "")
+        if action_type in {"answer", "status", "unknown"}:
+            continue
         actions.extend(
-            canonical_replay_action(
-                action,
-                normalized_coordinates=True,
-            )
-            for action in extract_canonical_step_actions(step)
+            replay_action(action)
+            for action in project_androidworld_step_actions(step)
         )
     return actions
 
 
 def _raw_replay_source_size(data: dict[str, Any]) -> tuple[int, int] | None:
-    """Best-effort source screen size used only for coordinate scaling."""
+    """Read the source display from the accepted RunLog observation."""
 
-    candidates: list[Any] = []
-    for step in list(data.get("steps") or []):
-        if not isinstance(step, dict):
-            continue
-        for obs_key in (
-            "observation_before_act",
-            "before_observation",
-            "before",
-            "observation",
-        ):
-            obs = step.get(obs_key)
-            if isinstance(obs, dict):
-                candidates.append(obs)
-                candidates.append(obs.get("screenshot"))
-        provider_detail = step.get("provider_detail")
-        if isinstance(provider_detail, dict):
-            native_replay = provider_detail.get("native_runlog_replay")
-            result = native_replay.get("result") if isinstance(native_replay, dict) else None
-            replay = result.get("replay") if isinstance(result, dict) else None
-            step_results = replay.get("step_results") if isinstance(replay, dict) else None
-            if isinstance(step_results, list):
-                for step_result in step_results:
-                    if not isinstance(step_result, dict):
-                        continue
-                    source_context = step_result.get("source_context")
-                    if isinstance(source_context, dict):
-                        candidates.append(source_context)
-                        candidates.append(source_context.get("screenshot"))
-            final_state = result.get("final_state") if isinstance(result, dict) else None
-            if isinstance(final_state, dict):
-                candidates.append(final_state)
-                candidates.append(final_state.get("screenshot"))
-
-    for candidate in candidates:
-        if not isinstance(candidate, dict):
-            continue
-        width = _coerce_positive_int(
-            candidate.get("original_width")
-            or candidate.get("screen_width")
-            or candidate.get("width")
-        )
-        height = _coerce_positive_int(
-            candidate.get("original_height")
-            or candidate.get("screen_height")
-            or candidate.get("height")
-        )
-        if width and height:
-            return width, height
-
+    run_log = import_run_log(data)
+    for step in run_log["steps"]:
+        observation = step["observation"]
+        pixels = observation.get("pixels")
+        if isinstance(pixels, dict):
+            return int(pixels["width"]), int(pixels["height"])
+        auxiliaries = observation.get("auxiliaries")
+        display = auxiliaries.get("display") if isinstance(auxiliaries, dict) else None
+        if isinstance(display, dict):
+            width = _coerce_positive_int(display.get("width"))
+            height = _coerce_positive_int(display.get("height"))
+            if width and height:
+                return width, height
     return None
 
 
@@ -4272,6 +4154,7 @@ def _build_launch_agent(
     appagent_teacher_source: str = "",
     appagent_demo_name: str = "",
     appagent_output_root: str = "",
+    task_seed: int | None = None,
 ) -> Any:
     """Build the launcher-facing AndroidWorld agent for one explicit selector.
 
@@ -4328,6 +4211,7 @@ def _build_launch_agent(
             "store_path": store_path,
             "adb_serial": adb_serial,
             "adb_path": adb_path,
+            "task_seed": task_seed,
         }
         if planner is not None:
             build_kwargs["planner"] = planner
@@ -5012,6 +4896,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             appagent_teacher_source=str(args.appagent_teacher_source or ""),
             appagent_demo_name=str(args.appagent_demo_name or ""),
             appagent_output_root=str(run_output_dir / "appagent_runtime"),
+            task_seed=int(args.task_random_seed),
         )
 
         checkpoint_dir = (

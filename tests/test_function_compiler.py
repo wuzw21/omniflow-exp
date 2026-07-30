@@ -6,33 +6,26 @@ from pathlib import Path
 import pytest
 
 from omniflow.functions.compiler import compile_runlog_to_store
+from runlog_fixtures import androidworld_run_log, androidworld_state
 
 
 def _run_log(step_count: int) -> dict:
-    return {
-        "schema_version": "omniflow.canonical_run_log.v1",
-        "run_id": "source-run",
-        "goal": "Open Settings and wait.",
-        "status": "succeeded",
-        "success": True,
-        "steps": [
-            {
-                "step_index": index,
-                "before_state_id": f"state_{index}",
-                "action": (
-                    {
-                        "tool": "open_app",
-                        "args": {"package_name": "com.android.settings"},
-                    }
-                    if index == 0
-                    else {"tool": "wait", "args": {"duration_ms": 100}}
-                ),
-                "result": {"success": True},
-                "after_state_id": f"state_{index + 1}",
-            }
+    actions = [
+        (
+            {"action_type": "open_app", "app_name": "com.android.settings"}
+            if index == 0
+            else {"action_type": "wait"}
+        )
+        for index in range(step_count)
+    ]
+    return androidworld_run_log(
+        actions,
+        observations=[
+            androidworld_state(f"state_{index}")
             for index in range(step_count)
         ],
-    }
+        goal="Open Settings and wait.",
+    )
 
 
 def test_default_compiler_rejects_one_action_atomic_function(

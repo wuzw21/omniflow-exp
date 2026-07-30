@@ -12,6 +12,7 @@ from src.experiment.observation_evidence import (
     ObservationArchive,
     persist_target_run_evidence,
 )
+from runlog_fixtures import androidworld_run_log, androidworld_state
 
 
 def test_archive_preserves_every_observation_and_deduplicates_images(
@@ -70,25 +71,14 @@ def test_archive_reports_an_observation_without_pixels(tmp_path) -> None:
 
 
 def test_target_run_evidence_is_immutable_and_hash_addressable(tmp_path) -> None:
-    run_log = {
-        "schema_version": "omniflow.canonical_run_log.v1",
-        "run_id": "target-run",
-        "goal": "Open Settings.",
-        "status": "succeeded",
-        "success": True,
-        "steps": [
-            {
-                "step_index": 0,
-                "before_state_id": "target-before",
-                "action": {
-                    "tool": "open_app",
-                    "args": {"package_name": "com.android.settings"},
-                },
-                "result": {"success": True},
-                "after_state_id": "target-after",
-            }
-        ],
-    }
+    run_log = androidworld_run_log(
+        [{"action_type": "open_app", "app_name": "com.android.settings"}],
+        observations=[androidworld_state("target-before")],
+        task_name="OpenSettings",
+        run_id="target-run",
+        goal="Open Settings.",
+    )
+    run_log["steps"][0]["next_observation"] = androidworld_state("target-after")
     states = {
         "target-before": {
             "state_id": "target-before",

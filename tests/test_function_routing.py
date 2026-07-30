@@ -20,6 +20,7 @@ from omniflow.vlm.function_router import VLMFunctionRouter
 from omniflow.vlm.gui import build_model_turn_request
 from omniflow.vlm.planner import VLMPlanner
 from src.integrations.android_world.agent import build_agent
+from runlog_fixtures import androidworld_run_log, androidworld_state
 
 
 class RecordingHost:
@@ -582,27 +583,19 @@ def test_androidworld_agent_returns_target_states_when_source_catalog_exists(
     )
     original_source_catalog = source_catalog.read_bytes()
     flow = build_agent(env=SimpleNamespace(), store_path=str(store_path))
+    target_run_log = androidworld_run_log(
+        [{"action_type": "open_app", "app_name": "com.android.settings"}],
+        observations=[androidworld_state("target-before")],
+        task_name="OpenSettings",
+        run_id="target-run",
+        goal="Open Settings.",
+    )
+    target_run_log["steps"][0]["next_observation"] = androidworld_state(
+        "target-after"
+    )
     flow.host.state.update(
         last_result=SimpleNamespace(success=True),
-        last_run_log={
-            "schema_version": "omniflow.canonical_run_log.v1",
-            "run_id": "target-run",
-            "goal": "Open Settings.",
-            "status": "succeeded",
-            "success": True,
-            "steps": [
-                {
-                    "step_index": 0,
-                    "before_state_id": "target-before",
-                    "action": {
-                        "tool": "open_app",
-                        "args": {"package_name": "com.android.settings"},
-                    },
-                    "result": {"success": True},
-                    "after_state_id": "target-after",
-                }
-            ],
-        },
+        last_run_log=target_run_log,
         captured_transfer_states={
             "target-before": {
                 "state_id": "target-before",

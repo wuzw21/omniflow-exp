@@ -15,6 +15,7 @@ from src.experiment.result_registry import (
     register_attempt_summary,
     registered_cell_plan,
 )
+from runlog_fixtures import androidworld_run_log
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -372,13 +373,12 @@ def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
     source_run_log = tmp_path / "evidence" / "TaskOne" / "source.run_log.json"
     _write_json(
         source_run_log,
-        {
-            "schema_version": "omniflow.run_log.v1",
-            "run_id": "source-run",
-            "goal": "Complete task one.",
-            "success": True,
-            "steps": [{"step_index": 0}],
-        },
+        androidworld_run_log(
+            [{"action_type": "wait"}],
+            task_name="TaskOne",
+            goal="Complete task one.",
+            with_pixels=True,
+        ),
     )
     source_index = tmp_path / "source_index.json"
     _write_json(

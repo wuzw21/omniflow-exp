@@ -12,6 +12,7 @@ import pytest
 from src.experiment import androidworld as pipeline
 from src.experiment import appagent_source
 from src.integrations import appagent_adapter
+from runlog_fixtures import androidworld_run_log, androidworld_state
 
 
 def _write_appagent_teacher_source(
@@ -145,38 +146,26 @@ def _install_androidworld_app_registry(
 
 def _write_open_app_teacher_source(root: Path) -> Path:
     source_run_log = root / "source.run_log.json"
-    source_run_log.write_text(
-        json.dumps(
+    run_log = androidworld_run_log(
+        [
             {
-                "run_id": "browser-draw-source",
-                "success": True,
-                "steps": [
-                    {
-                        "step_index": 0,
-                        "action": {
-                            "tool": "open_app",
-                            "args": {
-                                "package_name": "com.google.android.documentsui"
-                            },
-                        },
-                        "result": {"success": True},
-                    },
-                    {
-                        "step_index": 1,
-                        "action": {
-                            "tool": "click",
-                            "args": {
-                                "target_description": "6.50 kB",
-                                "source_context": {
-                                    "element": {"text": "6.50 kB"}
-                                },
-                            },
-                        },
-                        "result": {"success": True},
-                    },
-                ],
-            }
-        ),
+                "action_type": "open_app",
+                "app_name": "com.google.android.documentsui",
+            },
+            {"action_type": "click", "x": 50, "y": 50},
+        ],
+        observations=[
+            androidworld_state("launcher", width=100, height=100),
+            androidworld_state("files", width=100, height=100),
+        ],
+        task_name="BrowserDraw",
+        run_id="browser-draw-source",
+    )
+    run_log["steps"][1]["metadata"] = {
+        "source_context": {"element": {"text": "6.50 kB"}}
+    }
+    source_run_log.write_text(
+        json.dumps(run_log),
         encoding="utf-8",
     )
     teacher_source = root / "teacher_source.json"
@@ -325,25 +314,19 @@ def _write_source_index(root: Path) -> Path:
     source_run_log = root / "source.run_log.json"
     source_run_log.write_text(
         json.dumps(
-            {
-                "schema_version": "omniflow.canonical_run_log.v1",
-                "run_id": "source-run",
-                "goal": "Turn Bluetooth on.",
-                "status": "succeeded",
-                "success": True,
-                "steps": [
-                    {
-                        "step_index": 0,
-                        "before_state_id": "state-0",
-                        "action": {
-                            "tool": "click",
-                            "args": {"x": 500, "y": 500},
-                        },
-                        "result": {"success": True},
-                        "after_state_id": "state-1",
-                    }
+            androidworld_run_log(
+                [{"action_type": "click", "x": 50, "y": 50}],
+                observations=[
+                    androidworld_state(
+                        "state-0",
+                        width=100,
+                        height=100,
+                        with_pixels=True,
+                    )
                 ],
-            }
+                task_name="SystemBluetoothTurnOn",
+                goal="Turn Bluetooth on.",
+            )
         ),
         encoding="utf-8",
     )

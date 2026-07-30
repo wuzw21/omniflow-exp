@@ -9,8 +9,13 @@ import re
 from typing import Any
 import xml.etree.ElementTree as ET
 
+from omniflow.core.trajectory import state_id as observation_state_id
 from omniflow.transfer.runtime import load_transfer_state_catalog
-from src.integrations.runlog import import_run_log, import_run_log_evidence
+from src.integrations.runlog import (
+    import_run_log,
+    import_run_log_evidence,
+    project_androidworld_step_actions,
+)
 
 
 def select_source_asset_revision(
@@ -316,50 +321,61 @@ def _ground_source_actions(
     grounded = json.loads(json.dumps(canonical, ensure_ascii=False))
     semantic_action_count = 0
     for step_index, step in enumerate(grounded["steps"]):
-        state_id = str(step.get("before_state_id") or "").strip()
-        state = states.get(state_id)
+        observation = step["observation"]
+        state_identifier = observation_state_id(observation)
+        state = states.get(state_identifier)
         if not isinstance(state, dict):
-            raise ValueError(f"source_state_missing:{state_id}")
-        xml_text = str(state.get("xml") or "").strip()
+            raise ValueError(f"source_state_missing:{state_identifier}")
+        xml_text = str(state.get("xml") or observation.get("forest") or "").strip()
         if not xml_text:
-            raise ValueError(f"source_state_xml_missing:{state_id}")
-        action = step.get("action")
-        if not isinstance(action, dict):
-            continue
-        args = action.get("args")
-        if not isinstance(args, dict):
-            args = {}
-        action_type = str(action.get("tool") or "").strip()
+            raise ValueError(f"source_state_xml_missing:{state_identifier}")
+        projected_actions = project_androidworld_step_actions(step)
+        action_type = str(step["action"].get("action_type") or "").strip()
         target = (
-            targets_by_state.get(state_id)
+            targets_by_state.get(state_identifier)
             or targets_by_step.get(step_index)
             or {}
         )
-        if not target and action_type in {"click", "long_press"}:
-            target = _identity_at_action_point(
-                xml_text,
-                action_args=args,
-                display=(
-                    state.get("display")
-                    if isinstance(state.get("display"), dict)
-                    else {}
+        if not target and action_type in {"click", "double_tap", "long_press"}:
+            point_action = next(
+                (
+                    action
+                    for action in projected_actions
+                    if action["tool"] in {"click", "long_press"}
                 ),
+                None,
             )
+            if point_action is not None:
+                target = _identity_at_action_point(
+                    xml_text,
+                    action_args=point_action["args"],
+                    display=(
+                        state.get("display")
+                        if isinstance(state.get("display"), dict)
+                        else {}
+                    ),
+                )
         if not target and action_type == "input_text":
             target = _unique_editable_identity(xml_text)
         source_context: dict[str, Any] = {"page": xml_text}
-        package_name = str(state.get("package_name") or "").strip()
+        auxiliaries = observation.get("auxiliaries")
+        package_name = str(
+            state.get("package_name")
+            or (
+                auxiliaries.get("package_name")
+                if isinstance(auxiliaries, dict)
+                else ""
+            )
+            or ""
+        ).strip()
         if package_name:
             source_context["package_name"] = package_name
         if target:
             source_context["element"] = target
             semantic_action_count += 1
-        args["source_context"] = source_context
-        action["args"] = args
-        step["observation_before_act"] = {
-            "xml": xml_text,
-            "package_name": package_name,
-        }
+        metadata = dict(step.get("metadata") or {})
+        metadata["source_context"] = source_context
+        step["metadata"] = metadata
     return grounded, semantic_action_count
 
 
