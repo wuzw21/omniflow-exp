@@ -154,6 +154,7 @@ def test_check_only_is_read_only_before_any_runtime_output(
         "OMNIFLOW_SINGLE_TASK_MANAGE_EMULATORS": "0",
         "OMNIFLOW_SINGLE_TASK_METHODS": "fixed_replay",
         "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_root / "current.json"),
+        "OMNIFLOW_JAVA_HOME": str(tmp_path),
         "PYTHON_BIN": sys.executable,
     }
     completed = subprocess.run(
