@@ -143,6 +143,44 @@ def patch_androidworld_setup_click_retry(
                     ):
                         raise
                     last_error = error
+
+            native_controller = getattr(controller, "_env", None)
+            original_method = getattr(native_controller, "_a11y_method", None)
+            uiautomator_method = getattr(
+                type(original_method),
+                "UIAUTOMATOR",
+                None,
+            )
+            if (
+                native_controller is not None
+                and uiautomator_method is not None
+                and original_method is not uiautomator_method
+            ):
+                native_controller._a11y_method = uiautomator_method
+                try:
+                    native_visible = _visible_setup_strings(controller)
+                    if _setup_click_is_already_complete(native_visible, target_text):
+                        return None
+                    native_visible_casefold = {
+                        value.casefold() for value in native_visible
+                    }
+                    for label in (
+                        candidate
+                        for candidate in labels
+                        if candidate.casefold() in native_visible_casefold
+                    ):
+                        try:
+                            return click_label(controller, label, args, kwargs)
+                        except ValueError as error:
+                            message = str(error or "")
+                            if not (
+                                ("Target text" in message and "not found" in message)
+                                or "Invalid element index" in message
+                            ):
+                                raise
+                            last_error = error
+                finally:
+                    native_controller._a11y_method = original_method
             if attempt < max(1, int(attempts)):
                 time.sleep(max(0.0, float(delay_seconds)))
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import Enum
 from types import SimpleNamespace
 
 import pytest
@@ -42,6 +43,44 @@ def test_androidworld_setup_clicks_visible_alias_before_legacy_label() -> None:
     Controller().click_element("Accept & continue")
 
     assert click_calls == ["Use without an account"]
+
+
+def test_androidworld_setup_falls_back_to_native_uiautomator_for_missing_label() -> None:
+    click_calls: list[str] = []
+
+    class A11yMethod(Enum):
+        FORWARDER = "forwarder"
+        UIAUTOMATOR = "uiautomator"
+
+    class NativeController:
+        _a11y_method = A11yMethod.FORWARDER
+
+        def get_ui_elements(self):
+            if self._a11y_method is A11yMethod.UIAUTOMATOR:
+                return [_setup_element("Accept & continue")]
+            return [_setup_element("Welcome to Chrome")]
+
+    class Controller:
+        def __init__(self) -> None:
+            self._env = NativeController()
+
+        def click_element(self, element_text: str) -> None:
+            click_calls.append(element_text)
+            if self._env._a11y_method is not A11yMethod.UIAUTOMATOR:
+                raise ValueError(f'Target text "{element_text}" not found.')
+
+    tools_module = SimpleNamespace(AndroidToolController=Controller)
+    patch_androidworld_setup_click_retry(
+        tools_module,
+        attempts=1,
+        delay_seconds=0,
+    )
+    controller = Controller()
+
+    controller.click_element("Accept & continue")
+
+    assert click_calls == ["Accept & continue"]
+    assert controller._env._a11y_method is A11yMethod.FORWARDER
 
 
 def test_androidworld_setup_skips_click_when_chrome_is_complete() -> None:
