@@ -391,6 +391,7 @@ class MobileGPTTeacher:
         self.task: dict[str, Any] = {}
         self.last_emitted_result: TeacherActionResult | None = None
         self._emitted_preflight_keys: set[str] = set()
+        self._target_preflight_seen = False
 
     @property
     def exhausted(self) -> bool:
@@ -441,6 +442,35 @@ class MobileGPTTeacher:
         self.task = dict(task or {})
         self.last_emitted_result = None
         self._emitted_preflight_keys.clear()
+        self._target_preflight_seen = False
+
+    def _target_preflight_reentry(
+        self,
+        screen: str,
+        *,
+        current_app_package: str,
+    ) -> TeacherActionResult | None:
+        for record in reversed(self._actions[: self._cursor]):
+            action = dict(record["action"])
+            if str(action.get("type") or "").strip() != "click":
+                continue
+            if _source_action_package(action) != current_app_package:
+                continue
+            try:
+                migrated = migrate_source_action_to_mobilegpt(action, screen)
+            except Exception:
+                continue
+            return TeacherActionResult(
+                action=migrated["action"],
+                source_action_type="target_preflight_reentry",
+                source_step_index=int(record["source_step_index"]),
+                source_action_index=int(record["source_action_index"]),
+                matched_index=str(migrated["matched_index"]),
+                match_score=float(migrated["match_score"]),
+                match_reason=str(migrated["match_reason"]),
+                consumed_source_action=False,
+            )
+        return None
 
     def next_action(self, screen: str) -> TeacherActionResult:
         if self.exhausted:
@@ -460,6 +490,13 @@ class MobileGPTTeacher:
             current_app_package=current_app_package,
         )
         if app_switch is not None:
+            if self._target_preflight_seen:
+                reentry = self._target_preflight_reentry(
+                    screen,
+                    current_app_package=current_app_package,
+                )
+                if reentry is not None:
+                    return reentry
             return TeacherActionResult(
                 action={
                     "name": MOBILEGPT_INTERNAL_LAUNCH_ACTION,
@@ -498,14 +535,17 @@ class MobileGPTTeacher:
         except Exception:
             preflight = _target_preflight_action(screen)
             if preflight is not None:
+                self._target_preflight_seen = True
                 return preflight
             raise
 
         preflight = _target_preflight_action(screen)
         if preflight is not None and float(migrated.get("match_score") or 0.0) < 8.0:
+            self._target_preflight_seen = True
             return preflight
 
         self._cursor += 1
+        self._target_preflight_seen = False
         return TeacherActionResult(
             action=migrated["action"],
             source_action_type=source_type,

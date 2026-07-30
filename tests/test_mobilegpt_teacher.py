@@ -157,3 +157,104 @@ def test_teacher_handles_chrome_search_provider_prompt_without_consuming_source(
     assert result is not None
     assert result.action == {"name": "click", "parameters": {"index": "12"}}
     assert result.consumed_source_action is False
+
+
+def test_teacher_reenters_external_intent_after_target_setup(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    source_run_log = tmp_path / "source.run_log.json"
+    source_run_log.write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {
+                        "observation": {
+                            "package_name": "com.google.android.documentsui",
+                            "xml": (
+                                '<hierarchy><node text="task.html" clickable="true" '
+                                'bounds="[0,0][100,100]" /></hierarchy>'
+                            ),
+                        },
+                        "action": {
+                            "type": "click",
+                            "params": {"x": 50, "y": 50},
+                        },
+                    },
+                    {
+                        "observation": {
+                            "package_name": "android",
+                            "xml": (
+                                '<hierarchy><node text="Just once" clickable="true" '
+                                'bounds="[0,0][100,100]" /></hierarchy>'
+                            ),
+                        },
+                        "action": {
+                            "type": "click",
+                            "params": {"x": 50, "y": 50},
+                        },
+                    },
+                    {
+                        "observation": {
+                            "package_name": "com.android.chrome",
+                            "xml": (
+                                '<hierarchy><node text="Color Challenge" '
+                                'clickable="true" bounds="[0,0][100,100]" />'
+                                "</hierarchy>"
+                            ),
+                        },
+                        "action": {
+                            "type": "click",
+                            "params": {"x": 50, "y": 50},
+                        },
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        mobilegpt_teacher,
+        "_adb_foreground_package",
+        lambda: "android",
+    )
+    teacher = mobilegpt_teacher.MobileGPTTeacher(source_run_log)
+
+    assert teacher.next_action(
+        '<button id="com.google.android.documentsui:id/file" '
+        'text="task.html" index="38" />'
+    ).consumed_source_action is True
+    assert teacher.next_action(
+        '<button text="Just once" index="9" />'
+    ).consumed_source_action is True
+    setup = teacher.next_action(
+        '<button id="com.android.chrome:id/terms_accept" '
+        'text="Accept &amp; continue" index="18" />'
+    )
+    assert setup.source_action_type == "target_preflight"
+    assert setup.consumed_source_action is False
+
+    reopen_file = teacher.next_action(
+        '<button id="com.google.android.documentsui:id/file" '
+        'text="task.html" index="38" />'
+    )
+    assert reopen_file.action == {"name": "click", "parameters": {"index": "38"}}
+    assert reopen_file.source_action_type == "target_preflight_reentry"
+    assert reopen_file.consumed_source_action is False
+    assert teacher.cursor == 2
+
+    choose_browser = teacher.next_action(
+        '<button text="Just once" index="9" />'
+    )
+    assert choose_browser.action == {"name": "click", "parameters": {"index": "9"}}
+    assert choose_browser.source_action_type == "target_preflight_reentry"
+    assert choose_browser.consumed_source_action is False
+    assert teacher.cursor == 2
+
+    resumed = teacher.next_action(
+        '<button id="com.android.chrome:id/challenge" '
+        'text="Color Challenge" index="13" />'
+    )
+    assert resumed.action == {"name": "click", "parameters": {"index": "13"}}
+    assert resumed.consumed_source_action is True
+    assert teacher.cursor == 3
