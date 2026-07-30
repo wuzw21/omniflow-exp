@@ -450,17 +450,16 @@ class MobileGPTTeacher:
         *,
         current_app_package: str,
     ) -> TeacherActionResult | None:
+        semantic_matches: list[TeacherActionResult] = []
         for record in reversed(self._actions[: self._cursor]):
             action = dict(record["action"])
             if str(action.get("type") or "").strip() != "click":
-                continue
-            if _source_action_package(action) != current_app_package:
                 continue
             try:
                 migrated = migrate_source_action_to_mobilegpt(action, screen)
             except Exception:
                 continue
-            return TeacherActionResult(
+            result = TeacherActionResult(
                 action=migrated["action"],
                 source_action_type="target_preflight_reentry",
                 source_step_index=int(record["source_step_index"]),
@@ -470,7 +469,11 @@ class MobileGPTTeacher:
                 match_reason=str(migrated["match_reason"]),
                 consumed_source_action=False,
             )
-        return None
+            if _source_action_package(action) == current_app_package:
+                return result
+            if result.match_score >= 10.0:
+                semantic_matches.append(result)
+        return semantic_matches[0] if len(semantic_matches) == 1 else None
 
     def next_action(self, screen: str) -> TeacherActionResult:
         if self.exhausted:

@@ -216,7 +216,7 @@ def test_teacher_reenters_external_intent_after_target_setup(
     monkeypatch.setattr(
         mobilegpt_teacher,
         "_adb_foreground_package",
-        lambda: "android",
+        lambda: "com.android.providers.downloads.documents",
     )
     teacher = mobilegpt_teacher.MobileGPTTeacher(source_run_log)
 
@@ -258,3 +258,39 @@ def test_teacher_reenters_external_intent_after_target_setup(
     assert resumed.action == {"name": "click", "parameters": {"index": "13"}}
     assert resumed.consumed_source_action is True
     assert teacher.cursor == 3
+
+
+def test_teacher_reentry_rejects_ambiguous_cross_package_matches(tmp_path) -> None:
+    source_run_log = tmp_path / "source.run_log.json"
+    source_run_log.write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {
+                        "observation": {
+                            "package_name": package_name,
+                            "xml": (
+                                '<hierarchy><node text="Just once" clickable="true" '
+                                'bounds="[0,0][100,100]" /></hierarchy>'
+                            ),
+                        },
+                        "action": {
+                            "type": "click",
+                            "params": {"x": 50, "y": 50},
+                        },
+                    }
+                    for package_name in ("android", "com.example.resolver")
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    teacher = mobilegpt_teacher.MobileGPTTeacher(source_run_log)
+    teacher._cursor = 2
+
+    result = teacher._target_preflight_reentry(
+        '<button text="Just once" index="9" />',
+        current_app_package="com.android.providers.downloads.documents",
+    )
+
+    assert result is None
