@@ -2764,6 +2764,25 @@ def _patch_mobilegpt_client_runtime(
         "mClient.sendAppList(info.packageNames)",
         "mClient.sendAppList(launchablePackages)",
     )
+    bootstrap_connection = """        if (mClient == null) {
+            mExecutorService.execute(this::initNetworkConnection);
+            mExecutorService.execute(()->mClient.sendAppList(launchablePackages));
+            mExecutorService.execute(()->mClient.disconnect());
+        }
+"""
+    if bootstrap_connection not in patched_service:
+        patched_service, bootstrap_replacements = re.subn(
+            r"(?m)^        mExecutorService\.execute\(this::initNetworkConnection\);\n"
+            r"        mExecutorService\.execute\(\(\)->mClient\.sendAppList\(launchablePackages\)\);\n"
+            r"        mExecutorService\.execute\(\(\)->mClient\.disconnect\(\)\);\n",
+            bootstrap_connection,
+            patched_service,
+            count=1,
+        )
+        if bootstrap_replacements != 1:
+            raise ValueError(
+                f"Unable to guard MobileGPT app-list connection: {service_java}"
+            )
     if 'action.equals("back") || action.equals("go-back")' not in patched_service:
         def _back_branch(match: re.Match[str]) -> str:
             indent = str(match.group("indent") or "")
@@ -2824,6 +2843,7 @@ def _patch_mobilegpt_client_runtime(
         "String[] launchablePackages = getAppList();",
         "info.packageNames = null;",
         "mClient.sendAppList(launchablePackages)",
+        bootstrap_connection.strip(),
         "getRootInActiveWindow()",
         '"com.example.MobileGPT".equals',
         'action.equals("back") || action.equals("go-back")',
@@ -2925,6 +2945,11 @@ def _validate_mobilegpt_client_source(
         "String[] launchablePackages = getAppList();",
         "info.packageNames = null;",
         "mClient.sendAppList(launchablePackages)",
+        "if (mClient == null) {\n"
+        "            mExecutorService.execute(this::initNetworkConnection);\n"
+        "            mExecutorService.execute(()->mClient.sendAppList(launchablePackages));\n"
+        "            mExecutorService.execute(()->mClient.disconnect());\n"
+        "        }",
         "getRootInActiveWindow()",
         '"com.example.MobileGPT".equals',
         'action.equals("back") || action.equals("go-back")',

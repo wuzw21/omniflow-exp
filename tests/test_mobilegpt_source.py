@@ -38,7 +38,9 @@ public class MobileGPTAccessibilityService {
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
         info.packageNames = getAppList();
         setServiceInfo(info);
+        mExecutorService.execute(this::initNetworkConnection);
         mExecutorService.execute(()->mClient.sendAppList(info.packageNames));
+        mExecutorService.execute(()->mClient.disconnect());
     }
 
     public void handleResponse(String action) {
@@ -86,6 +88,10 @@ public class MobileGPTAccessibilityService {
     assert "String[] launchablePackages = getAppList();" in service_text
     assert "info.packageNames = null;" in service_text
     assert "mClient.sendAppList(launchablePackages)" in service_text
+    assert "if (mClient == null)" in service_text
+    assert service_text.index("if (mClient == null)") < service_text.index(
+        "mExecutorService.execute(this::initNetworkConnection);"
+    )
     assert "getRootInActiveWindow()" in service_text
     assert '"com.example.MobileGPT".equals' in service_text
     assert '"back", "go-back"' in global_java.read_text(encoding="utf-8")
@@ -114,7 +120,9 @@ public class MobileGPTAccessibilityService {
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
         info.packageNames = getAppList();
         setServiceInfo(info);
+        mExecutorService.execute(this::initNetworkConnection);
         mExecutorService.execute(()->mClient.sendAppList(info.packageNames));
+        mExecutorService.execute(()->mClient.disconnect());
     }
 
     public void handleResponse(String action) {
