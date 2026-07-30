@@ -5,8 +5,67 @@ from types import SimpleNamespace
 import pytest
 
 from src.integrations.android_world.setup_compat import (
+    patch_androidworld_setup_click_retry,
     patch_androidworld_setup_fail_closed,
 )
+
+
+def _setup_element(text: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        package_name="com.android.chrome",
+        text=text,
+        content_description="",
+    )
+
+
+def test_androidworld_setup_clicks_visible_alias_before_legacy_label() -> None:
+    click_calls: list[str] = []
+
+    class Controller:
+        def __init__(self) -> None:
+            self._env = SimpleNamespace(
+                get_ui_elements=lambda: [_setup_element("Use without an account")]
+            )
+
+        def click_element(self, element_text: str) -> None:
+            click_calls.append(element_text)
+            if element_text != "Use without an account":
+                raise ValueError(f'Target text "{element_text}" not found.')
+
+    tools_module = SimpleNamespace(AndroidToolController=Controller)
+    patch_androidworld_setup_click_retry(
+        tools_module,
+        attempts=1,
+        delay_seconds=0,
+    )
+
+    Controller().click_element("Accept & continue")
+
+    assert click_calls == ["Use without an account"]
+
+
+def test_androidworld_setup_skips_click_when_chrome_is_complete() -> None:
+    click_calls: list[str] = []
+
+    class Controller:
+        def __init__(self) -> None:
+            self._env = SimpleNamespace(
+                get_ui_elements=lambda: [_setup_element("Search or type web address")]
+            )
+
+        def click_element(self, element_text: str) -> None:
+            click_calls.append(element_text)
+            raise ValueError(f'Target text "{element_text}" not found.')
+
+    tools_module = SimpleNamespace(AndroidToolController=Controller)
+    patch_androidworld_setup_click_retry(
+        tools_module,
+        attempts=1,
+        delay_seconds=0,
+    )
+
+    assert Controller().click_element("No thanks") is None
+    assert click_calls == []
 
 
 def test_androidworld_setup_retries_before_saving_snapshot() -> None:

@@ -39,8 +39,10 @@ def _visible_setup_strings(controller: Any) -> set[str]:
     }
 
 
-def _setup_click_is_already_complete(controller: Any, target_text: str) -> bool:
-    visible = _visible_setup_strings(controller)
+def _setup_click_is_already_complete(
+    visible: set[str],
+    target_text: str,
+) -> bool:
     if "Search or type web address" in visible:
         return target_text in {"Accept & continue", "No thanks"}
     if target_text == "Accept & continue":
@@ -122,7 +124,15 @@ def patch_androidworld_setup_click_retry(
         last_error: ValueError | None = None
         for attempt in range(1, max(1, int(attempts)) + 1):
             labels = (target_text, *_EQUIVALENT_SETUP_LABELS.get(target_text, ()))
-            for label in labels:
+            visible = _visible_setup_strings(controller)
+            if _setup_click_is_already_complete(visible, target_text):
+                return None
+            visible_casefold = {value.casefold() for value in visible}
+            for label in (
+                candidate
+                for candidate in labels
+                if candidate.casefold() in visible_casefold
+            ):
                 try:
                     return click_label(controller, label, args, kwargs)
                 except ValueError as error:
@@ -133,8 +143,6 @@ def patch_androidworld_setup_click_retry(
                     ):
                         raise
                     last_error = error
-            if _setup_click_is_already_complete(controller, target_text):
-                return None
             if attempt < max(1, int(attempts)):
                 time.sleep(max(0.0, float(delay_seconds)))
 
