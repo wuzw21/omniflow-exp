@@ -20,7 +20,6 @@ import xml.etree.ElementTree as ET
 from PIL import Image
 
 from src.integrations.android_world.accessibility import androidworld_forest_xml
-from src.integrations.android_world.apps import resolve_androidworld_app_name
 from src.integrations.android_world.host import (
     androidworld_elements_xml,
     make_agent_result,
@@ -32,7 +31,6 @@ APPAGENT_SOURCE_SEED = 111
 APPAGENT_TEACHER_SOURCE_SCHEMA = "omniflow.appagent-teacher-source.v1"
 APPAGENT_DEMO_MEMORY_SCHEMA = "omniflow.appagent-demo-memory.v1"
 APPAGENT_DEMO_MANIFEST = "appagent_demo_manifest.json"
-APPAGENT_TEACHER_OBSERVATION_ATTEMPTS = 3
 APPAGENT_SUPPORTED_SOURCE_TYPES = {
     "click",
     "input_text",
@@ -71,37 +69,33 @@ _SOURCE_COORDINATE_FIELDS = {
 }
 
 
-def _has_foreground_activity(env: Any) -> bool:
-    if "foreground_activity_name" in getattr(env, "__dict__", {}):
-        return True
-    return any(
-        "foreground_activity_name" in parent.__dict__
-        for parent in type(env).__mro__
-    )
-
-
-def _foreground_package(env: Any) -> str:
-    try:
-        activity = str(getattr(env, "foreground_activity_name", "") or "").strip()
-    except Exception:  # noqa: BLE001
-        return ""
-    return activity.split("/", 1)[0].strip()
-
-
-def _xml_matches_foreground_package(xml_text: str, env: Any) -> bool:
-    foreground_package = _foreground_package(env)
-    if not foreground_package:
-        return True
-    try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError:
-        return False
-    observed_packages = {
-        str(element.attrib.get("package") or "").strip()
-        for element in root.iter()
-        if str(element.attrib.get("package") or "").strip()
-    }
-    return not observed_packages or foreground_package in observed_packages
+def _native_appagent_observation(env: Any) -> tuple[str, Any]:
+    state = env.get_state()
+    pixels = getattr(state, "pixels", None)
+    if pixels is None:
+        raise ValueError("appagent_androidworld_screenshot_missing")
+    xml_text = str(getattr(state, "xml", "") or "").strip()
+    if not xml_text and getattr(state, "forest", None) is not None:
+        if isinstance(pixels, Image.Image):
+            screen_size = pixels.size
+        else:
+            shape = tuple(getattr(pixels, "shape", ()) or ())
+            screen_size = (
+                (int(shape[1]), int(shape[0]))
+                if len(shape) >= 2
+                else (1, 1)
+            )
+        xml_text = androidworld_forest_xml(
+            state.forest,
+            screen_size=screen_size,
+        )
+    if not xml_text:
+        xml_text = androidworld_elements_xml(
+            list(getattr(state, "ui_elements", ()) or ())
+        )
+    if not xml_text:
+        raise ValueError("appagent_androidworld_xml_missing")
+    return xml_text, pixels
 
 
 @dataclass(frozen=True)
@@ -224,7 +218,6 @@ class AppAgentAndroidWorldAgent:
         llm: Any,
         output_root: str | Path,
         docs_root: str | Path | None = None,
-        launch_app_on_start: bool = True,
         action_factory: Any | None = None,
     ) -> None:
         self.env = env
@@ -241,7 +234,6 @@ class AppAgentAndroidWorldAgent:
         )
         if self.docs_root is not None and not self.docs_root.is_dir():
             raise FileNotFoundError(f"appagent_docs_missing:{self.docs_root}")
-        self.launch_app_on_start = bool(launch_app_on_start)
         self._action_factory = action_factory
         self.name = "appagent"
         self._omniflow_llm_usage_tracker = llm
@@ -255,7 +247,6 @@ class AppAgentAndroidWorldAgent:
         self.grid_on = False
         self.grid_rows = 0
         self.grid_columns = 0
-        self._app_started = False
         self._max_steps = 20
         self._log_path = self.output_root / "appagent_task_log.jsonl"
 
@@ -272,7 +263,6 @@ class AppAgentAndroidWorldAgent:
         self.grid_on = False
         self.grid_rows = 0
         self.grid_columns = 0
-        self._app_started = False
 
     def update_current_task_context(self, task: Any) -> dict[str, Any]:
         app_names = [
@@ -308,7 +298,6 @@ class AppAgentAndroidWorldAgent:
                 data=self._result_data(error="appagent_max_steps_reached"),
             )
         try:
-            self._ensure_app_started()
             self.round_count += 1
             xml_text, raw_image_path = self._capture_round(self.round_count)
             elements = appagent_elements_from_xml(
@@ -381,42 +370,10 @@ class AppAgentAndroidWorldAgent:
             )
             return make_agent_result(done=True, data=self._result_data(error=str(exc)))
 
-    def _ensure_app_started(self) -> None:
-        if self._app_started or not self.launch_app_on_start:
-            return
-        if not self.app_name:
-            raise ValueError("appagent_single_task_app_required")
-        self.env.execute_action(
-            self._new_action(
-                action_type="open_app",
-                app_name=self.app_name,
-            )
-        )
-        self._app_started = True
-        time.sleep(float(os.environ.get("APPAGENT_APP_START_WAIT_SEC") or 1.0))
-
     def _capture_round(self, round_index: int) -> tuple[str, Path]:
-        state = self.env.get_state()
-        xml_text = str(getattr(state, "xml", "") or "").strip()
-        controller = getattr(self.env, "controller", None)
-        xml_text = xml_text or str(
-            getattr(controller, "_omniflow_last_ui_xml", "") or ""
-        ).strip()
-        if not xml_text:
-            xml_text = androidworld_elements_xml(
-                list(getattr(state, "ui_elements", ()) or ())
-            )
-        if not xml_text:
-            raise ValueError("appagent_androidworld_xml_missing")
+        xml_text, pixels = _native_appagent_observation(self.env)
         xml_path = self.output_root / f"round_{round_index:03d}.xml"
         xml_path.write_text(xml_text, encoding="utf-8")
-        pixels = getattr(state, "pixels", None)
-        if pixels is None and controller is not None:
-            screenshot = getattr(controller, "get_screenshot", None)
-            if callable(screenshot):
-                pixels = screenshot()
-        if pixels is None:
-            raise ValueError("appagent_androidworld_screenshot_missing")
         image = pixels if isinstance(pixels, Image.Image) else Image.fromarray(pixels)
         image_path = self.output_root / f"round_{round_index:03d}.png"
         image.convert("RGB").save(image_path)
@@ -573,7 +530,6 @@ class AppAgentTeacherAgent:
         teacher_source: str | Path,
         workspace_root: str | Path,
         demo_name: str,
-        launch_app_on_start: bool = True,
         action_factory: Any | None = None,
     ) -> None:
         self.env = env
@@ -581,12 +537,8 @@ class AppAgentTeacherAgent:
         self.teacher_source_path = Path(teacher_source).expanduser().resolve()
         self.teacher_source = load_appagent_teacher_source(self.teacher_source_path)
         self.actions = [dict(item) for item in self.teacher_source["actions"]]
-        self.source_app_package = str(
-            self.teacher_source.get("source_app_package") or ""
-        ).strip()
         self.workspace_root = Path(workspace_root).expanduser().resolve()
         self.demo_name = _safe_appagent_name(demo_name)
-        self.launch_app_on_start = bool(launch_app_on_start)
         self._action_factory = action_factory
         self.name = "appagent_teacher"
         self.task_name = ""
@@ -595,7 +547,6 @@ class AppAgentTeacherAgent:
         self.task_context: dict[str, Any] = {}
         self.demo_root: Path | None = None
         self.teacher_actions_consumed = 0
-        self._app_started = False
         self._stop_written = False
         self._max_steps = len(self.actions) + 1
 
@@ -607,7 +558,6 @@ class AppAgentTeacherAgent:
         if callable(reset):
             reset(go_home=go_home)
         self.teacher_actions_consumed = 0
-        self._app_started = False
         self._stop_written = False
 
     def update_current_task_context(self, task: Any) -> dict[str, Any]:
@@ -641,7 +591,6 @@ class AppAgentTeacherAgent:
     def step(self, goal: str) -> Any:
         self.goal = str(goal or self.goal or "").strip()
         try:
-            self._ensure_app_started()
             self._prepare_demo_root()
             if self.teacher_actions_consumed >= len(self.actions):
                 self._capture_demo_state(len(self.actions) + 1)
@@ -650,10 +599,8 @@ class AppAgentTeacherAgent:
                 return make_agent_result(done=True, data=self._result_data())
             record = self.actions[self.teacher_actions_consumed]
             action = dict(record.get("action") or {})
-            xml_text, elements, observation_attempts = (
-                self._capture_groundable_demo_state(
-                    self.teacher_actions_consumed + 1
-                )
+            xml_text, elements = self._capture_demo_state(
+                self.teacher_actions_consumed + 1
             )
             grounded = ground_appagent_teacher_action(
                 xml_text,
@@ -672,7 +619,6 @@ class AppAgentTeacherAgent:
                     "current_uid": grounded.uid,
                     "match_reason": grounded.match_reason,
                     "current_element_count": len(elements),
-                    "observation_attempts": observation_attempts,
                     "source_coordinates_used": False,
                 }
             )
@@ -708,88 +654,13 @@ class AppAgentTeacherAgent:
         (demo_root / "record.txt").touch()
         self.demo_root = demo_root
 
-    def _ensure_app_started(self) -> None:
-        if self._app_started or not self.launch_app_on_start:
-            return
-        if not self.app_name:
-            raise ValueError("appagent_single_task_app_required")
-        launch_app = self.source_app_package or self.app_name
-        controller = getattr(self.env, "controller", None)
-        if self.source_app_package and controller is not None:
-            launch_app = resolve_androidworld_app_name(
-                self.source_app_package,
-                controller,
-            )
-        self.env.execute_action(
-            self._new_action(action_type="open_app", app_name=launch_app)
-        )
-        wait_seconds = max(
-            0.0,
-            float(os.environ.get("APPAGENT_APP_START_WAIT_SEC") or 1.0),
-        )
-        if self.source_app_package and _has_foreground_activity(self.env):
-            deadline = time.monotonic() + wait_seconds
-            observed_package = ""
-            while True:
-                observed_package = _foreground_package(self.env)
-                if observed_package == self.source_app_package:
-                    break
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise RuntimeError(
-                        "appagent_source_app_not_ready:"
-                        f"expected={self.source_app_package}:"
-                        f"observed={observed_package or 'unknown'}"
-                    )
-                time.sleep(min(0.1, remaining))
-        elif wait_seconds > 0:
-            time.sleep(wait_seconds)
-        self._app_started = True
-
     def _capture_demo_state(
         self,
         step_index: int,
     ) -> tuple[str, list[AppAgentElement]]:
         if self.demo_root is None:
             raise RuntimeError("appagent_demo_root_not_prepared")
-        state = self.env.get_state()
-        pixels = getattr(state, "pixels", None)
-        controller = getattr(self.env, "controller", None)
-        if pixels is None and controller is not None:
-            screenshot = getattr(controller, "get_screenshot", None)
-            if callable(screenshot):
-                pixels = screenshot()
-        if pixels is None:
-            raise ValueError("appagent_androidworld_screenshot_missing")
-        xml_text = str(getattr(state, "xml", "") or "").strip()
-        cached_xml = str(
-            getattr(controller, "_omniflow_last_ui_xml", "") or ""
-        ).strip()
-        if not xml_text and cached_xml and _xml_matches_foreground_package(
-            cached_xml,
-            self.env,
-        ):
-            xml_text = cached_xml
-        if not xml_text and getattr(state, "forest", None) is not None:
-            if isinstance(pixels, Image.Image):
-                screen_size = pixels.size
-            else:
-                shape = tuple(getattr(pixels, "shape", ()) or ())
-                screen_size = (
-                    (int(shape[1]), int(shape[0]))
-                    if len(shape) >= 2
-                    else (1, 1)
-                )
-            xml_text = androidworld_forest_xml(
-                state.forest,
-                screen_size=screen_size,
-            )
-        if not xml_text:
-            xml_text = androidworld_elements_xml(
-                list(getattr(state, "ui_elements", ()) or ())
-            )
-        if not xml_text:
-            raise ValueError("appagent_androidworld_xml_missing")
+        xml_text, pixels = _native_appagent_observation(self.env)
         base_name = f"{self.demo_name}_{step_index}"
         xml_path = self.demo_root / "xml" / f"{base_name}.xml"
         xml_path.write_text(xml_text, encoding="utf-8")
@@ -808,21 +679,6 @@ class AppAgentTeacherAgent:
             record_mode=True,
         )
         return xml_text, elements
-
-    def _capture_groundable_demo_state(
-        self,
-        step_index: int,
-    ) -> tuple[str, list[AppAgentElement], int]:
-        xml_text = ""
-        elements: list[AppAgentElement] = []
-        for observation_attempt in range(
-            1,
-            APPAGENT_TEACHER_OBSERVATION_ATTEMPTS + 1,
-        ):
-            xml_text, elements = self._capture_demo_state(step_index)
-            if elements:
-                return xml_text, elements, observation_attempt
-        raise ValueError("appagent_current_screen_has_no_interactive_elements")
 
     def _execute_teacher_action(
         self,

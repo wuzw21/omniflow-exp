@@ -4271,7 +4271,6 @@ def _build_launch_agent(
     appagent_teacher_source: str = "",
     appagent_demo_name: str = "",
     appagent_output_root: str = "",
-    appagent_launch_app: bool = True,
 ) -> Any:
     """Build the launcher-facing AndroidWorld agent for one explicit selector.
 
@@ -4375,7 +4374,6 @@ def _build_launch_agent(
                 teacher_source=appagent_teacher_source,
                 workspace_root=appagent_workspace_root,
                 demo_name=appagent_demo_name,
-                launch_app_on_start=appagent_launch_app,
             )
         llm = _OpenAICompatibleMultimodalWrapper()
         return AppAgentAndroidWorldAgent(
@@ -4384,7 +4382,6 @@ def _build_launch_agent(
             llm=llm,
             output_root=appagent_output_root,
             docs_root=(appagent_docs_root or None),
-            launch_app_on_start=appagent_launch_app,
         )
     if resolved_agent.startswith("official:"):
         official_agent_name = str(
@@ -4489,7 +4486,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--appagent-docs-root", default="")
     parser.add_argument("--appagent-teacher-source", default="")
     parser.add_argument("--appagent-demo-name", default="")
-    parser.add_argument("--appagent-no-launch-app", action="store_true")
     parser.add_argument(
         "--task-params-json",
         default="",
@@ -4554,6 +4550,11 @@ def _decode_task_params(
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
+    selected_agent = str(args.agent or MODE_OMNIFLOW).strip() or MODE_OMNIFLOW
+    native_appagent = selected_agent in {
+        "external:appagent",
+        "external:appagent_teacher",
+    }
     if str(args.planner_provider or "").strip():
         os.environ["OMNIFLOW_PLANNER_PROVIDER"] = str(args.planner_provider).strip()
     if str(args.model or "").strip():
@@ -4662,7 +4663,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if "android_world.utils.app_snapshot" not in str(exc):
                 raise
             app_snapshot = None
-        if app_snapshot is not None and adb_utils is not None:
+        if app_snapshot is not None and adb_utils is not None and not native_appagent:
             original_restore_snapshot = getattr(app_snapshot, "restore_snapshot", None)
             if callable(original_restore_snapshot):
 
@@ -4713,7 +4714,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         original_get_controller = getattr(
             android_world_controller, "get_controller", None
         )
-        if callable(original_get_controller):
+        if callable(original_get_controller) and not native_appagent:
 
             def _get_controller_without_reinstall(
                 console_port: int = 5554,
@@ -4910,22 +4911,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             os.environ.get("ANDROID_SERIAL") or f"emulator-{int(args.console_port)}"
         ).strip()
         _patch_androidworld_ui_debug_settings(android_world_controller)
-        _patch_androidworld_controller_ui_dump_fallback(
-            android_world_controller,
-            adb_serial=target_adb_serial,
-            adb_path=str(args.adb_path or ""),
-        )
+        if not native_appagent:
+            _patch_androidworld_controller_ui_dump_fallback(
+                android_world_controller,
+                adb_serial=target_adb_serial,
+                adb_path=str(args.adb_path or ""),
+            )
         env = env_launcher.load_and_setup_env(
             console_port=int(args.console_port),
             emulator_setup=False,
             adb_path=str(args.adb_path or ""),
             grpc_port=int(args.console_port) + 3000,
         )
-        _patch_androidworld_env_get_state_fallback(
-            env,
-            adb_serial=target_adb_serial,
-            adb_path=str(args.adb_path or ""),
-        )
+        if not native_appagent:
+            _patch_androidworld_env_get_state_fallback(
+                env,
+                adb_serial=target_adb_serial,
+                adb_path=str(args.adb_path or ""),
+            )
         if _use_oob_observe_backend():
             oob_prepare = _prepare_oob_device_host_for_replay(
                 adb_serial=target_adb_serial,
@@ -4942,7 +4945,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ", ".join(selected_task_names) or "<all>",
             )
             aw_setup.setup_apps(env, app_list=setup_app_list)
-        if not _use_oob_observe_backend():
+        if not _use_oob_observe_backend() and not native_appagent:
             a11y_runtime = _prepare_native_androidworld_a11y_runtime(
                 env,
                 adb_serial=target_adb_serial,
@@ -5005,7 +5008,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             appagent_teacher_source=str(args.appagent_teacher_source or ""),
             appagent_demo_name=str(args.appagent_demo_name or ""),
             appagent_output_root=str(run_output_dir / "appagent_runtime"),
-            appagent_launch_app=not bool(args.appagent_no_launch_app),
         )
 
         checkpoint_dir = (
@@ -5030,7 +5032,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 pass
         original_run_task = getattr(suite_utils, "_run_task", None)
         if callable(original_run_task):
-            selected_agent = str(args.agent or MODE_OMNIFLOW).strip() or MODE_OMNIFLOW
             official_goal_hint_text = ""
             official_goal_hint_meta: dict[str, Any] | None = None
             if selected_agent.startswith("official:"):
@@ -5073,7 +5074,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 try:
                     set_current_task = getattr(agent, "set_current_task", None)
                     if callable(set_current_task):
-                        set_current_task(task_name, goal_text)
+                        if native_appagent:
+                            update_task_context = getattr(
+                                agent,
+                                "update_current_task_context",
+                                None,
+                            )
+                            if callable(update_task_context):
+                                task_context = dict(update_task_context(task) or {})
+                            set_current_task(task_name, goal_text, task_context)
+                        else:
+                            set_current_task(task_name, goal_text)
                     def _update_context_after_initialize(initialized_task):
                         update_task_context = getattr(
                             agent,
@@ -5104,22 +5115,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 exc,
                             )
 
-                    task_adb_serial = str(
-                        os.environ.get("ANDROID_SERIAL")
-                        or f"emulator-{int(args.console_port)}"
-                    ).strip()
-                    _wrap_task_initialize_for_observation_runtime(
-                        task,
-                        agent=agent,
-                        adb_serial=task_adb_serial,
-                        adb_path=str(args.adb_path or ""),
-                        oob_url=str(
-                            os.environ.get("OMNIFLOW_OOB_DEVICE_URL") or ""
-                        ).strip().rstrip("/"),
-                        console_port=int(args.console_port),
-                        restore_app_snapshot=original_restore_snapshot,
-                        after_initialized=_update_context_after_initialize,
-                    )
+                    if not native_appagent:
+                        task_adb_serial = str(
+                            os.environ.get("ANDROID_SERIAL")
+                            or f"emulator-{int(args.console_port)}"
+                        ).strip()
+                        _wrap_task_initialize_for_observation_runtime(
+                            task,
+                            agent=agent,
+                            adb_serial=task_adb_serial,
+                            adb_path=str(args.adb_path or ""),
+                            oob_url=str(
+                                os.environ.get("OMNIFLOW_OOB_DEVICE_URL") or ""
+                            ).strip().rstrip("/"),
+                            console_port=int(args.console_port),
+                            restore_app_snapshot=original_restore_snapshot,
+                            after_initialized=_update_context_after_initialize,
+                        )
                     reference_text = official_goal_hint_text
                     if reference_text:
                         hinted_goal = f"{goal_text}\n\n{reference_text}"

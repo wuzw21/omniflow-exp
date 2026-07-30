@@ -3,8 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -12,7 +11,6 @@ import pytest
 from src.experiment import androidworld as pipeline
 from src.experiment import appagent_source
 from src.integrations import appagent_adapter
-from src.integrations.android_world.apps import resolve_androidworld_app_name
 
 
 def _write_appagent_teacher_source(
@@ -120,38 +118,6 @@ def _forest_node(
 
 def _copy_labeled_screenshot(source, destination, *_args, **_kwargs) -> None:
     Path(destination).write_bytes(Path(source).read_bytes())
-
-
-def test_resolve_androidworld_app_name_uses_installed_official_alias(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    controller = object()
-    adb_utils = SimpleNamespace(
-        get_all_apps=lambda actual_controller: (
-            ["chrome", "files"] if actual_controller is controller else []
-        ),
-        get_adb_activity=lambda app_name: {
-            "chrome": "com.android.chrome/com.google.android.apps.chrome.Main",
-            "files": (
-                "com.google.android.documentsui/"
-                "com.android.documentsui.files.FilesActivity"
-            ),
-        }.get(app_name),
-    )
-    android_world = ModuleType("android_world")
-    android_world_env = ModuleType("android_world.env")
-    android_world_env.adb_utils = adb_utils
-    android_world.env = android_world_env
-    monkeypatch.setitem(sys.modules, "android_world", android_world)
-    monkeypatch.setitem(sys.modules, "android_world.env", android_world_env)
-
-    assert (
-        resolve_androidworld_app_name(
-            "com.google.android.documentsui",
-            controller,
-        )
-        == "files"
-    )
 
 
 def _write_source_index(root: Path) -> Path:
@@ -503,172 +469,9 @@ def test_appagent_teacher_input_replaces_existing_field_text(
     }
 
 
-def test_appagent_teacher_launches_source_app_package(tmp_path: Path) -> None:
-    launched: list[dict] = []
-    agent = _browser_draw_teacher_agent(
-        tmp_path,
-        env=SimpleNamespace(execute_action=launched.append),
-    )
-    agent._ensure_app_started()
-
-    assert agent.app_name == "chrome"
-    assert launched == [
-        {
-            "action_type": "open_app",
-            "app_name": "com.google.android.documentsui",
-        }
-    ]
-
-
-def test_appagent_teacher_resolves_source_package_to_androidworld_app_name(
+def test_appagent_teacher_uses_native_androidworld_observation(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("APPAGENT_APP_START_WAIT_SEC", "0")
-    controller = object()
-    monkeypatch.setattr(
-        appagent_adapter,
-        "resolve_androidworld_app_name",
-        lambda package_name, actual_controller: (
-            "files"
-            if package_name == "com.google.android.documentsui"
-            and actual_controller is controller
-            else package_name
-        ),
-    )
-    launched: list[dict] = []
-    agent = _browser_draw_teacher_agent(
-        tmp_path,
-        env=SimpleNamespace(
-            controller=controller,
-            execute_action=launched.append,
-            foreground_activity_name=(
-                "com.google.android.documentsui/"
-                "com.android.documentsui.files.FilesActivity"
-            ),
-        ),
-    )
-
-    agent._ensure_app_started()
-
-    assert launched == [{"action_type": "open_app", "app_name": "files"}]
-
-
-def test_appagent_teacher_rejects_wrong_foreground_package_after_launch(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("APPAGENT_APP_START_WAIT_SEC", "0")
-    monkeypatch.setattr(
-        appagent_adapter,
-        "resolve_androidworld_app_name",
-        lambda package_name, _controller: "files",
-    )
-    agent = _browser_draw_teacher_agent(
-        tmp_path,
-        SimpleNamespace(
-            controller=object(),
-            execute_action=lambda _action: None,
-            foreground_activity_name="com.android.chrome/.Main",
-        ),
-    )
-
-    with pytest.raises(
-        RuntimeError,
-        match=(
-            "appagent_source_app_not_ready:"
-            "expected=com.google.android.documentsui:observed=com.android.chrome"
-        ),
-    ):
-        agent._ensure_app_started()
-
-
-def test_appagent_teacher_retries_partial_a11y_tree_after_launch(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("APPAGENT_APP_START_WAIT_SEC", "0")
-    teacher_source = _write_appagent_teacher_source(
-        tmp_path,
-        task_name="BrowserDraw",
-        source_app_package="com.google.android.documentsui",
-        action={
-            "type": "click",
-            "params": {
-                "target_description": "6.50 kB",
-                "source_context": {"element": {"text": "6.50 kB"}},
-            },
-        },
-    )
-    partial_xml = (
-        '<hierarchy class="android.widget.FrameLayout" '
-        'bounds="[0,0][220,100]"><node package="com.android.systemui" '
-        'class="android.widget.TextView" text="11:22" '
-        'clickable="false" bounds="[0,0][100,20]" /></hierarchy>'
-    )
-    ready_xml = (
-        '<hierarchy class="android.widget.FrameLayout" '
-        'bounds="[0,0][220,100]"><node '
-        'package="com.google.android.documentsui" '
-        'class="android.widget.TextView" text="6.50 kB" '
-        'clickable="true" bounds="[10,20][110,80]" /></hierarchy>'
-    )
-    state_xml = iter((partial_xml, ready_xml))
-    actions: list[dict] = []
-    env = SimpleNamespace(
-        execute_action=actions.append,
-        get_state=lambda: SimpleNamespace(
-            xml=next(state_xml),
-            pixels=np.zeros((100, 220, 3), dtype=np.uint8),
-        ),
-    )
-
-    def draw_elements(source, destination, *_args, **_kwargs):
-        Path(destination).write_bytes(Path(source).read_bytes())
-
-    agent = appagent_adapter.AppAgentTeacherAgent(
-        env=env,
-        official_runtime=SimpleNamespace(
-            min_dist=0.0,
-            request_interval=0.0,
-            draw_elements=draw_elements,
-        ),
-        teacher_source=teacher_source,
-        workspace_root=tmp_path / "workspace",
-        demo_name="browser_draw",
-        action_factory=lambda **kwargs: kwargs,
-    )
-    agent.set_current_task(
-        "BrowserDraw",
-        "Open task.html and draw.",
-        {"app_names": ["chrome"]},
-    )
-
-    result = agent.step("Open task.html and draw.")
-
-    assert result.done is False
-    assert result.data["teacher_actions_consumed"] == 1
-    assert actions == [
-        {
-            "action_type": "open_app",
-            "app_name": "com.google.android.documentsui",
-        },
-        {"action_type": "click", "x": 60, "y": 50},
-    ]
-    trace = json.loads(
-        (
-            tmp_path
-            / "workspace/apps/chrome/demos/browser_draw/teacher_trace.jsonl"
-        ).read_text(encoding="utf-8")
-    )
-    assert trace["observation_attempts"] == 2
-
-
-def test_appagent_teacher_preserves_native_accessibility_hierarchy(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("APPAGENT_APP_START_WAIT_SEC", "0")
     teacher_source = _write_appagent_teacher_source(
         tmp_path,
         task_name="BrowserDraw",
@@ -757,56 +560,4 @@ def test_appagent_teacher_preserves_native_accessibility_hierarchy(
     result = agent.step("Open task.html and draw.")
 
     assert result.done is False
-    assert actions[-1] == {"action_type": "click", "x": 120, "y": 55}
-
-
-def test_appagent_teacher_rejects_stale_cached_xml_from_another_app(
-    tmp_path: Path,
-) -> None:
-    stale_xml = (
-        '<hierarchy><node package="com.android.chrome" '
-        'class="android.widget.TextView" text="New tab" clickable="true" '
-        'bounds="[0,0][220,100]" /></hierarchy>'
-    )
-    forest = SimpleNamespace(
-        windows=[
-            SimpleNamespace(
-                id=1,
-                title="Downloads",
-                tree=SimpleNamespace(
-                    nodes=[
-                        _forest_node(1, (0, 0, 220, 100), child_ids=(2,)),
-                        _forest_node(
-                            2,
-                            (10, 20, 110, 80),
-                            text="6.50 kB",
-                            clickable=True,
-                        ),
-                    ]
-                ),
-            )
-        ]
-    )
-    env = SimpleNamespace(
-        controller=SimpleNamespace(_omniflow_last_ui_xml=stale_xml),
-        foreground_activity_name=(
-            "com.google.android.documentsui/"
-            "com.android.documentsui.files.FilesActivity"
-        ),
-        get_state=lambda: SimpleNamespace(
-            pixels=np.zeros((100, 220, 3), dtype=np.uint8),
-            forest=forest,
-            ui_elements=(),
-        ),
-    )
-    agent = _browser_draw_teacher_agent(tmp_path, env)
-    agent.official_runtime = SimpleNamespace(
-        min_dist=0.0,
-        draw_elements=_copy_labeled_screenshot,
-    )
-
-    saved_xml, elements = agent._capture_demo_state(1)
-
-    assert len(elements) == 1
-    assert "com.google.android.documentsui" in saved_xml
-    assert "com.android.chrome" not in saved_xml
+    assert actions == [{"action_type": "click", "x": 120, "y": 55}]
