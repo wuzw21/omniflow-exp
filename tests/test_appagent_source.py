@@ -13,6 +13,53 @@ from src.experiment import appagent_source
 from src.integrations import appagent_adapter
 
 
+def _write_appagent_teacher_source(
+    root: Path,
+    *,
+    task_name: str,
+    source_app_package: str,
+    action: dict,
+) -> Path:
+    source_run_log = root / "source.run_log.json"
+    source_run_log.write_text("{}", encoding="utf-8")
+    teacher_source = root / "teacher_source.json"
+    teacher_source.write_text(
+        json.dumps(
+            {
+                "schema_version": appagent_adapter.APPAGENT_TEACHER_SOURCE_SCHEMA,
+                "task_name": task_name,
+                "source_seed": 111,
+                "source_run_id": "source",
+                "source_run_log": str(source_run_log),
+                "source_run_log_sha256": hashlib.sha256(
+                    source_run_log.read_bytes()
+                ).hexdigest(),
+                "official_appagent_revision": (
+                    appagent_adapter.APPAGENT_OFFICIAL_REVISION
+                ),
+                "source_app_package": source_app_package,
+                "actions": [
+                    {
+                        "source_step_index": 1,
+                        "source_action_index": 0,
+                        "action": action,
+                    }
+                ],
+                "action_count": 1,
+                "consumer": "appagent_official_human_demonstration",
+                "adapter_scope": "human_demo_primitive_grounding_only",
+                "uses_omniflow_function": False,
+                "writes_appagent_docs": False,
+                "requires_native_source_episode": True,
+                "target_inputs_read": False,
+                "coordinate_replay": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return teacher_source
+
+
 def _write_source_index(root: Path) -> Path:
     root.mkdir(parents=True)
     source_run_log = root / "source.run_log.json"
@@ -295,56 +342,24 @@ def test_appagent_source_failure_marker_forbids_retry(tmp_path: Path) -> None:
 def test_appagent_teacher_input_replaces_existing_field_text(
     tmp_path: Path,
 ) -> None:
-    source_run_log = tmp_path / "source.run_log.json"
-    source_run_log.write_text("{}", encoding="utf-8")
-    teacher_source = tmp_path / "teacher_source.json"
-    teacher_source.write_text(
-        json.dumps(
-            {
-                "schema_version": appagent_adapter.APPAGENT_TEACHER_SOURCE_SCHEMA,
-                "task_name": "AudioRecorderRecordAudioWithFileName",
-                "source_seed": 111,
-                "source_run_id": "source",
-                "source_run_log": str(source_run_log),
-                "source_run_log_sha256": hashlib.sha256(
-                    source_run_log.read_bytes()
-                ).hexdigest(),
-                "official_appagent_revision": (
-                    appagent_adapter.APPAGENT_OFFICIAL_REVISION
-                ),
-                "source_app_package": "com.dimowner.audiorecorder",
-                "actions": [
-                    {
-                        "source_step_index": 1,
-                        "source_action_index": 0,
-                        "action": {
-                            "type": "input_text",
-                            "params": {
-                                "text": "G367_conference.m4a",
-                                "source_context": {
-                                    "element": {
-                                        "resource_id": (
-                                            "com.dimowner.audiorecorder:"
-                                            "id/input_name"
-                                        ),
-                                        "text": "Record-1",
-                                    }
-                                },
-                            },
-                        },
+    teacher_source = _write_appagent_teacher_source(
+        tmp_path,
+        task_name="AudioRecorderRecordAudioWithFileName",
+        source_app_package="com.dimowner.audiorecorder",
+        action={
+            "type": "input_text",
+            "params": {
+                "text": "G367_conference.m4a",
+                "source_context": {
+                    "element": {
+                        "resource_id": (
+                            "com.dimowner.audiorecorder:id/input_name"
+                        ),
+                        "text": "Record-1",
                     }
-                ],
-                "action_count": 1,
-                "consumer": "appagent_official_human_demonstration",
-                "adapter_scope": "human_demo_primitive_grounding_only",
-                "uses_omniflow_function": False,
-                "writes_appagent_docs": False,
-                "requires_native_source_episode": True,
-                "target_inputs_read": False,
-                "coordinate_replay": False,
-            }
-        ),
-        encoding="utf-8",
+                },
+            },
+        },
     )
     actions: list[dict] = []
     xml = (
@@ -395,50 +410,17 @@ def test_appagent_teacher_input_replaces_existing_field_text(
 
 
 def test_appagent_teacher_launches_source_app_package(tmp_path: Path) -> None:
-    source_run_log = tmp_path / "source.run_log.json"
-    source_run_log.write_text("{}", encoding="utf-8")
-    teacher_source = tmp_path / "teacher_source.json"
-    teacher_source.write_text(
-        json.dumps(
-            {
-                "schema_version": appagent_adapter.APPAGENT_TEACHER_SOURCE_SCHEMA,
-                "task_name": "BrowserDraw",
-                "source_seed": 111,
-                "source_run_id": "source",
-                "source_run_log": str(source_run_log),
-                "source_run_log_sha256": hashlib.sha256(
-                    source_run_log.read_bytes()
-                ).hexdigest(),
-                "official_appagent_revision": (
-                    appagent_adapter.APPAGENT_OFFICIAL_REVISION
-                ),
-                "source_app_package": "com.google.android.documentsui",
-                "actions": [
-                    {
-                        "source_step_index": 1,
-                        "source_action_index": 0,
-                        "action": {
-                            "type": "click",
-                            "params": {
-                                "target_description": "6.50 kB",
-                                "source_context": {
-                                    "element": {"text": "6.50 kB"}
-                                },
-                            },
-                        },
-                    }
-                ],
-                "action_count": 1,
-                "consumer": "appagent_official_human_demonstration",
-                "adapter_scope": "human_demo_primitive_grounding_only",
-                "uses_omniflow_function": False,
-                "writes_appagent_docs": False,
-                "requires_native_source_episode": True,
-                "target_inputs_read": False,
-                "coordinate_replay": False,
-            }
-        ),
-        encoding="utf-8",
+    teacher_source = _write_appagent_teacher_source(
+        tmp_path,
+        task_name="BrowserDraw",
+        source_app_package="com.google.android.documentsui",
+        action={
+            "type": "click",
+            "params": {
+                "target_description": "6.50 kB",
+                "source_context": {"element": {"text": "6.50 kB"}},
+            },
+        },
     )
     launched: list[dict] = []
     agent = appagent_adapter.AppAgentTeacherAgent(
@@ -464,3 +446,84 @@ def test_appagent_teacher_launches_source_app_package(tmp_path: Path) -> None:
             "app_name": "com.google.android.documentsui",
         }
     ]
+
+
+def test_appagent_teacher_retries_partial_a11y_tree_after_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APPAGENT_APP_START_WAIT_SEC", "0")
+    teacher_source = _write_appagent_teacher_source(
+        tmp_path,
+        task_name="BrowserDraw",
+        source_app_package="com.google.android.documentsui",
+        action={
+            "type": "click",
+            "params": {
+                "target_description": "6.50 kB",
+                "source_context": {"element": {"text": "6.50 kB"}},
+            },
+        },
+    )
+    partial_xml = (
+        '<hierarchy class="android.widget.FrameLayout" '
+        'bounds="[0,0][220,100]"><node package="com.android.systemui" '
+        'class="android.widget.TextView" text="11:22" '
+        'clickable="false" bounds="[0,0][100,20]" /></hierarchy>'
+    )
+    ready_xml = (
+        '<hierarchy class="android.widget.FrameLayout" '
+        'bounds="[0,0][220,100]"><node '
+        'package="com.google.android.documentsui" '
+        'class="android.widget.TextView" text="6.50 kB" '
+        'clickable="true" bounds="[10,20][110,80]" /></hierarchy>'
+    )
+    state_xml = iter((partial_xml, ready_xml))
+    actions: list[dict] = []
+    env = SimpleNamespace(
+        execute_action=actions.append,
+        get_state=lambda: SimpleNamespace(
+            xml=next(state_xml),
+            pixels=np.zeros((100, 220, 3), dtype=np.uint8),
+        ),
+    )
+
+    def draw_elements(source, destination, *_args, **_kwargs):
+        Path(destination).write_bytes(Path(source).read_bytes())
+
+    agent = appagent_adapter.AppAgentTeacherAgent(
+        env=env,
+        official_runtime=SimpleNamespace(
+            min_dist=0.0,
+            request_interval=0.0,
+            draw_elements=draw_elements,
+        ),
+        teacher_source=teacher_source,
+        workspace_root=tmp_path / "workspace",
+        demo_name="browser_draw",
+        action_factory=lambda **kwargs: kwargs,
+    )
+    agent.set_current_task(
+        "BrowserDraw",
+        "Open task.html and draw.",
+        {"app_names": ["chrome"]},
+    )
+
+    result = agent.step("Open task.html and draw.")
+
+    assert result.done is False
+    assert result.data["teacher_actions_consumed"] == 1
+    assert actions == [
+        {
+            "action_type": "open_app",
+            "app_name": "com.google.android.documentsui",
+        },
+        {"action_type": "click", "x": 60, "y": 50},
+    ]
+    trace = json.loads(
+        (
+            tmp_path
+            / "workspace/apps/chrome/demos/browser_draw/teacher_trace.jsonl"
+        ).read_text(encoding="utf-8")
+    )
+    assert trace["observation_attempts"] == 2

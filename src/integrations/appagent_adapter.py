@@ -30,6 +30,7 @@ APPAGENT_SOURCE_SEED = 111
 APPAGENT_TEACHER_SOURCE_SCHEMA = "omniflow.appagent-teacher-source.v1"
 APPAGENT_DEMO_MEMORY_SCHEMA = "omniflow.appagent-demo-memory.v1"
 APPAGENT_DEMO_MANIFEST = "appagent_demo_manifest.json"
+APPAGENT_TEACHER_OBSERVATION_ATTEMPTS = 3
 APPAGENT_SUPPORTED_SOURCE_TYPES = {
     "click",
     "input_text",
@@ -614,8 +615,10 @@ class AppAgentTeacherAgent:
                 return make_agent_result(done=True, data=self._result_data())
             record = self.actions[self.teacher_actions_consumed]
             action = dict(record.get("action") or {})
-            xml_text, elements = self._capture_demo_state(
-                self.teacher_actions_consumed + 1
+            xml_text, elements, observation_attempts = (
+                self._capture_groundable_demo_state(
+                    self.teacher_actions_consumed + 1
+                )
             )
             grounded = ground_appagent_teacher_action(
                 xml_text,
@@ -634,6 +637,7 @@ class AppAgentTeacherAgent:
                     "current_uid": grounded.uid,
                     "match_reason": grounded.match_reason,
                     "current_element_count": len(elements),
+                    "observation_attempts": observation_attempts,
                     "source_coordinates_used": False,
                 }
             )
@@ -724,6 +728,21 @@ class AppAgentTeacherAgent:
             record_mode=True,
         )
         return xml_text, elements
+
+    def _capture_groundable_demo_state(
+        self,
+        step_index: int,
+    ) -> tuple[str, list[AppAgentElement], int]:
+        xml_text = ""
+        elements: list[AppAgentElement] = []
+        for observation_attempt in range(
+            1,
+            APPAGENT_TEACHER_OBSERVATION_ATTEMPTS + 1,
+        ):
+            xml_text, elements = self._capture_demo_state(step_index)
+            if elements:
+                return xml_text, elements, observation_attempt
+        raise ValueError("appagent_current_screen_has_no_interactive_elements")
 
     def _execute_teacher_action(
         self,
