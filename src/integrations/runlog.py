@@ -114,7 +114,10 @@ def adapt_source_run_log(
     package_resolver: Callable[[str], str] | None = None,
 ) -> dict[str, Any]:
     """Normalize native evidence or validate an existing production RunLog."""
-    if value.get("schema_version") == OMNIFLOW_RUN_LOG_SCHEMA_VERSION:
+    if (
+        value.get("schema_version") == OMNIFLOW_RUN_LOG_SCHEMA_VERSION
+        and not _is_legacy_run_log(value)
+    ):
         run_log = import_run_log(value)
         expected_task = str(task_name).strip()
         if run_log["task_name"] != expected_task:
@@ -132,6 +135,27 @@ def adapt_source_run_log(
         screenshot_roots=screenshot_roots,
         require_screenshots=require_screenshots,
         package_resolver=package_resolver,
+    )
+
+
+def _is_legacy_run_log(value: dict[str, Any]) -> bool:
+    if any(
+        key in value
+        for key in ("androidworld", "completed", "done_reason", "trace_id")
+    ):
+        return True
+    steps = value.get("steps")
+    return isinstance(steps, list) and any(
+        isinstance(step, dict)
+        and any(
+            key in step
+            for key in (
+                "observation_before_act",
+                "executed_actions",
+                "actions",
+            )
+        )
+        for step in steps
     )
 
 
@@ -217,13 +241,17 @@ def convert_legacy_run_log(
         raw_actions = _legacy_actions(raw_step)
         if not raw_actions:
             raise ValueError(f"legacy_run_log_action_required:{task}:{step_index}")
+        inferred_package_name = str(
+            after.get("package_name")
+            or after.get("packageName")
+            or _legacy_following_package(raw_steps, raw_step_index)
+            or ""
+        ).strip()
         for raw_action in raw_actions:
             action = _legacy_action_to_androidworld(
                 raw_action,
                 observation=before,
-                inferred_package_name=str(
-                    after.get("package_name") or ""
-                ).strip(),
+                inferred_package_name=inferred_package_name,
                 package_resolver=package_resolver,
             )
             result = {"success": _success(raw_step, default=True)}
@@ -611,6 +639,20 @@ def _legacy_after_observation(step: dict[str, Any]) -> dict[str, Any]:
         or step.get("observation_after_act")
         or step.get("after")
     )
+
+
+def _legacy_following_package(steps: list[Any], step_index: int) -> str:
+    following_index = step_index + 1
+    if following_index >= len(steps) or not isinstance(
+        steps[following_index], dict
+    ):
+        return ""
+    observation = _legacy_before_observation(steps[following_index])
+    return str(
+        observation.get("package_name")
+        or observation.get("packageName")
+        or ""
+    ).strip()
 
 
 def _legacy_observation(value: Any) -> dict[str, Any]:

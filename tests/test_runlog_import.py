@@ -344,6 +344,90 @@ def test_source_adapter_normalizes_native_xml_and_screenshot_aliases(
     }
 
 
+def test_source_adapter_converts_legacy_log_with_current_schema_name(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "legacy-current-name.run_log.json"
+    payload = {
+        "schema_version": "omniflow.run_log.v1",
+        "run_id": "legacy-current-name",
+        "trace_id": "legacy-trace",
+        "goal": "Wait.",
+        "completed": True,
+        "success": True,
+        "steps": [
+            {
+                "observation_before_act": {"width": 32, "height": 48},
+                "actions": [{"type": "wait", "params": {}}],
+                "success": True,
+            }
+        ],
+    }
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    adapted = adapt_source_run_log(
+        payload,
+        task_name="LegacyTask",
+        task_parameters={},
+        seed=111,
+        source_path=source,
+        require_screenshots=False,
+    )
+
+    assert adapted["task_name"] == "LegacyTask"
+    assert adapted["steps"][0]["action"] == {"action_type": "wait"}
+
+
+def test_legacy_start_activity_uses_following_observation_package(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "legacy-start-activity.run_log.json"
+    payload = {
+        "run_id": "legacy-start-activity",
+        "success": True,
+        "steps": [
+            {
+                "observation_before_act": {
+                    "package_name": "com.google.android.apps.nexuslauncher",
+                    "width": 720,
+                    "height": 1280,
+                },
+                "actions": [
+                    {
+                        "type": "start_activity",
+                        "params": {"action": "android.settings.SETTINGS"},
+                    }
+                ],
+                "success": True,
+            },
+            {
+                "observation_before_act": {
+                    "package_name": "com.android.settings",
+                    "width": 720,
+                    "height": 1280,
+                },
+                "actions": [{"type": "wait", "params": {}}],
+                "success": True,
+            },
+        ],
+    }
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    converted = convert_legacy_run_log(
+        payload,
+        task_name="WifiTask",
+        task_parameters={},
+        seed=111,
+        source_path=source,
+        require_screenshots=False,
+    )
+
+    assert converted["steps"][0]["action"] == {
+        "action_type": "open_app",
+        "app_name": "com.android.settings",
+    }
+
+
 def test_source_index_accepts_official_runlog_without_screenshot_roots(
     tmp_path: Path,
 ) -> None:
