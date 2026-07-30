@@ -385,3 +385,75 @@ def test_appagent_teacher_input_replaces_existing_field_text(
         "text": "G367_conference.m4a",
         "clear_text": True,
     }
+
+
+def test_appagent_teacher_launches_source_app_package(tmp_path: Path) -> None:
+    source_run_log = tmp_path / "source.run_log.json"
+    source_run_log.write_text("{}", encoding="utf-8")
+    teacher_source = tmp_path / "teacher_source.json"
+    teacher_source.write_text(
+        json.dumps(
+            {
+                "schema_version": appagent_adapter.APPAGENT_TEACHER_SOURCE_SCHEMA,
+                "task_name": "BrowserDraw",
+                "source_seed": 111,
+                "source_run_id": "source",
+                "source_run_log": str(source_run_log),
+                "source_run_log_sha256": hashlib.sha256(
+                    source_run_log.read_bytes()
+                ).hexdigest(),
+                "official_appagent_revision": (
+                    appagent_adapter.APPAGENT_OFFICIAL_REVISION
+                ),
+                "source_app_package": "com.google.android.documentsui",
+                "actions": [
+                    {
+                        "source_step_index": 1,
+                        "source_action_index": 0,
+                        "action": {
+                            "type": "click",
+                            "params": {
+                                "target_description": "6.50 kB",
+                                "source_context": {
+                                    "element": {"text": "6.50 kB"}
+                                },
+                            },
+                        },
+                    }
+                ],
+                "action_count": 1,
+                "consumer": "appagent_official_human_demonstration",
+                "adapter_scope": "human_demo_primitive_grounding_only",
+                "uses_omniflow_function": False,
+                "writes_appagent_docs": False,
+                "requires_native_source_episode": True,
+                "target_inputs_read": False,
+                "coordinate_replay": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    launched: list[dict] = []
+    agent = appagent_adapter.AppAgentTeacherAgent(
+        env=SimpleNamespace(execute_action=launched.append),
+        official_runtime=SimpleNamespace(),
+        teacher_source=teacher_source,
+        workspace_root=tmp_path / "workspace",
+        demo_name="browser_draw",
+        action_factory=lambda **kwargs: kwargs,
+    )
+
+    agent.set_current_task(
+        "BrowserDraw",
+        "Open task.html and draw.",
+        {"app_names": ["chrome"]},
+    )
+    agent._ensure_app_started()
+
+    assert agent.app_name == "chrome"
+    assert launched == [
+        {
+            "action_type": "open_app",
+            "app_name": "com.google.android.documentsui",
+        }
+    ]

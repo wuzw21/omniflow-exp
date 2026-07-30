@@ -545,6 +545,9 @@ class AppAgentTeacherAgent:
         self.teacher_source_path = Path(teacher_source).expanduser().resolve()
         self.teacher_source = load_appagent_teacher_source(self.teacher_source_path)
         self.actions = [dict(item) for item in self.teacher_source["actions"]]
+        self.source_app_package = str(
+            self.teacher_source.get("source_app_package") or ""
+        ).strip()
         self.workspace_root = Path(workspace_root).expanduser().resolve()
         self.demo_name = _safe_appagent_name(demo_name)
         self.launch_app_on_start = bool(launch_app_on_start)
@@ -671,8 +674,9 @@ class AppAgentTeacherAgent:
             return
         if not self.app_name:
             raise ValueError("appagent_single_task_app_required")
+        launch_app = self.source_app_package or self.app_name
         self.env.execute_action(
-            self._new_action(action_type="open_app", app_name=self.app_name)
+            self._new_action(action_type="open_app", app_name=launch_app)
         )
         self._app_started = True
         time.sleep(float(os.environ.get("APPAGENT_APP_START_WAIT_SEC") or 1.0))
