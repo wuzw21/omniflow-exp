@@ -331,6 +331,9 @@ def _preflight_appagent_teacher(
     }
     groundable_action_count = 0
     for record in teacher_source.get("actions") or []:
+        action = dict(record.get("action") or {})
+        if str(action.get("type") or "").strip() == "open_app":
+            continue
         step_index = int(record.get("source_step_index") or 0)
         step = grounded_steps.get(step_index) or {}
         observation = step.get("observation_before_act")
@@ -345,11 +348,11 @@ def _preflight_appagent_teacher(
             )
         ground_appagent_teacher_action(
             xml_text,
-            dict(record.get("action") or {}),
+            action,
             min_dist=30.0,
         )
         groundable_action_count += 1
-    if groundable_action_count != int(teacher_source["action_count"]):
+    if groundable_action_count != int(teacher_source["demo_action_count"]):
         raise ValueError("appagent_teacher_source_has_ungroundable_actions")
     grounding_audit["appagent_groundable_action_count"] = (
         groundable_action_count
@@ -378,6 +381,7 @@ def preflight_appagent_source(
         "source_method": source_method_label(item),
         "source_run_log": str(grounding_audit["source_run_log"]),
         "action_count": int(teacher_source["action_count"]),
+        "demo_action_count": int(teacher_source["demo_action_count"]),
         "grounding": grounding_audit,
         "ready": True,
     }
@@ -511,7 +515,8 @@ def prepare_appagent_demo_memory(
         demo_name=demo_name,
         source_result=source_result,
         task_name=item.task,
-        expected_action_count=int(teacher_source["action_count"]),
+        expected_teacher_action_count=int(teacher_source["action_count"]),
+        expected_demo_action_count=int(teacher_source["demo_action_count"]),
     )
 
     document_root = root / "_document_generation"

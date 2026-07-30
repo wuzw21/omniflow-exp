@@ -4268,6 +4268,7 @@ def _build_launch_agent(
     appagent_root: str = "",
     appagent_workspace_root: str = "",
     appagent_docs_root: str = "",
+    appagent_action_source: str = "",
     appagent_teacher_source: str = "",
     appagent_demo_name: str = "",
     appagent_output_root: str = "",
@@ -4382,6 +4383,7 @@ def _build_launch_agent(
             llm=llm,
             output_root=appagent_output_root,
             docs_root=(appagent_docs_root or None),
+            action_source=(appagent_action_source or None),
         )
     if resolved_agent.startswith("official:"):
         official_agent_name = str(
@@ -4484,6 +4486,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--appagent-root", default="")
     parser.add_argument("--appagent-workspace-root", default="")
     parser.add_argument("--appagent-docs-root", default="")
+    parser.add_argument("--appagent-action-source", default="")
     parser.add_argument("--appagent-teacher-source", default="")
     parser.add_argument("--appagent-demo-name", default="")
     parser.add_argument(
@@ -5005,6 +5008,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             appagent_root=str(args.appagent_root or ""),
             appagent_workspace_root=str(args.appagent_workspace_root or ""),
             appagent_docs_root=str(args.appagent_docs_root or ""),
+            appagent_action_source=str(args.appagent_action_source or ""),
             appagent_teacher_source=str(args.appagent_teacher_source or ""),
             appagent_demo_name=str(args.appagent_demo_name or ""),
             appagent_output_root=str(run_output_dir / "appagent_runtime"),

@@ -3,7 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -17,7 +18,6 @@ def _write_appagent_teacher_source(
     root: Path,
     *,
     task_name: str,
-    source_app_package: str,
     action: dict,
 ) -> Path:
     source_run_log = root / "source.run_log.json"
@@ -37,7 +37,6 @@ def _write_appagent_teacher_source(
                 "official_appagent_revision": (
                     appagent_adapter.APPAGENT_OFFICIAL_REVISION
                 ),
-                "source_app_package": source_app_package,
                 "actions": [
                     {
                         "source_step_index": 1,
@@ -46,8 +45,9 @@ def _write_appagent_teacher_source(
                     }
                 ],
                 "action_count": 1,
+                "demo_action_count": 1,
                 "consumer": "appagent_official_human_demonstration",
-                "adapter_scope": "human_demo_primitive_grounding_only",
+                "adapter_scope": "native_androidworld_action_sequence",
                 "uses_omniflow_function": False,
                 "writes_appagent_docs": False,
                 "requires_native_source_episode": True,
@@ -67,7 +67,6 @@ def _browser_draw_teacher_agent(
     teacher_source = _write_appagent_teacher_source(
         tmp_path,
         task_name="BrowserDraw",
-        source_app_package="com.google.android.documentsui",
         action={
             "type": "click",
             "params": {
@@ -118,6 +117,207 @@ def _forest_node(
 
 def _copy_labeled_screenshot(source, destination, *_args, **_kwargs) -> None:
     Path(destination).write_bytes(Path(source).read_bytes())
+
+
+def _install_androidworld_app_registry(
+    monkeypatch: pytest.MonkeyPatch,
+    controller: object,
+) -> None:
+    adb_utils = SimpleNamespace(
+        get_all_apps=lambda actual_controller: (
+            ["chrome", "files"] if actual_controller is controller else []
+        ),
+        get_adb_activity=lambda app_name: {
+            "chrome": "com.android.chrome/com.google.android.apps.chrome.Main",
+            "files": (
+                "com.google.android.documentsui/"
+                "com.android.documentsui.files.FilesActivity"
+            ),
+        }.get(app_name),
+    )
+    android_world = ModuleType("android_world")
+    android_world_env = ModuleType("android_world.env")
+    android_world_env.adb_utils = adb_utils
+    android_world.env = android_world_env
+    monkeypatch.setitem(sys.modules, "android_world", android_world)
+    monkeypatch.setitem(sys.modules, "android_world.env", android_world_env)
+
+
+def _write_open_app_teacher_source(root: Path) -> Path:
+    source_run_log = root / "source.run_log.json"
+    source_run_log.write_text(
+        json.dumps(
+            {
+                "run_id": "browser-draw-source",
+                "success": True,
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "action": {
+                            "tool": "open_app",
+                            "args": {
+                                "package_name": "com.google.android.documentsui"
+                            },
+                        },
+                        "result": {"success": True},
+                    },
+                    {
+                        "step_index": 1,
+                        "action": {
+                            "tool": "click",
+                            "args": {
+                                "target_description": "6.50 kB",
+                                "source_context": {
+                                    "element": {"text": "6.50 kB"}
+                                },
+                            },
+                        },
+                        "result": {"success": True},
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    teacher_source = root / "teacher_source.json"
+    teacher_source.write_text(
+        json.dumps(
+            appagent_adapter.build_appagent_teacher_source(
+                source_run_log,
+                task_name="BrowserDraw",
+            )
+        ),
+        encoding="utf-8",
+    )
+    return teacher_source
+
+
+def test_appagent_teacher_executes_open_app_through_androidworld(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = object()
+    _install_androidworld_app_registry(monkeypatch, controller)
+    teacher_source = _write_open_app_teacher_source(tmp_path)
+    events: list[tuple[str, object]] = []
+    xml = (
+        '<hierarchy class="android.widget.FrameLayout" '
+        'bounds="[0,0][100,100]"><node index="0" '
+        'class="android.widget.TextView" text="6.50 kB" clickable="true" '
+        'bounds="[0,0][100,100]" /></hierarchy>'
+    )
+
+    def get_state():
+        events.append(("observe", None))
+        return SimpleNamespace(
+            xml=xml,
+            pixels=np.zeros((100, 100, 3), dtype=np.uint8),
+        )
+
+    agent = appagent_adapter.AppAgentTeacherAgent(
+        env=SimpleNamespace(
+            controller=controller,
+            execute_action=lambda action: events.append(("action", action)),
+            get_state=get_state,
+        ),
+        official_runtime=SimpleNamespace(
+            min_dist=0.0,
+            request_interval=0.0,
+            draw_elements=_copy_labeled_screenshot,
+        ),
+        teacher_source=teacher_source,
+        workspace_root=tmp_path / "workspace",
+        demo_name="browser_draw",
+        action_factory=lambda **kwargs: kwargs,
+    )
+    agent.set_current_task(
+        "BrowserDraw",
+        "Open task.html and draw.",
+        {"app_names": ["chrome"]},
+    )
+
+    launch_result = agent.step("Open task.html and draw.")
+
+    assert launch_result.done is False
+    assert launch_result.data["teacher_actions_consumed"] == 1
+    assert events == [
+        ("action", {"action_type": "open_app", "app_name": "files"})
+    ]
+
+    action_result = agent.step("Open task.html and draw.")
+    final_result = agent.step("Open task.html and draw.")
+
+    assert action_result.done is False
+    assert final_result.done is True
+    assert [event[0] for event in events] == [
+        "action",
+        "observe",
+        "action",
+        "observe",
+    ]
+    assert events[2] == (
+        "action",
+        {"action_type": "click", "x": 50, "y": 50},
+    )
+    appagent_adapter._validate_demo_artifacts(
+        Path(final_result.data["demo_root"]),
+        expected_teacher_action_count=2,
+        expected_demo_action_count=1,
+    )
+
+
+def test_appagent_deployment_consumes_open_app_before_observation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = object()
+    _install_androidworld_app_registry(monkeypatch, controller)
+    action_source = _write_open_app_teacher_source(tmp_path)
+    events: list[tuple[str, object]] = []
+    xml = (
+        '<hierarchy><node text="6.50 kB" clickable="true" '
+        'bounds="[0,0][100,100]" /></hierarchy>'
+    )
+
+    def get_state():
+        events.append(("observe", None))
+        return SimpleNamespace(
+            xml=xml,
+            pixels=np.zeros((100, 100, 3), dtype=np.uint8),
+        )
+
+    def draw_elements(source, destination, *_args, **_kwargs):
+        Path(destination).write_bytes(Path(source).read_bytes())
+
+    agent = appagent_adapter.AppAgentAndroidWorldAgent(
+        env=SimpleNamespace(
+            controller=controller,
+            execute_action=lambda action: events.append(("action", action)),
+            get_state=get_state,
+        ),
+        official_runtime=SimpleNamespace(
+            min_dist=0.0,
+            request_interval=0.0,
+            draw_elements=draw_elements,
+            build_task_prompt=lambda **_kwargs: "prompt",
+            parse_response=lambda *_args, **_kwargs: ["FINISH"],
+        ),
+        llm=SimpleNamespace(
+            predict_mm=lambda *_args, **_kwargs: ("finish", None, {})
+        ),
+        output_root=tmp_path / "output",
+        docs_root=None,
+        action_source=action_source,
+        action_factory=lambda **kwargs: kwargs,
+    )
+
+    result = agent.step("Open task.html and draw.")
+
+    assert result.done is True
+    assert events[:2] == [
+        ("action", {"action_type": "open_app", "app_name": "files"}),
+        ("observe", None),
+    ]
 
 
 def _write_source_index(root: Path) -> Path:
@@ -267,6 +467,7 @@ def test_appagent_source_generation_runs_each_phase_once(
         "build_appagent_teacher_source",
         lambda *_args, **_kwargs: {
             "action_count": 1,
+            "demo_action_count": 1,
             "actions": [
                 {
                     "source_step_index": 0,
@@ -405,7 +606,6 @@ def test_appagent_teacher_input_replaces_existing_field_text(
     teacher_source = _write_appagent_teacher_source(
         tmp_path,
         task_name="AudioRecorderRecordAudioWithFileName",
-        source_app_package="com.dimowner.audiorecorder",
         action={
             "type": "input_text",
             "params": {
@@ -475,7 +675,6 @@ def test_appagent_teacher_uses_native_androidworld_observation(
     teacher_source = _write_appagent_teacher_source(
         tmp_path,
         task_name="BrowserDraw",
-        source_app_package="com.google.android.documentsui",
         action={
             "type": "click",
             "params": {
@@ -561,3 +760,143 @@ def test_appagent_teacher_uses_native_androidworld_observation(
 
     assert result.done is False
     assert actions == [{"action_type": "click", "x": 120, "y": 55}]
+
+
+def test_appagent_demo_memory_rejects_manifest_teacher_count_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    teacher_source = _write_appagent_teacher_source(
+        tmp_path,
+        task_name="BrowserDraw",
+        action={
+            "type": "click",
+            "params": {
+                "target_description": "6.50 kB",
+                "source_context": {"element": {"text": "6.50 kB"}},
+            },
+        },
+    )
+    source_run_log = tmp_path / "source.run_log.json"
+    monkeypatch.setattr(appagent_adapter, "_require_hash", lambda *_args: None)
+    monkeypatch.setattr(appagent_adapter, "_tree_sha256", lambda *_args: "tree")
+    monkeypatch.setattr(appagent_adapter, "_validate_demo_artifacts", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(appagent_adapter, "_validate_demo_docs", lambda *_args: 1)
+    manifest = {
+        "schema_version": appagent_adapter.APPAGENT_DEMO_MEMORY_SCHEMA,
+        "official_appagent_revision": appagent_adapter.APPAGENT_OFFICIAL_REVISION,
+        "task_name": "BrowserDraw",
+        "source_seed": 111,
+        "official_source_success": True,
+        "source_episode_metrics": {
+            "duration_sec": 1.0,
+            "wall_sec": 1.0,
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "total_tokens": 2,
+        },
+        "doc_generation_usage": {
+            "model_calls": 1,
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "total_tokens": 2,
+            "wall_sec": 1.0,
+        },
+        "prep_wall_sec": 1.0,
+        "teacher_complete": True,
+        "teacher_action_count": 2,
+        "teacher_actions_consumed": 2,
+        "demo_action_count": 1,
+        "uses_omniflow_function": False,
+        "target_inputs_read": False,
+        "target_observations_read": False,
+        "validator_state_read_for_memory": False,
+        "teacher_source": str(teacher_source),
+        "teacher_source_sha256": hashlib.sha256(
+            teacher_source.read_bytes()
+        ).hexdigest(),
+        "source_result": "source_result.jsonl",
+        "source_result_sha256": "unused",
+        "document_generation_log": "document.log",
+        "document_generation_log_sha256": "unused",
+        "document_generation_usage_path": "document_usage.jsonl",
+        "document_generation_usage_sha256": "unused",
+        "demo_root": "demo",
+        "demo_sha256": "tree",
+        "demo_docs_root": "docs",
+        "demo_docs_sha256": "tree",
+        "demo_docs_file_count": 1,
+        "source_run_log": str(source_run_log),
+        "source_run_log_sha256": hashlib.sha256(
+            source_run_log.read_bytes()
+        ).hexdigest(),
+    }
+    (tmp_path / appagent_adapter.APPAGENT_DEMO_MANIFEST).write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="appagent_demo_memory_teacher_action_count_mismatch",
+    ):
+        appagent_adapter.validate_appagent_demo_memory(
+            tmp_path,
+            task_name="BrowserDraw",
+            source_run_log=source_run_log,
+        )
+
+
+def test_appagent_warm_command_carries_unified_action_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_run_log = tmp_path / "source.run_log.json"
+    source_run_log.write_text("{}", encoding="utf-8")
+    action_source = tmp_path / "teacher_source.json"
+    action_source.write_text("{}", encoding="utf-8")
+    base_spec = pipeline.CommandSpec(
+        label="base",
+        argv=["python", "launch.py"],
+        env={},
+        cwd=tmp_path,
+        output_path=tmp_path / "output",
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_e2e_command",
+        lambda *_args, **_kwargs: base_spec,
+    )
+    item = pipeline.ArchivedRunLog(
+        task="BrowserDraw",
+        goal="Open task.html and draw.",
+        params={},
+        source_run_log=source_run_log,
+        replay_seed=111,
+        step_count=2,
+        meta={},
+    )
+
+    spec = pipeline.build_appagent_androidworld_command(
+        item,
+        method_name="appagent_demo",
+        target=pipeline.DeviceTarget("small5554", "emulator-5554", 5554),
+        android_world_root=tmp_path / "android_world",
+        output_root=tmp_path / "output",
+        appagent_root=tmp_path / "AppAgent",
+        docs_root=tmp_path / "docs",
+        action_source=action_source,
+        max_steps=20,
+        timeout_sec=60,
+        task_random_seed=113,
+        fixed_task_seed=True,
+        fixed_task_params=True,
+        task_params_override={},
+        perform_emulator_setup=False,
+        adb_path="adb",
+        repo_root=tmp_path,
+    )
+
+    action_source_index = spec.argv.index("--appagent-action-source")
+    assert spec.argv[action_source_index + 1] == str(action_source.resolve())
+    assert spec.metadata["appagent_action_source"] == str(action_source.resolve())

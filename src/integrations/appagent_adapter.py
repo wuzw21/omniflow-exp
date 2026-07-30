@@ -20,6 +20,7 @@ import xml.etree.ElementTree as ET
 from PIL import Image
 
 from src.integrations.android_world.accessibility import androidworld_forest_xml
+from src.integrations.android_world.apps import resolve_androidworld_app_name
 from src.integrations.android_world.host import (
     androidworld_elements_xml,
     make_agent_result,
@@ -28,21 +29,21 @@ from src.integrations.runlog import extract_canonical_step_actions
 
 APPAGENT_OFFICIAL_REVISION = "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
 APPAGENT_SOURCE_SEED = 111
-APPAGENT_TEACHER_SOURCE_SCHEMA = "omniflow.appagent-teacher-source.v1"
-APPAGENT_DEMO_MEMORY_SCHEMA = "omniflow.appagent-demo-memory.v1"
+APPAGENT_TEACHER_SOURCE_SCHEMA = "omniflow.appagent-teacher-source.v2"
+APPAGENT_DEMO_MEMORY_SCHEMA = "omniflow.appagent-demo-memory.v2"
 APPAGENT_DEMO_MANIFEST = "appagent_demo_manifest.json"
-APPAGENT_SUPPORTED_SOURCE_TYPES = {
+APPAGENT_DEMO_ACTION_TYPES = {
     "click",
     "input_text",
     "long_press",
     "swipe",
 }
+APPAGENT_SUPPORTED_SOURCE_TYPES = APPAGENT_DEMO_ACTION_TYPES | {"open_app"}
 
 _NON_PRIMITIVE_SOURCE_TYPES = {
     "done",
     "finish",
     "finished",
-    "open_app",
     "status",
     "wait",
 }
@@ -218,6 +219,7 @@ class AppAgentAndroidWorldAgent:
         llm: Any,
         output_root: str | Path,
         docs_root: str | Path | None = None,
+        action_source: str | Path | None,
         action_factory: Any | None = None,
     ) -> None:
         self.env = env
@@ -234,6 +236,23 @@ class AppAgentAndroidWorldAgent:
         )
         if self.docs_root is not None and not self.docs_root.is_dir():
             raise FileNotFoundError(f"appagent_docs_missing:{self.docs_root}")
+        if action_source is None or not str(action_source).strip():
+            raise ValueError("appagent_action_source_required")
+        self.action_source_path = Path(action_source).expanduser().resolve()
+        self.startup_actions: list[dict[str, Any]] = []
+        action_source_payload = load_appagent_teacher_source(self.action_source_path)
+        demo_action_seen = False
+        for record in action_source_payload["actions"]:
+            action = dict(record.get("action") or {})
+            action_type = str(action.get("type") or "").strip()
+            if action_type == "open_app":
+                if demo_action_seen:
+                    raise ValueError(
+                        "appagent_runtime_open_app_must_precede_demo_actions"
+                    )
+                self.startup_actions.append(action)
+            else:
+                demo_action_seen = True
         self._action_factory = action_factory
         self.name = "appagent"
         self._omniflow_llm_usage_tracker = llm
@@ -247,6 +266,7 @@ class AppAgentAndroidWorldAgent:
         self.grid_on = False
         self.grid_rows = 0
         self.grid_columns = 0
+        self._startup_actions_executed = False
         self._max_steps = 20
         self._log_path = self.output_root / "appagent_task_log.jsonl"
 
@@ -263,6 +283,7 @@ class AppAgentAndroidWorldAgent:
         self.grid_on = False
         self.grid_rows = 0
         self.grid_columns = 0
+        self._startup_actions_executed = False
 
     def update_current_task_context(self, task: Any) -> dict[str, Any]:
         app_names = [
@@ -298,6 +319,7 @@ class AppAgentAndroidWorldAgent:
                 data=self._result_data(error="appagent_max_steps_reached"),
             )
         try:
+            self._execute_startup_actions()
             self.round_count += 1
             xml_text, raw_image_path = self._capture_round(self.round_count)
             elements = appagent_elements_from_xml(
@@ -369,6 +391,36 @@ class AppAgentAndroidWorldAgent:
                 }
             )
             return make_agent_result(done=True, data=self._result_data(error=str(exc)))
+
+    def _execute_startup_actions(self) -> None:
+        if self._startup_actions_executed:
+            return
+        for action in self.startup_actions:
+            package_name = str(
+                (action.get("params") or {}).get("package_name") or ""
+            ).strip()
+            app_name = resolve_androidworld_app_name(
+                package_name,
+                getattr(self.env, "controller", None),
+            )
+            if not app_name:
+                raise ValueError("appagent_runtime_open_app_name_missing")
+            native_action = self._new_action(
+                action_type="open_app",
+                app_name=app_name,
+            )
+            self.env.execute_action(native_action)
+            self.actions_executed += 1
+            self._append_log(
+                {
+                    "event": "startup_action",
+                    "action_type": "open_app",
+                    "package_name": package_name,
+                    "androidworld_app_name": app_name,
+                    "execution_backend": "androidworld_native",
+                }
+            )
+        self._startup_actions_executed = True
 
     def _capture_round(self, round_index: int) -> tuple[str, Path]:
         xml_text, pixels = _native_appagent_observation(self.env)
@@ -515,6 +567,10 @@ class AppAgentAndroidWorldAgent:
             "actions_executed": self.actions_executed,
             "uses_demo_docs": self.docs_root is not None,
             "docs_root": str(self.docs_root or ""),
+            "action_source": str(self.action_source_path or ""),
+            "startup_actions_executed": len(self.startup_actions)
+            if self._startup_actions_executed
+            else 0,
             "error": str(error or "") or None,
         }
 
@@ -547,6 +603,7 @@ class AppAgentTeacherAgent:
         self.task_context: dict[str, Any] = {}
         self.demo_root: Path | None = None
         self.teacher_actions_consumed = 0
+        self.demo_actions_consumed = 0
         self._stop_written = False
         self._max_steps = len(self.actions) + 1
 
@@ -558,6 +615,7 @@ class AppAgentTeacherAgent:
         if callable(reset):
             reset(go_home=go_home)
         self.teacher_actions_consumed = 0
+        self.demo_actions_consumed = 0
         self._stop_written = False
 
     def update_current_task_context(self, task: Any) -> dict[str, Any]:
@@ -593,14 +651,41 @@ class AppAgentTeacherAgent:
         try:
             self._prepare_demo_root()
             if self.teacher_actions_consumed >= len(self.actions):
-                self._capture_demo_state(len(self.actions) + 1)
+                self._capture_demo_state(self.demo_actions_consumed + 1)
                 self._append_record("stop")
                 self._stop_written = True
                 return make_agent_result(done=True, data=self._result_data())
             record = self.actions[self.teacher_actions_consumed]
             action = dict(record.get("action") or {})
+            if str(action.get("type") or "").strip() == "open_app":
+                package_name = str(
+                    (action.get("params") or {}).get("package_name") or ""
+                ).strip()
+                app_name = resolve_androidworld_app_name(
+                    package_name,
+                    getattr(self.env, "controller", None),
+                )
+                if not app_name:
+                    raise ValueError("appagent_teacher_open_app_name_missing")
+                self.env.execute_action(
+                    self._new_action(action_type="open_app", app_name=app_name)
+                )
+                self.teacher_actions_consumed += 1
+                self._append_trace(
+                    {
+                        "teacher_cursor": self.teacher_actions_consumed,
+                        "source_step_index": record.get("source_step_index"),
+                        "source_action_index": record.get("source_action_index"),
+                        "action_type": "open_app",
+                        "package_name": package_name,
+                        "androidworld_app_name": app_name,
+                        "execution_backend": "androidworld_native",
+                        "source_coordinates_used": False,
+                    }
+                )
+                return make_agent_result(done=False, data=self._result_data())
             xml_text, elements = self._capture_demo_state(
-                self.teacher_actions_consumed + 1
+                self.demo_actions_consumed + 1
             )
             grounded = ground_appagent_teacher_action(
                 xml_text,
@@ -609,6 +694,7 @@ class AppAgentTeacherAgent:
             )
             self._execute_teacher_action(action, grounded)
             self.teacher_actions_consumed += 1
+            self.demo_actions_consumed += 1
             self._append_trace(
                 {
                     "teacher_cursor": self.teacher_actions_consumed,
@@ -743,6 +829,10 @@ class AppAgentTeacherAgent:
             "actions_executed": self.teacher_actions_consumed,
             "teacher_action_count": len(self.actions),
             "teacher_actions_consumed": self.teacher_actions_consumed,
+            "demo_action_count": int(
+                self.teacher_source.get("demo_action_count") or 0
+            ),
+            "demo_actions_consumed": self.demo_actions_consumed,
             "teacher_complete": self.teacher_actions_consumed == len(self.actions),
             "demo_root": str(self.demo_root or ""),
             "error": str(error or "") or None,
@@ -794,7 +884,6 @@ def build_appagent_teacher_source(
                 ).strip()
                 if package_name:
                     source_app_packages.add(package_name)
-                continue
             if action_type in _NON_PRIMITIVE_SOURCE_TYPES:
                 continue
             if action_type not in APPAGENT_SUPPORTED_SOURCE_TYPES:
@@ -838,11 +927,14 @@ def build_appagent_teacher_source(
             provenance_path.read_bytes()
         ).hexdigest(),
         "official_appagent_revision": APPAGENT_OFFICIAL_REVISION,
-        "source_app_package": next(iter(source_app_packages), ""),
         "actions": actions,
         "action_count": len(actions),
+        "demo_action_count": sum(
+            str(record["action"].get("type") or "") in APPAGENT_DEMO_ACTION_TYPES
+            for record in actions
+        ),
         "consumer": "appagent_official_human_demonstration",
-        "adapter_scope": "human_demo_primitive_grounding_only",
+        "adapter_scope": "native_androidworld_action_sequence",
         "uses_omniflow_function": False,
         "writes_appagent_docs": False,
         "requires_native_source_episode": True,
@@ -877,6 +969,7 @@ def load_appagent_teacher_source(path: str | Path) -> dict[str, Any]:
         raise ValueError("appagent_teacher_source_actions_required")
     if int(payload.get("action_count") or 0) != len(raw_actions):
         raise ValueError("appagent_teacher_source_action_count_mismatch")
+    demo_action_count = 0
     for record in raw_actions:
         action = record.get("action") if isinstance(record, dict) else None
         if not isinstance(action, dict):
@@ -889,6 +982,14 @@ def load_appagent_teacher_source(path: str | Path) -> dict[str, Any]:
             )
         if not isinstance(params, dict) or _contains_source_coordinates(params):
             raise ValueError("appagent_teacher_source_coordinates_forbidden")
+        if action_type == "open_app" and not str(
+            params.get("package_name") or ""
+        ).strip():
+            raise ValueError("appagent_teacher_source_open_app_package_required")
+        if action_type in APPAGENT_DEMO_ACTION_TYPES:
+            demo_action_count += 1
+    if int(payload.get("demo_action_count") or 0) != demo_action_count:
+        raise ValueError("appagent_teacher_source_demo_action_count_mismatch")
     return payload
 
 
@@ -937,7 +1038,8 @@ def seal_appagent_demo_memory(
     docs_root = root / "apps" / normalized_app / "demo_docs"
     _validate_demo_artifacts(
         demo_root,
-        expected_action_count=int(teacher.get("action_count") or 0),
+        expected_teacher_action_count=int(teacher.get("action_count") or 0),
+        expected_demo_action_count=int(teacher.get("demo_action_count") or 0),
     )
     docs_file_count = _validate_demo_docs(docs_root)
     source_result_path = Path(source_result).expanduser().resolve()
@@ -1017,6 +1119,7 @@ def seal_appagent_demo_memory(
         "teacher_source_sha256": _file_sha256(teacher_path),
         "teacher_action_count": int(teacher.get("action_count") or 0),
         "teacher_actions_consumed": int(teacher.get("action_count") or 0),
+        "demo_action_count": int(teacher.get("demo_action_count") or 0),
         "teacher_complete": True,
         "demo_root": str(demo_root),
         "demo_sha256": _tree_sha256(demo_root),
@@ -1061,7 +1164,8 @@ def validate_appagent_source_demo(
     demo_name: str,
     source_result: str | Path,
     task_name: str,
-    expected_action_count: int,
+    expected_teacher_action_count: int,
+    expected_demo_action_count: int,
 ) -> dict[str, Any]:
     """Require one complete official-success source demo before doc generation."""
 
@@ -1079,7 +1183,8 @@ def validate_appagent_source_demo(
     )
     _validate_demo_artifacts(
         demo_root,
-        expected_action_count=int(expected_action_count),
+        expected_teacher_action_count=int(expected_teacher_action_count),
+        expected_demo_action_count=int(expected_demo_action_count),
     )
     return source_result_row
 
@@ -1135,6 +1240,14 @@ def validate_appagent_demo_memory(
         payload.get("teacher_actions_consumed") or 0
     ) != int(payload.get("teacher_action_count") or -1):
         raise ValueError("appagent_demo_memory_teacher_incomplete")
+    teacher_action_count = int(payload.get("teacher_action_count") or 0)
+    demo_action_count = int(payload.get("demo_action_count") or 0)
+    if (
+        teacher_action_count <= 0
+        or demo_action_count <= 0
+        or demo_action_count > teacher_action_count
+    ):
+        raise ValueError("appagent_demo_memory_action_count_invalid")
     for key in (
         "target_inputs_read",
         "target_observations_read",
@@ -1143,6 +1256,17 @@ def validate_appagent_demo_memory(
         if payload.get(key) is not False:
             raise ValueError(f"appagent_demo_memory_leakage:{key}")
     _require_hash(payload, "teacher_source", "teacher_source_sha256")
+    teacher_source = load_appagent_teacher_source(payload["teacher_source"])
+    if teacher_source.get("task_name") != payload.get("task_name"):
+        raise ValueError("appagent_demo_memory_teacher_task_mismatch")
+    if int(teacher_source.get("action_count") or 0) != teacher_action_count:
+        raise ValueError("appagent_demo_memory_teacher_action_count_mismatch")
+    if int(teacher_source.get("demo_action_count") or 0) != demo_action_count:
+        raise ValueError("appagent_demo_memory_demo_action_count_mismatch")
+    if teacher_source.get("source_run_log_sha256") != payload.get(
+        "source_run_log_sha256"
+    ):
+        raise ValueError("appagent_demo_memory_teacher_source_mismatch")
     _require_hash(payload, "source_result", "source_result_sha256")
     _require_hash(
         payload,
@@ -1160,6 +1284,11 @@ def validate_appagent_demo_memory(
         raise ValueError("appagent_demo_memory_demo_sha256_mismatch")
     if _tree_sha256(docs_root) != payload.get("demo_docs_sha256"):
         raise ValueError("appagent_demo_memory_docs_sha256_mismatch")
+    _validate_demo_artifacts(
+        demo_root,
+        expected_teacher_action_count=teacher_action_count,
+        expected_demo_action_count=demo_action_count,
+    )
     if _validate_demo_docs(docs_root) != int(payload.get("demo_docs_file_count") or 0):
         raise ValueError("appagent_demo_memory_docs_count_mismatch")
     expected_source = (
@@ -1507,6 +1636,12 @@ def _adapter_params(action_type: str, params: dict[str, Any]) -> dict[str, Any]:
             adapted["source_context"] = {"element": identity}
     if action_type == "input_text":
         adapted["text"] = str(params.get("text") or "")
+    elif action_type == "open_app":
+        package_name = str(
+            params.get("package_name") or params.get("app_name") or ""
+        ).strip()
+        if package_name:
+            adapted["package_name"] = package_name
     elif action_type == "swipe":
         adapted["direction"] = str(params.get("direction") or "")
     return _without_source_coordinates(adapted)
@@ -1727,8 +1862,13 @@ def _official_source_result(path: Path, *, task_name: str) -> dict[str, Any]:
     return row
 
 
-def _validate_demo_artifacts(demo_root: Path, *, expected_action_count: int) -> None:
-    if expected_action_count <= 0:
+def _validate_demo_artifacts(
+    demo_root: Path,
+    *,
+    expected_teacher_action_count: int,
+    expected_demo_action_count: int,
+) -> None:
+    if expected_teacher_action_count <= 0 or expected_demo_action_count <= 0:
         raise ValueError("appagent_demo_action_count_invalid")
     required_dirs = (
         demo_root / "raw_screenshots",
@@ -1739,10 +1879,10 @@ def _validate_demo_artifacts(demo_root: Path, *, expected_action_count: int) -> 
         if not directory.is_dir():
             raise FileNotFoundError(f"appagent_demo_artifact_dir_missing:{directory}")
         file_count = len([path for path in directory.iterdir() if path.is_file()])
-        if file_count != expected_action_count + 1:
+        if file_count != expected_demo_action_count + 1:
             raise ValueError(
                 "appagent_demo_artifact_count_mismatch:"
-                f"{directory.name}:{file_count}:{expected_action_count + 1}"
+                f"{directory.name}:{file_count}:{expected_demo_action_count + 1}"
             )
     record_path = demo_root / "record.txt"
     lines = [
@@ -1750,12 +1890,14 @@ def _validate_demo_artifacts(demo_root: Path, *, expected_action_count: int) -> 
         for line in record_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    if len(lines) != expected_action_count + 1 or lines[-1] != "stop":
+    if len(lines) != expected_demo_action_count + 1 or lines[-1] != "stop":
         raise ValueError("appagent_demo_record_incomplete")
     trace_rows = _jsonl_objects(demo_root / "teacher_trace.jsonl")
-    if len(trace_rows) != expected_action_count:
+    if len(trace_rows) != expected_teacher_action_count:
         raise ValueError("appagent_demo_teacher_trace_count_mismatch")
-    if int(trace_rows[-1].get("teacher_cursor") or 0) != expected_action_count:
+    if int(trace_rows[-1].get("teacher_cursor") or 0) != (
+        expected_teacher_action_count
+    ):
         raise ValueError("appagent_demo_teacher_trace_incomplete")
     if any(row.get("source_coordinates_used") is not False for row in trace_rows):
         raise ValueError("appagent_demo_source_coordinate_replay_detected")

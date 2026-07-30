@@ -249,6 +249,7 @@ def _valid_appagent_demo_manifest(payload: Any) -> bool:
     try:
         teacher_action_count = int(payload.get("teacher_action_count") or 0)
         teacher_actions_consumed = int(payload.get("teacher_actions_consumed") or 0)
+        demo_action_count = int(payload.get("demo_action_count") or 0)
         source_prompt = int(source_metrics.get("prompt_tokens") or 0)
         source_completion = int(source_metrics.get("completion_tokens") or 0)
         source_total = int(source_metrics.get("total_tokens") or 0)
@@ -256,7 +257,7 @@ def _valid_appagent_demo_manifest(payload: Any) -> bool:
         doc_completion = int(doc_usage.get("completion_tokens") or 0)
         doc_total = int(doc_usage.get("total_tokens") or 0)
         return (
-            payload.get("schema_version") == "omniflow.appagent-demo-memory.v1"
+            payload.get("schema_version") == "omniflow.appagent-demo-memory.v2"
             and payload.get("official_appagent_revision")
             == APPAGENT_OFFICIAL_REVISION
             and payload.get("source_seed") == 111
@@ -264,6 +265,7 @@ def _valid_appagent_demo_manifest(payload: Any) -> bool:
             and payload.get("teacher_complete") is True
             and teacher_action_count > 0
             and teacher_actions_consumed == teacher_action_count
+            and 0 < demo_action_count <= teacher_action_count
             and float(source_metrics.get("duration_sec") or 0.0) > 0
             and float(source_metrics.get("wall_sec") or 0.0) > 0
             and source_total == source_prompt + source_completion

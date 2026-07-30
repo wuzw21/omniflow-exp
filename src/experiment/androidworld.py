@@ -7709,6 +7709,7 @@ def build_appagent_androidworld_command(
     output_root: str | Path,
     appagent_root: str | Path,
     docs_root: str | Path | None = None,
+    action_source: str | Path | None = None,
     teacher_source: str | Path | None = None,
     workspace_root: str | Path | None = None,
     demo_name: str = "",
@@ -7728,6 +7729,10 @@ def build_appagent_androidworld_command(
         raise ValueError("appagent_teacher_workspace_required")
     if teacher_mode and docs_root is not None:
         raise ValueError("appagent_teacher_docs_forbidden")
+    if teacher_mode and action_source is not None:
+        raise ValueError("appagent_teacher_action_source_forbidden")
+    if not teacher_mode and action_source is None:
+        raise ValueError("appagent_action_source_required")
     selector = "external:appagent_teacher" if teacher_mode else "external:appagent"
     spec = build_e2e_command(
         item,
@@ -7752,11 +7757,15 @@ def build_appagent_androidworld_command(
     resolved_appagent_root = _repo_path(appagent_root, repo_root=repo_root)
     argv = [*spec.argv, "--appagent-root", str(resolved_appagent_root)]
     resolved_docs_root: Path | None = None
+    resolved_action_source: Path | None = None
     resolved_teacher_source: Path | None = None
     resolved_workspace_root: Path | None = None
     if docs_root is not None:
         resolved_docs_root = _repo_path(docs_root, repo_root=repo_root)
         argv.extend(["--appagent-docs-root", str(resolved_docs_root)])
+    if action_source is not None:
+        resolved_action_source = _repo_path(action_source, repo_root=repo_root)
+        argv.extend(["--appagent-action-source", str(resolved_action_source)])
     if teacher_mode:
         resolved_teacher_source = _repo_path(teacher_source, repo_root=repo_root)
         resolved_workspace_root = _repo_path(workspace_root, repo_root=repo_root)
@@ -7788,6 +7797,7 @@ def build_appagent_androidworld_command(
             "device_target": target.to_dict(),
             "appagent_root": str(resolved_appagent_root),
             "appagent_docs_root": str(resolved_docs_root or ""),
+            "appagent_action_source": str(resolved_action_source or ""),
             "appagent_teacher_source": str(resolved_teacher_source or ""),
             "appagent_workspace_root": str(resolved_workspace_root or ""),
             "uses_omniflow_function": False,
@@ -8353,6 +8363,7 @@ def cmd_one_task(args: argparse.Namespace) -> int:
         _claim_method_memory_root(memory_root)
         source_action_hint_path: Path | None = None
         appagent_docs_root: Path | None = None
+        appagent_action_source: Path | None = None
         appagent_prep: dict[str, Any] = {}
         if _is_mobilegpt_method(method):
             mobilegpt_records, mobilegpt_failed = _run_one_task_mobilegpt(
@@ -8428,6 +8439,9 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                     source_run_log=source_memory_run_log,
                 )
                 appagent_docs_root = Path(provenance["demo_docs_root"]).resolve()
+                appagent_action_source = Path(
+                    provenance["teacher_source"]
+                ).resolve()
                 source_metrics = dict(provenance["source_episode_metrics"])
                 document_usage = dict(provenance["doc_generation_usage"])
                 prep_model_calls = _coerce_int(
@@ -8484,6 +8498,8 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                     ),
                     "demo_docs_root": str(appagent_docs_root),
                     "demo_docs_sha256": provenance["demo_docs_sha256"],
+                    "action_source": str(appagent_action_source),
+                    "action_source_sha256": provenance["teacher_source_sha256"],
                     "official_appagent_revision": provenance[
                         "official_appagent_revision"
                     ],
@@ -8615,6 +8631,7 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                     output_root=output_root,
                     appagent_root=args.appagent_root,
                     docs_root=appagent_docs_root,
+                    action_source=appagent_action_source,
                     max_steps=int(args.max_steps or 20),
                     timeout_sec=int(args.timeout_sec or 0),
                     task_random_seed=task_seed,
