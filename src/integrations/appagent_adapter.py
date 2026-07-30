@@ -952,6 +952,7 @@ def seal_appagent_demo_memory(
     prep_wall_sec: float,
     source_method: str,
     document_generation_model: str,
+    source_environment_repair_reason: str = "",
 ) -> dict[str, Any]:
     """Seal official AppAgent demo docs after one successful source episode."""
 
@@ -1051,6 +1052,9 @@ def seal_appagent_demo_memory(
         "demo_name": normalized_demo,
         "source_seed": APPAGENT_SOURCE_SEED,
         "source_method": normalized_source_method,
+        "source_environment_repair_reason": str(
+            source_environment_repair_reason or ""
+        ).strip(),
         "source_run_id": str(teacher.get("source_run_id") or ""),
         "source_run_log": str(source_run_log.resolve()),
         "source_run_log_sha256": _file_sha256(source_run_log),

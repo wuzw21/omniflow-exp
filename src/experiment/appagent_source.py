@@ -404,6 +404,10 @@ def prepare_appagent_demo_memory(
     normalized_model = str(model or "").strip()
     if not normalized_model:
         raise ValueError("appagent_source_model_required")
+    source_environment_repair_reason = str(
+        os.environ.get("OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON")
+        or ""
+    ).strip()
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_method = source_method_label(item)
     root = Path(memory_root).expanduser().resolve()
@@ -477,6 +481,9 @@ def prepare_appagent_demo_memory(
                 "model": normalized_model,
                 "model_attempts": 1,
                 "episode_retries": 0,
+                "source_environment_repair_reason": (
+                    source_environment_repair_reason
+                ),
                 "target_inputs_read": False,
                 "target_observations_read": False,
                 "validator_state_read_for_memory": False,
@@ -538,6 +545,7 @@ def prepare_appagent_demo_memory(
         prep_wall_sec=prep_wall_sec,
         source_method=source_method,
         document_generation_model=normalized_model,
+        source_environment_repair_reason=source_environment_repair_reason,
     )
     return {
         "schema_version": "omniflow.appagent-source-prepare.v2",
@@ -549,6 +557,7 @@ def prepare_appagent_demo_memory(
         "memory_root": str(root),
         "source_result": str(source_result),
         "source_episode_wall_sec": source_wall_sec,
+        "source_environment_repair_reason": source_environment_repair_reason,
         "document_generation": doc_result,
         "prep_wall_sec": prep_wall_sec,
         "manifest": manifest,

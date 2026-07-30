@@ -150,6 +150,10 @@ def test_appagent_source_generation_runs_each_phase_once(
     bundle = tmp_path / "bundle"
     calls = {"episode": 0, "documents": 0, "seal": 0}
     captured: dict[str, object] = {}
+    monkeypatch.setenv(
+        "OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON",
+        "launch_source_app_package_from_teacher_contract@7709f60",
+    )
 
     monkeypatch.setattr(
         appagent_source,
@@ -272,6 +276,9 @@ def test_appagent_source_generation_runs_each_phase_once(
     )
     assert command["model_attempts"] == 1
     assert command["episode_retries"] == 0
+    assert command["source_environment_repair_reason"] == (
+        "launch_source_app_package_from_teacher_contract@7709f60"
+    )
 
 
 def test_appagent_source_failure_marker_forbids_retry(tmp_path: Path) -> None:

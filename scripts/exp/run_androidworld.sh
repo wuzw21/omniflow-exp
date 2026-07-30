@@ -29,6 +29,7 @@ task_iteration="${OMNIFLOW_SINGLE_TASK_ITERATION:-1}"
 all_methods="fixed_replay,ours,mobilegpt_offline_retrieval,appagent_demo,t3a_hint"
 eight_cell_methods="fixed_replay,ours,mobilegpt_offline_retrieval,appagent_demo"
 baseline_environment_repair="${OMNIFLOW_BASELINE_ENVIRONMENT_REPAIR_REASON:-}"
+appagent_source_environment_repair="${OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON:-}"
 formal_device_targets="small5554:emulator-5554:5554,fold5564:emulator-5564:5564"
 device_targets="${OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS:-$formal_device_targets}"
 fixed_task_params="${OMNIFLOW_SINGLE_TASK_FIXED_TASK_PARAMS:-$formal_fixed_task_params}"
@@ -101,7 +102,8 @@ Required external roots:
 Optional runtime overrides:
   PYTHON_BIN, OMNIFLOW_ENV_FILE, OMNIFLOW_SINGLE_TASK_SOURCE_INDEX,
   OMNIFLOW_MASTER_SOURCE_INDEX, OMNIFLOW_OURS_STORE_INDEX,
-  OMNIFLOW_ANDROID_SDK_ROOT, OMNIFLOW_JAVA_HOME.
+  OMNIFLOW_ANDROID_SDK_ROOT, OMNIFLOW_JAVA_HOME,
+  OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON.
 
 Asset conversion inputs:
   OMNIFLOW_OURS_SOURCE_ASSET_INDEX Source RunLog index; defaults to the master
@@ -589,7 +591,7 @@ export JAVA_HOME="$java_home"
 export PATH="$java_home/bin:$PATH"
 echo "[java] home=$java_home major=$java_major version=$java_version_line"
 select_source_asset_revision() {
-  "$python_bin" - "$repo" "$1" "$2" "$ours_store_index" "$3" <<'PY'
+  "$python_bin" - "$repo" "$1" "$2" "$ours_store_index" "$3" "${4:-}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -614,6 +616,7 @@ try:
         sys.argv[2],
         manifest_name=sys.argv[3],
         expected_source_sha256=source_sha256,
+        environment_repair_reason=sys.argv[6],
     )
 except ValueError as error:
     message = str(error)
@@ -640,7 +643,8 @@ if [[ "$all_tasks" -eq 0 && "$requires_appagent_source_memory" -eq 1 && -z "$app
     select_source_asset_revision \
       "$appagent_source_base" \
       "appagent_demo_manifest.json" \
-      "$task"
+      "$task" \
+      "$appagent_source_environment_repair"
   )"
 fi
 prepare_mobilegpt_client() {
@@ -921,13 +925,18 @@ PY
         appagent_demo)
           source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$source_method"
           source_manifest="appagent_demo_manifest.json"
+          source_repair_reason="$appagent_source_environment_repair"
           ;;
       esac
+      if [[ "$source_method" != "appagent_demo" ]]; then
+        source_repair_reason=""
+      fi
       if selected_source_root="$(
         select_source_asset_revision \
           "$source_base" \
           "$source_manifest" \
-          "$batch_task"
+          "$batch_task" \
+          "$source_repair_reason"
       )"; then
         case "$source_method" in
           mobilegpt_offline_retrieval)
@@ -1115,10 +1124,12 @@ PY
             appagent_demo)
               source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$cell_method"
               source_manifest="appagent_demo_manifest.json"
+              source_repair_reason="$appagent_source_environment_repair"
               ;;
             *)
               source_base=""
               source_manifest=""
+              source_repair_reason=""
               ;;
           esac
           if [[ -n "$source_base" ]]; then
@@ -1126,6 +1137,7 @@ PY
               "$source_base" \
               "$source_manifest" \
               "$batch_task" \
+              "$source_repair_reason" \
               >/dev/null; then
               :
             else

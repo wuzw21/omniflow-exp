@@ -510,6 +510,33 @@ def test_source_revision_rejects_terminal_failure_for_exact_source_hash(
         )
 
 
+def test_source_revision_allows_audited_environment_repair(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "appagent_demo"
+    expected = "2" * 64
+    failed = base / f"source_{expected[:12]}"
+    failed.mkdir(parents=True)
+    (failed / "prep_failure.json").write_text(
+        json.dumps(
+            {
+                "error": "appagent_official_source_success_required",
+                "retry_allowed": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert select_source_asset_revision(
+        base,
+        manifest_name="appagent_demo_manifest.json",
+        expected_source_sha256=expected,
+        environment_repair_reason=(
+            "launch_source_app_package_from_teacher_contract@7709f60"
+        ),
+    ) == base / f"source_{expected[:12]}_r2"
+
+
 def test_source_revision_advances_beyond_two_digit_failure_revision(
     tmp_path: Path,
 ) -> None:

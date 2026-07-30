@@ -19,6 +19,7 @@ def select_source_asset_revision(
     manifest_name: str,
     initial_revision: int = 3,
     expected_source_sha256: str = "",
+    environment_repair_reason: str = "",
 ) -> Path:
     """Reuse the first frozen source asset or allocate a fresh revision path.
 
@@ -34,6 +35,7 @@ def select_source_asset_revision(
     if not manifest or Path(manifest).name != manifest:
         raise ValueError("manifest_name must be one file name")
     source_sha256 = str(expected_source_sha256 or "").strip().lower()
+    repair_reason = str(environment_repair_reason or "").strip()
     if source_sha256 and not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
         raise ValueError("expected_source_sha256 must be one SHA-256 digest")
     base = Path(base_root).expanduser().resolve()
@@ -78,7 +80,10 @@ def select_source_asset_revision(
                     )
         if not revisions:
             return base / prefix
-        _reject_forbidden_source_retry(revisions)
+        _reject_forbidden_source_retry(
+            revisions,
+            environment_repair_reason=repair_reason,
+        )
         next_revision = max(revision for revision, _ in revisions) + 1
         return base / f"{prefix}_r{next_revision}"
     revisions: list[tuple[int, Path]] = []
@@ -96,7 +101,10 @@ def select_source_asset_revision(
     )
     if frozen:
         return frozen[0][1]
-    _reject_forbidden_source_retry(revisions)
+    _reject_forbidden_source_retry(
+        revisions,
+        environment_repair_reason=repair_reason,
+    )
     next_revision = max(
         [initial_revision - 1, *(revision for revision, _ in revisions)]
     ) + 1
@@ -105,6 +113,8 @@ def select_source_asset_revision(
 
 def _reject_forbidden_source_retry(
     revisions: list[tuple[int, Path]],
+    *,
+    environment_repair_reason: str = "",
 ) -> None:
     for _, candidate in sorted(revisions):
         marker = candidate / "prep_failure.json"
@@ -115,6 +125,8 @@ def _reject_forbidden_source_retry(
         except (OSError, json.JSONDecodeError):
             continue
         if not isinstance(failure, dict) or failure.get("retry_allowed") is not False:
+            continue
+        if str(environment_repair_reason or "").strip():
             continue
         error = str(failure.get("error") or "terminal_source_failure").strip()
         raise ValueError(f"source_asset_retry_forbidden:{candidate}:{error}")
