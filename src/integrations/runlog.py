@@ -328,12 +328,6 @@ def _androidworld_action_to_omniflow(
         projected = {"tool": "press_key", "args": {"key": "home"}}
     elif action_type == "keyboard_enter":
         projected = {"tool": "press_key", "args": {"key": "enter"}}
-    elif action_type == "press_keyboard":
-        key = str(action.get("keycode") or "").removeprefix("KEYCODE_").lower()
-        projected = {
-            "tool": "press_key",
-            "args": {"key": "delete" if key == "del" else key},
-        }
     elif action_type == "wait":
         projected = {"tool": "wait", "args": {"duration_ms": 1000}}
     else:
@@ -516,11 +510,7 @@ def _legacy_action_to_androidworld(
             return {"action_type": "navigate_home"}
         if key in {"ENTER", "KEYBOARD_ENTER", "PRESS_ENTER"}:
             return {"action_type": "keyboard_enter"}
-        if key == "DELETE":
-            key = "DEL"
-        if not key:
-            raise ValueError("legacy_action_keycode_required")
-        return {"action_type": "press_keyboard", "keycode": f"KEYCODE_{key}"}
+        raise ValueError(f"legacy_action_unsupported:{tool}")
     if tool in {"wait", "sleep"}:
         return {"action_type": "wait"}
     if tool in {"finished", "finish", "done", "status"}:

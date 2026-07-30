@@ -4,6 +4,13 @@ This repository exists only for the paper's AndroidWorld experiment. Do not add
 product code, historical campaigns, ablations, exploratory methods, raw data,
 or compatibility layers.
 
+## OmniFlow / OmniTransfer boundary
+
+- OmniTransfer is responsible only for mapping and mapped points.
+- OmniFlow-exp owns the experiment's core logic, including the native 512D
+  pole encoding and page encoding. Do not substitute OmniTransfer matcher
+  embeddings for these OmniFlow embeddings.
+
 ## Current phase
 
 The current phase is code migration and script maintenance only. Do not launch
@@ -47,6 +54,15 @@ retry policy, step budget, model, or output.
 Never commit RunLogs, screenshots, XML dumps, model weights, APKs, emulator
 images, baseline memory, credentials, runtime attempts, or result tables. All
 such assets must be supplied through explicit absolute paths.
+
+The only RunLog contract is `omniflow.run_log.v1`. Its observation fields are
+the AndroidWorld `State` fields `pixels`, `forest`, `ui_elements`, and
+`auxiliaries`; its actions use only fields and action types accepted by
+AndroidWorld `JSONAction`. OmniFlow persists `pixels` as an immutable screenshot
+reference instead of embedding the array. Never encode an OmniFlow action alias
+or a private device command as an AndroidWorld action.
+This contract is defined by OmniFlow source and the checked-in schema, never by
+`current.json`; experiment memory only indexes immutable assets and results.
 
 OmniTransfer failures must return to the normal OmniFlow fallback path. Never
 replay source-device coordinates directly on a target device.

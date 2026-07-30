@@ -146,7 +146,6 @@
             "navigate_back",
             "navigate_home",
             "open_app",
-            "press_keyboard",
             "scroll",
             "status",
             "swipe",
@@ -154,13 +153,13 @@
             "wait"
           ]
         },
-        "index": {"type": "integer", "minimum": 0},
-        "x": {"type": "integer", "minimum": 0},
-        "y": {"type": "integer", "minimum": 0},
+        "index": {"type": "integer"},
+        "x": {"type": "number"},
+        "y": {"type": "number"},
         "text": {"type": "string"},
         "direction": {"enum": ["left", "right", "down", "up"]},
-        "app_name": {"type": "string", "minLength": 1},
-        "goal_status": {"type": "string", "minLength": 1},
+        "app_name": {"type": "string"},
+        "goal_status": {"type": "string"},
         "keycode": {"type": "string", "pattern": "^KEYCODE_"},
         "clear_text": {"type": "boolean"}
       }

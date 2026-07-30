@@ -19,7 +19,6 @@ _ACTION_TYPES = {
     "navigate_back",
     "navigate_home",
     "open_app",
-    "press_keyboard",
     "scroll",
     "status",
     "swipe",
@@ -84,41 +83,28 @@ def canonicalize_androidworld_action(value: Any) -> dict[str, Any]:
     if unknown:
         raise ValueError("androidworld_action_unknown_fields:" + ",".join(unknown))
     action = {key: item for key, item in value.items() if item is not None}
-    action_type = str(action.get("action_type") or "").strip()
+    action_type = action.get("action_type")
     if action_type not in _ACTION_TYPES:
         raise ValueError(f"androidworld_action_type_invalid:{action_type}")
-    action["action_type"] = action_type
     if "index" in action:
-        _non_negative_int(action["index"], "androidworld_action_index_invalid")
+        _integer(action["index"], "androidworld_action_index_invalid")
         if "x" in action or "y" in action:
             raise ValueError("androidworld_action_index_or_coordinates_required")
     for key in ("x", "y"):
         if key in action:
-            _non_negative_int(
+            _number(
                 action[key], f"androidworld_action_{key}_invalid"
             )
-    if action_type in {"click", "double_tap", "long_press"}:
-        if "index" not in action and not all(key in action for key in ("x", "y")):
-            raise ValueError(
-                f"androidworld_action_target_required:{action_type}"
-            )
-    if action_type == "input_text" and not isinstance(action.get("text"), str):
-        raise ValueError("androidworld_action_text_required:input_text")
-    if action_type in {"scroll", "swipe"} and action.get("direction") not in {
+    if action.get("direction") is not None and action["direction"] not in {
         "left",
         "right",
         "down",
         "up",
     }:
-        raise ValueError(f"androidworld_action_direction_required:{action_type}")
-    if action_type == "open_app" and not str(action.get("app_name") or "").strip():
-        raise ValueError("androidworld_action_app_name_required")
-    if action_type == "status" and not str(
-        action.get("goal_status") or ""
-    ).strip():
-        raise ValueError("androidworld_action_goal_status_required")
-    if action_type == "press_keyboard" and not re.fullmatch(
-        r"KEYCODE_[A-Z0-9_]+", str(action.get("keycode") or "")
+        raise ValueError("androidworld_action_direction_invalid")
+    if action.get("keycode") is not None and (
+        not isinstance(action["keycode"], str)
+        or not action["keycode"].startswith("KEYCODE_")
     ):
         raise ValueError("androidworld_action_keycode_required")
     return _copy(action)
@@ -180,8 +166,14 @@ def _validate_screenshot_reference(value: Any) -> None:
         raise ValueError("run_log_screenshot_path_must_be_absolute")
 
 
-def _non_negative_int(value: Any, error: str) -> int:
-    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+def _integer(value: Any, error: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(error)
+    return value
+
+
+def _number(value: Any, error: str) -> int | float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
         raise ValueError(error)
     return value
 

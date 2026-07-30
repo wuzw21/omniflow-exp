@@ -3534,12 +3534,7 @@ def _raw_replay_action_to_payload(
             return {"action_type": "navigate_home"}, None
         if key in {"enter", "keyboard_enter"}:
             return {"action_type": "keyboard_enter"}, None
-        keycode = str(params.get("keycode") or key or "").strip().upper()
-        if keycode and not keycode.startswith("KEYCODE_"):
-            keycode = f"KEYCODE_{keycode}"
-        if keycode:
-            return {"action_type": "press_keyboard", "keycode": keycode}, None
-        return None, "missing_key"
+        return None, "unsupported_androidworld_key"
 
     if action_type in {"back", "press_back", "navigate_back"}:
         return {"action_type": "navigate_back"}, None

@@ -217,15 +217,6 @@ def _step_action(
     }
     if action_type in keys:
         return {"tool": "press_key", "args": {"key": keys[action_type]}}
-    if action_type == "press_keyboard":
-        return {
-            "tool": "press_key",
-            "args": {
-                "key": str(action.get("keycode") or "")
-                .removeprefix("KEYCODE_")
-                .lower()
-            },
-        }
     if action_type == "wait":
         return {"tool": "wait", "args": {}}
     return {"tool": "", "args": {}}

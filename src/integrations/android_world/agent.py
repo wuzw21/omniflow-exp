@@ -484,11 +484,7 @@ def _omniflow_action_to_androidworld(
             return {"action_type": "navigate_home"}
         if key in {"ENTER", "KEYBOARD_ENTER", "PRESS_ENTER"}:
             return {"action_type": "keyboard_enter"}
-        if key == "DELETE":
-            key = "DEL"
-        if not key:
-            raise ValueError("omniflow_trace_keycode_required")
-        return {"action_type": "press_keyboard", "keycode": f"KEYCODE_{key}"}
+        raise ValueError("omniflow_trace_action_unsupported:press_key")
     if tool == "wait":
         return {"action_type": "wait"}
     raise ValueError(f"omniflow_trace_action_unsupported:{tool or 'missing'}")

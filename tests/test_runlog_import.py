@@ -75,6 +75,38 @@ def test_production_import_rejects_retired_androidworld_schema_name() -> None:
         import_run_log(run_log)
 
 
+def test_production_import_accepts_androidworld_float_coordinates() -> None:
+    run_log = androidworld_run_log(
+        [{"action_type": "click", "x": 50.2, "y": 50.3}]
+    )
+
+    assert import_run_log(run_log) == run_log
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        {"action_type": "open_app", "app_name": ""},
+        {"action_type": "status", "goal_status": ""},
+    ],
+)
+def test_production_import_keeps_androidworld_optional_empty_strings(
+    action: dict[str, object],
+) -> None:
+    run_log = androidworld_run_log([action])
+
+    assert import_run_log(run_log) == run_log
+
+
+def test_production_import_rejects_nonofficial_action_type() -> None:
+    run_log = androidworld_run_log(
+        [{"action_type": "press_keyboard", "keycode": "KEYCODE_DEL"}]
+    )
+
+    with pytest.raises(ValueError, match="run_log_schema_invalid"):
+        import_run_log(run_log)
+
+
 def test_explicit_converter_emits_only_omniflow_schema(tmp_path: Path) -> None:
     source = tmp_path / "legacy.run_log.json"
     payload = {
@@ -218,6 +250,33 @@ def test_explicit_converter_rejects_private_action(tmp_path: Path) -> None:
         convert_legacy_run_log(
             payload,
             task_name="ClipboardTask",
+            task_parameters={},
+            seed=111,
+            source_path=source,
+            require_screenshots=False,
+        )
+
+
+def test_explicit_converter_rejects_nonofficial_keyboard_action(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "legacy.run_log.json"
+    payload = {
+        "run_id": "legacy-keyboard-action",
+        "success": True,
+        "steps": [
+            {
+                "action": {"type": "press_key", "params": {"key": "delete"}},
+                "success": True,
+            }
+        ],
+    }
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="legacy_action_unsupported:press_key"):
+        convert_legacy_run_log(
+            payload,
+            task_name="KeyboardTask",
             task_parameters={},
             seed=111,
             source_path=source,

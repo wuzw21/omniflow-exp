@@ -394,7 +394,6 @@ class AndroidWorldHost:
             "long_press": "LONG_PRESS",
             "input_text": "INPUT_TEXT",
             "swipe": "SCROLL",
-            "press_key": "PRESS_KEYBOARD",
             "press_back": "NAVIGATE_BACK",
             "press_home": "NAVIGATE_HOME",
             "press_enter": "KEYBOARD_ENTER",
@@ -414,12 +413,8 @@ class AndroidWorldHost:
                 "KEYCODE_ENTER",
             }:
                 enum_name = "KEYBOARD_ENTER"
-            elif key in {"DEL", "DELETE", "KEYCODE_DEL"}:
-                payload["keycode"] = "KEYCODE_DEL"
-            elif key:
-                payload["keycode"] = key if key.startswith("KEYCODE_") else f"KEYCODE_{key}"
             else:
-                raise ValueError("press_key missing keycode")
+                raise ValueError(f"unsupported AndroidWorld key: {key or 'missing'}")
         if enum_name is None:
             raise ValueError(f"unsupported AndroidWorld action: {action_name}")
         payload["action_type"] = getattr(action_types, enum_name, enum_name.lower())
