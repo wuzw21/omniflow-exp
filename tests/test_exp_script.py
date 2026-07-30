@@ -999,3 +999,28 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
         "--function-catalog",
         str(catalog),
     ]
+
+    environment.pop("OMNIFLOW_MEMORY_FUNCTION_CATALOGS")
+    without_catalog = subprocess.run(
+        ["bash", str(SCRIPT), "--refresh-memory"],
+        cwd=REPO,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert without_catalog.returncode == 0, without_catalog.stderr
+    assert captured.read_text(encoding="utf-8").splitlines() == [
+        "-m",
+        "src.experiment.artifact_memory",
+        "refresh",
+        "--memory-root",
+        str(memory_root),
+        "--source-index",
+        str(source_index),
+        "--runlog-root",
+        str(runlogs),
+        "--result-root",
+        str(results),
+    ]

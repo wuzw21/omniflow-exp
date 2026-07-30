@@ -238,17 +238,19 @@ if [[ "$refresh_memory" -eq 1 ]]; then
     fi
     memory_args+=(--result-root "$configured_root")
   done
-  IFS=':' read -r -a configured_function_catalogs <<< "$memory_function_catalogs"
-  for configured_catalog in "${configured_function_catalogs[@]}"; do
-    if [[ -z "$configured_catalog" ]]; then
-      continue
-    fi
-    if [[ "$configured_catalog" != /* || ! -f "$configured_catalog" ]]; then
-      echo "Memory Function catalog must be an existing absolute file: $configured_catalog" >&2
-      exit 2
-    fi
-    memory_args+=(--function-catalog "$configured_catalog")
-  done
+  if [[ -n "$memory_function_catalogs" ]]; then
+    IFS=':' read -r -a configured_function_catalogs <<< "$memory_function_catalogs"
+    for configured_catalog in "${configured_function_catalogs[@]}"; do
+      if [[ -z "$configured_catalog" ]]; then
+        continue
+      fi
+      if [[ "$configured_catalog" != /* || ! -f "$configured_catalog" ]]; then
+        echo "Memory Function catalog must be an existing absolute file: $configured_catalog" >&2
+        exit 2
+      fi
+      memory_args+=(--function-catalog "$configured_catalog")
+    done
+  fi
   cd "$repo"
   exec "$python_bin" "${memory_args[@]}"
 fi
