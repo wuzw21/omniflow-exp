@@ -1359,10 +1359,12 @@ def preflight_teacher_source_run_log(source_run_log: str | Path) -> dict[str, An
             source_xml_action_count += 1
         if _teacher_action_is_groundable(action):
             groundable_action_count += 1
+    teacher_action_count = len(actions)
     return {
         "source_run_log": str(path),
-        "teacher_action_count": len(actions),
+        "teacher_action_count": teacher_action_count,
         "groundable_action_count": groundable_action_count,
+        "ungroundable_action_count": teacher_action_count - groundable_action_count,
         "source_xml_action_count": source_xml_action_count,
         "has_source_xml": bool(source_xml_action_count),
     }
@@ -1407,13 +1409,25 @@ def run_teacher_server(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     preflight = preflight_teacher_source_run_log(args.source_run_log)
+    fallback_to_vlm = bool(args.fallback_to_vlm_on_teacher_miss)
+    native_vlm_fallback_only = (
+        int(preflight["teacher_action_count"]) <= 0 and fallback_to_vlm
+    )
+    preflight = {
+        **preflight,
+        "fallback_to_vlm_on_teacher_miss": fallback_to_vlm,
+        "expected_vlm_fallback_action_count": int(
+            preflight["ungroundable_action_count"]
+        ),
+        "native_vlm_fallback_only": native_vlm_fallback_only,
+    }
     _write_stats_event(
         {
             "event": "mobilegpt_teacher_source_preflight",
             **preflight,
         }
     )
-    if int(preflight["teacher_action_count"]) <= 0:
+    if int(preflight["teacher_action_count"]) <= 0 and not native_vlm_fallback_only:
         _write_stats_event(
             {
                 "event": "mobilegpt_teacher_preflight_failed",
@@ -1425,8 +1439,10 @@ def run_teacher_server(argv: list[str] | None = None) -> int:
             "source run log has no MobileGPT-supported teacher actions: "
             f"{preflight['source_run_log']}"
         )
-    if int(preflight["groundable_action_count"]) != int(
-        preflight["teacher_action_count"]
+    if (
+        int(preflight["groundable_action_count"])
+        != int(preflight["teacher_action_count"])
+        and not fallback_to_vlm
     ):
         _write_stats_event(
             {
@@ -1455,16 +1471,18 @@ def run_teacher_server(argv: list[str] | None = None) -> int:
     from src.integrations.mobilegpt_runtime import install_mobilegpt_openai_runtime
 
     install_mobilegpt_openai_runtime()
-    install_mobilegpt_teacher(
-        source_run_log=args.source_run_log,
-        fallback_to_vlm_on_miss=bool(args.fallback_to_vlm_on_teacher_miss),
-    )
+    if not native_vlm_fallback_only:
+        install_mobilegpt_teacher(
+            source_run_log=args.source_run_log,
+            fallback_to_vlm_on_miss=fallback_to_vlm,
+        )
     _write_stats_event(
         {
             "event": "mobilegpt_teacher_server_started",
             "source_run_log": str(Path(args.source_run_log).expanduser().resolve()),
             "host": args.host,
             "port": int(args.port),
+            "native_vlm_fallback_only": native_vlm_fallback_only,
         }
     )
     Server(

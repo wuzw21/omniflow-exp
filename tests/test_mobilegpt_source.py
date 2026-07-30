@@ -8,7 +8,12 @@ import subprocess
 import sys
 
 import pytest
-from runlog_fixtures import androidworld_run_log, androidworld_state
+from runlog_fixtures import (
+    androidworld_run_log,
+    androidworld_state,
+    mobilegpt_native_fallback_run_log,
+    mobilegpt_partial_grounding_run_log,
+)
 
 from src.experiment import androidworld as pipeline
 from src.experiment import mobilegpt_source
@@ -405,6 +410,170 @@ def _write_source_index(
         encoding="utf-8",
     )
     return index, source_run_log
+
+
+def _mobilegpt_write_status(
+    stats_path: Path,
+    rows: list[dict],
+) -> tuple[dict, dict]:
+    stats_path.write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    summary = pipeline.summarize_mobilegpt_stats(stats_path)
+    status = pipeline._mobilegpt_memory_write_status(
+        stats_summary=summary,
+        memory_inventory={
+            "has_recallable_subtasks": True,
+            "has_useful_actions": True,
+        },
+    )
+    return summary, status
+
+
+def test_mobilegpt_teacher_source_records_partial_grounding_fallback(
+    tmp_path: Path,
+) -> None:
+    source_run_log = tmp_path / "partial.run_log.json"
+    source_run_log.write_text(
+        json.dumps(
+            mobilegpt_partial_grounding_run_log(
+                task_name="PartialGroundingTask"
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    teacher_source = pipeline.build_mobilegpt_teacher_source(
+        source_run_log,
+        task_name="PartialGroundingTask",
+        fallback_to_vlm_on_teacher_miss=True,
+    )
+
+    assert teacher_source["action_count"] == 2
+    assert teacher_source["groundable_action_count"] == 1
+    assert teacher_source["expected_vlm_fallback_action_count"] == 1
+    assert teacher_source["fallback_to_vlm_on_teacher_miss"] is True
+
+
+def test_mobilegpt_teacher_source_records_native_fallback_only(
+    tmp_path: Path,
+) -> None:
+    source_run_log = tmp_path / "native-fallback.run_log.json"
+    source_run_log.write_text(
+        json.dumps(mobilegpt_native_fallback_run_log(task_name="QueryTask")),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="mobilegpt_teacher_source_has_no_supported_actions",
+    ):
+        pipeline.build_mobilegpt_teacher_source(
+            source_run_log,
+            task_name="QueryTask",
+        )
+
+    teacher_source = pipeline.build_mobilegpt_teacher_source(
+        source_run_log,
+        task_name="QueryTask",
+        fallback_to_vlm_on_teacher_miss=True,
+    )
+
+    assert teacher_source["action_count"] == 0
+    assert teacher_source["groundable_action_count"] == 0
+    assert teacher_source["native_vlm_fallback_only"] is True
+    assert teacher_source["fallback_to_vlm_on_teacher_miss"] is True
+
+
+@pytest.mark.parametrize(
+    ("preflight", "events", "expected_consumed", "expected_fallbacks"),
+    [
+        (
+            {"teacher_action_count": 2, "groundable_action_count": 1},
+            [
+                {"event": "mobilegpt_teacher_action"},
+                {"event": "mobilegpt_teacher_miss", "fallback_to_vlm": True},
+            ],
+            2,
+            1,
+        ),
+        (
+            {"teacher_action_count": 1, "groundable_action_count": 0},
+            [{"event": "mobilegpt_teacher_miss", "fallback_to_vlm": True}],
+            1,
+            1,
+        ),
+        (
+            {
+                "teacher_action_count": 0,
+                "groundable_action_count": 0,
+                "native_vlm_fallback_only": True,
+            },
+            [
+                {
+                    "event": "chat_call",
+                    "model": "qwen3-vl-plus",
+                    "prompt_tokens": 10,
+                    "completion_tokens": 2,
+                    "total_tokens": 12,
+                }
+            ],
+            0,
+            0,
+        ),
+    ],
+)
+def test_mobilegpt_enabled_fallback_accounting_can_seal(
+    tmp_path: Path,
+    preflight: dict,
+    events: list[dict],
+    expected_consumed: int,
+    expected_fallbacks: int,
+) -> None:
+    summary, status = _mobilegpt_write_status(
+        tmp_path / "source_stats.jsonl",
+        [
+            {
+                "event": "mobilegpt_teacher_source_preflight",
+                "fallback_to_vlm_on_teacher_miss": True,
+                **preflight,
+            },
+            *events,
+            {"event": "task_finished"},
+        ],
+    )
+
+    assert summary["teacher_consumed_action_count"] == expected_consumed
+    assert summary["teacher_vlm_fallback_count"] == expected_fallbacks
+    assert summary["teacher_unrecovered_miss_count"] == 0
+    assert status["memory_written"] is True
+
+
+def test_mobilegpt_native_fallback_requires_a_model_call(tmp_path: Path) -> None:
+    summary, _ = _mobilegpt_write_status(
+        tmp_path / "source_stats.jsonl",
+        [
+            {
+                "event": "mobilegpt_teacher_source_preflight",
+                "teacher_action_count": 0,
+                "groundable_action_count": 0,
+                "fallback_to_vlm_on_teacher_miss": True,
+                "native_vlm_fallback_only": True,
+            },
+            {"event": "task_finished"},
+        ],
+    )
+    status = pipeline._mobilegpt_memory_write_status(
+        stats_summary=summary,
+        memory_inventory={
+            "has_recallable_subtasks": True,
+            "has_useful_actions": True,
+        },
+    )
+
+    assert status["memory_written"] is False
+    assert "missing_native_vlm_fallback_calls" in status["reasons"]
 
 
 def test_mobilegpt_deterministic_preflight_does_not_claim_output(

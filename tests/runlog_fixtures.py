@@ -86,3 +86,39 @@ def androidworld_run_log(
             for index, action in enumerate(actions)
         ],
     }
+
+
+def mobilegpt_partial_grounding_run_log(
+    *,
+    task_name: str = "Task",
+) -> dict[str, Any]:
+    return androidworld_run_log(
+        [
+            {"action_type": "click", "x": 50, "y": 50},
+            {"action_type": "click", "x": 50, "y": 50},
+        ],
+        observations=[
+            androidworld_state(
+                "groundable",
+                forest=(
+                    '<hierarchy><node text="Continue" clickable="true" '
+                    'bounds="[0,0][100,100]" /></hierarchy>'
+                ),
+            ),
+            androidworld_state("ungroundable", forest="<hierarchy />"),
+        ],
+        task_name=task_name,
+    )
+
+
+def mobilegpt_native_fallback_run_log(
+    *,
+    task_name: str = "Task",
+) -> dict[str, Any]:
+    return androidworld_run_log(
+        [
+            {"action_type": "open_app", "app_name": "com.example.app"},
+            {"action_type": "answer", "text": "No tasks are due."},
+        ],
+        task_name=task_name,
+    )

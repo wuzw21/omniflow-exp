@@ -3387,6 +3387,14 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
         for row in rows
         if str(row.get("event") or "").startswith("mobilegpt_teacher_")
     ]
+    teacher_preflight_rows = [
+        row
+        for row in teacher_rows
+        if row.get("event") == "mobilegpt_teacher_source_preflight"
+    ]
+    teacher_miss_rows = [
+        row for row in teacher_rows if row.get("event") == "mobilegpt_teacher_miss"
+    ]
     memory_rows = [row for row in rows if row.get("event") == "memory_lookup"]
     action_rows = [row for row in rows if row.get("event") == "mobilegpt_action_sent"]
     device_action_rows = [
@@ -3400,6 +3408,16 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
         ]
         or [0]
     )
+    teacher_groundable_action_count = max(
+        [
+            _coerce_int(
+                row.get("groundable_action_count"),
+                _coerce_int(row.get("teacher_action_count")),
+            )
+            for row in teacher_preflight_rows
+        ]
+        or [teacher_expected_action_count]
+    )
     teacher_action_count = sum(
         1 for row in teacher_rows if row.get("event") == "mobilegpt_teacher_action"
     )
@@ -3407,6 +3425,20 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
         _coerce_int(row.get("skipped_count"))
         for row in teacher_rows
         if row.get("event") == "mobilegpt_teacher_skipped_noop"
+    )
+    teacher_vlm_fallback_count = sum(
+        1 for row in teacher_miss_rows if row.get("fallback_to_vlm") is True
+    )
+    teacher_unrecovered_miss_count = sum(
+        1 for row in teacher_miss_rows if row.get("fallback_to_vlm") is not True
+    )
+    teacher_vlm_fallback_enabled = any(
+        row.get("fallback_to_vlm_on_teacher_miss") is True
+        for row in teacher_preflight_rows
+    )
+    native_vlm_fallback_only = any(
+        row.get("native_vlm_fallback_only") is True
+        for row in teacher_preflight_rows
     )
     memory_hit_count = sum(
         1 for row in memory_rows if row.get("result") == "direct_hit"
@@ -3430,13 +3462,18 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
         "teacher_event_count": len(teacher_rows),
         "teacher_action_count": teacher_action_count,
         "teacher_expected_action_count": teacher_expected_action_count,
+        "teacher_groundable_action_count": teacher_groundable_action_count,
         "teacher_consumed_action_count": (
-            teacher_action_count + teacher_skipped_noop_count
+            teacher_action_count
+            + teacher_skipped_noop_count
+            + teacher_vlm_fallback_count
         ),
         "teacher_skipped_noop_count": teacher_skipped_noop_count,
-        "teacher_miss_count": sum(
-            1 for row in teacher_rows if row.get("event") == "mobilegpt_teacher_miss"
-        ),
+        "teacher_miss_count": len(teacher_miss_rows),
+        "teacher_vlm_fallback_count": teacher_vlm_fallback_count,
+        "teacher_unrecovered_miss_count": teacher_unrecovered_miss_count,
+        "teacher_vlm_fallback_enabled": teacher_vlm_fallback_enabled,
+        "native_vlm_fallback_only": native_vlm_fallback_only,
         "teacher_failed_finish_count": sum(
             1
             for row in teacher_rows
@@ -3863,13 +3900,24 @@ def validate_mobilegpt_adapted_memory(
         raise ValueError(
             "mobilegpt_cold_memory_incomplete:" + ",".join(write_status["reasons"])
         )
-    expected_teacher_count = int(teacher_payload.get("action_count") or 0)
-    if expected_teacher_count != int(write_status["teacher_expected_action_count"]):
-        raise ValueError("mobilegpt_cold_memory_teacher_source_action_count_mismatch")
+    _validate_mobilegpt_teacher_stats(
+        teacher_payload,
+        stats_summary,
+        error_prefix="mobilegpt_cold_memory_teacher_source",
+    )
     manifest_count_pairs = {
         "teacher_action_count": write_status["teacher_action_count"],
         "teacher_expected_action_count": write_status["teacher_expected_action_count"],
+        "teacher_groundable_action_count": stats_summary[
+            "teacher_groundable_action_count"
+        ],
         "teacher_consumed_count": write_status["teacher_consumed_action_count"],
+        "teacher_vlm_fallback_count": write_status[
+            "teacher_vlm_fallback_count"
+        ],
+        "teacher_unrecovered_miss_count": write_status[
+            "teacher_unrecovered_miss_count"
+        ],
         "task_finished_count": write_status["task_finished_count"],
     }
     if any(
@@ -3903,6 +3951,7 @@ def build_mobilegpt_teacher_source(
     task_name: str,
     source_seed: int = 111,
     provenance_source_run_log: str | Path | None = None,
+    fallback_to_vlm_on_teacher_miss: bool = False,
 ) -> dict[str, Any]:
     """Build a coordinate-free audit artifact for the native teacher stream."""
 
@@ -3922,9 +3971,13 @@ def build_mobilegpt_teacher_source(
     )
 
     teacher_preflight = preflight_teacher_source_run_log(source_path)
-    if int(teacher_preflight["groundable_action_count"]) != int(
-        teacher_preflight["teacher_action_count"]
-    ):
+    teacher_action_count = int(teacher_preflight["teacher_action_count"])
+    groundable_action_count = int(teacher_preflight["groundable_action_count"])
+    expected_vlm_fallback_action_count = teacher_action_count - groundable_action_count
+    native_vlm_fallback_only = (
+        teacher_action_count == 0 and fallback_to_vlm_on_teacher_miss
+    )
+    if expected_vlm_fallback_action_count and not fallback_to_vlm_on_teacher_miss:
         raise ValueError("mobilegpt_teacher_source_has_ungroundable_actions")
 
     actions: list[dict[str, Any]] = []
@@ -3979,7 +4032,7 @@ def build_mobilegpt_teacher_source(
                 "params": sanitized_params,
             }
         )
-    if not actions:
+    if not actions and not native_vlm_fallback_only:
         raise ValueError("mobilegpt_teacher_source_has_no_supported_actions")
     return {
         "schema_version": "omniflow.mobilegpt-teacher-source.v1",
@@ -3989,7 +4042,12 @@ def build_mobilegpt_teacher_source(
         "source_run_log_sha256": _file_sha256(provenance_path),
         "grounded_teacher_run_log_sha256": _file_sha256(source_path),
         "action_count": len(actions),
-        "groundable_action_count": int(teacher_preflight["groundable_action_count"]),
+        "groundable_action_count": groundable_action_count,
+        "expected_vlm_fallback_action_count": expected_vlm_fallback_action_count,
+        "fallback_to_vlm_on_teacher_miss": bool(
+            fallback_to_vlm_on_teacher_miss
+        ),
+        "native_vlm_fallback_only": native_vlm_fallback_only,
         "actions": actions,
         "contains_source_coordinates": False,
         "contains_task_or_subtask_semantics": False,
@@ -4021,6 +4079,53 @@ def _mobilegpt_official_source_result(
         "official_validator_used": True,
         "official_validator_success": success,
     }
+
+
+def _validate_mobilegpt_teacher_stats(
+    teacher_source: dict[str, Any],
+    stats_summary: dict[str, Any],
+    *,
+    error_prefix: str,
+) -> tuple[int, bool, bool]:
+    action_count = int(teacher_source.get("action_count") or 0)
+    groundable_action_count = int(
+        teacher_source.get("groundable_action_count") or 0
+    )
+    fallback_enabled = bool(
+        teacher_source.get("fallback_to_vlm_on_teacher_miss")
+    )
+    native_fallback_only = bool(teacher_source.get("native_vlm_fallback_only"))
+    comparisons = (
+        (
+            action_count,
+            int(stats_summary.get("teacher_expected_action_count") or 0),
+            "action_count",
+        ),
+        (
+            groundable_action_count,
+            int(stats_summary.get("teacher_groundable_action_count") or 0),
+            "groundable_count",
+        ),
+        (
+            int(teacher_source.get("expected_vlm_fallback_action_count") or 0),
+            action_count - groundable_action_count,
+            "fallback_count",
+        ),
+        (
+            fallback_enabled,
+            bool(stats_summary.get("teacher_vlm_fallback_enabled")),
+            "fallback_policy",
+        ),
+        (
+            native_fallback_only,
+            bool(stats_summary.get("native_vlm_fallback_only")),
+            "fallback_mode",
+        ),
+    )
+    for expected, actual, label in comparisons:
+        if expected != actual:
+            raise ValueError(f"{error_prefix}_{label}_mismatch")
+    return groundable_action_count, fallback_enabled, native_fallback_only
 
 
 def seal_mobilegpt_adapted_memory(
@@ -4086,10 +4191,15 @@ def seal_mobilegpt_adapted_memory(
         raise ValueError(
             "mobilegpt_cold_memory_incomplete:" + ",".join(write_status["reasons"])
         )
-    if int(teacher.get("action_count") or 0) != int(
-        write_status["teacher_expected_action_count"]
-    ):
-        raise ValueError("mobilegpt_teacher_source_action_count_mismatch")
+    (
+        teacher_groundable_action_count,
+        teacher_fallback_enabled,
+        teacher_native_vlm_fallback_only,
+    ) = _validate_mobilegpt_teacher_stats(
+        teacher,
+        stats_summary,
+        error_prefix="mobilegpt_teacher_source",
+    )
 
     provenance_root = bundle_root / "provenance"
     provenance_root.mkdir(exist_ok=False)
@@ -4127,6 +4237,12 @@ def seal_mobilegpt_adapted_memory(
             "relative_path": copied_teacher.relative_to(bundle_root).as_posix(),
             "sha256": _file_sha256(copied_teacher),
             "action_count": int(teacher["action_count"]),
+            "groundable_action_count": teacher_groundable_action_count,
+            "expected_vlm_fallback_action_count": int(
+                teacher.get("expected_vlm_fallback_action_count") or 0
+            ),
+            "fallback_to_vlm_on_teacher_miss": teacher_fallback_enabled,
+            "native_vlm_fallback_only": teacher_native_vlm_fallback_only,
         },
         "source_run_log": {
             "relative_path": copied_source.relative_to(bundle_root).as_posix(),
@@ -4139,9 +4255,17 @@ def seal_mobilegpt_adapted_memory(
             "teacher_expected_action_count": int(
                 write_status["teacher_expected_action_count"]
             ),
+            "teacher_groundable_action_count": teacher_groundable_action_count,
             "teacher_consumed_count": int(
                 write_status["teacher_consumed_action_count"]
             ),
+            "teacher_vlm_fallback_count": int(
+                write_status["teacher_vlm_fallback_count"]
+            ),
+            "teacher_unrecovered_miss_count": int(
+                write_status["teacher_unrecovered_miss_count"]
+            ),
+            "native_vlm_fallback_only": teacher_native_vlm_fallback_only,
             "task_finished_count": int(write_status["task_finished_count"]),
             "model_calls": _coerce_int(stats_summary.get("model_calls")),
             "chat_models": list(stats_summary.get("chat_models") or []),
@@ -4160,6 +4284,11 @@ def seal_mobilegpt_adapted_memory(
         "provenance": {
             "native_mobilegpt_learning": True,
             "complete_teacher_action_consumption": True,
+            "teacher_groundable_action_count": teacher_groundable_action_count,
+            "teacher_vlm_fallback_action_count": int(
+                write_status["teacher_vlm_fallback_count"]
+            ),
+            "native_vlm_fallback_only": teacher_native_vlm_fallback_only,
             "function_conversion_enabled": False,
             "target_inputs_read": False,
             "target_observations_read": False,
@@ -6676,6 +6805,19 @@ def _mobilegpt_memory_write_status(
         teacher_action_count,
     )
     teacher_miss_count = _coerce_int(stats_summary.get("teacher_miss_count"))
+    teacher_vlm_fallback_count = _coerce_int(
+        stats_summary.get("teacher_vlm_fallback_count")
+    )
+    teacher_unrecovered_miss_count = _coerce_int(
+        stats_summary.get("teacher_unrecovered_miss_count"),
+        teacher_miss_count,
+    )
+    teacher_vlm_fallback_enabled = bool(
+        stats_summary.get("teacher_vlm_fallback_enabled")
+    )
+    native_vlm_fallback_only = bool(
+        stats_summary.get("native_vlm_fallback_only")
+    )
     teacher_failed_finish_count = _coerce_int(
         stats_summary.get("teacher_failed_finish_count")
     )
@@ -6696,12 +6838,20 @@ def _mobilegpt_memory_write_status(
         reasons.append("missing_recallable_subtasks")
     if not has_useful_actions:
         reasons.append("missing_non_finish_actions")
-    if teacher_action_count <= 0 or teacher_expected_action_count <= 0:
+    if teacher_expected_action_count <= 0 and not native_vlm_fallback_only:
         reasons.append("missing_teacher_actions")
+    if native_vlm_fallback_only and teacher_expected_action_count != 0:
+        reasons.append("native_vlm_fallback_has_teacher_actions")
+    if native_vlm_fallback_only and _coerce_int(
+        stats_summary.get("model_calls")
+    ) <= 0:
+        reasons.append("missing_native_vlm_fallback_calls")
     if teacher_consumed_action_count != teacher_expected_action_count:
         reasons.append("incomplete_source_actions")
-    if teacher_miss_count > 0 or teacher_failed_finish_count > 0:
+    if teacher_unrecovered_miss_count > 0 or teacher_failed_finish_count > 0:
         reasons.append("teacher_grounding_failed")
+    if teacher_vlm_fallback_count > 0 and not teacher_vlm_fallback_enabled:
+        reasons.append("unexpected_teacher_vlm_fallback")
     if teacher_action_error_count > 0:
         reasons.append("teacher_action_failed")
     if teacher_forced_select_count > 0:
@@ -6717,6 +6867,10 @@ def _mobilegpt_memory_write_status(
         "teacher_expected_action_count": teacher_expected_action_count,
         "teacher_consumed_action_count": teacher_consumed_action_count,
         "teacher_miss_count": teacher_miss_count,
+        "teacher_vlm_fallback_count": teacher_vlm_fallback_count,
+        "teacher_unrecovered_miss_count": teacher_unrecovered_miss_count,
+        "teacher_vlm_fallback_enabled": teacher_vlm_fallback_enabled,
+        "native_vlm_fallback_only": native_vlm_fallback_only,
         "teacher_failed_finish_count": teacher_failed_finish_count,
         "teacher_forced_select_count": teacher_forced_select_count,
         "teacher_action_error_count": teacher_action_error_count,
@@ -7254,8 +7408,20 @@ def _one_task_summary_rows(
                     "mobilegpt_teacher_action_count": _coerce_int(
                         teacher_stats.get("teacher_action_count")
                     ),
+                    "mobilegpt_teacher_groundable_action_count": _coerce_int(
+                        teacher_stats.get("teacher_groundable_action_count")
+                    ),
                     "mobilegpt_teacher_miss_count": _coerce_int(
                         teacher_stats.get("teacher_miss_count")
+                    ),
+                    "mobilegpt_teacher_vlm_fallback_count": _coerce_int(
+                        teacher_stats.get("teacher_vlm_fallback_count")
+                    ),
+                    "mobilegpt_teacher_unrecovered_miss_count": _coerce_int(
+                        teacher_stats.get("teacher_unrecovered_miss_count")
+                    ),
+                    "mobilegpt_native_vlm_fallback_only": bool(
+                        teacher_stats.get("native_vlm_fallback_only")
                     ),
                 }
             )

@@ -161,6 +161,7 @@ def _preflight_mobilegpt_teacher(
             task_name=item.task,
             source_seed=SOURCE_SEED,
             provenance_source_run_log=grounding_audit["source_run_log"],
+            fallback_to_vlm_on_teacher_miss=True,
         )
     target_info = _mobilegpt_source_target(item=item, grounded=grounded)
     return grounded, grounding_audit, teacher_payload, target_info
@@ -234,6 +235,18 @@ def preflight_mobilegpt_source(
         "source_method": source_method_label(item),
         "source_run_log": str(grounding_audit["source_run_log"]),
         "action_count": int(teacher_payload["action_count"]),
+        "groundable_action_count": int(
+            teacher_payload["groundable_action_count"]
+        ),
+        "expected_vlm_fallback_action_count": int(
+            teacher_payload["expected_vlm_fallback_action_count"]
+        ),
+        "fallback_to_vlm_on_teacher_miss": bool(
+            teacher_payload["fallback_to_vlm_on_teacher_miss"]
+        ),
+        "native_vlm_fallback_only": bool(
+            teacher_payload["native_vlm_fallback_only"]
+        ),
         "target_package": target_info["target_package"],
         "target_source": target_info["target_source"],
         "grounding": grounding_audit,

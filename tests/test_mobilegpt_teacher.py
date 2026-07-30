@@ -5,7 +5,13 @@ import subprocess
 import sys
 from types import ModuleType
 
-from runlog_fixtures import androidworld_run_log, androidworld_state
+import pytest
+from runlog_fixtures import (
+    androidworld_run_log,
+    androidworld_state,
+    mobilegpt_native_fallback_run_log,
+    mobilegpt_partial_grounding_run_log,
+)
 
 from src.integrations import mobilegpt_teacher
 from src.integrations.mobilegpt_teacher import install_mobilegpt_teacher
@@ -29,6 +35,78 @@ def _write_source_run_log(
         ),
         encoding="utf-8",
     )
+
+
+def test_teacher_server_allows_partial_grounding_only_with_vlm_fallback(
+    tmp_path,
+) -> None:
+    source_run_log = tmp_path / "source.run_log.json"
+    source_run_log.write_text(
+        json.dumps(mobilegpt_partial_grounding_run_log()),
+        encoding="utf-8",
+    )
+    missing_mobilegpt_root = tmp_path / "missing-mobilegpt"
+
+    with pytest.raises(ValueError, match="ungroundable MobileGPT teacher actions"):
+        mobilegpt_teacher.run_teacher_server(
+            [
+                "--mobilegpt-root",
+                str(missing_mobilegpt_root),
+                "--source-run-log",
+                str(source_run_log),
+            ]
+        )
+
+    with pytest.raises(FileNotFoundError, match="MobileGPT Server directory"):
+        mobilegpt_teacher.run_teacher_server(
+            [
+                "--mobilegpt-root",
+                str(missing_mobilegpt_root),
+                "--source-run-log",
+                str(source_run_log),
+                "--fallback-to-vlm-on-teacher-miss",
+            ]
+        )
+
+
+def test_teacher_server_uses_native_vlm_fallback_for_zero_teacher_actions(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    source_run_log = tmp_path / "source.run_log.json"
+    source_run_log.write_text(
+        json.dumps(mobilegpt_native_fallback_run_log()),
+        encoding="utf-8",
+    )
+    missing_mobilegpt_root = tmp_path / "missing-mobilegpt"
+    events: list[dict] = []
+    monkeypatch.setattr(mobilegpt_teacher, "_write_stats_event", events.append)
+
+    with pytest.raises(FileNotFoundError, match="MobileGPT Server directory"):
+        mobilegpt_teacher.run_teacher_server(
+            [
+                "--mobilegpt-root",
+                str(missing_mobilegpt_root),
+                "--source-run-log",
+                str(source_run_log),
+                "--fallback-to-vlm-on-teacher-miss",
+            ]
+        )
+
+    assert events == [
+        {
+            "event": "mobilegpt_teacher_source_preflight",
+            "source_run_log": str(source_run_log.resolve()),
+            "teacher_action_count": 0,
+            "groundable_action_count": 0,
+            "ungroundable_action_count": 0,
+            "source_xml_action_count": 0,
+            "has_source_xml": False,
+            "fallback_to_vlm_on_teacher_miss": True,
+            "expected_vlm_fallback_action_count": 0,
+            "native_vlm_fallback_only": True,
+        }
+    ]
 
 
 def test_exhausted_teacher_finishes_task_before_subtask_reentry(
