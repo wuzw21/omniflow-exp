@@ -59,7 +59,8 @@ source_device="${OMNIFLOW_SOURCE_DEVICE:-source5560:emulator-5560:5560}"
 preflight_profile="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_PROFILE:-}"
 preflight_serials="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_SERIALS:-}"
 manage_emulators="${OMNIFLOW_SINGLE_TASK_MANAGE_EMULATORS:-1}"
-emulator_avds="${OMNIFLOW_SINGLE_TASK_EMULATOR_AVDS:-emulator-5554=SmallPhone,emulator-5560=OmniFlowAW_r25,emulator-5564=OmniFlowTargetPixelFoldApi34}"
+emulator_avds="${OMNIFLOW_SINGLE_TASK_EMULATOR_AVDS:-emulator-5554=SmallPhone,emulator-5560=AndroidWorldAvd,emulator-5564=OmniFlowTargetPixelFoldApi33}"
+emulator_avd_specs="${OMNIFLOW_SINGLE_TASK_EMULATOR_AVD_SPECS:-SmallPhone|system-images;android-33;google_apis;arm64-v8a|small_phone,AndroidWorldAvd|system-images;android-33;google_apis;arm64-v8a|pixel_6,OmniFlowTargetPixelFoldApi33|system-images;android-33;google_apis;arm64-v8a|pixel_fold}"
 emulator_gpu="${OMNIFLOW_SINGLE_TASK_EMULATOR_GPU:-swiftshader_indirect}"
 emulator_boot_timeout_sec="${OMNIFLOW_SINGLE_TASK_EMULATOR_BOOT_TIMEOUT_SEC:-240}"
 fold_serial="${OMNIFLOW_SINGLE_TASK_FOLD_SERIAL:-emulator-5564}"
@@ -708,6 +709,7 @@ export ANDROID_SDK_ROOT="$android_sdk_root"
 export ANDROID_HOME="$android_sdk_root"
 adb_bin="${OMNIFLOW_ADB_PATH:-$android_sdk_root/platform-tools/adb}"
 emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$android_sdk_root/emulator/emulator}"
+avdmanager_bin="${OMNIFLOW_AVDMANAGER_BIN:-$android_sdk_root/cmdline-tools/latest/bin/avdmanager}"
 export PATH="/home/wuzewen/.local/bin:$android_sdk_root/platform-tools:$PATH"
 java_home="${OMNIFLOW_JAVA_HOME:-}"
 if [[ -z "$java_home" ]]; then
@@ -1728,6 +1730,51 @@ avd_for_serial() {
   return 1
 }
 
+avd_spec_for_name() {
+  local wanted_avd="$1"
+  local spec spec_avd system_image device_profile extra
+  IFS=',' read -r -a configured_avd_specs <<< "$emulator_avd_specs"
+  for spec in "${configured_avd_specs[@]}"; do
+    IFS='|' read -r spec_avd system_image device_profile extra <<< "$spec"
+    if [[ "$spec_avd" == "$wanted_avd" && -n "$system_image" && -n "$device_profile" && -z "${extra:-}" ]]; then
+      printf '%s\t%s\n' "$system_image" "$device_profile"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ensure_avd_installed() {
+  local avd="$1"
+  local avd_spec system_image device_profile image_dir
+  if "$emulator_bin" -list-avds | grep -Fqx "$avd"; then
+    return 0
+  fi
+  if ! avd_spec="$(avd_spec_for_name "$avd")"; then
+    echo "Configured AVD is not installed and has no provisioning spec: avd=$avd" >&2
+    return 1
+  fi
+  IFS=$'\t' read -r system_image device_profile <<< "$avd_spec"
+  image_dir="$android_sdk_root/${system_image//;/\/}"
+  if [[ ! -d "$image_dir" ]]; then
+    echo "Configured AVD system image is not installed: avd=$avd image=$system_image" >&2
+    return 1
+  fi
+  if [[ ! -x "$avdmanager_bin" ]]; then
+    echo "Android avdmanager missing: $avdmanager_bin" >&2
+    return 1
+  fi
+  echo "[emulator] create-avd avd=$avd image=$system_image device=$device_profile"
+  printf 'no\n' | "$avdmanager_bin" create avd \
+    --name "$avd" \
+    --package "$system_image" \
+    --device "$device_profile"
+  if ! "$emulator_bin" -list-avds | grep -Fqx "$avd"; then
+    echo "AVD provisioning completed without the configured AVD: avd=$avd" >&2
+    return 1
+  fi
+}
+
 device_state() {
   local serial="$1"
   local devices
@@ -1807,8 +1854,8 @@ ensure_emulator() {
     echo "No AVD mapping configured for $serial in OMNIFLOW_SINGLE_TASK_EMULATOR_AVDS." >&2
     return 1
   fi
-  if ! "$emulator_bin" -list-avds | grep -Fqx "$avd"; then
-    echo "Configured AVD is not installed: serial=$serial avd=$avd" >&2
+  if ! ensure_avd_installed "$avd"; then
+    echo "Configured AVD is unavailable: serial=$serial avd=$avd" >&2
     return 1
   fi
   log_path="$preflight_output_root/emulator_${serial#emulator-}.log"
