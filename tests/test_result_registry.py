@@ -409,9 +409,26 @@ def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
                     "task_name": "TaskOne",
                     "method": "ours",
                     "device": "small5554",
+                    "serial": "emulator-5554",
+                    "console_port": 5554,
                     "official_validator_used": True,
                     "official_validator_success": False,
                     "official_validator_task_count": 1,
+                    "task_random_seed": 113,
+                    "max_steps": 20,
+                    "task_params": {},
+                    "task_params_sha256": hashlib.sha256(
+                        json.dumps({}, sort_keys=True).encode("utf-8")
+                    ).hexdigest(),
+                    "state_backend": "androidworld",
+                    "fixed_task_seed": True,
+                    "fixed_task_params": False,
+                    "perform_emulator_setup": True,
+                    "command": (
+                        "python -m src.integrations.android_world.launch "
+                        "--task-random-seed 113 --max-steps 20 "
+                        "--fixed-task-seed --perform-emulator-setup"
+                    ),
                 }
             ],
         },

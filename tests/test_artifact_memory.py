@@ -452,7 +452,7 @@ def test_refresh_keeps_earliest_formal_result_without_success_cherry_picking(
     assert canonical["registered_result_aliases"] == [str(first)]
     assert (
         canonical["selection_reason"]
-        == "earliest_verified_official_validator_conclusion"
+        == "earliest_formal_protocol_compliant_validator_conclusion"
     )
     assert registered_cell_plan_from_memory(
         memory_index=pointer,
@@ -535,7 +535,7 @@ def test_refresh_normalizes_legacy_target_device_labels(
     assert cell["registered_device_label"] == "target5554"
 
 
-def test_memory_plan_rejects_incompatible_formal_protocol(
+def test_refresh_preserves_but_does_not_select_incompatible_formal_result(
     tmp_path: Path,
 ) -> None:
     source = _write_json(
@@ -558,7 +558,7 @@ def test_memory_plan_rejects_incompatible_formal_protocol(
         },
     )
     runs = tmp_path / "runs"
-    _write_registered_result(
+    incompatible = _write_registered_result(
         runs,
         attempt="attempt_001",
         registered_at="2026-07-20T00:00:00+00:00",
@@ -567,12 +567,63 @@ def test_memory_plan_rejects_incompatible_formal_protocol(
         use_oob=True,
         include_task_params=False,
     )
-    refresh_artifact_memory(
+    report = refresh_artifact_memory(
         memory_root=tmp_path / "memory",
         source_index=source_index,
         function_catalogs=(),
         runlog_roots=(tmp_path / "evidence",),
         result_roots=(runs,),
+    )
+
+    assert report["counts"]["canonical_result_cells"] == 0
+    assert report["counts"]["formal_protocol_excluded_results"] == 1
+    assert report["canonical"]["result_cells"] == {}
+    record = report["artifacts"]["results"][_sha256(incompatible)]
+    assert record["verified_registration"] is True
+    assert any(
+        "formal_result_protocol_mismatch" in error
+        for error in record["canonical_exclusion_errors"]
+    )
+    assert registered_cell_plan_from_memory(
+        memory_index=tmp_path / "memory" / "current.json",
+        task_name="RecordWithName",
+        methods=("ours",),
+        devices=("small5554",),
+        source_seed=111,
+        evaluation_seed=113,
+        formal_max_steps=20,
+    ) == {
+        "completed": [],
+        "pending": [("ours", "small5554")],
+    }
+
+
+def test_memory_plan_rejects_incompatible_canonical_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    incompatible = _write_registered_result(
+        tmp_path / "runs",
+        attempt="attempt_001",
+        registered_at="2026-07-20T00:00:00+00:00",
+        success=False,
+        max_steps=30,
+        use_oob=True,
+        include_task_params=False,
+    )
+    cell_key = "RecordWithName|ours|small5554|111|113"
+    monkeypatch.setattr(
+        "src.experiment.artifact_memory.load_artifact_memory",
+        lambda _: {
+            "canonical": {
+                "result_cells": {
+                    cell_key: {
+                        "registered_result_object_path": str(incompatible),
+                        "registered_result_sha256": _sha256(incompatible),
+                    }
+                }
+            }
+        },
     )
 
     with pytest.raises(ValueError, match="formal_result_protocol_mismatch"):

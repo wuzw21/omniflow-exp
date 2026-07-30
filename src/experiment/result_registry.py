@@ -29,6 +29,9 @@ FORMAL_DEVICE_TARGETS = {
     "small5554": ("emulator-5554", 5554),
     "fold5564": ("emulator-5564", 5564),
 }
+FORMAL_SOURCE_SEED = 111
+FORMAL_EVALUATION_SEED = 113
+FORMAL_MAX_STEPS = 20
 
 METHOD_MATRIX_COLUMNS = [
     "task_index",
@@ -185,13 +188,14 @@ RUN_RECORD_COLUMNS = [
     "source_summary_sha256",
 ]
 
-MASTER_PROGRESS_METHODS = (
+FORMAL_METHODS = (
     "fixed_replay",
     "ours",
     "mobilegpt_offline_retrieval",
     "appagent_demo",
     "t3a_hint",
 )
+MASTER_PROGRESS_METHODS = FORMAL_METHODS
 MASTER_PROGRESS_COMMON_FIELDS = (
     "sr",
     "status",

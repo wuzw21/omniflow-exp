@@ -344,6 +344,55 @@ def _formal_device_label(value: Any) -> str:
     }.get(label, label)
 
 
+def _formal_result_protocol_error(
+    *,
+    task_names: Sequence[str],
+    task: str,
+    method: str,
+    device: str,
+    source_seed: Any,
+    evaluation_seed: Any,
+    row: dict[str, Any],
+) -> str | None:
+    from src.experiment.result_registry import (
+        FORMAL_DEVICE_TARGETS,
+        FORMAL_EVALUATION_SEED,
+        FORMAL_MAX_STEPS,
+        FORMAL_METHODS,
+        FORMAL_SOURCE_SEED,
+        validate_formal_result_protocol,
+    )
+
+    violations: list[str] = []
+    if task not in task_names:
+        violations.append("task_not_indexed")
+    if method not in FORMAL_METHODS:
+        violations.append("unsupported_method")
+    if device not in FORMAL_DEVICE_TARGETS:
+        violations.append("unsupported_device")
+    if source_seed != FORMAL_SOURCE_SEED:
+        violations.append("source_seed")
+    if evaluation_seed != FORMAL_EVALUATION_SEED:
+        violations.append("evaluation_seed")
+    if violations:
+        return (
+            "formal_result_protocol_mismatch:"
+            f"{task}:{method}:{device}:{','.join(violations)}"
+        )
+    try:
+        validate_formal_result_protocol(
+            row,
+            task_name=task,
+            method=method,
+            device=device,
+            evaluation_seed=FORMAL_EVALUATION_SEED,
+            max_steps=FORMAL_MAX_STEPS,
+        )
+    except ValueError as error:
+        return str(error)
+    return None
+
+
 def _load_results(
     memory_root: Path,
     roots: Sequence[Path],
@@ -434,10 +483,24 @@ def _load_results(
         device = _formal_device_label(registered_device_label)
         source_seed = result_payload.get("source_seed")
         evaluation_seed = result_payload.get("evaluation_seed")
-        if not all(
-            isinstance(seed, int) and not isinstance(seed, bool)
-            for seed in (source_seed, evaluation_seed)
-        ):
+        protocol_error = _formal_result_protocol_error(
+            task_names=task_names,
+            task=task,
+            method=method,
+            device=device,
+            source_seed=source_seed,
+            evaluation_seed=evaluation_seed,
+            row=result_row,
+        )
+        if protocol_error is not None:
+            record["canonical_exclusion_errors"] = sorted(
+                set(
+                    [
+                        *record.get("canonical_exclusion_errors", []),
+                        f"{path}:{protocol_error}",
+                    ]
+                )
+            )
             continue
         manifest_path = verified["manifest_path"]
         manifest_digest = _sha256(manifest_path)
@@ -465,7 +528,7 @@ def _load_results(
             "registration_manifest_sha256": manifest_digest,
             "registration_manifest_object_path": str(manifest_object),
             "selection_reason": (
-                "earliest_verified_official_validator_conclusion"
+                "earliest_formal_protocol_compliant_validator_conclusion"
             ),
         }
         cell = (
@@ -835,7 +898,9 @@ def _refresh_artifact_memory_unlocked(
         "policy": {
             "deduplication": "exact_sha256",
             "source_run_log": "source_index_authoritative",
-            "result": "earliest_verified_official_validator_conclusion",
+            "result": (
+                "earliest_formal_protocol_compliant_validator_conclusion"
+            ),
             "success_cherry_picking": False,
         },
         "inputs": {
@@ -856,6 +921,10 @@ def _refresh_artifact_memory_unlocked(
             "function_store_tasks": len(canonical_function_stores),
             "result_paths": len(result_paths),
             "unique_results": len(result_records),
+            "formal_protocol_excluded_results": sum(
+                "canonical_exclusion_errors" in record
+                for record in result_records.values()
+            ),
             "canonical_result_cells": len(canonical_result_cells),
         },
         "indexes": {
