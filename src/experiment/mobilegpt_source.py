@@ -345,7 +345,7 @@ def prepare_mobilegpt_source_memory(
         port=int(port),
         stats_jsonl=stats_path,
         source_run_log=grounded_source_path,
-        fallback_to_vlm_on_teacher_miss=False,
+        fallback_to_vlm_on_teacher_miss=True,
         target_package=target_package,
         target_app=target_app,
         runtime_serial_file=runtime_serial_file,

@@ -316,3 +316,82 @@ def test_teacher_reentry_rejects_ambiguous_cross_package_matches(tmp_path) -> No
     )
 
     assert result is None
+
+
+def test_teacher_migration_miss_uses_native_vlm_fallback(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    source_run_log = tmp_path / "source.run_log.json"
+    source_run_log.write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {
+                        "observation": {
+                            "package_name": "com.android.chrome",
+                            "xml": (
+                                '<hierarchy><node text="Color Challenge" '
+                                'clickable="true" bounds="[0,0][100,100]" />'
+                                "</hierarchy>"
+                            ),
+                        },
+                        "action": {
+                            "type": "click",
+                            "params": {"x": 50, "y": 50},
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    events: list[dict] = []
+
+    class MobileGPT:
+        def init(self, instruction, task, is_new_task):
+            return None
+
+        def _MobileGPT__finish_task(self):
+            return None
+
+    class DeriveAgent:
+        def derive(self, screen, examples=None):
+            return {"name": "click", "parameters": {"index": "20"}}, {}
+
+    agents_module = ModuleType("agents")
+    derive_module = ModuleType("agents.derive_agent")
+    derive_module.DeriveAgent = DeriveAgent
+    mobilegpt_module = ModuleType("mobilegpt")
+    mobilegpt_module.MobileGPT = MobileGPT
+    parsing_utils = ModuleType("utils.parsing_utils")
+    utils_module = ModuleType("utils")
+    utils_module.parsing_utils = parsing_utils
+    monkeypatch.setitem(sys.modules, "agents", agents_module)
+    monkeypatch.setitem(sys.modules, "agents.derive_agent", derive_module)
+    monkeypatch.setitem(sys.modules, "mobilegpt", mobilegpt_module)
+    monkeypatch.setitem(sys.modules, "utils", utils_module)
+    monkeypatch.setitem(sys.modules, "utils.parsing_utils", parsing_utils)
+
+    teacher = install_mobilegpt_teacher(
+        source_run_log=source_run_log,
+        fallback_to_vlm_on_miss=True,
+        stats_writer=events.append,
+    )
+    agent = DeriveAgent()
+    agent.instruction = "Complete the color challenge."
+    agent.subtask = {}
+
+    action, example = agent.derive(
+        '<div><button text="Unlabeled" index="20" /></div>'
+    )
+
+    assert action == {"name": "click", "parameters": {"index": "20"}}
+    assert example == {}
+    assert teacher.cursor == 1
+    assert teacher.exhausted is True
+    assert any(
+        event.get("event") == "mobilegpt_teacher_miss"
+        and event.get("fallback_to_vlm") is True
+        for event in events
+    )

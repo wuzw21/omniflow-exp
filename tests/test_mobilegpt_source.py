@@ -634,7 +634,8 @@ def test_mobilegpt_source_generation_has_no_model_or_episode_retry(
         lambda **_kwargs: [],
     )
 
-    def build_server(*_args: object, **_kwargs: object) -> pipeline.CommandSpec:
+    def build_server(*_args: object, **kwargs: object) -> pipeline.CommandSpec:
+        captured["server_kwargs"] = kwargs
         return pipeline.CommandSpec(
             label="mobilegpt-teacher",
             argv=["python", "teacher.py"],
@@ -736,9 +737,12 @@ def test_mobilegpt_source_generation_has_no_model_or_episode_retry(
     )
 
     server = captured["server"]
+    server_kwargs = captured["server_kwargs"]
     episode_kwargs = captured["episode_kwargs"]
     assert isinstance(server, pipeline.CommandSpec)
+    assert isinstance(server_kwargs, dict)
     assert isinstance(episode_kwargs, dict)
+    assert server_kwargs["fallback_to_vlm_on_teacher_miss"] is True
     assert server.env["MOBILEGPT_CHAT_MODEL"] == "qwen3-vl-plus"
     assert server.env["MOBILEGPT_CHAT_MAX_ATTEMPTS"] == "1"
     assert server.env["MOBILEGPT_OOB_OBSERVE_RETRIES"] == "1"
