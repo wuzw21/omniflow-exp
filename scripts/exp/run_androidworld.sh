@@ -17,6 +17,7 @@ formal_max_fallback_steps=5
 formal_fixed_task_params=0
 formal_fold_state=2
 formal_fold_size="2208x1840"
+formal_model="qwen3-vl-plus"
 expected_source_seed="${OMNIFLOW_SINGLE_TASK_SOURCE_SEED:-$formal_source_seed}"
 evaluation_seed="${OMNIFLOW_SINGLE_TASK_EVALUATION_SEED:-$formal_evaluation_seed}"
 omnitransfer_root="${OMNITRANSFER_ROOT:-}"
@@ -769,7 +770,8 @@ export PATH="$java_home/bin:$PATH"
 echo "[java] home=$java_home major=$java_major version=$java_version_line"
 select_source_asset_revision() {
   local hash_index="${5:-$source_index}"
-  "$python_bin" - "$repo" "$1" "$2" "$hash_index" "$3" "${4:-}" <<'PY'
+  local expected_source_model="${6:-}"
+  "$python_bin" - "$repo" "$1" "$2" "$hash_index" "$3" "${4:-}" "$expected_source_model" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -807,6 +809,7 @@ try:
         manifest_name=sys.argv[3],
         expected_source_sha256=source_sha256,
         compatible_source_sha256s=compatible_source_sha256s,
+        expected_source_model=sys.argv[7],
         environment_repair_reason=sys.argv[6],
     )
 except ValueError as error:
@@ -826,7 +829,8 @@ if [[ "$all_tasks" -eq 0 && "$requires_mobilegpt_source_memory" -eq 1 && -z "$mo
       "cold_memory_manifest.json" \
       "$task" \
       "$mobilegpt_source_environment_repair" \
-      "$ours_store_index"
+      "$ours_store_index" \
+      "$formal_model"
   )"
   mobilegpt_source_memory_root="$mobilegpt_source_attempt_root/memory"
 fi
@@ -1095,12 +1099,14 @@ PY
           source_manifest="cold_memory_manifest.json"
           source_repair_reason="$mobilegpt_source_environment_repair"
           source_hash_index="$ours_store_index"
+          source_model="$formal_model"
           ;;
         appagent_demo)
           source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$source_method"
           source_manifest="appagent_demo_manifest.json"
           source_repair_reason="$appagent_source_environment_repair"
           source_hash_index="$source_index"
+          source_model=""
           ;;
       esac
       if selected_source_root="$(
@@ -1109,7 +1115,8 @@ PY
           "$source_manifest" \
           "$batch_task" \
           "$source_repair_reason" \
-          "$source_hash_index"
+          "$source_hash_index" \
+          "$source_model"
       )"; then
         case "$source_method" in
           mobilegpt_offline_retrieval)
@@ -1295,12 +1302,14 @@ PY
               source_manifest="cold_memory_manifest.json"
               source_repair_reason="$mobilegpt_source_environment_repair"
               source_hash_index="$ours_store_index"
+              source_model="$formal_model"
               ;;
             appagent_demo)
               source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$cell_method"
               source_manifest="appagent_demo_manifest.json"
               source_repair_reason="$appagent_source_environment_repair"
               source_hash_index="$source_index"
+              source_model=""
               ;;
             *)
               source_base=""
@@ -1316,6 +1325,7 @@ PY
               "$batch_task" \
               "$source_repair_reason" \
               "$source_hash_index" \
+              "$source_model" \
               >/dev/null; then
               :
             else
@@ -1528,8 +1538,8 @@ if not model:
 print(model)
 PY
 )"
-if [[ "$paper_model" != "qwen3-vl-plus" ]]; then
-  echo "Formal model must remain qwen3-vl-plus, got: $paper_model" >&2
+if [[ "$paper_model" != "$formal_model" ]]; then
+  echo "Formal model must remain $formal_model, got: $paper_model" >&2
   exit 1
 fi
 export OPENAI_MODEL="$paper_model"

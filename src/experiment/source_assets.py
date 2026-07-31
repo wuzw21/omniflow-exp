@@ -28,6 +28,7 @@ def select_source_asset_revision(
     initial_revision: int = 3,
     expected_source_sha256: str = "",
     compatible_source_sha256s: Sequence[str] = (),
+    expected_source_model: str = "",
     environment_repair_reason: str = "",
 ) -> Path:
     """Reuse the first frozen source asset or allocate a fresh revision path.
@@ -57,6 +58,7 @@ def select_source_asset_revision(
     if any(not re.fullmatch(r"[0-9a-f]{64}", digest) for digest in compatible_sha256s):
         raise ValueError("compatible_source_sha256s must contain SHA-256 digests")
     accepted_source_sha256s = {source_sha256, *compatible_sha256s} - {""}
+    source_model = str(expected_source_model or "").strip()
     base = Path(base_root).expanduser().resolve()
     if source_sha256:
         matches: list[Path] = []
@@ -69,7 +71,14 @@ def select_source_asset_revision(
                     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
                 except (OSError, json.JSONDecodeError):
                     continue
-                if _manifest_source_sha256(payload) in accepted_source_sha256s:
+                if (
+                    _manifest_source_sha256(payload) in accepted_source_sha256s
+                    and (
+                        not source_model
+                        or str(payload.get("source_model") or "").strip()
+                        == source_model
+                    )
+                ):
                     matches.append(candidate.resolve())
         if len(matches) > 1:
             raise ValueError(

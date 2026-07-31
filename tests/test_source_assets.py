@@ -1232,6 +1232,58 @@ def test_source_revision_reuses_explicit_conversion_lineage_hash(
     )
 
 
+def test_source_revision_skips_frozen_asset_from_wrong_model(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "mobilegpt_offline_retrieval"
+    expected = "2" * 64
+    legacy = "1" * 64
+    frozen = base / "native_source_r2"
+    frozen.mkdir(parents=True)
+    (frozen / "cold_memory_manifest.json").write_text(
+        json.dumps(
+            {
+                "source_run_log": {"sha256": legacy},
+                "source_model": "qwen-plus",
+            }
+        ),
+        encoding="utf-8",
+    )
+    selected = base / f"source_{expected[:12]}"
+
+    assert (
+        select_source_asset_revision(
+            base,
+            manifest_name="cold_memory_manifest.json",
+            expected_source_sha256=expected,
+            compatible_source_sha256s=(legacy,),
+            expected_source_model="qwen3-vl-plus",
+        )
+        == selected
+    )
+
+    selected.mkdir()
+    (selected / "cold_memory_manifest.json").write_text(
+        json.dumps(
+            {
+                "source_run_log": {"sha256": legacy},
+                "source_model": "qwen3-vl-plus",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert (
+        select_source_asset_revision(
+            base,
+            manifest_name="cold_memory_manifest.json",
+            expected_source_sha256=expected,
+            compatible_source_sha256s=(legacy,),
+            expected_source_model="qwen3-vl-plus",
+        )
+        == selected
+    )
+
+
 def test_source_revision_rejects_terminal_failure_for_exact_source_hash(
     tmp_path: Path,
 ) -> None:
