@@ -2996,9 +2996,9 @@ def validate_mobilegpt_adapted_memory(
         ],
         "task_finished_count": write_status["task_finished_count"],
     }
-    if any(
-        int(source_stats.get(key) or 0) != int(value)
-        for key, value in manifest_count_pairs.items()
+    if not _mobilegpt_stats_manifest_matches(
+        source_stats,
+        manifest_count_pairs,
     ):
         raise ValueError("mobilegpt_cold_memory_stats_manifest_mismatch")
     if official_result.get("official_validator_used") is not True or (
@@ -3019,6 +3019,17 @@ def validate_mobilegpt_adapted_memory(
         "target_package": str(manifest.get("target_package") or ""),
         "target_app": str(manifest.get("target_app") or ""),
     }
+
+
+def _mobilegpt_stats_manifest_matches(
+    source_stats: dict[str, Any],
+    expected_counts: dict[str, Any],
+) -> bool:
+    return all(
+        key not in source_stats
+        or int(source_stats.get(key) or 0) == int(value)
+        for key, value in expected_counts.items()
+    )
 
 
 def build_mobilegpt_teacher_source(

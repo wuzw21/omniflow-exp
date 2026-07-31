@@ -318,6 +318,26 @@ def test_mobilegpt_native_fallback_requires_a_model_call(tmp_path: Path) -> None
     assert "missing_native_vlm_fallback_calls" in status["reasons"]
 
 
+def test_mobilegpt_v1_stats_manifest_allows_absent_derived_counts() -> None:
+    expected = {
+        "teacher_action_count": 7,
+        "teacher_groundable_action_count": 7,
+        "teacher_vlm_fallback_count": 0,
+    }
+
+    assert pipeline._mobilegpt_stats_manifest_matches(
+        {"teacher_action_count": 7},
+        expected,
+    )
+    assert not pipeline._mobilegpt_stats_manifest_matches(
+        {
+            "teacher_action_count": 7,
+            "teacher_groundable_action_count": 0,
+        },
+        expected,
+    )
+
+
 def test_mobilegpt_deterministic_preflight_does_not_claim_output(
     tmp_path: Path,
 ) -> None:
