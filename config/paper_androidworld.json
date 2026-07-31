@@ -29,7 +29,6 @@
     "mobilegpt_port": 12345,
     "mobilegpt_server_warmup_sec": 5.0,
     "mobilegpt_wait_start_timeout_sec": 60.0,
-    "mobilegpt_rebroadcast_on_start_timeout": 1,
     "mobilegpt_episode_wait_timeout_sec": 120.0,
     "mobilegpt_open_target_app": "",
     "mobilegpt_source_memory_root": "runtime/evals/androidworld_single_task_assets/source_seed_111/SystemBluetoothTurnOn/mobilegpt_offline_retrieval/native_source_r3/memory",
