@@ -2815,6 +2815,46 @@ def _mobilegpt_manifest_evidence_path(
     return path
 
 
+def _mobilegpt_legacy_fixed_replay_source(
+    source_run_log: str | Path,
+    *,
+    task_name: str,
+    source_seed: int,
+) -> bool:
+    try:
+        payload = json.loads(_repo_path(source_run_log).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    androidworld = payload.get("androidworld")
+    replay = payload.get("raw_replay_evidence")
+    if not isinstance(androidworld, dict) or not isinstance(replay, dict):
+        return False
+    validator = androidworld.get("validator")
+    if not isinstance(validator, dict):
+        return False
+    source_action_count = replay.get("source_action_count")
+    actions_executed = replay.get("actions_executed")
+    return bool(
+        payload.get("schema_version")
+        == "omniflow.androidworld_function_ready_runlog.v1"
+        and payload.get("completed") is True
+        and payload.get("success") is True
+        and str(androidworld.get("task_name") or "") == str(task_name)
+        and androidworld.get("seed") == int(source_seed)
+        and validator.get("success") is True
+        and validator.get("uses_androidworld_official_validator") is True
+        and replay.get("success") is True
+        and replay.get("official_validator_used") is True
+        and replay.get("execution_backend") == "memory_adapter_exact_sequence"
+        and replay.get("model_calls") == 0
+        and type(source_action_count) is int
+        and source_action_count > 0
+        and actions_executed == source_action_count
+    )
+
+
 def validate_mobilegpt_adapted_memory(
     memory_root: str | Path,
     *,
@@ -2848,16 +2888,6 @@ def validate_mobilegpt_adapted_memory(
     if int(source_seed) != 111:
         raise ValueError("mobilegpt_cold_memory_requires_source_seed_111")
     normalized_expected_source_method = str(expected_source_method or "").strip()
-    if (
-        normalized_expected_source_method
-        and str(manifest.get("source_method") or "").strip()
-        != normalized_expected_source_method
-    ):
-        raise ValueError(
-            "mobilegpt_cold_memory_source_method_mismatch:"
-            f"expected={normalized_expected_source_method}:"
-            f"actual={str(manifest.get('source_method') or '').strip() or 'missing'}"
-        )
 
     provenance = manifest.get("provenance")
     if not isinstance(provenance, dict):
@@ -2922,7 +2952,7 @@ def validate_mobilegpt_adapted_memory(
     if teacher_payload.get("contains_source_coordinates") is not False:
         raise ValueError("mobilegpt_cold_memory_teacher_coordinates_forbidden")
     source_log_record = manifest.get("source_run_log")
-    _mobilegpt_manifest_evidence_path(
+    source_log_path = _mobilegpt_manifest_evidence_path(
         bundle_root,
         source_log_record,
         label="source_run_log",
@@ -2940,6 +2970,26 @@ def validate_mobilegpt_adapted_memory(
         raise ValueError("mobilegpt_cold_memory_source_run_log_mismatch")
     if teacher_source_sha256 != manifest_source_sha256:
         raise ValueError("mobilegpt_cold_memory_teacher_source_run_log_mismatch")
+    manifest_source_method = str(manifest.get("source_method") or "").strip()
+    legacy_fixed_replay = bool(
+        not manifest_source_method
+        and normalized_expected_source_method == DEFAULT_SOURCE_METHOD
+        and _mobilegpt_legacy_fixed_replay_source(
+            source_log_path,
+            task_name=task_name,
+            source_seed=source_seed,
+        )
+    )
+    if (
+        normalized_expected_source_method
+        and manifest_source_method != normalized_expected_source_method
+        and not legacy_fixed_replay
+    ):
+        raise ValueError(
+            "mobilegpt_cold_memory_source_method_mismatch:"
+            f"expected={normalized_expected_source_method}:"
+            f"actual={manifest_source_method or 'missing'}"
+        )
     source_stats = manifest.get("source_stats")
     source_stats_path = _mobilegpt_manifest_evidence_path(
         bundle_root,

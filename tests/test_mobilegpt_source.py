@@ -454,6 +454,48 @@ def test_mobilegpt_offline_runner_uses_protocol_source_method_default(
         )
 
 
+def test_mobilegpt_legacy_fixed_replay_source_requires_strict_evidence(
+    tmp_path: Path,
+) -> None:
+    source_run_log = tmp_path / "source.run_log.json"
+    payload = {
+        "schema_version": "omniflow.androidworld_function_ready_runlog.v1",
+        "completed": True,
+        "success": True,
+        "androidworld": {
+            "task_name": "SystemBluetoothTurnOff",
+            "seed": 111,
+            "validator": {
+                "success": True,
+                "uses_androidworld_official_validator": True,
+            },
+        },
+        "raw_replay_evidence": {
+            "success": True,
+            "official_validator_used": True,
+            "actions_executed": 5,
+            "source_action_count": 5,
+            "execution_backend": "memory_adapter_exact_sequence",
+            "model_calls": 0,
+        },
+    }
+    source_run_log.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert pipeline._mobilegpt_legacy_fixed_replay_source(
+        source_run_log,
+        task_name="SystemBluetoothTurnOff",
+        source_seed=111,
+    )
+
+    payload["raw_replay_evidence"]["model_calls"] = 1
+    source_run_log.write_text(json.dumps(payload), encoding="utf-8")
+    assert not pipeline._mobilegpt_legacy_fixed_replay_source(
+        source_run_log,
+        task_name="SystemBluetoothTurnOff",
+        source_seed=111,
+    )
+
+
 def test_mobilegpt_source_rejects_registered_historical_runlog(
     tmp_path: Path,
 ) -> None:
