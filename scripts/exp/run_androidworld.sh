@@ -893,6 +893,7 @@ if [[ "$all_tasks" -eq 1 ]]; then
   batch_device_array=()
   IFS=',' read -r -a batch_device_array <<< "$device_targets"
   batch_device_count="${#batch_device_array[@]}"
+  batch_device_labels=()
   seen_batch_devices=","
   for batch_device_target in "${batch_device_array[@]}"; do
     case "$batch_device_target" in
@@ -909,6 +910,7 @@ if [[ "$all_tasks" -eq 1 ]]; then
       exit 2
     fi
     seen_batch_devices+="$batch_device_label,"
+    batch_device_labels+=("$batch_device_label")
   done
   if [[ "$batch_device_count" -eq 0 ]]; then
     echo "--all-tasks device selection is empty." >&2
@@ -1008,6 +1010,55 @@ PY
   fi
   batch_output_root="${OMNIFLOW_BATCH_OUTPUT_ROOT:-$results_root/attempts}"
   batch_log_root="${OMNIFLOW_BATCH_LOG_ROOT:-$results_root/logs}"
+  batch_outcomes_root="${OMNIFLOW_BATCH_OUTCOMES_ROOT:-$results_root/androidworld_validator/cell_outcomes}"
+  batch_report_root="${OMNIFLOW_BATCH_REPORT_ROOT:-$results_root/androidworld_validator/batch_reports/$attempt_id}"
+  record_batch_outcome() {
+    local outcome_task="$1"
+    local outcome_method="$2"
+    local outcome_device="$3"
+    local outcome_serial="$4"
+    local outcome_status="$5"
+    local outcome_stage="$6"
+    local outcome_log="${7:-}"
+    local outcome_artifact_root="${8:-}"
+    local outcome_outer_wall_sec="${9:-0}"
+    local outcome_args=(
+      -m src.experiment.batch_outcomes record
+      --outcomes-root "$batch_outcomes_root"
+      --task "$outcome_task"
+      --method "$outcome_method"
+      --device "$outcome_device"
+      --device-serial "$outcome_serial"
+      --attempt-id "$attempt_id"
+      --source-seed "$expected_source_seed"
+      --evaluation-seed "$evaluation_seed"
+      --status "$outcome_status"
+      --stage "$outcome_stage"
+      --outer-wall-sec "$outcome_outer_wall_sec"
+    )
+    if [[ -n "$outcome_log" ]]; then
+      outcome_args+=(--task-log "$outcome_log")
+    fi
+    if [[ -n "$outcome_artifact_root" ]]; then
+      outcome_args+=(--artifact-root "$outcome_artifact_root")
+    fi
+    "$python_bin" "${outcome_args[@]}"
+  }
+  write_batch_report() {
+    local task_csv
+    task_csv="$(IFS=,; echo "${batch_tasks[*]}")"
+    "$python_bin" -m src.experiment.batch_outcomes report \
+      --report-root "$batch_report_root" \
+      --memory-index "$memory_index" \
+      --outcomes-root "$batch_outcomes_root" \
+      --source-index "$source_index" \
+      --tasks "$task_csv" \
+      --methods "$batch_methods" \
+      --devices "$(IFS=,; echo "${batch_device_labels[*]}")" \
+      --source-seed "$expected_source_seed" \
+      --evaluation-seed "$evaluation_seed" \
+      --attempt-id "$attempt_id"
+  }
   registration_plan_for_task() {
     "$python_bin" - \
       "$repo" \
@@ -1016,6 +1067,7 @@ PY
       "$1" \
       "$batch_methods" \
       "$device_targets" \
+      "$batch_outcomes_root" \
       "$expected_source_seed" \
       "$evaluation_seed" \
       "$max_steps" <<'PY'
@@ -1024,6 +1076,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
 from src.experiment.artifact_memory import registered_cell_plan_from_memory
+from src.experiment.batch_outcomes import concluded_cell_keys
 
 memory_index = Path(sys.argv[3]).expanduser().resolve()
 task = sys.argv[4]
@@ -1035,9 +1088,10 @@ for raw in sys.argv[6].split(","):
         raise SystemExit(f"invalid_device_target:{raw}")
     device_specs[fields[0]] = fields
 devices = tuple(device_specs)
-source_seed = int(sys.argv[7])
-evaluation_seed = int(sys.argv[8])
-max_steps = int(sys.argv[9])
+outcomes_root = Path(sys.argv[7]).expanduser().resolve()
+source_seed = int(sys.argv[8])
+evaluation_seed = int(sys.argv[9])
+max_steps = int(sys.argv[10])
 plan = registered_cell_plan_from_memory(
     memory_index=memory_index,
     task_name=task,
@@ -1047,8 +1101,18 @@ plan = registered_cell_plan_from_memory(
     evaluation_seed=evaluation_seed,
     formal_max_steps=max_steps,
 )
-print(f"summary\t{len(plan['completed'])}\t{len(plan['pending'])}")
-for method, device in plan["pending"]:
+concluded = concluded_cell_keys(
+    outcomes_root=outcomes_root,
+    task_name=task,
+    methods=methods,
+    devices=devices,
+    source_seed=source_seed,
+    evaluation_seed=evaluation_seed,
+)
+pending = [cell for cell in plan["pending"] if cell not in concluded]
+completed_count = len(plan["completed"]) + len(plan["pending"]) - len(pending)
+print(f"summary\t{completed_count}\t{len(pending)}")
+for method, device in pending:
     label, serial, port = device_specs[device]
     print(f"pending\t{method}\t{label}\t{serial}\t{port}")
 PY
@@ -1061,6 +1125,7 @@ PY
   batch_appagent_source_roots=()
   pending_cell_count=0
   terminal_cell_count=0
+  failed=0
   for batch_index in "${!batch_tasks[@]}"; do
     batch_task="${batch_tasks[$batch_index]}"
     registration_plan="$(registration_plan_for_task "$batch_task")"
@@ -1114,15 +1179,17 @@ PY
           source_model=""
           ;;
       esac
-      if selected_source_root="$(
+      source_selection_output=""
+      if source_selection_output="$(
         select_source_asset_revision \
           "$source_base" \
           "$source_manifest" \
           "$batch_task" \
           "$source_repair_reason" \
           "$source_hash_index" \
-          "$source_model"
+          "$source_model" 2>&1
       )"; then
+        selected_source_root="$source_selection_output"
         case "$source_method" in
           mobilegpt_offline_retrieval)
             selected_mobilegpt_source_root="$selected_source_root/memory"
@@ -1133,9 +1200,27 @@ PY
         esac
       else
         source_status="$?"
+        printf '%s\n' "$source_selection_output" >&2
+        terminal_source_root=""
+        while IFS= read -r source_error_line; do
+          if [[ "$source_error_line" == source_asset_retry_forbidden:* ]]; then
+            terminal_source_root="${source_error_line#source_asset_retry_forbidden:}"
+            terminal_source_root="${terminal_source_root%%:*}"
+            break
+          fi
+        done <<< "$source_selection_output"
+        case "$source_method" in
+          mobilegpt_offline_retrieval)
+            if [[ -n "$terminal_source_root" ]]; then
+              selected_mobilegpt_source_root="$terminal_source_root/memory"
+            fi
+            ;;
+          appagent_demo)
+            selected_appagent_source_root="$terminal_source_root"
+            ;;
+        esac
         if [[ "$source_status" -ne 75 ]]; then
-          echo "Source asset selection failed: task=$batch_task method=$source_method status=$source_status" >&2
-          exit "$source_status"
+          echo "Source asset selection failed without retry: task=$batch_task method=$source_method status=$source_status" >&2
         fi
         terminal_task_methods="${terminal_task_methods:+$terminal_task_methods,}$source_method"
         method_pending_count="$(
@@ -1145,6 +1230,24 @@ PY
         )"
         terminal_cell_count="$((terminal_cell_count + method_pending_count))"
         echo "[batch:static] terminal task=$batch_task method=$source_method pending=$method_pending_count"
+        if [[ "$check_only" -eq 0 ]]; then
+          while IFS=$'\t' read -r source_row_kind source_cell_method source_cell_device source_cell_serial _; do
+            if [[ "$source_row_kind" != "pending" || "$source_cell_method" != "$source_method" ]]; then
+              continue
+            fi
+            record_batch_outcome \
+              "$batch_task" \
+              "$source_cell_method" \
+              "$source_cell_device" \
+              "$source_cell_serial" \
+              "prep_failed" \
+              "source_memory" \
+              "" \
+              "$terminal_source_root" \
+              "0"
+            failed="$((failed + 1))"
+          done <<< "$registration_plan"
+        fi
       fi
     done
     batch_mobilegpt_source_roots[$batch_index]="$selected_mobilegpt_source_root"
@@ -1210,27 +1313,75 @@ PY
     task_output_root="$batch_output_root/$batch_task/$attempt_id/static"
     child_static_args=(--check-only)
     echo "[batch:static] check task=$batch_task methods=$runnable_task_methods completed=$completed_cells pending=$pending_cells"
-    (
-      export OMNIFLOW_BATCH_CHILD=1
-      export OMNIFLOW_SINGLE_TASK_TASK="$batch_task"
-      export OMNIFLOW_SINGLE_TASK_METHODS="$runnable_task_methods"
-      export OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT="$task_output_root"
-      export OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS="$source_index_task_count"
-      unset OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT
-      unset OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT
-      if [[ -n "$selected_mobilegpt_source_root" ]]; then
-        export OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT="$selected_mobilegpt_source_root"
+    static_started_epoch="$(date +%s)"
+    static_log=""
+    run_static_child() {
+      (
+        export OMNIFLOW_BATCH_CHILD=1
+        export OMNIFLOW_SINGLE_TASK_TASK="$batch_task"
+        export OMNIFLOW_SINGLE_TASK_METHODS="$runnable_task_methods"
+        export OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT="$task_output_root"
+        export OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS="$source_index_task_count"
+        unset OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT
+        unset OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT
+        if [[ -n "$selected_mobilegpt_source_root" ]]; then
+          export OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT="$selected_mobilegpt_source_root"
+        fi
+        if [[ -n "$selected_appagent_source_root" ]]; then
+          export OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT="$selected_appagent_source_root"
+        fi
+        if [[ -n "$indexed_store_path" ]]; then
+          export OMNIFLOW_SINGLE_TASK_STORE_PATH="$indexed_store_path"
+        fi
+        bash "$0" "${child_static_args[@]}"
+      )
+    }
+    if [[ "$check_only" -eq 0 ]]; then
+      static_log="$batch_log_root/$batch_task/$attempt_id/static.log"
+      mkdir -p "$(dirname "$static_log")"
+      if run_static_child 2>&1 | tee "$static_log"; then
+        static_status=0
+      else
+        static_status="$?"
       fi
-      if [[ -n "$selected_appagent_source_root" ]]; then
-        export OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT="$selected_appagent_source_root"
-      fi
-      if [[ -n "$indexed_store_path" ]]; then
-        export OMNIFLOW_SINGLE_TASK_STORE_PATH="$indexed_store_path"
-      fi
-      bash "$0" "${child_static_args[@]}"
-    )
+    elif run_static_child; then
+      static_status=0
+    else
+      static_status="$?"
+    fi
+    static_outer_wall_sec="$(( $(date +%s) - static_started_epoch ))"
+    if [[ "$static_status" -ne 0 ]]; then
+      static_terminal_count=0
+      while IFS=$'\t' read -r row_kind cell_method cell_device cell_serial cell_port; do
+        if [[ "$row_kind" != "pending" ]]; then
+          continue
+        fi
+        terminal_line=$'terminal\t'"$cell_method"$'\t'"$cell_device"$'\t'"$cell_serial"$'\t'"$cell_port"
+        if grep -Fqx "$terminal_line" <<< "$terminal_plan"; then
+          continue
+        fi
+        terminal_plan+="${terminal_plan:+$'\n'}$terminal_line"
+        static_terminal_count="$((static_terminal_count + 1))"
+        if [[ "$check_only" -eq 0 ]]; then
+          record_batch_outcome \
+            "$batch_task" \
+            "$cell_method" \
+            "$cell_device" \
+            "$cell_serial" \
+            "prep_failed" \
+            "static_preflight" \
+            "$static_log" \
+            "$task_output_root" \
+            "$static_outer_wall_sec"
+          failed="$((failed + 1))"
+        fi
+      done <<< "$runnable_plan"
+      batch_terminal_plans[$batch_index]="$terminal_plan"
+      terminal_cell_count="$((terminal_cell_count + static_terminal_count))"
+      echo "[batch:static] terminal task=$batch_task stage=preflight pending=$static_terminal_count status=$static_status"
+    fi
   done
-  echo "[batch:static] ready tasks=$batch_task_count; no persistent output created"
+  echo "[batch:static] ready tasks=$batch_task_count"
   if [[ "$check_only" -eq 1 ]]; then
     if [[ "$terminal_cell_count" -ne 0 ]]; then
       echo "[batch:static] incomplete terminal=$terminal_cell_count pending=$pending_cell_count total=$((batch_task_count * batch_cell_count))" >&2
@@ -1239,7 +1390,8 @@ PY
     exit 0
   fi
   if [[ "$pending_cell_count" -eq 0 ]]; then
-    echo "[batch] complete completed=0 skipped=$((batch_task_count * batch_cell_count)) total=$((batch_task_count * batch_cell_count))"
+    write_batch_report
+    echo "[batch] complete completed=0 skipped=$((batch_task_count * batch_cell_count)) failed=0 total=$((batch_task_count * batch_cell_count))"
     exit 0
   fi
 
@@ -1272,6 +1424,7 @@ PY
       task_log="$batch_log_root/$batch_task/$attempt_id/$cell_method-$cell_device.log"
       mkdir -p "$(dirname "$task_log")"
       echo "[batch] start task=$batch_task method=$cell_method device=$cell_device completed=$completed skipped=$skipped"
+      cell_started_epoch="$(date +%s)"
       if (
         export OMNIFLOW_BATCH_CHILD=1
         export OMNIFLOW_SINGLE_TASK_TASK="$batch_task"
@@ -1296,6 +1449,7 @@ PY
       else
         status="$?"
       fi
+      cell_outer_wall_sec="$(( $(date +%s) - cell_started_epoch ))"
       updated_plan="$(registration_plan_for_task "$batch_task")"
       pending_line=$'pending\t'"$cell_method"$'\t'"$cell_device"$'\t'"$cell_serial"$'\t'"$cell_port"
       if grep -Fqx "$pending_line" <<< "$updated_plan"; then
@@ -1343,6 +1497,17 @@ PY
         fi
         if [[ "$runtime_terminal" -eq 1 ]]; then
           newly_terminal=0
+          source_artifact_root=""
+          case "$cell_method" in
+            mobilegpt_offline_retrieval)
+              if [[ -n "$selected_mobilegpt_source_root" ]]; then
+                source_artifact_root="$(dirname "$selected_mobilegpt_source_root")"
+              fi
+              ;;
+            appagent_demo)
+              source_artifact_root="$selected_appagent_source_root"
+              ;;
+          esac
           while IFS=$'\t' read -r pending_kind pending_method pending_device pending_serial pending_port; do
             if [[ "$pending_kind" != "pending" || "$pending_method" != "$cell_method" ]]; then
               continue
@@ -1352,18 +1517,41 @@ PY
               continue
             fi
             terminal_plan+="${terminal_plan:+$'\n'}$terminal_line"
+            record_batch_outcome \
+              "$batch_task" \
+              "$pending_method" \
+              "$pending_device" \
+              "$pending_serial" \
+              "prep_failed" \
+              "source_memory" \
+              "$task_log" \
+              "$source_artifact_root" \
+              "$cell_outer_wall_sec"
             newly_terminal="$((newly_terminal + 1))"
+            failed="$((failed + 1))"
           done <<< "$updated_plan"
           batch_terminal_plans[$batch_index]="$terminal_plan"
           terminal_cell_count="$((terminal_cell_count + newly_terminal))"
           echo "[batch] terminal task=$batch_task method=$cell_method pending=$newly_terminal"
           continue
         fi
-        echo "[batch] stopped task=$batch_task method=$cell_method device=$cell_device status=$status log=$task_log" >&2
-        if [[ "$status" -eq 0 ]]; then
-          exit 1
-        fi
-        exit "$status"
+        record_batch_outcome \
+          "$batch_task" \
+          "$cell_method" \
+          "$cell_device" \
+          "$cell_serial" \
+          "execution_failed" \
+          "target_episode" \
+          "$task_log" \
+          "$task_output_root" \
+          "$cell_outer_wall_sec"
+        terminal_line=$'terminal\t'"$cell_method"$'\t'"$cell_device"$'\t'"$cell_serial"$'\t'"$cell_port"
+        terminal_plan+="${terminal_plan:+$'\n'}$terminal_line"
+        batch_terminal_plans[$batch_index]="$terminal_plan"
+        terminal_cell_count="$((terminal_cell_count + 1))"
+        failed="$((failed + 1))"
+        echo "[batch] failed task=$batch_task method=$cell_method device=$cell_device status=$status log=$task_log" >&2
+        continue
       fi
       completed="$((completed + 1))"
       echo "[batch] registered task=$batch_task method=$cell_method device=$cell_device status=$status completed=$completed skipped=$skipped total=$((batch_task_count * batch_cell_count))"
@@ -1384,20 +1572,8 @@ PY
       done <<< "$final_plan"
     fi
   done
-  if [[ "$terminal_cell_count" -ne 0 ]]; then
-    for batch_index in "${!batch_tasks[@]}"; do
-      batch_task="${batch_tasks[$batch_index]}"
-      terminal_plan="${batch_terminal_plans[$batch_index]}"
-      while IFS=$'\t' read -r row_kind cell_method cell_device _; do
-        if [[ "$row_kind" == "terminal" ]]; then
-          echo "[batch] unresolved task=$batch_task method=$cell_method device=$cell_device reason=source_asset_retry_forbidden" >&2
-        fi
-      done <<< "$terminal_plan"
-    done
-    echo "[batch] incomplete completed=$completed skipped=$skipped terminal=$terminal_cell_count pending=$terminal_cell_count total=$((batch_task_count * batch_cell_count))" >&2
-    exit 1
-  fi
-  echo "[batch] complete completed=$completed skipped=$skipped total=$((batch_task_count * batch_cell_count))"
+  write_batch_report
+  echo "[batch] complete completed=$completed skipped=$skipped failed=$failed total=$((batch_task_count * batch_cell_count))"
   exit 0
 fi
 if [[ "${OMNIFLOW_BATCH_CHILD:-0}" != "1" ]]; then

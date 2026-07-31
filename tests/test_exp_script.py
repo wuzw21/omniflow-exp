@@ -871,6 +871,14 @@ fi
 if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ]; then
   completed=6
   pending=4
+  if [ -f "$STATE_DIR/outcome-mobilegpt_offline_retrieval-small5554" ]; then
+    completed=$((completed + 1))
+    pending=$((pending - 1))
+  fi
+  if [ -f "$STATE_DIR/outcome-mobilegpt_offline_retrieval-fold5564" ]; then
+    completed=$((completed + 1))
+    pending=$((pending - 1))
+  fi
   if [ -f "$STATE_DIR/t3a_hint-small5554" ]; then
     completed=$((completed + 1))
     pending=$((pending - 1))
@@ -880,8 +888,12 @@ if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ]; then
     pending=$((pending - 1))
   fi
   printf 'summary\t%s\t%s\n' "$completed" "$pending"
-  printf 'pending\tmobilegpt_offline_retrieval\tsmall5554\temulator-5554\t5554\n'
-  printf 'pending\tmobilegpt_offline_retrieval\tfold5564\temulator-5564\t5564\n'
+  if [ ! -f "$STATE_DIR/outcome-mobilegpt_offline_retrieval-small5554" ]; then
+    printf 'pending\tmobilegpt_offline_retrieval\tsmall5554\temulator-5554\t5554\n'
+  fi
+  if [ ! -f "$STATE_DIR/outcome-mobilegpt_offline_retrieval-fold5564" ]; then
+    printf 'pending\tmobilegpt_offline_retrieval\tfold5564\temulator-5564\t5564\n'
+  fi
   if [ ! -f "$STATE_DIR/t3a_hint-small5554" ]; then
     printf 'pending\tt3a_hint\tsmall5554\temulator-5554\t5554\n'
   fi
@@ -902,6 +914,29 @@ fi
 if [ "$1" = "-m" ] && [ "$2" = "src.experiment.mobilegpt_source" ] && [ "$3" = "prepare" ]; then
   : > "$STATE_DIR/mobilegpt-terminal"
   exit 9
+fi
+if [ "$1" = "-m" ] && [ "$2" = "src.experiment.batch_outcomes" ]; then
+  command="$3"
+  shift 3
+  if [ "$command" = "record" ]; then
+    method=""
+    device=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --method) method="$2"; shift 2 ;;
+        --device) device="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    : > "$STATE_DIR/outcome-${method}-${device}"
+    printf '%s\n' "$STATE_DIR/outcome-${method}-${device}"
+    exit 0
+  fi
+  if [ "$command" = "report" ]; then
+    : > "$STATE_DIR/batch-report"
+    printf '%s\n' '{"counts":{"pending":0}}'
+    exit 0
+  fi
 fi
 exit 0
 """,
@@ -975,10 +1010,13 @@ exit 0
         text=True,
     )
 
-    assert completed.returncode != 0
+    assert completed.returncode == 0, completed.stderr
     assert (state_dir / "t3a_hint-small5554").is_file()
     assert (state_dir / "t3a_hint-fold5564").is_file()
     assert not list(state_dir.glob("mobilegpt_offline_retrieval-*"))
+    assert (state_dir / "outcome-mobilegpt_offline_retrieval-small5554").is_file()
+    assert (state_dir / "outcome-mobilegpt_offline_retrieval-fold5564").is_file()
+    assert (state_dir / "batch-report").is_file()
     terminal_prefix = (
         "[batch:static]" if terminal_phase == "static" else "[batch]"
     )
@@ -987,16 +1025,8 @@ exit 0
         "method=mobilegpt_offline_retrieval pending=2"
     ) in completed.stdout
     assert (
-        "[batch] unresolved task=BrowserDraw "
-        "method=mobilegpt_offline_retrieval device=small5554"
-    ) in completed.stderr
-    assert (
-        "[batch] unresolved task=BrowserDraw "
-        "method=mobilegpt_offline_retrieval device=fold5564"
-    ) in completed.stderr
-    assert (
-        "[batch] incomplete completed=2 skipped=6 terminal=2 pending=2 total=10"
-    ) in completed.stderr
+        "[batch] complete completed=2 skipped=6 failed=2 total=10"
+    ) in completed.stdout
 
 
 def test_memory_refresh_routes_all_evidence_through_the_only_script(
