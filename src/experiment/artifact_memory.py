@@ -968,6 +968,43 @@ def _load_function_stores(
             task_source_metadata = source_metadata.get(task)
             if not isinstance(task_source_metadata, dict):
                 raise ValueError(f"function_source_metadata_missing:{task}")
+            function_source_metadata = dict(task_source_metadata)
+            source_transfer_states_value = raw_item.get("source_transfer_states")
+            if source_transfer_states_value:
+                source_transfer_states = _require_hashed_file(
+                    source_transfer_states_value,
+                    raw_item.get("source_transfer_states_sha256"),
+                    label=f"function_source_transfer_states:{task}",
+                )
+                source_transfer_states_payload = _load_object(source_transfer_states)
+                expected_source_run_id = str(
+                    raw_item.get("source_transfer_states_run_id") or ""
+                ).strip()
+                actual_source_run_id = str(
+                    source_transfer_states_payload.get("run_id")
+                    if isinstance(source_transfer_states_payload, dict)
+                    else ""
+                ).strip()
+                function_source_run_id = str(
+                    raw_source_payload.get("run_id") or ""
+                ).strip()
+                if (
+                    not expected_source_run_id
+                    or actual_source_run_id != expected_source_run_id
+                    or function_source_run_id != expected_source_run_id
+                ):
+                    raise ValueError(
+                        "function_source_transfer_states_run_id_mismatch:"
+                        f"{task}:source={function_source_run_id}:"
+                        f"catalog={actual_source_run_id}:"
+                        f"expected={expected_source_run_id or 'missing'}"
+                    )
+                function_source_metadata["source_state_catalog"] = str(
+                    source_transfer_states
+                )
+                function_source_metadata["source_state_catalog_sha256"] = _sha256(
+                    source_transfer_states
+                )
             canonical_source = canonical_sources.get(task)
             if not isinstance(canonical_source, dict):
                 raise ValueError(f"canonical_function_source_missing:{task}")
@@ -980,7 +1017,7 @@ def _load_function_stores(
                 task=task,
                 source_run_log=source_run_log,
                 source_payload=raw_source_payload,
-                source_metadata=task_source_metadata,
+                source_metadata=function_source_metadata,
                 canonical_source=canonical_source,
                 screenshot_roots=screenshot_roots,
                 records=run_log_records,

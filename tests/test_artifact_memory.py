@@ -648,19 +648,36 @@ def test_refresh_registers_legacy_function_source_as_canonical_run_log(
     legacy_source = _write_json(
         tmp_path / "converted" / "legacy.run_log.json",
         {
-            "schema_version": "omniflow.androidworld_function_ready_runlog.v1",
+            "schema_version": "omniflow.canonical_run_log.v1",
             "run_id": "legacy-function-source",
             "goal": "Record audio and save it.",
-            "completed": True,
             "success": True,
             "steps": [
                 {
                     "step_index": 0,
-                    "observation_before_act": {"width": 100, "height": 200},
-                    "executed_actions": [{"type": "wait", "params": {}}],
-                    "success": True,
+                    "before_state_id": "legacy-before",
+                    "after_state_id": "legacy-after",
+                    "action": {"tool": "click", "args": {"x": 500, "y": 500}},
+                    "result": {"success": True},
                 }
             ],
+        },
+    )
+    source_transfer = _write_json(
+        tmp_path / "converted" / "source_transfer_states.json",
+        {
+            "schema_version": "omniflow.transfer-state-catalog.v1",
+            "run_id": "legacy-function-source",
+            "states": {
+                state_id: {
+                    "state_id": state_id,
+                    "xml": "<hierarchy />",
+                    "package_name": "com.example.recorder",
+                    "activity_name": ".MainActivity",
+                    "display": {"width": 100, "height": 200},
+                }
+                for state_id in ("legacy-before", "legacy-after")
+            },
         },
     )
     store = _write_json(
@@ -687,6 +704,9 @@ def test_refresh_registers_legacy_function_source_as_canonical_run_log(
                     "status": "converted",
                     "source_run_log": str(legacy_source),
                     "source_run_log_sha256": _sha256(legacy_source),
+                    "source_transfer_states": str(source_transfer),
+                    "source_transfer_states_sha256": _sha256(source_transfer),
+                    "source_transfer_states_run_id": "legacy-function-source",
                     "store_path": str(store),
                     "store_sha256": _sha256(store),
                     "transfer_states_path": str(transfer),
@@ -715,6 +735,14 @@ def test_refresh_registers_legacy_function_source_as_canonical_run_log(
     assert canonical_source["task_name"] == "RecordWithName"
     assert canonical_source["task_parameters"] == {"file_name": "meeting.m4a"}
     assert canonical_source["seed"] == 111
+    assert canonical_source["steps"][0]["action"] == {
+        "action_type": "click",
+        "x": 50,
+        "y": 100,
+    }
+    assert canonical_source["steps"][0]["observation"]["auxiliaries"][
+        "display"
+    ] == {"width": 100, "height": 200}
     assert canonical_source["provenance"]["source_sha256"] == _sha256(legacy_source)
     assert lineage["conversion"] == "legacy_import"
     assert lineage["source_sha256"] == _sha256(legacy_source)
