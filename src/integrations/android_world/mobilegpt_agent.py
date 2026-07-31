@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import importlib
+import io
 import json
 import os
 from pathlib import Path
@@ -26,6 +28,23 @@ def _wire_text(value: str) -> str:
 
 def _socket_timeout(value: float) -> float | None:
     return None if value < 0 else max(0.1, value)
+
+
+def _jpeg_payload(image_base64: str | None) -> bytes:
+    if not str(image_base64 or "").strip():
+        raise ValueError("mobilegpt_androidworld_state_screenshot_empty")
+    try:
+        raw = base64.b64decode(str(image_base64), validate=True)
+        image_module = importlib.import_module("PIL.Image")
+        image = image_module.open(io.BytesIO(raw))
+        image.load()
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+        output = io.BytesIO()
+        image.save(output, format="JPEG")
+        return output.getvalue()
+    except Exception as error:
+        raise ValueError("mobilegpt_androidworld_state_screenshot_invalid") from error
 
 
 def _bounds_for_index(xml_text: str, index: Any) -> tuple[int, int, int, int]:
@@ -113,6 +132,11 @@ def build_mobilegpt_agent(
         def _send_xml(self, stream: Any, xml_text: str) -> None:
             payload = xml_text.encode("utf-8")
             stream.write(f"X{len(payload)}\n".encode())
+            stream.write(payload)
+
+        def _send_screenshot(self, stream: Any, image_base64: str | None) -> None:
+            payload = _jpeg_payload(image_base64)
+            stream.write(f"S{len(payload)}\n".encode())
             stream.write(payload)
 
         def _read_line(self, stream: Any) -> str:
@@ -237,7 +261,7 @@ def build_mobilegpt_agent(
                         while actions_executed < self.max_steps:
                             observation = host.observe(
                                 xml=True,
-                                screenshot=False,
+                                screenshot=True,
                                 app_info=True,
                             )
                             xml_text = mobilegpt_compatible_xml(
@@ -245,6 +269,7 @@ def build_mobilegpt_agent(
                             )
                             if not xml_text:
                                 raise RuntimeError("mobilegpt_androidworld_state_xml_empty")
+                            self._send_screenshot(stream, observation.image_base64)
                             self._send_xml(stream, xml_text)
                             while True:
                                 response = self._read_line(stream)

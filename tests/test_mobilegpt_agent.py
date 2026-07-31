@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import io
 import json
 from pathlib import Path
 import socket
 import threading
 from types import SimpleNamespace
+
+from PIL import Image
 
 from src.integrations.android_world.mobilegpt_agent import (
     _socket_timeout,
@@ -37,6 +40,7 @@ def test_mobilegpt_negative_timeout_means_unbounded_socket_wait() -> None:
 
 
 def test_mobilegpt_executes_server_click_through_androidworld_state_and_action(
+    tmp_path: Path,
     monkeypatch,
 ) -> None:
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -54,6 +58,7 @@ def test_mobilegpt_executes_server_click_through_androidworld_state_and_action(
                 transcript["packages"] = stream.readline().decode().strip()
                 transcript["instruction"] = stream.readline().decode().strip()
                 stream.write(b"##$$##com.example.target\r\n")
+                transcript["first_screenshot"] = _read_payload(stream, b"S")
                 transcript["first_xml"] = _read_payload(stream, b"X")
                 stream.write(
                     json.dumps(
@@ -61,6 +66,7 @@ def test_mobilegpt_executes_server_click_through_androidworld_state_and_action(
                     ).encode()
                     + b"\r\n"
                 )
+                transcript["second_screenshot"] = _read_payload(stream, b"S")
                 transcript["second_xml"] = _read_payload(stream, b"X")
                 stream.write(b"$$$$$\r\n")
         except BaseException as error:
@@ -94,7 +100,7 @@ def test_mobilegpt_executes_server_click_through_androidworld_state_and_action(
                 is_scrollable=False,
             )
             return SimpleNamespace(
-                pixels=None,
+                pixels=Image.new("RGB", (100, 200), color="blue"),
                 forest=None,
                 ui_elements=[element],
                 auxiliaries={
@@ -112,6 +118,7 @@ def test_mobilegpt_executes_server_click_through_androidworld_state_and_action(
     env = FakeEnv()
     agent = build_mobilegpt_agent(
         env=env,
+        evidence_root=tmp_path,
         action_factory=lambda **payload: SimpleNamespace(**payload),
     )
 
@@ -122,6 +129,10 @@ def test_mobilegpt_executes_server_click_through_androidworld_state_and_action(
     assert server_errors == []
     assert transcript["packages"] == "Lcom.example.target"
     assert transcript["instruction"] == "IRecord and save audio"
+    for key in ("first_screenshot", "second_screenshot"):
+        image = Image.open(io.BytesIO(transcript[key]))
+        assert image.format == "JPEG"
+        assert image.size == (100, 200)
     first_xml = transcript["first_xml"].decode()
     assert 'text="Record"' in first_xml
     assert 'index="0"' in first_xml
