@@ -210,7 +210,7 @@ def convert_legacy_run_log(
     if not isinstance(raw_steps, list) or not raw_steps:
         raise ValueError(f"legacy_run_log_steps_required:{task}")
     states = None if source_states is None else dict(source_states)
-    normalized_points = (
+    canonical_action_points = (
         str(payload.get("schema_version") or "")
         == "omniflow.canonical_run_log.v1"
     )
@@ -270,7 +270,14 @@ def convert_legacy_run_log(
                 inferred_package_name=inferred_package_name,
                 package_resolver=package_resolver,
                 default_coordinate_space=(
-                    "canonical_0_1000" if normalized_points else ""
+                    "canonical_0_1000"
+                    if canonical_action_points
+                    and not any(
+                        isinstance(raw_step.get(key), list)
+                        and bool(raw_step.get(key))
+                        for key in ("executed_actions", "actions")
+                    )
+                    else ""
                 ),
             )
             result = {"success": _success(raw_step, default=True)}

@@ -157,6 +157,49 @@ def test_explicit_converter_emits_only_omniflow_schema(tmp_path: Path) -> None:
     ]
 
 
+def test_canonical_legacy_inline_observation_keeps_pixel_coordinates(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "legacy.run_log.json"
+    payload = {
+        "schema_version": "omniflow.canonical_run_log.v1",
+        "run_id": "legacy-inline-pixels",
+        "goal": "Confirm deletion.",
+        "success": True,
+        "steps": [
+            {
+                "observation_before_act": {"width": 720, "height": 1280},
+                "executed_actions": [
+                    {"type": "click", "params": {"x": 637, "y": 717}}
+                ],
+                "success": True,
+            },
+            {
+                "observation_before_act": {"width": 720, "height": 1280},
+                "executed_actions": [
+                    {"type": "click", "params": {"x": 360, "y": 1144}}
+                ],
+                "success": True,
+            },
+        ],
+    }
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    converted = convert_legacy_run_log(
+        payload,
+        task_name="DeleteTask",
+        task_parameters={},
+        seed=111,
+        source_path=source,
+        require_screenshots=False,
+    )
+
+    assert [step["action"] for step in converted["steps"]] == [
+        {"action_type": "click", "x": 637, "y": 717},
+        {"action_type": "click", "x": 360, "y": 1144},
+    ]
+
+
 def test_explicit_converter_preserves_filtered_source_target_evidence(
     tmp_path: Path,
 ) -> None:
