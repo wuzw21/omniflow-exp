@@ -16,6 +16,7 @@ import tempfile
 from typing import Any, Iterable, Sequence
 
 from omniflow.core.trajectory import require_complete_source_run_log
+from omniflow.transfer.runtime import load_transfer_state_catalog
 from src.integrations.runlog import adapt_source_run_log
 
 MEMORY_SCHEMA = "omniflow.androidworld-artifact-memory.v2"
@@ -290,6 +291,18 @@ def _canonicalize_function_source_run_log(
         canonical = require_complete_source_run_log(source_payload)
         conversion = "identity"
     except ValueError:
+        source_states = None
+        source_catalog_value = source_metadata.get(
+            "source_state_catalog"
+        ) or source_metadata.get("transfer_state_catalog")
+        if source_catalog_value:
+            source_catalog_path = _require_hashed_file(
+                source_catalog_value,
+                source_metadata.get("source_state_catalog_sha256")
+                or source_metadata.get("transfer_state_catalog_sha256"),
+                label=f"function_source_state_catalog:{task}",
+            )
+            source_states = load_transfer_state_catalog(source_catalog_path)
         canonical = require_complete_source_run_log(
             adapt_source_run_log(
                 source_payload,
@@ -301,6 +314,7 @@ def _canonicalize_function_source_run_log(
                 ),
                 seed=_function_source_seed(source_metadata),
                 source_path=source_object,
+                source_states=source_states,
                 screenshot_roots=screenshot_roots,
                 require_screenshots=False,
             )

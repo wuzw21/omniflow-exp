@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from omniflow.core.trajectory import require_complete_source_run_log
+from omniflow.transfer.runtime import load_transfer_state_catalog
 from src.integrations.runlog import adapt_source_run_log
 
 SOURCE_INDEX_SCHEMA = "omniflow.androidworld.source_run_log_index.v1"
@@ -46,6 +47,7 @@ def convert_source_index(
         else sorted(source_payload.items())
     )
     converted: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    source_catalogs: dict[str, tuple[Path, str]] = {}
     failures: dict[str, str] = {}
     for task, raw_item in items:
         try:
@@ -57,12 +59,46 @@ def convert_source_index(
                 or raw_item.get("source_run_log"),
             )
             raw_run_log = _load_object(source_path)
+            source_states = None
+            source_catalog_value = raw_item.get(
+                "source_state_catalog"
+            ) or raw_item.get("transfer_state_catalog")
+            if source_catalog_value:
+                source_catalog_path = _resolve_source_path(
+                    index_path,
+                    source_catalog_value,
+                )
+                source_catalog_sha256 = hashlib.sha256(
+                    source_catalog_path.read_bytes()
+                ).hexdigest()
+                expected_catalog_sha256 = str(
+                    raw_item.get("source_state_catalog_sha256")
+                    or raw_item.get("transfer_state_catalog_sha256")
+                    or ""
+                ).strip()
+                if (
+                    expected_catalog_sha256
+                    and expected_catalog_sha256 != source_catalog_sha256
+                ):
+                    raise ValueError(
+                        "source_state_catalog_hash_mismatch:"
+                        f"{task}:expected={expected_catalog_sha256}:"
+                        f"actual={source_catalog_sha256}"
+                    )
+                source_states = load_transfer_state_catalog(
+                    source_catalog_path
+                )
+                source_catalogs[str(task)] = (
+                    source_catalog_path,
+                    source_catalog_sha256,
+                )
             run_log = adapt_source_run_log(
                 raw_run_log,
                 task_name=str(task),
                 task_parameters=dict(raw_item.get("params") or {}),
                 seed=_source_seed(raw_item),
                 source_path=source_path,
+                source_states=source_states,
                 screenshot_roots=screenshot_roots,
                 require_screenshots=False,
             )
@@ -107,6 +143,10 @@ def convert_source_index(
                 if key in original_item
             },
         }
+        if task in source_catalogs:
+            catalog_path, catalog_sha256 = source_catalogs[task]
+            index[task]["source_state_catalog"] = str(catalog_path)
+            index[task]["source_state_catalog_sha256"] = catalog_sha256
     destination.mkdir(parents=True, exist_ok=True)
     object_dir = destination / "objects"
     object_dir.mkdir()

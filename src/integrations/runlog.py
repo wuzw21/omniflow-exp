@@ -109,6 +109,7 @@ def adapt_source_run_log(
     task_parameters: dict[str, Any],
     seed: int | None,
     source_path: str | Path,
+    source_states: dict[str, dict[str, Any]] | None = None,
     screenshot_roots: Iterable[str | Path] = (),
     require_screenshots: bool = True,
     package_resolver: Callable[[str], str] | None = None,
@@ -132,6 +133,7 @@ def adapt_source_run_log(
         task_parameters=task_parameters,
         seed=seed,
         source_path=source_path,
+        source_states=source_states,
         screenshot_roots=screenshot_roots,
         require_screenshots=require_screenshots,
         package_resolver=package_resolver,
@@ -190,6 +192,7 @@ def convert_legacy_run_log(
     task_parameters: dict[str, Any],
     seed: int | None,
     source_path: str | Path,
+    source_states: dict[str, dict[str, Any]] | None = None,
     screenshot_roots: Iterable[str | Path] = (),
     require_screenshots: bool = True,
     package_resolver: Callable[[str], str] | None = None,
@@ -206,13 +209,26 @@ def convert_legacy_run_log(
     raw_steps = payload.get("steps") or payload.get("cards") or []
     if not isinstance(raw_steps, list) or not raw_steps:
         raise ValueError(f"legacy_run_log_steps_required:{task}")
+    states = None if source_states is None else dict(source_states)
+    normalized_points = (
+        str(payload.get("schema_version") or "")
+        == "omniflow.canonical_run_log.v1"
+    )
     resolver = ScreenshotResolver(screenshot_roots)
     converted_steps: list[dict[str, Any]] = []
     for raw_step_index, raw_step in enumerate(raw_steps):
         if not isinstance(raw_step, dict):
             raise ValueError(f"legacy_run_log_step_invalid:{task}:{raw_step_index}")
-        before = _legacy_before_observation(raw_step)
-        after = _legacy_after_observation(raw_step)
+        before = _hydrate_legacy_observation(
+            _legacy_before_observation(raw_step),
+            state_identifier=raw_step.get("before_state_id"),
+            source_states=states,
+        )
+        after = _hydrate_legacy_observation(
+            _legacy_after_observation(raw_step),
+            state_identifier=raw_step.get("after_state_id"),
+            source_states=states,
+        )
         step_index = _integer(raw_step.get("step_index"), raw_step_index)
         observation = _androidworld_state(
             before,
@@ -253,6 +269,9 @@ def convert_legacy_run_log(
                 observation=before,
                 inferred_package_name=inferred_package_name,
                 package_resolver=package_resolver,
+                default_coordinate_space=(
+                    "canonical_0_1000" if normalized_points else ""
+                ),
             )
             result = {"success": _success(raw_step, default=True)}
             raw_result = _map(raw_step.get("result"))
@@ -496,6 +515,7 @@ def _legacy_action_to_androidworld(
     observation: dict[str, Any],
     inferred_package_name: str,
     package_resolver: Callable[[str], str] | None,
+    default_coordinate_space: str = "",
 ) -> dict[str, Any]:
     raw = _map(value)
     function = _map(raw.get("function"))
@@ -516,6 +536,8 @@ def _legacy_action_to_androidworld(
     )
     for key in _EXECUTION_TIMING_ARGS:
         args.pop(key, None)
+    if default_coordinate_space and not args.get("coordinate_space"):
+        args["coordinate_space"] = default_coordinate_space
     if tool == "android_privileged_action":
         tool = str(args.pop("tool", "")).strip().lower()
         args.update(_map(args.pop("arguments", None)))
@@ -657,6 +679,34 @@ def _legacy_following_package(steps: list[Any], step_index: int) -> str:
 
 def _legacy_observation(value: Any) -> dict[str, Any]:
     return {"xml": value} if isinstance(value, str) else _map(value)
+
+
+def _hydrate_legacy_observation(
+    observation: dict[str, Any],
+    *,
+    state_identifier: Any,
+    source_states: dict[str, dict[str, Any]] | None,
+) -> dict[str, Any]:
+    identifier = str(state_identifier or "").strip()
+    if not identifier or source_states is None:
+        return observation
+    source_state = source_states.get(identifier)
+    if not isinstance(source_state, dict):
+        raise ValueError(f"legacy_source_state_missing:{identifier}")
+    hydrated: dict[str, Any] = {"state_id": identifier}
+    for key in ("xml", "package_name", "activity_name"):
+        if _present(source_state.get(key)):
+            hydrated[key] = source_state[key]
+    display = source_state.get("display")
+    if isinstance(display, dict):
+        if _present(display.get("width")):
+            hydrated["width"] = display["width"]
+        if _present(display.get("height")):
+            hydrated["height"] = display["height"]
+    for key, value in observation.items():
+        if _present(value):
+            hydrated[key] = value
+    return hydrated
 
 
 def _androidworld_state(
