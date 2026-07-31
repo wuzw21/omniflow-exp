@@ -247,6 +247,7 @@ def test_mobilegpt_episode_command_declares_native_androidworld_io(
         adb_path="adb",
         start_timeout_sec=60.0,
         finish_timeout_sec=120.0,
+        timeout_sec=600.0,
     )
 
     assert spec.env["MOBILEGPT_SERVER_HOST"] == "127.0.0.1"
@@ -256,3 +257,4 @@ def test_mobilegpt_episode_command_declares_native_androidworld_io(
     assert spec.metadata["state_backend"] == "androidworld"
     assert spec.metadata["action_backend"] == "androidworld"
     assert spec.metadata["native_androidworld_agent_io"] is True
+    assert spec.timeout_sec == 600.0

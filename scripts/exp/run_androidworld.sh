@@ -1955,7 +1955,8 @@ if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
     --serial "$source_serial" \
     --console-port "$source_console_port" \
     --adb-path "$adb_bin" \
-    --max-steps "$max_steps"
+    --max-steps "$max_steps" \
+    --timeout-sec "$timeout_sec"
 fi
 if [[ "$appagent_source_generation_required" -eq 1 ]]; then
   "$python_bin" "$preflight" \

@@ -6636,6 +6636,7 @@ def build_mobilegpt_androidworld_command(
     adb_path: str,
     start_timeout_sec: float,
     finish_timeout_sec: float,
+    timeout_sec: float | None = None,
     run_dir_suffix: str = "",
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
@@ -6677,6 +6678,9 @@ def build_mobilegpt_androidworld_command(
         },
         cwd=spec.cwd,
         output_path=spec.output_path,
+        timeout_sec=(
+            float(timeout_sec) if timeout_sec is not None and timeout_sec > 0 else None
+        ),
         metadata={
             **dict(spec.metadata),
             "mode": "mobilegpt_androidworld_episode",
@@ -7161,6 +7165,7 @@ def _run_one_task_mobilegpt(
                     adb_path=args.adb_path,
                     start_timeout_sec=float(args.mobilegpt_wait_start_timeout_sec),
                     finish_timeout_sec=float(args.mobilegpt_episode_wait_timeout_sec),
+                    timeout_sec=float(args.timeout_sec or 0),
                 )
                 episode_spec.metadata.update(
                     {

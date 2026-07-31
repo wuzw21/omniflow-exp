@@ -901,5 +901,6 @@ def test_mobilegpt_source_generation_has_no_model_or_episode_retry(
     assert server.metadata["episode_retries"] == 0
     assert episode_kwargs["server_host"] == "0.0.0.0"
     assert episode_kwargs["target_package"] == "com.android.settings"
+    assert episode_kwargs["timeout_sec"] == 600.0
     assert "rebroadcast_limit" not in episode_kwargs
     assert result["source_method"] == "ours"

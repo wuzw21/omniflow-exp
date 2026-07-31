@@ -284,6 +284,7 @@ def prepare_mobilegpt_source_memory(
     server_warmup_sec: float = 5.0,
     wait_start_timeout_sec: float = 60.0,
     wait_finish_timeout_sec: float = 180.0,
+    timeout_sec: float = 600.0,
     perform_emulator_setup: bool = True,
 ) -> dict[str, Any]:
     """Run one source episode, seal its memory, and never retry it."""
@@ -415,6 +416,7 @@ def prepare_mobilegpt_source_memory(
         adb_path=str(adb_path),
         start_timeout_sec=float(wait_start_timeout_sec),
         finish_timeout_sec=float(wait_finish_timeout_sec),
+        timeout_sec=float(timeout_sec),
     )
     episode_spec.metadata.update(
         {
@@ -582,6 +584,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--server-warmup-sec", type=float, default=5.0)
     prepare.add_argument("--wait-start-timeout-sec", type=float, default=60.0)
     prepare.add_argument("--wait-finish-timeout-sec", type=float, default=180.0)
+    prepare.add_argument("--timeout-sec", type=float, default=600.0)
     prepare.add_argument("--no-emulator-setup", action="store_true")
 
     validate = subparsers.add_parser("validate")
@@ -619,6 +622,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 server_warmup_sec=args.server_warmup_sec,
                 wait_start_timeout_sec=args.wait_start_timeout_sec,
                 wait_finish_timeout_sec=args.wait_finish_timeout_sec,
+                timeout_sec=args.timeout_sec,
                 perform_emulator_setup=not args.no_emulator_setup,
             )
         elif args.command == "validate":
