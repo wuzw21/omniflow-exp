@@ -61,7 +61,20 @@ preflight_profile="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_PROFILE:-}"
 preflight_serials="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_SERIALS:-}"
 manage_emulators="${OMNIFLOW_SINGLE_TASK_MANAGE_EMULATORS:-1}"
 emulator_avds="${OMNIFLOW_SINGLE_TASK_EMULATOR_AVDS:-emulator-5554=SmallPhone,emulator-5560=AndroidWorldAvd,emulator-5564=OmniFlowTargetPixelFoldApi33}"
-emulator_avd_specs="${OMNIFLOW_SINGLE_TASK_EMULATOR_AVD_SPECS:-SmallPhone|system-images;android-33;google_apis;arm64-v8a|small_phone,AndroidWorldAvd|system-images;android-33;google_apis;arm64-v8a|pixel_6,OmniFlowTargetPixelFoldApi33|system-images;android-33;google_apis;arm64-v8a|pixel_fold}"
+host_machine="$(uname -m)"
+case "$host_machine" in
+  x86_64|amd64)
+    default_emulator_system_image_abi="x86_64"
+    ;;
+  arm64|aarch64)
+    default_emulator_system_image_abi="arm64-v8a"
+    ;;
+  *)
+    default_emulator_system_image_abi="arm64-v8a"
+    ;;
+esac
+default_emulator_avd_specs="SmallPhone|system-images;android-33;google_apis;$default_emulator_system_image_abi|small_phone,AndroidWorldAvd|system-images;android-33;google_apis;$default_emulator_system_image_abi|pixel_6,OmniFlowTargetPixelFoldApi33|system-images;android-33;google_apis;$default_emulator_system_image_abi|pixel_fold"
+emulator_avd_specs="${OMNIFLOW_SINGLE_TASK_EMULATOR_AVD_SPECS:-$default_emulator_avd_specs}"
 emulator_gpu="${OMNIFLOW_SINGLE_TASK_EMULATOR_GPU:-swiftshader_indirect}"
 emulator_boot_timeout_sec="${OMNIFLOW_SINGLE_TASK_EMULATOR_BOOT_TIMEOUT_SEC:-240}"
 fold_serial="${OMNIFLOW_SINGLE_TASK_FOLD_SERIAL:-emulator-5564}"

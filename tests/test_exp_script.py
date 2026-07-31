@@ -63,6 +63,60 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
 
 
 @pytest.mark.parametrize(
+    ("host_machine", "expected_abi"),
+    [
+        ("x86_64", "x86_64"),
+        ("amd64", "x86_64"),
+        ("arm64", "arm64-v8a"),
+        ("aarch64", "arm64-v8a"),
+    ],
+)
+def test_default_avd_system_image_matches_host_architecture(
+    tmp_path: Path,
+    host_machine: str,
+    expected_abi: str,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_uname = fake_bin / "uname"
+    fake_uname.write_text(
+        f"#!/bin/sh\nprintf '%s\\n' '{host_machine}'\n",
+        encoding="utf-8",
+    )
+    fake_uname.chmod(0o755)
+    script_prefix = tmp_path / "script-prefix.sh"
+    script_prefix.write_text(
+        SCRIPT.read_text(encoding="utf-8").split("\ndry_run=0\n", maxsplit=1)[0]
+        + "\ndry_run=0\n",
+        encoding="utf-8",
+    )
+    environment = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        "SCRIPT_PREFIX": str(script_prefix),
+    }
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "source \"$SCRIPT_PREFIX\"; "
+            "printf '%s\\n' \"$emulator_avd_specs\"",
+        ],
+        cwd=REPO,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.count(
+        f"system-images;android-33;google_apis;{expected_abi}"
+    ) == 3
+
+
+@pytest.mark.parametrize(
     ("arguments", "message"),
     [
         (
