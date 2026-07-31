@@ -855,8 +855,11 @@ if [ "$1" = "-" ] && [ "$2" = "$SOURCE_INDEX" ] && [ "$#" -eq 3 ]; then
   printf '%s\n' 'BrowserDraw'
   exit 0
 fi
-if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ] && [ "$5" = "$SOURCE_INDEX" ]; then
+if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ] && { [ "$5" = "$SOURCE_INDEX" ] || [ "$5" = "$STORE_INDEX" ]; }; then
   if [ "$4" = "cold_memory_manifest.json" ]; then
+    if [ "$5" != "$STORE_INDEX" ]; then
+      exit 44
+    fi
     if [ "$TERMINAL_PHASE" = "static" ] || [ -f "$STATE_DIR/mobilegpt-terminal" ]; then
       printf '%s\n' 'source_asset_retry_forbidden:/immutable/mobilegpt:official_source_failed' >&2
       exit 75

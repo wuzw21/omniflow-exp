@@ -768,7 +768,8 @@ export JAVA_HOME="$java_home"
 export PATH="$java_home/bin:$PATH"
 echo "[java] home=$java_home major=$java_major version=$java_version_line"
 select_source_asset_revision() {
-  "$python_bin" - "$repo" "$1" "$2" "$source_index" "$3" "${4:-}" <<'PY'
+  local hash_index="${5:-$source_index}"
+  "$python_bin" - "$repo" "$1" "$2" "$hash_index" "$3" "${4:-}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -812,7 +813,8 @@ if [[ "$all_tasks" -eq 0 && "$requires_mobilegpt_source_memory" -eq 1 && -z "$mo
       "$mobilegpt_source_base" \
       "cold_memory_manifest.json" \
       "$task" \
-      "$mobilegpt_source_environment_repair"
+      "$mobilegpt_source_environment_repair" \
+      "$ours_store_index"
   )"
   mobilegpt_source_memory_root="$mobilegpt_source_attempt_root/memory"
 fi
@@ -1080,11 +1082,13 @@ PY
           source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$source_method"
           source_manifest="cold_memory_manifest.json"
           source_repair_reason="$mobilegpt_source_environment_repair"
+          source_hash_index="$ours_store_index"
           ;;
         appagent_demo)
           source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$source_method"
           source_manifest="appagent_demo_manifest.json"
           source_repair_reason="$appagent_source_environment_repair"
+          source_hash_index="$source_index"
           ;;
       esac
       if selected_source_root="$(
@@ -1092,7 +1096,8 @@ PY
           "$source_base" \
           "$source_manifest" \
           "$batch_task" \
-          "$source_repair_reason"
+          "$source_repair_reason" \
+          "$source_hash_index"
       )"; then
         case "$source_method" in
           mobilegpt_offline_retrieval)
@@ -1277,16 +1282,19 @@ PY
               source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$cell_method"
               source_manifest="cold_memory_manifest.json"
               source_repair_reason="$mobilegpt_source_environment_repair"
+              source_hash_index="$ours_store_index"
               ;;
             appagent_demo)
               source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$cell_method"
               source_manifest="appagent_demo_manifest.json"
               source_repair_reason="$appagent_source_environment_repair"
+              source_hash_index="$source_index"
               ;;
             *)
               source_base=""
               source_manifest=""
               source_repair_reason=""
+              source_hash_index=""
               ;;
           esac
           if [[ -n "$source_base" ]]; then
@@ -1295,6 +1303,7 @@ PY
               "$source_manifest" \
               "$batch_task" \
               "$source_repair_reason" \
+              "$source_hash_index" \
               >/dev/null; then
               :
             else
