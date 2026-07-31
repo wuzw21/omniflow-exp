@@ -1117,15 +1117,33 @@ def build_grounded_teacher_run_log_from_store_index(
     row = payload.get(str(task_name)) if isinstance(payload, dict) else None
     if not isinstance(row, dict):
         raise ValueError(f"store_index_task_missing:{task_name}")
-    return build_grounded_teacher_run_log(
-        source_run_log=row.get("source_run_log_path"),
-        source_state_catalog=row.get("transfer_states_path"),
-        provenance_manifest=row.get("provenance_path"),
+    source_path = _require_frozen_file(
+        row.get("source_run_log_path"),
+        expected_sha256=str(row.get("source_run_log_sha256") or ""),
+        label=f"store_source_run_log:{task_name}",
+    )
+    state_catalog_path = _require_frozen_file(
+        row.get("transfer_states_path"),
+        expected_sha256=str(row.get("transfer_states_sha256") or ""),
+        label="source_state_catalog",
+    )
+    provenance_path = _require_frozen_file(
+        row.get("provenance_path"),
+        expected_sha256=str(row.get("provenance_sha256") or ""),
+        label="source_provenance",
+    )
+    grounded, audit = _build_grounded_teacher_run_log_from_canonical_source(
+        source_run_log=source_path,
         expected_source_run_log_sha256=str(
             row.get("source_run_log_sha256") or ""
         ),
-        expected_source_state_catalog_sha256=str(
-            row.get("transfer_states_sha256") or ""
-        ),
-        expected_provenance_sha256=str(row.get("provenance_sha256") or ""),
     )
+    audit.update(
+        {
+            "function_store_state_catalog": str(state_catalog_path),
+            "function_store_state_catalog_sha256": _sha256(state_catalog_path),
+            "function_store_provenance_manifest": str(provenance_path),
+            "function_store_provenance_sha256": _sha256(provenance_path),
+        }
+    )
+    return grounded, audit

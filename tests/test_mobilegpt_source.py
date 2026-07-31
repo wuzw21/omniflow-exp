@@ -561,6 +561,66 @@ def test_mobilegpt_preflight_uses_canonical_store_source(
     assert result["ready"] is True
 
 
+def test_mobilegpt_preflight_grounds_complete_store_source_without_full_function_catalog(
+    tmp_path: Path,
+) -> None:
+    index, indexed_source_run_log = _write_source_index(
+        tmp_path / "partial-function-catalog"
+    )
+    indexed_source_run_log.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [
+                    {"action_type": "click", "x": 50, "y": 50},
+                    {"action_type": "click", "x": 50, "y": 50},
+                ],
+                observations=[
+                    androidworld_state(
+                        "state-0",
+                        forest=(
+                            '<hierarchy><node text="Bluetooth" clickable="true" '
+                            'bounds="[0,0][100,100]" /></hierarchy>'
+                        ),
+                        package_name="com.android.settings",
+                    ),
+                    androidworld_state(
+                        "state-1",
+                        forest=(
+                            '<hierarchy><node text="Continue" clickable="true" '
+                            'bounds="[0,0][100,100]" /></hierarchy>'
+                        ),
+                        package_name="com.android.settings",
+                    ),
+                ],
+                task_name="SystemBluetoothTurnOn",
+                goal="Turn Bluetooth on.",
+            )
+        ),
+        encoding="utf-8",
+    )
+    source_index_payload = json.loads(index.read_text(encoding="utf-8"))
+    source_row = source_index_payload["SystemBluetoothTurnOn"]
+    source_row["source_run_log_sha256"] = hashlib.sha256(
+        indexed_source_run_log.read_bytes()
+    ).hexdigest()
+    source_row["step_count"] = 2
+    index.write_text(json.dumps(source_index_payload), encoding="utf-8")
+    store_index, store_source_run_log = _write_store_index(index)
+
+    result = mobilegpt_source.preflight_mobilegpt_source(
+        index_path=index,
+        store_index_path=store_index,
+        task_name="SystemBluetoothTurnOn",
+    )
+
+    assert Path(result["source_run_log"]) == store_source_run_log
+    assert result["grounding"]["source_state_count"] == 2
+    assert result["grounding"]["grounding_source"] == (
+        "canonical_androidworld_run_log"
+    )
+    assert result["ready"] is True
+
+
 def test_mobilegpt_preflight_resolves_target_from_official_open_app_action(
     tmp_path: Path,
 ) -> None:
