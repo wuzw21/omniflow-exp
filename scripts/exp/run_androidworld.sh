@@ -1001,9 +1001,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
 from src.experiment.artifact_memory import registered_cell_plan_from_memory
-from src.experiment.result_registry import registered_cell_plan
 
-runs_root = Path(sys.argv[2]).expanduser().resolve()
 memory_index = Path(sys.argv[3]).expanduser().resolve()
 task = sys.argv[4]
 methods = tuple(sys.argv[5].split(","))
@@ -1017,16 +1015,7 @@ devices = tuple(device_specs)
 source_seed = int(sys.argv[7])
 evaluation_seed = int(sys.argv[8])
 max_steps = int(sys.argv[9])
-live_plan = registered_cell_plan(
-    runs_root=runs_root,
-    task_name=task,
-    methods=methods,
-    devices=devices,
-    source_seed=source_seed,
-    evaluation_seed=evaluation_seed,
-    formal_max_steps=max_steps,
-)
-memory_plan = registered_cell_plan_from_memory(
+plan = registered_cell_plan_from_memory(
     memory_index=memory_index,
     task_name=task,
     methods=methods,
@@ -1035,15 +1024,6 @@ memory_plan = registered_cell_plan_from_memory(
     evaluation_seed=evaluation_seed,
     formal_max_steps=max_steps,
 )
-expected = [(method, device) for method in methods for device in devices]
-completed_set = {
-    *live_plan["completed"],
-    *memory_plan["completed"],
-}
-plan = {
-    "completed": [cell for cell in expected if cell in completed_set],
-    "pending": [cell for cell in expected if cell not in completed_set],
-}
 print(f"summary\t{len(plan['completed'])}\t{len(plan['pending'])}")
 for method, device in plan["pending"]:
     label, serial, port = device_specs[device]

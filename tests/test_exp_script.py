@@ -60,6 +60,8 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "-read-only" in script_text
     assert "-no-snapshot-load" in script_text
     assert "-no-snapshot-save" in script_text
+    assert "from src.experiment.result_registry import registered_cell_plan" not in script_text
+    assert script_text.count("registered_cell_plan_from_memory(") == 1
 
 
 @pytest.mark.parametrize(
