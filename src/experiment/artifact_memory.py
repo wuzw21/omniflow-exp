@@ -270,6 +270,7 @@ def _canonicalize_function_source_run_log(
     source_run_log: Path,
     source_payload: dict[str, Any],
     source_metadata: dict[str, Any],
+    canonical_source: dict[str, Any],
     screenshot_roots: Sequence[Path],
     records: dict[str, dict[str, Any]],
 ) -> tuple[Path, str, dict[str, Any]]:
@@ -291,38 +292,63 @@ def _canonicalize_function_source_run_log(
         canonical = require_complete_source_run_log(source_payload)
         conversion = "identity"
     except ValueError:
-        source_states = None
-        source_catalog_value = source_metadata.get(
-            "source_state_catalog"
-        ) or source_metadata.get("transfer_state_catalog")
-        if source_catalog_value:
-            source_catalog_path = _require_hashed_file(
-                source_catalog_value,
-                source_metadata.get("source_state_catalog_sha256")
-                or source_metadata.get("transfer_state_catalog_sha256"),
-                label=f"function_source_state_catalog:{task}",
-            )
-            source_states = load_transfer_state_catalog(source_catalog_path)
-        canonical = require_complete_source_run_log(
-            adapt_source_run_log(
-                source_payload,
-                task_name=task,
-                task_parameters=dict(
-                    source_metadata.get("params")
-                    or source_metadata.get("task_parameters")
-                    or {}
-                ),
-                seed=_function_source_seed(source_metadata),
-                source_path=source_object,
-                source_states=source_states,
-                screenshot_roots=screenshot_roots,
-                require_screenshots=False,
-            )
+        canonical_object = _require_hashed_file(
+            canonical_source.get("object_path"),
+            canonical_source.get("sha256"),
+            label=f"canonical_source_run_log:{task}",
         )
-        conversion = "legacy_import"
+        canonical_candidate = require_complete_source_run_log(
+            _load_object(canonical_object)
+        )
+        if canonical_candidate["task_name"] != task:
+            raise ValueError(
+                "canonical_function_source_task_mismatch:"
+                f"{task}:{canonical_candidate['task_name']}"
+            )
+        canonical_provenance = canonical_candidate.get("provenance")
+        canonical_provenance_source_sha256 = (
+            str(canonical_provenance.get("source_sha256") or "").strip()
+            if isinstance(canonical_provenance, dict)
+            else ""
+        )
+        if canonical_provenance_source_sha256 == source_sha256:
+            canonical = canonical_candidate
+            conversion = "canonical_source_reuse"
+        else:
+            source_states = None
+            source_catalog_value = source_metadata.get(
+                "source_state_catalog"
+            ) or source_metadata.get("transfer_state_catalog")
+            if source_catalog_value:
+                source_catalog_path = _require_hashed_file(
+                    source_catalog_value,
+                    source_metadata.get("source_state_catalog_sha256")
+                    or source_metadata.get("transfer_state_catalog_sha256"),
+                    label=f"function_source_state_catalog:{task}",
+                )
+                source_states = load_transfer_state_catalog(source_catalog_path)
+            canonical = require_complete_source_run_log(
+                adapt_source_run_log(
+                    source_payload,
+                    task_name=task,
+                    task_parameters=dict(
+                        source_metadata.get("params")
+                        or source_metadata.get("task_parameters")
+                        or {}
+                    ),
+                    seed=_function_source_seed(source_metadata),
+                    source_path=source_object,
+                    source_states=source_states,
+                    screenshot_roots=screenshot_roots,
+                    require_screenshots=False,
+                )
+            )
+            conversion = "legacy_import"
     if conversion == "identity":
         canonical_sha256 = source_sha256
         canonical_object = source_object
+    elif conversion == "canonical_source_reuse":
+        canonical_sha256 = str(canonical_source["sha256"])
     else:
         canonical_content = _json_bytes(canonical)
         canonical_sha256 = hashlib.sha256(canonical_content).hexdigest()
@@ -879,6 +905,7 @@ def _load_function_stores(
     catalogs: Sequence[Path],
     *,
     source_metadata: dict[str, Any],
+    canonical_sources: dict[str, dict[str, Any]],
     screenshot_roots: Sequence[Path],
     run_log_records: dict[str, dict[str, Any]],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
@@ -941,6 +968,9 @@ def _load_function_stores(
             task_source_metadata = source_metadata.get(task)
             if not isinstance(task_source_metadata, dict):
                 raise ValueError(f"function_source_metadata_missing:{task}")
+            canonical_source = canonical_sources.get(task)
+            if not isinstance(canonical_source, dict):
+                raise ValueError(f"canonical_function_source_missing:{task}")
             (
                 canonical_source_run_log,
                 canonical_source_run_log_hash,
@@ -951,6 +981,7 @@ def _load_function_stores(
                 source_run_log=source_run_log,
                 source_payload=raw_source_payload,
                 source_metadata=task_source_metadata,
+                canonical_source=canonical_source,
                 screenshot_roots=screenshot_roots,
                 records=run_log_records,
             )
@@ -1171,6 +1202,7 @@ def _refresh_artifact_memory_unlocked(
         root,
         catalog_paths,
         source_metadata=source_payload,
+        canonical_sources=canonical_sources,
         screenshot_roots=screenshot_roots,
         run_log_records=records,
     )
