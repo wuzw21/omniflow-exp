@@ -101,7 +101,7 @@ def test_default_avd_system_image_matches_host_architecture(
             "bash",
             "-c",
             "source \"$SCRIPT_PREFIX\"; "
-            "printf '%s\\n' \"$emulator_avd_specs\"",
+            "printf '%s\\n%s\\n' \"$emulator_avds\" \"$emulator_avd_specs\"",
         ],
         cwd=REPO,
         env=environment,
@@ -113,7 +113,11 @@ def test_default_avd_system_image_matches_host_architecture(
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.count(
         f"system-images;android-33;google_apis;{expected_abi}"
-    ) == 3
+    ) == 2
+    assert completed.stdout.count(
+        f"system-images;android-34;google_apis;{expected_abi}"
+    ) == 1
+    assert "emulator-5564=OmniFlowTargetPixelFoldApi34" in completed.stdout
 
 
 @pytest.mark.parametrize(
