@@ -5,7 +5,12 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 asset_root="${OMNIFLOW_EXP_ASSET_ROOT:-}"
 results_root="${OMNIFLOW_EXP_RESULTS_ROOT:-}"
-python_bin="${PYTHON_BIN:-python3}"
+account_root="$(cd && pwd)"
+unified_python="$account_root/miniconda3/envs/omniflow-py31113/bin/python"
+if [[ ! -x "$unified_python" ]]; then
+  unified_python="python3"
+fi
+python_bin="${PYTHON_BIN:-$unified_python}"
 env_file="${OMNIFLOW_ENV_FILE:-${asset_root:+$asset_root/.env}}"
 master_source_index="${OMNIFLOW_MASTER_SOURCE_INDEX:-${asset_root:+$asset_root/runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json}}"
 source_index="${OMNIFLOW_SINGLE_TASK_SOURCE_INDEX:-$master_source_index}"
