@@ -289,7 +289,9 @@ def build_mobilegpt_agent(
                                         action_type="open_app",
                                         app_name=package,
                                     )
-                                    continue
+                                    if post_action_wait:
+                                        time.sleep(post_action_wait)
+                                    break
                                 try:
                                     action = json.loads(response)
                                     device_action, spoken = self._execute_server_action(

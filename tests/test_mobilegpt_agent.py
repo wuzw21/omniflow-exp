@@ -60,14 +60,17 @@ def test_mobilegpt_executes_server_click_through_androidworld_state_and_action(
                 stream.write(b"##$$##com.example.target\r\n")
                 transcript["first_screenshot"] = _read_payload(stream, b"S")
                 transcript["first_xml"] = _read_payload(stream, b"X")
+                stream.write(b"##$$##com.example.other\r\n")
+                transcript["second_screenshot"] = _read_payload(stream, b"S")
+                transcript["second_xml"] = _read_payload(stream, b"X")
                 stream.write(
                     json.dumps(
                         {"name": "click", "parameters": {"index": 0}}
                     ).encode()
                     + b"\r\n"
                 )
-                transcript["second_screenshot"] = _read_payload(stream, b"S")
-                transcript["second_xml"] = _read_payload(stream, b"X")
+                transcript["third_screenshot"] = _read_payload(stream, b"S")
+                transcript["third_xml"] = _read_payload(stream, b"X")
                 stream.write(b"$$$$$\r\n")
         except BaseException as error:
             server_errors.append(error)
@@ -129,16 +132,21 @@ def test_mobilegpt_executes_server_click_through_androidworld_state_and_action(
     assert server_errors == []
     assert transcript["packages"] == "Lcom.example.target"
     assert transcript["instruction"] == "IRecord and save audio"
-    for key in ("first_screenshot", "second_screenshot"):
+    for key in ("first_screenshot", "second_screenshot", "third_screenshot"):
         image = Image.open(io.BytesIO(transcript[key]))
         assert image.format == "JPEG"
         assert image.size == (100, 200)
     first_xml = transcript["first_xml"].decode()
     assert 'text="Record"' in first_xml
     assert 'index="0"' in first_xml
-    assert [action.action_type for action in env.actions] == ["open_app", "click"]
+    assert [action.action_type for action in env.actions] == [
+        "open_app",
+        "open_app",
+        "click",
+    ]
     assert env.actions[0].app_name == "com.example.target"
-    assert (env.actions[1].x, env.actions[1].y) == (20, 40)
+    assert env.actions[1].app_name == "com.example.other"
+    assert (env.actions[2].x, env.actions[2].y) == (20, 40)
     assert result.done is True
     assert result.data["actions_executed"] == 1
     assert result.data["state_backend"] == "androidworld"
