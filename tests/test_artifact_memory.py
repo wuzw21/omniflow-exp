@@ -15,6 +15,7 @@ from src.experiment.artifact_memory import (
     registered_cell_plan_from_memory,
 )
 from src.experiment.artifact_memory import main as artifact_memory_main
+from src.experiment.source_assets import store_source_run_log_sha256s
 from src.integrations.runlog import adapt_source_run_log
 
 
@@ -609,6 +610,7 @@ def test_refresh_keeps_one_verified_runtime_store_from_duplicate_catalogs(
     assert Path(row["provenance_path"]).read_bytes() == provenance.read_bytes()
     assert Path(row["source_run_log_path"]).read_bytes() == source.read_bytes()
     assert row["source_run_log_sha256"] == _sha256(source)
+    assert row["source_run_log_lineage"]["conversion"] == "identity"
 
     assert (
         artifact_memory_main(
@@ -626,6 +628,107 @@ def test_refresh_keeps_one_verified_runtime_store_from_duplicate_catalogs(
     )
     refreshed = load_artifact_memory(tmp_path / "memory" / "current.json")
     assert list(refreshed["canonical"]["function_stores"]) == ["RecordWithName"]
+
+
+def test_refresh_registers_legacy_function_source_as_canonical_run_log(
+    tmp_path: Path,
+) -> None:
+    source = _write_source_run_log(tmp_path)
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "params": {"file_name": "meeting.m4a"},
+                "source_seed": 111,
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    legacy_source = _write_json(
+        tmp_path / "converted" / "legacy.run_log.json",
+        {
+            "schema_version": "omniflow.androidworld_function_ready_runlog.v1",
+            "run_id": "legacy-function-source",
+            "goal": "Record audio and save it.",
+            "completed": True,
+            "success": True,
+            "steps": [
+                {
+                    "step_index": 0,
+                    "observation_before_act": {"width": 100, "height": 200},
+                    "executed_actions": [{"type": "wait", "params": {}}],
+                    "success": True,
+                }
+            ],
+        },
+    )
+    store = _write_json(
+        tmp_path / "converted" / "function_store" / "store.json",
+        {
+            "schema_version": "omniflow.store.v2",
+            "functions": {"record_with_name": {"function_id": "record_with_name"}},
+        },
+    )
+    transfer = _write_json(
+        store.with_name("transfer_states.json"),
+        {"schema_version": "omniflow.transfer-state-catalog.v1", "states": {}},
+    )
+    provenance = _write_json(
+        tmp_path / "converted" / "provenance_manifest.json",
+        {"schema_version": "test.provenance.v1"},
+    )
+    catalog = _write_json(
+        tmp_path / "converted" / "catalog.json",
+        {
+            "schema_version": "omniflow.function-asset-catalog.v1",
+            "tasks": {
+                "RecordWithName": {
+                    "status": "converted",
+                    "source_run_log": str(legacy_source),
+                    "source_run_log_sha256": _sha256(legacy_source),
+                    "store_path": str(store),
+                    "store_sha256": _sha256(store),
+                    "transfer_states_path": str(transfer),
+                    "transfer_states_sha256": _sha256(transfer),
+                    "provenance_path": str(provenance),
+                    "provenance_sha256": _sha256(provenance),
+                    "target_inputs_read": False,
+                    "target_observations_read": False,
+                }
+            },
+        },
+    )
+
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(catalog,),
+        runlog_roots=(tmp_path / "evidence",),
+        result_roots=(),
+    )
+
+    row = report["canonical"]["function_stores"]["RecordWithName"]
+    canonical_source = json.loads(Path(row["source_run_log_path"]).read_text())
+    lineage = row["source_run_log_lineage"]
+    assert canonical_source["schema_version"] == "omniflow.run_log.v1"
+    assert canonical_source["task_name"] == "RecordWithName"
+    assert canonical_source["task_parameters"] == {"file_name": "meeting.m4a"}
+    assert canonical_source["seed"] == 111
+    assert canonical_source["provenance"]["source_sha256"] == _sha256(legacy_source)
+    assert lineage["conversion"] == "legacy_import"
+    assert lineage["source_sha256"] == _sha256(legacy_source)
+    assert lineage["output_sha256"] == row["source_run_log_sha256"]
+    assert Path(lineage["source_path"]).read_bytes() == legacy_source.read_bytes()
+    assert Path(row["store_path"]).read_bytes() == store.read_bytes()
+    assert len(report["by_task"]["RecordWithName"]["run_log_sha256s"]) == 3
+    current = json.loads(
+        (tmp_path / "memory" / "current.json").read_text(encoding="utf-8")
+    )
+    assert store_source_run_log_sha256s(
+        current["ours_store_index"],
+        task_name="RecordWithName",
+    ) == (row["source_run_log_sha256"], _sha256(legacy_source))
 
 
 def test_refresh_keeps_earliest_formal_result_without_success_cherry_picking(

@@ -16,6 +16,7 @@ from src.experiment import androidworld as pipeline
 from src.experiment.source_assets import (
     build_grounded_teacher_run_log_from_store_index,
     resolve_store_source_run_log,
+    store_source_run_log_sha256s,
 )
 from src.integrations.runlog import import_run_log
 
@@ -109,11 +110,16 @@ def validate_mobilegpt_source_memory(
         store_index_path,
         task_name=item.task,
     )
+    compatible_source_sha256s = store_source_run_log_sha256s(
+        store_index_path,
+        task_name=item.task,
+    )
     validated = pipeline.validate_mobilegpt_adapted_memory(
         memory_root,
         task_name=item.task,
         source_seed=SOURCE_SEED,
         source_run_log=source_run_log,
+        compatible_source_sha256s=compatible_source_sha256s,
         expected_model=str(model),
         expected_source_method=source_method,
     )

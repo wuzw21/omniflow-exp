@@ -6,7 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Sequence
 import xml.etree.ElementTree as ET
 
 from omniflow.core.trajectory import state_id as observation_state_id
@@ -18,6 +18,8 @@ from src.integrations.runlog import (
     project_androidworld_step_actions,
 )
 
+FUNCTION_SOURCE_LINEAGE_SCHEMA = "omniflow.function-store-source-lineage.v1"
+
 
 def select_source_asset_revision(
     base_root: str | Path,
@@ -25,6 +27,7 @@ def select_source_asset_revision(
     manifest_name: str,
     initial_revision: int = 3,
     expected_source_sha256: str = "",
+    compatible_source_sha256s: Sequence[str] = (),
     environment_repair_reason: str = "",
 ) -> Path:
     """Reuse the first frozen source asset or allocate a fresh revision path.
@@ -41,9 +44,19 @@ def select_source_asset_revision(
     if not manifest or Path(manifest).name != manifest:
         raise ValueError("manifest_name must be one file name")
     source_sha256 = str(expected_source_sha256 or "").strip().lower()
+    compatible_sha256s = tuple(
+        dict.fromkeys(
+            str(value or "").strip().lower()
+            for value in compatible_source_sha256s
+            if str(value or "").strip()
+        )
+    )
     repair_reason = str(environment_repair_reason or "").strip()
     if source_sha256 and not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
         raise ValueError("expected_source_sha256 must be one SHA-256 digest")
+    if any(not re.fullmatch(r"[0-9a-f]{64}", digest) for digest in compatible_sha256s):
+        raise ValueError("compatible_source_sha256s must contain SHA-256 digests")
+    accepted_source_sha256s = {source_sha256, *compatible_sha256s} - {""}
     base = Path(base_root).expanduser().resolve()
     if source_sha256:
         matches: list[Path] = []
@@ -56,7 +69,7 @@ def select_source_asset_revision(
                     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
                 except (OSError, json.JSONDecodeError):
                     continue
-                if _manifest_source_sha256(payload) == source_sha256:
+                if _manifest_source_sha256(payload) in accepted_source_sha256s:
                     matches.append(candidate.resolve())
         if len(matches) > 1:
             raise ValueError(
@@ -1049,6 +1062,47 @@ def resolve_store_source_run_log(
         label=f"store_source_run_log:{task_name}",
     )
     return source_path, str(row["source_run_log_sha256"])
+
+
+def store_source_run_log_sha256s(
+    store_index_path: str | Path,
+    *,
+    task_name: str,
+) -> tuple[str, ...]:
+    index_path = Path(store_index_path).expanduser().resolve()
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+    row = payload.get(str(task_name)) if isinstance(payload, dict) else None
+    if not isinstance(row, dict):
+        raise ValueError(f"store_index_task_missing:{task_name}")
+    _, canonical_sha256 = resolve_store_source_run_log(
+        index_path,
+        task_name=task_name,
+    )
+    lineage = row.get("source_run_log_lineage")
+    if lineage is None:
+        return (canonical_sha256,)
+    if (
+        not isinstance(lineage, dict)
+        or lineage.get("schema_version") != FUNCTION_SOURCE_LINEAGE_SCHEMA
+        or str(lineage.get("output_sha256") or "") != canonical_sha256
+        or str(lineage.get("output_path") or "")
+        != str(Path(row["source_run_log_path"]).expanduser().resolve())
+    ):
+        raise ValueError(f"store_source_run_log_lineage_invalid:{task_name}")
+    source_sha256 = str(lineage.get("source_sha256") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
+        raise ValueError(f"store_source_run_log_lineage_invalid:{task_name}")
+    source_path = _require_frozen_file(
+        lineage.get("source_path"),
+        expected_sha256=source_sha256,
+        label=f"store_source_run_log_lineage:{task_name}",
+    )
+    if (
+        source_path == Path(row["source_run_log_path"]).expanduser().resolve()
+        and source_sha256 != canonical_sha256
+    ):
+        raise ValueError(f"store_source_run_log_lineage_invalid:{task_name}")
+    return tuple(dict.fromkeys((canonical_sha256, source_sha256)))
 
 
 def build_grounded_teacher_run_log_from_store_index(

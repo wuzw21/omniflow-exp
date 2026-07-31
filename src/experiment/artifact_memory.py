@@ -21,6 +21,7 @@ from src.integrations.runlog import adapt_source_run_log
 MEMORY_SCHEMA = "omniflow.androidworld-artifact-memory.v2"
 CURRENT_SCHEMA = "omniflow.androidworld-artifact-memory-pointer.v2"
 SOURCE_SELECTION_SCHEMA = "omniflow.androidworld-source-selection.v1"
+FUNCTION_SOURCE_LINEAGE_SCHEMA = "omniflow.function-store-source-lineage.v1"
 RESULT_FILE_NAMES = (
     "one_task_commands.jsonl",
     "one_task_summary.json",
@@ -220,6 +221,119 @@ def _result_paths(roots: Iterable[Path]) -> list[Path]:
         for name in RESULT_FILE_NAMES:
             paths.update(path.resolve() for path in resolved.rglob(name))
     return sorted(paths)
+
+
+def _function_source_seed(item: dict[str, Any]) -> int | None:
+    for field in ("source_seed", "replay_seed", "collect_seed", "task_random_seed"):
+        value = item.get(field)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+    return None
+
+
+def _register_run_log_record(
+    records: dict[str, dict[str, Any]],
+    *,
+    path: Path,
+    digest: str,
+    payload: dict[str, Any],
+    task: str,
+    alias: str = "",
+) -> dict[str, Any]:
+    record = records.setdefault(
+        digest,
+        {
+            "sha256": digest,
+            "object_path": str(path.resolve()),
+            "aliases": [],
+            "tasks": [],
+            "schema_version": str(payload.get("schema_version") or ""),
+            "run_id": str(payload.get("run_id") or ""),
+            "success": payload.get("success")
+            if isinstance(payload.get("success"), bool)
+            else None,
+            "step_count": len(payload.get("steps") or []),
+        },
+    )
+    if alias:
+        record["aliases"] = sorted(set(record["aliases"]) | {alias})
+    if task:
+        record["tasks"] = sorted(set(record["tasks"]) | {task})
+    return record
+
+
+def _canonicalize_function_source_run_log(
+    memory_root: Path,
+    *,
+    task: str,
+    source_run_log: Path,
+    source_payload: dict[str, Any],
+    source_metadata: dict[str, Any],
+    screenshot_roots: Sequence[Path],
+    records: dict[str, dict[str, Any]],
+) -> tuple[Path, str, dict[str, Any]]:
+    source_sha256 = _sha256(source_run_log)
+    source_object = _materialize_object(
+        memory_root,
+        source_run_log,
+        source_sha256,
+    )
+    _register_run_log_record(
+        records,
+        path=source_object,
+        digest=source_sha256,
+        payload=source_payload,
+        task=task,
+        alias=str(source_run_log),
+    )
+    try:
+        canonical = require_complete_source_run_log(source_payload)
+        conversion = "identity"
+    except ValueError:
+        canonical = require_complete_source_run_log(
+            adapt_source_run_log(
+                source_payload,
+                task_name=task,
+                task_parameters=dict(
+                    source_metadata.get("params")
+                    or source_metadata.get("task_parameters")
+                    or {}
+                ),
+                seed=_function_source_seed(source_metadata),
+                source_path=source_object,
+                screenshot_roots=screenshot_roots,
+                require_screenshots=False,
+            )
+        )
+        conversion = "legacy_import"
+    if conversion == "identity":
+        canonical_sha256 = source_sha256
+        canonical_object = source_object
+    else:
+        canonical_content = _json_bytes(canonical)
+        canonical_sha256 = hashlib.sha256(canonical_content).hexdigest()
+        canonical_object = _materialize_content(
+            memory_root,
+            canonical_content,
+            canonical_sha256,
+        )
+    _register_run_log_record(
+        records,
+        path=canonical_object,
+        digest=canonical_sha256,
+        payload=canonical,
+        task=task,
+    )
+    lineage = {
+        "schema_version": FUNCTION_SOURCE_LINEAGE_SCHEMA,
+        "conversion": conversion,
+        "source_path": str(source_object),
+        "source_sha256": source_sha256,
+        "source_schema_version": str(source_payload.get("schema_version") or ""),
+        "output_path": str(canonical_object),
+        "output_sha256": canonical_sha256,
+    }
+    return canonical_object, canonical_sha256, lineage
 
 
 def _load_source_selections(
@@ -749,6 +863,10 @@ def _load_results(
 def _load_function_stores(
     memory_root: Path,
     catalogs: Sequence[Path],
+    *,
+    source_metadata: dict[str, Any],
+    screenshot_roots: Sequence[Path],
+    run_log_records: dict[str, dict[str, Any]],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     records: dict[str, dict[str, Any]] = {}
     candidates: dict[str, list[tuple[tuple[int, int], str]]] = {}
@@ -803,6 +921,25 @@ def _load_function_stores(
             transfer_hash = _sha256(transfer)
             provenance_hash = _sha256(provenance)
             source_run_log_hash = _sha256(source_run_log)
+            raw_source_payload = _load_object(source_run_log)
+            if not isinstance(raw_source_payload, dict):
+                raise ValueError(f"function_source_run_log_invalid:{task}")
+            task_source_metadata = source_metadata.get(task)
+            if not isinstance(task_source_metadata, dict):
+                raise ValueError(f"function_source_metadata_missing:{task}")
+            (
+                canonical_source_run_log,
+                canonical_source_run_log_hash,
+                source_run_log_lineage,
+            ) = _canonicalize_function_source_run_log(
+                memory_root,
+                task=task,
+                source_run_log=source_run_log,
+                source_payload=raw_source_payload,
+                source_metadata=task_source_metadata,
+                screenshot_roots=screenshot_roots,
+                records=run_log_records,
+            )
             identity = hashlib.sha256(
                 "\0".join(
                     (
@@ -813,11 +950,6 @@ def _load_function_stores(
                     )
                 ).encode("utf-8")
             ).hexdigest()
-            source_run_log_object = _materialize_object(
-                memory_root,
-                source_run_log,
-                source_run_log_hash,
-            )
             store_object = _materialize_object(memory_root, store, store_hash)
             transfer_object = _materialize_object(
                 memory_root,
@@ -836,8 +968,9 @@ def _load_function_stores(
                     "tasks": [],
                     "catalog_aliases": [],
                     "function_count": len(store_payload["functions"]),
-                    "source_run_log_path": str(source_run_log_object),
-                    "source_run_log_sha256": source_run_log_hash,
+                    "source_run_log_path": str(canonical_source_run_log),
+                    "source_run_log_sha256": canonical_source_run_log_hash,
+                    "source_run_log_lineage": source_run_log_lineage,
                     **_materialize_function_store(
                         memory_root,
                         store_object=store_object,
@@ -1023,6 +1156,9 @@ def _refresh_artifact_memory_unlocked(
     function_records, canonical_function_stores = _load_function_stores(
         root,
         catalog_paths,
+        source_metadata=source_payload,
+        screenshot_roots=screenshot_roots,
+        run_log_records=records,
     )
     result_paths, result_records, canonical_result_cells = _load_results(
         root,
@@ -1103,6 +1239,7 @@ def _refresh_artifact_memory_unlocked(
                 "store_sha256",
                 "source_run_log_path",
                 "source_run_log_sha256",
+                "source_run_log_lineage",
                 "transfer_states_path",
                 "transfer_states_sha256",
                 "provenance_path",

@@ -421,6 +421,7 @@ def test_mobilegpt_offline_runner_uses_protocol_source_method_default(
     def validate_source_memory(*args: object, **kwargs: object) -> dict[str, object]:
         assert kwargs["expected_source_method"] == "fixed_replay"
         assert kwargs["source_run_log"] == adapted_source_run_log
+        assert kwargs["compatible_source_sha256s"] == ("1" * 64, "2" * 64)
         raise ValidationReached
 
     monkeypatch.setattr(
@@ -449,6 +450,7 @@ def test_mobilegpt_offline_runner_uses_protocol_source_method_default(
             method="mobilegpt_offline_retrieval",
             attempt_id="attempt-1",
             source_run_log=adapted_source_run_log,
+            compatible_source_sha256s=("1" * 64, "2" * 64),
         )
 
 

@@ -30,6 +30,10 @@ if str(REPO_ROOT) not in sys.path:
 from omniflow.core.trajectory import canonicalize_run_log
 from omniflow.functions.store import FunctionStore
 from src.experiment.result_registry import register_attempt_summary
+from src.experiment.source_assets import (
+    resolve_store_source_run_log,
+    store_source_run_log_sha256s,
+)
 from src.integrations.appagent_adapter import validate_appagent_demo_memory
 
 DEFAULT_ARCHIVE_INDEX = (
@@ -2817,6 +2821,7 @@ def validate_mobilegpt_adapted_memory(
     task_name: str,
     source_seed: int,
     source_run_log: str | Path,
+    compatible_source_sha256s: Sequence[str] = (),
     expected_model: str = "",
     expected_source_method: str = "",
 ) -> dict[str, Any]:
@@ -2923,11 +2928,17 @@ def validate_mobilegpt_adapted_memory(
         label="source_run_log",
     )
     expected_source_sha256 = _file_sha256(_repo_path(source_run_log))
-    if str(source_log_record.get("sha256") or "") != expected_source_sha256:
+    accepted_source_sha256s = {expected_source_sha256}
+    for value in compatible_source_sha256s:
+        digest = str(value or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("mobilegpt_compatible_source_sha256_invalid")
+        accepted_source_sha256s.add(digest)
+    manifest_source_sha256 = str(source_log_record.get("sha256") or "")
+    teacher_source_sha256 = str(teacher_payload.get("source_run_log_sha256") or "")
+    if manifest_source_sha256 not in accepted_source_sha256s:
         raise ValueError("mobilegpt_cold_memory_source_run_log_mismatch")
-    if str(teacher_payload.get("source_run_log_sha256") or "") != (
-        expected_source_sha256
-    ):
+    if teacher_source_sha256 != manifest_source_sha256:
         raise ValueError("mobilegpt_cold_memory_teacher_source_run_log_mismatch")
     source_stats = manifest.get("source_stats")
     source_stats_path = _mobilegpt_manifest_evidence_path(
@@ -6756,6 +6767,7 @@ def _run_one_task_mobilegpt(
     method: str,
     attempt_id: str,
     source_run_log: Path,
+    compatible_source_sha256s: Sequence[str] = (),
 ) -> tuple[list[dict[str, Any]], int]:
     if method not in MOBILEGPT_METHODS:
         raise ValueError(f"unsupported_mobilegpt_method:{method}")
@@ -6792,6 +6804,7 @@ def _run_one_task_mobilegpt(
             task_name=item.task,
             source_seed=item.replay_seed,
             source_run_log=source_run_log,
+            compatible_source_sha256s=compatible_source_sha256s,
             expected_model=str(args.model or ""),
             expected_source_method=source_method,
         )
@@ -7246,6 +7259,21 @@ def cmd_one_task(args: argparse.Namespace) -> int:
     methods = _parse_one_task_methods(args.methods)
     targets = parse_device_targets(args.device_targets)
     source_memory_run_log = item.source_run_log
+    source_memory_run_log_sha256s = (_file_sha256(source_memory_run_log),)
+    if any(_is_mobilegpt_method(method) for method in methods):
+        store_index = str(args.store_index or "").strip()
+        if not store_index:
+            raise ValueError(
+                "--store-index is required when one-task includes MobileGPT"
+            )
+        source_memory_run_log, _ = resolve_store_source_run_log(
+            store_index,
+            task_name=item.task,
+        )
+        source_memory_run_log_sha256s = store_source_run_log_sha256s(
+            store_index,
+            task_name=item.task,
+        )
     attempt_root, _ = _task_managed_output_root(args.output_root)
     output_root = _source_seed_output_root(attempt_root, item.replay_seed)
     attempt_id = attempt_root.name
@@ -7287,6 +7315,7 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                 method=method,
                 attempt_id=attempt_id,
                 source_run_log=source_memory_run_log,
+                compatible_source_sha256s=source_memory_run_log_sha256s,
             )
             command_records.extend(mobilegpt_records)
             failed += mobilegpt_failed

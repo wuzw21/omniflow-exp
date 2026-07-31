@@ -790,11 +790,23 @@ source_sha256 = str(
 ).strip()
 if not source_sha256:
     raise SystemExit(f"canonical_source_run_log_hash_missing:{sys.argv[5]}")
+compatible_source_sha256s = []
+lineage = source_row.get("source_run_log_lineage")
+if lineage is not None:
+    if (
+        not isinstance(lineage, dict)
+        or lineage.get("schema_version")
+        != "omniflow.function-store-source-lineage.v1"
+        or str(lineage.get("output_sha256") or "") != source_sha256
+    ):
+        raise SystemExit(f"canonical_source_run_log_lineage_invalid:{sys.argv[5]}")
+    compatible_source_sha256s.append(str(lineage.get("source_sha256") or ""))
 try:
     selected = select_source_asset_revision(
         sys.argv[2],
         manifest_name=sys.argv[3],
         expected_source_sha256=source_sha256,
+        compatible_source_sha256s=compatible_source_sha256s,
         environment_repair_reason=sys.argv[6],
     )
 except ValueError as error:

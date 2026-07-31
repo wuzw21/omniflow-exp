@@ -1133,6 +1133,30 @@ def test_source_revision_is_stable_for_one_exact_source_hash(
     )
 
 
+def test_source_revision_reuses_explicit_conversion_lineage_hash(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "mobilegpt_offline_retrieval"
+    canonical = "2" * 64
+    legacy = "1" * 64
+    frozen = base / f"source_{legacy[:12]}"
+    frozen.mkdir(parents=True)
+    (frozen / "cold_memory_manifest.json").write_text(
+        json.dumps({"source_run_log": {"sha256": legacy}}),
+        encoding="utf-8",
+    )
+
+    assert (
+        select_source_asset_revision(
+            base,
+            manifest_name="cold_memory_manifest.json",
+            expected_source_sha256=canonical,
+            compatible_source_sha256s=(legacy,),
+        )
+        == frozen
+    )
+
+
 def test_source_revision_rejects_terminal_failure_for_exact_source_hash(
     tmp_path: Path,
 ) -> None:
