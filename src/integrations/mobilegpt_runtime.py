@@ -9,12 +9,8 @@ from pathlib import Path
 import re
 import sys
 import time
-from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 import xml.etree.ElementTree as ET
-
-from omniflow import Observation
-from src.integrations.android_world.host import AndroidWorldHost
 
 _ACTION_NAME_ALIASES = {
     "enter_text": "input",
@@ -50,7 +46,7 @@ _MOBILEGPT_DERIVE_ACTIONS = {
     "repeat-click",
     "scroll",
 }
-_LATEST_MOBILEGPT_OOB_XML = ""
+_LATEST_MOBILEGPT_XML = ""
 
 
 def install_mobilegpt_package_app_resolution(app_agent_class: type) -> None:
@@ -205,36 +201,6 @@ def normalize_mobilegpt_action(action: Any) -> Any:
     return normalized
 
 
-def attach_mobilegpt_oob_bounds(action: Any, xml_text: str) -> Any:
-    if not isinstance(action, dict):
-        return action
-    parameters = action.get("parameters")
-    if not isinstance(parameters, dict) or "index" not in parameters:
-        return action
-    try:
-        root = ET.fromstring(str(xml_text or "").strip())
-        target_index = str(int(parameters["index"]))
-    except (ET.ParseError, TypeError, ValueError):
-        return action
-    target = next(
-        (
-            element
-            for element in root.iter()
-            if str(element.attrib.get("index") or element.attrib.get("id") or "")
-            == target_index
-        ),
-        None,
-    )
-    bounds = str((target.attrib if target is not None else {}).get("bounds") or "").strip()
-    if not re.fullmatch(r"\[-?\d+,-?\d+\]\[-?\d+,-?\d+\]", bounds):
-        return action
-    bounded = dict(action)
-    bounded_parameters = dict(parameters)
-    bounded_parameters["oob_bounds"] = bounds
-    bounded["parameters"] = bounded_parameters
-    return bounded
-
-
 def install_mobilegpt_action_schema_adapter(server_module: Any) -> None:
     if bool(getattr(server_module, "_omniflow_action_schema_installed", False)):
         return
@@ -242,10 +208,6 @@ def install_mobilegpt_action_schema_adapter(server_module: Any) -> None:
 
     def _send(client_socket, action):
         normalized = normalize_mobilegpt_action(action)
-        normalized = attach_mobilegpt_oob_bounds(
-            normalized,
-            _LATEST_MOBILEGPT_OOB_XML,
-        )
         action_name = (
             str(normalized.get("name") or "").strip()
             if isinstance(normalized, dict)
@@ -684,8 +646,10 @@ def install_mobilegpt_android_action_prompt(derive_prompt_module: Any) -> None:
         )
 
 
-def install_mobilegpt_oob_layout_encoding(encoder_class: type) -> None:
-    if bool(getattr(encoder_class, "_omniflow_oob_layout_installed", False)):
+def install_mobilegpt_androidworld_layout_encoding(encoder_class: type) -> None:
+    if bool(
+        getattr(encoder_class, "_omniflow_androidworld_layout_installed", False)
+    ):
         return
     original_encode = encoder_class.encode
 
@@ -696,10 +660,12 @@ def install_mobilegpt_oob_layout_encoding(encoder_class: type) -> None:
             index,
         )
         backend = str(
-            os.environ.get("MOBILEGPT_RUNTIME_OBSERVE_BACKEND") or "client"
+            os.environ.get("MOBILEGPT_RUNTIME_OBSERVE_BACKEND") or "androidworld"
         ).strip().lower()
-        if backend in {"client", "mobilegpt"}:
-            return parsed_xml, hierarchy_xml, encoded_xml
+        if backend != "androidworld":
+            raise RuntimeError(
+                f"mobilegpt_native_observe_backend_required:{backend or 'missing'}"
+            )
         tree = ET.fromstring(parsed_xml)
         for element in tree.iter():
             element.attrib.pop("important", None)
@@ -715,7 +681,7 @@ def install_mobilegpt_oob_layout_encoding(encoder_class: type) -> None:
         return parsed_xml, hierarchy_xml, encoded_xml
 
     encoder_class.encode = _encode
-    encoder_class._omniflow_oob_layout_installed = True
+    encoder_class._omniflow_androidworld_layout_installed = True
 
 
 def _write_stats_event(event: dict[str, Any]) -> None:
@@ -731,20 +697,6 @@ def _write_stats_event(event: dict[str, Any]) -> None:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
     except Exception:
         pass
-
-
-def active_mobilegpt_serial() -> str:
-    serial_file = str(os.environ.get("MOBILEGPT_OOB_SERIAL_FILE") or "").strip()
-    if serial_file:
-        path = Path(serial_file).expanduser()
-        if path.is_file():
-            serial = path.read_text(encoding="utf-8").strip()
-            if serial:
-                return serial
-    serial = str(os.environ.get("ANDROID_SERIAL") or "").strip()
-    if not serial:
-        raise RuntimeError("mobilegpt_oob_serial_missing")
-    return serial
 
 
 def _mobilegpt_class_name(element: ET.Element) -> str:
@@ -764,14 +716,27 @@ def _mobilegpt_class_name(element: ET.Element) -> str:
     return "android.view.View"
 
 
-def mobilegpt_compatible_oob_xml(xml_text: str) -> str:
+def mobilegpt_compatible_xml(xml_text: str) -> str:
     root = ET.fromstring(str(xml_text or "").strip())
+    next_index = 0
     for element in root.iter():
         attributes = element.attrib
-        if not str(attributes.get("index") or "").strip():
-            oob_index = str(attributes.get("id") or "").strip()
-            if oob_index:
-                attributes["index"] = oob_index
+        action_candidate = element.tag == "node" and any(
+            str(attributes.get(key) or "").strip()
+            for key in (
+                "id",
+                "resource-id",
+                "text",
+                "content-desc",
+                "clickable",
+                "editable",
+                "scrollable",
+                "long-clickable",
+            )
+        )
+        if action_candidate:
+            attributes["index"] = str(next_index)
+            next_index += 1
         if not str(attributes.get("resource-id") or "").strip():
             resource_id = str(attributes.get("resource_id") or "").strip()
             if resource_id:
@@ -793,142 +758,48 @@ def mobilegpt_compatible_oob_xml(xml_text: str) -> str:
     return ET.tostring(root, encoding="unicode")
 
 
-def capture_mobilegpt_oob_observation(serial: str) -> Observation:
-    retries = max(
-        1,
-        int(os.environ.get("MOBILEGPT_OOB_OBSERVE_RETRIES") or "3"),
-    )
-    retry_wait_s = max(
-        0.0,
-        float(os.environ.get("MOBILEGPT_OOB_OBSERVE_RETRY_WAIT_SEC") or "1"),
-    )
-    host = AndroidWorldHost(SimpleNamespace(), adb_serial=serial)
-    host.observe_backend = "oob"
-    errors: list[str] = []
-    for attempt in range(1, retries + 1):
-        try:
-            observation = Observation.from_value(
-                host.observe(xml=True, screenshot=False, app_info=True)
-            )
-            xml_text = str(observation.xml or "").strip()
-            if not xml_text:
-                raise RuntimeError("empty_xml")
-            compatible_xml = mobilegpt_compatible_oob_xml(xml_text)
-            return Observation(
-                xml=compatible_xml,
-                package_name=observation.package_name,
-                activity_name=observation.activity_name,
-                image_base64=None,
-                extra={
-                    **dict(observation.extra),
-                    "mobilegpt_oob_attempt": attempt,
-                },
-            )
-        except Exception as error:
-            errors.append(f"{type(error).__name__}: {error}")
-            if attempt < retries and retry_wait_s > 0:
-                time.sleep(retry_wait_s)
-    raise RuntimeError(
-        "mobilegpt_oob_observe_failed:" + " | ".join(errors)
-    )
-
-
-def install_mobilegpt_oob_observe(
-    server_class: type,
-    *,
-    observer: Callable[[str], Observation | dict[str, Any]] | None = None,
-) -> None:
-    if bool(getattr(server_class, "_omniflow_oob_observe_installed", False)):
+def install_mobilegpt_androidworld_observe(server_class: type) -> None:
+    if bool(
+        getattr(server_class, "_omniflow_androidworld_observe_installed", False)
+    ):
         return
     method_name = f"_{server_class.__name__}__recv_xml"
     original_receive = getattr(server_class, method_name)
-    observe = observer or capture_mobilegpt_oob_observation
 
     def _receive_xml(self, client_socket, screen_count, log_directory):
-        global _LATEST_MOBILEGPT_OOB_XML
+        global _LATEST_MOBILEGPT_XML
         client_xml = str(
             original_receive(self, client_socket, screen_count, log_directory)
             or ""
         )
+        backend = str(
+            os.environ.get("MOBILEGPT_RUNTIME_OBSERVE_BACKEND") or "androidworld"
+        ).strip().lower()
+        if backend != "androidworld":
+            raise RuntimeError(
+                f"mobilegpt_native_observe_backend_required:{backend or 'missing'}"
+            )
+        androidworld_xml = mobilegpt_compatible_xml(client_xml)
         xml_directory = Path(log_directory).expanduser() / "xmls"
         xml_directory.mkdir(parents=True, exist_ok=True)
-        (xml_directory / f"{screen_count}_client.xml").write_text(
-            client_xml,
-            encoding="utf-8",
-        )
-        backend = str(
-            os.environ.get("MOBILEGPT_RUNTIME_OBSERVE_BACKEND") or "client"
-        ).strip().lower()
-        if backend in {"client", "mobilegpt"}:
-            (xml_directory / f"{screen_count}.xml").write_text(
-                client_xml,
-                encoding="utf-8",
-            )
-            _LATEST_MOBILEGPT_OOB_XML = client_xml
-            _write_stats_event(
-                {
-                    "event": "mobilegpt_runtime_observe",
-                    "backend": "mobilegpt_client",
-                    "serial": str(os.environ.get("ANDROID_SERIAL") or "").strip(),
-                    "client_xml_chars": len(client_xml),
-                    "oob_xml_chars": 0,
-                    "screen_index": int(screen_count),
-                }
-            )
-            return client_xml
-        serial = active_mobilegpt_serial()
-        try:
-            observation = Observation.from_value(observe(serial))
-            oob_xml = mobilegpt_compatible_oob_xml(
-                str(observation.xml or "").strip()
-            )
-        except Exception as error:
-            fallback = str(
-                os.environ.get("MOBILEGPT_RUNTIME_OBSERVE_FALLBACK") or ""
-            ).strip().lower()
-            _write_stats_event(
-                {
-                    "event": "mobilegpt_runtime_observe_failed",
-                    "backend": "omniflow_oob",
-                    "serial": serial,
-                    "client_xml_chars": len(client_xml),
-                    "error": f"{type(error).__name__}: {error}",
-                    "fallback": fallback,
-                }
-            )
-            if fallback == "client" and client_xml.strip():
-                return client_xml
-            raise RuntimeError(
-                f"mobilegpt_runtime_oob_state_failed:{error}"
-            ) from error
-
         (xml_directory / f"{screen_count}.xml").write_text(
-            oob_xml,
+            androidworld_xml,
             encoding="utf-8",
         )
-        _LATEST_MOBILEGPT_OOB_XML = oob_xml
-        raw_state = (
-            observation.extra.get("raw_state")
-            if isinstance(observation.extra.get("raw_state"), dict)
-            else {}
-        )
+        _LATEST_MOBILEGPT_XML = androidworld_xml
         _write_stats_event(
             {
                 "event": "mobilegpt_runtime_observe",
-                "backend": "omniflow_oob",
-                "serial": serial,
-                "package_name": observation.package_name,
-                "activity_name": observation.activity_name,
+                "backend": "androidworld",
                 "client_xml_chars": len(client_xml),
-                "oob_xml_chars": len(oob_xml),
-                "oob_capture_attempts": raw_state.get("xml_capture_attempts"),
+                "androidworld_xml_chars": len(androidworld_xml),
                 "screen_index": int(screen_count),
             }
         )
-        return oob_xml
+        return androidworld_xml
 
     setattr(server_class, method_name, _receive_xml)
-    server_class._omniflow_oob_observe_installed = True
+    server_class._omniflow_androidworld_observe_installed = True
 
 
 def run_mobilegpt_server(argv: list[str] | None = None) -> int:
@@ -963,19 +834,19 @@ def run_mobilegpt_server(argv: list[str] | None = None) -> int:
     install_mobilegpt_openai_runtime()
     install_mobilegpt_package_app_resolution(AppAgent)
     install_mobilegpt_android_action_prompt(derive_agent_prompt)
-    install_mobilegpt_oob_layout_encoding(xmlEncoder)
+    install_mobilegpt_androidworld_layout_encoding(xmlEncoder)
     install_mobilegpt_action_schema_adapter(mobilegpt_server)
     install_mobilegpt_select_schema_repair(SelectAgent)
     install_mobilegpt_action_error_recovery(MobileGPT)
     install_mobilegpt_answer_event(MobileGPT)
-    install_mobilegpt_oob_observe(Server)
+    install_mobilegpt_androidworld_observe(Server)
     _write_stats_event(
         {
             "event": "mobilegpt_server_started",
             "host": args.host,
             "port": int(args.port),
             "runtime_observe_backend": str(
-                os.environ.get("MOBILEGPT_RUNTIME_OBSERVE_BACKEND") or "client"
+                os.environ.get("MOBILEGPT_RUNTIME_OBSERVE_BACKEND") or "androidworld"
             ),
         }
     )

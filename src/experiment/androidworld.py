@@ -22,7 +22,6 @@ import sys
 import tempfile
 import time
 from typing import Any, Iterable, Sequence
-import xml.etree.ElementTree as ET
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -54,19 +53,6 @@ DEFAULT_MOBILEGPT_STATS_JSONL = (
 )
 DEFAULT_MOBILEGPT_STATS_SUMMARY = (
     DEFAULT_OUTPUT_ROOT / "_mobilegpt_stats" / "mobilegpt_stats_summary.json"
-)
-MOBILEGPT_PACKAGE = "com.example.MobileGPT"
-MOBILEGPT_MAIN_ACTIVITY = "com.example.MobileGPT/.MainActivity"
-MOBILEGPT_ACCESSIBILITY_SERVICE = (
-    "com.example.MobileGPT/com.example.MobileGPT.MobileGPTAccessibilityService"
-)
-MOBILEGPT_ACCESSIBILITY_LABEL = "MobileGPT Accessibility"
-MOBILEGPT_STRING_ACTION = "com.example.MobileGPT.STRING_ACTION"
-MOBILEGPT_INSTRUCTION_EXTRA = "com.example.MobileGPT.INSTRUCTION_EXTRA"
-DEFAULT_CONTACTS_PERMISSION_GRANTS = (
-    "android.permission.READ_CONTACTS",
-    "android.permission.WRITE_CONTACTS",
-    "android.permission.POST_NOTIFICATIONS",
 )
 DEFAULT_DEVICE_TARGETS = "small5554:emulator-5554:5554,fold5564:emulator-5564:5564"
 DEFAULT_MOBILEGPT_WAIT_START_TIMEOUT_SEC = 60.0
@@ -2135,515 +2121,6 @@ def parse_device_targets(raw_targets: str) -> list[DeviceTarget]:
     return targets
 
 
-def _permission_allow_button_center(xml_text: str) -> tuple[int, int] | None:
-    try:
-        root = ET.fromstring(xml_text)
-    except Exception:
-        root = None
-    if root is not None:
-        for element in root.iter():
-            attrs = dict(element.attrib)
-            resource_id = str(attrs.get("resource-id") or "")
-            text = str(attrs.get("text") or "")
-            if (
-                resource_id.endswith("permission_allow_button")
-                or text.strip().lower() == "allow"
-            ):
-                center = _bounds_center(attrs.get("bounds"))
-                if center is not None:
-                    return center
-
-    match = re.search(
-        r'(?:resource-id="[^"]*permission_allow_button"|text="Allow")[^>]*'
-        r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
-        xml_text,
-    )
-    if not match:
-        return None
-    left, top, right, bottom = (int(value) for value in match.groups())
-    return (left + right) // 2, (top + bottom) // 2
-
-
-def _contacts_onboarding_overlay_center(xml_text: str) -> tuple[int, int] | None:
-    try:
-        root = ET.fromstring(xml_text)
-    except Exception:
-        root = None
-    if root is not None:
-        for element in root.iter():
-            attrs = dict(element.attrib)
-            resource_id = str(attrs.get("resource-id") or "")
-            if resource_id.endswith("og_tooltip_scrim_view"):
-                center = _bounds_center(attrs.get("bounds"))
-                if center is not None:
-                    return center
-
-        for element in root.iter():
-            attrs = dict(element.attrib)
-            text = str(attrs.get("text") or element.text or "")
-            description = str(attrs.get("content-desc") or "")
-            if (
-                "Now you can find Settings" in text
-                or "Now you can find Settings" in description
-            ):
-                screen_center = _root_bounds_center(root)
-                if screen_center is not None:
-                    return screen_center
-                return _bounds_center(attrs.get("bounds"))
-
-    match = re.search(
-        r'resource-id="[^"]*og_tooltip_scrim_view"[^>]*'
-        r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
-        xml_text,
-    )
-    if not match:
-        return None
-    left, top, right, bottom = (int(value) for value in match.groups())
-    return (left + right) // 2, (top + bottom) // 2
-
-
-def _bounds_center(bounds: Any) -> tuple[int, int] | None:
-    match = re.search(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", str(bounds or ""))
-    if not match:
-        return None
-    left, top, right, bottom = (int(value) for value in match.groups())
-    return (left + right) // 2, (top + bottom) // 2
-
-
-def _root_bounds_center(root: ET.Element) -> tuple[int, int] | None:
-    for element in root.iter():
-        center = _bounds_center(element.attrib.get("bounds"))
-        if center is not None:
-            return center
-    return None
-
-
-def _dump_device_xml(base_adb_command: Sequence[str]) -> str:
-    completed = subprocess.run(
-        [*base_adb_command, "exec-out", "uiautomator", "dump", "/dev/tty"],
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    return completed.stdout
-
-
-def _tap_device(
-    base_adb_command: Sequence[str], center: tuple[int, int]
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [*base_adb_command, "shell", "input", "tap", str(center[0]), str(center[1])],
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-
-
-def _adb_prefix(*, serial: str = "", adb_path: str = "") -> list[str]:
-    argv = [adb_path.strip() or "adb"]
-    if serial.strip():
-        argv.extend(["-s", serial.strip()])
-    return argv
-
-
-def _adb_shell_capture(
-    *,
-    serial: str = "",
-    adb_path: str = "",
-    shell_args: Sequence[str],
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [*_adb_prefix(serial=serial, adb_path=adb_path), "shell", *shell_args],
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-
-
-def _split_accessibility_services(value: str) -> list[str]:
-    services: list[str] = []
-    for raw in str(value or "").strip().split(":"):
-        service = raw.strip()
-        if service and service.lower() != "null" and service not in services:
-            services.append(service)
-    return services
-
-
-def _extract_dumpsys_braced_section(text: str, marker: str) -> str:
-    marker_index = text.find(marker)
-    if marker_index < 0:
-        return ""
-    start = text.find("{", marker_index)
-    if start < 0:
-        return ""
-    depth = 0
-    for index in range(start, len(text)):
-        char = text[index]
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start + 1 : index]
-    return text[start + 1 :]
-
-
-def _mobilegpt_accessibility_state_from_dumpsys(
-    stdout: str,
-    *,
-    returncode: int = 0,
-    stderr: str = "",
-) -> dict[str, Any]:
-    enabled_services = _extract_dumpsys_braced_section(stdout, "Enabled services:")
-    binding_services = _extract_dumpsys_braced_section(stdout, "Binding services:")
-    bound_services = _extract_dumpsys_braced_section(stdout, "Bound services:")
-    enabled = MOBILEGPT_ACCESSIBILITY_SERVICE in enabled_services
-    binding = MOBILEGPT_ACCESSIBILITY_SERVICE in binding_services
-    bound = (
-        MOBILEGPT_ACCESSIBILITY_LABEL in bound_services
-        or MOBILEGPT_PACKAGE in bound_services
-        or MOBILEGPT_ACCESSIBILITY_SERVICE in bound_services
-    )
-    return {
-        "dumpsys_success": int(returncode) == 0,
-        "returncode": int(returncode),
-        "stderr": str(stderr or "").strip(),
-        "enabled": enabled,
-        "binding": binding,
-        "bound": bound,
-        "service": MOBILEGPT_ACCESSIBILITY_SERVICE,
-        "enabled_services": enabled_services.strip(),
-        "binding_services": binding_services.strip(),
-        "bound_services": bound_services.strip(),
-    }
-
-
-def read_mobilegpt_accessibility_state(
-    *,
-    serial: str = "",
-    adb_path: str = "",
-) -> dict[str, Any]:
-    completed = _adb_shell_capture(
-        serial=serial,
-        adb_path=adb_path,
-        shell_args=["dumpsys", "accessibility"],
-    )
-    state = _mobilegpt_accessibility_state_from_dumpsys(
-        completed.stdout,
-        returncode=int(completed.returncode),
-        stderr=completed.stderr,
-    )
-    state["serial"] = serial
-    return state
-
-
-def wait_for_mobilegpt_accessibility_bound(
-    *,
-    serial: str = "",
-    adb_path: str = "",
-    timeout_sec: float = 8.0,
-    poll_sec: float = 0.5,
-) -> dict[str, Any]:
-    started = time.monotonic()
-    attempts = 0
-    timeout = max(0.0, float(timeout_sec))
-    poll = max(0.1, float(poll_sec))
-    last_state: dict[str, Any] = {}
-    while True:
-        attempts += 1
-        last_state = read_mobilegpt_accessibility_state(
-            serial=serial,
-            adb_path=adb_path,
-        )
-        elapsed = time.monotonic() - started
-        last_state["attempts"] = attempts
-        last_state["elapsed_sec"] = round(elapsed, 3)
-        last_state["timeout_sec"] = timeout
-        last_state["success"] = bool(
-            last_state.get("dumpsys_success") and last_state.get("bound")
-        )
-        if last_state["success"] or elapsed >= timeout:
-            return last_state
-        time.sleep(min(poll, max(0.0, timeout - elapsed)))
-
-
-def prepare_mobilegpt_accessibility_service(
-    *,
-    serial: str = "",
-    adb_path: str = "",
-    restart: bool = False,
-    settle_sec: float = 0.7,
-    wait_bound_timeout_sec: float = 8.0,
-    wait_poll_sec: float = 0.5,
-    launch: bool = True,
-) -> dict[str, Any]:
-    """Enable MobileGPT's accessibility service and optionally bounce it."""
-
-    enabled_before = _adb_shell_capture(
-        serial=serial,
-        adb_path=adb_path,
-        shell_args=["settings", "get", "secure", "enabled_accessibility_services"],
-    )
-    services_before = _split_accessibility_services(enabled_before.stdout)
-    services_without_mobilegpt = [
-        service
-        for service in services_before
-        if service != MOBILEGPT_ACCESSIBILITY_SERVICE
-    ]
-    commands: list[dict[str, Any]] = [
-        {
-            "name": "read_enabled_accessibility_services",
-            "returncode": int(enabled_before.returncode),
-            "stdout": enabled_before.stdout.strip(),
-            "stderr": enabled_before.stderr.strip(),
-        }
-    ]
-
-    def _put_secure(name: str, value: str) -> subprocess.CompletedProcess[str]:
-        completed = _adb_shell_capture(
-            serial=serial,
-            adb_path=adb_path,
-            shell_args=["settings", "put", "secure", name, value],
-        )
-        commands.append(
-            {
-                "name": f"settings_put_{name}",
-                "value": value,
-                "returncode": int(completed.returncode),
-                "stdout": completed.stdout.strip(),
-                "stderr": completed.stderr.strip(),
-            }
-        )
-        return completed
-
-    if restart:
-        _put_secure(
-            "enabled_accessibility_services",
-            ":".join(services_without_mobilegpt),
-        )
-        force_stop = _adb_shell_capture(
-            serial=serial,
-            adb_path=adb_path,
-            shell_args=["am", "force-stop", MOBILEGPT_PACKAGE],
-        )
-        commands.append(
-            {
-                "name": "force_stop_mobilegpt",
-                "returncode": int(force_stop.returncode),
-                "stdout": force_stop.stdout.strip(),
-                "stderr": force_stop.stderr.strip(),
-            }
-        )
-        if settle_sec > 0:
-            time.sleep(min(float(settle_sec), 1.0))
-
-    services_after = [*services_without_mobilegpt, MOBILEGPT_ACCESSIBILITY_SERVICE]
-    enable_services = _put_secure(
-        "enabled_accessibility_services",
-        ":".join(services_after),
-    )
-    enable_accessibility = _put_secure("accessibility_enabled", "1")
-    if launch:
-        launch_completed = _adb_shell_capture(
-            serial=serial,
-            adb_path=adb_path,
-            shell_args=["am", "start", "-n", MOBILEGPT_MAIN_ACTIVITY],
-        )
-        commands.append(
-            {
-                "name": "launch_mobilegpt",
-                "returncode": int(launch_completed.returncode),
-                "stdout": launch_completed.stdout.strip(),
-                "stderr": launch_completed.stderr.strip(),
-            }
-        )
-    if settle_sec > 0:
-        time.sleep(float(settle_sec))
-    bound_state = wait_for_mobilegpt_accessibility_bound(
-        serial=serial,
-        adb_path=adb_path,
-        timeout_sec=wait_bound_timeout_sec,
-        poll_sec=wait_poll_sec,
-    )
-
-    pidof = _adb_shell_capture(
-        serial=serial,
-        adb_path=adb_path,
-        shell_args=["pidof", MOBILEGPT_PACKAGE],
-    )
-    commands.append(
-        {
-            "name": "pidof_mobilegpt",
-            "returncode": int(pidof.returncode),
-            "stdout": pidof.stdout.strip(),
-            "stderr": pidof.stderr.strip(),
-        }
-    )
-    return {
-        "success": (
-            enable_services.returncode == 0
-            and enable_accessibility.returncode == 0
-            and bool(bound_state.get("success"))
-        ),
-        "serial": serial,
-        "restart": bool(restart),
-        "service": MOBILEGPT_ACCESSIBILITY_SERVICE,
-        "services_before": services_before,
-        "services_after": services_after,
-        "pid": pidof.stdout.strip(),
-        "bound_state": bound_state,
-        "commands": commands,
-    }
-
-
-def launch_mobilegpt_activity(
-    *, serial: str = "", adb_path: str = ""
-) -> dict[str, Any]:
-    completed = _adb_shell_capture(
-        serial=serial,
-        adb_path=adb_path,
-        shell_args=["am", "start", "-n", MOBILEGPT_MAIN_ACTIVITY],
-    )
-    return {
-        "success": completed.returncode == 0,
-        "serial": serial,
-        "activity": MOBILEGPT_MAIN_ACTIVITY,
-        "returncode": int(completed.returncode),
-        "stdout": completed.stdout.strip(),
-        "stderr": completed.stderr.strip(),
-    }
-
-
-def _dismiss_contacts_onboarding_overlay(
-    base_adb_command: Sequence[str],
-    *,
-    attempts: int = 4,
-) -> dict[str, Any]:
-    last_xml = ""
-    for attempt in range(1, max(1, int(attempts)) + 1):
-        last_xml = _dump_device_xml(base_adb_command)
-        center = _contacts_onboarding_overlay_center(last_xml)
-        if center is None:
-            return {
-                "success": True,
-                "reason": "no_contacts_onboarding",
-                "attempts": attempt,
-            }
-        tap = _tap_device(base_adb_command, center)
-        time.sleep(0.7)
-        if tap.returncode != 0:
-            return {
-                "success": False,
-                "reason": "contacts_onboarding_tap_failed",
-                "tap": {"x": center[0], "y": center[1]},
-                "tap_returncode": int(tap.returncode),
-                "tap_stdout": tap.stdout.strip(),
-                "tap_stderr": tap.stderr.strip(),
-                "attempts": attempt,
-            }
-    last_center = _contacts_onboarding_overlay_center(last_xml)
-    return {
-        "success": last_center is None,
-        "reason": "contacts_onboarding_dismissed"
-        if last_center is None
-        else "contacts_onboarding_still_visible",
-        "attempts": max(1, int(attempts)),
-        "last_xml_head": "" if last_center is None else last_xml[:2000],
-    }
-
-
-def prepare_mobilegpt_permission_dialog(
-    *,
-    serial: str,
-    adb_path: str = "",
-    permission_package: str = "",
-    grant_permissions: Sequence[str] = (),
-    attempts: int = 4,
-) -> dict[str, Any]:
-    adb = adb_path.strip() or "adb"
-    base = [adb]
-    if serial.strip():
-        base.extend(["-s", serial.strip()])
-
-    grants: list[dict[str, Any]] = []
-    package_name = str(permission_package or "").strip()
-    if package_name:
-        for permission in grant_permissions:
-            permission_text = str(permission or "").strip()
-            if not permission_text:
-                continue
-            completed = subprocess.run(
-                [*base, "shell", "pm", "grant", package_name, permission_text],
-                check=False,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            grants.append(
-                {
-                    "permission": permission_text,
-                    "returncode": int(completed.returncode),
-                    "stdout": completed.stdout.strip(),
-                    "stderr": completed.stderr.strip(),
-                }
-            )
-
-    permission_result: dict[str, Any] | None = None
-    last_xml = ""
-    for attempt in range(1, max(1, int(attempts)) + 1):
-        last_xml = _dump_device_xml(base)
-        if "permissioncontroller" not in last_xml:
-            permission_result = {
-                "success": True,
-                "serial": serial,
-                "reason": "no_permission_dialog",
-                "grants": grants,
-                "attempts": attempt,
-            }
-            break
-        center = _permission_allow_button_center(last_xml)
-        if center is not None:
-            tap = _tap_device(base, center)
-            time.sleep(0.7)
-            permission_result = {
-                "success": tap.returncode == 0,
-                "serial": serial,
-                "reason": "tapped_permission_allow",
-                "tap": {"x": center[0], "y": center[1]},
-                "tap_returncode": int(tap.returncode),
-                "tap_stdout": tap.stdout.strip(),
-                "tap_stderr": tap.stderr.strip(),
-                "grants": grants,
-                "attempts": attempt,
-            }
-            break
-        time.sleep(0.5)
-    if permission_result is None:
-        permission_result = {
-            "success": False,
-            "serial": serial,
-            "reason": "permission_dialog_without_allow_button",
-            "grants": grants,
-            "last_xml_head": last_xml[:2000],
-        }
-
-    onboarding_result = (
-        _dismiss_contacts_onboarding_overlay(base, attempts=attempts)
-        if permission_package == "com.google.android.contacts"
-        else {"success": True, "reason": "not_contacts_package", "attempts": 0}
-    )
-    return {
-        **permission_result,
-        "success": bool(permission_result.get("success"))
-        and bool(onboarding_result.get("success")),
-        "permission": permission_result,
-        "contacts_onboarding": onboarding_result,
-    }
-
-
 def run_commands_parallel(
     specs: Sequence[CommandSpec],
     *,
@@ -2691,406 +2168,6 @@ def run_commands_parallel(
             }
         )
     return records
-
-
-def _patch_mobilegpt_host_ip(
-    *,
-    mobilegpt_root: str | Path = DEFAULT_MOBILEGPT_ROOT,
-    host_ip: str,
-    repo_root: Path = REPO_ROOT,
-) -> Path:
-    root = _repo_path(mobilegpt_root, repo_root=repo_root)
-    global_java = (
-        root
-        / "App"
-        / "app"
-        / "src"
-        / "main"
-        / "java"
-        / "com"
-        / "example"
-        / "MobileGPT"
-        / "MobileGPTGlobal.java"
-    )
-    if not global_java.exists():
-        raise FileNotFoundError(f"MobileGPTGlobal.java not found: {global_java}")
-    text = global_java.read_text(encoding="utf-8")
-    patched = re.sub(
-        r'public static final String HOST_IP = "[^"]*";',
-        f'public static final String HOST_IP = "{host_ip}";',
-        text,
-    )
-    if patched == text and host_ip not in text:
-        raise ValueError(f"Unable to patch HOST_IP in {global_java}")
-    global_java.write_text(patched, encoding="utf-8")
-    return global_java
-
-
-def _patch_mobilegpt_client_runtime(
-    *,
-    mobilegpt_root: str | Path = DEFAULT_MOBILEGPT_ROOT,
-    repo_root: Path = REPO_ROOT,
-) -> list[Path]:
-    root = _repo_path(mobilegpt_root, repo_root=repo_root)
-    java_root = (
-        root / "App" / "app" / "src" / "main" / "java" / "com" / "example" / "MobileGPT"
-    )
-    service_java = java_root / "MobileGPTAccessibilityService.java"
-    global_java = java_root / "MobileGPTGlobal.java"
-    for path in (service_java, global_java):
-        if not path.is_file():
-            raise FileNotFoundError(f"MobileGPT client source not found: {path}")
-
-    patched_paths: list[Path] = []
-    service_text = service_java.read_text(encoding="utf-8")
-    patched_service = service_text
-    patched_service = re.sub(
-        r"(?m)^(\s*)String\[\]\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*"
-        r"getAppList\(\);\s*$",
-        r"\1String[] launchablePackages = getAppList();",
-        patched_service,
-        count=1,
-    )
-    if "String[] launchablePackages = getAppList();" not in patched_service:
-        patched_service = patched_service.replace(
-            "        info.packageNames = getAppList();\n",
-            "        String[] launchablePackages = getAppList();\n"
-            "        info.packageNames = null;\n",
-            1,
-        )
-    patched_service = re.sub(
-        r"mClient\.sendAppList\((?:info\.packageNames|"
-        r"[A-Za-z_$][A-Za-z0-9_$]*)\)",
-        "mClient.sendAppList(launchablePackages)",
-        patched_service,
-        count=1,
-    )
-    bootstrap_connection = """        if (mClient == null) {
-            mExecutorService.execute(this::initNetworkConnection);
-            mExecutorService.execute(()->mClient.sendAppList(launchablePackages));
-            mExecutorService.execute(()->mClient.disconnect());
-        }
-"""
-    if bootstrap_connection not in patched_service:
-        patched_service, bootstrap_replacements = re.subn(
-            r"(?m)^        mExecutorService\.execute\(this::initNetworkConnection\);\n"
-            r"        mExecutorService\.execute\(\(\)->mClient\.sendAppList\(launchablePackages\)\);\n"
-            r"        mExecutorService\.execute\(\(\)->mClient\.disconnect\(\)\);\n",
-            bootstrap_connection,
-            patched_service,
-            count=1,
-        )
-        if bootstrap_replacements != 1:
-            raise ValueError(
-                f"Unable to guard MobileGPT app-list connection: {service_java}"
-            )
-    if 'action.equals("back") || action.equals("go-back")' not in patched_service:
-
-        def _back_branch(match: re.Match[str]) -> str:
-            indent = str(match.group("indent") or "")
-            body_indent = indent + "    "
-            return "\n".join(
-                [
-                    f'{indent}}} else if (action.equals("back") || action.equals("go-back")) {{',
-                    f"{body_indent}action_success = performGlobalAction(GLOBAL_ACTION_BACK);",
-                    f'{body_indent}Log.d(TAG, "back success=" + action_success);',
-                    f"{body_indent}screenNeedUpdate = true;",
-                    f"{body_indent}xmlPending = true;",
-                    f'{body_indent}setActionFailedRunnable("There is no change in the screen. Try other approach.", 10000);',
-                    "",
-                    f"{indent}}} else if (MobileGPTGlobal.AVAILABLE_ACTIONS.contains(action)){{",
-                ]
-            )
-
-        patched_service, back_replacements = re.subn(
-            r"(?m)^(?P<indent>\s*)\} else if \(MobileGPTGlobal\.AVAILABLE_ACTIONS\.contains\(action\)\)\{",
-            _back_branch,
-            patched_service,
-            count=1,
-        )
-        if back_replacements != 1:
-            raise ValueError(f"Unable to patch MobileGPT back action: {service_java}")
-    active_root_method = """    private AccessibilityNodeInfo getRootForActiveApp(){
-        AccessibilityNodeInfo activeRoot = getRootInActiveWindow();
-        if (activeRoot != null) {
-            CharSequence activePackage = activeRoot.getPackageName();
-            if (activePackage != null &&
-                    !"com.example.MobileGPT".equals(String.valueOf(activePackage))) {
-                return activeRoot;
-            }
-        }
-
-        List<AccessibilityWindowInfo> windows = getWindows();
-        for (AccessibilityWindowInfo window : windows) {
-            AccessibilityNodeInfo root = window.getRoot();
-            if (root == null || root.getPackageName() == null) {
-                continue;
-            }
-            if (String.valueOf(root.getPackageName()).equals(targetPackageName)) {
-                return root;
-            }
-        }
-        Log.d(TAG, "No Appropriate Root found in this screen.");
-        return null;
-    }
-"""
-    patched_service, replacements = re.subn(
-        r"    private AccessibilityNodeInfo getRootForActiveApp\(\)\{.*?\n    \}\n+(?=    private void saveCurrScreen\()",
-        active_root_method,
-        patched_service,
-        count=1,
-        flags=re.DOTALL,
-    )
-    required_service_markers = (
-        "String[] launchablePackages = getAppList();",
-        "info.packageNames = null;",
-        "mClient.sendAppList(launchablePackages)",
-        bootstrap_connection.strip(),
-        "getRootInActiveWindow()",
-        '"com.example.MobileGPT".equals',
-        'action.equals("back") || action.equals("go-back")',
-    )
-    if replacements != 1 or any(
-        marker not in patched_service for marker in required_service_markers
-    ):
-        raise ValueError(
-            f"Unable to patch MobileGPT cross-package client runtime: {service_java}"
-        )
-    if patched_service != service_text:
-        service_java.write_text(patched_service, encoding="utf-8")
-        patched_paths.append(service_java)
-
-    global_text = global_java.read_text(encoding="utf-8")
-    patched_global = global_text.replace(
-        '"long-click", "go-back"',
-        '"long-click", "back", "go-back"',
-    )
-    if '"back", "go-back"' not in patched_global:
-        raise ValueError(f"Unable to patch MobileGPT back action: {global_java}")
-    if patched_global != global_text:
-        global_java.write_text(patched_global, encoding="utf-8")
-        patched_paths.append(global_java)
-    return patched_paths
-
-
-def _mobilegpt_client_paths(
-    *,
-    mobilegpt_root: str | Path = DEFAULT_MOBILEGPT_ROOT,
-    repo_root: Path = REPO_ROOT,
-) -> dict[str, Path]:
-    root = _repo_path(mobilegpt_root, repo_root=repo_root)
-    app_root = root / "App"
-    java_root = (
-        app_root / "app" / "src" / "main" / "java" / "com" / "example" / "MobileGPT"
-    )
-    output_root = app_root / "app" / "build" / "outputs" / "apk" / "debug"
-    return {
-        "root": root,
-        "app_root": app_root,
-        "service_java": java_root / "MobileGPTAccessibilityService.java",
-        "global_java": java_root / "MobileGPTGlobal.java",
-        "apk": output_root / "app-debug.apk",
-        "receipt": output_root / "omniflow-client-build.v1.json",
-    }
-
-
-def _mobilegpt_client_input_digest(app_root: Path) -> tuple[str, int]:
-    if not app_root.is_dir():
-        raise FileNotFoundError(f"MobileGPT App root not found: {app_root}")
-    excluded_directories = {".git", ".gradle", ".idea", "build"}
-    excluded_files = {"local.properties"}
-    digest = hashlib.sha256()
-    file_count = 0
-    for path in sorted(item for item in app_root.rglob("*") if item.is_file()):
-        relative = path.relative_to(app_root)
-        if relative.name in excluded_files or any(
-            part in excluded_directories for part in relative.parts[:-1]
-        ):
-            continue
-        digest.update(relative.as_posix().encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(f"{path.stat().st_mode & 0o777:o}".encode("ascii"))
-        digest.update(b"\0")
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-        digest.update(b"\0")
-        file_count += 1
-    if file_count == 0:
-        raise ValueError(f"MobileGPT App build input tree is empty: {app_root}")
-    return digest.hexdigest(), file_count
-
-
-def _validate_mobilegpt_client_source(
-    *,
-    mobilegpt_root: str | Path = DEFAULT_MOBILEGPT_ROOT,
-    host_ip: str,
-    repo_root: Path = REPO_ROOT,
-) -> dict[str, Path]:
-    paths = _mobilegpt_client_paths(
-        mobilegpt_root=mobilegpt_root,
-        repo_root=repo_root,
-    )
-    for label in ("service_java", "global_java"):
-        path = paths[label]
-        if not path.is_file():
-            raise FileNotFoundError(f"MobileGPT client source not found: {path}")
-    service_text = paths["service_java"].read_text(encoding="utf-8")
-    required_service_markers = (
-        "String[] launchablePackages = getAppList();",
-        "info.packageNames = null;",
-        "mClient.sendAppList(launchablePackages)",
-        "if (mClient == null) {\n"
-        "            mExecutorService.execute(this::initNetworkConnection);\n"
-        "            mExecutorService.execute(()->mClient.sendAppList(launchablePackages));\n"
-        "            mExecutorService.execute(()->mClient.disconnect());\n"
-        "        }",
-        "getRootInActiveWindow()",
-        '"com.example.MobileGPT".equals',
-        'action.equals("back") || action.equals("go-back")',
-    )
-    missing_markers = [
-        marker for marker in required_service_markers if marker not in service_text
-    ]
-    global_text = paths["global_java"].read_text(encoding="utf-8")
-    if '"back", "go-back"' not in global_text:
-        missing_markers.append('"back", "go-back"')
-    expected_host = f'public static final String HOST_IP = "{host_ip}";'
-    if expected_host not in global_text:
-        missing_markers.append(expected_host)
-    if missing_markers:
-        raise ValueError(
-            "MobileGPT client source patch audit failed: " + ", ".join(missing_markers)
-        )
-    return paths
-
-
-def _mobilegpt_client_build_state(
-    *,
-    mobilegpt_root: str | Path = DEFAULT_MOBILEGPT_ROOT,
-    host_ip: str,
-    repo_root: Path = REPO_ROOT,
-) -> dict[str, Any]:
-    paths = _validate_mobilegpt_client_source(
-        mobilegpt_root=mobilegpt_root,
-        host_ip=host_ip,
-        repo_root=repo_root,
-    )
-    if not paths["apk"].is_file():
-        raise FileNotFoundError(f"MobileGPT client APK not found: {paths['apk']}")
-    input_sha256, input_file_count = _mobilegpt_client_input_digest(paths["app_root"])
-    configured_java_home = str(os.environ.get("JAVA_HOME") or "").strip()
-    if configured_java_home:
-        java_home = Path(configured_java_home).expanduser().resolve()
-        java_executable = java_home / "bin" / "java"
-    else:
-        discovered_java = shutil.which("java")
-        if not discovered_java:
-            raise FileNotFoundError("Java executable not found for MobileGPT build")
-        java_executable = Path(discovered_java).resolve()
-        java_home = java_executable.parent.parent
-    if not java_executable.is_file():
-        raise FileNotFoundError(
-            f"Java executable not found for MobileGPT build: {java_executable}"
-        )
-    java_result = subprocess.run(
-        [str(java_executable), "-version"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    java_version = next(
-        (
-            line.strip()
-            for line in (java_result.stderr + "\n" + java_result.stdout).splitlines()
-            if line.strip()
-        ),
-        "",
-    )
-    if java_result.returncode != 0 or not java_version:
-        raise ValueError(
-            f"Unable to identify Java runtime for MobileGPT build: {java_executable}"
-        )
-    return {
-        "schema_version": "omniflow.mobilegpt_client_build.v1",
-        "build_command": ["./gradlew", ":app:assembleDebug"],
-        "host_ip": host_ip,
-        "input_tree_sha256": input_sha256,
-        "input_file_count": input_file_count,
-        "java_home": str(java_home),
-        "java_executable": str(java_executable),
-        "java_version": java_version,
-        "java_sha256": _file_sha256(java_executable),
-        "apk_relative_path": paths["apk"].relative_to(paths["root"]).as_posix(),
-        "apk_sha256": _file_sha256(paths["apk"]),
-    }
-
-
-def _write_mobilegpt_client_build_receipt(
-    *,
-    mobilegpt_root: str | Path = DEFAULT_MOBILEGPT_ROOT,
-    host_ip: str,
-    repo_root: Path = REPO_ROOT,
-) -> tuple[Path, dict[str, Any]]:
-    paths = _mobilegpt_client_paths(
-        mobilegpt_root=mobilegpt_root,
-        repo_root=repo_root,
-    )
-    state = _mobilegpt_client_build_state(
-        mobilegpt_root=mobilegpt_root,
-        host_ip=host_ip,
-        repo_root=repo_root,
-    )
-    paths["receipt"].write_text(
-        json.dumps(state, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    return paths["receipt"], state
-
-
-def _audit_mobilegpt_client_build(
-    *,
-    mobilegpt_root: str | Path = DEFAULT_MOBILEGPT_ROOT,
-    host_ip: str,
-    repo_root: Path = REPO_ROOT,
-) -> dict[str, Any]:
-    paths = _mobilegpt_client_paths(
-        mobilegpt_root=mobilegpt_root,
-        repo_root=repo_root,
-    )
-    if not paths["receipt"].is_file():
-        raise FileNotFoundError(
-            f"MobileGPT client build receipt not found: {paths['receipt']}"
-        )
-    receipt = json.loads(paths["receipt"].read_text(encoding="utf-8"))
-    if not isinstance(receipt, dict):
-        raise ValueError(
-            f"MobileGPT client build receipt must be an object: {paths['receipt']}"
-        )
-    current = _mobilegpt_client_build_state(
-        mobilegpt_root=mobilegpt_root,
-        host_ip=host_ip,
-        repo_root=repo_root,
-    )
-    if receipt.get("apk_sha256") != current["apk_sha256"]:
-        raise ValueError(
-            "MobileGPT client APK SHA-256 mismatch: "
-            f"receipt={receipt.get('apk_sha256')} current={current['apk_sha256']}"
-        )
-    if receipt != current:
-        differing = sorted(
-            key
-            for key in set(receipt) | set(current)
-            if receipt.get(key) != current.get(key)
-        )
-        raise ValueError(
-            "MobileGPT client build receipt mismatch: " + ",".join(differing)
-        )
-    return {
-        **current,
-        "receipt": str(paths["receipt"]),
-        "apk": str(paths["apk"]),
-    }
 
 
 def _patch_mobilegpt_server_runtime_context(
@@ -4482,12 +3559,6 @@ def _metadata_float(
     return float(value)
 
 
-def _mobilegpt_wire_instruction(instruction: str) -> str:
-    """Make instructions safe for MobileGPT's newline-delimited socket protocol."""
-
-    return re.sub(r"\s+", " ", str(instruction or "")).strip()
-
-
 def _find_free_local_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -4580,184 +3651,6 @@ def _start_mobilegpt_browser_task_server(
     return prepare, process
 
 
-def _write_mobilegpt_runtime_serial(
-    serial_file: str | Path,
-    serial: str,
-) -> Path:
-    resolved_serial = str(serial or "").strip()
-    if not resolved_serial:
-        raise ValueError("MobileGPT OOB runtime serial cannot be empty")
-    output = Path(serial_file).expanduser().resolve()
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=output.parent,
-            prefix=f".{output.name}.",
-            delete=False,
-        ) as handle:
-            handle.write(resolved_serial + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-            temporary_path = Path(handle.name)
-        os.replace(temporary_path, output)
-        temporary_path = None
-    finally:
-        if temporary_path is not None and temporary_path.exists():
-            temporary_path.unlink()
-    return output
-
-
-def run_mobilegpt_sequence(
-    specs: Sequence[CommandSpec],
-    *,
-    dry_run: bool = False,
-    run_delay_sec: float = 1.0,
-    adb_path: str = "",
-) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    for spec in specs:
-        target = (
-            spec.metadata.get("device_target")
-            if isinstance(spec.metadata.get("device_target"), dict)
-            else {}
-        )
-        target_serial = str(target.get("serial") or "").strip()
-        runtime_serial_file = str(
-            spec.metadata.get("mobilegpt_runtime_serial_file") or ""
-        ).strip()
-        if not dry_run and runtime_serial_file and target_serial:
-            active_serial_path = _write_mobilegpt_runtime_serial(
-                runtime_serial_file,
-                target_serial,
-            )
-            spec.metadata["mobilegpt_runtime_serial"] = target_serial
-            spec.metadata["mobilegpt_runtime_serial_file"] = str(active_serial_path)
-
-        wait_for_task_finished = bool(
-            spec.metadata.get("wait_for_mobilegpt_task_finished")
-        ) and spec.label.endswith(":run")
-        stats_path = str(spec.metadata.get("mobilegpt_stats_jsonl") or "").strip()
-        finish_event = str(spec.metadata.get("mobilegpt_wait_event") or "task_finished")
-        start_event = str(
-            spec.metadata.get("mobilegpt_wait_start_event") or "task_started"
-        )
-        start_timeout = _metadata_float(
-            spec.metadata,
-            "mobilegpt_wait_start_timeout_sec",
-            DEFAULT_MOBILEGPT_WAIT_START_TIMEOUT_SEC,
-        )
-        rebroadcast_limit = max(
-            0,
-            _coerce_int(
-                spec.metadata.get("mobilegpt_rebroadcast_on_start_timeout"),
-                1,
-            ),
-        )
-        finish_count = (
-            _count_mobilegpt_stats_event(stats_path, finish_event)
-            if not dry_run and wait_for_task_finished and stats_path
-            else 0
-        )
-        start_count = (
-            _count_mobilegpt_stats_event(stats_path, start_event)
-            if not dry_run and wait_for_task_finished and stats_path
-            else 0
-        )
-        started = time.monotonic()
-        returncode = run_command(spec, dry_run=dry_run)
-        record = {
-            "label": spec.label,
-            "returncode": returncode,
-            "output_path": str(spec.output_path or ""),
-            "command": _command_line(spec),
-            "summary_exclude": bool(spec.metadata.get("summary_exclude")),
-            "metadata": dict(spec.metadata),
-        }
-        records.append(record)
-
-        if not dry_run and returncode == 0 and spec.label.endswith(":run"):
-            if wait_for_task_finished and stats_path:
-                start_result = wait_for_mobilegpt_stats_event(
-                    stats_path,
-                    event=start_event,
-                    previous_count=start_count,
-                    timeout_sec=start_timeout,
-                    poll_sec=_metadata_float(
-                        spec.metadata,
-                        "mobilegpt_wait_poll_sec",
-                        0.5,
-                    ),
-                )
-                rebroadcasts: list[dict[str, Any]] = []
-                for attempt in range(rebroadcast_limit):
-                    if start_result["seen"]:
-                        break
-                    retry: dict[str, Any] = {"attempt": attempt + 1}
-                    if target_serial:
-                        retry["accessibility_prepare"] = (
-                            prepare_mobilegpt_accessibility_service(
-                                serial=target_serial,
-                                adb_path=adb_path,
-                                restart=True,
-                            )
-                        )
-                        retry["launch"] = launch_mobilegpt_activity(
-                            serial=target_serial,
-                            adb_path=adb_path,
-                        )
-                    retry_returncode = run_command(spec, dry_run=False)
-                    retry["run_returncode"] = int(retry_returncode)
-                    rebroadcasts.append(retry)
-                    if retry_returncode != 0:
-                        break
-                    start_result = wait_for_mobilegpt_stats_event(
-                        stats_path,
-                        event=start_event,
-                        previous_count=start_count,
-                        timeout_sec=start_timeout,
-                        poll_sec=_metadata_float(
-                            spec.metadata,
-                            "mobilegpt_wait_poll_sec",
-                            0.5,
-                        ),
-                    )
-                finish_result = wait_for_mobilegpt_stats_event(
-                    stats_path,
-                    event=finish_event,
-                    previous_count=finish_count,
-                    timeout_sec=_metadata_float(
-                        spec.metadata,
-                        "mobilegpt_wait_timeout_sec",
-                        DEFAULT_MOBILEGPT_EPISODE_WAIT_TIMEOUT_SEC,
-                    ),
-                    poll_sec=_metadata_float(
-                        spec.metadata,
-                        "mobilegpt_wait_poll_sec",
-                        0.5,
-                    ),
-                )
-                record["metadata"] = {
-                    **dict(record.get("metadata") or {}),
-                    "mobilegpt_start_wait_result": start_result,
-                    "mobilegpt_rebroadcasts": rebroadcasts,
-                    "mobilegpt_wait_result": finish_result,
-                }
-            elif float(run_delay_sec or 0) > 0:
-                time.sleep(float(run_delay_sec))
-
-        metadata = dict(record.get("metadata") or {})
-        metadata.setdefault(
-            "command_wall_sec",
-            _coerce_float(metadata.get("wall_sec")),
-        )
-        metadata["wall_sec"] = round(time.monotonic() - started, 3)
-        record["metadata"] = metadata
-    return records
-
-
 def build_mobilegpt_command(
     action: str,
     *,
@@ -4765,8 +3658,6 @@ def build_mobilegpt_command(
     mobilegpt_memory_root: str | Path | None = None,
     serial: str = "",
     adb_path: str = "",
-    instruction: str = "",
-    host_ip: str = "",
     server_host: str = "0.0.0.0",
     port: int = 12345,
     stats_jsonl: str | Path = DEFAULT_MOBILEGPT_STATS_JSONL,
@@ -4774,8 +3665,7 @@ def build_mobilegpt_command(
     fallback_to_vlm_on_teacher_miss: bool = False,
     target_package: str = "",
     target_app: str = "",
-    runtime_observe_backend: str = "client",
-    runtime_serial_file: str | Path = "",
+    runtime_observe_backend: str = "androidworld",
     python_executable: str = sys.executable,
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
@@ -4784,12 +3674,8 @@ def build_mobilegpt_command(
     if serial.strip():
         env["ANDROID_SERIAL"] = serial.strip()
     env["MOBILEGPT_RUNTIME_OBSERVE_BACKEND"] = str(
-        runtime_observe_backend or "client"
+        runtime_observe_backend or "androidworld"
     ).strip()
-    if str(runtime_serial_file or "").strip():
-        env["MOBILEGPT_OOB_SERIAL_FILE"] = str(
-            _repo_path(runtime_serial_file, repo_root=repo_root)
-        )
     if adb_path.strip():
         env["ADB_PATH"] = adb_path.strip()
     resolved_memory_root = (
@@ -4831,7 +3717,7 @@ def build_mobilegpt_command(
                 "port": int(port),
                 "target_package": str(target_package or "").strip(),
                 "target_app": str(target_app or "").strip(),
-                "state_backend": "mobilegpt_client",
+                "state_backend": "androidworld",
             },
         )
 
@@ -4876,98 +3762,12 @@ def build_mobilegpt_command(
                 "mode": "mobilegpt_native_teacher_forced_learning",
                 "target_package": str(target_package or "").strip(),
                 "target_app": str(target_app or "").strip(),
-                "state_backend": "mobilegpt_client",
-            },
-        )
-
-    if resolved_action == "build":
-        argv = ["./gradlew", ":app:assembleDebug"]
-        return CommandSpec(
-            label="mobilegpt:build",
-            argv=argv,
-            env=env,
-            cwd=root / "App",
-            output_path=root / "App" / "app" / "build" / "outputs" / "apk" / "debug",
-            metadata={"mobilegpt_root": str(root), "host_ip": host_ip},
-        )
-
-    if resolved_action == "install":
-        apk = (
-            root
-            / "App"
-            / "app"
-            / "build"
-            / "outputs"
-            / "apk"
-            / "debug"
-            / "app-debug.apk"
-        )
-        argv = [adb_path.strip() or "adb"]
-        if serial.strip():
-            argv.extend(["-s", serial.strip()])
-        argv.extend(["install", "-r", str(apk)])
-        return CommandSpec(
-            label="mobilegpt:install",
-            argv=argv,
-            env={},
-            cwd=repo_root,
-            output_path=apk,
-            metadata={"mobilegpt_root": str(root), "apk": str(apk)},
-        )
-
-    if resolved_action == "launch":
-        argv = [adb_path.strip() or "adb"]
-        if serial.strip():
-            argv.extend(["-s", serial.strip()])
-        argv.extend(["shell", "am", "start", "-n", MOBILEGPT_MAIN_ACTIVITY])
-        return CommandSpec(
-            label="mobilegpt:launch",
-            argv=argv,
-            env={},
-            cwd=repo_root,
-            metadata={"package": MOBILEGPT_PACKAGE},
-        )
-
-    if resolved_action == "run":
-        if not str(instruction or "").strip():
-            raise ValueError("mobilegpt run requires --instruction")
-        wire_instruction = _mobilegpt_wire_instruction(instruction)
-        argv = [adb_path.strip() or "adb"]
-        if serial.strip():
-            argv.extend(["-s", serial.strip()])
-        shell_command = shlex.join(
-            [
-                "am",
-                "broadcast",
-                "-a",
-                MOBILEGPT_STRING_ACTION,
-                "--es",
-                MOBILEGPT_INSTRUCTION_EXTRA,
-                wire_instruction,
-            ]
-        )
-        argv.extend(
-            [
-                "shell",
-                shell_command,
-            ]
-        )
-        return CommandSpec(
-            label="mobilegpt:run",
-            argv=argv,
-            env={},
-            cwd=repo_root,
-            metadata={
-                "package": MOBILEGPT_PACKAGE,
-                "instruction": instruction,
-                "mobilegpt_wire_instruction": wire_instruction,
-                "mobilegpt_instruction_sanitized": wire_instruction
-                != str(instruction or ""),
+                "state_backend": "androidworld",
             },
         )
 
     raise ValueError(
-        "Unsupported MobileGPT action. Use one of: server, teach-server, build, install, launch, run."
+        "Unsupported MobileGPT action. Use one of: server, teach-server."
     )
 
 
@@ -7752,7 +6552,9 @@ def build_mobilegpt_androidworld_command(
     android_world_root: str | Path,
     output_root: str | Path,
     stats_jsonl: str | Path,
-    runtime_serial_file: str | Path,
+    server_host: str,
+    server_port: int,
+    target_package: str,
     max_steps: int,
     task_random_seed: int | None,
     fixed_task_seed: bool,
@@ -7762,7 +6564,6 @@ def build_mobilegpt_androidworld_command(
     adb_path: str,
     start_timeout_sec: float,
     finish_timeout_sec: float,
-    rebroadcast_limit: int,
     run_dir_suffix: str = "",
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
@@ -7785,6 +6586,9 @@ def build_mobilegpt_androidworld_command(
         perform_emulator_setup=perform_emulator_setup,
         repo_root=repo_root,
     )
+    client_host = str(server_host or "127.0.0.1").strip()
+    if client_host in {"0.0.0.0", "::", "[::]"}:
+        client_host = "127.0.0.1"
     return CommandSpec(
         label=f"mobilegpt:cross-device:{target.label}:androidworld-episode",
         argv=spec.argv,
@@ -7792,12 +6596,12 @@ def build_mobilegpt_androidworld_command(
             **spec.env,
             "ANDROID_SERIAL": target.serial,
             "MOBILEGPT_STATS_JSONL": str(_repo_path(stats_jsonl, repo_root=repo_root)),
-            "MOBILEGPT_OOB_SERIAL_FILE": str(
-                _repo_path(runtime_serial_file, repo_root=repo_root)
-            ),
+            "MOBILEGPT_RUNTIME_OBSERVE_BACKEND": "androidworld",
+            "MOBILEGPT_SERVER_HOST": client_host,
+            "MOBILEGPT_SERVER_PORT": str(int(server_port)),
+            "MOBILEGPT_TARGET_PACKAGE": str(target_package or "").strip(),
             "MOBILEGPT_WAIT_START_TIMEOUT_SEC": str(float(start_timeout_sec)),
             "MOBILEGPT_WAIT_FINISH_TIMEOUT_SEC": str(float(finish_timeout_sec)),
-            "MOBILEGPT_REBROADCAST_LIMIT": str(max(0, int(rebroadcast_limit))),
         },
         cwd=spec.cwd,
         output_path=spec.output_path,
@@ -7806,12 +6610,14 @@ def build_mobilegpt_androidworld_command(
             "mode": "mobilegpt_androidworld_episode",
             "device_target": target.to_dict(),
             "mobilegpt_stats_jsonl": str(stats_jsonl),
-            "mobilegpt_runtime_serial_file": str(runtime_serial_file),
+            "mobilegpt_server_host": client_host,
+            "mobilegpt_server_port": int(server_port),
+            "target_package": str(target_package or "").strip(),
             "official_lifecycle": True,
-            "state_backend": "mobilegpt_client",
-            "action_backend": "mobilegpt_accessibility",
+            "state_backend": "androidworld",
+            "action_backend": "androidworld",
             "androidworld_lifecycle_backend": "androidworld",
-            "native_androidworld_agent_io": False,
+            "native_androidworld_agent_io": True,
         },
     )
 
@@ -7984,7 +6790,6 @@ def _run_one_task_mobilegpt(
     frozen_memory_root = memory_root / "frozen_memory"
     frozen_memory_manifest_path = memory_root / "frozen_memory_manifest.json"
     episodes_root = memory_root / "_episodes"
-    active_oob_serial_file = memory_root / "active_oob_serial.txt"
     source_target = _infer_mobilegpt_target_from_source_run_log(item)
     explicit_target_package = _mobilegpt_target_package_from_open_target_app(
         args.mobilegpt_open_target_app
@@ -8190,7 +6995,6 @@ def _run_one_task_mobilegpt(
                         expected_digest=str(frozen_memory.get("digest") or ""),
                         expected_file_count=int(frozen_memory.get("file_count") or 0),
                     )
-            _write_mobilegpt_runtime_serial(active_oob_serial_file, target.serial)
             server_spec = build_mobilegpt_command(
                 "server",
                 mobilegpt_root=args.mobilegpt_root,
@@ -8202,7 +7006,7 @@ def _run_one_task_mobilegpt(
                 adb_path=args.adb_path,
                 target_package=target_package,
                 target_app=target_app,
-                runtime_serial_file=active_oob_serial_file,
+                runtime_observe_backend="androidworld",
             )
             if str(args.model or "").strip():
                 server_spec = replace(
@@ -8271,7 +7075,9 @@ def _run_one_task_mobilegpt(
                     android_world_root=args.android_world_root,
                     output_root=output_root,
                     stats_jsonl=stats_jsonl,
-                    runtime_serial_file=active_oob_serial_file,
+                    server_host=args.mobilegpt_server_host,
+                    server_port=int(args.mobilegpt_port),
+                    target_package=target_package,
                     max_steps=int(args.max_steps or 20),
                     task_random_seed=task_seed,
                     fixed_task_seed=not bool(args.no_fixed_task_seed),
@@ -8281,7 +7087,6 @@ def _run_one_task_mobilegpt(
                     adb_path=args.adb_path,
                     start_timeout_sec=float(args.mobilegpt_wait_start_timeout_sec),
                     finish_timeout_sec=float(args.mobilegpt_episode_wait_timeout_sec),
-                    rebroadcast_limit=int(args.mobilegpt_rebroadcast_on_start_timeout),
                 )
                 episode_spec.metadata.update(
                     {
@@ -8869,107 +7674,12 @@ def cmd_one_task(args: argparse.Namespace) -> int:
 
 
 def cmd_mobilegpt(args: argparse.Namespace) -> int:
-    if args.mobilegpt_action in {"prepare-client", "audit-client"}:
-        host_ip = str(args.host_ip or "").strip()
-        if not host_ip:
-            print(
-                f"mobilegpt {args.mobilegpt_action} requires --host-ip",
-                file=sys.stderr,
-                flush=True,
-            )
-            return 2
-        if args.mobilegpt_action == "audit-client":
-            try:
-                audit = _audit_mobilegpt_client_build(
-                    mobilegpt_root=args.mobilegpt_root,
-                    host_ip=host_ip,
-                )
-            except (FileNotFoundError, ValueError, json.JSONDecodeError) as error:
-                print(f"[mobilegpt:client] audit-failed: {error}", file=sys.stderr)
-                return 1
-            print(
-                "[mobilegpt:client] audit " + json.dumps(audit, sort_keys=True),
-                flush=True,
-            )
-            return 0
-        if bool(args.dry_run):
-            print(
-                "mobilegpt prepare-client does not support --dry-run",
-                file=sys.stderr,
-                flush=True,
-            )
-            return 2
-        patched_host = _patch_mobilegpt_host_ip(
-            mobilegpt_root=args.mobilegpt_root,
-            host_ip=host_ip,
-        )
-        print(f"[mobilegpt:patch-host-ip] {patched_host}", flush=True)
-        patched_client = _patch_mobilegpt_client_runtime(
-            mobilegpt_root=args.mobilegpt_root,
-        )
-        for path in patched_client:
-            print(f"[mobilegpt:patch-client-runtime] {path}", flush=True)
-        try:
-            audit = _audit_mobilegpt_client_build(
-                mobilegpt_root=args.mobilegpt_root,
-                host_ip=host_ip,
-            )
-        except (FileNotFoundError, ValueError, json.JSONDecodeError) as error:
-            print(f"[mobilegpt:client] rebuild reason={error}", flush=True)
-        else:
-            print(
-                "[mobilegpt:client] reuse " + json.dumps(audit, sort_keys=True),
-                flush=True,
-            )
-            return 0
-        spec = build_mobilegpt_command(
-            "build",
-            mobilegpt_root=args.mobilegpt_root,
-            host_ip=host_ip,
-        )
-        returncode = run_command(spec, dry_run=False)
-        if returncode != 0:
-            return returncode
-        receipt, state = _write_mobilegpt_client_build_receipt(
-            mobilegpt_root=args.mobilegpt_root,
-            host_ip=host_ip,
-        )
-        audit = _audit_mobilegpt_client_build(
-            mobilegpt_root=args.mobilegpt_root,
-            host_ip=host_ip,
-        )
-        print(
-            "[mobilegpt:client] built "
-            + json.dumps(
-                {**state, "receipt": str(receipt), "apk": audit["apk"]},
-                sort_keys=True,
-            ),
-            flush=True,
-        )
-        return 0
-
     if args.mobilegpt_action in {"server", "teach-server"}:
         patched_server = _patch_mobilegpt_server_runtime_context(
             mobilegpt_root=args.mobilegpt_root,
         )
         for path in patched_server:
             print(f"[mobilegpt:patch-server-runtime] {path}", flush=True)
-
-    if bool(args.patch_host_ip):
-        if not str(args.host_ip or "").strip():
-            raise ValueError("--patch-host-ip requires --host-ip")
-        patched = _patch_mobilegpt_host_ip(
-            mobilegpt_root=args.mobilegpt_root,
-            host_ip=args.host_ip,
-        )
-        print(f"[mobilegpt:patch-host-ip] {patched}", flush=True)
-
-    if bool(args.patch_client_runtime):
-        patched_client = _patch_mobilegpt_client_runtime(
-            mobilegpt_root=args.mobilegpt_root,
-        )
-        for path in patched_client:
-            print(f"[mobilegpt:patch-client-runtime] {path}", flush=True)
 
     if bool(args.patch_stats):
         patched_stats = _patch_mobilegpt_stats(mobilegpt_root=args.mobilegpt_root)
@@ -8996,27 +7706,11 @@ def cmd_mobilegpt(args: argparse.Namespace) -> int:
             )
         return 0
 
-    if args.mobilegpt_action == "prepare-permissions":
-        result = prepare_mobilegpt_permission_dialog(
-            serial=args.serial,
-            adb_path=args.adb_path,
-            permission_package=args.permission_package,
-            grant_permissions=[
-                item.strip()
-                for item in str(args.grant_permissions or "").split(",")
-                if item.strip()
-            ],
-        )
-        print(json.dumps(result, indent=2, ensure_ascii=False), flush=True)
-        return 0 if result.get("success") else 1
-
     spec = build_mobilegpt_command(
         args.mobilegpt_action,
         mobilegpt_root=args.mobilegpt_root,
         serial=args.serial,
         adb_path=args.adb_path,
-        instruction=args.instruction,
-        host_ip=args.host_ip,
         server_host=args.server_host,
         port=args.port,
         stats_jsonl=args.stats_jsonl,
@@ -9291,17 +7985,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_MOBILEGPT_WAIT_START_TIMEOUT_SEC,
         help=(
-            "Seconds to wait for MobileGPT task_started after each broadcast. "
+            "Seconds to wait for the native MobileGPT server connection. "
             "Use -1 to wait indefinitely."
-        ),
-    )
-    one_task_parser.add_argument(
-        "--mobilegpt-rebroadcast-on-start-timeout",
-        type=int,
-        default=1,
-        help=(
-            "How many times to restart/launch/rebroadcast if task_started is "
-            "not observed before --mobilegpt-wait-start-timeout-sec."
         ),
     )
     one_task_parser.add_argument(
@@ -9342,27 +8027,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mobilegpt_parser.add_argument(
         "mobilegpt_action",
-        choices=[
-            "server",
-            "teach-server",
-            "prepare-client",
-            "audit-client",
-            "build",
-            "install",
-            "launch",
-            "run",
-            "stats",
-            "prepare-permissions",
-        ],
+        choices=["server", "teach-server", "stats"],
         help=(
             "`server` starts MobileGPT Server/main.py; `teach-server` starts "
             "MobileGPT cold-start learning with AndroidWorld source actions as "
-            "native teacher-forced DeriveAgent outputs; `build` builds the Android app; "
-            "`prepare-client` content-addresses the patched client build; "
-            "`audit-client` verifies its source/APK build receipt without writes; "
-            "`install` installs app-debug.apk; `launch` opens the app; `run` "
-            "broadcasts one instruction to the accessibility service; `stats` "
-            "aggregates the patched server JSONL stats."
+            "native teacher-forced DeriveAgent outputs; `stats` aggregates the "
+            "server JSONL stats."
         ),
     )
     mobilegpt_parser.add_argument(
@@ -9383,22 +8053,10 @@ def build_parser() -> argparse.ArgumentParser:
     mobilegpt_parser.add_argument("--limit", type=int, default=None)
     mobilegpt_parser.add_argument("--serial", default="")
     mobilegpt_parser.add_argument("--adb-path", default="")
-    mobilegpt_parser.add_argument("--instruction", default="")
-    mobilegpt_parser.add_argument("--host-ip", default="")
     mobilegpt_parser.add_argument("--server-host", default="0.0.0.0")
     mobilegpt_parser.add_argument("--port", type=int, default=12345)
     mobilegpt_parser.add_argument("--max-steps", type=int, default=20)
     mobilegpt_parser.add_argument("--source-run-log", default="")
-    mobilegpt_parser.add_argument(
-        "--permission-package",
-        default="com.google.android.contacts",
-        help="Package whose runtime permissions should be granted by prepare-permissions.",
-    )
-    mobilegpt_parser.add_argument(
-        "--grant-permissions",
-        default=",".join(DEFAULT_CONTACTS_PERMISSION_GRANTS),
-        help="Comma-separated runtime permissions for prepare-permissions.",
-    )
     mobilegpt_parser.add_argument(
         "--fallback-to-vlm-on-teacher-miss",
         action="store_true",
@@ -9420,27 +8078,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mobilegpt_parser.add_argument("--json", action="store_true")
     mobilegpt_parser.add_argument(
-        "--patch-host-ip",
-        action="store_true",
-        help=(
-            "Patch App/.../MobileGPTGlobal.java HOST_IP before running the selected "
-            "MobileGPT action. Use with --host-ip."
-        ),
-    )
-    mobilegpt_parser.add_argument(
         "--patch-stats",
         action="store_true",
         help=(
             "Patch MobileGPT Server utils/mobilegpt modules to write OpenAI usage "
             "and task finish events to --stats-jsonl."
-        ),
-    )
-    mobilegpt_parser.add_argument(
-        "--patch-client-runtime",
-        action="store_true",
-        help=(
-            "Patch the pinned MobileGPT Android client to observe active "
-            "cross-package windows while preserving its launchable app list."
         ),
     )
     mobilegpt_parser.add_argument("--dry-run", action="store_true")

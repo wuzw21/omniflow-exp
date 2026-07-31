@@ -1,93 +1,86 @@
 from __future__ import annotations
 
+import importlib
 import json
 import os
 from pathlib import Path
-import shlex
-import subprocess
+import re
+import socket
 import time
-from typing import Any
+from typing import Any, Callable
+import xml.etree.ElementTree as ET
 
-from src.integrations.android_world.host import make_agent_result
-
-MOBILEGPT_PACKAGE = "com.example.MobileGPT"
-MOBILEGPT_ACTIVITY = "com.example.MobileGPT/.MainActivity"
-MOBILEGPT_SERVICE = (
-    "com.example.MobileGPT/com.example.MobileGPT.MobileGPTAccessibilityService"
+from src.integrations.android_world.host import AndroidWorldHost, make_agent_result
+from src.integrations.mobilegpt_runtime import (
+    mobilegpt_compatible_xml,
+    normalize_mobilegpt_action,
 )
-MOBILEGPT_ACTION = "com.example.MobileGPT.STRING_ACTION"
-MOBILEGPT_INSTRUCTION_EXTRA = "com.example.MobileGPT.INSTRUCTION_EXTRA"
-ANDROIDWORLD_CANONICAL_EMULATOR_MODEL = "sdk_gphone_x86_64"
 
 
-def _device_compatible_goal(goal: str, device_model: str) -> str:
-    model = str(device_model or "").strip()
-    if not model.startswith("sdk_gphone"):
-        return goal
-    return str(goal).replace(ANDROIDWORLD_CANONICAL_EMULATOR_MODEL, model)
+_BOUNDS_PATTERN = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
 
 
-def _event_count(path: Path, event: str) -> int:
-    if not path.is_file():
-        return 0
-    count = 0
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        count += payload.get("event") == event
-    return count
+def _wire_text(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
-def _event_text_after(
-    path: Path,
-    event: str,
-    previous_count: int,
-) -> str:
-    if not path.is_file():
-        return ""
-    seen = 0
-    latest = ""
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if payload.get("event") != event:
-            continue
-        seen += 1
-        if seen > previous_count:
-            text = str(payload.get("text") or "").strip()
-            if text:
-                latest = text
-    return latest
+def _socket_timeout(value: float) -> float | None:
+    return None if value < 0 else max(0.1, value)
 
 
-def _wait_for_event(
-    path: Path,
-    event: str,
-    previous_count: int,
-    timeout_sec: float,
-) -> bool:
-    unbounded = timeout_sec < 0
-    deadline = None if unbounded else time.monotonic() + max(0.0, timeout_sec)
-    while True:
-        if _event_count(path, event) > previous_count:
-            return True
-        if deadline is not None and time.monotonic() >= deadline:
-            return False
-        time.sleep(0.5)
+def _bounds_for_index(xml_text: str, index: Any) -> tuple[int, int, int, int]:
+    target_index = str(index).strip()
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as error:
+        raise ValueError(f"mobilegpt_native_xml_invalid:{error}") from error
+    target = next(
+        (
+            element
+            for element in root.iter()
+            if str(element.attrib.get("index") or "").strip() == target_index
+        ),
+        None,
+    )
+    if target is None:
+        raise ValueError(f"mobilegpt_action_index_missing:{target_index}")
+    match = _BOUNDS_PATTERN.fullmatch(
+        str(target.attrib.get("bounds") or "").strip()
+    )
+    if match is None:
+        raise ValueError(f"mobilegpt_action_bounds_missing:{target_index}")
+    return tuple(int(value) for value in match.groups())
 
 
-def build_mobilegpt_agent(*, env: Any, adb_serial: str, adb_path: str = "") -> Any:
-    adb = str(adb_path or "adb").strip() or "adb"
-    serial = str(adb_serial or os.environ.get("ANDROID_SERIAL") or "").strip()
-    stats_path = Path(os.environ["MOBILEGPT_STATS_JSONL"]).expanduser().resolve()
-    serial_file_text = str(os.environ.get("MOBILEGPT_OOB_SERIAL_FILE") or "").strip()
-    start_timeout = float(os.environ.get("MOBILEGPT_WAIT_START_TIMEOUT_SEC") or 60.0)
-    finish_timeout = float(os.environ.get("MOBILEGPT_WAIT_FINISH_TIMEOUT_SEC") or 120.0)
-    rebroadcast_limit = int(os.environ.get("MOBILEGPT_REBROADCAST_LIMIT") or 1)
+def _center(bounds: tuple[int, int, int, int]) -> tuple[int, int]:
+    left, top, right, bottom = bounds
+    return (left + right) // 2, (top + bottom) // 2
+
+
+def build_mobilegpt_agent(
+    *,
+    env: Any,
+    evidence_root: str | Path | None = None,
+    action_factory: Callable[..., Any] | None = None,
+) -> Any:
+    server_host = str(os.environ.get("MOBILEGPT_SERVER_HOST") or "127.0.0.1").strip()
+    server_port = int(os.environ.get("MOBILEGPT_SERVER_PORT") or 12345)
+    connect_timeout = float(os.environ.get("MOBILEGPT_WAIT_START_TIMEOUT_SEC") or 60.0)
+    response_timeout = float(os.environ.get("MOBILEGPT_WAIT_FINISH_TIMEOUT_SEC") or 120.0)
+    post_action_wait = max(
+        0.0,
+        float(os.environ.get("MOBILEGPT_POST_ACTION_WAIT_SEC") or 1.0),
+    )
+    target_package = str(os.environ.get("MOBILEGPT_TARGET_PACKAGE") or "").strip()
+    packages = [
+        package.strip()
+        for package in re.split(
+            r"##|,",
+            str(os.environ.get("MOBILEGPT_APP_PACKAGES") or target_package),
+        )
+        if package.strip()
+    ]
+    host = AndroidWorldHost(env, evidence_root=evidence_root)
 
     class MobileGPTAndroidWorldAgent:
         name = "external:mobilegpt"
@@ -95,6 +88,7 @@ def build_mobilegpt_agent(*, env: Any, adb_serial: str, adb_path: str = "") -> A
 
         def __init__(self) -> None:
             self.env = env
+            self.max_steps = 20
             self.attempted = False
 
         def reset(self, go_home: bool = False) -> None:
@@ -102,154 +96,207 @@ def build_mobilegpt_agent(*, env: Any, adb_serial: str, adb_path: str = "") -> A
             self.env.reset(go_home=go_home)
 
         def set_max_steps(self, max_steps: int) -> None:
-            del max_steps
+            self.max_steps = max(1, int(max_steps))
 
-        def _adb(self, *args: str) -> subprocess.CompletedProcess[str]:
-            command = [adb]
-            if serial:
-                command.extend(["-s", serial])
-            command.extend(args)
-            return subprocess.run(
-                command,
-                check=False,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+        def _new_action(self, **payload: Any) -> Any:
+            if action_factory is not None:
+                return action_factory(**payload)
+            json_action = importlib.import_module("android_world.env.json_action")
+            return json_action.JSONAction(**payload)
 
-        def _prepare(self) -> None:
-            enabled = self._adb(
-                "shell", "settings", "get", "secure", "enabled_accessibility_services"
-            ).stdout.strip()
-            services = [
-                value
-                for value in enabled.split(":")
-                if value and value.lower() != "null" and value != MOBILEGPT_SERVICE
-            ]
-            self._adb(
-                "shell",
-                "settings",
-                "put",
-                "secure",
-                "enabled_accessibility_services",
-                ":".join(services),
-            )
-            self._adb("shell", "am", "force-stop", MOBILEGPT_PACKAGE)
-            stop_deadline = time.monotonic() + 5.0
-            while time.monotonic() < stop_deadline:
-                accessibility = self._adb(
-                    "shell",
-                    "dumpsys",
-                    "accessibility",
-                ).stdout
-                if "Service[label=MobileGPT Accessibility" not in accessibility:
-                    break
-                time.sleep(0.25)
-            time.sleep(0.5)
-            services.append(MOBILEGPT_SERVICE)
-            self._adb(
-                "shell",
-                "settings",
-                "put",
-                "secure",
-                "enabled_accessibility_services",
-                ":".join(services),
-            )
-            self._adb("shell", "settings", "put", "secure", "accessibility_enabled", "1")
-            self._adb("shell", "am", "start", "-n", MOBILEGPT_ACTIVITY)
-            deadline = time.monotonic() + 8.0
-            while time.monotonic() < deadline:
-                accessibility = self._adb(
-                    "shell",
-                    "dumpsys",
-                    "accessibility",
-                ).stdout
-                if "Service[label=MobileGPT Accessibility" in accessibility:
-                    break
-                time.sleep(0.25)
-            time.sleep(1.0)
-            if serial_file_text:
-                serial_file = Path(serial_file_text).expanduser().resolve()
-                serial_file.parent.mkdir(parents=True, exist_ok=True)
-                serial_file.write_text(serial + "\n", encoding="utf-8")
+        def _execute(self, **payload: Any) -> None:
+            self.env.execute_action(self._new_action(**payload))
 
-        def _broadcast(self, goal: str) -> subprocess.CompletedProcess[str]:
-            self._adb("shell", "am", "start", "-n", MOBILEGPT_ACTIVITY)
-            device_model = self._adb(
-                "shell", "getprop", "ro.product.model"
-            ).stdout.strip()
-            wire_goal = _device_compatible_goal(goal, device_model)
-            shell_command = shlex.join(
-                [
-                    "am",
-                    "broadcast",
-                    "-a",
-                    MOBILEGPT_ACTION,
-                    "--es",
-                    MOBILEGPT_INSTRUCTION_EXTRA,
-                    wire_goal,
-                ]
-            )
-            return self._adb("shell", shell_command)
+        def _send_line(self, stream: Any, prefix: str, value: str) -> None:
+            stream.write(f"{prefix}{_wire_text(value)}\n".encode())
 
-        def step(self, goal: str):
-            if self.attempted:
-                return make_agent_result(
-                    done=True,
-                    data={"summary": "MobileGPT did not finish", "source": self.name},
+        def _send_xml(self, stream: Any, xml_text: str) -> None:
+            payload = xml_text.encode("utf-8")
+            stream.write(f"X{len(payload)}\n".encode())
+            stream.write(payload)
+
+        def _read_line(self, stream: Any) -> str:
+            raw = stream.readline()
+            if not raw:
+                raise ConnectionError("mobilegpt_server_closed_connection")
+            return raw.decode("utf-8").strip()
+
+        def _execute_server_action(
+            self,
+            action: Any,
+            *,
+            xml_text: str,
+        ) -> tuple[bool, str]:
+            normalized = normalize_mobilegpt_action(action)
+            if not isinstance(normalized, dict):
+                raise ValueError("mobilegpt_action_not_object")
+            name = str(normalized.get("name") or "").strip()
+            parameters = normalized.get("parameters")
+            parameters = dict(parameters) if isinstance(parameters, dict) else {}
+            if name in {"click", "long-click", "input"}:
+                if parameters.get("index") is None:
+                    raise ValueError(f"mobilegpt_action_index_required:{name}")
+                x, y = _center(
+                    _bounds_for_index(xml_text, parameters.get("index"))
                 )
-            self.attempted = True
-            self._prepare()
-            started_before = _event_count(stats_path, "task_started")
-            finished_before = _event_count(stats_path, "task_finished")
-            answers_before = _event_count(stats_path, "agent_answer")
-            broadcast = self._broadcast(goal)
-            started = _wait_for_event(
-                stats_path,
-                "task_started",
-                started_before,
-                start_timeout,
-            )
-            for _ in range(max(0, rebroadcast_limit)):
-                if started:
-                    break
-                self._prepare()
-                broadcast = self._broadcast(goal)
-                started = _wait_for_event(
-                    stats_path,
-                    "task_started",
-                    started_before,
-                    start_timeout,
-                )
-            finished = started and _wait_for_event(
-                stats_path,
-                "task_finished",
-                finished_before,
-                finish_timeout,
-            )
-            answer = (
-                _event_text_after(
-                    stats_path,
-                    "agent_answer",
-                    answers_before,
-                )
-                if finished
-                else ""
-            )
-            if answer:
-                self.env.interaction_cache = answer
-            error = "" if finished else "task_finished_timeout" if started else "task_started_timeout"
+                if name == "click":
+                    self._execute(action_type="click", x=x, y=y)
+                elif name == "long-click":
+                    self._execute(action_type="long_press", x=x, y=y)
+                else:
+                    self._execute(
+                        action_type="input_text",
+                        x=x,
+                        y=y,
+                        text=str(
+                            parameters.get("input_text")
+                            or parameters.get("text")
+                            or ""
+                        ),
+                        clear_text=True,
+                    )
+                return True, ""
+            if name == "scroll":
+                direction = str(parameters.get("direction") or "").strip().lower()
+                if direction not in {"up", "down", "left", "right"}:
+                    raise ValueError(
+                        f"mobilegpt_scroll_direction_invalid:{direction or 'missing'}"
+                    )
+                self._execute(action_type="scroll", direction=direction)
+                return True, ""
+            if name in {"back", "go-back"}:
+                self._execute(action_type="navigate_back")
+                return True, ""
+            if name == "speak":
+                message = str(parameters.get("message") or "").strip()
+                self._execute(action_type="answer", text=message)
+                return False, message
+            if name == "ask":
+                raise RuntimeError("mobilegpt_ask_has_no_androidworld_answer_source")
+            raise ValueError(f"mobilegpt_action_unsupported:{name or 'missing'}")
+
+        def _result(
+            self,
+            *,
+            actions_executed: int,
+            answer: str,
+            error: str,
+        ) -> Any:
             return make_agent_result(
                 done=True,
                 data={
-                    "summary": "MobileGPT finished" if finished else error,
+                    "summary": (
+                        "MobileGPT native AndroidWorld episode finished"
+                        if not error
+                        else error
+                    ),
                     "source": self.name,
                     "error": error or None,
                     "answer": answer or None,
-                    "broadcast_returncode": int(broadcast.returncode),
-                    "actions_executed": 0,
+                    "actions_executed": int(actions_executed),
+                    "state_backend": "androidworld",
+                    "action_backend": "androidworld",
+                    "native_androidworld_agent_io": True,
                 },
             )
+
+        def step(self, goal: str) -> Any:
+            if self.attempted:
+                return self._result(
+                    actions_executed=0,
+                    answer="",
+                    error="mobilegpt_episode_already_attempted",
+                )
+            self.attempted = True
+            actions_executed = 0
+            answer = ""
+            try:
+                with socket.create_connection(
+                    (server_host, server_port),
+                    timeout=_socket_timeout(connect_timeout),
+                ) as connection:
+                    connection.settimeout(_socket_timeout(response_timeout))
+                    with connection.makefile("rwb", buffering=0) as stream:
+                        self._send_line(stream, "L", "##".join(packages))
+                        self._send_line(stream, "I", goal)
+                        launch = self._read_line(stream)
+                        if not launch.startswith("##$$##"):
+                            raise RuntimeError(
+                                f"mobilegpt_launch_response_invalid:{launch}"
+                            )
+                        launch_package = launch.removeprefix("##$$##").strip()
+                        if not launch_package:
+                            raise RuntimeError("mobilegpt_launch_package_missing")
+                        self._execute(
+                            action_type="open_app",
+                            app_name=launch_package,
+                        )
+                        if post_action_wait:
+                            time.sleep(post_action_wait)
+
+                        while actions_executed < self.max_steps:
+                            observation = host.observe(
+                                xml=True,
+                                screenshot=False,
+                                app_info=True,
+                            )
+                            xml_text = mobilegpt_compatible_xml(
+                                str(observation.xml or "").strip()
+                            )
+                            if not xml_text:
+                                raise RuntimeError("mobilegpt_androidworld_state_xml_empty")
+                            self._send_xml(stream, xml_text)
+                            while True:
+                                response = self._read_line(stream)
+                                if response == "$$$$$":
+                                    return self._result(
+                                        actions_executed=actions_executed,
+                                        answer=answer,
+                                        error="",
+                                    )
+                                if response.startswith("##$$##"):
+                                    package = response.removeprefix("##$$##").strip()
+                                    if not package:
+                                        raise RuntimeError(
+                                            "mobilegpt_launch_package_missing"
+                                        )
+                                    self._execute(
+                                        action_type="open_app",
+                                        app_name=package,
+                                    )
+                                    continue
+                                try:
+                                    action = json.loads(response)
+                                    device_action, spoken = self._execute_server_action(
+                                        action,
+                                        xml_text=xml_text,
+                                    )
+                                except Exception as action_error:
+                                    self._send_line(
+                                        stream,
+                                        "E",
+                                        f"{type(action_error).__name__}: {action_error}",
+                                    )
+                                    continue
+                                if spoken:
+                                    answer = spoken
+                                if not device_action:
+                                    continue
+                                actions_executed += 1
+                                if post_action_wait:
+                                    time.sleep(post_action_wait)
+                                break
+                        return self._result(
+                            actions_executed=actions_executed,
+                            answer=answer,
+                            error=f"mobilegpt_step_budget_exhausted:{self.max_steps}",
+                        )
+            except Exception as error:
+                return self._result(
+                    actions_executed=actions_executed,
+                    answer=answer,
+                    error=f"{type(error).__name__}: {error}",
+                )
 
     return MobileGPTAndroidWorldAgent()
 

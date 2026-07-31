@@ -313,9 +313,6 @@ def prepare_mobilegpt_source_memory(
     memory_root.mkdir()
     stats_path = bundle_root / "source_stats.jsonl"
     stats_summary_path = bundle_root / "source_stats_summary.json"
-    runtime_serial_file = bundle_root / "active_serial.txt"
-    pipeline._write_mobilegpt_runtime_serial(runtime_serial_file, serial)
-
     target = pipeline.DeviceTarget(
         label=f"source{int(console_port)}",
         serial=str(serial),
@@ -344,7 +341,7 @@ def prepare_mobilegpt_source_memory(
         fallback_to_vlm_on_teacher_miss=True,
         target_package=target_package,
         target_app=target_app,
-        runtime_serial_file=runtime_serial_file,
+        runtime_observe_backend="androidworld",
     )
     server_spec = replace(
         server_spec,
@@ -352,7 +349,6 @@ def prepare_mobilegpt_source_memory(
             **server_spec.env,
             "MOBILEGPT_CHAT_MODEL": normalized_model,
             "MOBILEGPT_CHAT_MAX_ATTEMPTS": "1",
-            "MOBILEGPT_OOB_OBSERVE_RETRIES": "1",
             "MOBILEGPT_TEACHER_FAIL_ON_ACTION_ERROR": "1",
         },
         metadata={
@@ -394,7 +390,9 @@ def prepare_mobilegpt_source_memory(
         android_world_root=android_world_root,
         output_root=bundle_root / "_source_episode",
         stats_jsonl=stats_path,
-        runtime_serial_file=runtime_serial_file,
+        server_host=server_host,
+        server_port=int(port),
+        target_package=target_package,
         max_steps=max(int(max_steps), int(teacher_payload["action_count"]) + 3),
         task_random_seed=SOURCE_SEED,
         fixed_task_seed=True,
@@ -404,14 +402,12 @@ def prepare_mobilegpt_source_memory(
         adb_path=str(adb_path),
         start_timeout_sec=float(wait_start_timeout_sec),
         finish_timeout_sec=float(wait_finish_timeout_sec),
-        rebroadcast_limit=0,
     )
     episode_spec.metadata.update(
         {
             "model": normalized_model,
             "source_method": source_method,
             "prep_type": "mobilegpt_native_teacher_source_memory",
-            "rebroadcast_limit": 0,
         }
     )
     command_manifest_path = bundle_root / "source_episode_command.json"

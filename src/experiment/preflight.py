@@ -771,10 +771,7 @@ def main(argv: list[str] | None = None) -> int:
                 installed_version == expected_version,
                 f"{installed_version}; require {expected_version}",
             )
-    if appagent_mode or native_mode:
-        add("jq", True, f"not required by {profile} profile")
-    else:
-        add("jq", bool(shutil.which("jq")), shutil.which("jq") or "missing")
+    add("jq", True, f"not required by {profile} profile")
     add("java", bool(shutil.which("java")), shutil.which("java") or "missing")
     add("model_key", bool(os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY")), "configured" if os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY") else "missing")
     if appagent_mode or native_mode:
@@ -831,7 +828,11 @@ def main(argv: list[str] | None = None) -> int:
                     else ()
                 )
             else:
-                required_packages = ("com.example.MobileGPT", "com.google.android.contacts")
+                required_packages = (
+                    ("com.google.android.contacts",)
+                    if args.require_contacts_ready
+                    else ()
+                )
             for package_name in required_packages:
                 package = _run([adb, "-s", args.serial, "shell", "pm", "path", package_name], timeout=10)
                 add(f"package:{package_name}", package.stdout.strip().startswith("package:"), package.stdout.strip() or "missing")

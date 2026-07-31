@@ -3689,8 +3689,7 @@ def _build_launch_agent(
 
         return build_mobilegpt_agent(
             env=env,
-            adb_serial=adb_serial,
-            adb_path=adb_path,
+            evidence_root=evidence_root or None,
         )
     if resolved_agent in {"external:appagent", "external:appagent_teacher"}:
         from src.integrations.appagent_adapter import (

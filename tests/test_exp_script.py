@@ -610,7 +610,7 @@ exit 0
     assert completed.returncode == 0, completed.stderr
     assert converted_marker.is_file()
     assert mobilegpt_marker.is_file()
-    assert mobilegpt_install_marker.is_file()
+    assert not mobilegpt_install_marker.exists()
     assert appagent_marker.is_file()
     assert replayed_marker.is_file()
     calls = call_log.read_text(encoding="utf-8")
@@ -655,12 +655,8 @@ exit 0
 
     assert checked.returncode == 0, checked.stderr
     checked_calls = call_log.read_text(encoding="utf-8")
-    assert checked_calls.count(
-        "src.experiment.androidworld mobilegpt audit-client"
-    ) == 3
-    assert checked_calls.count(
-        "src.experiment.androidworld mobilegpt prepare-client"
-    ) == 2
+    assert "src.experiment.androidworld mobilegpt audit-client" not in checked_calls
+    assert "src.experiment.androidworld mobilegpt prepare-client" not in checked_calls
 
 
 def test_task_major_completed_cells_skip_before_asset_generation(
