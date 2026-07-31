@@ -509,6 +509,81 @@ def test_canonical_grounding_recovers_unique_verified_legacy_target(
     assert audit["verified_source_target_count"] == 1
 
 
+def test_canonical_grounding_reuses_observations_for_state_id_provenance(
+    tmp_path: Path,
+) -> None:
+    raw_path = tmp_path / "raw-state-id.run_log.json"
+    raw = {
+        "schema_version": "omniflow.canonical_run_log.v1",
+        "run_id": "legacy-state-id",
+        "goal": "Tap Continue.",
+        "success": True,
+        "steps": [
+            {
+                "step_index": 0,
+                "before_state_id": "state-before",
+                "after_state_id": "state-after",
+                "action": {
+                    "tool": "click",
+                    "args": {
+                        "x": 500,
+                        "y": 500,
+                        "target_description": "Continue",
+                    },
+                },
+                "result": {"success": True},
+            }
+        ],
+    }
+    raw_path.write_text(json.dumps(raw), encoding="utf-8")
+    source_states = {
+        state_id: {
+            "state_id": state_id,
+            "xml": (
+                '<hierarchy><node text="Continue" '
+                'resource-id="app:id/continue" clickable="true" '
+                'bounds="[40,40][60,60]" /></hierarchy>'
+            ),
+            "package_name": "com.example.app",
+            "activity_name": ".MainActivity",
+            "display": {"width": 100, "height": 100},
+        }
+        for state_id in ("state-before", "state-after")
+    }
+    canonical = convert_legacy_run_log(
+        raw,
+        task_name="LegacyTargetTask",
+        task_parameters={},
+        seed=111,
+        source_path=raw_path,
+        source_states=source_states,
+        require_screenshots=False,
+    )
+    canonical["steps"][0].pop("metadata", None)
+    canonical_path = tmp_path / "canonical-state-id.run_log.json"
+    canonical_path.write_text(json.dumps(canonical), encoding="utf-8")
+    item = SimpleNamespace(
+        task="LegacyTargetTask",
+        source_run_log=canonical_path,
+        meta={
+            "retained_source_run_log_sha256": hashlib.sha256(
+                canonical_path.read_bytes()
+            ).hexdigest()
+        },
+    )
+
+    grounded, audit = build_grounded_teacher_run_log_from_item(
+        index_path=tmp_path / "source_index.json",
+        item=item,
+    )
+
+    assert grounded["steps"][0]["metadata"]["source_context"]["element"] == {
+        "text": "Continue",
+        "resource_id": "app:id/continue",
+    }
+    assert audit["source_target_evidence_source"] == "verified_legacy_provenance"
+
+
 def test_canonical_grounding_rejects_legacy_provenance_hash_mismatch(
     tmp_path: Path,
 ) -> None:

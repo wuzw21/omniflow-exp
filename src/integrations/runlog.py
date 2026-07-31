@@ -172,7 +172,18 @@ def import_run_log_evidence(
     run_log = canonicalize_run_log(value)
     states: dict[str, dict[str, Any]] = {}
     for step in run_log["steps"]:
-        observation = step["observation"]
+        observations = [step["observation"]]
+        if isinstance(step.get("next_observation"), dict):
+            observations.append(step["next_observation"])
+        for observation in observations:
+            source_state = _transfer_state(observation)
+            existing = states.get(source_state["state_id"])
+            if existing is not None and existing != source_state:
+                raise ValueError(f"source_state_conflict:{source_state['state_id']}")
+            states[source_state["state_id"]] = source_state
+    final_observation = run_log.get("final_observation")
+    if isinstance(final_observation, dict):
+        observation = final_observation
         source_state = _transfer_state(observation)
         existing = states.get(source_state["state_id"])
         if existing is not None and existing != source_state:

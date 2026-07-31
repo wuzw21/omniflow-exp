@@ -569,6 +569,7 @@ def _target_audit_from_embedded_evidence(
 
 def _target_audit_from_legacy_provenance(
     canonical: dict[str, Any],
+    source_states: dict[str, dict[str, Any]],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     provenance = canonical.get("provenance")
     if not isinstance(provenance, dict) or provenance.get("kind") != "legacy_import":
@@ -598,6 +599,7 @@ def _target_audit_from_legacy_provenance(
         task_parameters=dict(canonical.get("task_parameters") or {}),
         seed=canonical.get("seed"),
         source_path=source_path,
+        source_states=source_states,
         require_screenshots=False,
     )
     if len(reconverted["steps"]) != len(canonical["steps"]):
@@ -621,11 +623,12 @@ def _target_audit_from_legacy_provenance(
 
 def _canonical_source_target_audit(
     canonical: dict[str, Any],
+    source_states: dict[str, dict[str, Any]],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     source_targets, audit = _target_audit_from_embedded_evidence(canonical)
     if audit["source_target_evidence_count"]:
         return source_targets, audit
-    return _target_audit_from_legacy_provenance(canonical)
+    return _target_audit_from_legacy_provenance(canonical, source_states)
 
 
 def _ground_source_actions(
@@ -911,7 +914,8 @@ def _build_grounded_teacher_run_log_from_canonical_source(
     )
     states = source_states["states"]
     source_target_audit, target_evidence_audit = _canonical_source_target_audit(
-        canonical
+        canonical,
+        states,
     )
     grounded, semantic_action_count = _ground_source_actions(
         canonical,
