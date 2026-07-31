@@ -14,7 +14,8 @@ from typing import Any
 
 from src.experiment import androidworld as pipeline
 from src.experiment.source_assets import (
-    build_grounded_teacher_run_log_from_item,
+    build_grounded_teacher_run_log_from_store_index,
+    resolve_store_source_run_log,
 )
 from src.integrations.runlog import import_run_log
 
@@ -97,13 +98,17 @@ def load_canonical_source_item(
 def validate_mobilegpt_source_memory(
     *,
     index_path: str | Path,
+    store_index_path: str | Path,
     task_name: str,
     memory_root: str | Path,
     model: str,
 ) -> dict[str, Any]:
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_method = source_method_label(item)
-    source_run_log = item.source_run_log
+    source_run_log, _ = resolve_store_source_run_log(
+        store_index_path,
+        task_name=item.task,
+    )
     validated = pipeline.validate_mobilegpt_adapted_memory(
         memory_root,
         task_name=item.task,
@@ -125,18 +130,18 @@ def validate_mobilegpt_source_memory(
 
 def _grounded_source_payload(
     *,
-    index_path: str | Path,
+    store_index_path: str | Path,
     item: pipeline.ArchivedRunLog,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    return build_grounded_teacher_run_log_from_item(
-        index_path=index_path,
-        item=item,
+    return build_grounded_teacher_run_log_from_store_index(
+        store_index_path=store_index_path,
+        task_name=item.task,
     )
 
 
 def _preflight_mobilegpt_teacher(
     *,
-    index_path: str | Path,
+    store_index_path: str | Path,
     item: pipeline.ArchivedRunLog,
 ) -> tuple[
     dict[str, Any],
@@ -145,7 +150,7 @@ def _preflight_mobilegpt_teacher(
     dict[str, str],
 ]:
     grounded, grounding_audit = _grounded_source_payload(
-        index_path=index_path,
+        store_index_path=store_index_path,
         item=item,
     )
     with tempfile.TemporaryDirectory(
@@ -217,6 +222,7 @@ def _mobilegpt_source_target(
 def preflight_mobilegpt_source(
     *,
     index_path: str | Path,
+    store_index_path: str | Path,
     task_name: str,
 ) -> dict[str, Any]:
     """Validate one source asset without creating a persistent output."""
@@ -224,7 +230,7 @@ def preflight_mobilegpt_source(
     item = load_canonical_source_item(index_path, task_name=task_name)
     _, grounding_audit, teacher_payload, target_info = (
         _preflight_mobilegpt_teacher(
-            index_path=index_path,
+            store_index_path=store_index_path,
             item=item,
         )
     )
@@ -257,6 +263,7 @@ def preflight_mobilegpt_source(
 def prepare_mobilegpt_source_memory(
     *,
     index_path: str | Path,
+    store_index_path: str | Path,
     task_name: str,
     mobilegpt_root: str | Path,
     android_world_root: str | Path,
@@ -287,7 +294,7 @@ def prepare_mobilegpt_source_memory(
         )
     grounded_payload, grounding_audit, teacher_payload, target_info = (
         _preflight_mobilegpt_teacher(
-            index_path=index_path,
+            store_index_path=store_index_path,
             item=item,
         )
     )
@@ -554,6 +561,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     prepare = subparsers.add_parser("prepare")
     prepare.add_argument("--index", required=True)
+    prepare.add_argument("--store-index", required=True)
     prepare.add_argument("--task", required=True)
     prepare.add_argument("--mobilegpt-root", required=True)
     prepare.add_argument("--android-world-root", required=True)
@@ -572,12 +580,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate = subparsers.add_parser("validate")
     validate.add_argument("--index", required=True)
+    validate.add_argument("--store-index", required=True)
     validate.add_argument("--task", required=True)
     validate.add_argument("--memory-root", required=True)
     validate.add_argument("--model", required=True)
 
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument("--index", required=True)
+    preflight.add_argument("--store-index", required=True)
     preflight.add_argument("--task", required=True)
     return parser
 
@@ -588,6 +598,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "prepare":
             result = prepare_mobilegpt_source_memory(
                 index_path=args.index,
+                store_index_path=args.store_index,
                 task_name=args.task,
                 mobilegpt_root=args.mobilegpt_root,
                 android_world_root=args.android_world_root,
@@ -607,6 +618,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "validate":
             result = validate_mobilegpt_source_memory(
                 index_path=args.index,
+                store_index_path=args.store_index,
                 task_name=args.task,
                 memory_root=args.memory_root,
                 model=args.model,
@@ -614,6 +626,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             result = preflight_mobilegpt_source(
                 index_path=args.index,
+                store_index_path=args.store_index,
                 task_name=args.task,
             )
     except BaseException as error:

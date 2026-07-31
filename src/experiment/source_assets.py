@@ -1049,3 +1049,29 @@ def resolve_store_source_run_log(
         label=f"store_source_run_log:{task_name}",
     )
     return source_path, str(row["source_run_log_sha256"])
+
+
+def build_grounded_teacher_run_log_from_store_index(
+    *,
+    store_index_path: str | Path,
+    task_name: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Ground one teacher from the canonical Function Store in memory."""
+
+    index_path = Path(store_index_path).expanduser().resolve()
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+    row = payload.get(str(task_name)) if isinstance(payload, dict) else None
+    if not isinstance(row, dict):
+        raise ValueError(f"store_index_task_missing:{task_name}")
+    return build_grounded_teacher_run_log(
+        source_run_log=row.get("source_run_log_path"),
+        source_state_catalog=row.get("transfer_states_path"),
+        provenance_manifest=row.get("provenance_path"),
+        expected_source_run_log_sha256=str(
+            row.get("source_run_log_sha256") or ""
+        ),
+        expected_source_state_catalog_sha256=str(
+            row.get("transfer_states_sha256") or ""
+        ),
+        expected_provenance_sha256=str(row.get("provenance_sha256") or ""),
+    )

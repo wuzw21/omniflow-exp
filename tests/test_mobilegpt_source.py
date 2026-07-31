@@ -142,6 +142,37 @@ def _mobilegpt_write_status(
     return summary, status
 
 
+def _write_store_index(source_index: Path) -> tuple[Path, Path]:
+    source_payload = json.loads(source_index.read_text(encoding="utf-8"))
+    source_row = source_payload["SystemBluetoothTurnOn"]
+    indexed_source_run_log = Path(source_row["retained_source_run_log"])
+    source_run_log = source_index.with_name("store_source.run_log.json")
+    source_run_log.write_bytes(indexed_source_run_log.read_bytes())
+    store_index = source_index.with_name("store_index.json")
+    store_index.write_text(
+        json.dumps(
+            {
+                "SystemBluetoothTurnOn": {
+                    "source_run_log_path": str(source_run_log),
+                    "source_run_log_sha256": hashlib.sha256(
+                        source_run_log.read_bytes()
+                    ).hexdigest(),
+                    "transfer_states_path": source_row["source_state_catalog"],
+                    "transfer_states_sha256": source_row[
+                        "source_state_catalog_sha256"
+                    ],
+                    "provenance_path": source_row["store_provenance"],
+                    "provenance_sha256": source_row[
+                        "store_provenance_sha256"
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return store_index, source_run_log
+
+
 def test_mobilegpt_teacher_source_records_partial_grounding_fallback(
     tmp_path: Path,
 ) -> None:
@@ -295,11 +326,16 @@ def test_mobilegpt_deterministic_preflight_does_not_claim_output(
     row = payload["SystemBluetoothTurnOn"]
     row["source_state_catalog_sha256"] = "0" * 64
     index.write_text(json.dumps(payload), encoding="utf-8")
+    store_index, _ = _write_store_index(index)
+    store_payload = json.loads(store_index.read_text(encoding="utf-8"))
+    store_payload["SystemBluetoothTurnOn"]["transfer_states_sha256"] = "0" * 64
+    store_index.write_text(json.dumps(store_payload), encoding="utf-8")
     output_root = tmp_path / "never-created"
 
     with pytest.raises(ValueError, match="source_state_catalog_hash_mismatch"):
         mobilegpt_source.prepare_mobilegpt_source_memory(
             index_path=index,
+            store_index_path=store_index,
             task_name="SystemBluetoothTurnOn",
             mobilegpt_root=tmp_path / "mobilegpt",
             android_world_root=tmp_path / "android_world",
@@ -451,6 +487,7 @@ def test_mobilegpt_preflight_resolves_target_from_frozen_source_states(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     index, _ = _write_source_index(tmp_path / "source-package")
+    store_index, _ = _write_store_index(index)
     monkeypatch.setattr(
         pipeline,
         "_infer_mobilegpt_target_from_source_run_log",
@@ -463,6 +500,7 @@ def test_mobilegpt_preflight_resolves_target_from_frozen_source_states(
 
     result = mobilegpt_source.preflight_mobilegpt_source(
         index_path=index,
+        store_index_path=store_index,
         task_name="SystemBluetoothTurnOn",
     )
 
@@ -470,10 +508,42 @@ def test_mobilegpt_preflight_resolves_target_from_frozen_source_states(
     assert result["target_source"] == "frozen_source_states"
 
 
+def test_mobilegpt_preflight_uses_canonical_store_source(
+    tmp_path: Path,
+) -> None:
+    index, indexed_source_run_log = _write_source_index(tmp_path / "source-store")
+    store_index, store_source_run_log = _write_store_index(index)
+    indexed_payload = json.loads(indexed_source_run_log.read_text(encoding="utf-8"))
+    indexed_payload["steps"][0]["observation"] = androidworld_state(
+        "different-state",
+        forest="",
+        package_name="com.android.settings",
+    )
+    indexed_source_run_log.write_text(
+        json.dumps(indexed_payload),
+        encoding="utf-8",
+    )
+    source_index_payload = json.loads(index.read_text(encoding="utf-8"))
+    source_index_payload["SystemBluetoothTurnOn"]["source_run_log_sha256"] = (
+        hashlib.sha256(indexed_source_run_log.read_bytes()).hexdigest()
+    )
+    index.write_text(json.dumps(source_index_payload), encoding="utf-8")
+
+    result = mobilegpt_source.preflight_mobilegpt_source(
+        index_path=index,
+        store_index_path=store_index,
+        task_name="SystemBluetoothTurnOn",
+    )
+
+    assert Path(result["source_run_log"]) == store_source_run_log
+    assert result["ready"] is True
+
+
 def test_mobilegpt_preflight_resolves_target_from_official_open_app_action(
     tmp_path: Path,
 ) -> None:
     index, source_run_log = _write_source_index(tmp_path / "official-action")
+    store_index, _ = _write_store_index(index)
     source_run_log.write_text(
         json.dumps(
             androidworld_run_log(
@@ -526,6 +596,7 @@ def test_mobilegpt_preflight_resolves_target_from_official_open_app_action(
 
     result = mobilegpt_source.preflight_mobilegpt_source(
         index_path=index,
+        store_index_path=store_index,
         task_name="SystemBluetoothTurnOn",
     )
 
@@ -562,6 +633,7 @@ def test_mobilegpt_source_generation_has_no_model_or_episode_retry(
     source_root = tmp_path / "source"
     source_root.mkdir()
     index, _ = _write_source_index(source_root)
+    store_index, _ = _write_store_index(index)
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
@@ -683,6 +755,7 @@ def test_mobilegpt_source_generation_has_no_model_or_episode_retry(
 
     result = mobilegpt_source.prepare_mobilegpt_source_memory(
         index_path=index,
+        store_index_path=store_index,
         task_name="SystemBluetoothTurnOn",
         mobilegpt_root=tmp_path / "mobilegpt",
         android_world_root=tmp_path / "android_world",
