@@ -332,6 +332,7 @@ def _dismiss_known_accessibility_crash_dialog(
             "shell",
             "am",
             "broadcast",
+            "--async",
             "-a",
             "android.intent.action.CLOSE_SYSTEM_DIALOGS",
         ],

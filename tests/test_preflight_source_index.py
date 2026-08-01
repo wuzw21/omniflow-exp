@@ -60,6 +60,7 @@ def test_preflight_dismisses_known_accessibility_crash_dialog(monkeypatch) -> No
         "shell",
         "am",
         "broadcast",
+        "--async",
         "-a",
         "android.intent.action.CLOSE_SYSTEM_DIALOGS",
     ]

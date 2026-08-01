@@ -677,3 +677,38 @@ def test_androidworld_restores_chrome_before_agent_reads_task_context(
         "context_updated",
         "a11y_ready",
     ]
+
+
+def test_androidworld_closes_system_dialogs_with_async_broadcast(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def run_adb_command(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        return {"returncode": 0}
+
+    monkeypatch.setattr(launch, "_run_adb_command", run_adb_command)
+
+    launch._close_android_system_dialogs(
+        adb_serial="emulator-5554",
+        adb_path="/sdk/adb",
+        failure="test_failure",
+    )
+
+    assert calls == [
+        {
+            "adb_serial": "emulator-5554",
+            "adb_path": "/sdk/adb",
+            "adb_args": [
+                "shell",
+                "am",
+                "broadcast",
+                "--async",
+                "-a",
+                "android.intent.action.CLOSE_SYSTEM_DIALOGS",
+            ],
+            "timeout_sec": 15,
+            "capture_stdout": True,
+        }
+    ]

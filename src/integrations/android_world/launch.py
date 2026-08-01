@@ -2239,21 +2239,11 @@ def _prepare_native_androidworld_a11y_runtime(
     refresh_env = getattr(controller, "refresh_env", None)
     if callable(refresh_env):
         refresh_env()
-    close_dialogs = _run_adb_command(
+    _close_android_system_dialogs(
         adb_serial=adb_serial,
         adb_path=adb_path,
-        adb_args=[
-            "shell",
-            "am",
-            "broadcast",
-            "-a",
-            "android.intent.action.CLOSE_SYSTEM_DIALOGS",
-        ],
-        timeout_sec=15,
-        capture_stdout=True,
+        failure="androidworld_close_system_dialogs_failed",
     )
-    if close_dialogs["returncode"] != 0:
-        raise RuntimeError("androidworld_close_system_dialogs_failed")
     dialog_deadline = time.monotonic() + 3.0
     while True:
         focused_window = _run_adb_command(
@@ -2708,6 +2698,31 @@ def _run_adb_command(
     if capture_stdout:
         record["stdout"] = completed.stdout
     return record
+
+
+def _close_android_system_dialogs(
+    *,
+    adb_serial: str,
+    adb_path: str,
+    failure: str,
+) -> dict[str, Any]:
+    result = _run_adb_command(
+        adb_serial=adb_serial,
+        adb_path=adb_path,
+        adb_args=[
+            "shell",
+            "am",
+            "broadcast",
+            "--async",
+            "-a",
+            "android.intent.action.CLOSE_SYSTEM_DIALOGS",
+        ],
+        timeout_sec=15,
+        capture_stdout=True,
+    )
+    if result["returncode"] != 0:
+        raise RuntimeError(failure)
+    return result
 
 
 def _read_raw_replay_run_log(path_text: str) -> dict[str, Any]:
@@ -4538,21 +4553,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 adb_serial=target_adb_serial,
                 adb_path=str(args.adb_path or ""),
             )
-            close_setup_dialogs = _run_adb_command(
+            _close_android_system_dialogs(
                 adb_serial=target_adb_serial,
                 adb_path=str(args.adb_path or ""),
-                adb_args=[
-                    "shell",
-                    "am",
-                    "broadcast",
-                    "-a",
-                    "android.intent.action.CLOSE_SYSTEM_DIALOGS",
-                ],
-                timeout_sec=15,
-                capture_stdout=True,
+                failure="androidworld_setup_close_system_dialogs_failed",
             )
-            if close_setup_dialogs["returncode"] != 0:
-                raise RuntimeError("androidworld_setup_close_system_dialogs_failed")
             logger.info(
                 "AndroidWorld app setup A11Y runtime ready: %s",
                 setup_forwarder,
