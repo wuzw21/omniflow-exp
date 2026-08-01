@@ -326,9 +326,14 @@ def patch_androidworld_setup_click_retry(
                 return None
             if (
                 target_text == "Skip"
-                and "Open with Contacts" in visible
                 and "Always" in visible
+                and any(label.startswith("Open with ") for label in visible)
             ):
+                if "Open with Contacts" not in visible and "Contacts" in visible:
+                    click_label(controller, "Contacts", args, kwargs)
+                    if attempt < max(1, int(attempts)):
+                        time.sleep(max(0.0, float(delay_seconds)))
+                        continue
                 click_label(controller, "Always", args, kwargs)
                 if attempt < max(1, int(attempts)):
                     time.sleep(max(0.0, float(delay_seconds)))

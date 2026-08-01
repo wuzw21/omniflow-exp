@@ -139,6 +139,35 @@ def test_androidworld_setup_resolves_contacts_chooser_before_onboarding() -> Non
     assert click_calls == ["Always", "Skip"]
 
 
+def test_androidworld_setup_selects_contacts_before_resolving_chooser() -> None:
+    click_calls: list[str] = []
+    visible = ["Open with Omnibot", "Contacts", "Always"]
+
+    class Controller:
+        def __init__(self) -> None:
+            self._env = SimpleNamespace(
+                get_ui_elements=lambda: [_setup_element(text) for text in visible]
+            )
+
+        def click_element(self, element_text: str) -> None:
+            click_calls.append(element_text)
+            if element_text == "Contacts":
+                visible[:] = ["Open with Contacts", "Always"]
+            elif element_text == "Always":
+                visible[:] = ["Skip"]
+
+    tools_module = SimpleNamespace(AndroidToolController=Controller)
+    patch_androidworld_setup_click_retry(
+        tools_module,
+        attempts=3,
+        delay_seconds=0,
+    )
+
+    Controller().click_element("Skip")
+
+    assert click_calls == ["Contacts", "Always", "Skip"]
+
+
 def test_androidworld_setup_accepts_ready_contacts_without_notification_dialog() -> None:
     click_calls: list[str] = []
 
