@@ -2727,7 +2727,13 @@ def _raw_replay_step_actions(data: dict[str, Any]) -> list[dict[str, Any]]:
                 display=display,
             )
             if selector:
-                return {"type": tool, "params": {"selector": selector}}
+                projected = {
+                    "type": tool,
+                    "params": {**params, "selector": selector},
+                }
+                if any(key in params for key in ("x", "y")):
+                    projected["coordinate_space"] = "canonical_0_1000"
+                return projected
             projected = {"type": tool, "params": params}
             if any(key in params for key in ("x", "y")):
                 projected["coordinate_space"] = "canonical_0_1000"
@@ -3024,6 +3030,7 @@ def _raw_replay_action_to_payload(
     source_size: tuple[int, int] | None,
     target_size: tuple[int, int],
     target_xml: str = "",
+    resolution: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     action_type = str(
         source_action.get("type")
@@ -3045,6 +3052,17 @@ def _raw_replay_action_to_payload(
     else:
         source_width, source_height = source_size or (target_size[0], target_size[1])
     target_width, target_height = target_size
+
+    def _record_resolution(
+        parameter_source: str,
+        *,
+        selector_error: str = "",
+    ) -> None:
+        if resolution is None:
+            return
+        resolution["parameter_source"] = parameter_source
+        if selector_error:
+            resolution["selector_error"] = selector_error
 
     def _scaled_xy() -> tuple[int | None, int | None]:
         relative_x, relative_y = _raw_replay_relative_coord_pair(
@@ -3082,11 +3100,20 @@ def _raw_replay_action_to_payload(
                 selector,
             )
             if selector_error is not None:
-                return None, selector_error
-            assert center is not None
-            x, y = center
+                x, y = _scaled_xy()
+                if x is None or y is None:
+                    return None, selector_error
+                _record_resolution(
+                    "scaled_coordinate_fallback",
+                    selector_error=selector_error,
+                )
+            else:
+                assert center is not None
+                x, y = center
+                _record_resolution("selector")
         else:
             x, y = _scaled_xy()
+            _record_resolution("scaled_coordinate_fallback")
         if x is None or y is None:
             return None, "missing_selector_and_coordinates"
         return {
@@ -3510,7 +3537,7 @@ def _apply_fixed_replay(
                     "summary": "fixed replay already completed",
                     "run_id": payload.get("run_id"),
                     "step_index": 0,
-                    "source": "selector_then_scaled_coordinate_replay",
+                    "source": "selector_then_scaled_coordinate_fallback_v2",
                     "actions_executed": int(summary.get("actions_executed") or 0),
                     "fallback": False,
                     "error": None,
@@ -3541,6 +3568,8 @@ def _apply_fixed_replay(
         actions_executed = 0
         selector_actions = 0
         scaled_coordinate_actions = 0
+        selector_fallback_actions = 0
+        direct_actions = 0
         for index, source_action in enumerate(source_actions):
             observation_record: dict[str, Any] | None = None
             source_params = (
@@ -3564,11 +3593,23 @@ def _apply_fixed_replay(
                     replay_observe(xml=True, screenshot=False, app_info=True),
                     fallback_size=(int(target_size[0]), int(target_size[1])),
                 )
+            action_resolution: dict[str, Any] = {}
             payload, skip_reason = _raw_replay_action_to_payload(
                 source_action,
                 source_size=source_size,
                 target_size=(int(target_size[0]), int(target_size[1])),
                 target_xml=str((observation_record or {}).get("xml") or ""),
+                resolution=action_resolution,
+            )
+            parameter_source = str(
+                action_resolution.get("parameter_source")
+                or (
+                    "selector"
+                    if needs_selector_observation
+                    else "scaled_coordinate_fallback"
+                    if uses_scaled_coordinates
+                    else "direct_androidworld_action"
+                )
             )
             step_record: dict[str, Any] = {
                 "index": index,
@@ -3578,14 +3619,13 @@ def _apply_fixed_replay(
                 "target_screen_size": [int(target_size[0]), int(target_size[1])],
                 "completed": False,
                 "skipped": False,
-                "parameter_source": (
-                    "selector"
-                    if needs_selector_observation
-                    else "scaled_coordinate_fallback"
-                    if uses_scaled_coordinates
-                    else "direct_androidworld_action"
-                ),
+                "parameter_source": parameter_source,
             }
+            selector_fallback_reason = str(
+                action_resolution.get("selector_error") or ""
+            )
+            if selector_fallback_reason:
+                step_record["selector_fallback_reason"] = selector_fallback_reason
             if observation_record is not None:
                 step_record["observation_before_act"] = observation_record
             if skip_reason:
@@ -3601,10 +3641,14 @@ def _apply_fixed_replay(
                     target_size=(int(target_size[0]), int(target_size[1])),
                 )
                 actions_executed += 1
-                if needs_selector_observation:
+                if parameter_source == "selector":
                     selector_actions += 1
-                elif uses_scaled_coordinates:
+                elif parameter_source == "scaled_coordinate_fallback":
                     scaled_coordinate_actions += 1
+                    if selector_fallback_reason:
+                        selector_fallback_actions += 1
+                else:
+                    direct_actions += 1
                 step_record["completed"] = True
                 wait_after_s = _raw_replay_action_wait_seconds(
                     source_action,
@@ -3652,11 +3696,13 @@ def _apply_fixed_replay(
         execution_summary = {
             "completed": bool(completed),
             "replay_completed": bool(completed),
-            "execution_backend": "selector_then_scaled_coordinate_replay",
+            "execution_backend": "selector_then_scaled_coordinate_fallback_v2",
             "steps": int(actions_executed),
             "actions_executed": int(actions_executed),
             "selector_actions": int(selector_actions),
             "scaled_coordinate_actions": int(scaled_coordinate_actions),
+            "selector_fallback_actions": int(selector_fallback_actions),
+            "direct_actions": int(direct_actions),
             "model_calls": 0,
             "tokens": 0,
             "prompt_tokens": 0,
@@ -3687,7 +3733,7 @@ def _apply_fixed_replay(
                 {
                     "step_index": 0,
                     "selection_source": "fixed_replay",
-                    "execution_source": "selector_then_scaled_coordinate_replay",
+                    "execution_source": "selector_then_scaled_coordinate_fallback_v2",
                     "provider_detail": {
                         "raw_replay": {
                             "source_run_log": str(run_log_json_path),
@@ -3697,6 +3743,10 @@ def _apply_fixed_replay(
                             "scaled_coordinate_actions": int(
                                 scaled_coordinate_actions
                             ),
+                            "selector_fallback_actions": int(
+                                selector_fallback_actions
+                            ),
+                            "direct_actions": int(direct_actions),
                             "source_screen_size": list(source_size)
                             if source_size
                             else None,
@@ -3756,6 +3806,10 @@ def _apply_fixed_replay(
                                 "scaled_coordinate_actions": int(
                                     scaled_coordinate_actions
                                 ),
+                                "selector_fallback_actions": int(
+                                    selector_fallback_actions
+                                ),
+                                "direct_actions": int(direct_actions),
                                 "duration_ms": elapsed_ms,
                                 "run_log": run_log,
                             }
@@ -3774,7 +3828,7 @@ def _apply_fixed_replay(
                 "summary": error_text or "fixed replay executed",
                 "run_id": run_id,
                 "step_index": 0,
-                "source": "selector_then_scaled_coordinate_replay",
+                "source": "selector_then_scaled_coordinate_fallback_v2",
                 "actions_executed": int(actions_executed),
                 "fallback": False,
                 "error": error_text,

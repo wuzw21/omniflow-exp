@@ -38,14 +38,14 @@ def test_fixed_replay_source_xml_metadata_is_promoted() -> None:
         [
             {
                 "metadata": {
-                    "execution_backend": "selector_then_scaled_coordinate_replay",
+                    "execution_backend": "selector_then_scaled_coordinate_fallback_v2",
                     "uses_source_xml": True,
                 }
             }
         ],
     )
 
-    assert row["execution_backend"] == "selector_then_scaled_coordinate_replay"
+    assert row["execution_backend"] == "selector_then_scaled_coordinate_fallback_v2"
     assert row["uses_source_xml"] is True
 
 

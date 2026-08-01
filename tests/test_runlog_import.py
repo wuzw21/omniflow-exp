@@ -787,8 +787,11 @@ def test_fixed_replay_accepts_only_omniflow_run_log() -> None:
                 "selector": {
                     "text": "Network & internet",
                     "resource_id": "com.android.settings:id/network_dashboard",
-                }
+                },
+                "x": 500.0,
+                "y": 500.0,
             },
+            "coordinate_space": "canonical_0_1000",
         },
     ]
 
@@ -834,7 +837,8 @@ def test_fixed_replay_scales_coordinates_only_without_selector() -> None:
     assert payload == {"action_type": "click", "x": 720, "y": 1280}
 
 
-def test_fixed_replay_does_not_fallback_when_selector_misses() -> None:
+def test_fixed_replay_scales_source_coordinates_when_selector_misses() -> None:
+    resolution: dict[str, object] = {}
     payload, error = _raw_replay_action_to_payload(
         {
             "type": "click",
@@ -851,10 +855,47 @@ def test_fixed_replay_does_not_fallback_when_selector_misses() -> None:
             '<hierarchy><node text="Different target" '
             'bounds="[100,100][300,300]" /></hierarchy>'
         ),
+        resolution=resolution,
     )
 
-    assert payload is None
-    assert error == "selector_target_not_found"
+    assert error is None
+    assert payload == {"action_type": "click", "x": 720, "y": 1280}
+    assert resolution == {
+        "parameter_source": "scaled_coordinate_fallback",
+        "selector_error": "selector_target_not_found",
+    }
+
+
+def test_fixed_replay_scales_source_coordinates_when_selector_is_ambiguous() -> None:
+    resolution: dict[str, object] = {}
+    payload, error = _raw_replay_action_to_payload(
+        {
+            "type": "click",
+            "params": {
+                "selector": {
+                    "relation": "unique_actionable_descendant",
+                    "container_anchor": {"text": "task.html"},
+                },
+                "x": 500,
+                "y": 500,
+            },
+            "coordinate_space": "canonical_0_1000",
+        },
+        source_size=(720, 1280),
+        target_size=(1440, 2560),
+        target_xml=(
+            '<hierarchy><node><node text="task.html" /></node>'
+            '<node><node text="task.html" /></node></hierarchy>'
+        ),
+        resolution=resolution,
+    )
+
+    assert error is None
+    assert payload == {"action_type": "click", "x": 720, "y": 1280}
+    assert resolution == {
+        "parameter_source": "scaled_coordinate_fallback",
+        "selector_error": "selector_container_anchor_ambiguous",
+    }
 
 
 def test_fixed_replay_resolves_structural_selector() -> None:

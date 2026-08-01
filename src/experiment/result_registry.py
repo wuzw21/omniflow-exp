@@ -699,7 +699,7 @@ def validate_formal_result_protocol(
     if method == "fixed_replay":
         if (
             row.get("execution_backend")
-            != "selector_then_scaled_coordinate_replay"
+            != "selector_then_scaled_coordinate_fallback_v2"
         ):
             violations.append("execution_backend")
 

@@ -1683,7 +1683,7 @@ def build_fixed_replay_command(
             "state_backend": "androidworld",
             "action_backend": "androidworld",
             "native_androidworld_agent_io": True,
-            "execution_backend": "selector_then_scaled_coordinate_replay",
+            "execution_backend": "selector_then_scaled_coordinate_fallback_v2",
             "uses_action_transfer": False,
             "uses_source_xml": True,
             "uses_vlm_fallback": False,

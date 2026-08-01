@@ -43,6 +43,7 @@ def _write_registered_cell(
     include_task_params: bool = True,
     legacy_fixed_replay: bool = False,
     include_uses_source_xml: bool = True,
+    fixed_replay_backend: str = "selector_then_scaled_coordinate_fallback_v2",
 ) -> None:
     cell = runs_root / task / method / device / attempt
     result_path = cell / "registered_result.json"
@@ -87,7 +88,7 @@ def _write_registered_cell(
                 "execution_backend": (
                     "raw_coordinate_replay"
                     if method == "fixed_replay" and legacy_fixed_replay
-                    else "selector_then_scaled_coordinate_replay"
+                    else fixed_replay_backend
                     if method == "fixed_replay"
                     else None
                 ),
@@ -258,6 +259,32 @@ def test_registered_cell_plan_rejects_legacy_coordinate_fixed_replay(
         device="small5554",
         success=True,
         legacy_fixed_replay=True,
+    )
+
+    with pytest.raises(ValueError, match="formal_result_protocol_mismatch"):
+        registered_cell_plan(
+            runs_root=runs_root,
+            task_name=task,
+            methods=("fixed_replay",),
+            devices=("small5554",),
+            source_seed=111,
+            evaluation_seed=113,
+            formal_max_steps=20,
+        )
+
+
+def test_registered_cell_plan_rejects_previous_selector_stop_policy(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "runs"
+    task = "BrowserMaze"
+    _write_registered_cell(
+        runs_root,
+        task=task,
+        method="fixed_replay",
+        device="small5554",
+        success=False,
+        fixed_replay_backend="selector_then_scaled_coordinate_replay",
     )
 
     with pytest.raises(ValueError, match="formal_result_protocol_mismatch"):

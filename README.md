@@ -46,8 +46,10 @@ bash scripts/exp/run_androidworld.sh \
   --tasks AudioRecorderRecordAudio
 ```
 
-For `fixed_replay`, the runtime consumes the recorded actions directly. For
-`ours`, a missing canonical Store is created through
+For `fixed_replay`, the runtime resolves a recorded selector first and falls
+back to the recorded point scaled to the target display whenever the selector
+cannot produce one target. For `ours`, a missing canonical Store is created
+through
 `compile_runlog_to_store(...)` followed by exactly one call to the existing
 `enhance_function(...)`, then frozen and registered in long-term memory.
 MobileGPT and AppAgent resolve or create their method-native source assets from
