@@ -279,7 +279,8 @@ if [[ "$refresh_memory" -eq 1 ]]; then
     echo "Set OMNIFLOW_EXP_MEMORY_ROOT to an absolute path." >&2
     exit 2
   fi
-  if [[ ! -f "$master_source_index" ]]; then
+  memory_pointer="$memory_root/current.json"
+  if [[ ! -f "$memory_pointer" && ! -f "$master_source_index" ]]; then
     echo "Canonical master source index missing: $master_source_index" >&2
     exit 2
   fi
@@ -295,8 +296,10 @@ if [[ "$refresh_memory" -eq 1 ]]; then
     -m src.experiment.artifact_memory
     refresh
     --memory-root "$memory_root"
-    --source-index "$master_source_index"
   )
+  if [[ ! -f "$memory_pointer" ]]; then
+    memory_args+=(--source-index "$master_source_index")
+  fi
   if [[ -n "$source_selection_manifest" ]]; then
     if [[ "$source_selection_manifest" != /* || ! -f "$source_selection_manifest" ]]; then
       echo "Source selection manifest must be an existing absolute file: $source_selection_manifest" >&2

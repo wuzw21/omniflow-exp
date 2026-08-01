@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
 import stat
 
 import pytest
@@ -620,8 +621,6 @@ def test_refresh_keeps_one_verified_runtime_store_from_duplicate_catalogs(
                 "refresh",
                 "--memory-root",
                 str(tmp_path / "memory"),
-                "--source-index",
-                str(source_index),
                 "--runlog-root",
                 str(tmp_path / "evidence"),
             ]
@@ -630,6 +629,39 @@ def test_refresh_keeps_one_verified_runtime_store_from_duplicate_catalogs(
     )
     refreshed = load_artifact_memory(tmp_path / "memory" / "current.json")
     assert list(refreshed["canonical"]["function_stores"]) == ["RecordWithName"]
+
+
+def test_refresh_reports_invalid_indexed_runlog_task_and_path(
+    tmp_path: Path,
+) -> None:
+    invalid_source = _write_json(
+        tmp_path / "invalid.run_log.json",
+        {"schema_version": "omniflow.run_log.v1", "steps": []},
+    )
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(invalid_source),
+            }
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "indexed_source_run_log_invalid:RecordWithName:"
+            + re.escape(str(invalid_source))
+        ),
+    ):
+        refresh_artifact_memory(
+            memory_root=tmp_path / "memory",
+            source_index=source_index,
+            function_catalogs=(),
+            runlog_roots=(tmp_path,),
+            result_roots=(),
+        )
 
 
 def test_refresh_registers_legacy_function_source_as_canonical_run_log(

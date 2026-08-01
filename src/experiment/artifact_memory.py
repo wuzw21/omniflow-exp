@@ -1158,7 +1158,13 @@ def _refresh_artifact_memory_unlocked(
             raise ValueError(f"run_log_must_be_object:{path}")
         indexed_task = indexed_paths.get(path)
         if indexed_task:
-            source_run_log = require_complete_source_run_log(payload)
+            try:
+                source_run_log = require_complete_source_run_log(payload)
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    f"indexed_source_run_log_invalid:{indexed_task}:{path}:"
+                    f"{error}"
+                ) from error
             if source_run_log["task_name"] != indexed_task:
                 raise ValueError(
                     "indexed_source_run_log_task_mismatch:"
@@ -1621,7 +1627,6 @@ def registered_cell_plan_from_memory(
 def refresh_artifact_memory_from_pointer(
     *,
     memory_index: str | Path,
-    source_index: str | Path | None = None,
     source_selection_manifest: str | Path | None = None,
     source_screenshot_roots: Sequence[str | Path] = (),
     additional_function_catalogs: Sequence[str | Path] = (),
@@ -1663,7 +1668,7 @@ def refresh_artifact_memory_from_pointer(
         )
         return _refresh_artifact_memory_unlocked(
             memory_root=pointer_path.parent,
-            source_index=source_index or str(inputs["source_index"]),
+            source_index=str(inputs["source_index"]),
             function_catalogs=function_catalogs,
             runlog_roots=runlog_roots,
             result_roots=result_roots,
@@ -1693,7 +1698,7 @@ def main(argv: list[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     refresh_parser = subparsers.add_parser("refresh")
     refresh_parser.add_argument("--memory-root", required=True)
-    refresh_parser.add_argument("--source-index", required=True)
+    refresh_parser.add_argument("--source-index")
     refresh_parser.add_argument("--source-selection-manifest")
     refresh_parser.add_argument("--source-screenshot-root", action="append", default=[])
     refresh_parser.add_argument("--function-catalog", action="append", default=[])
@@ -1714,7 +1719,6 @@ def main(argv: list[str] | None = None) -> int:
         if pointer_path.is_file():
             report = refresh_artifact_memory_from_pointer(
                 memory_index=pointer_path,
-                source_index=args.source_index,
                 source_selection_manifest=args.source_selection_manifest,
                 source_screenshot_roots=args.source_screenshot_root,
                 additional_function_catalogs=_split_values(args.function_catalog),
@@ -1722,6 +1726,10 @@ def main(argv: list[str] | None = None) -> int:
                 additional_result_roots=_split_values(args.result_root),
             )
         else:
+            if not args.source_index:
+                refresh_parser.error(
+                    "--source-index is required when initializing memory"
+                )
             report = refresh_artifact_memory(
                 memory_root=memory_root,
                 source_index=args.source_index,

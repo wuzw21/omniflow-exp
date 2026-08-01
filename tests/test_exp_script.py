@@ -1109,3 +1109,28 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
         "--result-root",
         str(results),
     ]
+
+    memory_root.mkdir()
+    (memory_root / "current.json").write_text("{}", encoding="utf-8")
+    source_index.unlink()
+    from_existing_memory = subprocess.run(
+        ["bash", str(SCRIPT), "--refresh-memory"],
+        cwd=REPO,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert from_existing_memory.returncode == 0, from_existing_memory.stderr
+    assert captured.read_text(encoding="utf-8").splitlines() == [
+        "-m",
+        "src.experiment.artifact_memory",
+        "refresh",
+        "--memory-root",
+        str(memory_root),
+        "--runlog-root",
+        str(runlogs),
+        "--result-root",
+        str(results),
+    ]
