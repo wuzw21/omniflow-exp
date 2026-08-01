@@ -179,7 +179,7 @@ def patch_androidworld_osmand_storage_setup(setup_module: Any) -> None:
 
     if getattr(setup_module, "_omniflow_osmand_storage_patch", False):
         return
-    osmand_app = setup_module.apps.OsmandApp
+    osmand_app = setup_module.apps.OsmAndApp
     original_setup = osmand_app.setup
 
     def setup(cls: Any, env: Any) -> None:
@@ -240,7 +240,15 @@ def patch_androidworld_special_storage_setup(setup_module: Any) -> None:
 
     def setup_vlc(cls: Any, env: Any) -> None:
         _grant_manage_external_storage(apps_module, cls.app_name, env)
-        original_vlc_setup(env)
+        try:
+            original_vlc_setup(env)
+        except ValueError as error:
+            if 'setup target "GRANT PERMISSION" not found' not in str(error):
+                raise
+            _grant_manage_external_storage(apps_module, cls.app_name, env)
+            logging.warning(
+                "VLC special storage UI was absent; verified app-op instead."
+            )
 
     vlc_app.setup = classmethod(setup_vlc)
     setup_module._omniflow_special_storage_patch = True

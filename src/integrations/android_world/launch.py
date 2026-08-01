@@ -4492,7 +4492,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if app_setup not in seen_setup_apps:
                     setup_apps.append(app_setup)
                     seen_setup_apps.add(app_setup)
-            setup_app_list = tuple(setup_apps) if setup_apps else None
+            setup_app_list = tuple(setup_apps)
 
         target_adb_serial = str(
             os.environ.get("ANDROID_SERIAL") or f"emulator-{int(args.console_port)}"
@@ -4514,12 +4514,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "OOB get_state not ready before AndroidWorld setup: "
                     + str(oob_prepare.get("error") or oob_prepare)
                 )
-        if bool(args.perform_emulator_setup):
-            logger.info(
-                "Setting up AndroidWorld snapshots for selected tasks: %s",
-                ", ".join(selected_task_names) or "<all>",
-            )
-            aw_setup.setup_apps(env, app_list=setup_app_list)
         if not _use_oob_observe_backend() and not native_appagent:
             a11y_runtime = _prepare_native_androidworld_a11y_runtime(
                 env,
@@ -4527,6 +4521,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 adb_path=str(args.adb_path or ""),
             )
             logger.info("Native AndroidWorld A11Y runtime ready: %s", a11y_runtime)
+        if bool(args.perform_emulator_setup):
+            logger.info(
+                "Setting up AndroidWorld snapshots for selected tasks: %s",
+                ", ".join(selected_task_names) or "<all>",
+            )
+            aw_setup.setup_apps(env, app_list=setup_app_list)
 
         suite = suite_utils.create_suite(
             task_types,

@@ -194,7 +194,7 @@ def test_androidworld_osmand_chcon_requires_verified_map() -> None:
     commands: list[list[str]] = []
     response = SimpleNamespace(status="ok", generic=SimpleNamespace(output=b""))
 
-    class OsmandApp:
+    class OsmAndApp:
         MAP_NAMES = ("map.obf",)
         DEVICE_MAPS_PATH = "/storage/maps/"
 
@@ -205,7 +205,7 @@ def test_androidworld_osmand_chcon_requires_verified_map() -> None:
             )
 
     setup_module = SimpleNamespace(
-        apps=SimpleNamespace(OsmandApp=OsmandApp),
+        apps=SimpleNamespace(OsmAndApp=OsmAndApp),
         adb_utils=SimpleNamespace(
             issue_generic_request=lambda command, controller: (
                 commands.append(command) or response
@@ -215,7 +215,7 @@ def test_androidworld_osmand_chcon_requires_verified_map() -> None:
     )
 
     patch_androidworld_osmand_storage_setup(setup_module)
-    OsmandApp.setup(SimpleNamespace(controller=object()))
+    OsmAndApp.setup(SimpleNamespace(controller=object()))
 
     assert commands == [["shell", "test", "-s", "/storage/maps/map.obf"]]
 
@@ -266,6 +266,60 @@ def test_androidworld_gallery_missing_dialog_requires_verified_appop() -> None:
             "appops",
             "set",
             "package.simple gallery pro",
+            "MANAGE_EXTERNAL_STORAGE",
+            "allow",
+        ]
+    ) == 2
+
+
+def test_androidworld_vlc_missing_dialog_requires_verified_appop() -> None:
+    commands: list[list[str]] = []
+    response = SimpleNamespace(
+        status="ok",
+        generic=SimpleNamespace(output=b"MANAGE_EXTERNAL_STORAGE: allow"),
+    )
+
+    class GalleryApp:
+        app_name = "simple gallery pro"
+
+        @classmethod
+        def setup(cls, env) -> None:
+            return None
+
+    class VlcApp:
+        app_name = "vlc"
+
+        @classmethod
+        def setup(cls, env) -> None:
+            raise ValueError(
+                'AndroidWorld setup target "GRANT PERMISSION" not found'
+            )
+
+    adb_utils = SimpleNamespace(
+        extract_package_name=lambda activity: activity,
+        get_adb_activity=lambda app_name: f"package.{app_name}",
+        issue_generic_request=lambda command, controller: (
+            commands.append(command) or response
+        ),
+        check_ok=lambda actual_response, message: None,
+    )
+    setup_module = SimpleNamespace(
+        apps=SimpleNamespace(
+            SimpleGalleryProApp=GalleryApp,
+            VlcApp=VlcApp,
+            adb_utils=adb_utils,
+        )
+    )
+
+    patch_androidworld_special_storage_setup(setup_module)
+    VlcApp.setup(SimpleNamespace(controller=object()))
+
+    assert commands.count(
+        [
+            "shell",
+            "appops",
+            "set",
+            "package.vlc",
             "MANAGE_EXTERNAL_STORAGE",
             "allow",
         ]
