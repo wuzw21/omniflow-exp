@@ -4514,6 +4514,40 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "OOB get_state not ready before AndroidWorld setup: "
                     + str(oob_prepare.get("error") or oob_prepare)
                 )
+        if (
+            bool(args.perform_emulator_setup)
+            and not _use_oob_observe_backend()
+            and not native_appagent
+        ):
+            setup_forwarder = _quiesce_androidworld_accessibility_forwarder(
+                adb_serial=target_adb_serial,
+                adb_path=str(args.adb_path or ""),
+            )
+            close_setup_dialogs = _run_adb_command(
+                adb_serial=target_adb_serial,
+                adb_path=str(args.adb_path or ""),
+                adb_args=[
+                    "shell",
+                    "am",
+                    "broadcast",
+                    "-a",
+                    "android.intent.action.CLOSE_SYSTEM_DIALOGS",
+                ],
+                timeout_sec=15,
+                capture_stdout=True,
+            )
+            if close_setup_dialogs["returncode"] != 0:
+                raise RuntimeError("androidworld_setup_close_system_dialogs_failed")
+            logger.info(
+                "AndroidWorld app setup A11Y runtime ready: %s",
+                setup_forwarder,
+            )
+        if bool(args.perform_emulator_setup):
+            logger.info(
+                "Setting up AndroidWorld snapshots for selected tasks: %s",
+                ", ".join(selected_task_names) or "<all>",
+            )
+            aw_setup.setup_apps(env, app_list=setup_app_list)
         if not _use_oob_observe_backend() and not native_appagent:
             a11y_runtime = _prepare_native_androidworld_a11y_runtime(
                 env,
@@ -4521,12 +4555,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 adb_path=str(args.adb_path or ""),
             )
             logger.info("Native AndroidWorld A11Y runtime ready: %s", a11y_runtime)
-        if bool(args.perform_emulator_setup):
-            logger.info(
-                "Setting up AndroidWorld snapshots for selected tasks: %s",
-                ", ".join(selected_task_names) or "<all>",
-            )
-            aw_setup.setup_apps(env, app_list=setup_app_list)
 
         suite = suite_utils.create_suite(
             task_types,

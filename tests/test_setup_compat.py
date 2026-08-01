@@ -384,6 +384,39 @@ def test_androidworld_setup_failure_does_not_save_snapshot() -> None:
     assert snapshot_calls == []
 
 
+def test_androidworld_setup_uses_uiautomator_then_restores_forwarder() -> None:
+    events: list[object] = []
+
+    class A11yMethod(Enum):
+        FORWARDER = "forwarder"
+        UIAUTOMATOR = "uiautomator"
+
+    controller = SimpleNamespace(_a11y_method=A11yMethod.FORWARDER)
+    env = SimpleNamespace(controller=controller)
+
+    class App:
+        app_name = "contacts"
+
+        @classmethod
+        def setup(cls, actual_env) -> None:
+            events.append(actual_env.controller._a11y_method)
+
+    setup_module = SimpleNamespace(
+        setup_app=lambda app, actual_env: None,
+        app_snapshot=SimpleNamespace(
+            save_snapshot=lambda name, actual_controller: events.append(
+                actual_controller._a11y_method
+            )
+        ),
+    )
+
+    patch_androidworld_setup_fail_closed(setup_module, attempts=1)
+    setup_module.setup_app(App, env)
+
+    assert events == [A11yMethod.UIAUTOMATOR, A11yMethod.FORWARDER]
+    assert controller._a11y_method is A11yMethod.FORWARDER
+
+
 def test_androidworld_restores_chrome_snapshot_after_task_initialize() -> None:
     restore_calls: list[tuple[str, object]] = []
     controller = object()

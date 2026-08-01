@@ -115,7 +115,16 @@ def patch_androidworld_setup_fail_closed(
 
     def setup_app_with_retry(app: Any, env: Any) -> None:
         attempt_count = max(1, int(attempts))
+        native_controller = getattr(env, "controller", None)
+        original_a11y_method = getattr(native_controller, "_a11y_method", None)
+        uiautomator_method = getattr(
+            type(original_a11y_method),
+            "UIAUTOMATOR",
+            None,
+        )
         for attempt in range(1, attempt_count + 1):
+            if uiautomator_method is not None:
+                native_controller._a11y_method = uiautomator_method
             try:
                 app.setup(env)
             except ValueError as error:
@@ -130,6 +139,9 @@ def patch_androidworld_setup_fail_closed(
                 )
                 time.sleep(max(0.0, float(delay_seconds)))
                 continue
+            finally:
+                if uiautomator_method is not None:
+                    native_controller._a11y_method = original_a11y_method
             setup_module.app_snapshot.save_snapshot(app.app_name, env.controller)
             return
 
