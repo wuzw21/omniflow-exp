@@ -12,6 +12,13 @@ _EQUIVALENT_SETUP_LABELS: dict[str, tuple[str, ...]] = {
     "Skip": ("SKIP",),
 }
 _POST_INITIALIZE_SNAPSHOT_APPS = frozenset({"chrome"})
+_CONTACTS_READY_LABELS = frozenset(
+    {
+        "Create contact",
+        "Fix & manage",
+        "Search contacts",
+    }
+)
 
 
 def _visible_setup_elements(controller: Any) -> list[dict[str, str]]:
@@ -48,7 +55,51 @@ def _setup_click_is_already_complete(
         return target_text in {"Accept & continue", "No thanks"}
     if target_text == "Accept & continue":
         return "No thanks" in visible
+    if target_text == "Don't allow":
+        return bool(_CONTACTS_READY_LABELS.intersection(visible))
     return False
+
+
+def _grant_manage_external_storage(apps_module: Any, app_name: str, env: Any) -> None:
+    package_name = apps_module.adb_utils.extract_package_name(
+        apps_module.adb_utils.get_adb_activity(app_name)
+    )
+    response = apps_module.adb_utils.issue_generic_request(
+        [
+            "shell",
+            "appops",
+            "set",
+            package_name,
+            "MANAGE_EXTERNAL_STORAGE",
+            "allow",
+        ],
+        env.controller,
+    )
+    apps_module.adb_utils.check_ok(
+        response,
+        f"Failed to grant MANAGE_EXTERNAL_STORAGE to {package_name}.",
+    )
+    verification = apps_module.adb_utils.issue_generic_request(
+        [
+            "shell",
+            "appops",
+            "get",
+            package_name,
+            "MANAGE_EXTERNAL_STORAGE",
+        ],
+        env.controller,
+    )
+    apps_module.adb_utils.check_ok(
+        verification,
+        f"Failed to verify MANAGE_EXTERNAL_STORAGE for {package_name}.",
+    )
+    output = bytes(getattr(verification.generic, "output", b"")).decode(
+        "utf-8", errors="replace"
+    )
+    if "allow" not in output.casefold():
+        raise RuntimeError(
+            f"MANAGE_EXTERNAL_STORAGE is not allowed for {package_name}: {output}"
+        )
 
 
 def patch_androidworld_setup_fail_closed(
@@ -84,6 +135,115 @@ def patch_androidworld_setup_fail_closed(
 
     setup_module.setup_app = setup_app_with_retry
     setup_module._omniflow_setup_fail_closed_patch = True
+
+
+def patch_androidworld_legacy_apk_install(setup_module: Any) -> None:
+    """Retry only Android's explicit low-target-SDK rejection with its bypass."""
+
+    if getattr(setup_module, "_omniflow_legacy_apk_install_patch", False):
+        return
+    original_download_and_install = setup_module.download_and_install_apk
+
+    def download_and_install_apk(apk_name: str, raw_env: Any) -> None:
+        try:
+            original_download_and_install(apk_name, raw_env)
+            return
+        except Exception as error:  # noqa: BLE001 - match the ADB rejection exactly
+            if "INSTALL_FAILED_DEPRECATED_SDK_VERSION" not in str(error):
+                raise
+        apk_path = setup_module.apps.download_app_data(apk_name)
+        response = setup_module.adb_utils.issue_generic_request(
+            [
+                "install",
+                "--bypass-low-target-sdk-block",
+                apk_path,
+            ],
+            raw_env,
+            timeout_sec=30.0,
+        )
+        setup_module.adb_utils.check_ok(
+            response,
+            f"Failed to install legacy AndroidWorld APK {apk_path}.",
+        )
+        logging.warning(
+            "Installed AndroidWorld APK with the platform low-target-SDK bypass: %s",
+            apk_name,
+        )
+
+    setup_module.download_and_install_apk = download_and_install_apk
+    setup_module._omniflow_legacy_apk_install_patch = True
+
+
+def patch_androidworld_osmand_storage_setup(setup_module: Any) -> None:
+    """Accept unsupported shared-storage chcon only after every map verifies."""
+
+    if getattr(setup_module, "_omniflow_osmand_storage_patch", False):
+        return
+    osmand_app = setup_module.apps.OsmandApp
+    original_setup = osmand_app.setup
+
+    def setup(cls: Any, env: Any) -> None:
+        try:
+            original_setup(env)
+            return
+        except Exception as error:  # noqa: BLE001 - exact device-filesystem error
+            message = str(error)
+            if not (
+                "chcon" in message
+                and "Operation not supported on transport endpoint" in message
+            ):
+                raise
+        for map_name in tuple(cls.MAP_NAMES):
+            map_path = cls.DEVICE_MAPS_PATH.rstrip("/") + "/" + str(map_name)
+            response = setup_module.adb_utils.issue_generic_request(
+                ["shell", "test", "-s", map_path],
+                env.controller,
+            )
+            setup_module.adb_utils.check_ok(
+                response,
+                f"OsmAnd map is missing after unsupported chcon: {map_path}",
+            )
+        logging.warning(
+            "Skipped unsupported OsmAnd shared-storage chcon after map verification."
+        )
+
+    osmand_app.setup = classmethod(setup)
+    setup_module._omniflow_osmand_storage_patch = True
+
+
+def patch_androidworld_special_storage_setup(setup_module: Any) -> None:
+    """Grant and verify special storage access for current Android system UI."""
+
+    if getattr(setup_module, "_omniflow_special_storage_patch", False):
+        return
+    apps_module = setup_module.apps
+
+    gallery_app = apps_module.SimpleGalleryProApp
+    original_gallery_setup = gallery_app.setup
+
+    def setup_gallery(cls: Any, env: Any) -> None:
+        _grant_manage_external_storage(apps_module, cls.app_name, env)
+        try:
+            original_gallery_setup(env)
+        except ValueError as error:
+            if 'setup target "All files" not found' not in str(error):
+                raise
+            _grant_manage_external_storage(apps_module, cls.app_name, env)
+            logging.warning(
+                "Simple Gallery special storage UI was absent; verified app-op instead."
+            )
+
+    gallery_app.setup = classmethod(setup_gallery)
+
+    vlc_app = apps_module.VlcApp
+    original_vlc_setup = vlc_app.setup
+
+    def setup_vlc(cls: Any, env: Any) -> None:
+        _grant_manage_external_storage(apps_module, cls.app_name, env)
+        original_vlc_setup(env)
+
+    vlc_app.setup = classmethod(setup_vlc)
+    setup_module._omniflow_special_storage_patch = True
 
 
 def restore_task_app_snapshots_after_initialize(
@@ -144,6 +304,15 @@ def patch_androidworld_setup_click_retry(
             visible = _visible_setup_strings(controller)
             if _setup_click_is_already_complete(visible, target_text):
                 return None
+            if (
+                target_text == "Skip"
+                and "Open with Contacts" in visible
+                and "Always" in visible
+            ):
+                click_label(controller, "Always", args, kwargs)
+                if attempt < max(1, int(attempts)):
+                    time.sleep(max(0.0, float(delay_seconds)))
+                    continue
             visible_casefold = {value.casefold() for value in visible}
             for label in (
                 candidate
