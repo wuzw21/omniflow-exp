@@ -673,7 +673,8 @@ def _verified_registered_result(path: Path) -> dict[str, Any]:
         validator_coverage = float(row.get("official_validator_coverage_rate") or 0)
     except (TypeError, ValueError) as error:
         raise ValueError("registered_result_validator_coverage_invalid") from error
-    conclusion = (
+    validator_error = str(row.get("error") or "").strip()
+    conclusion = not validator_error and (
         (official_used and isinstance(official_success, bool))
         or validator_count > 0
         or validator_coverage > 0

@@ -57,6 +57,7 @@ def _write_registered_result(
     max_steps: int = 20,
     use_oob: bool = False,
     include_task_params: bool = True,
+    error: str = "",
 ) -> Path:
     cell_root = root / "RecordWithName" / "ours" / device / attempt
     result_path = cell_root / "registered_result.json"
@@ -94,6 +95,7 @@ def _write_registered_result(
                 "official_validator_used": True,
                 "official_validator_success": success,
                 "official_validator_task_count": 1,
+                "error": error,
                 "task_random_seed": 113,
                 "max_steps": max_steps,
                 "task_params": task_params,
@@ -945,6 +947,43 @@ def test_refresh_keeps_earliest_formal_result_without_success_cherry_picking(
     second_pointer = json.loads(pointer.read_text(encoding="utf-8"))
     assert second_pointer == first_pointer
     assert load_artifact_memory(pointer)["canonical"] == report["canonical"]
+
+
+def test_refresh_preserves_but_does_not_select_environment_error_result(
+    tmp_path: Path,
+) -> None:
+    source = _write_source_run_log(tmp_path)
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    runs = tmp_path / "runs"
+    invalid = _write_registered_result(
+        runs,
+        attempt="attempt_001",
+        registered_at="2026-07-20T00:00:00+00:00",
+        success=False,
+        error="FileNotFoundError: app database missing",
+    )
+
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "evidence",),
+        result_roots=(runs,),
+    )
+
+    assert report["counts"]["canonical_result_cells"] == 0
+    assert report["canonical"]["result_cells"] == {}
+    assert report["artifacts"]["results"][_sha256(invalid)][
+        "verified_registration"
+    ] is True
 
 
 def test_refresh_normalizes_legacy_target_device_labels(

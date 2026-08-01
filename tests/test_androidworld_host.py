@@ -10,7 +10,10 @@ import pytest
 
 from omniflow import Action
 from src.integrations.android_world.host import AndroidWorldHost
-from src.integrations.android_world.launch import _native_androidworld_a11y_method
+from src.integrations.android_world.launch import (
+    _native_androidworld_a11y_method,
+    _result_has_official_validator_conclusion,
+)
 
 
 def _official_state(**overrides):
@@ -37,6 +40,18 @@ def _ui_element(
             x_max=bounds[2],
             y_max=bounds[3],
         ),
+    )
+
+
+def test_androidworld_skipped_episode_is_not_validator_conclusion() -> None:
+    assert not _result_has_official_validator_conclusion(
+        {
+            "is_successful": 0.0,
+            "exception_info": "FileNotFoundError: app database missing",
+        }
+    )
+    assert _result_has_official_validator_conclusion(
+        {"is_successful": 0.0, "exception_info": None}
     )
 
 

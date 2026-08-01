@@ -6,13 +6,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from PIL import Image
+from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment.androidworld import aggregate_task_results
 from src.experiment.observation_evidence import (
     ObservationArchive,
     persist_target_run_evidence,
 )
-from runlog_fixtures import androidworld_run_log, androidworld_state
 
 
 def test_archive_preserves_every_observation_and_deduplicates_images(
@@ -146,3 +146,27 @@ def test_target_evidence_provenance_survives_metrics_aggregation(tmp_path) -> No
     assert row["target_run_log_sha256"] == "run-sha"
     assert row["target_transfer_states_sha256"] == "states-sha"
     assert row["target_transfer_state_audit"] == {"complete": True}
+
+
+def test_metrics_preserve_missing_validator_as_unknown(tmp_path) -> None:
+    result_path = tmp_path / "Task" / "fixed_replay" / "fold5564" / "task_results.jsonl"
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps(
+            {
+                "task_name": "Task",
+                "official_validator_used": False,
+                "success": False,
+                "error": "FileNotFoundError: app database missing",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = aggregate_task_results([result_path])
+
+    assert summary["official_validator_task_count"] == 0
+    assert summary["official_validator_coverage_rate"] == 0.0
+    assert summary["per_task"][0]["official_validator_success"] is None
+    assert summary["per_task"][0]["success"] is None

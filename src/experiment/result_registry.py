@@ -489,7 +489,12 @@ def _row_from_summary(
     duration_ms = _number(row.get("duration_ms"))
     if not duration_ms and duration_sec:
         duration_ms = _number(float(duration_sec) * 1000)
-    task_count = _number(row.get("official_validator_task_count") or 1)
+    raw_task_count = row.get("official_validator_task_count")
+    task_count = _number(
+        raw_task_count
+        if raw_task_count is not None
+        else int(row.get("official_validator_used") is True)
+    )
     success_count = _number(
         row.get("official_validator_success_count")
         if row.get("official_validator_success_count") is not None
@@ -809,11 +814,12 @@ def registered_cell_plan(
                 ) from error
             validator_used = row.get("official_validator_used") is True
             validator_success = row.get("official_validator_success")
+            validator_error = str(row.get("error") or "").strip()
             validator_conclusion = validator_used and isinstance(
                 validator_success,
                 bool,
             )
-            cell_completed = (
+            cell_completed = not validator_error and (
                 validator_conclusion
                 or validator_task_count > 0
                 or validator_coverage > 0

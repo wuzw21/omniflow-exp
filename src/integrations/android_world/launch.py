@@ -608,6 +608,21 @@ def _official_validator_success(row: dict[str, Any]) -> bool:
     return _official_validator_used(row) and _is_validator_success(row)
 
 
+def _result_has_official_validator_conclusion(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if str(result.get("exception_info") or result.get("error") or "").strip():
+        return False
+    reward = result.get("is_successful")
+    if reward is None:
+        return False
+    try:
+        float(reward)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 def _compact_relocation_diagnostic(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -4800,6 +4815,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 ).strip()
                                 or None
                             )
+                        official_validator_used = (
+                            _result_has_official_validator_conclusion(result)
+                        )
                         if canonical_run is not None:
                             try:
                                 canonical_function_step_count = int(
@@ -4956,13 +4974,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "action_backend": "androidworld",
                             "native_androidworld_agent_io": True,
                             "success": task_success,
-                            "official_validator_used": True,
+                            "official_validator_used": official_validator_used,
                             "androidworld_validator_result": {
                                 "success": task_success,
                                 "reward": validator_reward,
                                 "error": error_text,
-                                "uses_androidworld_official_validator": True,
-                                "validator": "androidworld_official",
+                                "uses_androidworld_official_validator": (
+                                    official_validator_used
+                                ),
+                                "validator": (
+                                    "androidworld_official"
+                                    if official_validator_used
+                                    else None
+                                ),
                             },
                             "response_acceptance": {
                                 "generic": task_success,
@@ -5140,16 +5164,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"Finished AndroidWorld test shell agent={mainline_name} "
             f"max_steps={fixed_max_steps} on {args.suite_family} family. Wrote to {checkpoint_dir}."
         )
-        try:
-            _write_task_results_summary(
-                task_results_path=task_results_path,
-                output_dir=Path(args.output_path).expanduser().resolve(),
-                checkpoint_dir=str(checkpoint_dir),
-                agent=mainline_name,
-                tasks=selected_task_names,
+        run_summary = _write_task_results_summary(
+            task_results_path=task_results_path,
+            output_dir=Path(args.output_path).expanduser().resolve(),
+            checkpoint_dir=str(checkpoint_dir),
+            agent=mainline_name,
+            tasks=selected_task_names,
+        )
+        if int(run_summary.get("official_validator_task_count") or 0) != len(
+            selected_task_names
+        ):
+            print(
+                "[error] AndroidWorld episode ended without complete official "
+                "validator coverage.",
+                flush=True,
             )
-        except Exception as exc:  # noqa: BLE001
-            print(f"[warn] failed to write AndroidWorld summary: {exc}")
+            return 1
         return 0
     finally:
         if "android_world_controller" in locals() and callable(original_get_controller):

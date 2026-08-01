@@ -44,6 +44,7 @@ def _write_registered_cell(
     legacy_fixed_replay: bool = False,
     include_uses_source_xml: bool = True,
     fixed_replay_backend: str = "selector_then_scaled_coordinate_fallback_v2",
+    error: str = "",
 ) -> None:
     cell = runs_root / task / method / device / attempt
     result_path = cell / "registered_result.json"
@@ -74,6 +75,7 @@ def _write_registered_cell(
                 "official_validator_coverage_rate": float(
                     validator_task_count > 0
                 ),
+                "error": error,
                 "task_random_seed": evaluation_seed,
                 "max_steps": max_steps,
                 "task_params": task_params,
@@ -381,6 +383,33 @@ def test_registered_cell_plan_retries_rows_without_validator_coverage(
 
     assert plan["completed"] == []
     assert plan["pending"] == [("ours", "small5554")]
+
+
+def test_registered_cell_plan_retries_validator_rows_with_environment_error(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "runs"
+    task = "NotesIsTodo"
+    _write_registered_cell(
+        runs_root,
+        task=task,
+        method="fixed_replay",
+        device="fold5564",
+        success=False,
+        error="FileNotFoundError: app database missing",
+    )
+
+    plan = registered_cell_plan(
+        runs_root=runs_root,
+        task_name=task,
+        methods=("fixed_replay",),
+        devices=("fold5564",),
+        source_seed=111,
+        evaluation_seed=113,
+    )
+
+    assert plan["completed"] == []
+    assert plan["pending"] == [("fixed_replay", "fold5564")]
 
 
 def test_registered_cell_plan_accepts_per_episode_validator_conclusion(

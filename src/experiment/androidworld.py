@@ -4607,6 +4607,10 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
         replay_step_total += step_total
         relocation_diagnostics = _extract_relocation_diagnostics(row)
         relocation_diagnostic_count += len(relocation_diagnostics)
+        official_validator_used = _official_validator_used(row)
+        official_validator_success = (
+            _official_validator_success(row) if official_validator_used else None
+        )
         per_task.append(
             {
                 "task_name": task_name,
@@ -4622,9 +4626,9 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
                 "stage": row.get("stage") or path_context.get("stage"),
                 "result_file": str(file_path),
                 "replay_track": row.get("replay_track"),
-                "official_validator_used": _official_validator_used(row),
-                "official_validator_success": _official_validator_success(row),
-                "success": _official_validator_success(row),
+                "official_validator_used": official_validator_used,
+                "official_validator_success": official_validator_success,
+                "success": official_validator_success,
                 "replay_completed": _canonical_replay_completed(row),
                 "duration_ms": round(_coerce_float(row.get("duration_ms")), 3),
                 "duration_sec": round(
