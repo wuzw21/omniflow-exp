@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+from runlog_fixtures import androidworld_run_log
 
 from src.experiment.artifact_memory import (
     load_artifact_memory,
@@ -15,7 +16,6 @@ from src.experiment.result_registry import (
     register_attempt_summary,
     registered_cell_plan,
 )
-from runlog_fixtures import androidworld_run_log
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -41,6 +41,7 @@ def _write_registered_cell(
     max_steps: int = 20,
     use_oob: bool = False,
     include_task_params: bool = True,
+    legacy_fixed_replay: bool = False,
 ) -> None:
     cell = runs_root / task / method / device / attempt
     result_path = cell / "registered_result.json"
@@ -82,6 +83,16 @@ def _write_registered_cell(
                     else None
                 ),
                 "state_backend": "androidworld",
+                "execution_backend": (
+                    "raw_coordinate_replay"
+                    if method == "fixed_replay" and legacy_fixed_replay
+                    else "selector_then_scaled_coordinate_replay"
+                    if method == "fixed_replay"
+                    else None
+                ),
+                "uses_source_xml": (
+                    not legacy_fixed_replay if method == "fixed_replay" else None
+                ),
                 "fixed_task_seed": True,
                 "fixed_task_params": False,
                 "perform_emulator_setup": True,
@@ -228,6 +239,32 @@ def test_registered_cell_plan_skips_any_cell_with_a_verified_conclusion(
         ("fixed_replay", "fold5564"),
         ("ours", "small5554"),
     ]
+
+
+def test_registered_cell_plan_rejects_legacy_coordinate_fixed_replay(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "runs"
+    task = "AudioRecorderRecordAudio"
+    _write_registered_cell(
+        runs_root,
+        task=task,
+        method="fixed_replay",
+        device="small5554",
+        success=True,
+        legacy_fixed_replay=True,
+    )
+
+    with pytest.raises(ValueError, match="formal_result_protocol_mismatch"):
+        registered_cell_plan(
+            runs_root=runs_root,
+            task_name=task,
+            methods=("fixed_replay",),
+            devices=("small5554",),
+            source_seed=111,
+            evaluation_seed=113,
+            formal_max_steps=20,
+        )
 
 
 def test_registered_cell_plan_does_not_skip_a_different_evaluation_seed(

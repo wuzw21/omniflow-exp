@@ -696,6 +696,14 @@ def validate_formal_result_protocol(
         violations.append("perform_emulator_setup")
     if row.get("state_backend") != "androidworld":
         violations.append("state_backend")
+    if method == "fixed_replay":
+        if (
+            row.get("execution_backend")
+            != "selector_then_scaled_coordinate_replay"
+        ):
+            violations.append("execution_backend")
+        if row.get("uses_source_xml") is not True:
+            violations.append("uses_source_xml")
 
     task_params = row.get("task_params")
     params_sha256 = str(row.get("task_params_sha256") or "")
