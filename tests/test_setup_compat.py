@@ -8,6 +8,7 @@ import pytest
 from src.integrations.android_world import launch
 from src.integrations.android_world.setup_compat import (
     patch_androidworld_legacy_apk_install,
+    patch_androidworld_open_tracks_setup,
     patch_androidworld_osmand_storage_setup,
     patch_androidworld_setup_click_retry,
     patch_androidworld_setup_fail_closed,
@@ -354,6 +355,80 @@ def test_androidworld_vlc_missing_dialog_requires_verified_appop() -> None:
             "allow",
         ]
     ) == 2
+
+
+def test_androidworld_open_tracks_missing_dialog_requires_bluetooth_grants() -> None:
+    commands: list[list[str]] = []
+    events: list[str] = []
+    response = SimpleNamespace(
+        status="ok",
+        generic=SimpleNamespace(
+            output=(
+                b"android.permission.BLUETOOTH_SCAN: granted=true, flags=[]\n"
+                b"android.permission.BLUETOOTH_CONNECT: granted=true, flags=[]"
+            )
+        ),
+    )
+
+    class OpenTracksApp:
+        @classmethod
+        def setup(cls, env) -> None:
+            raise ValueError('AndroidWorld setup target "Allow" not found')
+
+    adb_utils = SimpleNamespace(
+        get_adb_activity=lambda app_name: "de.dennisguse.opentracks/.MainActivity",
+        extract_package_name=lambda activity: activity.split("/")[0],
+        issue_generic_request=lambda command, controller: (
+            commands.append(command) or response
+        ),
+        check_ok=lambda actual_response, message: None,
+        launch_app=lambda app_name, controller: events.append(f"launch:{app_name}"),
+        close_app=lambda app_name, controller: events.append(f"close:{app_name}"),
+    )
+    setup_module = SimpleNamespace(
+        apps=SimpleNamespace(OpenTracksApp=OpenTracksApp),
+        adb_utils=adb_utils,
+    )
+
+    patch_androidworld_open_tracks_setup(setup_module)
+    OpenTracksApp.setup(SimpleNamespace(controller=object()))
+
+    assert commands == [
+        ["shell", "dumpsys", "package", "de.dennisguse.opentracks"]
+    ]
+    assert events == ["launch:activity tracker", "close:activity tracker"]
+
+
+def test_androidworld_open_tracks_missing_dialog_rejects_missing_grant() -> None:
+    response = SimpleNamespace(
+        status="ok",
+        generic=SimpleNamespace(
+            output=b"android.permission.BLUETOOTH_SCAN: granted=true, flags=[]"
+        ),
+    )
+
+    class OpenTracksApp:
+        @classmethod
+        def setup(cls, env) -> None:
+            raise ValueError('AndroidWorld setup target "Allow" not found')
+
+    adb_utils = SimpleNamespace(
+        get_adb_activity=lambda app_name: "de.dennisguse.opentracks/.MainActivity",
+        extract_package_name=lambda activity: activity.split("/")[0],
+        issue_generic_request=lambda command, controller: response,
+        check_ok=lambda actual_response, message: None,
+        launch_app=lambda app_name, controller: None,
+        close_app=lambda app_name, controller: None,
+    )
+    setup_module = SimpleNamespace(
+        apps=SimpleNamespace(OpenTracksApp=OpenTracksApp),
+        adb_utils=adb_utils,
+    )
+
+    patch_androidworld_open_tracks_setup(setup_module)
+
+    with pytest.raises(RuntimeError, match="BLUETOOTH_CONNECT"):
+        OpenTracksApp.setup(SimpleNamespace(controller=object()))
 
 
 def test_androidworld_setup_retries_before_saving_snapshot() -> None:

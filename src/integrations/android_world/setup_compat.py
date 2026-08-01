@@ -15,6 +15,12 @@ _POST_INITIALIZE_SNAPSHOT_APPS = frozenset({"chrome"})
 _CONTACTS_APP_NAME = "contacts"
 _CONTACTS_PACKAGE = "com.google.android.contacts"
 _POST_NOTIFICATIONS_PERMISSION = "android.permission.POST_NOTIFICATIONS"
+_OPEN_TRACKS_ACTIVITY_NAME = "open tracks"
+_OPEN_TRACKS_COMPANION_APP_NAME = "activity tracker"
+_OPEN_TRACKS_BLUETOOTH_PERMISSIONS = (
+    "android.permission.BLUETOOTH_SCAN",
+    "android.permission.BLUETOOTH_CONNECT",
+)
 _CONTACTS_READY_LABELS = frozenset(
     {
         "Create contact",
@@ -323,6 +329,66 @@ def patch_androidworld_special_storage_setup(setup_module: Any) -> None:
 
     vlc_app.setup = classmethod(setup_vlc)
     setup_module._omniflow_special_storage_patch = True
+
+
+def patch_androidworld_open_tracks_setup(setup_module: Any) -> None:
+    """Accept an absent Bluetooth dialog only after both grants verify."""
+
+    if getattr(setup_module, "_omniflow_open_tracks_setup_patch", False):
+        return
+    open_tracks_app = setup_module.apps.OpenTracksApp
+    original_setup = open_tracks_app.setup
+
+    def setup_open_tracks(cls: Any, env: Any) -> None:
+        try:
+            original_setup(env)
+            return
+        except ValueError as error:
+            if 'setup target "Allow" not found' not in str(error):
+                raise
+
+        package_name = setup_module.adb_utils.extract_package_name(
+            setup_module.adb_utils.get_adb_activity(_OPEN_TRACKS_ACTIVITY_NAME)
+        )
+        verification = setup_module.adb_utils.issue_generic_request(
+            ["shell", "dumpsys", "package", package_name],
+            env.controller,
+        )
+        setup_module.adb_utils.check_ok(
+            verification,
+            f"Failed to verify OpenTracks permissions for {package_name}.",
+        )
+        output = bytes(getattr(verification.generic, "output", b"")).decode(
+            "utf-8", errors="replace"
+        )
+        missing_permissions = [
+            permission
+            for permission in _OPEN_TRACKS_BLUETOOTH_PERMISSIONS
+            if not any(
+                permission in line and "granted=true" in line
+                for line in output.splitlines()
+            )
+        ]
+        if missing_permissions:
+            raise RuntimeError(
+                "OpenTracks Bluetooth dialog was absent without verified grants: "
+                + repr(missing_permissions)
+            )
+
+        setup_module.adb_utils.launch_app(
+            _OPEN_TRACKS_COMPANION_APP_NAME,
+            env.controller,
+        )
+        setup_module.adb_utils.close_app(
+            _OPEN_TRACKS_COMPANION_APP_NAME,
+            env.controller,
+        )
+        logging.warning(
+            "OpenTracks Bluetooth permission UI was absent; verified runtime grants instead."
+        )
+
+    open_tracks_app.setup = classmethod(setup_open_tracks)
+    setup_module._omniflow_open_tracks_setup_patch = True
 
 
 def restore_task_app_snapshots_after_initialize(

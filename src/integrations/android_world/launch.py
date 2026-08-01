@@ -37,6 +37,7 @@ from src.integrations.android_world.agent import (
 from src.integrations.android_world.host import make_agent_result
 from src.integrations.android_world.setup_compat import (
     patch_androidworld_legacy_apk_install,
+    patch_androidworld_open_tracks_setup,
     patch_androidworld_osmand_storage_setup,
     patch_androidworld_setup_click_retry,
     patch_androidworld_setup_fail_closed,
@@ -4238,6 +4239,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         patch_androidworld_setup_click_retry(android_world_tools)
         if aw_setup is not None:
             patch_androidworld_legacy_apk_install(aw_setup)
+            patch_androidworld_open_tracks_setup(aw_setup)
             patch_androidworld_osmand_storage_setup(aw_setup)
             patch_androidworld_setup_fail_closed(aw_setup)
             patch_androidworld_special_storage_setup(aw_setup)
