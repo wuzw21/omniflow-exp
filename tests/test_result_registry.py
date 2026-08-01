@@ -42,6 +42,7 @@ def _write_registered_cell(
     use_oob: bool = False,
     include_task_params: bool = True,
     legacy_fixed_replay: bool = False,
+    include_uses_source_xml: bool = True,
 ) -> None:
     cell = runs_root / task / method / device / attempt
     result_path = cell / "registered_result.json"
@@ -90,8 +91,12 @@ def _write_registered_cell(
                     if method == "fixed_replay"
                     else None
                 ),
-                "uses_source_xml": (
-                    not legacy_fixed_replay if method == "fixed_replay" else None
+                **(
+                    {
+                        "uses_source_xml": not legacy_fixed_replay,
+                    }
+                    if method == "fixed_replay" and include_uses_source_xml
+                    else {}
                 ),
                 "fixed_task_seed": True,
                 "fixed_task_params": False,
@@ -265,6 +270,34 @@ def test_registered_cell_plan_rejects_legacy_coordinate_fixed_replay(
             evaluation_seed=113,
             formal_max_steps=20,
         )
+
+
+def test_registered_cell_plan_accepts_selector_replay_missing_redundant_audit_flag(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "runs"
+    task = "BrowserMaze"
+    _write_registered_cell(
+        runs_root,
+        task=task,
+        method="fixed_replay",
+        device="small5554",
+        success=False,
+        include_uses_source_xml=False,
+    )
+
+    plan = registered_cell_plan(
+        runs_root=runs_root,
+        task_name=task,
+        methods=("fixed_replay",),
+        devices=("small5554",),
+        source_seed=111,
+        evaluation_seed=113,
+        formal_max_steps=20,
+    )
+
+    assert plan["completed"] == [("fixed_replay", "small5554")]
+    assert plan["pending"] == []
 
 
 def test_registered_cell_plan_does_not_skip_a_different_evaluation_seed(

@@ -8,6 +8,7 @@ from omniflow.functions.store import FunctionStore
 from src.experiment.androidworld import (
     ArchivedRunLog,
     _parse_one_task_methods,
+    _promote_one_task_metadata_to_row,
     _select_complete_function,
     build_official_androidworld_command,
 )
@@ -27,6 +28,25 @@ def test_formal_one_task_method_set_is_exact() -> None:
 
 def test_t3a_hint_is_a_supported_one_task_method() -> None:
     assert _parse_one_task_methods("t3a_hint") == ["t3a_hint"]
+
+
+def test_fixed_replay_source_xml_metadata_is_promoted() -> None:
+    row: dict[str, object] = {}
+
+    _promote_one_task_metadata_to_row(
+        row,
+        [
+            {
+                "metadata": {
+                    "execution_backend": "selector_then_scaled_coordinate_replay",
+                    "uses_source_xml": True,
+                }
+            }
+        ],
+    )
+
+    assert row["execution_backend"] == "selector_then_scaled_coordinate_replay"
+    assert row["uses_source_xml"] is True
 
 
 def _put_function(

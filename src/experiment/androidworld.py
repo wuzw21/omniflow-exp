@@ -5965,6 +5965,7 @@ _ONE_TASK_METADATA_ROW_KEYS = (
     "action_backend",
     "native_androidworld_agent_io",
     "execution_backend",
+    "uses_source_xml",
     "official_agent_name",
     "uses_omniflow_agent",
     "uses_source_action_hints",
