@@ -97,6 +97,30 @@ def test_record_prep_failure_preserves_reason_tokens_and_time(tmp_path: Path) ->
     assert outcome["retry_count"] == 0
 
 
+def test_record_outcome_accepts_empty_integer_token_totals(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "fixed_replay"
+    artifact_root.mkdir()
+
+    outcome_path = record_cell_outcome(
+        outcomes_root=tmp_path / "outcomes",
+        task_name="BrowserMaze",
+        method="fixed_replay",
+        device="small5554",
+        device_serial="emulator-5554",
+        attempt_id="iteration_01-test",
+        source_seed=111,
+        evaluation_seed=113,
+        status="completed",
+        stage="target_episode",
+        artifact_root=artifact_root,
+    )
+
+    outcome = json.loads(outcome_path.read_text(encoding="utf-8"))
+    assert outcome["prompt_tokens"] == 0
+    assert outcome["completion_tokens"] == 0
+    assert outcome["total_tokens"] == 0
+
+
 def test_concluded_cell_keys_skip_immutable_failure_on_resume(tmp_path: Path) -> None:
     record_cell_outcome(
         outcomes_root=tmp_path / "outcomes",

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
 import hashlib
-import csv
 import json
 import os
 from pathlib import Path
@@ -13,7 +13,6 @@ import re
 import shutil
 import tempfile
 from typing import Any, Iterable
-
 
 SCHEMA_VERSION = "omniflow.androidworld.cell_outcome.v1"
 
@@ -59,8 +58,9 @@ def _number(value: Any) -> float:
         return 0.0
 
 
-def _whole_or_float(value: float) -> int | float:
-    return int(value) if value.is_integer() else round(value, 6)
+def _whole_or_float(value: int | float) -> int | float:
+    numeric = float(value)
+    return int(numeric) if numeric.is_integer() else round(numeric, 6)
 
 
 def _stats_metrics(artifact_root: Path | None) -> dict[str, int | float]:
