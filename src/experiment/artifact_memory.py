@@ -1749,11 +1749,20 @@ def main(argv: list[str] | None = None) -> int:
         load_artifact_memory(args.memory_index)
         output = _load_object(Path(args.memory_index).expanduser().resolve())
     else:
+        from src.experiment.result_registry import (
+            FORMAL_EVALUATION_SEED,
+            FORMAL_MAX_STEPS,
+            FORMAL_SOURCE_SEED,
+        )
+
         output = registered_cell_plan_from_memory(
             memory_index=args.memory_index,
             task_name=args.task,
             methods=tuple(item for item in args.methods.split(",") if item),
             devices=tuple(item for item in args.devices.split(",") if item),
+            source_seed=FORMAL_SOURCE_SEED,
+            evaluation_seed=FORMAL_EVALUATION_SEED,
+            formal_max_steps=FORMAL_MAX_STEPS,
         )
     print(json.dumps(output, ensure_ascii=False, sort_keys=True))
     return 0

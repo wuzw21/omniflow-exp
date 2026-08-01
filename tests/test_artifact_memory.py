@@ -529,6 +529,7 @@ def test_refresh_classifies_case_normalized_task_directory_exactly(
 
 def test_refresh_keeps_one_verified_runtime_store_from_duplicate_catalogs(
     tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     source = _write_source_run_log(tmp_path)
     source_index = _write_json(
@@ -629,6 +630,27 @@ def test_refresh_keeps_one_verified_runtime_store_from_duplicate_catalogs(
     )
     refreshed = load_artifact_memory(tmp_path / "memory" / "current.json")
     assert list(refreshed["canonical"]["function_stores"]) == ["RecordWithName"]
+    capsys.readouterr()
+    assert (
+        artifact_memory_main(
+            [
+                "plan",
+                "--memory-index",
+                str(tmp_path / "memory" / "current.json"),
+                "--task",
+                "RecordWithName",
+                "--methods",
+                "ours",
+                "--devices",
+                "small5554",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out) == {
+        "completed": [],
+        "pending": [["ours", "small5554"]],
+    }
 
 
 def test_refresh_reports_invalid_indexed_runlog_task_and_path(
