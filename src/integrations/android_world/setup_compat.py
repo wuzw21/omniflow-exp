@@ -12,6 +12,9 @@ _EQUIVALENT_SETUP_LABELS: dict[str, tuple[str, ...]] = {
     "Skip": ("SKIP",),
 }
 _POST_INITIALIZE_SNAPSHOT_APPS = frozenset({"chrome"})
+_CONTACTS_APP_NAME = "contacts"
+_CONTACTS_PACKAGE = "com.google.android.contacts"
+_POST_NOTIFICATIONS_PERMISSION = "android.permission.POST_NOTIFICATIONS"
 _CONTACTS_READY_LABELS = frozenset(
     {
         "Create contact",
@@ -19,6 +22,60 @@ _CONTACTS_READY_LABELS = frozenset(
         "Search contacts",
     }
 )
+
+
+def _deny_contacts_notification_permission(setup_module: Any, env: Any) -> None:
+    adb_utils = setup_module.adb_utils
+    commands = (
+        [
+            "shell",
+            "pm",
+            "revoke",
+            _CONTACTS_PACKAGE,
+            _POST_NOTIFICATIONS_PERMISSION,
+        ],
+        [
+            "shell",
+            "pm",
+            "set-permission-flags",
+            _CONTACTS_PACKAGE,
+            _POST_NOTIFICATIONS_PERMISSION,
+            "user-set",
+            "user-fixed",
+        ],
+    )
+    for command in commands:
+        response = adb_utils.issue_generic_request(command, env.controller)
+        adb_utils.check_ok(
+            response,
+            "Failed to fix the Contacts notification permission state.",
+        )
+    verification = adb_utils.issue_generic_request(
+        ["shell", "dumpsys", "package", _CONTACTS_PACKAGE],
+        env.controller,
+    )
+    adb_utils.check_ok(
+        verification,
+        "Failed to verify the Contacts notification permission state.",
+    )
+    output = bytes(getattr(verification.generic, "output", b"")).decode(
+        "utf-8", errors="replace"
+    )
+    permission_lines = [
+        line
+        for line in output.splitlines()
+        if f"{_POST_NOTIFICATIONS_PERMISSION}:" in line
+    ]
+    if not any(
+        "granted=false" in line
+        and "USER_SET" in line
+        and "USER_FIXED" in line
+        for line in permission_lines
+    ):
+        raise RuntimeError(
+            "Contacts notification permission is not denied and user-fixed: "
+            + repr(permission_lines)
+        )
 
 
 def _visible_setup_elements(controller: Any) -> list[dict[str, str]]:
@@ -142,6 +199,8 @@ def patch_androidworld_setup_fail_closed(
             finally:
                 if uiautomator_method is not None:
                     native_controller._a11y_method = original_a11y_method
+            if str(getattr(app, "app_name", "") or "") == _CONTACTS_APP_NAME:
+                _deny_contacts_notification_permission(setup_module, env)
             setup_module.app_snapshot.save_snapshot(app.app_name, env.controller)
             return
 

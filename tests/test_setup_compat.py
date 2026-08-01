@@ -413,6 +413,106 @@ def test_androidworld_setup_failure_does_not_save_snapshot() -> None:
     assert snapshot_calls == []
 
 
+def test_androidworld_setup_fixes_contacts_notification_before_snapshot() -> None:
+    events: list[str] = []
+    commands: list[list[str]] = []
+    permission_state = (
+        "android.permission.POST_NOTIFICATIONS: granted=false, "
+        "flags=[ USER_SET|USER_FIXED]"
+    )
+
+    def issue_generic_request(command, controller):
+        commands.append(command)
+        events.append(command[1] if command[1] == "dumpsys" else command[2])
+        output = permission_state.encode() if command[1] == "dumpsys" else b""
+        return SimpleNamespace(status="ok", generic=SimpleNamespace(output=output))
+
+    class App:
+        app_name = "contacts"
+
+        @classmethod
+        def setup(cls, env) -> None:
+            events.append("setup")
+
+    setup_module = SimpleNamespace(
+        setup_app=lambda app, env: None,
+        adb_utils=SimpleNamespace(
+            issue_generic_request=issue_generic_request,
+            check_ok=lambda response, message: None,
+        ),
+        app_snapshot=SimpleNamespace(
+            save_snapshot=lambda name, controller: events.append("snapshot")
+        ),
+    )
+
+    patch_androidworld_setup_fail_closed(setup_module, attempts=1)
+    setup_module.setup_app(App, SimpleNamespace(controller=object()))
+
+    assert events == [
+        "setup",
+        "revoke",
+        "set-permission-flags",
+        "dumpsys",
+        "snapshot",
+    ]
+    assert commands == [
+        [
+            "shell",
+            "pm",
+            "revoke",
+            "com.google.android.contacts",
+            "android.permission.POST_NOTIFICATIONS",
+        ],
+        [
+            "shell",
+            "pm",
+            "set-permission-flags",
+            "com.google.android.contacts",
+            "android.permission.POST_NOTIFICATIONS",
+            "user-set",
+            "user-fixed",
+        ],
+        ["shell", "dumpsys", "package", "com.google.android.contacts"],
+    ]
+
+
+def test_androidworld_setup_rejects_unfixed_contacts_notification_state() -> None:
+    snapshot_calls: list[str] = []
+    response = SimpleNamespace(
+        status="ok",
+        generic=SimpleNamespace(
+            output=(
+                b"android.permission.POST_NOTIFICATIONS: granted=false, flags=[]"
+            )
+        ),
+    )
+
+    class App:
+        app_name = "contacts"
+
+        @classmethod
+        def setup(cls, env) -> None:
+            return None
+
+    setup_module = SimpleNamespace(
+        setup_app=lambda app, env: None,
+        adb_utils=SimpleNamespace(
+            issue_generic_request=lambda command, controller: response,
+            check_ok=lambda actual_response, message: None,
+        ),
+        app_snapshot=SimpleNamespace(
+            save_snapshot=lambda name, controller: snapshot_calls.append(name)
+        ),
+    )
+
+    patch_androidworld_setup_fail_closed(setup_module, attempts=1)
+
+    with pytest.raises(RuntimeError, match="not denied and user-fixed"):
+        setup_module.setup_app(App, SimpleNamespace(controller=object()))
+
+    assert snapshot_calls == []
+
+
 def test_androidworld_setup_uses_uiautomator_then_restores_forwarder() -> None:
     events: list[object] = []
 
@@ -432,6 +532,18 @@ def test_androidworld_setup_uses_uiautomator_then_restores_forwarder() -> None:
 
     setup_module = SimpleNamespace(
         setup_app=lambda app, actual_env: None,
+        adb_utils=SimpleNamespace(
+            issue_generic_request=lambda command, actual_controller: SimpleNamespace(
+                status="ok",
+                generic=SimpleNamespace(
+                    output=(
+                        b"android.permission.POST_NOTIFICATIONS: granted=false, "
+                        b"flags=[ USER_SET|USER_FIXED]"
+                    )
+                ),
+            ),
+            check_ok=lambda response, message: None,
+        ),
         app_snapshot=SimpleNamespace(
             save_snapshot=lambda name, actual_controller: events.append(
                 actual_controller._a11y_method
