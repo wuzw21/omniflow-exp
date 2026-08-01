@@ -62,6 +62,11 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "-no-snapshot-save" in script_text
     assert "from src.experiment.result_registry import registered_cell_plan" not in script_text
     assert script_text.count("registered_cell_plan_from_memory(") == 1
+    native_preflight = script_text.split(
+        'if [[ "$profile" == "androidworld_native" ]]; then',
+        maxsplit=1,
+    )[1].split("\n  fi", maxsplit=1)[0]
+    assert "--require-contacts-ready" in native_preflight
 
 
 @pytest.mark.parametrize(

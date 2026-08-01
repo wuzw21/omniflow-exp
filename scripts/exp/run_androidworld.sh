@@ -2192,6 +2192,7 @@ for serial in $preflight_serials; do
       --expected-tasks "$source_index_expected_tasks"
       --source-index "$source_index"
       --source-task "$task"
+      --require-contacts-ready
     )
   fi
   if [[ "$profile" == "appagent" ]]; then
