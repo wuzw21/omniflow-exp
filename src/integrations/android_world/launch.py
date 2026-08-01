@@ -41,6 +41,7 @@ from src.integrations.android_world.setup_compat import (
     patch_androidworld_setup_click_retry,
     patch_androidworld_setup_fail_closed,
     patch_androidworld_special_storage_setup,
+    resolve_androidworld_task_setup_apps,
     restore_task_app_snapshots_after_initialize,
 )
 from src.integrations.runlog import import_run_log, project_androidworld_step_actions
@@ -4472,6 +4473,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             item.strip() for item in str(args.tasks).split(",") if item.strip()
         ]
         task_types = task_registry.get_registry(family=args.suite_family)
+        suite = suite_utils.create_suite(
+            task_types,
+            n_task_combinations=int(args.n_task_combinations),
+            seed=int(args.task_random_seed),
+            tasks=selected_task_names,
+            use_identical_params=bool(args.fixed_task_seed),
+        )
         setup_app_list = None
         if bool(args.perform_emulator_setup):
             if aw_setup is None:
@@ -4479,20 +4487,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "AndroidWorld setup_device module is required when "
                     "--perform-emulator-setup is set."
                 )
-            setup_apps: list[type] = []
-            seen_setup_apps: set[type] = set()
-            for selected_task_name in selected_task_names:
-                task_type = task_types.get(selected_task_name)
-                for app_name in tuple(getattr(task_type, "app_names", ()) or ()):
-                    app_setup = aw_setup.get_app_mapping(str(app_name))
-                    if app_setup is not None and app_setup not in seen_setup_apps:
-                        setup_apps.append(app_setup)
-                        seen_setup_apps.add(app_setup)
-            for app_setup in aw_setup.get_app_list_to_setup(selected_task_names) or ():
-                if app_setup not in seen_setup_apps:
-                    setup_apps.append(app_setup)
-                    seen_setup_apps.add(app_setup)
-            setup_app_list = tuple(setup_apps)
+            setup_app_list = resolve_androidworld_task_setup_apps(
+                aw_setup,
+                task_types=task_types,
+                task_suite=suite,
+                selected_task_names=selected_task_names,
+            )
 
         target_adb_serial = str(
             os.environ.get("ANDROID_SERIAL") or f"emulator-{int(args.console_port)}"
@@ -4556,13 +4556,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             logger.info("Native AndroidWorld A11Y runtime ready: %s", a11y_runtime)
 
-        suite = suite_utils.create_suite(
-            task_types,
-            n_task_combinations=int(args.n_task_combinations),
-            seed=int(args.task_random_seed),
-            tasks=selected_task_names,
-            use_identical_params=bool(args.fixed_task_seed),
-        )
         if task_params:
             if len(selected_task_names) != 1:
                 raise ValueError("--task-params-json requires exactly one selected task")

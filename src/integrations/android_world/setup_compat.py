@@ -341,6 +341,33 @@ def restore_task_app_snapshots_after_initialize(
         restored.add(app_name)
 
 
+def resolve_androidworld_task_setup_apps(
+    setup_module: Any,
+    *,
+    task_types: dict[str, Any],
+    task_suite: dict[str, Any],
+    selected_task_names: list[str],
+) -> tuple[type, ...]:
+    """Resolve setup apps from both task classes and instantiated tasks."""
+
+    setup_apps: list[type] = []
+    seen_setup_apps: set[type] = set()
+    for selected_task_name in selected_task_names:
+        task_sources = [task_types.get(selected_task_name)]
+        task_sources.extend(tuple(task_suite.get(selected_task_name, ()) or ()))
+        for task_source in task_sources:
+            for app_name in tuple(getattr(task_source, "app_names", ()) or ()):
+                app_setup = setup_module.get_app_mapping(str(app_name))
+                if app_setup is not None and app_setup not in seen_setup_apps:
+                    setup_apps.append(app_setup)
+                    seen_setup_apps.add(app_setup)
+    for app_setup in setup_module.get_app_list_to_setup(selected_task_names) or ():
+        if app_setup not in seen_setup_apps:
+            setup_apps.append(app_setup)
+            seen_setup_apps.add(app_setup)
+    return tuple(setup_apps)
+
+
 def patch_androidworld_setup_click_retry(
     tools_module: Any,
     *,

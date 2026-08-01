@@ -12,6 +12,7 @@ from src.integrations.android_world.setup_compat import (
     patch_androidworld_setup_click_retry,
     patch_androidworld_setup_fail_closed,
     patch_androidworld_special_storage_setup,
+    resolve_androidworld_task_setup_apps,
     restore_task_app_snapshots_after_initialize,
 )
 
@@ -571,6 +572,46 @@ def test_androidworld_restores_chrome_snapshot_after_task_initialize() -> None:
     restore_task_app_snapshots_after_initialize(restore_snapshot, task, env)
 
     assert restore_calls == [("chrome", controller)]
+
+
+def test_androidworld_setup_resolves_dynamic_task_instance_apps() -> None:
+    class JoplinApp:
+        app_name = "joplin"
+
+    setup_module = SimpleNamespace(
+        get_app_mapping=lambda app_name: JoplinApp if app_name == "joplin" else None,
+        get_app_list_to_setup=lambda task_names: (),
+    )
+
+    setup_apps = resolve_androidworld_task_setup_apps(
+        setup_module,
+        task_types={"NotesIsTodo": SimpleNamespace(app_names=())},
+        task_suite={
+            "NotesIsTodo": [SimpleNamespace(app_names=("joplin",))],
+        },
+        selected_task_names=["NotesIsTodo"],
+    )
+
+    assert setup_apps == (JoplinApp,)
+
+
+def test_androidworld_setup_deduplicates_class_instance_and_name_apps() -> None:
+    class JoplinApp:
+        app_name = "joplin"
+
+    setup_module = SimpleNamespace(
+        get_app_mapping=lambda app_name: JoplinApp if app_name == "joplin" else None,
+        get_app_list_to_setup=lambda task_names: (JoplinApp,),
+    )
+
+    setup_apps = resolve_androidworld_task_setup_apps(
+        setup_module,
+        task_types={"JoplinTask": SimpleNamespace(app_names=("joplin",))},
+        task_suite={"JoplinTask": [SimpleNamespace(app_names=("joplin",))]},
+        selected_task_names=["JoplinTask"],
+    )
+
+    assert setup_apps == (JoplinApp,)
 
 
 def test_androidworld_does_not_restore_other_apps_after_task_initialize() -> None:
