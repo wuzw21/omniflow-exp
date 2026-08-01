@@ -1070,7 +1070,8 @@ PY
       "$batch_outcomes_root" \
       "$expected_source_seed" \
       "$evaluation_seed" \
-      "$max_steps" <<'PY'
+      "$max_steps" \
+      "$attempt_id" <<'PY'
 import sys
 from pathlib import Path
 
@@ -1092,6 +1093,7 @@ outcomes_root = Path(sys.argv[7]).expanduser().resolve()
 source_seed = int(sys.argv[8])
 evaluation_seed = int(sys.argv[9])
 max_steps = int(sys.argv[10])
+attempt_id = sys.argv[11]
 plan = registered_cell_plan_from_memory(
     memory_index=memory_index,
     task_name=task,
@@ -1108,6 +1110,7 @@ concluded = concluded_cell_keys(
     devices=devices,
     source_seed=source_seed,
     evaluation_seed=evaluation_seed,
+    attempt_id=attempt_id,
 )
 pending = [cell for cell in plan["pending"] if cell not in concluded]
 completed_count = len(plan["completed"]) + len(plan["pending"]) - len(pending)

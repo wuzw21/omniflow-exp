@@ -147,6 +147,57 @@ def test_concluded_cell_keys_skip_immutable_failure_on_resume(tmp_path: Path) ->
     assert concluded == {("mobilegpt_offline_retrieval", "fold5564")}
 
 
+def test_environment_repair_retry_ignores_prior_attempt_outcomes(
+    tmp_path: Path,
+) -> None:
+    outcomes_root = tmp_path / "outcomes"
+    record_cell_outcome(
+        outcomes_root=outcomes_root,
+        task_name="BrowserDraw",
+        method="fixed_replay",
+        device="fold5564",
+        device_serial="emulator-5564",
+        attempt_id="iteration_01-failed-environment",
+        source_seed=111,
+        evaluation_seed=113,
+        status="execution_failed",
+        stage="target_episode",
+    )
+
+    assert concluded_cell_keys(
+        outcomes_root=outcomes_root,
+        task_name="BrowserDraw",
+        methods=("fixed_replay",),
+        devices=("fold5564",),
+        source_seed=111,
+        evaluation_seed=113,
+        attempt_id="iteration_02-environment-repair",
+    ) == set()
+
+    record_cell_outcome(
+        outcomes_root=outcomes_root,
+        task_name="BrowserDraw",
+        method="fixed_replay",
+        device="fold5564",
+        device_serial="emulator-5564",
+        attempt_id="iteration_02-environment-repair",
+        source_seed=111,
+        evaluation_seed=113,
+        status="execution_failed",
+        stage="target_episode",
+    )
+
+    assert concluded_cell_keys(
+        outcomes_root=outcomes_root,
+        task_name="BrowserDraw",
+        methods=("fixed_replay",),
+        devices=("fold5564",),
+        source_seed=111,
+        evaluation_seed=113,
+        attempt_id="iteration_02-environment-repair",
+    ) == {("fixed_replay", "fold5564")}
+
+
 def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> None:
     source_index = tmp_path / "source_index.json"
     source_index.write_text(
@@ -203,7 +254,7 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
         method="mobilegpt_offline_retrieval",
         device="fold5564",
         device_serial="emulator-5564",
-        attempt_id="iteration_01-failure",
+        attempt_id="iteration_01-report",
         source_seed=111,
         evaluation_seed=113,
         status="execution_failed",
@@ -241,3 +292,55 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
         "cell_finished_without_registered_validator_result"
     )
     assert rows[1]["outer_wall_sec"] == 12.0
+
+
+def test_batch_report_uses_current_attempt_failure_outcome(tmp_path: Path) -> None:
+    source_index = tmp_path / "source_index.json"
+    source_index.write_text(
+        json.dumps({"BrowserDraw": {"task": "BrowserDraw", "source_seed": 111}}),
+        encoding="utf-8",
+    )
+    result_cells = tmp_path / "result_cells.json"
+    result_cells.write_text("{}", encoding="utf-8")
+    memory_index = tmp_path / "current.json"
+    memory_index.write_text(
+        json.dumps({"result_cells": str(result_cells)}),
+        encoding="utf-8",
+    )
+    outcomes_root = tmp_path / "outcomes"
+    for attempt_id, outer_wall_sec in (
+        ("iteration_01-environment-failure", 12.0),
+        ("iteration_02-environment-repair", 34.0),
+    ):
+        record_cell_outcome(
+            outcomes_root=outcomes_root,
+            task_name="BrowserDraw",
+            method="fixed_replay",
+            device="fold5564",
+            device_serial="emulator-5564",
+            attempt_id=attempt_id,
+            source_seed=111,
+            evaluation_seed=113,
+            status="execution_failed",
+            stage="target_episode",
+            outer_wall_sec=outer_wall_sec,
+        )
+
+    report = write_batch_report(
+        report_root=tmp_path / "report",
+        memory_index=memory_index,
+        outcomes_root=outcomes_root,
+        source_index=source_index,
+        tasks=("BrowserDraw",),
+        methods=("fixed_replay",),
+        devices=("fold5564",),
+        source_seed=111,
+        evaluation_seed=113,
+        attempt_id="iteration_02-environment-repair",
+    )
+
+    row = json.loads(
+        Path(report["cells_jsonl"]).read_text(encoding="utf-8").strip()
+    )
+    assert row["attempt_id"] == "iteration_02-environment-repair"
+    assert row["outer_wall_sec"] == 34.0

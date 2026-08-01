@@ -227,8 +227,9 @@ def concluded_cell_keys(
     devices: Iterable[str],
     source_seed: int,
     evaluation_seed: int,
+    attempt_id: str | None = None,
 ) -> set[tuple[str, str]]:
-    """Return cells with an immutable non-validator conclusion."""
+    """Return cells concluded within the selected immutable attempt."""
 
     root = Path(outcomes_root).expanduser().resolve()
     accepted_methods = {str(value) for value in methods}
@@ -249,6 +250,10 @@ def concluded_cell_keys(
             or device not in accepted_devices
             or int(payload.get("source_seed") or -1) != int(source_seed)
             or int(payload.get("evaluation_seed") or -1) != int(evaluation_seed)
+            or (
+                attempt_id is not None
+                and str(payload.get("attempt_id") or "") != str(attempt_id)
+            )
         ):
             continue
         concluded.add((method, device))
@@ -277,7 +282,11 @@ def _registered_cell_rows(memory_index: Path) -> dict[str, dict[str, Any]]:
     return rows
 
 
-def _outcome_rows(outcomes_root: Path) -> dict[str, dict[str, Any]]:
+def _outcome_rows(
+    outcomes_root: Path,
+    *,
+    attempt_id: str | None = None,
+) -> dict[str, dict[str, Any]]:
     rows: dict[str, dict[str, Any]] = {}
     if not outcomes_root.is_dir():
         return rows
@@ -286,6 +295,10 @@ def _outcome_rows(outcomes_root: Path) -> dict[str, dict[str, Any]]:
         if (
             payload.get("schema_version") != SCHEMA_VERSION
             or payload.get("immutable") is not True
+            or (
+                attempt_id is not None
+                and str(payload.get("attempt_id") or "") != str(attempt_id)
+            )
         ):
             continue
         key = "|".join(
@@ -418,7 +431,10 @@ def write_batch_report(
     if not source_path.is_file():
         raise FileNotFoundError(f"source index missing: {source_path}")
     registered = _registered_cell_rows(memory_path)
-    outcomes = _outcome_rows(Path(outcomes_root).expanduser().resolve())
+    outcomes = _outcome_rows(
+        Path(outcomes_root).expanduser().resolve(),
+        attempt_id=attempt_id,
+    )
     rows: list[dict[str, Any]] = []
     counts = {
         "planned": 0,

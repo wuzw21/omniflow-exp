@@ -747,7 +747,7 @@ exit 1
     assert "src.experiment.function_assets" not in calls
     assert any(
         line.startswith(f"- {REPO} ")
-        and line.endswith(" 111 113 20")
+        and " 111 113 20 iteration_01-" in line
         for line in calls.splitlines()
     )
 
