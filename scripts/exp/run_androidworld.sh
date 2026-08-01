@@ -82,6 +82,8 @@ default_emulator_avd_specs="SmallPhone|system-images;android-33;google_apis;$def
 emulator_avd_specs="${OMNIFLOW_SINGLE_TASK_EMULATOR_AVD_SPECS:-$default_emulator_avd_specs}"
 emulator_gpu="${OMNIFLOW_SINGLE_TASK_EMULATOR_GPU:-swiftshader_indirect}"
 emulator_boot_timeout_sec="${OMNIFLOW_SINGLE_TASK_EMULATOR_BOOT_TIMEOUT_SEC:-240}"
+emulator_graceful_shutdown_timeout_sec="${OMNIFLOW_SINGLE_TASK_EMULATOR_GRACEFUL_SHUTDOWN_TIMEOUT_SEC:-30}"
+emulator_forced_shutdown_timeout_sec="${OMNIFLOW_SINGLE_TASK_EMULATOR_FORCED_SHUTDOWN_TIMEOUT_SEC:-10}"
 fold_serial="${OMNIFLOW_SINGLE_TASK_FOLD_SERIAL:-emulator-5564}"
 fold_state="${OMNIFLOW_SINGLE_TASK_FOLD_STATE:-$formal_fold_state}"
 fold_size="${OMNIFLOW_SINGLE_TASK_FOLD_SIZE:-$formal_fold_size}"
@@ -657,6 +659,14 @@ if [[ ! "$manage_emulators" =~ ^[01]$ ]]; then
 fi
 if [[ ! "$emulator_boot_timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
   echo "OMNIFLOW_SINGLE_TASK_EMULATOR_BOOT_TIMEOUT_SEC must be a positive integer." >&2
+  exit 2
+fi
+if [[ ! "$emulator_graceful_shutdown_timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
+  echo "OMNIFLOW_SINGLE_TASK_EMULATOR_GRACEFUL_SHUTDOWN_TIMEOUT_SEC must be a positive integer." >&2
+  exit 2
+fi
+if [[ ! "$emulator_forced_shutdown_timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
+  echo "OMNIFLOW_SINGLE_TASK_EMULATOR_FORCED_SHUTDOWN_TIMEOUT_SEC must be a positive integer." >&2
   exit 2
 fi
 printf -v iteration_label '%02d' "$task_iteration"
@@ -1960,17 +1970,74 @@ device_state() {
   awk -v wanted="$serial" '$1 == wanted {print $2; exit}' <<< "$devices"
 }
 
+managed_emulator_pids() {
+  local serial="$1"
+  local avd="$2"
+  "$python_bin" -m src.experiment.emulator_processes \
+    --serial "$serial" \
+    --avd "$avd"
+}
+
+force_stop_managed_emulator() {
+  local serial="$1"
+  local avd process_ids process_id stop_deadline
+  if ! avd="$(avd_for_serial "$serial")"; then
+    echo "Cannot identify managed emulator AVD for forced stop: $serial" >&2
+    return 1
+  fi
+  if ! process_ids="$(managed_emulator_pids "$serial" "$avd")"; then
+    echo "Cannot inspect managed emulator process: serial=$serial avd=$avd" >&2
+    return 1
+  fi
+  if [[ -z "$process_ids" ]]; then
+    echo "No exact managed emulator process found: serial=$serial avd=$avd" >&2
+    return 1
+  fi
+  if [[ "$process_ids" == *$'\n'* ]]; then
+    echo "Ambiguous managed emulator processes: serial=$serial avd=$avd pids=${process_ids//$'\n'/,}" >&2
+    return 1
+  fi
+  process_id="$process_ids"
+  echo "[emulator] terminate serial=$serial avd=$avd pid=$process_id"
+  if ! kill -TERM "$process_id" 2>/dev/null && kill -0 "$process_id" 2>/dev/null; then
+    echo "Managed emulator rejected SIGTERM: serial=$serial avd=$avd pid=$process_id" >&2
+    return 1
+  fi
+  stop_deadline="$(( $(date +%s) + emulator_forced_shutdown_timeout_sec ))"
+  while kill -0 "$process_id" 2>/dev/null; do
+    if (( $(date +%s) >= stop_deadline )); then
+      echo "[emulator] kill serial=$serial avd=$avd pid=$process_id"
+      if ! kill -KILL "$process_id" 2>/dev/null && kill -0 "$process_id" 2>/dev/null; then
+        echo "Managed emulator rejected SIGKILL: serial=$serial avd=$avd pid=$process_id" >&2
+        return 1
+      fi
+      break
+    fi
+    sleep 1
+  done
+}
+
 stop_emulator() {
   local serial="$1"
   local reason="$2"
-  local stop_deadline
+  local console_port grpc_port stop_deadline
+  console_port="${serial#emulator-}"
+  grpc_port="$(( console_port + 3000 ))"
   echo "[emulator] stop serial=$serial reason=$reason"
   "$adb_bin" -s "$serial" emu kill >/dev/null 2>&1 || true
-  stop_deadline="$(( $(date +%s) + 30 ))"
-  while [[ -n "$(device_state "$serial")" ]]; do
+  stop_deadline="$(( $(date +%s) + emulator_graceful_shutdown_timeout_sec ))"
+  while [[ -n "$(device_state "$serial")" ]] || grpc_ready "$grpc_port"; do
     if (( $(date +%s) >= stop_deadline )); then
-      echo "Existing emulator could not be stopped safely: $serial" >&2
-      return 1
+      force_stop_managed_emulator "$serial"
+      stop_deadline="$(( $(date +%s) + emulator_forced_shutdown_timeout_sec ))"
+      while [[ -n "$(device_state "$serial")" ]] || grpc_ready "$grpc_port"; do
+        if (( $(date +%s) >= stop_deadline )); then
+          echo "Managed emulator remained visible after exact process stop: serial=$serial grpc=$grpc_port" >&2
+          return 1
+        fi
+        sleep 1
+      done
+      return 0
     fi
     sleep 1
   done
@@ -2029,12 +2096,9 @@ ensure_emulator() {
     echo "Emulator is not ready and automatic management is disabled: serial=$serial grpc=$grpc_port" >&2
     return 1
   fi
-  if [[ -n "$current_state" ]]; then
-    echo "[emulator] cold-restart serial=$serial state=$current_state grpc=$grpc_port"
+  if [[ -n "$current_state" ]] || grpc_ready "$grpc_port"; then
+    echo "[emulator] cold-restart serial=$serial state=${current_state:-absent} grpc=$grpc_port"
     stop_emulator "$serial" "cold-restart"
-  elif grpc_ready "$grpc_port"; then
-    echo "gRPC port is occupied without its emulator: 127.0.0.1:$grpc_port" >&2
-    return 1
   fi
   if ! avd="$(avd_for_serial "$serial")"; then
     echo "No AVD mapping configured for $serial in OMNIFLOW_SINGLE_TASK_EMULATOR_AVDS." >&2
