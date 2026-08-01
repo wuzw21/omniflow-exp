@@ -23,6 +23,7 @@ from typing import Any, Sequence
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 
 from omniflow.vlm.usage import token_usage_status
 from src.experiment.observation_evidence import (
@@ -2703,12 +2704,37 @@ def _read_raw_replay_run_log(path_text: str) -> dict[str, Any]:
 def _raw_replay_step_actions(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Project the only accepted RunLog schema to fixed-replay actions."""
 
-    def replay_action(action: dict[str, Any]) -> dict[str, Any]:
+    from omniflow.core.trajectory import observation_display
+    from src.experiment.source_assets import _identity_at_action_point
+
+    def replay_action(
+        step: dict[str, Any],
+        action: dict[str, Any],
+    ) -> dict[str, Any]:
         tool = str(action["tool"])
         params = dict(action.get("args") or {})
+        if tool in {"click", "long_press"}:
+            observation = step["observation"]
+            display_size = observation_display(observation)
+            display = (
+                {"width": display_size[0], "height": display_size[1]}
+                if display_size is not None
+                else {}
+            )
+            selector = _identity_at_action_point(
+                str(observation.get("forest") or ""),
+                action_args=params,
+                display=display,
+            )
+            if selector:
+                return {"type": tool, "params": {"selector": selector}}
+            projected = {"type": tool, "params": params}
+            if any(key in params for key in ("x", "y")):
+                projected["coordinate_space"] = "canonical_0_1000"
+            return projected
         projected = {"type": tool, "params": params}
         if (
-            tool in {"click", "long_press", "input_text", "swipe"}
+            tool in {"input_text", "swipe"}
             and any(
                 key in params
                 for key in ("x", "y", "x1", "y1", "x2", "y2")
@@ -2726,7 +2752,7 @@ def _raw_replay_step_actions(data: dict[str, Any]) -> list[dict[str, Any]]:
         if action_type in {"answer", "status", "unknown"}:
             continue
         actions.extend(
-            replay_action(action)
+            replay_action(step, action)
             for action in project_androidworld_step_actions(step)
         )
     return actions
@@ -2875,11 +2901,129 @@ def _raw_replay_direction_from_points(
     return "up" if dy < 0 else "down"
 
 
+def _fixed_replay_normalize_selector_value(value: Any) -> str:
+    return " ".join(str(value or "").casefold().split())
+
+
+def _fixed_replay_selector_nodes(
+    xml_text: str,
+    selector: dict[str, Any],
+) -> tuple[list[ET.Element], str | None]:
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return [], "selector_target_xml_invalid"
+    return _fixed_replay_selector_nodes_from_root(root, selector)
+
+
+def _fixed_replay_selector_nodes_from_root(
+    root: ET.Element,
+    selector: dict[str, Any],
+) -> tuple[list[ET.Element], str | None]:
+    nodes = list(root.iter())
+    relation = str(selector.get("relation") or "").strip()
+    if relation == "unique_actionable_descendant":
+        anchor = selector.get("container_anchor")
+        if not isinstance(anchor, dict) or not anchor:
+            return [], "selector_container_anchor_missing"
+        anchor_nodes, anchor_error = _fixed_replay_selector_nodes_from_root(
+            root,
+            anchor,
+        )
+        if anchor_error is not None:
+            return [], anchor_error
+        if len(anchor_nodes) != 1:
+            return [], "selector_container_anchor_ambiguous"
+        parents = {child: parent for parent in root.iter() for child in list(parent)}
+        container = parents.get(anchor_nodes[0])
+        if container is None:
+            return [], "selector_container_missing"
+        actionable = [
+            node
+            for node in container.iter()
+            if node is not anchor_nodes[0]
+            and any(
+                str(node.attrib.get(key) or "").lower() == "true"
+                for key in ("clickable", "editable", "long-clickable")
+            )
+        ]
+        return actionable, None
+    if str(selector.get("role") or "").strip() == "editable":
+        editable = [
+            node
+            for node in nodes
+            if str(node.attrib.get("editable") or "").lower() == "true"
+            or str(node.attrib.get("class") or "") == "android.widget.EditText"
+        ]
+        return editable, None
+    aliases = {
+        "resource_id": "resource-id",
+        "text": "text",
+        "content_desc": "content-desc",
+    }
+    expected = {
+        attribute: _fixed_replay_normalize_selector_value(selector.get(key))
+        for key, attribute in aliases.items()
+        if _fixed_replay_normalize_selector_value(selector.get(key))
+    }
+    if not expected:
+        return [], "selector_identity_missing"
+    resource_id = expected.get("resource-id")
+    if resource_id:
+        resource_matches = [
+            node
+            for node in nodes
+            if _fixed_replay_normalize_selector_value(
+                node.attrib.get("resource-id")
+            )
+            == resource_id
+        ]
+        if len(resource_matches) == 1:
+            return resource_matches, None
+        if resource_matches:
+            nodes = resource_matches
+    matches = [
+        node
+        for node in nodes
+        if all(
+            _fixed_replay_normalize_selector_value(node.attrib.get(attribute))
+            == value
+            for attribute, value in expected.items()
+        )
+    ]
+    return matches, None
+
+
+def _fixed_replay_selector_center(
+    xml_text: str,
+    selector: dict[str, Any],
+) -> tuple[tuple[int, int] | None, str | None]:
+    matches, error = _fixed_replay_selector_nodes(xml_text, selector)
+    if error is not None:
+        return None, error
+    if not matches:
+        return None, "selector_target_not_found"
+    if len(matches) != 1:
+        return None, "selector_target_ambiguous"
+    bounds = str(matches[0].attrib.get("bounds") or "").strip()
+    match = re.fullmatch(
+        r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]",
+        bounds,
+    )
+    if match is None:
+        return None, "selector_target_bounds_missing"
+    left, top, right, bottom = (int(value) for value in match.groups())
+    if right <= left or bottom <= top:
+        return None, "selector_target_bounds_invalid"
+    return ((left + right) // 2, (top + bottom) // 2), None
+
+
 def _raw_replay_action_to_payload(
     source_action: dict[str, Any],
     *,
     source_size: tuple[int, int] | None,
     target_size: tuple[int, int],
+    target_xml: str = "",
 ) -> tuple[dict[str, Any] | None, str | None]:
     action_type = str(
         source_action.get("type")
@@ -2927,9 +3071,24 @@ def _raw_replay_action_to_payload(
         return x, y
 
     if action_type in {"click", "tap", "double_tap", "long_press", "longpress"}:
-        x, y = _scaled_xy()
+        selector = (
+            dict(params.get("selector") or {})
+            if isinstance(params.get("selector"), dict)
+            else {}
+        )
+        if selector:
+            center, selector_error = _fixed_replay_selector_center(
+                target_xml,
+                selector,
+            )
+            if selector_error is not None:
+                return None, selector_error
+            assert center is not None
+            x, y = center
+        else:
+            x, y = _scaled_xy()
         if x is None or y is None:
-            return None, "missing_coordinates"
+            return None, "missing_selector_and_coordinates"
         return {
             "action_type": "long_press"
             if action_type in {"long_press", "longpress"}
@@ -3233,13 +3392,13 @@ def _launch_raw_replay_app(app_identifier: str, env: Any) -> None:
     adb_utils.check_ok(result, f"Failed to launch Android package {identifier}.")
 
 
-def _apply_raw_coordinate_replay(
+def _apply_fixed_replay(
     agent: Any,
     *,
     run_log_json_path: str,
     adb_path: str = "",
 ) -> Any:
-    """Replay fixed source coordinates through AndroidWorld without relocation."""
+    """Replay fixed source actions through selector-first AndroidWorld parameters."""
 
     original_set_max_steps = getattr(agent, "set_max_steps", None)
     run_log_data = _read_raw_replay_run_log(run_log_json_path)
@@ -3253,8 +3412,16 @@ def _apply_raw_coordinate_replay(
         os.environ.get("OMNIFLOW_RAW_REPLAY_CAPTURE_OBSERVATIONS") or ""
     ).strip().lower() in {"1", "true", "yes", "on"}
     capture_observations = use_oob_observe or capture_native_observations
-    if capture_observations and not callable(replay_observe):
-        raise RuntimeError("raw replay observation capture requires host.observe")
+    requires_selector_observations = any(
+        isinstance(action.get("params"), dict)
+        and isinstance(action["params"].get("selector"), dict)
+        and bool(action["params"]["selector"])
+        for action in source_actions
+    )
+    if (
+        capture_observations or requires_selector_observations
+    ) and not callable(replay_observe):
+        raise RuntimeError("fixed replay selector resolution requires host.observe")
 
     def _forced_reset(go_home: bool = False) -> None:
         state["ran"] = False
@@ -3340,14 +3507,14 @@ def _apply_raw_coordinate_replay(
             return make_agent_result(
                 done=True,
                 data={
-                    "summary": "raw coordinate replay already completed",
+                    "summary": "fixed replay already completed",
                     "run_id": payload.get("run_id"),
                     "step_index": 0,
-                    "source": "raw_coordinate_replay",
+                    "source": "selector_then_scaled_coordinate_replay",
                     "actions_executed": int(summary.get("actions_executed") or 0),
                     "fallback": False,
                     "error": None,
-                    "done_reason": "raw_coordinate_replay_already_completed",
+                    "done_reason": "fixed_replay_already_completed",
                 },
             )
 
@@ -3372,9 +3539,27 @@ def _apply_raw_coordinate_replay(
         completed = True
         error_text: str | None = None
         actions_executed = 0
+        selector_actions = 0
+        scaled_coordinate_actions = 0
         for index, source_action in enumerate(source_actions):
             observation_record: dict[str, Any] | None = None
-            if capture_observations:
+            source_params = (
+                dict(source_action.get("params") or {})
+                if isinstance(source_action.get("params"), dict)
+                else {}
+            )
+            needs_selector_observation = bool(
+                isinstance(source_params.get("selector"), dict)
+                and source_params["selector"]
+            )
+            uses_scaled_coordinates = bool(
+                not needs_selector_observation
+                and any(
+                    key in source_params
+                    for key in ("x", "y", "x1", "y1", "x2", "y2")
+                )
+            )
+            if capture_observations or needs_selector_observation:
                 observation_record = _raw_replay_observation_record(
                     replay_observe(xml=True, screenshot=False, app_info=True),
                     fallback_size=(int(target_size[0]), int(target_size[1])),
@@ -3383,6 +3568,7 @@ def _apply_raw_coordinate_replay(
                 source_action,
                 source_size=source_size,
                 target_size=(int(target_size[0]), int(target_size[1])),
+                target_xml=str((observation_record or {}).get("xml") or ""),
             )
             step_record: dict[str, Any] = {
                 "index": index,
@@ -3392,14 +3578,22 @@ def _apply_raw_coordinate_replay(
                 "target_screen_size": [int(target_size[0]), int(target_size[1])],
                 "completed": False,
                 "skipped": False,
+                "parameter_source": (
+                    "selector"
+                    if needs_selector_observation
+                    else "scaled_coordinate_fallback"
+                    if uses_scaled_coordinates
+                    else "direct_androidworld_action"
+                ),
             }
             if observation_record is not None:
                 step_record["observation_before_act"] = observation_record
             if skip_reason:
-                step_record["skipped"] = True
-                step_record["skip_reason"] = skip_reason
+                completed = False
+                error_text = skip_reason
+                step_record["error"] = skip_reason
                 step_results.append(step_record)
-                continue
+                break
             try:
                 assert payload is not None
                 _execute_payload(
@@ -3407,6 +3601,10 @@ def _apply_raw_coordinate_replay(
                     target_size=(int(target_size[0]), int(target_size[1])),
                 )
                 actions_executed += 1
+                if needs_selector_observation:
+                    selector_actions += 1
+                elif uses_scaled_coordinates:
+                    scaled_coordinate_actions += 1
                 step_record["completed"] = True
                 wait_after_s = _raw_replay_action_wait_seconds(
                     source_action,
@@ -3437,7 +3635,7 @@ def _apply_raw_coordinate_replay(
                 final_observation_error = str(exc) or type(exc).__name__
         elapsed_ms = max(0.0, (perf_counter() - started) * 1000.0)
         run_id = (
-            "raw_replay_"
+            "fixed_replay_"
             + str(run_log_data.get("run_id") or Path(run_log_json_path).stem)
             + "_"
             + utc_now_iso()
@@ -3447,16 +3645,18 @@ def _apply_raw_coordinate_replay(
             .replace("+", "")
         )
         done_reason = (
-            "raw_coordinate_replay_completed"
+            "fixed_replay_completed"
             if completed
-            else "raw_coordinate_replay_failed"
+            else "fixed_replay_failed"
         )
         execution_summary = {
             "completed": bool(completed),
             "replay_completed": bool(completed),
-            "execution_backend": "raw_coordinate_replay",
+            "execution_backend": "selector_then_scaled_coordinate_replay",
             "steps": int(actions_executed),
             "actions_executed": int(actions_executed),
+            "selector_actions": int(selector_actions),
+            "scaled_coordinate_actions": int(scaled_coordinate_actions),
             "model_calls": 0,
             "tokens": 0,
             "prompt_tokens": 0,
@@ -3487,12 +3687,16 @@ def _apply_raw_coordinate_replay(
                 {
                     "step_index": 0,
                     "selection_source": "fixed_replay",
-                    "execution_source": "raw_coordinate_replay",
+                    "execution_source": "selector_then_scaled_coordinate_replay",
                     "provider_detail": {
                         "raw_replay": {
                             "source_run_log": str(run_log_json_path),
                             "source_action_count": len(source_actions),
                             "actions_executed": int(actions_executed),
+                            "selector_actions": int(selector_actions),
+                            "scaled_coordinate_actions": int(
+                                scaled_coordinate_actions
+                            ),
                             "source_screen_size": list(source_size)
                             if source_size
                             else None,
@@ -3548,6 +3752,10 @@ def _apply_raw_coordinate_replay(
                                 "run_id": run_id,
                                 "step_count": len(step_results),
                                 "actions_executed": int(actions_executed),
+                                "selector_actions": int(selector_actions),
+                                "scaled_coordinate_actions": int(
+                                    scaled_coordinate_actions
+                                ),
                                 "duration_ms": elapsed_ms,
                                 "run_log": run_log,
                             }
@@ -3563,10 +3771,10 @@ def _apply_raw_coordinate_replay(
         return make_agent_result(
             done=True,
             data={
-                "summary": error_text or "raw coordinate replay executed",
+                "summary": error_text or "fixed replay executed",
                 "run_id": run_id,
                 "step_index": 0,
-                "source": "raw_coordinate_replay",
+                "source": "selector_then_scaled_coordinate_replay",
                 "actions_executed": int(actions_executed),
                 "fallback": False,
                 "error": error_text,
@@ -3678,7 +3886,7 @@ def _build_launch_agent(
             run_log_json_path = str(raw_replay_run_log or "").strip()
             if not run_log_json_path:
                 raise ValueError("fixed_replay requires --raw-replay-run-log")
-            return _apply_raw_coordinate_replay(
+            return _apply_fixed_replay(
                 built_agent,
                 run_log_json_path=run_log_json_path,
                 adb_path=adb_path,

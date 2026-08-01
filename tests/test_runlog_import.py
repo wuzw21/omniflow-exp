@@ -9,7 +9,10 @@ import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment.source_runlogs import convert_source_index
-from src.integrations.android_world.launch import _raw_replay_step_actions
+from src.integrations.android_world.launch import (
+    _raw_replay_action_to_payload,
+    _raw_replay_step_actions,
+)
 from src.integrations.runlog import (
     adapt_source_run_log,
     convert_legacy_run_log,
@@ -752,6 +755,11 @@ def test_explicit_converter_uses_provider_online_action(tmp_path: Path) -> None:
 
 
 def test_fixed_replay_accepts_only_omniflow_run_log() -> None:
+    settings_xml = (
+        '<hierarchy><node text="Network &amp; internet" '
+        'resource-id="com.android.settings:id/network_dashboard" '
+        'bounds="[100,500][620,780]" clickable="true" /></hierarchy>'
+    )
     run_log = androidworld_run_log(
         [
             {"action_type": "open_app", "app_name": "com.android.settings"},
@@ -759,7 +767,12 @@ def test_fixed_replay_accepts_only_omniflow_run_log() -> None:
         ],
         observations=[
             androidworld_state("launcher", width=720, height=1280),
-            androidworld_state("settings", width=720, height=1280),
+            androidworld_state(
+                "settings",
+                forest=settings_xml,
+                width=720,
+                height=1280,
+            ),
         ],
     )
 
@@ -770,7 +783,102 @@ def test_fixed_replay_accepts_only_omniflow_run_log() -> None:
         },
         {
             "type": "click",
-            "params": {"x": 500.0, "y": 500.0},
-            "coordinate_space": "canonical_0_1000",
+            "params": {
+                "selector": {
+                    "text": "Network & internet",
+                    "resource_id": "com.android.settings:id/network_dashboard",
+                }
+            },
         },
     ]
+
+
+def test_fixed_replay_resolves_click_from_target_selector() -> None:
+    target_xml = (
+        '<hierarchy><node text="Network &amp; internet" '
+        'resource-id="com.android.settings:id/network_dashboard" '
+        'bounds="[200,800][600,1000]" clickable="true" /></hierarchy>'
+    )
+
+    payload, error = _raw_replay_action_to_payload(
+        {
+            "type": "click",
+            "params": {
+                "selector": {
+                    "text": "Network & internet",
+                    "resource_id": "com.android.settings:id/network_dashboard",
+                }
+            },
+        },
+        source_size=(720, 1280),
+        target_size=(800, 1600),
+        target_xml=target_xml,
+    )
+
+    assert error is None
+    assert payload == {"action_type": "click", "x": 400, "y": 900}
+
+
+def test_fixed_replay_scales_coordinates_only_without_selector() -> None:
+    payload, error = _raw_replay_action_to_payload(
+        {
+            "type": "click",
+            "params": {"x": 500, "y": 500},
+            "coordinate_space": "canonical_0_1000",
+        },
+        source_size=(720, 1280),
+        target_size=(1440, 2560),
+    )
+
+    assert error is None
+    assert payload == {"action_type": "click", "x": 720, "y": 1280}
+
+
+def test_fixed_replay_does_not_fallback_when_selector_misses() -> None:
+    payload, error = _raw_replay_action_to_payload(
+        {
+            "type": "click",
+            "params": {
+                "selector": {"text": "Missing target"},
+                "x": 500,
+                "y": 500,
+            },
+            "coordinate_space": "canonical_0_1000",
+        },
+        source_size=(720, 1280),
+        target_size=(1440, 2560),
+        target_xml=(
+            '<hierarchy><node text="Different target" '
+            'bounds="[100,100][300,300]" /></hierarchy>'
+        ),
+    )
+
+    assert payload is None
+    assert error == "selector_target_not_found"
+
+
+def test_fixed_replay_resolves_structural_selector() -> None:
+    target_xml = (
+        '<hierarchy><node bounds="[0,0][600,300]">'
+        '<node text="Dreamer&apos;s Awake" bounds="[20,40][400,180]" />'
+        '<node clickable="true" bounds="[440,40][580,180]" />'
+        "</node></hierarchy>"
+    )
+
+    payload, error = _raw_replay_action_to_payload(
+        {
+            "type": "click",
+            "params": {
+                "selector": {
+                    "relation": "unique_actionable_descendant",
+                    "container_anchor": {"text": "Dreamer's Awake"},
+                }
+            },
+        },
+        source_size=(600, 300),
+        target_size=(600, 300),
+        target_xml=target_xml,
+    )
+
+    assert error is None
+    assert payload == {"action_type": "click", "x": 510, "y": 110}
