@@ -159,9 +159,11 @@ def test_exhausted_teacher_finishes_task_before_subtask_reentry(
     assert calls == ["task_finished"]
 
 
-def test_teacher_uses_task_local_subtask_before_cold_selector(
+@pytest.mark.parametrize("native_select_succeeds", [True, False])
+def test_teacher_keeps_native_subtask_selection_task_local(
     tmp_path,
     monkeypatch,
+    native_select_succeeds,
 ) -> None:
     source_run_log = tmp_path / "source.run_log.json"
     _write_source_run_log(
@@ -184,7 +186,20 @@ def test_teacher_uses_task_local_subtask_before_cold_selector(
 
         def select(self, *_args, **_kwargs):
             type(self).calls += 1
-            raise ValueError("invalid_json:Extra data")
+            if not native_select_succeeds:
+                raise ValueError("invalid_json:Extra data")
+            return (
+                {
+                    "reasoning": "Search for the requested note.",
+                    "action": {
+                        "name": "search_notes",
+                        "description": "Search notes by query.",
+                        "parameters": {"query": "note title"},
+                    },
+                    "completion_rate": 0,
+                },
+                None,
+            )
 
     class DeriveAgent:
         def __init__(self):
@@ -216,7 +231,18 @@ def test_teacher_uses_task_local_subtask_before_cold_selector(
             encoded_xml=None,
         ):
             response, _ = self.select_agent.select(
-                [],
+                [
+                    {
+                        "name": "toggle_sidebar",
+                        "description": "Toggle the sidebar.",
+                        "parameters": {},
+                    },
+                    {
+                        "name": "search_notes",
+                        "description": "Search notes by query.",
+                        "parameters": {"query": "note title"},
+                    },
+                ],
                 [],
                 [],
                 encoded_xml,
@@ -268,14 +294,27 @@ def test_teacher_uses_task_local_subtask_before_cold_selector(
 
     assert action == {"name": "click", "parameters": {"index": "7"}}
     assert teacher.cursor == 1
-    assert SelectAgent.calls == 0
-    assert any(
-        event.get("event") == "mobilegpt_teacher_forced_select"
-        and event.get("scope") == "task"
-        and event.get("task_name") == "submitDrawing"
-        and event.get("subtask", {}).get("name") == "submitDrawing"
-        for event in events
-    )
+    assert SelectAgent.calls == 1
+    if native_select_succeeds:
+        assert any(
+            event.get("event") == "mobilegpt_teacher_task_local_select"
+            and event.get("selection_source") == "native_select_agent"
+            and event.get("subtask", {}).get("name") == "search_notes"
+            for event in events
+        )
+        assert not any(
+            event.get("event") == "mobilegpt_teacher_forced_select"
+            for event in events
+        )
+    else:
+        assert any(
+            event.get("event") == "mobilegpt_teacher_forced_select"
+            and event.get("scope") == "task"
+            and event.get("task_name") == "submitDrawing"
+            and event.get("selection_source") == "task_definition_fallback"
+            and event.get("subtask", {}).get("name") == "submitDrawing"
+            for event in events
+        )
 
 
 def test_teacher_uses_foreground_package_when_parsed_xml_omits_it(

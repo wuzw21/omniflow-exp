@@ -604,6 +604,7 @@ def install_mobilegpt_teacher(
         select_agent = getattr(self, "select_agent", None)
         if select_agent is None or not callable(getattr(select_agent, "select", None)):
             return result
+        original_select = select_agent.select
 
         def select_task_local_subtask(
             available_subtasks,
@@ -611,24 +612,44 @@ def install_mobilegpt_teacher(
             qa_history,
             screen,
         ):
-            del subtask_history, qa_history, screen
-            selected = None
-            for candidate in available_subtasks or []:
-                if not isinstance(candidate, dict):
-                    continue
-                candidate_name = str(candidate.get("name") or "").strip()
-                if candidate_name and candidate_name not in {
+            native_error = ""
+            try:
+                response, new_action = original_select(
+                    available_subtasks,
+                    subtask_history,
+                    qa_history,
+                    screen,
+                )
+                selected = (
+                    dict(response.get("action") or {})
+                    if isinstance(response, dict)
+                    and isinstance(response.get("action"), dict)
+                    else {}
+                )
+                selected_name = str(selected.get("name") or "").strip()
+                if not selected_name or selected_name in {
                     "finish",
                     "read_screen",
                     "scroll_screen",
                     "speak",
                 }:
-                    selected = dict(candidate)
-                    break
-
-            selection_source = "native_available_subtask"
-            new_action = None
-            if selected is None:
+                    raise ValueError("mobilegpt_teacher_native_subtask_invalid")
+                task_name = str(
+                    (getattr(self, "task", {}) or {}).get("name") or ""
+                ).strip()
+                writer(
+                    {
+                        "event": "mobilegpt_teacher_task_local_select",
+                        "scope": "task",
+                        "task_name": task_name,
+                        "source_run_log": teacher.source_run_log,
+                        "selection_source": "native_select_agent",
+                        "subtask": selected,
+                    }
+                )
+                return response, new_action
+            except Exception as error:
+                native_error = f"{type(error).__name__}:{error}"
                 task_payload = (
                     dict(getattr(self, "task", {}) or {})
                     if isinstance(getattr(self, "task", {}), dict)
@@ -648,8 +669,6 @@ def install_mobilegpt_teacher(
                         dict(parameters) if isinstance(parameters, dict) else {}
                     ),
                 }
-                selection_source = "task_definition_fallback"
-                new_action = dict(selected)
 
             if not isinstance(selected.get("parameters"), dict):
                 selected["parameters"] = {}
@@ -673,11 +692,12 @@ def install_mobilegpt_teacher(
                     "scope": "task",
                     "task_name": task_name,
                     "source_run_log": teacher.source_run_log,
-                    "selection_source": selection_source,
+                    "selection_source": "task_definition_fallback",
+                    "native_select_error": native_error,
                     "subtask": selected,
                 }
             )
-            return response, new_action
+            return response, dict(selected)
 
         select_agent.select = select_task_local_subtask
         return result
