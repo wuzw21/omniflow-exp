@@ -3448,6 +3448,7 @@ def _launch_raw_replay_app(app_identifier: str, env: Any) -> None:
                 f"raw_replay_app_package_unresolved:{identifier}:{len(matches)}"
             )
         identifier = matches[0]
+    adb_utils.close_app(identifier, env.controller)
     adb_utils.launch_app(identifier, env.controller)
 
 

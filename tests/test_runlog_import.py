@@ -907,7 +907,10 @@ def test_fixed_replay_opens_packages_through_androidworld_launcher(
     calls: list[tuple[str, object]] = []
     adb_utils = SimpleNamespace(
         launch_app=lambda app, actual_controller: calls.append(
-            (app, actual_controller)
+            (f"launch:{app}", actual_controller)
+        ),
+        close_app=lambda app, actual_controller: calls.append(
+            (f"close:{app}", actual_controller)
         ),
         get_all_apps=lambda actual_controller: (
             ["settings"] if actual_controller is controller else []
@@ -929,7 +932,10 @@ def test_fixed_replay_opens_packages_through_androidworld_launcher(
         SimpleNamespace(controller=controller),
     )
 
-    assert calls == [("settings", controller)]
+    assert calls == [
+        ("close:settings", controller),
+        ("launch:settings", controller),
+    ]
 
 
 def test_fixed_replay_scales_coordinates_only_without_selector() -> None:
