@@ -13,6 +13,7 @@ from src.integrations.android_world.setup_compat import (
     patch_androidworld_setup_click_retry,
     patch_androidworld_setup_fail_closed,
     patch_androidworld_special_storage_setup,
+    patch_androidworld_vlc_apk_selection,
     resolve_androidworld_task_setup_apps,
     restore_task_app_snapshots_after_initialize,
 )
@@ -219,6 +220,74 @@ def test_androidworld_legacy_apk_install_uses_platform_bypass() -> None:
             "/tmp/clipper.apk",
         ]
     ]
+
+
+def test_androidworld_vlc_install_selects_x86_64_apk() -> None:
+    selected_apks: list[tuple[str, ...]] = []
+    commands: list[list[str]] = []
+    response = SimpleNamespace(
+        status="ok",
+        generic=SimpleNamespace(output=b"x86_64\n"),
+    )
+
+    class VlcApp:
+        apk_names = (
+            "org.videolan.vlc_13050407.apk",
+            "org.videolan.vlc_13050408.apk",
+        )
+
+    setup_module = SimpleNamespace(
+        maybe_install_app=lambda app, env: selected_apks.append(tuple(app.apk_names)),
+        apps=SimpleNamespace(VlcApp=VlcApp),
+        adb_utils=SimpleNamespace(
+            issue_generic_request=lambda command, controller: (
+                commands.append(command) or response
+            ),
+            check_ok=lambda actual_response, message: None,
+        ),
+    )
+
+    patch_androidworld_vlc_apk_selection(setup_module)
+    setup_module.maybe_install_app(VlcApp, SimpleNamespace(controller=object()))
+
+    assert commands == [["shell", "getprop", "ro.product.cpu.abi"]]
+    assert selected_apks == [("org.videolan.vlc_13050408.apk",)]
+    assert VlcApp.apk_names == (
+        "org.videolan.vlc_13050407.apk",
+        "org.videolan.vlc_13050408.apk",
+    )
+
+
+def test_androidworld_vlc_install_rejects_unknown_abi() -> None:
+    response = SimpleNamespace(
+        status="ok",
+        generic=SimpleNamespace(output=b"riscv64\n"),
+    )
+
+    class VlcApp:
+        apk_names = (
+            "org.videolan.vlc_13050407.apk",
+            "org.videolan.vlc_13050408.apk",
+        )
+
+    setup_module = SimpleNamespace(
+        maybe_install_app=lambda app, env: (_ for _ in ()).throw(
+            AssertionError("unsupported ABI must not probe an APK")
+        ),
+        apps=SimpleNamespace(VlcApp=VlcApp),
+        adb_utils=SimpleNamespace(
+            issue_generic_request=lambda command, controller: response,
+            check_ok=lambda actual_response, message: None,
+        ),
+    )
+
+    patch_androidworld_vlc_apk_selection(setup_module)
+
+    with pytest.raises(RuntimeError, match="riscv64"):
+        setup_module.maybe_install_app(
+            VlcApp,
+            SimpleNamespace(controller=object()),
+        )
 
 
 def test_androidworld_osmand_chcon_requires_verified_map() -> None:

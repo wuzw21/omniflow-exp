@@ -21,6 +21,10 @@ _OPEN_TRACKS_BLUETOOTH_PERMISSIONS = (
     "android.permission.BLUETOOTH_SCAN",
     "android.permission.BLUETOOTH_CONNECT",
 )
+_VLC_APK_BY_ABI = {
+    "arm64-v8a": "org.videolan.vlc_13050407.apk",
+    "x86_64": "org.videolan.vlc_13050408.apk",
+}
 _CONTACTS_READY_LABELS = frozenset(
     {
         "Create contact",
@@ -249,6 +253,47 @@ def patch_androidworld_legacy_apk_install(setup_module: Any) -> None:
 
     setup_module.download_and_install_apk = download_and_install_apk
     setup_module._omniflow_legacy_apk_install_patch = True
+
+
+def patch_androidworld_vlc_apk_selection(setup_module: Any) -> None:
+    """Select the official VLC APK matching the target device ABI."""
+
+    if getattr(setup_module, "_omniflow_vlc_apk_selection_patch", False):
+        return
+    original_maybe_install_app = setup_module.maybe_install_app
+    vlc_app = setup_module.apps.VlcApp
+
+    def maybe_install_app(app: Any, env: Any) -> None:
+        if app is not vlc_app:
+            original_maybe_install_app(app, env)
+            return
+        response = setup_module.adb_utils.issue_generic_request(
+            ["shell", "getprop", "ro.product.cpu.abi"],
+            env.controller,
+        )
+        setup_module.adb_utils.check_ok(
+            response,
+            "Failed to read the Android device ABI for VLC installation.",
+        )
+        output = bytes(getattr(response.generic, "output", b"")).decode(
+            "utf-8", errors="replace"
+        )
+        device_abi = output.strip().splitlines()[0] if output.strip() else ""
+        selected_apk = _VLC_APK_BY_ABI.get(device_abi)
+        available_apks = tuple(str(name) for name in app.apk_names)
+        if selected_apk is None or selected_apk not in available_apks:
+            raise RuntimeError(
+                "No official AndroidWorld VLC APK matches the target device ABI: "
+                f"abi={device_abi!r} available={available_apks!r}"
+            )
+        app.apk_names = (selected_apk,)
+        try:
+            original_maybe_install_app(app, env)
+        finally:
+            app.apk_names = available_apks
+
+    setup_module.maybe_install_app = maybe_install_app
+    setup_module._omniflow_vlc_apk_selection_patch = True
 
 
 def patch_androidworld_osmand_storage_setup(setup_module: Any) -> None:
