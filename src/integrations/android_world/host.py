@@ -91,6 +91,39 @@ def androidworld_elements_xml(elements: list[Any]) -> str:
     return _elements_xml(elements)
 
 
+def _xml_semantic_score(xml_text: str) -> tuple[int, int, int, int]:
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return (0, 0, 0, 0)
+    nodes = [element for element in root.iter() if element.tag == "node"]
+    identity_count = sum(
+        bool(
+            str(element.attrib.get("text") or "").strip()
+            or str(element.attrib.get("content-desc") or "").strip()
+            or str(element.attrib.get("resource-id") or "").strip()
+        )
+        for element in nodes
+    )
+    editable_count = sum(
+        str(element.attrib.get("editable") or "").lower() == "true"
+        for element in nodes
+    )
+    actionable_count = sum(
+        any(
+            str(element.attrib.get(attribute) or "").lower() == "true"
+            for attribute in ("clickable", "editable", "scrollable", "long-clickable")
+        )
+        for element in nodes
+    )
+    semantic_value_count = sum(
+        bool(str(element.attrib.get(attribute) or "").strip())
+        for element in nodes
+        for attribute in ("text", "content-desc", "resource-id", "class", "package")
+    )
+    return identity_count, editable_count, actionable_count, semantic_value_count
+
+
 def _image_base64(pixels: Any) -> str | None:
     if pixels is None:
         return None
@@ -239,15 +272,21 @@ class AndroidWorldHost:
         xml_text = ""
         graph_source = ""
         forest = getattr(state, "forest", None)
+        forest_xml = ""
         if xml and forest is not None:
-            xml_text = androidworld_forest_xml(
+            forest_xml = androidworld_forest_xml(
                 forest,
                 screen_size=(display_width, display_height),
             )
-            if xml_text:
-                graph_source = "androidworld_state_forest"
-        if xml and not xml_text and elements:
-            xml_text = _elements_xml(elements)
+        elements_xml = _elements_xml(elements) if xml and elements else ""
+        if forest_xml and (
+            not elements_xml
+            or _xml_semantic_score(forest_xml) >= _xml_semantic_score(elements_xml)
+        ):
+            xml_text = forest_xml
+            graph_source = "androidworld_state_forest"
+        elif elements_xml:
+            xml_text = elements_xml
             graph_source = "androidworld_state_ui_elements"
         package = package or _package_from_xml(xml_text)
         if xml and xml_text and not xml_covers_screen(

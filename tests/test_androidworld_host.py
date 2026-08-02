@@ -231,6 +231,103 @@ def test_observe_derives_internal_xml_from_official_forest() -> None:
     assert internet.attrib["bounds"] == "[991,586][1171,657]"
 
 
+def test_observe_prefers_semantically_richer_official_ui_elements() -> None:
+    sparse_node = SimpleNamespace(
+        unique_id=1,
+        bounds_in_screen=SimpleNamespace(left=0, top=0, right=1080, bottom=2092),
+        child_ids=[],
+        is_visible_to_user=True,
+        is_clickable=True,
+        is_scrollable=False,
+    )
+    forest = SimpleNamespace(
+        windows=[
+            SimpleNamespace(
+                id=1,
+                title="",
+                tree=SimpleNamespace(nodes=[sparse_node]),
+            )
+        ]
+    )
+    rich_element = SimpleNamespace(
+        text="Meeting attendees",
+        content_description="Attendee count",
+        resource_name="com.example:id/attendees",
+        package_name="com.example",
+        class_name="android.widget.EditText",
+        is_clickable=True,
+        is_editable=True,
+        is_scrollable=False,
+        bbox_pixels=SimpleNamespace(x_min=100, y_min=200, x_max=900, y_max=300),
+    )
+    env = SimpleNamespace(
+        get_state=lambda: _official_state(
+            forest=forest,
+            ui_elements=[rich_element],
+        ),
+        device_screen_size=(1080, 2092),
+        logical_screen_size=(1080, 2092),
+        foreground_activity_name="com.example/.MainActivity",
+    )
+
+    observation = AndroidWorldHost(env).observe()
+
+    assert observation.extra["ui_graph_source"] == "androidworld_state_ui_elements_partial"
+    root = ET.fromstring(observation.xml or "")
+    target = next(
+        element
+        for element in root.iter()
+        if element.attrib.get("resource-id") == "com.example:id/attendees"
+    )
+    assert target.attrib["text"] == "Meeting attendees"
+    assert target.attrib["content-desc"] == "Attendee count"
+    assert target.attrib["editable"] == "true"
+
+
+def test_observe_keeps_semantically_richer_official_forest() -> None:
+    rich_node = SimpleNamespace(
+        unique_id=1,
+        bounds_in_screen=SimpleNamespace(left=0, top=0, right=1080, bottom=2092),
+        child_ids=[],
+        text="Open settings",
+        content_description="Settings",
+        view_id_resource_name="com.example:id/settings",
+        package_name="com.example",
+        class_name="android.widget.Button",
+        is_visible_to_user=True,
+        is_clickable=True,
+        is_editable=False,
+        is_scrollable=False,
+    )
+    forest = SimpleNamespace(
+        windows=[
+            SimpleNamespace(
+                id=1,
+                title="Settings",
+                tree=SimpleNamespace(nodes=[rich_node]),
+            )
+        ]
+    )
+    sparse_element = SimpleNamespace(
+        package_name="com.example",
+        bbox_pixels=SimpleNamespace(x_min=0, y_min=0, x_max=1080, y_max=2092),
+    )
+    env = SimpleNamespace(
+        get_state=lambda: _official_state(
+            forest=forest,
+            ui_elements=[sparse_element],
+        ),
+        device_screen_size=(1080, 2092),
+        logical_screen_size=(1080, 2092),
+        foreground_activity_name="com.example/.MainActivity",
+    )
+
+    observation = AndroidWorldHost(env).observe()
+
+    assert observation.extra["ui_graph_source"] == "androidworld_state_forest"
+    assert "Open settings" in str(observation.xml)
+
+
 def test_open_app_waits_on_the_official_state() -> None:
     state = _official_state(ui_elements=[_ui_element()])
     env = SimpleNamespace(
