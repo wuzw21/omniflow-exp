@@ -238,6 +238,7 @@ def test_mobilegpt_native_speak_reaches_androidworld_answer(
 
         def __init__(self) -> None:
             self.actions: list[SimpleNamespace] = []
+            self.interaction_cache = ""
 
         def get_state(self) -> SimpleNamespace:
             return SimpleNamespace(
@@ -282,6 +283,7 @@ def test_mobilegpt_native_speak_reaches_androidworld_answer(
     assert server_errors == []
     assert [action.action_type for action in env.actions] == ["open_app", "answer"]
     assert env.actions[-1].text == "20"
+    assert env.interaction_cache == "20"
     assert result.done is True
     assert result.data["answer"] == "20"
     assert result.data["actions_executed"] == 0

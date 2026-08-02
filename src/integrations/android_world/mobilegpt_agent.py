@@ -299,6 +299,7 @@ def build_mobilegpt_agent(
             if name == "speak":
                 message = str(parameters.get("message") or "").strip()
                 self._execute(action_type="answer", text=message)
+                self.env.interaction_cache = message
                 return False, message
             if name == "ask":
                 raise RuntimeError("mobilegpt_ask_has_no_androidworld_answer_source")
