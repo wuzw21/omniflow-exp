@@ -137,6 +137,7 @@ def _mobilegpt_write_status(
         memory_inventory={
             "has_recallable_subtasks": True,
             "has_useful_actions": True,
+            "native_memory_complete": True,
         },
     )
     return summary, status
@@ -160,6 +161,20 @@ def _write_mobilegpt_memory(
         f'name,path\n{app_task_name},"{{""0"": [""toggleBluetooth""]}}"\n',
         encoding="utf-8",
     )
+    (app_root / "pages.csv").write_text(
+        "index,available_subtasks,trigger_uis,extra_uis,screen\n"
+        '0,"[]","{}","[]",screen-0\n',
+        encoding="utf-8",
+    )
+    (app_root / "hierarchy.csv").write_text(
+        "index,screen,embedding\n0,screen-0,[0.0]\n",
+        encoding="utf-8",
+    )
+    (page_root / "available_subtasks.csv").write_text(
+        "name,description,parameters\n"
+        "toggleBluetooth,Toggle Bluetooth,{}\n",
+        encoding="utf-8",
+    )
     (page_root / "subtasks.csv").write_text(
         "name,description,parameters\ntoggleBluetooth,Toggle Bluetooth,{}\n",
         encoding="utf-8",
@@ -169,6 +184,15 @@ def _write_mobilegpt_memory(
         'toggleBluetooth,0,"{""name"": ""click""}",{}\n',
         encoding="utf-8",
     )
+    screen_root = page_root / "screen"
+    screen_root.mkdir()
+    (screen_root / "hierarchy.xml").write_text(
+        "<hierarchy />\n",
+        encoding="utf-8",
+    )
+    for name in ("raw.xml", "html.xml", "parsed.xml", "pretty.xml"):
+        (screen_root / name).write_text("<hierarchy />\n", encoding="utf-8")
+    (screen_root / "screenshot.jpg").write_bytes(b"jpeg")
 
 
 def test_mobilegpt_memory_inventory_requires_matching_task_graph(
@@ -185,6 +209,14 @@ def test_mobilegpt_memory_inventory_requires_matching_task_graph(
     assert inventory["task_file_count"] == 1
     assert inventory["task_rows"] == 1
     assert inventory["app_task_names"] == ["toggleBluetooth"]
+    assert inventory["page_file_count"] == 1
+    assert inventory["page_rows"] == 1
+    assert inventory["hierarchy_file_count"] == 1
+    assert inventory["hierarchy_rows"] == 1
+    assert inventory["available_subtask_file_count"] == 1
+    assert inventory["screen_directory_count"] == 1
+    assert inventory["screen_file_count"] == 6
+    assert inventory["native_memory_complete"] is True
     assert inventory["task_local_memory"] is True
 
 
@@ -201,6 +233,82 @@ def test_mobilegpt_memory_inventory_rejects_cross_task_graph(
     inventory = pipeline.inspect_mobilegpt_memory(memory)
 
     assert inventory["task_local_memory"] is False
+
+
+def test_mobilegpt_memory_inventory_rejects_incomplete_native_page(
+    tmp_path: Path,
+) -> None:
+    memory = tmp_path / "memory"
+    _write_mobilegpt_memory(memory)
+    (memory / "com.android.settings" / "pages" / "0" / "available_subtasks.csv").unlink()
+
+    inventory = pipeline.inspect_mobilegpt_memory(memory)
+
+    assert inventory["native_memory_complete"] is False
+
+
+def test_mobilegpt_native_memory_seal_contains_no_teacher_artifacts(
+    tmp_path: Path,
+) -> None:
+    bundle = tmp_path / "bundle"
+    memory = bundle / "memory"
+    _write_mobilegpt_memory(memory)
+    source_run_log = tmp_path / "source.run_log.json"
+    source_run_log.write_text('{"source": true}\n', encoding="utf-8")
+    stats = tmp_path / "source_stats.jsonl"
+    stats.write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {"event": "task_started"},
+                {
+                    "event": "chat_call",
+                    "model": "qwen3-vl-plus",
+                    "prompt_tokens": 10,
+                    "completion_tokens": 2,
+                    "total_tokens": 12,
+                },
+                {"event": "task_finished"},
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    official_result = tmp_path / "task_results.jsonl"
+    official_result.write_text(
+        json.dumps(
+            {
+                "task_name": "SystemBluetoothTurnOn",
+                "official_validator_used": True,
+                "official_validator_success": True,
+                "success": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    sealed = pipeline.seal_mobilegpt_adapted_memory(
+        memory_root=memory,
+        source_run_log=source_run_log,
+        source_stats=stats,
+        official_source_result=official_result,
+        task_name="SystemBluetoothTurnOn",
+        target_package="com.android.settings",
+        target_app="Settings",
+        source_method=pipeline.MOBILEGPT_NATIVE_SOURCE_METHOD,
+        source_model="qwen3-vl-plus",
+    )
+
+    manifest = sealed["manifest"]
+    assert manifest["schema_version"] == (
+        "omniflow.mobilegpt-native-cold-memory.v1"
+    )
+    assert "teacher_source" not in manifest
+    assert manifest["provenance"]["learning_mode"] == "mobilegpt_native_cold"
+    assert manifest["provenance"]["teacher_forcing"] is False
+    assert manifest["provenance"]["synthetic_subtasks"] is False
+    assert sealed["memory_inventory"]["task_local_memory"] is True
 
 
 def _write_store_index(source_index: Path) -> tuple[Path, Path]:
@@ -289,81 +397,33 @@ def test_mobilegpt_teacher_source_records_native_fallback_only(
     assert teacher_source["fallback_to_vlm_on_teacher_miss"] is True
 
 
-@pytest.mark.parametrize(
-    ("preflight", "events", "expected_consumed", "expected_fallbacks"),
-    [
-        (
-            {"teacher_action_count": 2, "groundable_action_count": 1},
-            [
-                {"event": "mobilegpt_teacher_action"},
-                {"event": "mobilegpt_teacher_miss", "fallback_to_vlm": True},
-            ],
-            2,
-            1,
-        ),
-        (
-            {"teacher_action_count": 1, "groundable_action_count": 0},
-            [{"event": "mobilegpt_teacher_miss", "fallback_to_vlm": True}],
-            1,
-            1,
-        ),
-        (
-            {
-                "teacher_action_count": 0,
-                "groundable_action_count": 0,
-                "native_vlm_fallback_only": True,
-            },
-            [
-                {
-                    "event": "chat_call",
-                    "model": "qwen3-vl-plus",
-                    "prompt_tokens": 10,
-                    "completion_tokens": 2,
-                    "total_tokens": 12,
-                }
-            ],
-            0,
-            0,
-        ),
-    ],
-)
-def test_mobilegpt_enabled_fallback_accounting_can_seal(
-    tmp_path: Path,
-    preflight: dict,
-    events: list[dict],
-    expected_consumed: int,
-    expected_fallbacks: int,
-) -> None:
+def test_mobilegpt_native_cold_learning_can_seal(tmp_path: Path) -> None:
     summary, status = _mobilegpt_write_status(
         tmp_path / "source_stats.jsonl",
         [
+            {"event": "task_started"},
             {
-                "event": "mobilegpt_teacher_source_preflight",
-                "fallback_to_vlm_on_teacher_miss": True,
-                **preflight,
+                "event": "chat_call",
+                "model": "qwen3-vl-plus",
+                "prompt_tokens": 10,
+                "completion_tokens": 2,
+                "total_tokens": 12,
             },
-            *events,
             {"event": "task_finished"},
         ],
     )
 
-    assert summary["teacher_consumed_action_count"] == expected_consumed
-    assert summary["teacher_vlm_fallback_count"] == expected_fallbacks
-    assert summary["teacher_unrecovered_miss_count"] == 0
+    assert summary["task_started_count"] == 1
+    assert summary["task_finished_count"] == 1
+    assert summary["teacher_event_count"] == 0
     assert status["memory_written"] is True
 
 
-def test_mobilegpt_native_fallback_requires_a_model_call(tmp_path: Path) -> None:
+def test_mobilegpt_native_cold_learning_requires_a_model_call(tmp_path: Path) -> None:
     summary, _ = _mobilegpt_write_status(
         tmp_path / "source_stats.jsonl",
         [
-            {
-                "event": "mobilegpt_teacher_source_preflight",
-                "teacher_action_count": 0,
-                "groundable_action_count": 0,
-                "fallback_to_vlm_on_teacher_miss": True,
-                "native_vlm_fallback_only": True,
-            },
+            {"event": "task_started"},
             {"event": "task_finished"},
         ],
     )
@@ -372,55 +432,29 @@ def test_mobilegpt_native_fallback_requires_a_model_call(tmp_path: Path) -> None
         memory_inventory={
             "has_recallable_subtasks": True,
             "has_useful_actions": True,
+            "native_memory_complete": True,
         },
     )
 
     assert status["memory_written"] is False
-    assert "missing_native_vlm_fallback_calls" in status["reasons"]
+    assert "missing_native_model_calls" in status["reasons"]
 
 
-def test_mobilegpt_task_local_teacher_selection_can_seal(tmp_path: Path) -> None:
-    summary, status = _mobilegpt_write_status(
-        tmp_path / "source_stats.jsonl",
-        [
-            {
-                "event": "mobilegpt_teacher_source_preflight",
-                "teacher_action_count": 1,
-                "groundable_action_count": 1,
-            },
-            {
-                "event": "mobilegpt_teacher_forced_select",
-                "scope": "task",
-                "task_name": "submitDrawing",
-            },
-            {"event": "mobilegpt_teacher_action"},
-            {"event": "task_finished"},
-        ],
-    )
-
-    assert summary["teacher_forced_select_count"] == 1
-    assert summary["teacher_task_local_forced_select_count"] == 1
-    assert summary["teacher_unsafe_forced_select_count"] == 0
-    assert status["memory_written"] is True
-
-
-def test_mobilegpt_unscoped_teacher_selection_cannot_seal(tmp_path: Path) -> None:
+def test_mobilegpt_native_cold_learning_rejects_teacher_events(
+    tmp_path: Path,
+) -> None:
     _, status = _mobilegpt_write_status(
         tmp_path / "source_stats.jsonl",
         [
-            {
-                "event": "mobilegpt_teacher_source_preflight",
-                "teacher_action_count": 1,
-                "groundable_action_count": 1,
-            },
-            {"event": "mobilegpt_teacher_forced_select"},
-            {"event": "mobilegpt_teacher_action"},
+            {"event": "task_started"},
+            {"event": "mobilegpt_teacher_started"},
+            {"event": "chat_call", "model": "qwen3-vl-plus"},
             {"event": "task_finished"},
         ],
     )
 
     assert status["memory_written"] is False
-    assert "non_native_select_override" in status["reasons"]
+    assert "teacher_forcing_detected" in status["reasons"]
 
 
 def test_mobilegpt_v1_stats_manifest_allows_absent_derived_counts() -> None:
@@ -485,7 +519,9 @@ def test_mobilegpt_source_accepts_successful_canonical_recorded_seed(
     assert item.source_run_log == source_run_log
     assert item.replay_seed == 3936510006
     item.meta.pop("method")
-    assert mobilegpt_source.source_method_label(item) == "fixed_replay"
+    assert mobilegpt_source.source_method_label(item) == (
+        "mobilegpt_native_source_cold"
+    )
 
     rejected_root = tmp_path / "rejected"
     rejected_root.mkdir()
@@ -497,7 +533,9 @@ def test_mobilegpt_source_accepts_successful_canonical_recorded_seed(
         rejected_index,
         task_name="SystemBluetoothTurnOn",
     )
-    assert mobilegpt_source.source_method_label(item) == "fixed_replay"
+    assert mobilegpt_source.source_method_label(item) == (
+        "mobilegpt_native_source_cold"
+    )
 
 
 def test_mobilegpt_offline_runner_uses_protocol_source_method_default(
@@ -524,7 +562,9 @@ def test_mobilegpt_offline_runner_uses_protocol_source_method_default(
         pass
 
     def validate_source_memory(*args: object, **kwargs: object) -> dict[str, object]:
-        assert kwargs["expected_source_method"] == "fixed_replay"
+        assert kwargs["expected_source_method"] == (
+            "mobilegpt_native_source_cold"
+        )
         assert kwargs["source_run_log"] == adapted_source_run_log
         assert kwargs["compatible_source_sha256s"] == ("1" * 64, "2" * 64)
         raise ValidationReached
@@ -761,8 +801,8 @@ def test_mobilegpt_preflight_grounds_complete_store_source_without_full_function
     )
 
     assert Path(result["source_run_log"]) == store_source_run_log
-    assert result["grounding"]["source_state_count"] == 2
-    assert result["grounding"]["grounding_source"] == (
+    assert result["source_audit"]["source_state_count"] == 2
+    assert result["source_audit"]["grounding_source"] == (
         "canonical_androidworld_run_log"
     )
     assert result["ready"] is True
@@ -867,11 +907,6 @@ def test_mobilegpt_source_generation_has_no_model_or_episode_retry(
 
     monkeypatch.setattr(
         pipeline,
-        "build_mobilegpt_teacher_source",
-        lambda *_args, **_kwargs: {"action_count": 2},
-    )
-    monkeypatch.setattr(
-        pipeline,
         "_infer_mobilegpt_target_from_source_run_log",
         lambda _item: {
             "target_package": "com.android.settings",
@@ -889,11 +924,12 @@ def test_mobilegpt_source_generation_has_no_model_or_episode_retry(
         lambda **_kwargs: [],
     )
 
-    def build_server(*_args: object, **kwargs: object) -> pipeline.CommandSpec:
+    def build_server(action: str, **kwargs: object) -> pipeline.CommandSpec:
+        captured["server_action"] = action
         captured["server_kwargs"] = kwargs
         return pipeline.CommandSpec(
-            label="mobilegpt-teacher",
-            argv=["python", "teacher.py"],
+            label="mobilegpt-native",
+            argv=["python", "server.py"],
             env={},
             cwd=tmp_path,
         )
@@ -998,14 +1034,23 @@ def test_mobilegpt_source_generation_has_no_model_or_episode_retry(
     assert isinstance(server, pipeline.CommandSpec)
     assert isinstance(server_kwargs, dict)
     assert isinstance(episode_kwargs, dict)
-    assert server_kwargs["fallback_to_vlm_on_teacher_miss"] is True
+    assert captured["server_action"] == "server"
+    assert "fallback_to_vlm_on_teacher_miss" not in server_kwargs
+    assert "source_run_log" not in server_kwargs
     assert server_kwargs["runtime_observe_backend"] == "androidworld"
     assert server.env["MOBILEGPT_CHAT_MODEL"] == "qwen3-vl-plus"
     assert server.env["MOBILEGPT_CHAT_MAX_ATTEMPTS"] == "1"
+    assert server.env["MOBILEGPT_TEACHER_RUNLOG"] == ""
+    assert server.env["MOBILEGPT_TEACHER_ARTIFACT_DIR"] == ""
+    assert server.env["MOBILEGPT_TEACHER_FALLBACK_TO_VLM_ON_MISS"] == ""
     assert "MOBILEGPT_OOB_OBSERVE_RETRIES" not in server.env
     assert server.metadata["episode_retries"] == 0
     assert episode_kwargs["server_host"] == "0.0.0.0"
     assert episode_kwargs["target_package"] == "com.android.settings"
+    assert episode_kwargs["max_steps"] == 20
     assert episode_kwargs["timeout_sec"] == 600.0
     assert "rebroadcast_limit" not in episode_kwargs
-    assert result["source_method"] == "ours"
+    assert result["source_method"] == "mobilegpt_native_source_cold"
+    assert result["learning_mode"] == "mobilegpt_native_cold"
+    assert result["teacher_forcing"] is False
+    assert result["synthetic_subtasks"] is False

@@ -319,6 +319,13 @@ def _write_source_index(root: Path) -> Path:
                 observations=[
                     androidworld_state(
                         "state-0",
+                        forest=(
+                            '<hierarchy><node class="android.widget.FrameLayout" '
+                            'bounds="[0,0][100,100]"><node text="Bluetooth" '
+                            'resource-id="android:id/switch_widget" '
+                            'clickable="true" bounds="[0,0][100,100]" />'
+                            "</node></hierarchy>"
+                        ),
                         width=100,
                         height=100,
                         with_pixels=True,
@@ -409,7 +416,7 @@ def _write_source_index(root: Path) -> Path:
     return index
 
 
-def test_appagent_deterministic_preflight_does_not_claim_output(
+def test_appagent_preflight_uses_canonical_runlog_not_store_provenance(
     tmp_path: Path,
 ) -> None:
     index = _write_source_index(tmp_path / "source")
@@ -417,19 +424,19 @@ def test_appagent_deterministic_preflight_does_not_claim_output(
     row = payload["SystemBluetoothTurnOn"]
     row["store_provenance_sha256"] = "0" * 64
     index.write_text(json.dumps(payload), encoding="utf-8")
-    output_root = tmp_path / "never-created"
 
-    with pytest.raises(ValueError, match="source_provenance_hash_mismatch"):
-        appagent_source.prepare_appagent_demo_memory(
-            index_path=index,
-            task_name="SystemBluetoothTurnOn",
-            appagent_root=tmp_path / "appagent",
-            android_world_root=tmp_path / "android_world",
-            memory_root=output_root,
-            model="qwen3-vl-plus",
-        )
+    result = appagent_source.preflight_appagent_source(
+        index_path=index,
+        task_name="SystemBluetoothTurnOn",
+    )
 
-    assert not output_root.exists()
+    assert result["ready"] is True
+    assert result["source_run_log"] == str(
+        (tmp_path / "source" / "source.run_log.json").resolve()
+    )
+    assert result["grounding"]["grounding_source"] == (
+        "canonical_androidworld_run_log"
+    )
 
 
 def test_appagent_source_generation_runs_each_phase_once(

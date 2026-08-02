@@ -148,18 +148,22 @@ an emulator, it requires:
 - one immutable `ours` Function Store and complete referenced
   `transfer_states.json` catalog for the selected task;
 - the hash-bound source state catalog and complete source-target provenance
-  needed to ground every MobileGPT and AppAgent teacher action; and
+  used to audit source assets, resolve MobileGPT's target package, and ground
+  every AppAgent teacher action; and
 - valid frozen baseline assets when they already exist.
 
 The entry point does not synthesize or relabel missing RunLogs or Functions.
 It preserves the recorded generating method, including an explicit
 `unrecorded` value for legacy records without that field. Source assets are
-authored once and frozen. The entry point may create the method-native
-MobileGPT and AppAgent assets once from the same valid source RunLog; failed or
-partial creation is immutable and is never retried.
-Their shared grounding check uses source-only UI evidence, does not mutate the
-canonical RunLog, and verifies that every teacher action can be grounded before
-the immutable asset directory is claimed.
+authored once and frozen. The entry point may create method-native MobileGPT
+and AppAgent assets once from the same valid source RunLog; failed or partial
+creation is immutable and is never retried. MobileGPT runs its native
+source-seed-`111` cold-learning path and writes one task-local memory through
+its stock `TaskAgent`, `Explore`, `Select`, `Derive`, and `Memory.save_task()`
+flow. The RunLog and Function Store are audit inputs only and never provide
+MobileGPT actions or synthetic subtasks. AppAgent separately uses source-only
+UI evidence to ground its native human-demo capture without mutating the
+canonical RunLog.
 Environment setup and preflight logs are written to a separate unique external
 preflight directory. A device or dependency failure therefore does not create
 or consume the formal immutable task attempt.
@@ -172,9 +176,10 @@ without loading or saving a Quick Boot snapshot, waits for adb and emulator
 gRPC, forces the Pixel Fold to state `2`, and runs every required runtime
 preflight. If the versioned
 MobileGPT or AppAgent source memory is absent, the entry point creates it once
-on the source-only `emulator-5560` from the task's shared official-success
-RunLog, audits the exact `qwen3-vl-plus` model, and freezes it before target
-execution.
+on the source-only `emulator-5560`, audits the exact `qwen3-vl-plus` model, and
+freezes it before target execution. MobileGPT learns natively in the normal
+AndroidWorld episode; AppAgent captures its source demo from the task's shared
+official-success RunLog.
 
 ## Repository contents
 

@@ -727,6 +727,7 @@ def _mobilegpt_class_name(element: ET.Element) -> str:
 def mobilegpt_compatible_xml(xml_text: str) -> str:
     root = ET.fromstring(str(xml_text or "").strip())
     next_index = 0
+    next_structural_index = -1
     for element in root.iter():
         attributes = element.attrib
         action_candidate = element.tag == "node" and any(
@@ -745,6 +746,9 @@ def mobilegpt_compatible_xml(xml_text: str) -> str:
         if action_candidate:
             attributes["index"] = str(next_index)
             next_index += 1
+        elif element is not root:
+            attributes["index"] = str(next_structural_index)
+            next_structural_index -= 1
         if not str(attributes.get("resource-id") or "").strip():
             resource_id = str(attributes.get("resource_id") or "").strip()
             if resource_id:

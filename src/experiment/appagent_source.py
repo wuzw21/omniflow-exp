@@ -18,13 +18,10 @@ from typing import Any
 
 from src.experiment import androidworld as pipeline
 from src.experiment.mobilegpt_source import (
-    SOURCE_SEED,
     load_canonical_source_item,
-    source_method_label,
 )
 from src.experiment.source_assets import (
-    build_grounded_teacher_run_log_from_item,
-    resolve_store_source_run_log,
+    build_grounded_teacher_run_log_from_canonical_item,
 )
 from src.integrations.appagent_adapter import (
     APPAGENT_DEMO_MANIFEST,
@@ -36,6 +33,12 @@ from src.integrations.appagent_adapter import (
     validate_appagent_demo_memory,
     validate_appagent_source_demo,
 )
+
+SOURCE_SEED = 111
+
+
+def _appagent_source_method_label(item: pipeline.ArchivedRunLog) -> str:
+    return str(item.meta.get("method") or "").strip() or pipeline.DEFAULT_SOURCE_METHOD
 
 
 def _chat_completions_url(base_url: str) -> str:
@@ -263,22 +266,13 @@ def validate_appagent_source_memory(
     task_name: str,
     memory_root: str | Path,
     model: str,
-    store_index_path: str | Path | None = None,
 ) -> dict[str, Any]:
     item = load_canonical_source_item(index_path, task_name=task_name)
-    source_method = source_method_label(item)
-    source_run_log = (
-        resolve_store_source_run_log(
-            store_index_path,
-            task_name=item.task,
-        )[0]
-        if store_index_path is not None
-        else item.source_run_log
-    )
+    source_method = _appagent_source_method_label(item)
     manifest = validate_appagent_demo_memory(
         memory_root,
         task_name=item.task,
-        source_run_log=source_run_log,
+        source_run_log=item.source_run_log,
     )
     if str(manifest.get("source_method") or "") != source_method:
         raise ValueError("appagent_demo_memory_source_method_invalid")
@@ -301,14 +295,10 @@ def validate_appagent_source_memory(
 
 def _preflight_appagent_teacher(
     *,
-    index_path: str | Path,
     item: pipeline.ArchivedRunLog,
-    store_index_path: str | Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    grounded, grounding_audit = build_grounded_teacher_run_log_from_item(
-        index_path=index_path,
-        item=item,
-        store_index_path=store_index_path,
+    grounded, grounding_audit = build_grounded_teacher_run_log_from_canonical_item(
+        item
     )
     with tempfile.TemporaryDirectory(
         prefix="omniflow-appagent-preflight-"
@@ -377,21 +367,18 @@ def preflight_appagent_source(
     *,
     index_path: str | Path,
     task_name: str,
-    store_index_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Validate one source asset without creating a persistent output."""
 
     item = load_canonical_source_item(index_path, task_name=task_name)
     _, grounding_audit, teacher_source = _preflight_appagent_teacher(
-        index_path=index_path,
         item=item,
-        store_index_path=store_index_path,
     )
     return {
         "schema_version": "omniflow.appagent-source-preflight.v1",
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
-        "source_method": source_method_label(item),
+        "source_method": _appagent_source_method_label(item),
         "source_run_log": str(grounding_audit["source_run_log"]),
         "action_count": int(teacher_source["action_count"]),
         "demo_action_count": int(teacher_source["demo_action_count"]),
@@ -408,7 +395,6 @@ def prepare_appagent_demo_memory(
     android_world_root: str | Path,
     memory_root: str | Path,
     model: str,
-    store_index_path: str | Path | None = None,
     serial: str = "emulator-5560",
     console_port: int = 5560,
     adb_path: str = "",
@@ -426,15 +412,13 @@ def prepare_appagent_demo_memory(
         or ""
     ).strip()
     item = load_canonical_source_item(index_path, task_name=task_name)
-    source_method = source_method_label(item)
+    source_method = _appagent_source_method_label(item)
     root = Path(memory_root).expanduser().resolve()
     if root.exists():
         raise FileExistsError(f"immutable_appagent_memory_exists:{root}")
     grounded_payload, grounding_audit, teacher_source = (
         _preflight_appagent_teacher(
-            index_path=index_path,
             item=item,
-            store_index_path=store_index_path,
         )
     )
     source_run_log = Path(grounding_audit["source_run_log"]).resolve()
@@ -619,7 +603,6 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--android-world-root", required=True)
     prepare.add_argument("--memory-root", required=True)
     prepare.add_argument("--model", required=True)
-    prepare.add_argument("--store-index", default="")
     prepare.add_argument("--serial", default="emulator-5560")
     prepare.add_argument("--console-port", type=int, default=5560)
     prepare.add_argument("--adb-path", default="")
@@ -632,12 +615,10 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--task", required=True)
     validate.add_argument("--memory-root", required=True)
     validate.add_argument("--model", required=True)
-    validate.add_argument("--store-index", default="")
 
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument("--index", required=True)
     preflight.add_argument("--task", required=True)
-    preflight.add_argument("--store-index", default="")
     return parser
 
 
@@ -652,7 +633,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 android_world_root=args.android_world_root,
                 memory_root=args.memory_root,
                 model=args.model,
-                store_index_path=args.store_index or None,
                 serial=args.serial,
                 console_port=args.console_port,
                 adb_path=args.adb_path,
@@ -666,13 +646,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 task_name=args.task,
                 memory_root=args.memory_root,
                 model=args.model,
-                store_index_path=args.store_index or None,
             )
         else:
             result = preflight_appagent_source(
                 index_path=args.index,
                 task_name=args.task,
-                store_index_path=args.store_index or None,
             )
     except BaseException as error:
         if args.command == "prepare":

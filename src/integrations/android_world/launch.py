@@ -165,6 +165,27 @@ def build_response_acceptance_detail(
     }
 
 
+def _mobilegpt_runtime_integrity_error(value: Any) -> str | None:
+    error = str(value or "").strip()
+    if not error or "mobilegpt_step_budget_exhausted" in error:
+        return None
+    markers = (
+        "ConnectionError:",
+        "ConnectionRefusedError:",
+        "TimeoutError:",
+        "mobilegpt_androidworld_state_",
+        "mobilegpt_app_ui_not_ready:",
+        "mobilegpt_launch_response_invalid:",
+        "mobilegpt_native_xml_invalid:",
+        "mobilegpt_server_closed_connection",
+    )
+    return error if any(marker in error for marker in markers) else None
+
+
+def _mobilegpt_runtime_integrity_exit_code(run_summary: dict[str, Any]) -> int:
+    return int(int(run_summary.get("runtime_integrity_error_count") or 0) > 0)
+
+
 def _official_hint_text(value: Any, *, max_len: int = 100) -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     lowered = text.casefold()
@@ -906,6 +927,11 @@ def _write_task_results_summary(
     total_duration_ms = sum(_coerce_float(row.get("duration_ms")) for row in rows)
     total_actions = sum(_coerce_int(row.get("actions_executed")) for row in rows)
     total_model_calls = sum(_coerce_int(row.get("model_calls")) for row in rows)
+    runtime_integrity_errors = [
+        str(row.get("runtime_integrity_error") or "").strip()
+        for row in rows
+        if str(row.get("runtime_integrity_error") or "").strip()
+    ]
     prompt_tokens = sum(_coerce_int(row.get("prompt_tokens")) for row in rows)
     completion_tokens = sum(_coerce_int(row.get("completion_tokens")) for row in rows)
     total_tokens = sum(_coerce_int(row.get("total_tokens")) for row in rows)
@@ -957,6 +983,8 @@ def _write_task_results_summary(
             successful_tasks,
             official_validator_tasks,
         ),
+        "runtime_integrity_error_count": len(runtime_integrity_errors),
+        "runtime_integrity_errors": runtime_integrity_errors,
         "official_validator_coverage_rate": _rate(
             official_validator_tasks,
             total_tasks,
@@ -1000,6 +1028,7 @@ def _write_task_results_summary(
         f"- checkpoint_dir: `{checkpoint_dir}`",
         f"- official_validator_success: `{successful_tasks}/{official_validator_tasks}`",
         f"- official_validator_coverage: `{official_validator_tasks}/{total_tasks}`",
+        f"- runtime integrity errors: `{len(runtime_integrity_errors)}`",
         f"- total duration: `{round(total_duration_ms / 1000.0, 3)}s`",
         f"- actions executed: `{total_actions}`",
         f"- single-step execution accuracy: `{summary['single_step_execution_accuracy']}`",
@@ -5173,6 +5202,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                         official_validator_used = (
                             _result_has_official_validator_conclusion(result)
                         )
+                        mobilegpt_agent_result: dict[str, Any] = {}
+                        mobilegpt_agent_error = ""
+                        runtime_integrity_error = None
+                        if selected_agent == "external:mobilegpt":
+                            raw_agent_result = getattr(
+                                agent,
+                                "last_result_data",
+                                None,
+                            )
+                            if isinstance(raw_agent_result, dict):
+                                mobilegpt_agent_result = dict(raw_agent_result)
+                                mobilegpt_agent_error = str(
+                                    mobilegpt_agent_result.get("error") or ""
+                                ).strip()
+                                runtime_integrity_error = (
+                                    _mobilegpt_runtime_integrity_error(
+                                        mobilegpt_agent_error
+                                    )
+                                )
+                                if runtime_integrity_error:
+                                    error_text = runtime_integrity_error
                         if canonical_run is not None:
                             try:
                                 canonical_function_step_count = int(
@@ -5225,6 +5275,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 and selected_agent.startswith("official:")
                             ):
                                 actions_executed = step_count
+                        if mobilegpt_agent_result:
+                            actions_executed = max(
+                                actions_executed,
+                                _coerce_int(
+                                    mobilegpt_agent_result.get("actions_executed")
+                                ),
+                            )
                         model_calls = 0
                         fallback_steps = 0
                         total_tokens = 0
@@ -5375,6 +5432,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "artifact_ref": artifact_ref,
                             "error": error_text,
                         }
+                        if mobilegpt_agent_result:
+                            task_result_record["mobilegpt_agent_result"] = (
+                                to_serializable(mobilegpt_agent_result)
+                            )
+                            task_result_record["mobilegpt_agent_error"] = (
+                                mobilegpt_agent_error or None
+                            )
+                            task_result_record["runtime_integrity_error"] = (
+                                runtime_integrity_error
+                            )
                         if canonical_run is not None:
                             canonical_diagnostics = canonical_run.get("diagnostics")
                             canonical_diagnostics = (
@@ -5535,6 +5602,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 flush=True,
             )
             return 1
+        runtime_integrity_exit_code = _mobilegpt_runtime_integrity_exit_code(
+            run_summary
+        )
+        if runtime_integrity_exit_code:
+            print(
+                "[error] AndroidWorld episode ended with a MobileGPT runtime "
+                "integrity failure.",
+                flush=True,
+            )
+            return runtime_integrity_exit_code
         return 0
     finally:
         if "android_world_controller" in locals() and callable(original_get_controller):

@@ -76,7 +76,7 @@ def _center(bounds: tuple[int, int, int, int]) -> tuple[int, int]:
     return (left + right) // 2, (top + bottom) // 2
 
 
-def _indexed_app_ui_count(xml_text: str) -> int:
+def _indexed_app_ui_count(xml_text: str, package_name: str = "") -> int:
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError:
@@ -86,7 +86,10 @@ def _indexed_app_ui_count(xml_text: str) -> int:
         attributes = element.attrib
         if not str(attributes.get("index") or "").strip():
             continue
-        if str(attributes.get("package") or "").strip() == "com.android.systemui":
+        element_package = str(attributes.get("package") or "").strip()
+        if package_name and element_package != package_name:
+            continue
+        if element_package == "com.android.systemui":
             continue
         has_identity = any(
             str(attributes.get(key) or "").strip()
@@ -157,6 +160,7 @@ def build_mobilegpt_agent(
             self.env = env
             self.max_steps = 20
             self.attempted = False
+            self.last_result_data: dict[str, Any] = {}
 
         def reset(self, go_home: bool = False) -> None:
             self.attempted = False
@@ -196,6 +200,7 @@ def build_mobilegpt_agent(
         def _observe_ready_app(self, package: str) -> tuple[Any, str]:
             started_at = time.monotonic()
             deadline = started_at + app_ready_timeout
+            expected_package = package
             attempts = 0
             observed_package = ""
             indexed_app_nodes = 0
@@ -209,17 +214,20 @@ def build_mobilegpt_agent(
                 observed_package = str(observation.package_name or "").strip()
                 raw_xml = str(observation.xml or "").strip()
                 xml_text = mobilegpt_compatible_xml(raw_xml) if raw_xml else ""
-                indexed_app_nodes = _indexed_app_ui_count(xml_text)
+                indexed_app_nodes = _indexed_app_ui_count(
+                    xml_text,
+                    expected_package if "." in expected_package else "",
+                )
                 package_matches = (
                     not observed_package
-                    or "." not in package
-                    or observed_package == package
+                    or "." not in expected_package
+                    or observed_package == expected_package
                 )
                 if xml_text and indexed_app_nodes > 0 and package_matches:
                     _write_stats_event(
                         {
                             "event": "mobilegpt_app_ui_ready",
-                            "expected_package": package,
+                            "expected_package": expected_package,
                             "observed_package": observed_package,
                             "attempts": attempts,
                             "indexed_app_nodes": indexed_app_nodes,
@@ -233,7 +241,7 @@ def build_mobilegpt_agent(
                     _write_stats_event(
                         {
                             "event": "mobilegpt_app_ui_ready_timeout",
-                            "expected_package": package,
+                            "expected_package": expected_package,
                             "observed_package": observed_package,
                             "attempts": attempts,
                             "indexed_app_nodes": indexed_app_nodes,
@@ -242,7 +250,7 @@ def build_mobilegpt_agent(
                     )
                     raise RuntimeError(
                         "mobilegpt_app_ui_not_ready:"
-                        f"expected={package}:"
+                        f"expected={expected_package}:"
                         f"observed={observed_package or 'unknown'}:"
                         f"indexed_app_nodes={indexed_app_nodes}:"
                         f"attempts={attempts}:"
@@ -312,22 +320,24 @@ def build_mobilegpt_agent(
             answer: str,
             error: str,
         ) -> Any:
+            data = {
+                "summary": (
+                    "MobileGPT native AndroidWorld episode finished"
+                    if not error
+                    else error
+                ),
+                "source": self.name,
+                "error": error or None,
+                "answer": answer or None,
+                "actions_executed": int(actions_executed),
+                "state_backend": "androidworld",
+                "action_backend": "androidworld",
+                "native_androidworld_agent_io": True,
+            }
+            self.last_result_data = dict(data)
             return make_agent_result(
                 done=True,
-                data={
-                    "summary": (
-                        "MobileGPT native AndroidWorld episode finished"
-                        if not error
-                        else error
-                    ),
-                    "source": self.name,
-                    "error": error or None,
-                    "answer": answer or None,
-                    "actions_executed": int(actions_executed),
-                    "state_backend": "androidworld",
-                    "action_backend": "androidworld",
-                    "native_androidworld_agent_io": True,
-                },
+                data=data,
             )
 
         def step(self, goal: str) -> Any:

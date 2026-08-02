@@ -1847,15 +1847,13 @@ if [[ "$requires_appagent_source_memory" -eq 1 ]]; then
   if [[ "$appagent_source_generation_required" -eq 1 ]]; then
     "$python_bin" -m src.experiment.appagent_source preflight \
       --index "$source_index" \
-      --store-index "$ours_store_index" \
       --task "$task"
   else
     "$python_bin" -m src.experiment.appagent_source validate \
       --index "$source_index" \
       --task "$task" \
       --memory-root "$appagent_demo_memory_root" \
-      --model "$paper_model" \
-      --store-index "$ours_store_index"
+      --model "$paper_model"
   fi
 fi
 if [[ "$check_only" -eq 1 ]]; then
@@ -2216,7 +2214,6 @@ if [[ "$appagent_source_generation_required" -eq 1 ]]; then
     --appagent-root "$appagent_root"
   "$python_bin" -m src.experiment.appagent_source prepare \
     --index "$source_index" \
-    --store-index "$ours_store_index" \
     --task "$task" \
     --appagent-root "$appagent_root" \
     --android-world-root "$android_world_root" \

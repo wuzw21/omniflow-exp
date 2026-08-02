@@ -1059,6 +1059,22 @@ def build_grounded_teacher_run_log_from_item(
     )
 
 
+def build_grounded_teacher_run_log_from_canonical_item(
+    item: Any,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Ground one indexed item only from its canonical RunLog evidence."""
+
+    indexed_source_sha256 = str(
+        item.meta.get("retained_source_run_log_sha256")
+        or item.meta.get("source_run_log_sha256")
+        or ""
+    ).strip()
+    return _build_grounded_teacher_run_log_from_canonical_source(
+        source_run_log=item.source_run_log,
+        expected_source_run_log_sha256=indexed_source_sha256,
+    )
+
+
 def resolve_store_source_run_log(
     store_index_path: str | Path,
     *,

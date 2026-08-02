@@ -251,8 +251,7 @@ MASTER_PROGRESS_COLUMNS = [
 METHOD_LABELS = {
     "fixed_replay": "Fixed source-action replay / deterministic replay",
     "mobilegpt_offline_retrieval": (
-        "MobileGPT native memory from the frozen ours source demonstration "
-        "+ stock warm retrieval"
+        "MobileGPT task-local native source-cold memory + stock warm retrieval"
     ),
     "ours": "OmniFlow native E2E / persistent-function path",
     "t3a_hint": "AndroidWorld upstream T3A with source trace hint",

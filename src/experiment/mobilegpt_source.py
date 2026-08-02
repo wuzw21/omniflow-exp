@@ -8,7 +8,6 @@ from dataclasses import replace
 import datetime
 import json
 from pathlib import Path
-import tempfile
 import time
 from typing import Any
 
@@ -29,12 +28,10 @@ _IGNORED_SOURCE_PACKAGES = {
 
 
 def source_method_label(item: pipeline.ArchivedRunLog) -> str:
-    """Use the recorded method or the protocol's source replay method."""
+    """Return the native MobileGPT cold-learning method."""
 
-    return (
-        str(item.meta.get("method") or "").strip()
-        or pipeline.DEFAULT_SOURCE_METHOD
-    )
+    del item
+    return pipeline.MOBILEGPT_NATIVE_SOURCE_METHOD
 
 
 def load_canonical_source_item(
@@ -134,48 +131,31 @@ def validate_mobilegpt_source_memory(
     }
 
 
-def _grounded_source_payload(
+def _preflight_mobilegpt_native(
     *,
     store_index_path: str | Path,
     item: pipeline.ArchivedRunLog,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    return build_grounded_teacher_run_log_from_store_index(
+) -> tuple[Path, tuple[str, ...], dict[str, Any], dict[str, str]]:
+    audited_source, source_audit = build_grounded_teacher_run_log_from_store_index(
         store_index_path=store_index_path,
         task_name=item.task,
     )
-
-
-def _preflight_mobilegpt_teacher(
-    *,
-    store_index_path: str | Path,
-    item: pipeline.ArchivedRunLog,
-) -> tuple[
-    dict[str, Any],
-    dict[str, Any],
-    dict[str, Any],
-    dict[str, str],
-]:
-    grounded, grounding_audit = _grounded_source_payload(
-        store_index_path=store_index_path,
-        item=item,
+    source_run_log, source_sha256 = resolve_store_source_run_log(
+        store_index_path,
+        task_name=item.task,
     )
-    with tempfile.TemporaryDirectory(
-        prefix="omniflow-mobilegpt-preflight-"
-    ) as temporary:
-        grounded_path = Path(temporary) / "grounded.run_log.json"
-        grounded_path.write_text(
-            json.dumps(grounded, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        teacher_payload = pipeline.build_mobilegpt_teacher_source(
-            grounded_path,
-            task_name=item.task,
-            source_seed=SOURCE_SEED,
-            provenance_source_run_log=grounding_audit["source_run_log"],
-            fallback_to_vlm_on_teacher_miss=True,
-        )
-    target_info = _mobilegpt_source_target(item=item, grounded=grounded)
-    return grounded, grounding_audit, teacher_payload, target_info
+    compatible_source_sha256s = store_source_run_log_sha256s(
+        store_index_path,
+        task_name=item.task,
+    )
+    target_info = _mobilegpt_source_target(item=item, grounded=audited_source)
+    source_audit = {
+        **source_audit,
+        "source_run_log": str(source_run_log),
+        "source_run_log_sha256": source_sha256,
+        "compatible_source_sha256s": list(compatible_source_sha256s),
+    }
+    return source_run_log, compatible_source_sha256s, source_audit, target_info
 
 
 def _mobilegpt_source_target(
@@ -234,8 +214,8 @@ def preflight_mobilegpt_source(
     """Validate one source asset without creating a persistent output."""
 
     item = load_canonical_source_item(index_path, task_name=task_name)
-    _, grounding_audit, teacher_payload, target_info = (
-        _preflight_mobilegpt_teacher(
+    _, _, source_audit, target_info = (
+        _preflight_mobilegpt_native(
             store_index_path=store_index_path,
             item=item,
         )
@@ -245,23 +225,14 @@ def preflight_mobilegpt_source(
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
         "source_method": source_method_label(item),
-        "source_run_log": str(grounding_audit["source_run_log"]),
-        "action_count": int(teacher_payload["action_count"]),
-        "groundable_action_count": int(
-            teacher_payload["groundable_action_count"]
-        ),
-        "expected_vlm_fallback_action_count": int(
-            teacher_payload["expected_vlm_fallback_action_count"]
-        ),
-        "fallback_to_vlm_on_teacher_miss": bool(
-            teacher_payload["fallback_to_vlm_on_teacher_miss"]
-        ),
-        "native_vlm_fallback_only": bool(
-            teacher_payload["native_vlm_fallback_only"]
-        ),
+        "source_run_log": source_audit["source_run_log"],
+        "source_run_log_sha256": source_audit["source_run_log_sha256"],
+        "learning_mode": "mobilegpt_native_cold",
+        "teacher_forcing": False,
+        "synthetic_subtasks": False,
         "target_package": target_info["target_package"],
         "target_source": target_info["target_source"],
-        "grounding": grounding_audit,
+        "source_audit": source_audit,
         "ready": True,
     }
 
@@ -299,13 +270,12 @@ def prepare_mobilegpt_source_memory(
         raise FileExistsError(
             f"immutable_mobilegpt_source_attempt_exists:{bundle_root}"
         )
-    grounded_payload, grounding_audit, teacher_payload, target_info = (
-        _preflight_mobilegpt_teacher(
+    source_run_log, compatible_source_sha256s, source_audit, target_info = (
+        _preflight_mobilegpt_native(
             store_index_path=store_index_path,
             item=item,
         )
     )
-    source_run_log = Path(grounding_audit["source_run_log"]).resolve()
 
     target_package = str(target_info.get("target_package") or "").strip()
     if not target_package:
@@ -313,16 +283,6 @@ def prepare_mobilegpt_source_memory(
     target_app = str(target_info.get("target_app") or target_package).strip()
 
     bundle_root.mkdir(parents=True)
-    grounded_source_path = bundle_root / "grounded_teacher_run_log.json"
-    grounded_source_path.write_text(
-        json.dumps(grounded_payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    teacher_source_path = bundle_root / "teacher_source.json"
-    teacher_source_path.write_text(
-        json.dumps(teacher_payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
     memory_root = bundle_root / "memory"
     memory_root.mkdir()
     stats_path = bundle_root / "source_stats.jsonl"
@@ -343,7 +303,7 @@ def prepare_mobilegpt_source_memory(
         print(f"[mobilegpt:patch-server-runtime] {patched}", flush=True)
 
     server_spec = pipeline.build_mobilegpt_command(
-        "teach-server",
+        "server",
         mobilegpt_root=mobilegpt_root,
         mobilegpt_memory_root=memory_root,
         serial=serial,
@@ -351,8 +311,6 @@ def prepare_mobilegpt_source_memory(
         server_host=server_host,
         port=int(port),
         stats_jsonl=stats_path,
-        source_run_log=grounded_source_path,
-        fallback_to_vlm_on_teacher_miss=True,
         target_package=target_package,
         target_app=target_app,
         runtime_observe_backend="androidworld",
@@ -363,7 +321,9 @@ def prepare_mobilegpt_source_memory(
             **server_spec.env,
             "MOBILEGPT_CHAT_MODEL": normalized_model,
             "MOBILEGPT_CHAT_MAX_ATTEMPTS": "1",
-            "MOBILEGPT_TEACHER_FAIL_ON_ACTION_ERROR": "1",
+            "MOBILEGPT_TEACHER_RUNLOG": "",
+            "MOBILEGPT_TEACHER_ARTIFACT_DIR": "",
+            "MOBILEGPT_TEACHER_FALLBACK_TO_VLM_ON_MISS": "",
         },
         metadata={
             **server_spec.metadata,
@@ -407,7 +367,7 @@ def prepare_mobilegpt_source_memory(
         server_host=server_host,
         server_port=int(port),
         target_package=target_package,
-        max_steps=max(int(max_steps), int(teacher_payload["action_count"]) + 3),
+        max_steps=int(max_steps),
         task_random_seed=SOURCE_SEED,
         fixed_task_seed=True,
         fixed_task_params=True,
@@ -422,14 +382,14 @@ def prepare_mobilegpt_source_memory(
         {
             "model": normalized_model,
             "source_method": source_method,
-            "prep_type": "mobilegpt_native_teacher_source_memory",
+            "prep_type": "mobilegpt_native_source_memory",
         }
     )
     command_manifest_path = bundle_root / "source_episode_command.json"
     command_manifest_path.write_text(
         json.dumps(
             {
-                "schema_version": "omniflow.mobilegpt-source-command.v2",
+                "schema_version": "omniflow.mobilegpt-source-command.v3",
                 "source_seed": SOURCE_SEED,
                 "source_method": source_method,
                 "task_name": item.task,
@@ -444,15 +404,13 @@ def prepare_mobilegpt_source_memory(
                 "source_run_log_sha256": pipeline._file_sha256(
                     source_run_log
                 ),
-                "teacher_source": str(teacher_source_path),
-                "teacher_source_sha256": pipeline._file_sha256(
-                    teacher_source_path
+                "compatible_source_sha256s": list(
+                    compatible_source_sha256s
                 ),
-                "grounded_teacher_run_log": str(grounded_source_path),
-                "grounded_teacher_run_log_sha256": pipeline._file_sha256(
-                    grounded_source_path
-                ),
-                "grounding_audit": grounding_audit,
+                "source_audit": source_audit,
+                "learning_mode": "mobilegpt_native_cold",
+                "teacher_forcing": False,
+                "synthetic_subtasks": False,
                 "target_inputs_read": False,
                 "target_observations_read": False,
                 "validator_state_read": False,
@@ -475,7 +433,7 @@ def prepare_mobilegpt_source_memory(
         )
         if server_returncode != 0:
             raise RuntimeError(
-                f"mobilegpt_teacher_server_failed:{server_returncode}"
+                f"mobilegpt_native_server_failed:{server_returncode}"
             )
         episode_returncode = pipeline.run_command(episode_spec)
         if episode_returncode != 0:
@@ -508,7 +466,6 @@ def prepare_mobilegpt_source_memory(
 
     sealed = pipeline.seal_mobilegpt_adapted_memory(
         memory_root=memory_root,
-        teacher_source=teacher_source_path,
         source_run_log=source_run_log,
         source_stats=stats_path,
         official_source_result=result_path,
@@ -521,14 +478,16 @@ def prepare_mobilegpt_source_memory(
         source_model=normalized_model,
     )
     return {
-        "schema_version": "omniflow.mobilegpt-source-prepare.v2",
+        "schema_version": "omniflow.mobilegpt-source-prepare.v3",
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
         "source_method": source_method,
         "source_run_log": str(source_run_log),
         "model": normalized_model,
         "memory_root": str(memory_root),
-        "teacher_source": str(teacher_source_path),
+        "learning_mode": "mobilegpt_native_cold",
+        "teacher_forcing": False,
+        "synthetic_subtasks": False,
         "source_stats": str(stats_path),
         "source_stats_summary": str(stats_summary_path),
         "official_source_result": str(result_path),

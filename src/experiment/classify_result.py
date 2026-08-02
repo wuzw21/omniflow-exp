@@ -94,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
     ) if row else 0
     if row and task_started_count != 1:
         environment_reasons.append("task_not_started_once")
+    if row and str(row.get("runtime_integrity_error") or "").strip():
+        environment_reasons.append("runtime_integrity_error")
     for reason, pattern in ENVIRONMENT_PATTERNS.items():
         if re.search(pattern, log_text, flags=re.IGNORECASE):
             environment_reasons.append(reason)

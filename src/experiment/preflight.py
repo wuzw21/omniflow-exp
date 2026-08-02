@@ -165,7 +165,7 @@ def _validate_mobilegpt_cold_manifest(memory_root: Path) -> dict[str, Any]:
     manifest_path = root.parent / "cold_memory_manifest.json"
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or payload.get("schema_version") != (
-        "omniflow.mobilegpt-cold-memory.v1"
+        "omniflow.mobilegpt-native-cold-memory.v1"
     ):
         raise ValueError("mobilegpt_cold_memory_manifest_schema_invalid")
     if payload.get("source_seed") != 111:
@@ -173,9 +173,12 @@ def _validate_mobilegpt_cold_manifest(memory_root: Path) -> dict[str, Any]:
     provenance = payload.get("provenance")
     if not isinstance(provenance, dict):
         raise ValueError("mobilegpt_cold_memory_provenance_missing")
-    if provenance.get("native_mobilegpt_learning") is not True or provenance.get(
-        "complete_teacher_action_consumption"
-    ) is not True:
+    if (
+        provenance.get("native_mobilegpt_learning") is not True
+        or provenance.get("learning_mode") != "mobilegpt_native_cold"
+        or provenance.get("teacher_forcing") is not False
+        or provenance.get("synthetic_subtasks") is not False
+    ):
         raise ValueError("mobilegpt_cold_memory_native_learning_incomplete")
     forbidden = [
         key
@@ -203,7 +206,6 @@ def _validate_mobilegpt_cold_manifest(memory_root: Path) -> dict[str, Any]:
     if len(files) != int(memory.get("file_count") or -1):
         raise ValueError("mobilegpt_cold_memory_file_count_mismatch")
     for label in (
-        "teacher_source",
         "source_run_log",
         "source_stats",
         "official_source_result",

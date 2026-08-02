@@ -7,6 +7,7 @@ from pathlib import Path
 import socket
 import threading
 from types import SimpleNamespace
+import xml.etree.ElementTree as ET
 
 from PIL import Image
 
@@ -15,9 +16,14 @@ from src.integrations.android_world.mobilegpt_agent import (
     _socket_timeout,
     build_mobilegpt_agent,
 )
+from src.integrations.android_world.launch import (
+    _mobilegpt_runtime_integrity_error,
+    _mobilegpt_runtime_integrity_exit_code,
+)
 from src.integrations.mobilegpt_runtime import (
     _parse_mobilegpt_model_response,
     install_mobilegpt_androidworld_observe,
+    mobilegpt_compatible_xml,
 )
 
 
@@ -40,6 +46,53 @@ def test_mobilegpt_negative_timeout_means_unbounded_socket_wait() -> None:
     assert _socket_timeout(-1.0) is None
     assert _socket_timeout(0.0) == 0.1
     assert _socket_timeout(3.5) == 3.5
+
+
+def test_mobilegpt_runtime_integrity_errors_exclude_method_terminals() -> None:
+    assert _mobilegpt_runtime_integrity_error("TimeoutError: timed out") == (
+        "TimeoutError: timed out"
+    )
+    assert _mobilegpt_runtime_integrity_error(
+        "RuntimeError: mobilegpt_app_ui_not_ready:expected=com.example.target"
+    )
+    assert _mobilegpt_runtime_integrity_error(
+        "mobilegpt_step_budget_exhausted:20"
+    ) is None
+
+
+def test_mobilegpt_runtime_integrity_summary_returns_nonzero() -> None:
+    assert _mobilegpt_runtime_integrity_exit_code(
+        {"runtime_integrity_error_count": 1}
+    ) == 1
+    assert _mobilegpt_runtime_integrity_exit_code(
+        {"runtime_integrity_error_count": 0}
+    ) == 0
+    assert _mobilegpt_runtime_integrity_error(
+        "ValueError: mobilegpt_action_unsupported:unknown"
+    ) is None
+
+
+def test_mobilegpt_xml_preserves_action_indices_and_indexes_structural_children() -> None:
+    xml_text = mobilegpt_compatible_xml(
+        '<hierarchy bounds="[0,0][100,200]">'
+        '<window id="window-target">'
+        '<node id="target-root" package="com.example.target" '
+        'bounds="[0,0][100,200]" />'
+        '<node id="target-button" package="com.example.target" text="Open" '
+        'clickable="true" bounds="[10,20][30,60]" />'
+        '</window>'
+        '</hierarchy>'
+    )
+
+    root = ET.fromstring(xml_text)
+    indexed_children = [child for parent in root.iter() for child in parent]
+    assert all(child.attrib.get("index") is not None for child in indexed_children)
+    assert all(
+        isinstance(int(child.attrib["index"]), int) for child in indexed_children
+    )
+    assert root.find(".//*[@id='target-root']").attrib["index"] == "0"
+    assert root.find(".//*[@id='target-button']").attrib["index"] == "1"
+    assert int(root.find("./window").attrib["index"]) < 0
 
 
 def test_mobilegpt_repairs_native_task_app_nested_in_parameters(monkeypatch) -> None:
@@ -288,6 +341,7 @@ def test_mobilegpt_native_speak_reaches_androidworld_answer(
     assert result.data["answer"] == "20"
     assert result.data["actions_executed"] == 0
     assert result.data["error"] is None
+    assert agent.last_result_data == result.data
 
 
 def test_mobilegpt_waits_for_real_app_ui_before_sending_first_observation(
@@ -349,13 +403,13 @@ def test_mobilegpt_waits_for_real_app_ui_before_sending_first_observation(
                         is_scrollable=False,
                     ),
                     SimpleNamespace(
-                        bbox_pixels=_Bounds(0, 0, 100, 20),
-                        package_name="com.android.systemui",
-                        class_name="android.widget.TextView",
-                        text="12:00",
+                        bbox_pixels=_Bounds(10, 20, 90, 80),
+                        package_name="com.example.launcher",
+                        class_name="android.widget.Button",
+                        text="Target",
                         content_description="",
-                        resource_name="com.android.systemui:id/clock",
-                        is_clickable=False,
+                        resource_name="com.example.launcher:id/target",
+                        is_clickable=True,
                         is_editable=False,
                         is_scrollable=False,
                     )
