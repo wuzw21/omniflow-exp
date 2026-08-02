@@ -3165,12 +3165,12 @@ def validate_mobilegpt_adapted_memory(
         official_result_path,
         task_name=task_name,
     )
-    if not result_summary["official_validator_success"]:
-        raise ValueError("mobilegpt_cold_memory_official_source_failed")
     write_status = _mobilegpt_memory_write_status(
         stats_summary=stats_summary,
         memory_inventory=inventory,
-        cold_validator_success=True,
+        cold_validator_success=bool(
+            result_summary["official_validator_success"]
+        ),
     )
     if not write_status["memory_written"]:
         raise ValueError(
@@ -3434,8 +3434,6 @@ def seal_mobilegpt_adapted_memory(
         result_path,
         task_name=task_name,
     )
-    if not result_summary["official_validator_success"]:
-        raise ValueError("mobilegpt_cold_memory_official_source_failed")
     inventory = inspect_mobilegpt_memory(memory)
     if inventory.get("task_local_memory") is not True:
         raise ValueError("mobilegpt_cold_memory_not_task_local")
@@ -3444,7 +3442,9 @@ def seal_mobilegpt_adapted_memory(
     write_status = _mobilegpt_memory_write_status(
         stats_summary=stats_summary,
         memory_inventory=inventory,
-        cold_validator_success=True,
+        cold_validator_success=bool(
+            result_summary["official_validator_success"]
+        ),
     )
     if not write_status["memory_written"]:
         raise ValueError(
@@ -5789,8 +5789,6 @@ def _mobilegpt_memory_write_status(
         reasons.append("task_not_started_once")
     if task_finished_count <= 0:
         reasons.append("missing_task_finished")
-    if not cold_validator_success:
-        reasons.append("cold_validator_failed")
     if not has_recallable_subtasks:
         reasons.append("missing_recallable_subtasks")
     if not has_useful_actions:

@@ -172,6 +172,7 @@ def _write_mobilegpt_manifest(
     schema_version: str = "omniflow.mobilegpt-native-cold-memory.v1",
     source_method: str = "mobilegpt_native_source_cold",
     teacher_forcing: bool = False,
+    official_source_success: bool = True,
 ) -> Path:
     return _write_json(
         tmp_path / "mobilegpt" / "cold_memory_manifest.json",
@@ -183,7 +184,7 @@ def _write_mobilegpt_manifest(
             "memory": {"sha256": "a" * 64, "file_count": 12},
             "official_source_result": {
                 "official_validator_used": True,
-                "official_validator_success": True,
+                "official_validator_success": official_source_success,
             },
             "provenance": {
                 "native_mobilegpt_learning": True,
@@ -1080,7 +1081,10 @@ def test_refresh_selects_native_mobilegpt_result(tmp_path: Path) -> None:
             }
         },
     )
-    manifest = _write_mobilegpt_manifest(tmp_path)
+    manifest = _write_mobilegpt_manifest(
+        tmp_path,
+        official_source_success=False,
+    )
     result = _write_registered_result(
         tmp_path / "runs",
         attempt="attempt_001",

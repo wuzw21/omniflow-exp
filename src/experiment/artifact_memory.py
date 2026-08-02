@@ -754,7 +754,10 @@ def _mobilegpt_result_protocol_error(
     if (
         not isinstance(official_source_result, dict)
         or official_source_result.get("official_validator_used") is not True
-        or official_source_result.get("official_validator_success") is not True
+        or not isinstance(
+            official_source_result.get("official_validator_success"),
+            bool,
+        )
     ):
         return f"{prefix}:official_source_result"
     memory = manifest.get("memory")

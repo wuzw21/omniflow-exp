@@ -247,8 +247,10 @@ def test_mobilegpt_memory_inventory_rejects_incomplete_native_page(
     assert inventory["native_memory_complete"] is False
 
 
+@pytest.mark.parametrize("official_success", (True, False))
 def test_mobilegpt_native_memory_seal_contains_no_teacher_artifacts(
     tmp_path: Path,
+    official_success: bool,
 ) -> None:
     bundle = tmp_path / "bundle"
     memory = bundle / "memory"
@@ -280,8 +282,8 @@ def test_mobilegpt_native_memory_seal_contains_no_teacher_artifacts(
             {
                 "task_name": "SystemBluetoothTurnOn",
                 "official_validator_used": True,
-                "official_validator_success": True,
-                "success": True,
+                "official_validator_success": official_success,
+                "success": official_success,
             }
         )
         + "\n",
@@ -308,6 +310,10 @@ def test_mobilegpt_native_memory_seal_contains_no_teacher_artifacts(
     assert manifest["provenance"]["learning_mode"] == "mobilegpt_native_cold"
     assert manifest["provenance"]["teacher_forcing"] is False
     assert manifest["provenance"]["synthetic_subtasks"] is False
+    assert (
+        manifest["official_source_result"]["official_validator_success"]
+        is official_success
+    )
     assert sealed["memory_inventory"]["task_local_memory"] is True
 
 
