@@ -3163,19 +3163,36 @@ def _fixed_replay_normalize_selector_value(value: Any) -> str:
 def _fixed_replay_selector_nodes(
     xml_text: str,
     selector: dict[str, Any],
+    *,
+    package_name: str = "",
 ) -> tuple[list[ET.Element], str | None]:
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError:
         return [], "selector_target_xml_invalid"
-    return _fixed_replay_selector_nodes_from_root(root, selector)
+    return _fixed_replay_selector_nodes_from_root(
+        root,
+        selector,
+        package_name=package_name,
+    )
 
 
 def _fixed_replay_selector_nodes_from_root(
     root: ET.Element,
     selector: dict[str, Any],
+    *,
+    package_name: str = "",
 ) -> tuple[list[ET.Element], str | None]:
-    nodes = list(root.iter())
+    all_nodes = list(root.iter())
+    normalized_package = _fixed_replay_normalize_selector_value(package_name)
+    package_nodes = [
+        node
+        for node in all_nodes
+        if normalized_package
+        and _fixed_replay_normalize_selector_value(node.attrib.get("package"))
+        == normalized_package
+    ]
+    nodes = package_nodes or all_nodes
     relation = str(selector.get("relation") or "").strip()
     if relation == "unique_actionable_descendant":
         anchor = selector.get("container_anchor")
@@ -3184,6 +3201,7 @@ def _fixed_replay_selector_nodes_from_root(
         anchor_nodes, anchor_error = _fixed_replay_selector_nodes_from_root(
             root,
             anchor,
+            package_name=package_name,
         )
         if anchor_error is not None:
             return [], anchor_error
@@ -3197,6 +3215,7 @@ def _fixed_replay_selector_nodes_from_root(
             node
             for node in container.iter()
             if node is not anchor_nodes[0]
+            and (not package_nodes or node in package_nodes)
             and any(
                 str(node.attrib.get(key) or "").lower() == "true"
                 for key in ("clickable", "editable", "long-clickable")
@@ -3252,8 +3271,14 @@ def _fixed_replay_selector_nodes_from_root(
 def _fixed_replay_selector_center(
     xml_text: str,
     selector: dict[str, Any],
+    *,
+    package_name: str = "",
 ) -> tuple[tuple[int, int] | None, str | None]:
-    matches, error = _fixed_replay_selector_nodes(xml_text, selector)
+    matches, error = _fixed_replay_selector_nodes(
+        xml_text,
+        selector,
+        package_name=package_name,
+    )
     if error is not None:
         return None, error
     if not matches:
@@ -3279,6 +3304,7 @@ def _raw_replay_action_to_payload(
     source_size: tuple[int, int] | None,
     target_size: tuple[int, int],
     target_xml: str = "",
+    target_package_name: str = "",
     resolution: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     action_type = str(
@@ -3347,6 +3373,7 @@ def _raw_replay_action_to_payload(
             center, selector_error = _fixed_replay_selector_center(
                 target_xml,
                 selector,
+                package_name=target_package_name,
             )
             if selector_error is not None:
                 x, y = _scaled_xy()
@@ -3906,6 +3933,9 @@ def _apply_fixed_replay(
                 source_size=source_size,
                 target_size=action_target_size,
                 target_xml=str((observation_record or {}).get("xml") or ""),
+                target_package_name=str(
+                    (observation_record or {}).get("package_name") or ""
+                ),
                 resolution=action_resolution,
             )
             parameter_source = str(

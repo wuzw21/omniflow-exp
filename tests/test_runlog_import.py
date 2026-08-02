@@ -1188,6 +1188,87 @@ def test_fixed_replay_normalizes_selector_against_observation_display(
     ]
 
 
+def test_fixed_replay_resolves_selector_within_foreground_package(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_log_path = tmp_path / "fold.run_log.json"
+    run_log_path.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [{"action_type": "click", "x": 356, "y": 781}],
+                observations=[
+                    androidworld_state(
+                        "source",
+                        forest=(
+                            '<hierarchy><node text="Phone" '
+                            'package="com.google.android.contacts" '
+                            'bounds="[104,725][608,838]" clickable="true" '
+                            'editable="true" /></hierarchy>'
+                        ),
+                        package_name="com.google.android.contacts",
+                        width=720,
+                        height=1280,
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+    acted: list[dict[str, object]] = []
+    host = SimpleNamespace(
+        observe=lambda **_kwargs: SimpleNamespace(
+            xml=(
+                '<hierarchy><node text="Phone" '
+                'package="com.google.android.contacts" '
+                'bounds="[1083,896][2061,1045]" clickable="true" '
+                'editable="true" />'
+                '<node text="Phone" content-desc="Phone" '
+                'package="com.google.android.apps.nexuslauncher" '
+                'bounds="[679,1697][806,1824]" clickable="true" />'
+                "</hierarchy>"
+            ),
+            package_name="com.google.android.contacts",
+            activity_name="com.google.android.contacts/.ContactEditorActivity",
+            extra={
+                "observe_backend": "androidworld",
+                "display": {"width": 2208, "height": 1840},
+            },
+        ),
+        act=lambda action: acted.append(action) or SimpleNamespace(success=True),
+    )
+    agent = SimpleNamespace(
+        env=SimpleNamespace(
+            device_screen_size=(2208, 1840),
+            logical_screen_size=(1080, 2092),
+            controller=object(),
+        ),
+        host=host,
+        set_max_steps=lambda _steps: None,
+    )
+    android_world = ModuleType("android_world")
+    android_world_env = ModuleType("android_world.env")
+    android_world_env.actuation = SimpleNamespace()
+    android_world_env.adb_utils = SimpleNamespace()
+    android_world_env.json_action = SimpleNamespace()
+    android_world.env = android_world_env
+    monkeypatch.setitem(sys.modules, "android_world", android_world)
+    monkeypatch.setitem(sys.modules, "android_world.env", android_world_env)
+
+    _apply_fixed_replay(agent, run_log_json_path=str(run_log_path))
+    agent.step("Enter a phone number")
+
+    assert acted == [
+        {
+            "tool": "click",
+            "args": {
+                "x": pytest.approx(1572 / 2208 * 1000),
+                "y": pytest.approx(970 / 1840 * 1000),
+            },
+        }
+    ]
+
+
 def test_fixed_replay_opens_packages_through_androidworld_launcher(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
