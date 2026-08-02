@@ -6910,6 +6910,32 @@ def build_appagent_androidworld_command(
     )
 
 
+def _configure_mobilegpt_formal_server(
+    spec: CommandSpec,
+    *,
+    model: str = "",
+) -> CommandSpec:
+    normalized_model = str(model or "").strip()
+    return replace(
+        spec,
+        env={
+            **spec.env,
+            "MOBILEGPT_CHAT_MAX_ATTEMPTS": "1",
+            **(
+                {"MOBILEGPT_CHAT_MODEL": normalized_model}
+                if normalized_model
+                else {}
+            ),
+        },
+        metadata={
+            **spec.metadata,
+            "model_max_attempts": 1,
+            "episode_retries": 0,
+            **({"model": normalized_model} if normalized_model else {}),
+        },
+    )
+
+
 def _run_one_task_mobilegpt(
     *,
     args: argparse.Namespace,
@@ -7184,18 +7210,10 @@ def _run_one_task_mobilegpt(
                 target_app=target_app,
                 runtime_observe_backend="androidworld",
             )
-            if str(args.model or "").strip():
-                server_spec = replace(
-                    server_spec,
-                    env={
-                        **server_spec.env,
-                        "MOBILEGPT_CHAT_MODEL": str(args.model).strip(),
-                    },
-                    metadata={
-                        **server_spec.metadata,
-                        "model": str(args.model).strip(),
-                    },
-                )
+            server_spec = _configure_mobilegpt_formal_server(
+                server_spec,
+                model=str(args.model or ""),
+            )
             browser_task_url = str(browser_task_prepare.get("url") or "").strip()
             if browser_task_url:
                 server_spec = replace(

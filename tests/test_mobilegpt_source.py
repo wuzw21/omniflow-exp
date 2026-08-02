@@ -698,6 +698,28 @@ def test_mobilegpt_offline_runner_uses_protocol_source_method_default(
         )
 
 
+def test_mobilegpt_target_server_has_no_model_retry() -> None:
+    spec = pipeline.CommandSpec(
+        label="mobilegpt:server",
+        argv=["python", "server.py"],
+        env={"EXISTING": "kept"},
+        cwd=Path("."),
+        metadata={"existing": True},
+    )
+    configured = pipeline._configure_mobilegpt_formal_server(
+        spec,
+        model="qwen3-vl-plus",
+    )
+
+    assert configured.env["EXISTING"] == "kept"
+    assert configured.env["MOBILEGPT_CHAT_MODEL"] == "qwen3-vl-plus"
+    assert configured.env["MOBILEGPT_CHAT_MAX_ATTEMPTS"] == "1"
+    assert configured.metadata["existing"] is True
+    assert configured.metadata["model"] == "qwen3-vl-plus"
+    assert configured.metadata["model_max_attempts"] == 1
+    assert configured.metadata["episode_retries"] == 0
+
+
 def test_mobilegpt_legacy_fixed_replay_source_requires_strict_evidence(
     tmp_path: Path,
 ) -> None:
