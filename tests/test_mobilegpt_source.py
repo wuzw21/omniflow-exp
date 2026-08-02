@@ -142,6 +142,67 @@ def _mobilegpt_write_status(
     return summary, status
 
 
+def _write_mobilegpt_memory(
+    root: Path,
+    *,
+    root_task_name: str = "toggleBluetooth",
+    app_task_name: str = "toggleBluetooth",
+) -> None:
+    app_root = root / "com.android.settings"
+    page_root = app_root / "pages" / "0"
+    page_root.mkdir(parents=True)
+    (root / "tasks.csv").write_text(
+        "name,description,parameters,app\n"
+        f"{root_task_name},Toggle Bluetooth,{{}},com.android.settings\n",
+        encoding="utf-8",
+    )
+    (app_root / "tasks.csv").write_text(
+        f'name,path\n{app_task_name},"{{""0"": [""toggleBluetooth""]}}"\n',
+        encoding="utf-8",
+    )
+    (page_root / "subtasks.csv").write_text(
+        "name,description,parameters\ntoggleBluetooth,Toggle Bluetooth,{}\n",
+        encoding="utf-8",
+    )
+    (page_root / "actions.csv").write_text(
+        "subtask_name,step,action,example\n"
+        'toggleBluetooth,0,"{""name"": ""click""}",{}\n',
+        encoding="utf-8",
+    )
+
+
+def test_mobilegpt_memory_inventory_requires_matching_task_graph(
+    tmp_path: Path,
+) -> None:
+    memory = tmp_path / "memory"
+    _write_mobilegpt_memory(memory)
+
+    inventory = pipeline.inspect_mobilegpt_memory(memory)
+
+    assert inventory["root_task_file_count"] == 1
+    assert inventory["root_task_rows"] == 1
+    assert inventory["root_task_names"] == ["toggleBluetooth"]
+    assert inventory["task_file_count"] == 1
+    assert inventory["task_rows"] == 1
+    assert inventory["app_task_names"] == ["toggleBluetooth"]
+    assert inventory["task_local_memory"] is True
+
+
+def test_mobilegpt_memory_inventory_rejects_cross_task_graph(
+    tmp_path: Path,
+) -> None:
+    memory = tmp_path / "memory"
+    _write_mobilegpt_memory(
+        memory,
+        root_task_name="toggleBluetooth",
+        app_task_name="changeBrightness",
+    )
+
+    inventory = pipeline.inspect_mobilegpt_memory(memory)
+
+    assert inventory["task_local_memory"] is False
+
+
 def _write_store_index(source_index: Path) -> tuple[Path, Path]:
     source_payload = json.loads(source_index.read_text(encoding="utf-8"))
     source_row = source_payload["SystemBluetoothTurnOn"]
@@ -316,6 +377,50 @@ def test_mobilegpt_native_fallback_requires_a_model_call(tmp_path: Path) -> None
 
     assert status["memory_written"] is False
     assert "missing_native_vlm_fallback_calls" in status["reasons"]
+
+
+def test_mobilegpt_task_local_teacher_selection_can_seal(tmp_path: Path) -> None:
+    summary, status = _mobilegpt_write_status(
+        tmp_path / "source_stats.jsonl",
+        [
+            {
+                "event": "mobilegpt_teacher_source_preflight",
+                "teacher_action_count": 1,
+                "groundable_action_count": 1,
+            },
+            {
+                "event": "mobilegpt_teacher_forced_select",
+                "scope": "task",
+                "task_name": "submitDrawing",
+            },
+            {"event": "mobilegpt_teacher_action"},
+            {"event": "task_finished"},
+        ],
+    )
+
+    assert summary["teacher_forced_select_count"] == 1
+    assert summary["teacher_task_local_forced_select_count"] == 1
+    assert summary["teacher_unsafe_forced_select_count"] == 0
+    assert status["memory_written"] is True
+
+
+def test_mobilegpt_unscoped_teacher_selection_cannot_seal(tmp_path: Path) -> None:
+    _, status = _mobilegpt_write_status(
+        tmp_path / "source_stats.jsonl",
+        [
+            {
+                "event": "mobilegpt_teacher_source_preflight",
+                "teacher_action_count": 1,
+                "groundable_action_count": 1,
+            },
+            {"event": "mobilegpt_teacher_forced_select"},
+            {"event": "mobilegpt_teacher_action"},
+            {"event": "task_finished"},
+        ],
+    )
+
+    assert status["memory_written"] is False
+    assert "non_native_select_override" in status["reasons"]
 
 
 def test_mobilegpt_v1_stats_manifest_allows_absent_derived_counts() -> None:

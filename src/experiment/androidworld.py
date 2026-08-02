@@ -2503,6 +2503,16 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
     teacher_action_count = sum(
         1 for row in teacher_rows if row.get("event") == "mobilegpt_teacher_action"
     )
+    teacher_forced_select_rows = [
+        row
+        for row in teacher_rows
+        if row.get("event") == "mobilegpt_teacher_forced_select"
+    ]
+    teacher_task_local_forced_select_count = sum(
+        1
+        for row in teacher_forced_select_rows
+        if row.get("scope") == "task" and str(row.get("task_name") or "").strip()
+    )
     teacher_skipped_noop_count = sum(
         _coerce_int(row.get("skipped_count"))
         for row in teacher_rows
@@ -2561,10 +2571,12 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
             for row in teacher_rows
             if row.get("event") == "mobilegpt_teacher_failed_finish"
         ),
-        "teacher_forced_select_count": sum(
-            1
-            for row in teacher_rows
-            if row.get("event") == "mobilegpt_teacher_forced_select"
+        "teacher_forced_select_count": sum(1 for row in teacher_forced_select_rows),
+        "teacher_task_local_forced_select_count": (
+            teacher_task_local_forced_select_count
+        ),
+        "teacher_unsafe_forced_select_count": (
+            len(teacher_forced_select_rows) - teacher_task_local_forced_select_count
         ),
         "teacher_action_error_count": sum(
             1
@@ -2704,14 +2716,30 @@ def _mobilegpt_stats_row_fields(
 
 def inspect_mobilegpt_memory(memory_root: str | Path) -> dict[str, Any]:
     root = _repo_path(memory_root)
+    root_task_file = root / "tasks.csv"
     task_files = sorted(root.glob("*/tasks.csv")) if root.exists() else []
     subtask_files = sorted(root.glob("*/pages/*/subtasks.csv")) if root.exists() else []
     action_files = sorted(root.glob("*/pages/*/actions.csv")) if root.exists() else []
+    root_task_rows: list[dict[str, str]] = []
+    task_names: list[str] = []
+    app_task_names: list[str] = []
     task_rows = 0
     subtask_rows = 0
     action_rows = 0
     non_finish_action_rows = 0
     action_file_rows: list[dict[str, Any]] = []
+
+    if root_task_file.is_file():
+        try:
+            with root_task_file.open(newline="", encoding="utf-8") as handle:
+                root_task_rows = list(csv.DictReader(handle))
+        except Exception:
+            root_task_rows = []
+        task_names = [
+            str(row.get("name") or "").strip()
+            for row in root_task_rows
+            if str(row.get("name") or "").strip()
+        ]
 
     for task_file in task_files:
         try:
@@ -2720,6 +2748,11 @@ def inspect_mobilegpt_memory(memory_root: str | Path) -> dict[str, Any]:
         except Exception:
             rows = []
         task_rows += len(rows)
+        app_task_names.extend(
+            str(row.get("name") or "").strip()
+            for row in rows
+            if str(row.get("name") or "").strip()
+        )
 
     for subtask_file in subtask_files:
         try:
@@ -2760,8 +2793,19 @@ def inspect_mobilegpt_memory(memory_root: str | Path) -> dict[str, Any]:
 
     return {
         "memory_root": str(root),
+        "root_task_file_count": int(root_task_file.is_file()),
+        "root_task_rows": len(root_task_rows),
+        "root_task_names": task_names,
         "task_file_count": len(task_files),
         "task_rows": task_rows,
+        "app_task_names": app_task_names,
+        "task_local_memory": bool(
+            root_task_file.is_file()
+            and len(root_task_rows) == 1
+            and len(task_files) == 1
+            and task_rows == 1
+            and task_names == app_task_names
+        ),
         "subtask_file_count": len(subtask_files),
         "subtask_rows": subtask_rows,
         "action_file_count": len(action_files),
@@ -2928,6 +2972,8 @@ def validate_mobilegpt_adapted_memory(
     if actual_file_count != int(memory_record.get("file_count") or -1):
         raise ValueError("mobilegpt_cold_memory_file_count_mismatch")
     inventory = inspect_mobilegpt_memory(root)
+    if inventory.get("task_local_memory") is not True:
+        raise ValueError("mobilegpt_cold_memory_not_task_local")
     if not inventory.get("has_recallable_subtasks"):
         raise ValueError("mobilegpt_cold_memory_missing_recallable_subtasks")
     if not inventory.get("has_useful_actions"):
@@ -3051,11 +3097,16 @@ def validate_mobilegpt_adapted_memory(
             "teacher_groundable_action_count"
         ],
         "teacher_consumed_count": write_status["teacher_consumed_action_count"],
-        "teacher_vlm_fallback_count": write_status[
-            "teacher_vlm_fallback_count"
-        ],
+        "teacher_vlm_fallback_count": write_status["teacher_vlm_fallback_count"],
         "teacher_unrecovered_miss_count": write_status[
             "teacher_unrecovered_miss_count"
+        ],
+        "teacher_forced_select_count": write_status["teacher_forced_select_count"],
+        "teacher_task_local_forced_select_count": write_status[
+            "teacher_task_local_forced_select_count"
+        ],
+        "teacher_unsafe_forced_select_count": write_status[
+            "teacher_unsafe_forced_select_count"
         ],
         "task_finished_count": write_status["task_finished_count"],
     }
@@ -3332,6 +3383,8 @@ def seal_mobilegpt_adapted_memory(
     if not result_summary["official_validator_success"]:
         raise ValueError("mobilegpt_cold_memory_official_source_failed")
     inventory = inspect_mobilegpt_memory(memory)
+    if inventory.get("task_local_memory") is not True:
+        raise ValueError("mobilegpt_cold_memory_not_task_local")
     write_status = _mobilegpt_memory_write_status(
         stats_summary=stats_summary,
         memory_inventory=inventory,
@@ -3415,6 +3468,15 @@ def seal_mobilegpt_adapted_memory(
             "teacher_unrecovered_miss_count": int(
                 write_status["teacher_unrecovered_miss_count"]
             ),
+            "teacher_forced_select_count": int(
+                write_status["teacher_forced_select_count"]
+            ),
+            "teacher_task_local_forced_select_count": int(
+                write_status["teacher_task_local_forced_select_count"]
+            ),
+            "teacher_unsafe_forced_select_count": int(
+                write_status["teacher_unsafe_forced_select_count"]
+            ),
             "native_vlm_fallback_only": teacher_native_vlm_fallback_only,
             "task_finished_count": int(write_status["task_finished_count"]),
             "model_calls": _coerce_int(stats_summary.get("model_calls")),
@@ -3433,6 +3495,7 @@ def seal_mobilegpt_adapted_memory(
         },
         "provenance": {
             "native_mobilegpt_learning": True,
+            "task_local_memory": True,
             "complete_teacher_action_consumption": True,
             "teacher_groundable_action_count": teacher_groundable_action_count,
             "teacher_vlm_fallback_action_count": int(
@@ -5701,6 +5764,13 @@ def _mobilegpt_memory_write_status(
     teacher_forced_select_count = _coerce_int(
         stats_summary.get("teacher_forced_select_count")
     )
+    teacher_task_local_forced_select_count = _coerce_int(
+        stats_summary.get("teacher_task_local_forced_select_count")
+    )
+    teacher_unsafe_forced_select_count = _coerce_int(
+        stats_summary.get("teacher_unsafe_forced_select_count"),
+        teacher_forced_select_count - teacher_task_local_forced_select_count,
+    )
     teacher_action_error_count = _coerce_int(
         stats_summary.get("teacher_action_error_count")
     )
@@ -5731,7 +5801,7 @@ def _mobilegpt_memory_write_status(
         reasons.append("unexpected_teacher_vlm_fallback")
     if teacher_action_error_count > 0:
         reasons.append("teacher_action_failed")
-    if teacher_forced_select_count > 0:
+    if teacher_unsafe_forced_select_count > 0:
         reasons.append("non_native_select_override")
     return {
         "memory_written": not reasons,
@@ -5750,6 +5820,10 @@ def _mobilegpt_memory_write_status(
         "native_vlm_fallback_only": native_vlm_fallback_only,
         "teacher_failed_finish_count": teacher_failed_finish_count,
         "teacher_forced_select_count": teacher_forced_select_count,
+        "teacher_task_local_forced_select_count": (
+            teacher_task_local_forced_select_count
+        ),
+        "teacher_unsafe_forced_select_count": teacher_unsafe_forced_select_count,
         "teacher_action_error_count": teacher_action_error_count,
     }
 

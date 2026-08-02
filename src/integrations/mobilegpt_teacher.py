@@ -1,11 +1,11 @@
 """Teacher-forced MobileGPT learning from AndroidWorld source run logs.
 
 This module intentionally does not write MobileGPT memory files directly.
-The learning run still goes through MobileGPT's own server, XML encoder,
-explore/select agents, page manager, and ``Memory.save_task`` path.  The only
-runtime override is the action produced by ``DeriveAgent.derive``: instead of
-asking a VLM for the next primitive UI action, teacher mode migrates the next
-AndroidWorld source action onto MobileGPT's current parsed screen.
+The learning run still goes through MobileGPT's own server, XML encoder, page
+manager, and ``Memory.save_task`` path.  Teacher mode selects a task-local
+subtask before MobileGPT's cold selector and migrates each AndroidWorld source
+action onto MobileGPT's current parsed screen.  The resulting task, pages,
+subtasks, and actions are still persisted by MobileGPT's native memory code.
 """
 
 from __future__ import annotations
@@ -599,7 +599,87 @@ def install_mobilegpt_teacher(
                 "forced_is_new_task": True,
             }
         )
-        return original_init(self, instruction, task, True)
+        result = original_init(self, instruction, task, True)
+        select_agent = getattr(self, "select_agent", None)
+        if select_agent is None or not callable(getattr(select_agent, "select", None)):
+            return result
+
+        def select_task_local_subtask(
+            available_subtasks,
+            subtask_history,
+            qa_history,
+            screen,
+        ):
+            del subtask_history, qa_history, screen
+            selected = None
+            for candidate in available_subtasks or []:
+                if not isinstance(candidate, dict):
+                    continue
+                candidate_name = str(candidate.get("name") or "").strip()
+                if candidate_name and candidate_name not in {
+                    "finish",
+                    "read_screen",
+                    "scroll_screen",
+                    "speak",
+                }:
+                    selected = dict(candidate)
+                    break
+
+            selection_source = "native_available_subtask"
+            new_action = None
+            if selected is None:
+                task_payload = (
+                    dict(getattr(self, "task", {}) or {})
+                    if isinstance(getattr(self, "task", {}), dict)
+                    else {}
+                )
+                task_name = str(task_payload.get("name") or "").strip()
+                if not task_name:
+                    raise ValueError("mobilegpt_teacher_task_name_missing")
+                parameters = task_payload.get("parameters")
+                selected = {
+                    "name": task_name,
+                    "description": str(
+                        task_payload.get("description")
+                        or f"Complete the task {task_name}."
+                    ),
+                    "parameters": (
+                        dict(parameters) if isinstance(parameters, dict) else {}
+                    ),
+                }
+                selection_source = "task_definition_fallback"
+                new_action = dict(selected)
+
+            if not isinstance(selected.get("parameters"), dict):
+                selected["parameters"] = {}
+            selected.setdefault(
+                "description",
+                "Teacher-forced AndroidWorld replay subtask.",
+            )
+            task_name = str((getattr(self, "task", {}) or {}).get("name") or "").strip()
+            response = {
+                "reasoning": (
+                    "Use the task-local MobileGPT subtask while learning from "
+                    "the AndroidWorld source episode."
+                ),
+                "action": selected,
+                "completion_rate": 0,
+                "speak": "Continuing the task.",
+            }
+            writer(
+                {
+                    "event": "mobilegpt_teacher_forced_select",
+                    "scope": "task",
+                    "task_name": task_name,
+                    "source_run_log": teacher.source_run_log,
+                    "selection_source": selection_source,
+                    "subtask": selected,
+                }
+            )
+            return response, new_action
+
+        select_agent.select = select_task_local_subtask
+        return result
 
     def patched_get_next_action(
         self, parsed_xml=None, hierarchy_xml=None, encoded_xml=None

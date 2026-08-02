@@ -159,6 +159,125 @@ def test_exhausted_teacher_finishes_task_before_subtask_reentry(
     assert calls == ["task_finished"]
 
 
+def test_teacher_uses_task_local_subtask_before_cold_selector(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    source_run_log = tmp_path / "source.run_log.json"
+    _write_source_run_log(
+        source_run_log,
+        observations=[
+            androidworld_state(
+                "submit",
+                package_name="com.android.chrome",
+                forest=(
+                    '<hierarchy><node text="Submit" clickable="true" '
+                    'bounds="[0,0][100,100]" /></hierarchy>'
+                ),
+            )
+        ],
+    )
+    events: list[dict] = []
+
+    class SelectAgent:
+        calls = 0
+
+        def select(self, *_args, **_kwargs):
+            type(self).calls += 1
+            raise ValueError("invalid_json:Extra data")
+
+    class DeriveAgent:
+        def __init__(self):
+            self.instruction = ""
+            self.subtask = {}
+            self.response_history = []
+            self.action_history = []
+
+        def derive(self, screen, examples=None):
+            raise AssertionError("cold derive must not run in teacher mode")
+
+    class MobileGPT:
+        def __init__(self):
+            self.instruction = ""
+            self.task = {}
+            self.select_agent = SelectAgent()
+            self.derive_agent = DeriveAgent()
+
+        def init(self, instruction, task, is_new_task):
+            self.instruction = instruction
+            self.task = task
+            self.derive_agent.instruction = instruction
+            return None
+
+        def get_next_action(
+            self,
+            parsed_xml=None,
+            hierarchy_xml=None,
+            encoded_xml=None,
+        ):
+            response, _ = self.select_agent.select(
+                [],
+                [],
+                [],
+                encoded_xml,
+            )
+            self.derive_agent.subtask = response["action"]
+            action, _ = self.derive_agent.derive(encoded_xml)
+            return action
+
+        def _MobileGPT__finish_task(self):
+            return None
+
+    agents_module = ModuleType("agents")
+    derive_module = ModuleType("agents.derive_agent")
+    derive_module.DeriveAgent = DeriveAgent
+    mobilegpt_module = ModuleType("mobilegpt")
+    mobilegpt_module.MobileGPT = MobileGPT
+    parsing_utils = ModuleType("utils.parsing_utils")
+    parsing_utils.shrink_screen_xml = lambda screen, _index: screen
+    utils_module = ModuleType("utils")
+    utils_module.parsing_utils = parsing_utils
+    monkeypatch.setitem(sys.modules, "agents", agents_module)
+    monkeypatch.setitem(sys.modules, "agents.derive_agent", derive_module)
+    monkeypatch.setitem(sys.modules, "mobilegpt", mobilegpt_module)
+    monkeypatch.setitem(sys.modules, "utils", utils_module)
+    monkeypatch.setitem(sys.modules, "utils.parsing_utils", parsing_utils)
+    monkeypatch.setattr(
+        mobilegpt_teacher,
+        "_adb_foreground_package",
+        lambda: "com.android.chrome",
+    )
+
+    teacher = install_mobilegpt_teacher(
+        source_run_log=source_run_log,
+        stats_writer=events.append,
+    )
+    agent = MobileGPT()
+    agent.init(
+        "Submit the drawing.",
+        {
+            "name": "submitDrawing",
+            "description": "Submit the current drawing.",
+            "parameters": {},
+            "app": "com.android.chrome",
+        },
+        True,
+    )
+
+    action = agent.get_next_action(encoded_xml='<button text="Submit" index="7" />')
+
+    assert action == {"name": "click", "parameters": {"index": "7"}}
+    assert teacher.cursor == 1
+    assert SelectAgent.calls == 0
+    assert any(
+        event.get("event") == "mobilegpt_teacher_forced_select"
+        and event.get("scope") == "task"
+        and event.get("task_name") == "submitDrawing"
+        and event.get("subtask", {}).get("name") == "submitDrawing"
+        for event in events
+    )
+
+
 def test_teacher_uses_foreground_package_when_parsed_xml_omits_it(
     tmp_path,
     monkeypatch,
