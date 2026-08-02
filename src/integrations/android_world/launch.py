@@ -3644,13 +3644,20 @@ def _raw_replay_observation_record(
     return record
 
 
-def _launch_raw_replay_app(app_identifier: str, env: Any) -> None:
+def _launch_raw_replay_app(
+    app_identifier: str,
+    env: Any,
+    *,
+    host: Any | None = None,
+) -> None:
     from android_world.env import adb_utils
 
     identifier = str(app_identifier or "").strip()
     if not identifier:
         raise ValueError("raw_replay_open_app_identifier_required")
+    package_name = ""
     if "." in identifier:
+        package_name = identifier
         matches = []
         for app_name in adb_utils.get_all_apps(env.controller):
             activity = adb_utils.get_adb_activity(app_name)
@@ -3661,8 +3668,26 @@ def _launch_raw_replay_app(app_identifier: str, env: Any) -> None:
                 f"raw_replay_app_package_unresolved:{identifier}:{len(matches)}"
             )
         identifier = matches[0]
+    else:
+        activity = adb_utils.get_adb_activity(identifier)
+        if activity:
+            package_name = str(
+                adb_utils.extract_package_name(activity) or ""
+            ).strip()
     adb_utils.close_app(identifier, env.controller)
-    adb_utils.launch_app(identifier, env.controller)
+    if host is None:
+        adb_utils.launch_app(identifier, env.controller)
+        return
+    action_args = (
+        {"package_name": package_name}
+        if package_name
+        else {"app_name": identifier}
+    )
+    result = host.act({"tool": "open_app", "args": action_args})
+    if getattr(result, "success", False) is not True:
+        raise RuntimeError(
+            str(getattr(result, "error", "") or "raw replay open_app failed")
+        )
 
 
 def _apply_fixed_replay(
@@ -3720,7 +3745,11 @@ def _apply_fixed_replay(
         from android_world.env import actuation, adb_utils, json_action
 
         if payload.get("action_type") == "raw_open_app":
-            _launch_raw_replay_app(str(payload["app_identifier"]), agent.env)
+            _launch_raw_replay_app(
+                str(payload["app_identifier"]),
+                agent.env,
+                host=agent.host,
+            )
             return
         if payload.get("action_type") == "raw_wait":
             time.sleep(float(payload.get("seconds") or 0.0))

@@ -1226,6 +1226,126 @@ def test_fixed_replay_opens_packages_through_androidworld_launcher(
     ]
 
 
+def test_fixed_replay_waits_for_open_app_before_resolving_selector(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_log_path = tmp_path / "contacts.run_log.json"
+    run_log_path.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [
+                    {
+                        "action_type": "open_app",
+                        "app_name": "com.google.android.contacts",
+                    },
+                    {"action_type": "click", "x": 650, "y": 950},
+                ],
+                observations=[
+                    androidworld_state(
+                        "contacts-launch",
+                        package_name="com.google.android.contacts",
+                        width=720,
+                        height=1280,
+                    ),
+                    androidworld_state(
+                        "contacts-home",
+                        forest=(
+                            '<hierarchy><node content-desc="Create contact" '
+                            'bounds="[600,900][700,1000]" clickable="true" />'
+                            "</hierarchy>"
+                        ),
+                        package_name="com.google.android.contacts",
+                        width=720,
+                        height=1280,
+                    ),
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+    launcher_xml = (
+        '<hierarchy><node package="com.google.android.apps.nexuslauncher" '
+        'bounds="[0,0][2208,1840]" /></hierarchy>'
+    )
+    contacts_xml = (
+        '<hierarchy><node content-desc="Create contact" '
+        'package="com.google.android.contacts" '
+        'bounds="[1998,1283][2145,1430]" clickable="true" /></hierarchy>'
+    )
+    current_page = {"xml": launcher_xml, "package": "com.google.android.apps.nexuslauncher"}
+    acted: list[dict[str, object]] = []
+
+    def observe(**_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            xml=current_page["xml"],
+            package_name=current_page["package"],
+            activity_name=f'{current_page["package"]}/.MainActivity',
+            extra={
+                "observe_backend": "androidworld",
+                "display": {"width": 2208, "height": 1840},
+            },
+        )
+
+    def act(action: dict[str, object]) -> SimpleNamespace:
+        acted.append(action)
+        if action["tool"] == "open_app":
+            current_page.update(
+                xml=contacts_xml,
+                package="com.google.android.contacts",
+            )
+        return SimpleNamespace(success=True)
+
+    controller = object()
+    agent = SimpleNamespace(
+        env=SimpleNamespace(
+            device_screen_size=(2208, 1840),
+            logical_screen_size=(1080, 2092),
+            controller=controller,
+        ),
+        host=SimpleNamespace(observe=observe, act=act),
+        set_max_steps=lambda _steps: None,
+    )
+    adb_utils = SimpleNamespace(
+        launch_app=lambda _app, _controller: None,
+        close_app=lambda _app, _controller: None,
+        get_all_apps=lambda actual_controller: (
+            ["contacts"] if actual_controller is controller else []
+        ),
+        get_adb_activity=lambda app: (
+            "com.google.android.contacts/.PeopleActivity"
+            if app == "contacts"
+            else None
+        ),
+        extract_package_name=lambda activity: activity.split("/", 1)[0],
+    )
+    android_world = ModuleType("android_world")
+    android_world_env = ModuleType("android_world.env")
+    android_world_env.actuation = SimpleNamespace()
+    android_world_env.adb_utils = adb_utils
+    android_world_env.json_action = SimpleNamespace()
+    android_world.env = android_world_env
+    monkeypatch.setitem(sys.modules, "android_world", android_world)
+    monkeypatch.setitem(sys.modules, "android_world.env", android_world_env)
+
+    _apply_fixed_replay(agent, run_log_json_path=str(run_log_path))
+    agent.step("Create a contact")
+
+    assert acted == [
+        {
+            "tool": "open_app",
+            "args": {"package_name": "com.google.android.contacts"},
+        },
+        {
+            "tool": "click",
+            "args": {
+                "x": pytest.approx(2071 / 2208 * 1000),
+                "y": pytest.approx(1356 / 1840 * 1000),
+            },
+        },
+    ]
+
+
 def test_fixed_replay_scales_coordinates_only_without_selector() -> None:
     payload, error = _raw_replay_action_to_payload(
         {
