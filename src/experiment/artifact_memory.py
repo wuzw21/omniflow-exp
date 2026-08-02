@@ -705,6 +705,7 @@ def _formal_result_protocol_error(
     source_seed: Any,
     evaluation_seed: Any,
     row: dict[str, Any],
+    canonical_source_sha256: str = "",
 ) -> str | None:
     from src.experiment.result_registry import (
         FORMAL_DEVICE_TARGETS,
@@ -742,6 +743,29 @@ def _formal_result_protocol_error(
         )
     except ValueError as error:
         return str(error)
+    if method == "fixed_replay":
+        expected_source_sha256 = str(canonical_source_sha256 or "").strip()
+        for field in ("source_run_log", "replay_run_log"):
+            path = Path(str(row.get(field) or "")).expanduser()
+            if not path.is_absolute() or not path.is_file():
+                return (
+                    "formal_result_fixed_replay_source_missing:"
+                    f"{task}:{device}:{field}:{path}"
+                )
+            actual_sha256 = _sha256(path)
+            recorded_sha256 = str(row.get(f"{field}_sha256") or "").strip()
+            if recorded_sha256 and recorded_sha256 != actual_sha256:
+                return (
+                    "formal_result_fixed_replay_recorded_hash_mismatch:"
+                    f"{task}:{device}:{field}:"
+                    f"recorded={recorded_sha256}:actual={actual_sha256}"
+                )
+            if actual_sha256 != expected_source_sha256:
+                return (
+                    "formal_result_fixed_replay_source_hash_mismatch:"
+                    f"{task}:{device}:{field}:"
+                    f"expected={expected_source_sha256}:actual={actual_sha256}"
+                )
     return None
 
 
@@ -749,6 +773,7 @@ def _load_results(
     memory_root: Path,
     roots: Sequence[Path],
     task_names: Sequence[str],
+    canonical_sources: dict[str, dict[str, Any]],
 ) -> tuple[
     list[Path],
     dict[str, dict[str, Any]],
@@ -843,6 +868,9 @@ def _load_results(
             source_seed=source_seed,
             evaluation_seed=evaluation_seed,
             row=result_row,
+            canonical_source_sha256=str(
+                (canonical_sources.get(task) or {}).get("sha256") or ""
+            ),
         )
         if protocol_error is not None:
             record["canonical_exclusion_errors"] = sorted(
@@ -881,6 +909,10 @@ def _load_results(
                 "earliest_formal_protocol_compliant_validator_conclusion"
             ),
         }
+        if method == "fixed_replay":
+            candidate["source_run_log_sha256"] = _sha256(
+                Path(str(result_row["source_run_log"])).expanduser()
+            )
         cell = f"{task}|{method}|{device}|{source_seed}|{evaluation_seed}"
         candidates.setdefault(cell, []).append(
             (
@@ -1254,6 +1286,7 @@ def _refresh_artifact_memory_unlocked(
         root,
         resolved_result_roots,
         task_names,
+        canonical_sources,
     )
     memory_source_index: dict[str, Any] = {}
     for task, raw_item in source_payload.items():

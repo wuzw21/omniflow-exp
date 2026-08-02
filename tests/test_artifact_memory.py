@@ -59,11 +59,13 @@ def _write_registered_result(
     use_oob: bool = False,
     include_task_params: bool = True,
     error: str = "",
+    method: str = "ours",
+    source_run_log: Path | None = None,
 ) -> Path:
-    cell_root = root / "RecordWithName" / "ours" / device / attempt
+    cell_root = root / "RecordWithName" / method / device / attempt
     result_path = cell_root / "registered_result.json"
     manifest_path = cell_root / "registration_manifest.json"
-    registration_id = f"RecordWithName.ours.{device}.{attempt}"
+    registration_id = f"RecordWithName.{method}.{device}.{attempt}"
     task_params = {"file_name": "meeting.m4a"}
     command = (
         "python -m src.integrations.android_world.launch "
@@ -72,6 +74,10 @@ def _write_registered_result(
     )
     if use_oob:
         command += " --oob-observe-backend androidworld"
+    if method == "fixed_replay":
+        if source_run_log is None:
+            raise ValueError("fixed_replay source_run_log is required")
+        command += f" --raw-replay-run-log {source_run_log}"
     result = {
         "schema_version": "omniflow.androidworld_registered_result.v1",
         "registration_id": registration_id,
@@ -83,7 +89,7 @@ def _write_registered_result(
         "rows": [
             {
                 "task_name": "RecordWithName",
-                "method": "ours",
+                "method": method,
                 "device": device,
                 "serial": (
                     "emulator-5554"
@@ -112,6 +118,19 @@ def _write_registered_result(
                 "fixed_task_params": False,
                 "perform_emulator_setup": True,
                 "command": command,
+                **(
+                    {
+                        "execution_backend": (
+                            "selector_then_scaled_coordinate_fallback_v2"
+                        ),
+                        "source_run_log": str(source_run_log),
+                        "source_run_log_sha256": _sha256(source_run_log),
+                        "replay_run_log": str(source_run_log),
+                        "replay_run_log_sha256": _sha256(source_run_log),
+                    }
+                    if method == "fixed_replay" and source_run_log is not None
+                    else {}
+                ),
             }
         ],
     }
@@ -123,7 +142,7 @@ def _write_registered_result(
             "registration_id": registration_id,
             "immutable": True,
             "task_name": "RecordWithName",
-            "method": "ours",
+            "method": method,
             "device": device,
             "attempt_id": attempt,
             "source_seed": 111,
@@ -1001,6 +1020,66 @@ def test_refresh_keeps_earliest_formal_result_without_success_cherry_picking(
     second_pointer = json.loads(pointer.read_text(encoding="utf-8"))
     assert second_pointer == first_pointer
     assert load_artifact_memory(pointer)["canonical"] == report["canonical"]
+
+
+def test_refresh_selects_fixed_replay_result_for_canonical_source_only(
+    tmp_path: Path,
+) -> None:
+    canonical_source = _write_source_run_log(tmp_path)
+    stale_source = _write_json(
+        tmp_path / "stale" / "RecordWithName" / "source.run_log.json",
+        androidworld_run_log(
+            [{"action_type": "wait"}, {"action_type": "wait"}],
+            task_name="RecordWithName",
+            goal="Record stale audio.",
+            with_pixels=True,
+        ),
+    )
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(canonical_source),
+            }
+        },
+    )
+    runs = tmp_path / "runs"
+    stale = _write_registered_result(
+        runs,
+        attempt="attempt_001",
+        registered_at="2026-07-20T00:00:00+00:00",
+        success=False,
+        method="fixed_replay",
+        source_run_log=stale_source,
+    )
+    current = _write_registered_result(
+        runs,
+        attempt="attempt_002",
+        registered_at="2026-07-21T00:00:00+00:00",
+        success=True,
+        method="fixed_replay",
+        source_run_log=canonical_source,
+    )
+
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "evidence", tmp_path / "stale"),
+        result_roots=(runs,),
+    )
+
+    cell = report["canonical"]["result_cells"][
+        "RecordWithName|fixed_replay|small5554|111|113"
+    ]
+    assert cell["registered_result_aliases"] == [str(current)]
+    assert cell["source_run_log_sha256"] == _sha256(canonical_source)
+    stale_record = report["artifacts"]["results"][_sha256(stale)]
+    assert any(
+        "formal_result_fixed_replay_source_hash_mismatch" in error
+        for error in stale_record["canonical_exclusion_errors"]
+    )
 
 
 def test_refresh_preserves_but_does_not_select_environment_error_result(

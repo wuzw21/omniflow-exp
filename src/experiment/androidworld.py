@@ -1657,7 +1657,9 @@ def build_fixed_replay_command(
         timeout_sec=float(timeout_sec) if timeout_sec and timeout_sec > 0 else None,
         metadata={
             "source_run_log": str(item.source_run_log),
+            "source_run_log_sha256": _file_sha256(item.source_run_log),
             "replay_run_log": str(replay_run_log),
+            "replay_run_log_sha256": _file_sha256(replay_run_log),
             "memory_root": str(_repo_path(replay_memory_root, repo_root=repo_root))
             if replay_memory_root
             else "",
