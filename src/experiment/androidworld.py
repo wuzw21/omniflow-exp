@@ -3182,7 +3182,10 @@ def validate_mobilegpt_adapted_memory(
         manifest_count_pairs,
     ):
         raise ValueError("mobilegpt_cold_memory_stats_manifest_mismatch")
-    if official_result.get("official_validator_used") is not True or (
+    if (
+        official_result.get("official_validator_used")
+        is not result_summary["official_validator_used"]
+    ) or (
         official_result.get("official_validator_success")
         is not result_summary["official_validator_success"]
     ):
@@ -3339,13 +3342,28 @@ def _mobilegpt_official_source_result(
     if not task_rows:
         raise ValueError("mobilegpt_source_result_task_missing")
     official_rows = [row for row in task_rows if _official_validator_used(row)]
-    if not official_rows:
-        raise ValueError("mobilegpt_source_official_validator_required")
-    success = any(_official_validator_success(row) for row in official_rows)
+    validator_error = ""
+    for row in task_rows:
+        validator_result = row.get("androidworld_validator_result")
+        if isinstance(validator_result, dict):
+            validator_error = str(validator_result.get("error") or "").strip()
+        if not validator_error:
+            validator_error = str(row.get("error") or "").strip()
+        if validator_error:
+            break
+    validator_used = bool(official_rows)
+    if not validator_used and not validator_error:
+        raise ValueError("mobilegpt_source_validator_unavailable_without_error")
+    success = (
+        any(_official_validator_success(row) for row in official_rows)
+        if validator_used
+        else None
+    )
     return {
         "row_count": len(task_rows),
-        "official_validator_used": True,
+        "official_validator_used": validator_used,
         "official_validator_success": success,
+        "validator_error": validator_error or None,
     }
 
 

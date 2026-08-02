@@ -14,6 +14,7 @@ from runlog_fixtures import (
 
 from src.experiment import androidworld as pipeline
 from src.experiment import mobilegpt_source
+from src.experiment import preflight
 from src.integrations.mobilegpt_runtime import _mobilegpt_chat_model
 
 
@@ -315,6 +316,134 @@ def test_mobilegpt_native_memory_seal_contains_no_teacher_artifacts(
         is official_success
     )
     assert sealed["memory_inventory"]["task_local_memory"] is True
+
+
+def test_mobilegpt_native_memory_seal_accepts_source_validator_exception(
+    tmp_path: Path,
+) -> None:
+    bundle = tmp_path / "bundle"
+    memory = bundle / "memory"
+    _write_mobilegpt_memory(memory)
+    source_run_log = tmp_path / "source.run_log.json"
+    source_run_log.write_text('{"source": true}\n', encoding="utf-8")
+    stats = tmp_path / "source_stats.jsonl"
+    stats.write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {"event": "task_started"},
+                {
+                    "event": "chat_call",
+                    "model": "qwen3-vl-plus",
+                    "prompt_tokens": 10,
+                    "completion_tokens": 2,
+                    "total_tokens": 12,
+                },
+                {"event": "task_finished"},
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    official_result = tmp_path / "task_results.jsonl"
+    official_result.write_text(
+        json.dumps(
+            {
+                "task_name": "ContactsNewContactDraft",
+                "official_validator_used": False,
+                "official_validator_success": False,
+                "androidworld_validator_result": {
+                    "success": False,
+                    "error": "AssertionError",
+                },
+                "error": "AssertionError",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    sealed = pipeline.seal_mobilegpt_adapted_memory(
+        memory_root=memory,
+        source_run_log=source_run_log,
+        source_stats=stats,
+        official_source_result=official_result,
+        task_name="ContactsNewContactDraft",
+        target_package="com.google.android.contacts",
+        target_app="Contacts",
+        source_method=pipeline.MOBILEGPT_NATIVE_SOURCE_METHOD,
+        source_model="qwen3-vl-plus",
+    )
+
+    result = sealed["manifest"]["official_source_result"]
+    assert result["official_validator_used"] is False
+    assert result["official_validator_success"] is None
+    assert result["validator_error"] == "AssertionError"
+
+
+def test_mobilegpt_seals_existing_native_attempt_without_rerun(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    index, _ = _write_source_index(source_root)
+    bundle = tmp_path / "bundle"
+    _write_mobilegpt_memory(bundle / "memory")
+    (bundle / "source_stats.jsonl").write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {"event": "task_started"},
+                {
+                    "event": "chat_call",
+                    "model": "qwen3-vl-plus",
+                    "prompt_tokens": 10,
+                    "completion_tokens": 2,
+                    "total_tokens": 12,
+                },
+                {"event": "task_finished"},
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    result_path = (
+        bundle
+        / "_source_episode"
+        / "SystemBluetoothTurnOn"
+        / "mobilegpt_native_source_cold"
+        / "source5560"
+        / "task_results.jsonl"
+    )
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps(
+            {
+                "task_name": "SystemBluetoothTurnOn",
+                "official_validator_used": False,
+                "androidworld_validator_result": {
+                    "success": False,
+                    "error": "AssertionError",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    sealed = mobilegpt_source.seal_existing_mobilegpt_source_memory(
+        index_path=index,
+        task_name="SystemBluetoothTurnOn",
+        output_root=bundle,
+        model="qwen3-vl-plus",
+    )
+
+    assert sealed["source_episode_rerun"] is False
+    assert (bundle / "cold_memory_manifest.json").is_file()
+    assert sealed["sealed"]["memory_inventory"]["native_memory_complete"] is True
+    assert preflight._validate_mobilegpt_cold_manifest(bundle / "memory")[
+        "task_name"
+    ] == "SystemBluetoothTurnOn"
 
 
 def test_mobilegpt_teacher_source_records_partial_grounding_fallback(
@@ -858,9 +987,11 @@ def test_mobilegpt_configured_model_overrides_upstream_model_argument(
     assert _mobilegpt_chat_model("gpt-4") == "qwen3-vl-plus"
 
 
+@pytest.mark.parametrize("episode_returncode", (0, 1))
 def test_mobilegpt_source_generation_has_no_model_or_episode_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    episode_returncode: int,
 ) -> None:
     source_root = tmp_path / "source"
     source_root.mkdir()
@@ -971,7 +1102,7 @@ def test_mobilegpt_source_generation_has_no_model_or_episode_retry(
             + "\n",
             encoding="utf-8",
         )
-        return 0
+        return episode_returncode
 
     monkeypatch.setattr(pipeline, "run_command", run_episode)
     monkeypatch.setattr(

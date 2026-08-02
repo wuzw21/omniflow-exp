@@ -226,8 +226,15 @@ def _validate_mobilegpt_cold_manifest(memory_root: Path) -> dict[str, Any]:
         if actual_sha256 != str(record.get("sha256") or ""):
             raise ValueError(f"mobilegpt_cold_memory_{label}_hash_mismatch")
     official = payload["official_source_result"]
-    if official.get("official_validator_used") is not True or not isinstance(
-        official.get("official_validator_success"), bool
+    validator_used = official.get("official_validator_used")
+    validator_success = official.get("official_validator_success")
+    validator_error = str(official.get("validator_error") or "").strip()
+    if not isinstance(validator_used, bool):
+        raise ValueError("mobilegpt_cold_memory_official_source_invalid")
+    if validator_used and not isinstance(validator_success, bool):
+        raise ValueError("mobilegpt_cold_memory_official_source_invalid")
+    if not validator_used and (
+        validator_success is not None or not validator_error
     ):
         raise ValueError("mobilegpt_cold_memory_official_source_invalid")
     return {

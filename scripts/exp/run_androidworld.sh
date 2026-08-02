@@ -1824,12 +1824,12 @@ fi
 mobilegpt_source_attempt_root="$(dirname "$mobilegpt_source_memory_root")"
 mobilegpt_source_manifest="$mobilegpt_source_attempt_root/cold_memory_manifest.json"
 mobilegpt_source_generation_required=0
+mobilegpt_source_sealing_required=0
 if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
   if [[ -f "$mobilegpt_source_manifest" ]]; then
     :
   elif [[ -e "$mobilegpt_source_attempt_root" ]]; then
-    echo "Immutable MobileGPT source attempt is incomplete and cannot be retried: $mobilegpt_source_attempt_root" >&2
-    exit 1
+    mobilegpt_source_sealing_required=1
   else
     mobilegpt_source_generation_required=1
   fi
@@ -1846,12 +1846,12 @@ if [[ "$requires_appagent_source_memory" -eq 1 ]]; then
     appagent_source_generation_required=1
   fi
 fi
-if [[ "$dry_run" -eq 1 && ( "$mobilegpt_source_generation_required" -eq 1 || "$appagent_source_generation_required" -eq 1 ) ]]; then
+if [[ "$dry_run" -eq 1 && ( "$mobilegpt_source_generation_required" -eq 1 || "$mobilegpt_source_sealing_required" -eq 1 || "$appagent_source_generation_required" -eq 1 ) ]]; then
   echo "Dry-run cannot create frozen source assets; prepare them with a real one-command run first." >&2
   exit 1
 fi
 if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
-  if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
+  if [[ "$mobilegpt_source_generation_required" -eq 1 || "$mobilegpt_source_sealing_required" -eq 1 ]]; then
     "$python_bin" -m src.experiment.mobilegpt_source preflight \
       --index "$source_index" \
       --task "$task"
@@ -2220,6 +2220,13 @@ if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
     --adb-path "$adb_bin" \
     --max-steps "$max_steps" \
     --timeout-sec "$timeout_sec"
+fi
+if [[ "$mobilegpt_source_sealing_required" -eq 1 ]]; then
+  "$python_bin" -m src.experiment.mobilegpt_source seal-existing \
+    --index "$source_index" \
+    --task "$task" \
+    --output-root "$mobilegpt_source_attempt_root" \
+    --model "$paper_model"
 fi
 if [[ "$appagent_source_generation_required" -eq 1 ]]; then
   "$python_bin" "$preflight" \

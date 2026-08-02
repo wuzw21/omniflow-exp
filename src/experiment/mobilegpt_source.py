@@ -424,10 +424,6 @@ def prepare_mobilegpt_source_memory(
                 f"mobilegpt_native_server_failed:{server_returncode}"
             )
         episode_returncode = pipeline.run_command(episode_spec)
-        if episode_returncode != 0:
-            raise RuntimeError(
-                f"mobilegpt_source_episode_failed:{episode_returncode}"
-            )
     finally:
         pipeline._stop_background_command(server)
         pipeline._stop_background_command(browser_server)
@@ -479,7 +475,88 @@ def prepare_mobilegpt_source_memory(
         "source_stats": str(stats_path),
         "source_stats_summary": str(stats_summary_path),
         "official_source_result": str(result_path),
+        "source_episode_returncode": int(episode_returncode),
         "source_wall_sec": wall_sec,
+        "sealed": sealed,
+    }
+
+
+def seal_existing_mobilegpt_source_memory(
+    *,
+    index_path: str | Path,
+    task_name: str,
+    output_root: str | Path,
+    model: str,
+) -> dict[str, Any]:
+    """Seal one completed native attempt without rerunning its source episode."""
+
+    normalized_model = str(model or "").strip()
+    if not normalized_model:
+        raise ValueError("mobilegpt_source_model_required")
+    item = load_canonical_source_item(index_path, task_name=task_name)
+    source_method = source_method_label(item)
+    source_run_log, _, _, target_info = _preflight_mobilegpt_native(item=item)
+    bundle_root = Path(output_root).expanduser().resolve()
+    if not bundle_root.is_dir():
+        raise FileNotFoundError(
+            f"mobilegpt_source_attempt_missing:{bundle_root}"
+        )
+    memory_root = bundle_root / "memory"
+    stats_path = bundle_root / "source_stats.jsonl"
+    result_root = bundle_root / "_source_episode"
+    result_paths = []
+    if result_root.is_dir():
+        for candidate in sorted(result_root.rglob("task_results.jsonl")):
+            try:
+                pipeline._mobilegpt_official_source_result(
+                    candidate,
+                    task_name=item.task,
+                )
+            except ValueError as error:
+                if str(error) == "mobilegpt_source_result_task_missing":
+                    continue
+                raise
+            result_paths.append(candidate.resolve())
+    if len(result_paths) != 1:
+        raise ValueError(
+            "mobilegpt_source_result_resolution_failed:"
+            f"task={item.task}:matches={len(result_paths)}"
+        )
+    stats_summary = pipeline.summarize_mobilegpt_stats(stats_path)
+    actual_models = {
+        str(value or "").strip()
+        for value in stats_summary.get("chat_models") or []
+        if str(value or "").strip()
+    }
+    if actual_models != {normalized_model}:
+        raise ValueError(
+            "mobilegpt_source_model_mismatch:"
+            f"expected={normalized_model}:actual={sorted(actual_models)}"
+        )
+    sealed = pipeline.seal_mobilegpt_adapted_memory(
+        memory_root=memory_root,
+        source_run_log=source_run_log,
+        source_stats=stats_path,
+        official_source_result=result_paths[0],
+        task_name=item.task,
+        source_seed=SOURCE_SEED,
+        target_package=str(target_info.get("target_package") or ""),
+        target_app=str(target_info.get("target_app") or ""),
+        source_wall_sec=0.0,
+        source_method=source_method,
+        source_model=normalized_model,
+    )
+    return {
+        "schema_version": "omniflow.mobilegpt-source-seal-existing.v1",
+        "task_name": item.task,
+        "source_seed": SOURCE_SEED,
+        "source_method": source_method,
+        "source_run_log": str(source_run_log),
+        "model": normalized_model,
+        "memory_root": str(memory_root),
+        "source_stats": str(stats_path),
+        "official_source_result": str(result_paths[0]),
+        "source_episode_rerun": False,
         "sealed": sealed,
     }
 
@@ -539,6 +616,12 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--memory-root", required=True)
     validate.add_argument("--model", required=True)
 
+    seal_existing = subparsers.add_parser("seal-existing")
+    seal_existing.add_argument("--index", required=True)
+    seal_existing.add_argument("--task", required=True)
+    seal_existing.add_argument("--output-root", required=True)
+    seal_existing.add_argument("--model", required=True)
+
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument("--index", required=True)
     preflight.add_argument("--task", required=True)
@@ -573,6 +656,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 index_path=args.index,
                 task_name=args.task,
                 memory_root=args.memory_root,
+                model=args.model,
+            )
+        elif args.command == "seal-existing":
+            result = seal_existing_mobilegpt_source_memory(
+                index_path=args.index,
+                task_name=args.task,
+                output_root=args.output_root,
                 model=args.model,
             )
         else:
