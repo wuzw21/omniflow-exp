@@ -81,13 +81,24 @@ def _indexed_app_ui_count(xml_text: str) -> int:
         root = ET.fromstring(xml_text)
     except ET.ParseError:
         return 0
-    return sum(
-        1
-        for element in root.iter()
-        if str(element.attrib.get("index") or "").strip()
-        and str(element.attrib.get("package") or "").strip()
-        != "com.android.systemui"
-    )
+    count = 0
+    for element in root.iter():
+        attributes = element.attrib
+        if not str(attributes.get("index") or "").strip():
+            continue
+        if str(attributes.get("package") or "").strip() == "com.android.systemui":
+            continue
+        has_identity = any(
+            str(attributes.get(key) or "").strip()
+            for key in ("resource-id", "text", "content-desc")
+        )
+        has_action = any(
+            str(attributes.get(key) or "").strip().lower() == "true"
+            for key in ("clickable", "editable", "scrollable", "long-clickable")
+        )
+        if has_identity or has_action:
+            count += 1
+    return count
 
 
 def _write_stats_event(event: dict[str, Any]) -> None:

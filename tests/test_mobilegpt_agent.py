@@ -204,6 +204,17 @@ def test_mobilegpt_waits_for_real_app_ui_before_sending_first_observation(
             if self.state_reads == 1:
                 elements = [
                     SimpleNamespace(
+                        bbox_pixels=_Bounds(0, 20, 100, 200),
+                        package_name="com.example.target",
+                        class_name="android.widget.FrameLayout",
+                        text="",
+                        content_description="",
+                        resource_name="",
+                        is_clickable=False,
+                        is_editable=False,
+                        is_scrollable=False,
+                    ),
+                    SimpleNamespace(
                         bbox_pixels=_Bounds(0, 0, 100, 20),
                         package_name="com.android.systemui",
                         class_name="android.widget.TextView",
