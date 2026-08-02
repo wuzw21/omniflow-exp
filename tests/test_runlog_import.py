@@ -13,6 +13,7 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 from src.experiment.source_runlogs import convert_source_index
 from src.integrations.android_world.launch import (
     _apply_fixed_replay,
+    _launch_raw_replay_app,
     _raw_replay_action_to_payload,
     _raw_replay_step_actions,
 )
@@ -897,6 +898,38 @@ def test_fixed_replay_normalizes_selector_against_observation_display(
             },
         }
     ]
+
+
+def test_fixed_replay_opens_packages_through_androidworld_launcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = object()
+    calls: list[tuple[str, object]] = []
+    adb_utils = SimpleNamespace(
+        launch_app=lambda app, actual_controller: calls.append(
+            (app, actual_controller)
+        ),
+        get_all_apps=lambda actual_controller: (
+            ["settings"] if actual_controller is controller else []
+        ),
+        get_adb_activity=lambda app: (
+            "com.android.settings/.Settings" if app == "settings" else None
+        ),
+        extract_package_name=lambda activity: activity.split("/", 1)[0],
+    )
+    android_world = ModuleType("android_world")
+    android_world_env = ModuleType("android_world.env")
+    android_world_env.adb_utils = adb_utils
+    android_world.env = android_world_env
+    monkeypatch.setitem(sys.modules, "android_world", android_world)
+    monkeypatch.setitem(sys.modules, "android_world.env", android_world_env)
+
+    _launch_raw_replay_app(
+        "com.android.settings",
+        SimpleNamespace(controller=controller),
+    )
+
+    assert calls == [("settings", controller)]
 
 
 def test_fixed_replay_scales_coordinates_only_without_selector() -> None:

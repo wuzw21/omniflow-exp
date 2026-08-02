@@ -3437,22 +3437,18 @@ def _launch_raw_replay_app(app_identifier: str, env: Any) -> None:
     identifier = str(app_identifier or "").strip()
     if not identifier:
         raise ValueError("raw_replay_open_app_identifier_required")
-    if "." not in identifier:
-        adb_utils.launch_app(identifier, env.controller)
-        return
-    result = adb_utils.issue_generic_request(
-        [
-            "shell",
-            "monkey",
-            "-p",
-            identifier,
-            "-c",
-            "android.intent.category.LAUNCHER",
-            "1",
-        ],
-        env.controller,
-    )
-    adb_utils.check_ok(result, f"Failed to launch Android package {identifier}.")
+    if "." in identifier:
+        matches = []
+        for app_name in adb_utils.get_all_apps(env.controller):
+            activity = adb_utils.get_adb_activity(app_name)
+            if activity and adb_utils.extract_package_name(activity) == identifier:
+                matches.append(app_name)
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"raw_replay_app_package_unresolved:{identifier}:{len(matches)}"
+            )
+        identifier = matches[0]
+    adb_utils.launch_app(identifier, env.controller)
 
 
 def _apply_fixed_replay(
