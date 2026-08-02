@@ -30,10 +30,6 @@ if str(REPO_ROOT) not in sys.path:
 from omniflow.core.trajectory import canonicalize_run_log
 from omniflow.functions.store import FunctionStore
 from src.experiment.result_registry import register_attempt_summary
-from src.experiment.source_assets import (
-    resolve_store_source_run_log,
-    store_source_run_log_sha256s,
-)
 from src.integrations.appagent_adapter import validate_appagent_demo_memory
 
 DEFAULT_ARCHIVE_INDEX = (
@@ -7405,20 +7401,6 @@ def cmd_one_task(args: argparse.Namespace) -> int:
     mobilegpt_source_run_log_sha256s = (
         _file_sha256(mobilegpt_source_run_log),
     )
-    if any(_is_mobilegpt_method(method) for method in methods):
-        store_index = str(args.store_index or "").strip()
-        if not store_index:
-            raise ValueError(
-                "--store-index is required when one-task includes MobileGPT"
-            )
-        mobilegpt_source_run_log, _ = resolve_store_source_run_log(
-            store_index,
-            task_name=item.task,
-        )
-        mobilegpt_source_run_log_sha256s = store_source_run_log_sha256s(
-            store_index,
-            task_name=item.task,
-        )
     attempt_root, _ = _task_managed_output_root(args.output_root)
     output_root = _source_seed_output_root(attempt_root, item.replay_seed)
     attempt_id = attempt_root.name

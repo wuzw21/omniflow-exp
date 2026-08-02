@@ -853,7 +853,7 @@ if [[ "$all_tasks" -eq 0 && "$requires_mobilegpt_source_memory" -eq 1 && -z "$mo
       "cold_memory_manifest.json" \
       "$task" \
       "$mobilegpt_source_environment_repair" \
-      "$ours_store_index" \
+      "$source_index" \
       "$formal_model" \
       "$mobilegpt_source_schema" \
       "$mobilegpt_source_method"
@@ -1192,7 +1192,7 @@ PY
           source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$source_method"
           source_manifest="cold_memory_manifest.json"
           source_repair_reason="$mobilegpt_source_environment_repair"
-          source_hash_index="$ours_store_index"
+          source_hash_index="$source_index"
           source_model="$formal_model"
           source_schema="$mobilegpt_source_schema"
           source_source_method="$mobilegpt_source_method"
@@ -1490,7 +1490,7 @@ PY
               source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$cell_method"
               source_manifest="cold_memory_manifest.json"
               source_repair_reason="$mobilegpt_source_environment_repair"
-              source_hash_index="$ours_store_index"
+              source_hash_index="$source_index"
               source_model="$formal_model"
               source_schema="$mobilegpt_source_schema"
               source_source_method="$mobilegpt_source_method"
@@ -1854,12 +1854,10 @@ if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
   if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
     "$python_bin" -m src.experiment.mobilegpt_source preflight \
       --index "$source_index" \
-      --store-index "$ours_store_index" \
       --task "$task"
   else
     "$python_bin" -m src.experiment.mobilegpt_source validate \
       --index "$source_index" \
-      --store-index "$ours_store_index" \
       --task "$task" \
       --memory-root "$mobilegpt_source_memory_root" \
       --model "$paper_model"
@@ -2212,7 +2210,6 @@ if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
     --require-contacts-ready
   "$python_bin" -m src.experiment.mobilegpt_source prepare \
     --index "$source_index" \
-    --store-index "$ours_store_index" \
     --task "$task" \
     --mobilegpt-root "$mobilegpt_root" \
     --android-world-root "$android_world_root" \

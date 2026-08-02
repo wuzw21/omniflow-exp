@@ -12,11 +12,6 @@ import time
 from typing import Any
 
 from src.experiment import androidworld as pipeline
-from src.experiment.source_assets import (
-    build_grounded_teacher_run_log_from_store_index,
-    resolve_store_source_run_log,
-    store_source_run_log_sha256s,
-)
 from src.integrations.runlog import import_run_log
 
 SOURCE_SEED = 111
@@ -96,20 +91,14 @@ def load_canonical_source_item(
 def validate_mobilegpt_source_memory(
     *,
     index_path: str | Path,
-    store_index_path: str | Path,
     task_name: str,
     memory_root: str | Path,
     model: str,
 ) -> dict[str, Any]:
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_method = source_method_label(item)
-    source_run_log, _ = resolve_store_source_run_log(
-        store_index_path,
-        task_name=item.task,
-    )
-    compatible_source_sha256s = store_source_run_log_sha256s(
-        store_index_path,
-        task_name=item.task,
+    source_run_log, compatible_source_sha256s, _, _ = (
+        _preflight_mobilegpt_native(item=item)
     )
     validated = pipeline.validate_mobilegpt_adapted_memory(
         memory_root,
@@ -133,28 +122,31 @@ def validate_mobilegpt_source_memory(
 
 def _preflight_mobilegpt_native(
     *,
-    store_index_path: str | Path,
     item: pipeline.ArchivedRunLog,
 ) -> tuple[Path, tuple[str, ...], dict[str, Any], dict[str, str]]:
-    audited_source, source_audit = build_grounded_teacher_run_log_from_store_index(
-        store_index_path=store_index_path,
-        task_name=item.task,
+    source_run_log = item.source_run_log
+    source_sha256 = pipeline._file_sha256(source_run_log)
+    canonical_source = import_run_log(
+        json.loads(source_run_log.read_text(encoding="utf-8"))
     )
-    source_run_log, source_sha256 = resolve_store_source_run_log(
-        store_index_path,
-        task_name=item.task,
-    )
-    compatible_source_sha256s = store_source_run_log_sha256s(
-        store_index_path,
-        task_name=item.task,
-    )
-    target_info = _mobilegpt_source_target(item=item, grounded=audited_source)
     source_audit = {
-        **source_audit,
+        "schema_version": "omniflow.mobilegpt-native-source-audit.v1",
+        "grounding_source": "canonical_androidworld_run_log",
         "source_run_log": str(source_run_log),
         "source_run_log_sha256": source_sha256,
-        "compatible_source_sha256s": list(compatible_source_sha256s),
+        "source_state_count": sum(
+            isinstance(step, dict)
+            and isinstance(step.get("observation"), dict)
+            for step in canonical_source.get("steps") or []
+        ),
+        "actions_supplied_to_mobilegpt": False,
+        "function_store_used": False,
     }
+    compatible_source_sha256s = (source_sha256,)
+    target_info = _mobilegpt_source_target(
+        item=item,
+        grounded=canonical_source,
+    )
     return source_run_log, compatible_source_sha256s, source_audit, target_info
 
 
@@ -201,14 +193,13 @@ def _mobilegpt_source_target(
     return {
         "target_package": package_name,
         "target_app": package_name,
-        "target_source": "frozen_source_states",
+        "target_source": "canonical_source_runlog_observation",
     }
 
 
 def preflight_mobilegpt_source(
     *,
     index_path: str | Path,
-    store_index_path: str | Path,
     task_name: str,
 ) -> dict[str, Any]:
     """Validate one source asset without creating a persistent output."""
@@ -216,7 +207,6 @@ def preflight_mobilegpt_source(
     item = load_canonical_source_item(index_path, task_name=task_name)
     _, _, source_audit, target_info = (
         _preflight_mobilegpt_native(
-            store_index_path=store_index_path,
             item=item,
         )
     )
@@ -240,7 +230,6 @@ def preflight_mobilegpt_source(
 def prepare_mobilegpt_source_memory(
     *,
     index_path: str | Path,
-    store_index_path: str | Path,
     task_name: str,
     mobilegpt_root: str | Path,
     android_world_root: str | Path,
@@ -272,7 +261,6 @@ def prepare_mobilegpt_source_memory(
         )
     source_run_log, compatible_source_sha256s, source_audit, target_info = (
         _preflight_mobilegpt_native(
-            store_index_path=store_index_path,
             item=item,
         )
     )
@@ -528,7 +516,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     prepare = subparsers.add_parser("prepare")
     prepare.add_argument("--index", required=True)
-    prepare.add_argument("--store-index", required=True)
     prepare.add_argument("--task", required=True)
     prepare.add_argument("--mobilegpt-root", required=True)
     prepare.add_argument("--android-world-root", required=True)
@@ -548,14 +535,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate = subparsers.add_parser("validate")
     validate.add_argument("--index", required=True)
-    validate.add_argument("--store-index", required=True)
     validate.add_argument("--task", required=True)
     validate.add_argument("--memory-root", required=True)
     validate.add_argument("--model", required=True)
 
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument("--index", required=True)
-    preflight.add_argument("--store-index", required=True)
     preflight.add_argument("--task", required=True)
     return parser
 
@@ -566,7 +551,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "prepare":
             result = prepare_mobilegpt_source_memory(
                 index_path=args.index,
-                store_index_path=args.store_index,
                 task_name=args.task,
                 mobilegpt_root=args.mobilegpt_root,
                 android_world_root=args.android_world_root,
@@ -587,7 +571,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "validate":
             result = validate_mobilegpt_source_memory(
                 index_path=args.index,
-                store_index_path=args.store_index,
                 task_name=args.task,
                 memory_root=args.memory_root,
                 model=args.model,
@@ -595,7 +578,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             result = preflight_mobilegpt_source(
                 index_path=args.index,
-                store_index_path=args.store_index,
                 task_name=args.task,
             )
     except BaseException as error:

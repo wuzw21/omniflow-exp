@@ -632,7 +632,7 @@ exit 0
     ]
     assert mobilegpt_source_calls
     assert all(
-        f"--store-index {store_index}" in line
+        "--store-index" not in line
         for line in mobilegpt_source_calls
     )
 
@@ -862,7 +862,7 @@ if [ "$1" = "-" ] && [ "$2" = "$SOURCE_INDEX" ] && [ "$#" -eq 3 ]; then
 fi
 if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ] && { [ "$5" = "$SOURCE_INDEX" ] || [ "$5" = "$STORE_INDEX" ]; }; then
   if [ "$4" = "cold_memory_manifest.json" ]; then
-    if [ "$5" != "$STORE_INDEX" ]; then
+    if [ "$5" != "$SOURCE_INDEX" ]; then
       exit 44
     fi
     if [ "$TERMINAL_PHASE" = "static" ] || [ -f "$STATE_DIR/mobilegpt-terminal" ]; then
