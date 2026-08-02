@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import sys
+from types import ModuleType, SimpleNamespace
 
 from PIL import Image
 import pytest
@@ -10,6 +12,7 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment.source_runlogs import convert_source_index
 from src.integrations.android_world.launch import (
+    _apply_fixed_replay,
     _raw_replay_action_to_payload,
     _raw_replay_step_actions,
 )
@@ -820,6 +823,80 @@ def test_fixed_replay_resolves_click_from_target_selector() -> None:
 
     assert error is None
     assert payload == {"action_type": "click", "x": 400, "y": 900}
+
+
+def test_fixed_replay_normalizes_selector_against_observation_display(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_log_path = tmp_path / "fold.run_log.json"
+    run_log_path.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [{"action_type": "click", "x": 360, "y": 640}],
+                observations=[
+                    androidworld_state(
+                        "source",
+                        forest=(
+                            '<hierarchy><node text="Target" '
+                            'bounds="[300,500][420,780]" clickable="true" />'
+                            "</hierarchy>"
+                        ),
+                        width=720,
+                        height=1280,
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+    acted: list[dict[str, object]] = []
+    host = SimpleNamespace(
+        observe=lambda **_kwargs: SimpleNamespace(
+            xml=(
+                '<hierarchy><node text="Target" '
+                'bounds="[1000,600][1200,800]" clickable="true" />'
+                "</hierarchy>"
+            ),
+            package_name="com.example",
+            activity_name="com.example/.MainActivity",
+            extra={
+                "observe_backend": "androidworld",
+                "display": {"width": 2208, "height": 1840},
+            },
+        ),
+        act=lambda action: acted.append(action) or SimpleNamespace(success=True),
+    )
+    agent = SimpleNamespace(
+        env=SimpleNamespace(
+            device_screen_size=(2208, 1840),
+            logical_screen_size=(1080, 2092),
+            controller=object(),
+        ),
+        host=host,
+        set_max_steps=lambda _steps: None,
+    )
+    android_world = ModuleType("android_world")
+    android_world_env = ModuleType("android_world.env")
+    android_world_env.actuation = SimpleNamespace()
+    android_world_env.adb_utils = SimpleNamespace()
+    android_world_env.json_action = SimpleNamespace()
+    android_world.env = android_world_env
+    monkeypatch.setitem(sys.modules, "android_world", android_world)
+    monkeypatch.setitem(sys.modules, "android_world.env", android_world_env)
+
+    _apply_fixed_replay(agent, run_log_json_path=str(run_log_path))
+    agent.step("Tap Target")
+
+    assert acted == [
+        {
+            "tool": "click",
+            "args": {
+                "x": pytest.approx(1100 / 2208 * 1000),
+                "y": pytest.approx(700 / 1840 * 1000),
+            },
+        }
+    ]
 
 
 def test_fixed_replay_scales_coordinates_only_without_selector() -> None:

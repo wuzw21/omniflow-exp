@@ -3582,10 +3582,16 @@ def _apply_fixed_replay(
             )
 
         started = perf_counter()
-        target_size = tuple(getattr(agent.env, "logical_screen_size", (0, 0)) or (0, 0))
+        target_size = tuple(
+            getattr(agent.env, "device_screen_size", (0, 0)) or (0, 0)
+        )
         if len(target_size) != 2:
             target_size = (0, 0)
         if not target_size[0] or not target_size[1]:
+            target_size = tuple(
+                getattr(agent.env, "logical_screen_size", (0, 0)) or (0, 0)
+            )
+        if len(target_size) != 2 or not target_size[0] or not target_size[1]:
             target_size = source_size or (1080, 2400)
         oob_prepare: dict[str, Any] | None = None
         if use_oob_observe:
@@ -3629,11 +3635,21 @@ def _apply_fixed_replay(
                     replay_observe(xml=True, screenshot=False, app_info=True),
                     fallback_size=(int(target_size[0]), int(target_size[1])),
                 )
+            action_target_size = (int(target_size[0]), int(target_size[1]))
+            if observation_record is not None:
+                observed_width = _coerce_positive_int(
+                    observation_record.get("width")
+                )
+                observed_height = _coerce_positive_int(
+                    observation_record.get("height")
+                )
+                if observed_width and observed_height:
+                    action_target_size = (observed_width, observed_height)
             action_resolution: dict[str, Any] = {}
             payload, skip_reason = _raw_replay_action_to_payload(
                 source_action,
                 source_size=source_size,
-                target_size=(int(target_size[0]), int(target_size[1])),
+                target_size=action_target_size,
                 target_xml=str((observation_record or {}).get("xml") or ""),
                 resolution=action_resolution,
             )
@@ -3652,7 +3668,7 @@ def _apply_fixed_replay(
                 "source_action": _sanitize_raw_replay_source_action(source_action),
                 "androidworld_action": dict(payload or {}),
                 "source_screen_size": list(source_size) if source_size else None,
-                "target_screen_size": [int(target_size[0]), int(target_size[1])],
+                "target_screen_size": list(action_target_size),
                 "completed": False,
                 "skipped": False,
                 "parameter_source": parameter_source,
@@ -3674,7 +3690,7 @@ def _apply_fixed_replay(
                 assert payload is not None
                 _execute_payload(
                     payload,
-                    target_size=(int(target_size[0]), int(target_size[1])),
+                    target_size=action_target_size,
                 )
                 actions_executed += 1
                 if parameter_source == "selector":
