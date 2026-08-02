@@ -758,6 +758,45 @@ def test_explicit_converter_uses_provider_online_action(tmp_path: Path) -> None:
     }
 
 
+def test_explicit_converter_avoids_system_edge_for_interior_legacy_swipe(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "interior_swipe.run_log.json"
+    payload = {
+        "run_id": "interior-swipe",
+        "success": True,
+        "steps": [
+            {
+                "observation_before_act": {"width": 720, "height": 1280},
+                "action": {
+                    "type": "swipe",
+                    "params": {
+                        "start_x": 100,
+                        "start_y": 600,
+                        "end_x": 600,
+                        "end_y": 600,
+                    },
+                },
+            }
+        ],
+    }
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    converted = convert_legacy_run_log(
+        payload,
+        task_name="GestureTask",
+        task_parameters={},
+        seed=111,
+        source_path=source,
+        require_screenshots=False,
+    )
+
+    assert converted["steps"][0]["action"] == {
+        "action_type": "scroll",
+        "direction": "left",
+    }
+
+
 def test_explicit_converter_preserves_camera_gesture_and_wait_semantics(
     tmp_path: Path,
 ) -> None:
@@ -812,7 +851,7 @@ def test_explicit_converter_preserves_camera_gesture_and_wait_semantics(
     )
 
     assert [step["action"] for step in converted["steps"]] == [
-        {"action_type": "swipe", "direction": "left"},
+        {"action_type": "scroll", "direction": "left"},
         {"action_type": "click", "x": 200, "y": 580},
         {"action_type": "wait"},
         {"action_type": "wait"},
@@ -823,22 +862,23 @@ def test_explicit_converter_preserves_camera_gesture_and_wait_semantics(
 
 
 @pytest.mark.parametrize(
-    ("action_type", "end", "expected_direction"),
+    ("action_type", "end", "expected_action_type", "expected_direction"),
     [
-        ("swipe", (900, 500), "left"),
-        ("swipe", (100, 500), "right"),
-        ("swipe", (500, 900), "down"),
-        ("swipe", (500, 100), "up"),
-        ("scroll", (900, 500), "left"),
-        ("scroll", (100, 500), "right"),
-        ("scroll", (500, 900), "up"),
-        ("scroll", (500, 100), "down"),
+        ("swipe", (900, 500), "scroll", "left"),
+        ("swipe", (100, 500), "scroll", "right"),
+        ("swipe", (500, 900), "scroll", "up"),
+        ("swipe", (500, 100), "scroll", "down"),
+        ("scroll", (900, 500), "scroll", "left"),
+        ("scroll", (100, 500), "scroll", "right"),
+        ("scroll", (500, 900), "scroll", "up"),
+        ("scroll", (500, 100), "scroll", "down"),
     ],
 )
 def test_explicit_converter_maps_endpoint_gestures_to_androidworld_direction(
     tmp_path: Path,
     action_type: str,
     end: tuple[int, int],
+    expected_action_type: str,
     expected_direction: str,
 ) -> None:
     source = tmp_path / f"{action_type}-{expected_direction}.run_log.json"
@@ -872,8 +912,45 @@ def test_explicit_converter_maps_endpoint_gestures_to_androidworld_direction(
     )
 
     assert converted["steps"][0]["action"] == {
-        "action_type": action_type,
+        "action_type": expected_action_type,
         "direction": expected_direction,
+    }
+
+
+def test_explicit_converter_preserves_system_edge_swipe(tmp_path: Path) -> None:
+    source = tmp_path / "edge_swipe.run_log.json"
+    payload = {
+        "run_id": "edge-swipe",
+        "success": True,
+        "steps": [
+            {
+                "observation_before_act": {"width": 720, "height": 1280},
+                "action": {
+                    "type": "swipe",
+                    "params": {
+                        "start_x": 0,
+                        "start_y": 600,
+                        "end_x": 600,
+                        "end_y": 600,
+                    },
+                },
+            }
+        ],
+    }
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    converted = convert_legacy_run_log(
+        payload,
+        task_name="GestureTask",
+        task_parameters={},
+        seed=111,
+        source_path=source,
+        require_screenshots=False,
+    )
+
+    assert converted["steps"][0]["action"] == {
+        "action_type": "swipe",
+        "direction": "left",
     }
 
 

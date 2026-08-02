@@ -576,12 +576,20 @@ def _legacy_action_to_androidworld(
             action["x"], action["y"] = _legacy_point(args, observation)
         return action
     if tool in {"swipe", "scroll"}:
+        gesture_type = _legacy_androidworld_gesture_type(
+            tool,
+            args,
+            observation,
+        )
         direction = str(args.get("direction") or "").strip().lower()
         if not direction:
-            direction = _legacy_swipe_direction(args, action_type=tool)
+            direction = _legacy_swipe_direction(
+                args,
+                action_type=gesture_type,
+            )
         if direction not in {"left", "right", "down", "up"}:
             raise ValueError(f"legacy_action_direction_required:{tool}")
-        return {"action_type": tool, "direction": direction}
+        return {"action_type": gesture_type, "direction": direction}
     if tool in {"open_app", "start_activity", "launch_app", "openapp"}:
         app_name = str(args.get("app_name") or args.get("app") or "").strip()
         package = str(
@@ -801,6 +809,45 @@ def _legacy_point(
         x = x / 1000.0 * width
         y = y / 1000.0 * height
     return max(0, int(round(x))), max(0, int(round(y)))
+
+
+def _legacy_androidworld_gesture_type(
+    action_type: str,
+    args: dict[str, Any],
+    observation: dict[str, Any],
+) -> str:
+    if action_type != "swipe" or str(args.get("direction") or "").strip():
+        return action_type
+    x1 = _number(args, "x1", "start_x", "from_x", "touch_x")
+    y1 = _number(args, "y1", "start_y", "from_y", "touch_y")
+    x2 = _number(args, "x2", "end_x", "to_x", "lift_x")
+    y2 = _number(args, "y2", "end_y", "to_y", "lift_y")
+    if None in {x1, y1, x2, y2}:
+        return action_type
+    try:
+        if str(args.get("coordinate_space") or "").strip() == "canonical_0_1000":
+            width, height = 1000.0, 1000.0
+        else:
+            width, height = _legacy_display(observation)
+    except ValueError:
+        return action_type
+    dx = float(x2) - float(x1)
+    dy = float(y2) - float(y1)
+    if abs(dx) >= abs(dy):
+        tolerance = max(1.0, float(width) * 0.02)
+        starts_at_edge = (
+            float(x1) <= tolerance
+            if dx > 0
+            else float(x1) >= float(width) - tolerance
+        )
+    else:
+        tolerance = max(1.0, float(height) * 0.02)
+        starts_at_edge = (
+            float(y1) <= tolerance
+            if dy > 0
+            else float(y1) >= float(height) - tolerance
+        )
+    return "swipe" if starts_at_edge else "scroll"
 
 
 def _legacy_swipe_direction(
