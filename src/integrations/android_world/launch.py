@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
 import dataclasses
 import datetime
 import hashlib
@@ -2829,6 +2830,208 @@ def _raw_replay_source_size(data: dict[str, Any]) -> tuple[int, int] | None:
     return None
 
 
+def _fixed_replay_parameter_leaves(
+    value: Any,
+    *,
+    path: str = "$",
+) -> list[tuple[str, Any]]:
+    leaves: list[tuple[str, Any]] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            leaves.extend(
+                _fixed_replay_parameter_leaves(
+                    item,
+                    path=f"{path}.{key}",
+                )
+            )
+        return leaves
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            leaves.extend(
+                _fixed_replay_parameter_leaves(
+                    item,
+                    path=f"{path}[{index}]",
+                )
+            )
+        return leaves
+    if value is None or isinstance(value, bool):
+        return leaves
+    leaves.append((path, value))
+    return leaves
+
+
+def _fixed_replay_goal_value_boundary(
+    text: str,
+    *,
+    start: int,
+    value: str,
+) -> bool:
+    end = start + len(value)
+    if value[0].isalnum() and start > 0 and text[start - 1].isalnum():
+        return False
+    if value[-1].isalnum() and end < len(text) and text[end].isalnum():
+        return False
+    return True
+
+
+def _fixed_replay_goal_parameter_bindings(
+    run_log_data: dict[str, Any],
+    *,
+    target_goal: str,
+) -> dict[str, Any]:
+    run_log = import_run_log(run_log_data)
+    source_goal = str(run_log.get("goal") or "")
+    target_goal_text = str(target_goal or "")
+    task_parameters = run_log.get("task_parameters")
+    task_parameters = task_parameters if isinstance(task_parameters, dict) else {}
+    candidate_paths: dict[str, list[str]] = {}
+    for path, value in _fixed_replay_parameter_leaves(task_parameters):
+        final_key = path.rsplit(".", maxsplit=1)[-1]
+        if final_key in {"seed", "browser_task_seed"}:
+            continue
+        source_value = str(value)
+        if not source_value or source_value not in source_goal:
+            continue
+        candidate_paths.setdefault(source_value, []).append(path)
+
+    occurrences: list[tuple[int, int, str]] = []
+    cursor = 0
+    candidates = sorted(candidate_paths, key=lambda item: (-len(item), item))
+    while cursor < len(source_goal):
+        matches = [
+            value
+            for value in candidates
+            if source_goal.startswith(value, cursor)
+            and _fixed_replay_goal_value_boundary(
+                source_goal,
+                start=cursor,
+                value=value,
+            )
+        ]
+        if not matches:
+            cursor += 1
+            continue
+        selected = matches[0]
+        occurrences.append((cursor, cursor + len(selected), selected))
+        cursor += len(selected)
+
+    report: dict[str, Any] = {
+        "source_goal": source_goal,
+        "target_goal": target_goal_text,
+        "status": "no_goal_parameters",
+        "bindings": [],
+    }
+    if source_goal == target_goal_text:
+        report["status"] = "identical_goal"
+        return report
+    if not occurrences:
+        return report
+
+    pattern_parts: list[str] = []
+    source_cursor = 0
+    for index, (start, end, _source_value) in enumerate(occurrences):
+        pattern_parts.append(re.escape(source_goal[source_cursor:start]))
+        pattern_parts.append(f"(?P<value_{index}>.*?)")
+        source_cursor = end
+    pattern_parts.append(re.escape(source_goal[source_cursor:]))
+    match = re.fullmatch("".join(pattern_parts), target_goal_text, flags=re.DOTALL)
+    if match is None:
+        report["status"] = "target_goal_template_mismatch"
+        return report
+
+    captured_by_source: dict[str, set[str]] = {}
+    for index, (_start, _end, source_value) in enumerate(occurrences):
+        captured_by_source.setdefault(source_value, set()).add(
+            str(match.group(f"value_{index}"))
+        )
+    bindings: list[dict[str, Any]] = []
+    conflicts: list[dict[str, Any]] = []
+    for source_value, captured_values in captured_by_source.items():
+        if len(captured_values) != 1:
+            conflicts.append(
+                {
+                    "source_parameter_paths": sorted(candidate_paths[source_value]),
+                    "source_value": source_value,
+                    "target_values": sorted(captured_values),
+                }
+            )
+            continue
+        target_value = next(iter(captured_values))
+        bindings.append(
+            {
+                "source_parameter_paths": sorted(candidate_paths[source_value]),
+                "source_value": source_value,
+                "target_value": target_value,
+                "changed": source_value != target_value,
+            }
+        )
+    report["bindings"] = bindings
+    if conflicts:
+        report["status"] = "goal_parameter_capture_conflict"
+        report["conflicts"] = conflicts
+    else:
+        report["status"] = "matched_goal_template"
+    return report
+
+
+def _fixed_replay_bind_action_parameters(
+    source_action: dict[str, Any],
+    bindings: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    bound_action = copy.deepcopy(source_action)
+    changed: list[dict[str, Any]] = []
+    replacements = [
+        item
+        for item in bindings
+        if bool(item.get("changed")) and str(item.get("source_value") or "")
+    ]
+    replacements.sort(
+        key=lambda item: (-len(str(item["source_value"])), str(item["source_value"]))
+    )
+
+    def bind_value(value: Any, *, path: str) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: bind_value(item, path=f"{path}.{key}")
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [
+                bind_value(item, path=f"{path}[{index}]")
+                for index, item in enumerate(value)
+            ]
+        if not isinstance(value, str):
+            return value
+        updated = value
+        for binding in replacements:
+            source_value = str(binding["source_value"])
+            target_value = str(binding.get("target_value") or "")
+            match_kind = ""
+            if updated == source_value:
+                updated = target_value
+                match_kind = "exact"
+            elif len(source_value) >= 3 and source_value in updated:
+                updated = updated.replace(source_value, target_value)
+                match_kind = "substring"
+            if match_kind:
+                changed.append(
+                    {
+                        "action_path": path,
+                        "source_parameter_paths": list(
+                            binding.get("source_parameter_paths") or ()
+                        ),
+                        "source_value": source_value,
+                        "target_value": target_value,
+                        "match": match_kind,
+                    }
+                )
+        return updated
+
+    bound_action = bind_value(bound_action, path="$")
+    assert isinstance(bound_action, dict)
+    return bound_action, changed
+
+
 def _canonical_execution_summary(canonical_run: dict[str, Any]) -> dict[str, Any]:
     diagnostics = canonical_run.get("diagnostics")
     diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
@@ -3619,7 +3822,23 @@ def _apply_fixed_replay(
         scaled_coordinate_actions = 0
         selector_fallback_actions = 0
         direct_actions = 0
-        for index, source_action in enumerate(source_actions):
+        parameter_bound_actions = 0
+        parameter_bindings_applied = 0
+        goal_parameter_binding = _fixed_replay_goal_parameter_bindings(
+            run_log_data,
+            target_goal=goal_text,
+        )
+        goal_bindings = list(goal_parameter_binding.get("bindings") or ())
+        for index, original_source_action in enumerate(source_actions):
+            source_action, action_parameter_bindings = (
+                _fixed_replay_bind_action_parameters(
+                    original_source_action,
+                    goal_bindings,
+                )
+            )
+            if action_parameter_bindings:
+                parameter_bound_actions += 1
+                parameter_bindings_applied += len(action_parameter_bindings)
             observation_record: dict[str, Any] | None = None
             source_params = (
                 dict(source_action.get("params") or {})
@@ -3672,7 +3891,9 @@ def _apply_fixed_replay(
             )
             step_record: dict[str, Any] = {
                 "index": index,
-                "source_action": _sanitize_raw_replay_source_action(source_action),
+                "source_action": _sanitize_raw_replay_source_action(
+                    original_source_action
+                ),
                 "androidworld_action": dict(payload or {}),
                 "source_screen_size": list(source_size) if source_size else None,
                 "target_screen_size": list(action_target_size),
@@ -3680,6 +3901,11 @@ def _apply_fixed_replay(
                 "skipped": False,
                 "parameter_source": parameter_source,
             }
+            if action_parameter_bindings:
+                step_record["bound_source_action"] = (
+                    _sanitize_raw_replay_source_action(source_action)
+                )
+                step_record["task_parameter_bindings"] = action_parameter_bindings
             selector_fallback_reason = str(
                 action_resolution.get("selector_error") or ""
             )
@@ -3762,6 +3988,8 @@ def _apply_fixed_replay(
             "scaled_coordinate_actions": int(scaled_coordinate_actions),
             "selector_fallback_actions": int(selector_fallback_actions),
             "direct_actions": int(direct_actions),
+            "parameter_bound_actions": int(parameter_bound_actions),
+            "parameter_bindings_applied": int(parameter_bindings_applied),
             "model_calls": 0,
             "tokens": 0,
             "prompt_tokens": 0,
@@ -3788,6 +4016,7 @@ def _apply_fixed_replay(
             "source_run_log": str(run_log_json_path),
             "source_screen_size": list(source_size) if source_size else None,
             "target_screen_size": [int(target_size[0]), int(target_size[1])],
+            "goal_parameter_binding": goal_parameter_binding,
             "steps": [
                 {
                     "step_index": 0,
@@ -3806,6 +4035,11 @@ def _apply_fixed_replay(
                                 selector_fallback_actions
                             ),
                             "direct_actions": int(direct_actions),
+                            "parameter_bound_actions": int(parameter_bound_actions),
+                            "parameter_bindings_applied": int(
+                                parameter_bindings_applied
+                            ),
+                            "goal_parameter_binding": goal_parameter_binding,
                             "source_screen_size": list(source_size)
                             if source_size
                             else None,
@@ -3869,6 +4103,12 @@ def _apply_fixed_replay(
                                     selector_fallback_actions
                                 ),
                                 "direct_actions": int(direct_actions),
+                                "parameter_bound_actions": int(
+                                    parameter_bound_actions
+                                ),
+                                "parameter_bindings_applied": int(
+                                    parameter_bindings_applied
+                                ),
                                 "duration_ms": elapsed_ms,
                                 "run_log": run_log,
                             }

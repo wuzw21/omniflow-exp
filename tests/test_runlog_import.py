@@ -13,6 +13,8 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 from src.experiment.source_runlogs import convert_source_index
 from src.integrations.android_world.launch import (
     _apply_fixed_replay,
+    _fixed_replay_bind_action_parameters,
+    _fixed_replay_goal_parameter_bindings,
     _launch_raw_replay_app,
     _raw_replay_action_to_payload,
     _raw_replay_step_actions,
@@ -993,6 +995,71 @@ def test_fixed_replay_accepts_only_omniflow_run_log() -> None:
             },
             "coordinate_space": "canonical_0_1000",
         },
+    ]
+
+
+def test_fixed_replay_binds_goal_parameter_to_input_text() -> None:
+    run_log = androidworld_run_log(
+        [{"action_type": "input_text", "text": "source_name.m4a"}],
+        goal='Save the recording as "source_name.m4a".',
+    )
+    run_log["task_parameters"] = {"file_name": "source_name.m4a"}
+
+    report = _fixed_replay_goal_parameter_bindings(
+        run_log,
+        target_goal='Save the recording as "target_name.m4a".',
+    )
+    bound, changed = _fixed_replay_bind_action_parameters(
+        _raw_replay_step_actions(run_log)[0],
+        report["bindings"],
+    )
+
+    assert report["status"] == "matched_goal_template"
+    assert report["bindings"] == [
+        {
+            "source_parameter_paths": ["$.file_name"],
+            "source_value": "source_name.m4a",
+            "target_value": "target_name.m4a",
+            "changed": True,
+        }
+    ]
+    assert bound == {
+        "type": "input_text",
+        "params": {"text": "target_name.m4a"},
+    }
+    assert changed == [
+        {
+            "action_path": "$.params.text",
+            "source_parameter_paths": ["$.file_name"],
+            "source_value": "source_name.m4a",
+            "target_value": "target_name.m4a",
+            "match": "exact",
+        }
+    ]
+
+
+def test_fixed_replay_goal_binding_does_not_read_hidden_parameters() -> None:
+    run_log = androidworld_run_log(
+        [{"action_type": "input_text", "text": "visible"}],
+        goal='Enter "visible".',
+    )
+    run_log["task_parameters"] = {
+        "visible": "visible",
+        "hidden_validator_value": "secret-source",
+    }
+
+    report = _fixed_replay_goal_parameter_bindings(
+        run_log,
+        target_goal='Enter "changed".',
+    )
+
+    assert report["bindings"] == [
+        {
+            "source_parameter_paths": ["$.visible"],
+            "source_value": "visible",
+            "target_value": "changed",
+            "changed": True,
+        }
     ]
 
 
