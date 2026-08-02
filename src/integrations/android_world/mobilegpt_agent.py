@@ -76,6 +76,35 @@ def _center(bounds: tuple[int, int, int, int]) -> tuple[int, int]:
     return (left + right) // 2, (top + bottom) // 2
 
 
+def _indexed_app_ui_count(xml_text: str) -> int:
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return 0
+    return sum(
+        1
+        for element in root.iter()
+        if str(element.attrib.get("index") or "").strip()
+        and str(element.attrib.get("package") or "").strip()
+        != "com.android.systemui"
+    )
+
+
+def _write_stats_event(event: dict[str, Any]) -> None:
+    stats_path = str(os.environ.get("MOBILEGPT_STATS_JSONL") or "").strip()
+    if not stats_path:
+        return
+    try:
+        output = Path(stats_path).expanduser().resolve()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        payload = dict(event)
+        payload.setdefault("ts_unix", time.time())
+        with output.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 def build_mobilegpt_agent(
     *,
     env: Any,
@@ -89,6 +118,14 @@ def build_mobilegpt_agent(
     post_action_wait = max(
         0.0,
         float(os.environ.get("MOBILEGPT_POST_ACTION_WAIT_SEC") or 1.0),
+    )
+    app_ready_timeout = max(
+        0.0,
+        float(os.environ.get("MOBILEGPT_APP_READY_TIMEOUT_SEC") or 15.0),
+    )
+    app_ready_poll = max(
+        0.0,
+        float(os.environ.get("MOBILEGPT_APP_READY_POLL_SEC") or 0.25),
     )
     target_package = str(os.environ.get("MOBILEGPT_TARGET_PACKAGE") or "").strip()
     packages = [
@@ -144,6 +181,63 @@ def build_mobilegpt_agent(
             if not raw:
                 raise ConnectionError("mobilegpt_server_closed_connection")
             return raw.decode("utf-8").strip()
+
+        def _observe_ready_app(self, package: str) -> tuple[Any, str]:
+            started_at = time.monotonic()
+            deadline = started_at + app_ready_timeout
+            attempts = 0
+            observed_package = ""
+            indexed_app_nodes = 0
+            while True:
+                attempts += 1
+                observation = host.observe(
+                    xml=True,
+                    screenshot=True,
+                    app_info=True,
+                )
+                observed_package = str(observation.package_name or "").strip()
+                raw_xml = str(observation.xml or "").strip()
+                xml_text = mobilegpt_compatible_xml(raw_xml) if raw_xml else ""
+                indexed_app_nodes = _indexed_app_ui_count(xml_text)
+                package_matches = (
+                    not observed_package
+                    or "." not in package
+                    or observed_package == package
+                )
+                if xml_text and indexed_app_nodes > 0 and package_matches:
+                    _write_stats_event(
+                        {
+                            "event": "mobilegpt_app_ui_ready",
+                            "expected_package": package,
+                            "observed_package": observed_package,
+                            "attempts": attempts,
+                            "indexed_app_nodes": indexed_app_nodes,
+                            "wait_seconds": time.monotonic() - started_at,
+                        }
+                    )
+                    return observation, xml_text
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    waited = time.monotonic() - started_at
+                    _write_stats_event(
+                        {
+                            "event": "mobilegpt_app_ui_ready_timeout",
+                            "expected_package": package,
+                            "observed_package": observed_package,
+                            "attempts": attempts,
+                            "indexed_app_nodes": indexed_app_nodes,
+                            "wait_seconds": waited,
+                        }
+                    )
+                    raise RuntimeError(
+                        "mobilegpt_app_ui_not_ready:"
+                        f"expected={package}:"
+                        f"observed={observed_package or 'unknown'}:"
+                        f"indexed_app_nodes={indexed_app_nodes}:"
+                        f"attempts={attempts}:"
+                        f"wait_seconds={waited:.3f}"
+                    )
+                time.sleep(min(app_ready_poll, remaining))
 
         def _execute_server_action(
             self,
@@ -258,15 +352,23 @@ def build_mobilegpt_agent(
                         if post_action_wait:
                             time.sleep(post_action_wait)
 
+                        ready_observation: tuple[Any, str] | None = (
+                            self._observe_ready_app(launch_package)
+                        )
+
                         while actions_executed < self.max_steps:
-                            observation = host.observe(
-                                xml=True,
-                                screenshot=True,
-                                app_info=True,
-                            )
-                            xml_text = mobilegpt_compatible_xml(
-                                str(observation.xml or "").strip()
-                            )
+                            if ready_observation is not None:
+                                observation, xml_text = ready_observation
+                                ready_observation = None
+                            else:
+                                observation = host.observe(
+                                    xml=True,
+                                    screenshot=True,
+                                    app_info=True,
+                                )
+                                xml_text = mobilegpt_compatible_xml(
+                                    str(observation.xml or "").strip()
+                                )
                             if not xml_text:
                                 raise RuntimeError("mobilegpt_androidworld_state_xml_empty")
                             self._send_screenshot(stream, observation.image_base64)
@@ -291,6 +393,7 @@ def build_mobilegpt_agent(
                                     )
                                     if post_action_wait:
                                         time.sleep(post_action_wait)
+                                    ready_observation = self._observe_ready_app(package)
                                     break
                                 try:
                                     action = json.loads(response)

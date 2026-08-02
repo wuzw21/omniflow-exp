@@ -89,15 +89,16 @@ def test_mobilegpt_executes_server_click_through_androidworld_state_and_action(
 
         def __init__(self) -> None:
             self.actions: list[SimpleNamespace] = []
+            self.current_package = "com.example.target"
 
         def get_state(self) -> SimpleNamespace:
             element = SimpleNamespace(
                 bbox_pixels=_Bounds(10, 20, 30, 60),
-                package_name="com.example.target",
+                package_name=self.current_package,
                 class_name="android.widget.Button",
                 text="Record",
                 content_description="",
-                resource_name="com.example.target:id/record",
+                resource_name=f"{self.current_package}:id/record",
                 is_clickable=True,
                 is_editable=False,
                 is_scrollable=False,
@@ -107,13 +108,15 @@ def test_mobilegpt_executes_server_click_through_androidworld_state_and_action(
                 forest=None,
                 ui_elements=[element],
                 auxiliaries={
-                    "package_name": "com.example.target",
-                    "activity_name": self.foreground_activity_name,
+                    "package_name": self.current_package,
+                    "activity_name": f"{self.current_package}/.MainActivity",
                 },
             )
 
         def execute_action(self, action: SimpleNamespace) -> None:
             self.actions.append(action)
+            if action.action_type == "open_app":
+                self.current_package = action.app_name
 
         def reset(self, go_home: bool = False) -> None:
             del go_home
@@ -151,6 +154,120 @@ def test_mobilegpt_executes_server_click_through_androidworld_state_and_action(
     assert result.data["actions_executed"] == 1
     assert result.data["state_backend"] == "androidworld"
     assert result.data["action_backend"] == "androidworld"
+
+
+def test_mobilegpt_waits_for_real_app_ui_before_sending_first_observation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    listener.settimeout(5.0)
+    port = listener.getsockname()[1]
+    transcript: dict[str, object] = {}
+    server_errors: list[BaseException] = []
+
+    def serve() -> None:
+        try:
+            connection, _ = listener.accept()
+            with connection, connection.makefile("rwb", buffering=0) as stream:
+                stream.readline()
+                stream.readline()
+                stream.write(b"##$$##com.example.target\r\n")
+                transcript["screenshot"] = _read_payload(stream, b"S")
+                transcript["xml"] = _read_payload(stream, b"X")
+                stream.write(b"$$$$$\r\n")
+        except BaseException as error:
+            server_errors.append(error)
+        finally:
+            listener.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    monkeypatch.setenv("MOBILEGPT_SERVER_HOST", "127.0.0.1")
+    monkeypatch.setenv("MOBILEGPT_SERVER_PORT", str(port))
+    monkeypatch.setenv("MOBILEGPT_TARGET_PACKAGE", "com.example.target")
+    monkeypatch.setenv("MOBILEGPT_POST_ACTION_WAIT_SEC", "0")
+    monkeypatch.setenv("MOBILEGPT_APP_READY_POLL_SEC", "0")
+
+    class FakeEnv:
+        logical_screen_size = (100, 200)
+        foreground_activity_name = "com.example.target/.MainActivity"
+
+        def __init__(self) -> None:
+            self.actions: list[SimpleNamespace] = []
+            self.state_reads = 0
+
+        def get_state(self) -> SimpleNamespace:
+            self.state_reads += 1
+            if self.state_reads == 1:
+                elements = [
+                    SimpleNamespace(
+                        bbox_pixels=_Bounds(0, 0, 100, 20),
+                        package_name="com.android.systemui",
+                        class_name="android.widget.TextView",
+                        text="12:00",
+                        content_description="",
+                        resource_name="com.android.systemui:id/clock",
+                        is_clickable=False,
+                        is_editable=False,
+                        is_scrollable=False,
+                    )
+                ]
+                color = "white"
+            else:
+                elements = [
+                    SimpleNamespace(
+                        bbox_pixels=_Bounds(10, 20, 30, 60),
+                        package_name="com.example.target",
+                        class_name="android.widget.Button",
+                        text="New note",
+                        content_description="",
+                        resource_name="com.example.target:id/new_note",
+                        is_clickable=True,
+                        is_editable=False,
+                        is_scrollable=False,
+                    )
+                ]
+                color = "blue"
+            return SimpleNamespace(
+                pixels=Image.new("RGB", (100, 200), color=color),
+                forest=None,
+                ui_elements=elements,
+                auxiliaries={
+                    "package_name": "com.example.target",
+                    "activity_name": self.foreground_activity_name,
+                },
+            )
+
+        def execute_action(self, action: SimpleNamespace) -> None:
+            self.actions.append(action)
+
+        def reset(self, go_home: bool = False) -> None:
+            del go_home
+
+    env = FakeEnv()
+    agent = build_mobilegpt_agent(
+        env=env,
+        evidence_root=tmp_path,
+        action_factory=lambda **payload: SimpleNamespace(**payload),
+    )
+
+    result = agent.step("Create a note")
+    thread.join(timeout=5.0)
+
+    assert not thread.is_alive()
+    assert server_errors == []
+    assert env.state_reads == 2
+    assert transcript["xml"] is not None
+    xml_text = transcript["xml"].decode()
+    assert 'package="com.example.target"' in xml_text
+    assert 'text="New note"' in xml_text
+    image = Image.open(io.BytesIO(transcript["screenshot"]))
+    assert image.getpixel((50, 100)) == (0, 0, 254)
+    assert result.done is True
+    assert result.data["error"] is None
 
 
 def test_mobilegpt_server_trusts_only_androidworld_client_xml(
@@ -253,8 +370,12 @@ def test_mobilegpt_episode_command_declares_native_androidworld_io(
     assert spec.env["MOBILEGPT_SERVER_HOST"] == "127.0.0.1"
     assert spec.env["MOBILEGPT_SERVER_PORT"] == "12345"
     assert spec.env["MOBILEGPT_TARGET_PACKAGE"] == "com.dimowner.audiorecorder"
+    assert spec.env["MOBILEGPT_APP_READY_TIMEOUT_SEC"] == "15.0"
+    assert spec.env["MOBILEGPT_APP_READY_POLL_SEC"] == "0.25"
     assert "MOBILEGPT_OOB_SERIAL_FILE" not in spec.env
     assert spec.metadata["state_backend"] == "androidworld"
     assert spec.metadata["action_backend"] == "androidworld"
     assert spec.metadata["native_androidworld_agent_io"] is True
+    assert spec.metadata["mobilegpt_app_ready_timeout_sec"] == 15.0
+    assert spec.metadata["mobilegpt_app_ready_poll_sec"] == 0.25
     assert spec.timeout_sec == 600.0

@@ -61,6 +61,8 @@ DEFAULT_MOBILEGPT_STATS_SUMMARY = (
 DEFAULT_DEVICE_TARGETS = "small5554:emulator-5554:5554,fold5564:emulator-5564:5564"
 DEFAULT_MOBILEGPT_WAIT_START_TIMEOUT_SEC = 60.0
 DEFAULT_MOBILEGPT_EPISODE_WAIT_TIMEOUT_SEC = 120.0
+DEFAULT_MOBILEGPT_APP_READY_TIMEOUT_SEC = 15.0
+DEFAULT_MOBILEGPT_APP_READY_POLL_SEC = 0.25
 DEFAULT_EVAL_TASK_RANDOM_SEED = 113
 DEFAULT_SOURCE_METHOD = "fixed_replay"
 
@@ -6717,6 +6719,8 @@ def build_mobilegpt_androidworld_command(
     adb_path: str,
     start_timeout_sec: float,
     finish_timeout_sec: float,
+    app_ready_timeout_sec: float = DEFAULT_MOBILEGPT_APP_READY_TIMEOUT_SEC,
+    app_ready_poll_sec: float = DEFAULT_MOBILEGPT_APP_READY_POLL_SEC,
     timeout_sec: float | None = None,
     run_dir_suffix: str = "",
     repo_root: Path = REPO_ROOT,
@@ -6756,6 +6760,8 @@ def build_mobilegpt_androidworld_command(
             "MOBILEGPT_TARGET_PACKAGE": str(target_package or "").strip(),
             "MOBILEGPT_WAIT_START_TIMEOUT_SEC": str(float(start_timeout_sec)),
             "MOBILEGPT_WAIT_FINISH_TIMEOUT_SEC": str(float(finish_timeout_sec)),
+            "MOBILEGPT_APP_READY_TIMEOUT_SEC": str(float(app_ready_timeout_sec)),
+            "MOBILEGPT_APP_READY_POLL_SEC": str(float(app_ready_poll_sec)),
         },
         cwd=spec.cwd,
         output_path=spec.output_path,
@@ -6769,6 +6775,8 @@ def build_mobilegpt_androidworld_command(
             "mobilegpt_stats_jsonl": str(stats_jsonl),
             "mobilegpt_server_host": client_host,
             "mobilegpt_server_port": int(server_port),
+            "mobilegpt_app_ready_timeout_sec": float(app_ready_timeout_sec),
+            "mobilegpt_app_ready_poll_sec": float(app_ready_poll_sec),
             "target_package": str(target_package or "").strip(),
             "official_lifecycle": True,
             "state_backend": "androidworld",
@@ -7246,6 +7254,10 @@ def _run_one_task_mobilegpt(
                     adb_path=args.adb_path,
                     start_timeout_sec=float(args.mobilegpt_wait_start_timeout_sec),
                     finish_timeout_sec=float(args.mobilegpt_episode_wait_timeout_sec),
+                    app_ready_timeout_sec=float(
+                        args.mobilegpt_app_ready_timeout_sec
+                    ),
+                    app_ready_poll_sec=float(args.mobilegpt_app_ready_poll_sec),
                     timeout_sec=float(args.timeout_sec or 0),
                 )
                 episode_spec.metadata.update(
@@ -8173,6 +8185,18 @@ def build_parser() -> argparse.ArgumentParser:
             "Seconds to wait for MobileGPT task_finished before official "
             "AndroidWorld validation. Use -1 to wait indefinitely."
         ),
+    )
+    one_task_parser.add_argument(
+        "--mobilegpt-app-ready-timeout-sec",
+        type=float,
+        default=DEFAULT_MOBILEGPT_APP_READY_TIMEOUT_SEC,
+        help="Seconds to wait for indexed target-app UI after each app launch.",
+    )
+    one_task_parser.add_argument(
+        "--mobilegpt-app-ready-poll-sec",
+        type=float,
+        default=DEFAULT_MOBILEGPT_APP_READY_POLL_SEC,
+        help="Polling interval for target-app UI readiness.",
     )
     one_task_parser.add_argument("--mobilegpt-open-target-app", default="")
     one_task_parser.add_argument(
