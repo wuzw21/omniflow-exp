@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+import random
 from types import SimpleNamespace
 
 import pytest
@@ -17,6 +18,59 @@ from src.integrations.android_world.setup_compat import (
     resolve_androidworld_task_setup_apps,
     restore_task_app_snapshots_after_initialize,
 )
+
+
+def test_androidworld_rehydrates_receipt_image_from_official_instance_seed() -> None:
+    generated_image = object()
+
+    class MarkorTranscribeReceipt:
+        @classmethod
+        def generate_random_params(cls) -> dict[str, object]:
+            return {
+                "img": generated_image,
+                "file_name": "receipt.md",
+                "text": f"receipt-{random.randint(1, 1_000_000)}",
+            }
+
+    random.seed(1217212335)
+    expected_text = f"receipt-{random.randint(1, 1_000_000)}"
+    random.seed(7)
+    expected_next_random = random.random()
+    random.seed(7)
+
+    hydrated = launch._rehydrate_task_params(
+        params={
+            "file_name": "receipt.md",
+            "text": expected_text,
+            "seed": 1217212335,
+        },
+        task_type=MarkorTranscribeReceipt,
+    )
+
+    assert hydrated["img"] is generated_image
+    assert hydrated["text"] == expected_text
+    assert random.random() == expected_next_random
+
+
+def test_androidworld_rejects_mismatched_generated_receipt_params() -> None:
+    class MarkorTranscribeReceipt:
+        @classmethod
+        def generate_random_params(cls) -> dict[str, object]:
+            return {
+                "img": object(),
+                "file_name": "receipt.md",
+                "text": "official text",
+            }
+
+    with pytest.raises(ValueError, match="canonical source: text"):
+        launch._rehydrate_task_params(
+            params={
+                "file_name": "receipt.md",
+                "text": "different text",
+                "seed": 1217212335,
+            },
+            task_type=MarkorTranscribeReceipt,
+        )
 
 
 def _setup_element(text: str) -> SimpleNamespace:

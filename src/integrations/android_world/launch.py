@@ -13,6 +13,7 @@ import logging
 import os
 from pathlib import Path
 import pickle
+import random
 import re
 import socket
 import subprocess
@@ -1801,10 +1802,32 @@ def _add_android_world_path(android_world_root: Path) -> None:
 def _rehydrate_task_params(
     *,
     params: dict[str, object],
+    task_type: type[object] | None = None,
 ) -> dict[str, object]:
     """Restore AndroidWorld task params that were serialized through JSON."""
 
     hydrated = dict(params)
+    if task_type is not None and task_type.__name__ == "MarkorTranscribeReceipt":
+        if "seed" not in hydrated:
+            raise ValueError("MarkorTranscribeReceipt task params require seed")
+        random_state = random.getstate()
+        try:
+            random.seed(int(hydrated["seed"]))
+            generated = task_type.generate_random_params()
+        finally:
+            random.setstate(random_state)
+        for key, value in generated.items():
+            if key == "img":
+                continue
+            if key not in hydrated or hydrated[key] != value:
+                raise ValueError(
+                    "MarkorTranscribeReceipt generated params do not match "
+                    f"canonical source: {key}"
+                )
+        image = generated.get("img")
+        if image is None:
+            raise ValueError("MarkorTranscribeReceipt generated img is missing")
+        hydrated["img"] = image
     serialized_rows = [
         row
         for key in ("row_objects", "noise_row_objects")
@@ -1812,7 +1835,7 @@ def _rehydrate_task_params(
         if isinstance(row, dict)
     ]
     if not serialized_rows:
-        return dict(params)
+        return hydrated
     from android_world.task_evals.utils import sqlite_schema_utils
 
     def expense_row(row: object) -> object:
@@ -4914,6 +4937,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 task_type(
                     _rehydrate_task_params(
                         params=dict(task_params),
+                        task_type=task_type,
                     )
                 )
             ]
