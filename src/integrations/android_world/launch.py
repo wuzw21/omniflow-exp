@@ -2318,16 +2318,35 @@ def _prepare_native_androidworld_a11y_runtime(
         if time.monotonic() >= dialog_deadline:
             raise RuntimeError("androidworld_a11y_forwarder_crash_dialog_present")
         time.sleep(0.1)
-    state = env.get_state()
-    ui_elements = list(getattr(state, "ui_elements", ()) or ())
-    if not ui_elements:
-        raise RuntimeError("androidworld_a11y_forwarder_not_ready")
-    return {
-        "ready": True,
-        "ui_element_count": len(ui_elements),
-        "controller_refreshed": callable(refresh_env),
-        "forwarder_quiesced": bool(forwarder.get("removed")),
-    }
+    last_state_error: RuntimeError | None = None
+    for readiness_attempt in range(3):
+        if readiness_attempt:
+            time.sleep(0.5)
+            if callable(refresh_env):
+                refresh_env()
+            _close_android_system_dialogs(
+                adb_serial=adb_serial,
+                adb_path=adb_path,
+                failure="androidworld_close_system_dialogs_failed",
+            )
+        try:
+            state = env.get_state()
+        except RuntimeError as exc:
+            last_state_error = exc
+            continue
+        ui_elements = list(getattr(state, "ui_elements", ()) or ())
+        if ui_elements:
+            return {
+                "ready": True,
+                "ui_element_count": len(ui_elements),
+                "controller_refreshed": callable(refresh_env),
+                "forwarder_quiesced": bool(forwarder.get("removed")),
+                "readiness_attempts": readiness_attempt + 1,
+            }
+        last_state_error = RuntimeError(
+            "androidworld_a11y_forwarder_not_ready"
+        )
+    raise RuntimeError("androidworld_a11y_forwarder_not_ready") from last_state_error
 
 
 def _wrap_task_initialize_for_observation_runtime(
