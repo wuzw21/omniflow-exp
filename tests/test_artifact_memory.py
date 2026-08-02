@@ -61,6 +61,7 @@ def _write_registered_result(
     error: str = "",
     method: str = "ours",
     source_run_log: Path | None = None,
+    mobilegpt_manifest: Path | None = None,
 ) -> Path:
     cell_root = root / "RecordWithName" / method / device / attempt
     result_path = cell_root / "registered_result.json"
@@ -131,6 +132,17 @@ def _write_registered_result(
                     if method == "fixed_replay" and source_run_log is not None
                     else {}
                 ),
+                **(
+                    {
+                        "prep_type": "mobilegpt_native_source_cold_memory",
+                        "prep_manifest": str(mobilegpt_manifest),
+                        "prep_manifest_sha256": _sha256(mobilegpt_manifest),
+                        "prep_memory_sha256": "a" * 64,
+                    }
+                    if method == "mobilegpt_offline_retrieval"
+                    and mobilegpt_manifest is not None
+                    else {}
+                ),
             }
         ],
     }
@@ -152,6 +164,41 @@ def _write_registered_result(
         },
     )
     return result_path
+
+
+def _write_mobilegpt_manifest(
+    tmp_path: Path,
+    *,
+    schema_version: str = "omniflow.mobilegpt-native-cold-memory.v1",
+    source_method: str = "mobilegpt_native_source_cold",
+    teacher_forcing: bool = False,
+) -> Path:
+    return _write_json(
+        tmp_path / "mobilegpt" / "cold_memory_manifest.json",
+        {
+            "schema_version": schema_version,
+            "task_name": "RecordWithName",
+            "source_seed": 111,
+            "source_method": source_method,
+            "memory": {"sha256": "a" * 64, "file_count": 12},
+            "official_source_result": {
+                "official_validator_used": True,
+                "official_validator_success": True,
+            },
+            "provenance": {
+                "native_mobilegpt_learning": True,
+                "task_local_memory": True,
+                "learning_mode": "mobilegpt_native_cold",
+                "teacher_forcing": teacher_forcing,
+                "synthetic_subtasks": False,
+                "function_conversion_enabled": False,
+                "target_inputs_read": False,
+                "target_observations_read": False,
+                "validator_state_read": False,
+                "coordinate_replay": False,
+            },
+        },
+    )
 
 
 def test_refresh_deduplicates_runlogs_and_keeps_indexed_source_as_canonical(
@@ -1020,6 +1067,111 @@ def test_refresh_keeps_earliest_formal_result_without_success_cherry_picking(
     second_pointer = json.loads(pointer.read_text(encoding="utf-8"))
     assert second_pointer == first_pointer
     assert load_artifact_memory(pointer)["canonical"] == report["canonical"]
+
+
+def test_refresh_selects_native_mobilegpt_result(tmp_path: Path) -> None:
+    source = _write_source_run_log(tmp_path)
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    manifest = _write_mobilegpt_manifest(tmp_path)
+    result = _write_registered_result(
+        tmp_path / "runs",
+        attempt="attempt_001",
+        registered_at="2026-07-20T00:00:00+00:00",
+        success=False,
+        method="mobilegpt_offline_retrieval",
+        mobilegpt_manifest=manifest,
+    )
+
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "evidence",),
+        result_roots=(tmp_path / "runs",),
+    )
+
+    cell = report["canonical"]["result_cells"][
+        "RecordWithName|mobilegpt_offline_retrieval|small5554|111|113"
+    ]
+    assert cell["registered_result_aliases"] == [str(result)]
+
+
+@pytest.mark.parametrize(
+    ("schema_version", "source_method", "teacher_forcing", "expected_error"),
+    (
+        (
+            "omniflow.mobilegpt-cold-memory.v1",
+            "fixed_replay",
+            False,
+            "schema",
+        ),
+        (
+            "omniflow.mobilegpt-native-cold-memory.v1",
+            "fixed_replay",
+            False,
+            "source_method",
+        ),
+        (
+            "omniflow.mobilegpt-native-cold-memory.v1",
+            "mobilegpt_native_source_cold",
+            True,
+            "provenance_teacher_forcing",
+        ),
+    ),
+)
+def test_refresh_preserves_but_excludes_non_native_mobilegpt_result(
+    tmp_path: Path,
+    schema_version: str,
+    source_method: str,
+    teacher_forcing: bool,
+    expected_error: str,
+) -> None:
+    source = _write_source_run_log(tmp_path)
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    manifest = _write_mobilegpt_manifest(
+        tmp_path,
+        schema_version=schema_version,
+        source_method=source_method,
+        teacher_forcing=teacher_forcing,
+    )
+    result = _write_registered_result(
+        tmp_path / "runs",
+        attempt="attempt_001",
+        registered_at="2026-07-20T00:00:00+00:00",
+        success=False,
+        method="mobilegpt_offline_retrieval",
+        mobilegpt_manifest=manifest,
+    )
+
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "evidence",),
+        result_roots=(tmp_path / "runs",),
+    )
+
+    assert report["canonical"]["result_cells"] == {}
+    errors = report["artifacts"]["results"][_sha256(result)][
+        "canonical_exclusion_errors"
+    ]
+    assert any(expected_error in error for error in errors)
 
 
 def test_refresh_selects_fixed_replay_result_for_canonical_source_only(

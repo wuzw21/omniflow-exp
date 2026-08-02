@@ -23,6 +23,8 @@ MEMORY_SCHEMA = "omniflow.androidworld-artifact-memory.v2"
 CURRENT_SCHEMA = "omniflow.androidworld-artifact-memory-pointer.v2"
 SOURCE_SELECTION_SCHEMA = "omniflow.androidworld-source-selection.v1"
 FUNCTION_SOURCE_LINEAGE_SCHEMA = "omniflow.function-store-source-lineage.v1"
+MOBILEGPT_NATIVE_MEMORY_SCHEMA = "omniflow.mobilegpt-native-cold-memory.v1"
+MOBILEGPT_NATIVE_SOURCE_METHOD = "mobilegpt_native_source_cold"
 RESULT_FILE_NAMES = (
     "one_task_commands.jsonl",
     "one_task_summary.json",
@@ -696,6 +698,78 @@ def _formal_device_label(value: Any) -> str:
     }.get(label, label)
 
 
+def _mobilegpt_result_protocol_error(
+    *,
+    task: str,
+    source_seed: Any,
+    row: dict[str, Any],
+) -> str | None:
+    prefix = f"formal_result_mobilegpt_memory_invalid:{task}"
+    if str(row.get("prep_type") or "") != "mobilegpt_native_source_cold_memory":
+        return f"{prefix}:prep_type"
+    manifest_path = Path(str(row.get("prep_manifest") or "")).expanduser()
+    if not manifest_path.is_absolute() or not manifest_path.is_file():
+        return f"{prefix}:manifest_missing:{manifest_path}"
+    recorded_manifest_sha256 = str(row.get("prep_manifest_sha256") or "").strip()
+    actual_manifest_sha256 = _sha256(manifest_path)
+    if recorded_manifest_sha256 != actual_manifest_sha256:
+        return (
+            f"{prefix}:manifest_hash_mismatch:"
+            f"recorded={recorded_manifest_sha256 or 'missing'}:"
+            f"actual={actual_manifest_sha256}"
+        )
+    try:
+        manifest = _load_object(manifest_path)
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        return f"{prefix}:manifest_unreadable:{type(error).__name__}:{error}"
+    if not isinstance(manifest, dict):
+        return f"{prefix}:manifest_type"
+    if manifest.get("schema_version") != MOBILEGPT_NATIVE_MEMORY_SCHEMA:
+        return f"{prefix}:schema"
+    if str(manifest.get("task_name") or "") != task:
+        return f"{prefix}:task"
+    if manifest.get("source_seed") != source_seed:
+        return f"{prefix}:source_seed"
+    if str(manifest.get("source_method") or "") != MOBILEGPT_NATIVE_SOURCE_METHOD:
+        return f"{prefix}:source_method"
+    provenance = manifest.get("provenance")
+    if not isinstance(provenance, dict):
+        return f"{prefix}:provenance"
+    required_provenance = {
+        "native_mobilegpt_learning": True,
+        "task_local_memory": True,
+        "learning_mode": "mobilegpt_native_cold",
+        "teacher_forcing": False,
+        "synthetic_subtasks": False,
+        "function_conversion_enabled": False,
+        "target_inputs_read": False,
+        "target_observations_read": False,
+        "validator_state_read": False,
+        "coordinate_replay": False,
+    }
+    for field, expected in required_provenance.items():
+        if provenance.get(field) != expected:
+            return f"{prefix}:provenance_{field}"
+    official_source_result = manifest.get("official_source_result")
+    if (
+        not isinstance(official_source_result, dict)
+        or official_source_result.get("official_validator_used") is not True
+        or official_source_result.get("official_validator_success") is not True
+    ):
+        return f"{prefix}:official_source_result"
+    memory = manifest.get("memory")
+    if not isinstance(memory, dict):
+        return f"{prefix}:memory"
+    manifest_memory_sha256 = str(memory.get("sha256") or "").strip()
+    recorded_memory_sha256 = str(row.get("prep_memory_sha256") or "").strip()
+    if (
+        not manifest_memory_sha256
+        or recorded_memory_sha256 != manifest_memory_sha256
+    ):
+        return f"{prefix}:memory_hash"
+    return None
+
+
 def _formal_result_protocol_error(
     *,
     task_names: Sequence[str],
@@ -766,6 +840,12 @@ def _formal_result_protocol_error(
                     f"{task}:{device}:{field}:"
                     f"expected={expected_source_sha256}:actual={actual_sha256}"
                 )
+    if method == "mobilegpt_offline_retrieval":
+        return _mobilegpt_result_protocol_error(
+            task=task,
+            source_seed=source_seed,
+            row=row,
+        )
     return None
 
 
