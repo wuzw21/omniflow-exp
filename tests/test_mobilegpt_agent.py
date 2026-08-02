@@ -15,7 +15,10 @@ from src.integrations.android_world.mobilegpt_agent import (
     _socket_timeout,
     build_mobilegpt_agent,
 )
-from src.integrations.mobilegpt_runtime import install_mobilegpt_androidworld_observe
+from src.integrations.mobilegpt_runtime import (
+    _parse_mobilegpt_model_response,
+    install_mobilegpt_androidworld_observe,
+)
 
 
 @dataclass
@@ -37,6 +40,40 @@ def test_mobilegpt_negative_timeout_means_unbounded_socket_wait() -> None:
     assert _socket_timeout(-1.0) is None
     assert _socket_timeout(0.0) == 0.1
     assert _socket_timeout(3.5) == 3.5
+
+
+def test_mobilegpt_repairs_native_task_app_nested_in_parameters(monkeypatch) -> None:
+    monkeypatch.setenv("MOBILEGPT_TARGET_APP", "net.cozic.joplin")
+    valid, parsed, error = _parse_mobilegpt_model_response(
+        json.dumps(
+            {
+                "reasoning": "Create a task-local API for the requested note.",
+                "found_match": False,
+                "api": {
+                    "name": "getMeetingAttendeeCountByTitle",
+                    "description": "Retrieve attendee count by meeting title.",
+                    "parameters": {
+                        "title": "The exact meeting title.",
+                        "app": "Joplin",
+                    },
+                },
+            }
+        ),
+        messages=[
+            {
+                "role": "user",
+                "content": 'List of known APIs and return an "api" object.',
+            }
+        ],
+        is_list=False,
+    )
+
+    assert valid is True
+    assert error == ""
+    assert parsed["api"]["app"] == "net.cozic.joplin"
+    assert parsed["api"]["parameters"] == {
+        "title": "The exact meeting title."
+    }
 
 
 def test_mobilegpt_executes_server_click_through_androidworld_state_and_action(

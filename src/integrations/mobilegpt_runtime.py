@@ -354,6 +354,14 @@ def _parse_mobilegpt_model_response(
         api = parsed.get("api")
         if not isinstance(api, dict):
             return False, None, "missing_api"
+        parameters = api.get("parameters")
+        if not str(api.get("app") or "").strip() and isinstance(parameters, dict):
+            nested_app = str(parameters.get("app") or "").strip()
+            forced_app = str(os.getenv("MOBILEGPT_TARGET_APP") or "").strip()
+            if forced_app or nested_app:
+                api["parameters"] = dict(parameters)
+                api["parameters"].pop("app", None)
+                api["app"] = forced_app or nested_app
         for field in ("name", "description", "app"):
             if not str(api.get(field) or "").strip():
                 return False, None, f"missing_api_{field}"
