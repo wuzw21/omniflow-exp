@@ -318,6 +318,19 @@ def convert_legacy_run_log(
             if metadata:
                 step["metadata"] = metadata
             converted_steps.append(step)
+            wait_step_count = _legacy_additional_wait_step_count(
+                raw_action,
+                action_type=str(action.get("action_type") or ""),
+            )
+            for _ in range(wait_step_count):
+                converted_steps.append(
+                    {
+                        "step_index": len(converted_steps),
+                        "observation": next_observation or observation,
+                        "action": {"action_type": "wait"},
+                        "result": dict(result),
+                    }
+                )
     success = _success(payload, default=_success(value, default=False))
     source_schema = str(payload.get("schema_version") or "unknown")
     converted: dict[str, Any] = {
@@ -535,30 +548,11 @@ def _legacy_action_to_androidworld(
     package_resolver: Callable[[str], str] | None,
     default_coordinate_space: str = "",
 ) -> dict[str, Any]:
-    raw = _map(value)
-    function = _map(raw.get("function"))
-    tool = str(
-        raw.get("tool")
-        or raw.get("type")
-        or raw.get("action_type")
-        or raw.get("tool_name")
-        or raw.get("name")
-        or function.get("name")
-        or ""
-    ).strip().lower()
-    args = _map(
-        raw.get("args")
-        or raw.get("arguments")
-        or raw.get("params")
-        or function.get("arguments")
-    )
+    tool, args = _legacy_action_tool_and_args(value)
     for key in _EXECUTION_TIMING_ARGS:
         args.pop(key, None)
     if default_coordinate_space and not args.get("coordinate_space"):
         args["coordinate_space"] = default_coordinate_space
-    if tool == "android_privileged_action":
-        tool = str(args.pop("tool", "")).strip().lower()
-        args.update(_map(args.pop("arguments", None)))
     if tool in {"click", "tap", "double_tap", "long_press", "longpress"}:
         x, y = _legacy_point(args, observation)
         return {
@@ -584,7 +578,7 @@ def _legacy_action_to_androidworld(
     if tool in {"swipe", "scroll"}:
         direction = str(args.get("direction") or "").strip().lower()
         if not direction:
-            direction = _legacy_swipe_direction(args)
+            direction = _legacy_swipe_direction(args, action_type=tool)
         if direction not in {"left", "right", "down", "up"}:
             raise ValueError(f"legacy_action_direction_required:{tool}")
         return {"action_type": tool, "direction": direction}
@@ -809,7 +803,11 @@ def _legacy_point(
     return max(0, int(round(x))), max(0, int(round(y)))
 
 
-def _legacy_swipe_direction(args: dict[str, Any]) -> str:
+def _legacy_swipe_direction(
+    args: dict[str, Any],
+    *,
+    action_type: str,
+) -> str:
     x1 = _number(args, "x1", "start_x", "from_x", "touch_x")
     y1 = _number(args, "y1", "start_y", "from_y", "touch_y")
     x2 = _number(args, "x2", "end_x", "to_x", "lift_x")
@@ -818,11 +816,65 @@ def _legacy_swipe_direction(args: dict[str, Any]) -> str:
         return ""
     dx = float(x2) - float(x1)
     dy = float(y2) - float(y1)
-    return (
-        ("right" if dx > 0 else "left")
-        if abs(dx) >= abs(dy)
-        else ("down" if dy > 0 else "up")
+    if abs(dx) >= abs(dy):
+        return "left" if dx > 0 else "right"
+    if action_type == "scroll":
+        return "up" if dy > 0 else "down"
+    return "down" if dy > 0 else "up"
+
+
+def _legacy_additional_wait_step_count(
+    value: Any,
+    *,
+    action_type: str,
+) -> int:
+    _, args = _legacy_action_tool_and_args(value)
+    if action_type == "wait":
+        seconds = _number(args, "time_s", "seconds", "duration_s")
+        duration_ms = _number(args, "duration_ms", "time_ms")
+        if seconds is not None and duration_ms is not None:
+            raise ValueError("legacy_action_wait_duration_ambiguous")
+        if duration_ms is not None:
+            seconds = duration_ms / 1000.0
+        if seconds is None:
+            seconds = 1.0
+    else:
+        seconds = _number(
+            args,
+            "wait_after_s",
+            "post_action_wait_s",
+            "post_wait_s",
+        )
+        if seconds is None:
+            seconds = 1.0
+    rounded_seconds = round(seconds)
+    if seconds < 1.0 or abs(seconds - rounded_seconds) > 1e-9:
+        raise ValueError(f"legacy_action_wait_not_representable:{seconds}")
+    return int(rounded_seconds) - 1
+
+
+def _legacy_action_tool_and_args(value: Any) -> tuple[str, dict[str, Any]]:
+    raw = _map(value)
+    function = _map(raw.get("function"))
+    tool = str(
+        raw.get("tool")
+        or raw.get("type")
+        or raw.get("action_type")
+        or raw.get("tool_name")
+        or raw.get("name")
+        or function.get("name")
+        or ""
+    ).strip().lower()
+    args = _map(
+        raw.get("args")
+        or raw.get("arguments")
+        or raw.get("params")
+        or function.get("arguments")
     )
+    if tool == "android_privileged_action":
+        tool = str(args.pop("tool", "")).strip().lower()
+        args.update(_map(args.pop("arguments", None)))
+    return tool, args
 
 
 def _legacy_display(observation: dict[str, Any]) -> tuple[float, float]:

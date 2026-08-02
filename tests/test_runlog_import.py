@@ -758,6 +758,125 @@ def test_explicit_converter_uses_provider_online_action(tmp_path: Path) -> None:
     }
 
 
+def test_explicit_converter_preserves_camera_gesture_and_wait_semantics(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "camera_take_video.run_log.json"
+    payload = {
+        "run_id": "camera-take-video",
+        "success": True,
+        "steps": [
+            {
+                "observation_before_act": {"width": 720, "height": 1280},
+                "action": {
+                    "type": "swipe",
+                    "params": {
+                        "start_x": 100,
+                        "start_y": 600,
+                        "end_x": 600,
+                        "end_y": 600,
+                        "duration_ms": 500,
+                        "wait_after_s": 1.0,
+                    },
+                },
+            },
+            {
+                "observation_before_act": {"width": 720, "height": 1280},
+                "action": {
+                    "type": "click",
+                    "params": {"x": 200, "y": 580, "wait_after_s": 3.0},
+                },
+            },
+            {
+                "observation_before_act": {"width": 720, "height": 1280},
+                "action": {"type": "wait", "params": {"time_s": 5.0}},
+            },
+            {
+                "observation_before_act": {"width": 720, "height": 1280},
+                "action": {
+                    "type": "click",
+                    "params": {"x": 360, "y": 1136, "wait_after_s": 2.0},
+                },
+            },
+        ],
+    }
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    converted = convert_legacy_run_log(
+        payload,
+        task_name="CameraTakeVideo",
+        task_parameters={},
+        seed=111,
+        source_path=source,
+        require_screenshots=False,
+    )
+
+    assert [step["action"] for step in converted["steps"]] == [
+        {"action_type": "swipe", "direction": "left"},
+        {"action_type": "click", "x": 200, "y": 580},
+        {"action_type": "wait"},
+        {"action_type": "wait"},
+        *[{"action_type": "wait"} for _ in range(5)],
+        {"action_type": "click", "x": 360, "y": 1136},
+        {"action_type": "wait"},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("action_type", "end", "expected_direction"),
+    [
+        ("swipe", (900, 500), "left"),
+        ("swipe", (100, 500), "right"),
+        ("swipe", (500, 900), "down"),
+        ("swipe", (500, 100), "up"),
+        ("scroll", (900, 500), "left"),
+        ("scroll", (100, 500), "right"),
+        ("scroll", (500, 900), "up"),
+        ("scroll", (500, 100), "down"),
+    ],
+)
+def test_explicit_converter_maps_endpoint_gestures_to_androidworld_direction(
+    tmp_path: Path,
+    action_type: str,
+    end: tuple[int, int],
+    expected_direction: str,
+) -> None:
+    source = tmp_path / f"{action_type}-{expected_direction}.run_log.json"
+    payload = {
+        "run_id": "endpoint-gesture",
+        "success": True,
+        "steps": [
+            {
+                "observation_before_act": {"width": 1000, "height": 1000},
+                "action": {
+                    "type": action_type,
+                    "params": {
+                        "start_x": 500,
+                        "start_y": 500,
+                        "end_x": end[0],
+                        "end_y": end[1],
+                    },
+                },
+            }
+        ],
+    }
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    converted = convert_legacy_run_log(
+        payload,
+        task_name="GestureTask",
+        task_parameters={},
+        seed=111,
+        source_path=source,
+        require_screenshots=False,
+    )
+
+    assert converted["steps"][0]["action"] == {
+        "action_type": action_type,
+        "direction": expected_direction,
+    }
+
+
 def test_fixed_replay_accepts_only_omniflow_run_log() -> None:
     settings_xml = (
         '<hierarchy><node text="Network &amp; internet" '
