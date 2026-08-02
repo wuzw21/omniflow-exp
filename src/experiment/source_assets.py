@@ -121,6 +121,7 @@ def select_source_asset_revision(
         _reject_forbidden_source_retry(
             revisions,
             environment_repair_reason=repair_reason,
+            expected_source_method=source_method,
         )
         next_revision = max(revision for revision, _ in revisions) + 1
         return base / f"{prefix}_r{next_revision}"
@@ -153,6 +154,7 @@ def _reject_forbidden_source_retry(
     revisions: list[tuple[int, Path]],
     *,
     environment_repair_reason: str = "",
+    expected_source_method: str = "",
 ) -> None:
     for _, candidate in sorted(revisions):
         marker = candidate / "prep_failure.json"
@@ -164,6 +166,22 @@ def _reject_forbidden_source_retry(
             continue
         if not isinstance(failure, dict) or failure.get("retry_allowed") is not False:
             continue
+        command_path = candidate / "source_episode_command.json"
+        if str(expected_source_method or "").strip() and command_path.is_file():
+            try:
+                command = json.loads(command_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                command = None
+            failed_source_method = (
+                str(command.get("source_method") or "").strip()
+                if isinstance(command, dict)
+                else ""
+            )
+            if (
+                failed_source_method
+                and failed_source_method != expected_source_method
+            ):
+                continue
         if str(environment_repair_reason or "").strip():
             continue
         error = str(failure.get("error") or "terminal_source_failure").strip()

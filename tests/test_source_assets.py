@@ -1315,6 +1315,38 @@ def test_source_revision_skips_incompatible_mobilegpt_memory_contract(
     assert selected == base / f"source_{expected[:12]}_r2"
 
 
+def test_source_revision_ignores_terminal_failure_from_old_method(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "mobilegpt_offline_retrieval"
+    expected = "2" * 64
+    failed = base / f"source_{expected[:12]}"
+    failed.mkdir(parents=True)
+    (failed / "prep_failure.json").write_text(
+        json.dumps(
+            {
+                "error": "mobilegpt_source_episode_failed:1",
+                "retry_allowed": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (failed / "source_episode_command.json").write_text(
+        json.dumps({"source_method": "fixed_replay"}),
+        encoding="utf-8",
+    )
+
+    assert (
+        select_source_asset_revision(
+            base,
+            manifest_name="cold_memory_manifest.json",
+            expected_source_sha256=expected,
+            expected_source_method="mobilegpt_native_source_cold",
+        )
+        == base / f"source_{expected[:12]}_r2"
+    )
+
+
 def test_source_revision_rejects_terminal_failure_for_exact_source_hash(
     tmp_path: Path,
 ) -> None:
