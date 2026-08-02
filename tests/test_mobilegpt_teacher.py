@@ -159,6 +159,82 @@ def test_exhausted_teacher_finishes_task_before_subtask_reentry(
     assert calls == ["task_finished"]
 
 
+def test_exhausted_teacher_uses_native_speak_before_finishing(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    source_run_log = tmp_path / "source.run_log.json"
+    source_run_log.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [
+                    {"action_type": "click", "x": 50, "y": 50},
+                    {"action_type": "answer", "text": "20"},
+                ]
+            )
+        ),
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+    events: list[dict] = []
+
+    class MobileGPT:
+        def init(self, instruction, task, is_new_task):
+            return None
+
+        def get_next_action(
+            self,
+            parsed_xml=None,
+            hierarchy_xml=None,
+            encoded_xml=None,
+        ):
+            calls.append("subtask_reentry")
+            return {"name": "click", "parameters": {"index": "1"}}
+
+        def _MobileGPT__handle_primitive_subtask(self, subtask):
+            calls.append(f"speak:{subtask['parameters']['message']}")
+            return self.get_next_action()
+
+        def _MobileGPT__finish_task(self):
+            calls.append("task_finished")
+            return None
+
+    class DeriveAgent:
+        def derive(self, screen, examples=None):
+            raise AssertionError("derive must not run after teacher exhaustion")
+
+    agents_module = ModuleType("agents")
+    derive_module = ModuleType("agents.derive_agent")
+    derive_module.DeriveAgent = DeriveAgent
+    mobilegpt_module = ModuleType("mobilegpt")
+    mobilegpt_module.MobileGPT = MobileGPT
+    parsing_utils = ModuleType("utils.parsing_utils")
+    utils_module = ModuleType("utils")
+    utils_module.parsing_utils = parsing_utils
+    monkeypatch.setitem(sys.modules, "agents", agents_module)
+    monkeypatch.setitem(sys.modules, "agents.derive_agent", derive_module)
+    monkeypatch.setitem(sys.modules, "mobilegpt", mobilegpt_module)
+    monkeypatch.setitem(sys.modules, "utils", utils_module)
+    monkeypatch.setitem(sys.modules, "utils.parsing_utils", parsing_utils)
+
+    teacher = install_mobilegpt_teacher(
+        source_run_log=source_run_log,
+        stats_writer=events.append,
+    )
+    teacher.mark_exhausted()
+
+    assert MobileGPT().get_next_action() is None
+    assert calls == ["speak:20", "task_finished"]
+    assert [event for event in events if event["event"] == "mobilegpt_teacher_answer"] == [
+        {
+            "event": "mobilegpt_teacher_answer",
+            "instruction": "",
+            "source_run_log": str(source_run_log.resolve()),
+            "text": "20",
+        }
+    ]
+
+
 @pytest.mark.parametrize("native_select_succeeds", [True, False])
 def test_teacher_keeps_native_subtask_selection_task_local(
     tmp_path,

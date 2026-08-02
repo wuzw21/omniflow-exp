@@ -81,6 +81,23 @@ def load_teacher_actions(source_run_log: str | Path) -> list[dict[str, Any]]:
     return actions
 
 
+def load_teacher_terminal_answer(source_run_log: str | Path) -> str:
+    """Load the final AndroidWorld answer for MobileGPT's native speak action."""
+
+    path = Path(source_run_log).expanduser().resolve()
+    payload = import_run_log(json.loads(path.read_text(encoding="utf-8")))
+    answers = [
+        str(action.get("text") or "").strip()
+        for step in payload["steps"]
+        if isinstance(step, dict)
+        for action in [step.get("action")]
+        if isinstance(action, dict)
+        and str(action.get("action_type") or "").strip() == "answer"
+        and str(action.get("text") or "").strip()
+    ]
+    return answers[-1] if answers else ""
+
+
 def _teacher_step_actions(step: dict[str, Any]) -> list[dict[str, Any]]:
     action_type = str(step.get("action", {}).get("action_type") or "")
     if action_type in {"answer", "status", "unknown"}:
@@ -273,6 +290,7 @@ class MobileGPTTeacher:
     def __init__(self, source_run_log: str | Path) -> None:
         self.source_run_log = str(Path(source_run_log).expanduser().resolve())
         self._actions = load_teacher_actions(self.source_run_log)
+        self.terminal_answer = load_teacher_terminal_answer(self.source_run_log)
         self._cursor = 0
         self.instruction = ""
         self.task: dict[str, Any] = {}
@@ -548,6 +566,7 @@ def install_mobilegpt_teacher(
     )
     original_derive = DeriveAgent.derive
     finish_name = f"_{MobileGPT.__name__}__finish_task"
+    primitive_name = f"_{MobileGPT.__name__}__handle_primitive_subtask"
 
     def _teacher_example_for_action(
         *,
@@ -589,6 +608,8 @@ def install_mobilegpt_teacher(
 
     def patched_init(self, instruction: str, task: dict, is_new_task: bool):
         teacher.reset(instruction=instruction, task=task)
+        self._omniflow_teacher_answer_sent = False
+        self._omniflow_teacher_task_finished = False
         writer(
             {
                 "event": "mobilegpt_teacher_started",
@@ -706,6 +727,29 @@ def install_mobilegpt_teacher(
         self, parsed_xml=None, hierarchy_xml=None, encoded_xml=None
     ):
         if teacher.exhausted:
+            if teacher.terminal_answer and not getattr(
+                self,
+                "_omniflow_teacher_answer_sent",
+                False,
+            ):
+                self._omniflow_teacher_answer_sent = True
+                writer(
+                    {
+                        "event": "mobilegpt_teacher_answer",
+                        "instruction": getattr(self, "instruction", ""),
+                        "source_run_log": teacher.source_run_log,
+                        "text": teacher.terminal_answer,
+                    }
+                )
+                return getattr(self, primitive_name)(
+                    {
+                        "name": "speak",
+                        "parameters": {
+                            "message": teacher.terminal_answer,
+                            "completion_rate": 100,
+                        },
+                    }
+                )
             if getattr(self, "_omniflow_teacher_task_finished", False):
                 return None
             self._omniflow_teacher_task_finished = True

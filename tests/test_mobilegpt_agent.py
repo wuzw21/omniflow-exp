@@ -10,11 +10,11 @@ from types import SimpleNamespace
 
 from PIL import Image
 
+from src.experiment import androidworld as pipeline
 from src.integrations.android_world.mobilegpt_agent import (
     _socket_timeout,
     build_mobilegpt_agent,
 )
-from src.experiment import androidworld as pipeline
 from src.integrations.mobilegpt_runtime import install_mobilegpt_androidworld_observe
 
 
@@ -154,6 +154,101 @@ def test_mobilegpt_executes_server_click_through_androidworld_state_and_action(
     assert result.data["actions_executed"] == 1
     assert result.data["state_backend"] == "androidworld"
     assert result.data["action_backend"] == "androidworld"
+
+
+def test_mobilegpt_native_speak_reaches_androidworld_answer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    listener.settimeout(5.0)
+    port = listener.getsockname()[1]
+    server_errors: list[BaseException] = []
+
+    def serve() -> None:
+        try:
+            connection, _ = listener.accept()
+            with connection, connection.makefile("rwb", buffering=0) as stream:
+                stream.readline()
+                stream.readline()
+                stream.write(b"##$$##com.example.target\r\n")
+                _read_payload(stream, b"S")
+                _read_payload(stream, b"X")
+                stream.write(
+                    json.dumps(
+                        {"name": "speak", "parameters": {"message": "20"}}
+                    ).encode()
+                    + b"\r\n"
+                )
+                stream.write(b"$$$$$\r\n")
+        except BaseException as error:
+            server_errors.append(error)
+        finally:
+            listener.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    monkeypatch.setenv("MOBILEGPT_SERVER_HOST", "127.0.0.1")
+    monkeypatch.setenv("MOBILEGPT_SERVER_PORT", str(port))
+    monkeypatch.setenv("MOBILEGPT_TARGET_PACKAGE", "com.example.target")
+    monkeypatch.setenv("MOBILEGPT_POST_ACTION_WAIT_SEC", "0")
+
+    class FakeEnv:
+        logical_screen_size = (100, 200)
+        foreground_activity_name = "com.example.target/.MainActivity"
+
+        def __init__(self) -> None:
+            self.actions: list[SimpleNamespace] = []
+
+        def get_state(self) -> SimpleNamespace:
+            return SimpleNamespace(
+                pixels=Image.new("RGB", (100, 200), color="blue"),
+                forest=None,
+                ui_elements=[
+                    SimpleNamespace(
+                        bbox_pixels=_Bounds(10, 20, 30, 60),
+                        package_name="com.example.target",
+                        class_name="android.widget.TextView",
+                        text="Attendees: 20",
+                        content_description="",
+                        resource_name="com.example.target:id/body",
+                        is_clickable=False,
+                        is_editable=False,
+                        is_scrollable=False,
+                    )
+                ],
+                auxiliaries={
+                    "package_name": "com.example.target",
+                    "activity_name": self.foreground_activity_name,
+                },
+            )
+
+        def execute_action(self, action: SimpleNamespace) -> None:
+            self.actions.append(action)
+
+        def reset(self, go_home: bool = False) -> None:
+            del go_home
+
+    env = FakeEnv()
+    agent = build_mobilegpt_agent(
+        env=env,
+        evidence_root=tmp_path,
+        action_factory=lambda **payload: SimpleNamespace(**payload),
+    )
+
+    result = agent.step("How many attendees were present?")
+    thread.join(timeout=5.0)
+
+    assert not thread.is_alive()
+    assert server_errors == []
+    assert [action.action_type for action in env.actions] == ["open_app", "answer"]
+    assert env.actions[-1].text == "20"
+    assert result.done is True
+    assert result.data["answer"] == "20"
+    assert result.data["actions_executed"] == 0
+    assert result.data["error"] is None
 
 
 def test_mobilegpt_waits_for_real_app_ui_before_sending_first_observation(
