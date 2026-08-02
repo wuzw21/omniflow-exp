@@ -344,3 +344,103 @@ def test_batch_report_uses_current_attempt_failure_outcome(tmp_path: Path) -> No
     )
     assert row["attempt_id"] == "iteration_02-environment-repair"
     assert row["outer_wall_sec"] == 34.0
+
+
+def test_batch_report_recovers_native_source_failure_accounting(
+    tmp_path: Path,
+) -> None:
+    source_index = tmp_path / "source_index.json"
+    source_index.write_text(
+        json.dumps({"BrowserDraw": {"task": "BrowserDraw", "source_seed": 111}}),
+        encoding="utf-8",
+    )
+    result_cells = tmp_path / "result_cells.json"
+    result_cells.write_text("{}", encoding="utf-8")
+    memory_index = tmp_path / "current.json"
+    memory_index.write_text(
+        json.dumps({"result_cells": str(result_cells)}),
+        encoding="utf-8",
+    )
+    source_attempt = tmp_path / "source_attempt"
+    source_attempt.mkdir()
+    stats = source_attempt / "source_stats.jsonl"
+    stats.write_text(
+        "\n".join(
+            (
+                json.dumps(
+                    {
+                        "event": "chat_call",
+                        "prompt_tokens": 90,
+                        "completion_tokens": 10,
+                        "total_tokens": 100,
+                    }
+                ),
+                json.dumps({"event": "embedding_call", "prompt_tokens": 8}),
+                json.dumps({"event": "mobilegpt_action_sent"}),
+                json.dumps({"event": "task_finished", "elapsed_sec": 7.5}),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (source_attempt / "prep_failure.json").write_text(
+        json.dumps(
+            {
+                "error": "mobilegpt_cold_memory_not_task_local",
+                "retry_allowed": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (source_attempt / "source_episode_command.json").write_text(
+        json.dumps(
+            {
+                "task_name": "BrowserDraw",
+                "source_method": "mobilegpt_native_source_cold",
+            }
+        ),
+        encoding="utf-8",
+    )
+    task_log = tmp_path / "task.log"
+    task_log.write_text(
+        f"env MOBILEGPT_STATS_JSONL={stats} python -m source\n"
+        "ValueError: mobilegpt_cold_memory_not_task_local\n",
+        encoding="utf-8",
+    )
+    record_cell_outcome(
+        outcomes_root=tmp_path / "outcomes",
+        task_name="BrowserDraw",
+        method="mobilegpt_offline_retrieval",
+        device="small5554",
+        device_serial="emulator-5554",
+        attempt_id="iteration_01-report",
+        source_seed=111,
+        evaluation_seed=113,
+        status="execution_failed",
+        stage="target_episode",
+        task_log=task_log,
+        artifact_root=tmp_path / "unrelated_target_attempt",
+    )
+
+    report = write_batch_report(
+        report_root=tmp_path / "report",
+        memory_index=memory_index,
+        outcomes_root=tmp_path / "outcomes",
+        source_index=source_index,
+        tasks=("BrowserDraw",),
+        methods=("mobilegpt_offline_retrieval",),
+        devices=("small5554",),
+        source_seed=111,
+        evaluation_seed=113,
+        attempt_id="iteration_01-report",
+    )
+
+    row = json.loads(Path(report["cells_jsonl"]).read_text(encoding="utf-8"))
+    assert row["model_calls"] == 2
+    assert row["prompt_tokens"] == 98
+    assert row["completion_tokens"] == 10
+    assert row["total_tokens"] == 100
+    assert row["actions_executed"] == 1
+    assert row["episode_duration_sec"] == 7.5
+    assert row["accounting_recovered"] is True
+    assert row["accounting_evidence_path"] == str(source_attempt)

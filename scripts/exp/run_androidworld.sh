@@ -39,6 +39,7 @@ eight_cell_methods="fixed_replay,ours,mobilegpt_offline_retrieval,appagent_demo"
 baseline_environment_repair="${OMNIFLOW_BASELINE_ENVIRONMENT_REPAIR_REASON:-}"
 mobilegpt_source_environment_repair="${OMNIFLOW_MOBILEGPT_SOURCE_ENVIRONMENT_REPAIR_REASON:-}"
 appagent_source_environment_repair="${OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON:-}"
+batch_attempt_id="${OMNIFLOW_BATCH_ATTEMPT_ID:-}"
 formal_device_targets="small5554:emulator-5554:5554,fold5564:emulator-5564:5564"
 device_targets="${OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS:-$formal_device_targets}"
 fixed_task_params="${OMNIFLOW_SINGLE_TASK_FIXED_TASK_PARAMS:-$formal_fixed_task_params}"
@@ -138,7 +139,8 @@ Optional runtime overrides:
   OMNIFLOW_MASTER_SOURCE_INDEX, OMNIFLOW_OURS_STORE_INDEX,
   OMNIFLOW_ANDROID_SDK_ROOT, OMNIFLOW_JAVA_HOME,
   OMNIFLOW_MOBILEGPT_SOURCE_ENVIRONMENT_REPAIR_REASON,
-  OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON.
+  OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON,
+  OMNIFLOW_BATCH_ATTEMPT_ID (resume one interrupted immutable batch).
   Managed emulators are cold-restarted before every pending cell.
 
 Asset conversion inputs:
@@ -672,7 +674,15 @@ if [[ ! "$emulator_forced_shutdown_timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 printf -v iteration_label '%02d' "$task_iteration"
-attempt_id="iteration_${iteration_label}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+if [[ -n "$batch_attempt_id" ]]; then
+  if [[ ! "$batch_attempt_id" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
+    echo "OMNIFLOW_BATCH_ATTEMPT_ID must be one safe path component." >&2
+    exit 2
+  fi
+  attempt_id="$batch_attempt_id"
+else
+  attempt_id="iteration_${iteration_label}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+fi
 attempt_series_root="${results_root:+$results_root/androidworld_single_task_attempts/$task}"
 output_root="${OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT:-$attempt_series_root/$attempt_id}"
 preflight_output_root="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_OUTPUT_ROOT:-${results_root:+$results_root/preflight/$task/$attempt_id}}"
@@ -843,6 +853,21 @@ except ValueError as error:
         raise SystemExit(75) from error
     raise
 print(selected)
+PY
+}
+terminal_source_failure_marker() {
+  local marker="$1"
+  [[ -f "$marker" ]] || return 1
+  "$python_bin" - "$marker" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(1)
+raise SystemExit(0 if payload.get("retry_allowed") is False else 1)
 PY
 }
 if [[ "$all_tasks" -eq 0 && "$requires_mobilegpt_source_memory" -eq 1 && -z "$mobilegpt_source_memory_root" ]]; then
@@ -1484,6 +1509,7 @@ PY
       pending_line=$'pending\t'"$cell_method"$'\t'"$cell_device"$'\t'"$cell_serial"$'\t'"$cell_port"
       if grep -Fqx "$pending_line" <<< "$updated_plan"; then
         runtime_terminal=0
+        source_artifact_root=""
         if [[ "$status" -ne 0 ]]; then
           case "$cell_method" in
             mobilegpt_offline_retrieval)
@@ -1494,6 +1520,9 @@ PY
               source_model="$formal_model"
               source_schema="$mobilegpt_source_schema"
               source_source_method="$mobilegpt_source_method"
+              if [[ -n "$selected_mobilegpt_source_root" ]]; then
+                source_artifact_root="$(dirname "$selected_mobilegpt_source_root")"
+              fi
               ;;
             appagent_demo)
               source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$cell_method"
@@ -1503,6 +1532,7 @@ PY
               source_model=""
               source_schema=""
               source_source_method=""
+              source_artifact_root="$selected_appagent_source_root"
               ;;
             *)
               source_base=""
@@ -1513,7 +1543,10 @@ PY
               source_source_method=""
               ;;
           esac
-          if [[ -n "$source_base" ]]; then
+          if [[ -n "$source_artifact_root" ]] && \
+            terminal_source_failure_marker "$source_artifact_root/prep_failure.json"; then
+            runtime_terminal=1
+          elif [[ -n "$source_base" ]]; then
             if select_source_asset_revision \
               "$source_base" \
               "$source_manifest" \
@@ -1535,17 +1568,6 @@ PY
         fi
         if [[ "$runtime_terminal" -eq 1 ]]; then
           newly_terminal=0
-          source_artifact_root=""
-          case "$cell_method" in
-            mobilegpt_offline_retrieval)
-              if [[ -n "$selected_mobilegpt_source_root" ]]; then
-                source_artifact_root="$(dirname "$selected_mobilegpt_source_root")"
-              fi
-              ;;
-            appagent_demo)
-              source_artifact_root="$selected_appagent_source_root"
-              ;;
-          esac
           while IFS=$'\t' read -r pending_kind pending_method pending_device pending_serial pending_port; do
             if [[ "$pending_kind" != "pending" || "$pending_method" != "$cell_method" ]]; then
               continue

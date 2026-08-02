@@ -15,6 +15,9 @@ import tempfile
 from typing import Any, Iterable
 
 SCHEMA_VERSION = "omniflow.androidworld.cell_outcome.v1"
+_MOBILEGPT_SOURCE_STATS_PATTERN = re.compile(
+    r"MOBILEGPT_STATS_JSONL=(?P<path>[^\s'\"]+source_stats\.jsonl)"
+)
 
 
 def _safe_component(value: str, *, fallback: str) -> str:
@@ -103,6 +106,49 @@ def _stats_metrics(artifact_root: Path | None) -> dict[str, int | float]:
         ),
         "episode_duration_sec": round(episode_duration_sec, 6),
     }
+
+
+def _recover_mobilegpt_source_accounting(
+    outcome: dict[str, Any],
+) -> tuple[dict[str, int | float], Path | None]:
+    if str(outcome.get("method") or "") != "mobilegpt_offline_retrieval":
+        return {}, None
+    if any(
+        _number(outcome.get(field))
+        for field in (
+            "model_calls",
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "actions_executed",
+            "episode_duration_sec",
+        )
+    ):
+        return {}, None
+    task_log = Path(str(outcome.get("task_log") or "")).expanduser()
+    if not task_log.is_file():
+        return {}, None
+    text = task_log.read_text(encoding="utf-8", errors="replace")
+    candidates: list[Path] = []
+    for match in _MOBILEGPT_SOURCE_STATS_PATTERN.finditer(text):
+        stats_path = Path(match.group("path")).expanduser().resolve()
+        source_root = stats_path.parent
+        if not stats_path.is_file() or source_root in candidates:
+            continue
+        failure = _json_object(source_root / "prep_failure.json")
+        command = _json_object(source_root / "source_episode_command.json")
+        if (
+            failure.get("retry_allowed") is not False
+            or str(command.get("task_name") or "")
+            != str(outcome.get("task_name") or "")
+            or str(command.get("source_method") or "")
+            != "mobilegpt_native_source_cold"
+        ):
+            continue
+        candidates.append(source_root)
+    if len(candidates) != 1:
+        return {}, None
+    return _stats_metrics(candidates[0]), candidates[0]
 
 
 def _failure_summary(task_log: Path | None, artifact_root: Path | None) -> str:
@@ -312,6 +358,18 @@ def _outcome_rows(
             )
         )
         candidate = {**payload, "outcome_path": str(path)}
+        recovered_metrics, accounting_root = _recover_mobilegpt_source_accounting(
+            candidate
+        )
+        if recovered_metrics:
+            candidate.update(recovered_metrics)
+            candidate["accounting_recovered"] = True
+            candidate["accounting_evidence_path"] = str(accounting_root)
+        else:
+            candidate["accounting_recovered"] = False
+            candidate["accounting_evidence_path"] = str(
+                candidate.get("artifact_root") or ""
+            )
         existing = rows.get(key)
         if existing is None or str(candidate.get("recorded_at") or "") < str(
             existing.get("recorded_at") or ""
@@ -374,6 +432,10 @@ def _registered_report_row(
         ),
         "attempt_id": str(row.get("attempt_id") or ""),
         "evidence_path": str(row.get("run_dir") or row.get("output_path") or ""),
+        "accounting_recovered": False,
+        "accounting_evidence_path": str(
+            row.get("run_dir") or row.get("output_path") or ""
+        ),
     }
 
 
@@ -407,6 +469,10 @@ def _failure_report_row(
         "outer_wall_sec": _number(outcome.get("outer_wall_sec")),
         "attempt_id": str(outcome.get("attempt_id") or ""),
         "evidence_path": str(outcome.get("outcome_path") or ""),
+        "accounting_recovered": bool(outcome.get("accounting_recovered")),
+        "accounting_evidence_path": str(
+            outcome.get("accounting_evidence_path") or ""
+        ),
     }
 
 
@@ -490,6 +556,8 @@ def write_batch_report(
                         "outer_wall_sec": 0.0,
                         "attempt_id": "",
                         "evidence_path": "",
+                        "accounting_recovered": False,
+                        "accounting_evidence_path": "",
                     }
                     counts["pending"] += 1
                 rows.append(row)

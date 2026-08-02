@@ -720,6 +720,7 @@ exit 1
         "OMNIFLOW_EXP_ASSET_ROOT": str(assets),
         "OMNIFLOW_EXP_RESULTS_ROOT": str(results),
         "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_index),
+        "OMNIFLOW_BATCH_ATTEMPT_ID": "iteration_01-resume-test",
         "OMNIFLOW_ENV_FILE": str(assets / ".env"),
         "OMNIFLOW_ANDROID_WORLD_ROOT": str(assets / "android_world"),
         "OMNITRANSFER_ROOT": str(assets / "OmniTransfer"),
@@ -752,7 +753,7 @@ exit 1
     assert "src.experiment.function_assets" not in calls
     assert any(
         line.startswith(f"- {REPO} ")
-        and " 111 113 20 iteration_01-" in line
+        and " 111 113 20 iteration_01-resume-test" in line
         for line in calls.splitlines()
     )
 
@@ -917,6 +918,8 @@ if [ "$1" = "-m" ] && [ "$2" = "src.experiment.androidworld" ] && [ "$3" = "one-
   exit 0
 fi
 if [ "$1" = "-m" ] && [ "$2" = "src.experiment.mobilegpt_source" ] && [ "$3" = "prepare" ]; then
+  mkdir -p "$MOBILEGPT_BUNDLE"
+  printf '%s\n' '{"retry_allowed":false}' > "$MOBILEGPT_BUNDLE/prep_failure.json"
   : > "$STATE_DIR/mobilegpt-terminal"
   exit 9
 fi
