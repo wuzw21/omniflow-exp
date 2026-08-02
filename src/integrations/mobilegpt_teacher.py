@@ -33,6 +33,7 @@ MOBILEGPT_SUPPORTED_SOURCE_TYPES = {
 }
 
 MOBILEGPT_INTERNAL_LAUNCH_ACTION = "__omniflow_launch_package"
+_NON_LAUNCHABLE_SOURCE_PACKAGES = frozenset({"android"})
 
 
 @dataclass(frozen=True)
@@ -1075,7 +1076,7 @@ def _source_app_switch_preflight(
     if str(source_action.get("type") or "").strip() == "press_key":
         return None
     source_package = _source_action_package(source_action)
-    if not source_package:
+    if not source_package or source_package in _NON_LAUNCHABLE_SOURCE_PACKAGES:
         return None
     current_package = _screen_package(current_screen)
     effective_current_package = (

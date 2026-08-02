@@ -454,6 +454,25 @@ def test_teacher_does_not_treat_content_provider_uri_as_foreground_package() -> 
     )
 
 
+def test_teacher_does_not_launch_android_framework_package() -> None:
+    source_action = {
+        "type": "click",
+        "params": {
+            "target_description": "Just once",
+            "source_context": {"package_name": "android"},
+        },
+    }
+
+    assert (
+        mobilegpt_teacher._source_app_switch_preflight(
+            source_action,
+            '<div package="com.google.android.documentsui" />',
+            current_app_package="com.google.android.documentsui",
+        )
+        is None
+    )
+
+
 def test_teacher_handles_chrome_search_provider_prompt_without_consuming_source() -> (
     None
 ):
