@@ -9,7 +9,9 @@ import sys
 import pytest
 
 from src.experiment.preflight import (
+    _contacts_setup_ready,
     _dismiss_known_accessibility_crash_dialog,
+    _reset_contacts_setup_screen,
     _validate_source_index,
 )
 from runlog_fixtures import androidworld_run_log
@@ -84,6 +86,59 @@ def test_preflight_preserves_unknown_crash_dialog(monkeypatch) -> None:
         )
         == focused_windows
     )
+
+
+def test_preflight_resets_unknown_contacts_task(monkeypatch) -> None:
+    commands: list[list[str]] = []
+    screens = iter(
+        [
+            '<hierarchy><node package="com.google.android.contacts" text="Contact details" /></hierarchy>',
+            '<hierarchy><node package="com.google.android.contacts" text="Search contacts" /></hierarchy>',
+        ]
+    )
+
+    def fake_run(command: list[str], timeout: float = 10.0):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("src.experiment.preflight._run", fake_run)
+    monkeypatch.setattr("src.experiment.preflight._dump_ui_xml", lambda *_: next(screens))
+    monkeypatch.setattr("src.experiment.preflight.time.sleep", lambda _: None)
+
+    screen = _reset_contacts_setup_screen("/sdk/adb", "emulator-5564")
+
+    assert _contacts_setup_ready(screen)
+    assert commands[0][-3:] == [
+        "am",
+        "force-stop",
+        "com.google.android.contacts",
+    ]
+    assert commands[1][-5:] == [
+        "-W",
+        "--activity-clear-task",
+        "--activity-new-task",
+        "-n",
+        "com.google.android.contacts/com.android.contacts.activities.PeopleActivity",
+    ]
+
+
+def test_preflight_contacts_reset_fails_closed(monkeypatch) -> None:
+    unknown = '<hierarchy><node package="com.android.launcher3" text="Home" /></hierarchy>'
+    monkeypatch.setattr(
+        "src.experiment.preflight._run",
+        lambda command, timeout=10.0: subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="",
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr("src.experiment.preflight._dump_ui_xml", lambda *_: unknown)
+    monkeypatch.setattr("src.experiment.preflight.time.sleep", lambda _: None)
+
+    screen = _reset_contacts_setup_screen("/sdk/adb", "emulator-5564")
+
+    assert not _contacts_setup_ready(screen)
 
 
 def _write_index(

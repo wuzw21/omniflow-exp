@@ -418,6 +418,60 @@ def _permission_is_fixed_denied(
     return {"USER_FIXED", "USER_SET"}.issubset(flags)
 
 
+def _reset_contacts_setup_screen(adb: str, serial: str) -> str:
+    package_name = "com.google.android.contacts"
+    component = f"{package_name}/com.android.contacts.activities.PeopleActivity"
+    _run(
+        [adb, "-s", serial, "shell", "am", "force-stop", package_name],
+        timeout=10,
+    )
+    _run(
+        [
+            adb,
+            "-s",
+            serial,
+            "shell",
+            "am",
+            "start",
+            "-S",
+            "-W",
+            "--activity-clear-task",
+            "--activity-new-task",
+            "-n",
+            component,
+        ],
+        timeout=15,
+    )
+    screen = ""
+    for _ in range(5):
+        time.sleep(1)
+        screen = _dump_ui_xml(adb, serial)
+        deny_center = _permission_deny_center(screen)
+        if deny_center is not None:
+            _run(
+                [
+                    adb,
+                    "-s",
+                    serial,
+                    "shell",
+                    "input",
+                    "tap",
+                    str(deny_center[0]),
+                    str(deny_center[1]),
+                ],
+                timeout=10,
+            )
+            continue
+        if _contacts_setup_ready(screen):
+            return screen
+    return _navigate_contacts_back_to_home(
+        adb,
+        serial,
+        screen,
+        max_back_presses=4,
+    )
+
+
 def _validate_source_index(
     index_path: Path,
     *,
@@ -924,9 +978,17 @@ def main(argv: list[str] | None = None) -> int:
                         break
                     time.sleep(1)
                 screen = _navigate_contacts_back_to_home(adb, args.serial, screen)
+                contacts_task_reset = False
+                if not _contacts_setup_ready(screen):
+                    contacts_task_reset = True
+                    screen = _reset_contacts_setup_screen(adb, args.serial)
                 contacts_ready = _contacts_setup_ready(screen)
                 contacts_detail = (
-                    "contacts home"
+                    "contacts home after task reset"
+                    if contacts_task_reset and _contacts_home_ready(screen)
+                    else "contacts onboarding ready after task reset"
+                    if contacts_task_reset and contacts_ready
+                    else "contacts home"
                     if _contacts_home_ready(screen)
                     else "contacts onboarding ready"
                     if contacts_ready
