@@ -2793,6 +2793,16 @@ def _raw_replay_step_actions(data: dict[str, Any]) -> list[dict[str, Any]]:
         action_type = str(step["action"].get("action_type") or "")
         if action_type in {"answer", "status", "unknown"}:
             continue
+        if action_type in {"scroll", "swipe"}:
+            actions.append(
+                {
+                    "type": action_type,
+                    "params": {
+                        "direction": str(step["action"].get("direction") or ""),
+                    },
+                }
+            )
+            continue
         actions.extend(
             replay_action(step, action)
             for action in project_androidworld_step_actions(step)

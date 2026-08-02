@@ -800,6 +800,31 @@ def test_fixed_replay_accepts_only_omniflow_run_log() -> None:
     ]
 
 
+def test_fixed_replay_preserves_androidworld_directional_gestures() -> None:
+    run_log = androidworld_run_log(
+        [
+            {"action_type": "swipe", "direction": "right"},
+            {"action_type": "scroll", "direction": "down"},
+        ],
+        observations=[
+            androidworld_state("camera", width=720, height=1280),
+            androidworld_state("list", width=720, height=1280),
+        ],
+    )
+
+    replay_actions = _raw_replay_step_actions(run_log)
+
+    assert replay_actions == [
+        {"type": "swipe", "params": {"direction": "right"}},
+        {"type": "scroll", "params": {"direction": "down"}},
+    ]
+    assert _raw_replay_action_to_payload(
+        replay_actions[0],
+        source_size=(720, 1280),
+        target_size=(2208, 1840),
+    ) == ({"action_type": "swipe", "direction": "right"}, None)
+
+
 def test_fixed_replay_resolves_click_from_target_selector() -> None:
     target_xml = (
         '<hierarchy><node text="Network &amp; internet" '
