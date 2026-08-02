@@ -23,6 +23,8 @@ formal_fixed_task_params=0
 formal_fold_state=2
 formal_fold_size="2208x1840"
 formal_model="qwen3-vl-plus"
+mobilegpt_source_schema="omniflow.mobilegpt-native-cold-memory.v1"
+mobilegpt_source_method="mobilegpt_native_source_cold"
 expected_source_seed="${OMNIFLOW_SINGLE_TASK_SOURCE_SEED:-$formal_source_seed}"
 evaluation_seed="${OMNIFLOW_SINGLE_TASK_EVALUATION_SEED:-$formal_evaluation_seed}"
 omnitransfer_root="${OMNITRANSFER_ROOT:-}"
@@ -789,7 +791,9 @@ echo "[java] home=$java_home major=$java_major version=$java_version_line"
 select_source_asset_revision() {
   local hash_index="${5:-$source_index}"
   local expected_source_model="${6:-}"
-  "$python_bin" - "$repo" "$1" "$2" "$hash_index" "$3" "${4:-}" "$expected_source_model" <<'PY'
+  local expected_schema_version="${7:-}"
+  local expected_source_method="${8:-}"
+  "$python_bin" - "$repo" "$1" "$2" "$hash_index" "$3" "${4:-}" "$expected_source_model" "$expected_schema_version" "$expected_source_method" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -828,6 +832,8 @@ try:
         expected_source_sha256=source_sha256,
         compatible_source_sha256s=compatible_source_sha256s,
         expected_source_model=sys.argv[7],
+        expected_schema_version=sys.argv[8],
+        expected_source_method=sys.argv[9],
         environment_repair_reason=sys.argv[6],
     )
 except ValueError as error:
@@ -848,7 +854,9 @@ if [[ "$all_tasks" -eq 0 && "$requires_mobilegpt_source_memory" -eq 1 && -z "$mo
       "$task" \
       "$mobilegpt_source_environment_repair" \
       "$ours_store_index" \
-      "$formal_model"
+      "$formal_model" \
+      "$mobilegpt_source_schema" \
+      "$mobilegpt_source_method"
   )"
   mobilegpt_source_memory_root="$mobilegpt_source_attempt_root/memory"
 fi
@@ -1186,6 +1194,8 @@ PY
           source_repair_reason="$mobilegpt_source_environment_repair"
           source_hash_index="$ours_store_index"
           source_model="$formal_model"
+          source_schema="$mobilegpt_source_schema"
+          source_source_method="$mobilegpt_source_method"
           ;;
         appagent_demo)
           source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$source_method"
@@ -1193,6 +1203,8 @@ PY
           source_repair_reason="$appagent_source_environment_repair"
           source_hash_index="$source_index"
           source_model=""
+          source_schema=""
+          source_source_method=""
           ;;
       esac
       source_selection_output=""
@@ -1203,7 +1215,9 @@ PY
           "$batch_task" \
           "$source_repair_reason" \
           "$source_hash_index" \
-          "$source_model" 2>&1
+          "$source_model" \
+          "$source_schema" \
+          "$source_source_method" 2>&1
       )"; then
         selected_source_root="$source_selection_output"
         case "$source_method" in
@@ -1478,6 +1492,8 @@ PY
               source_repair_reason="$mobilegpt_source_environment_repair"
               source_hash_index="$ours_store_index"
               source_model="$formal_model"
+              source_schema="$mobilegpt_source_schema"
+              source_source_method="$mobilegpt_source_method"
               ;;
             appagent_demo)
               source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${expected_source_seed}/$batch_task/$cell_method"
@@ -1485,12 +1501,16 @@ PY
               source_repair_reason="$appagent_source_environment_repair"
               source_hash_index="$source_index"
               source_model=""
+              source_schema=""
+              source_source_method=""
               ;;
             *)
               source_base=""
               source_manifest=""
               source_repair_reason=""
               source_hash_index=""
+              source_schema=""
+              source_source_method=""
               ;;
           esac
           if [[ -n "$source_base" ]]; then
@@ -1501,6 +1521,8 @@ PY
               "$source_repair_reason" \
               "$source_hash_index" \
               "$source_model" \
+              "$source_schema" \
+              "$source_source_method" \
               >/dev/null; then
               :
             else

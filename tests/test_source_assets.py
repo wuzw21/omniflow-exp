@@ -1284,6 +1284,37 @@ def test_source_revision_skips_frozen_asset_from_wrong_model(
     )
 
 
+def test_source_revision_skips_incompatible_mobilegpt_memory_contract(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "mobilegpt_offline_retrieval"
+    expected = "2" * 64
+    old = base / f"source_{expected[:12]}"
+    old.mkdir(parents=True)
+    (old / "cold_memory_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.mobilegpt-cold-memory.v1",
+                "source_method": "fixed_replay",
+                "source_model": "qwen3-vl-plus",
+                "source_run_log": {"sha256": expected},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    selected = select_source_asset_revision(
+        base,
+        manifest_name="cold_memory_manifest.json",
+        expected_source_sha256=expected,
+        expected_source_model="qwen3-vl-plus",
+        expected_schema_version="omniflow.mobilegpt-native-cold-memory.v1",
+        expected_source_method="mobilegpt_native_source_cold",
+    )
+
+    assert selected == base / f"source_{expected[:12]}_r2"
+
+
 def test_source_revision_rejects_terminal_failure_for_exact_source_hash(
     tmp_path: Path,
 ) -> None:
