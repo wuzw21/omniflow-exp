@@ -73,13 +73,17 @@ def _stats_metrics(artifact_root: Path | None) -> dict[str, int | float]:
     rows = _jsonl_rows(stats_paths)
     prompt_tokens = sum(_number(row.get("prompt_tokens")) for row in rows)
     completion_tokens = sum(_number(row.get("completion_tokens")) for row in rows)
+    model_rows = [
+        row
+        for row in rows
+        if str(row.get("event") or "") in {"chat_call", "embedding_call"}
+    ]
     total_tokens = sum(
         _number(row.get("total_tokens"))
-        for row in rows
-        if str(row.get("event") or "") == "chat_call"
+        or _number(row.get("prompt_tokens"))
+        + _number(row.get("completion_tokens"))
+        for row in model_rows
     )
-    if not total_tokens:
-        total_tokens = prompt_tokens + completion_tokens
     task_finished = [
         row for row in rows if str(row.get("event") or "") == "task_finished"
     ]
@@ -113,27 +117,19 @@ def _recover_mobilegpt_source_accounting(
 ) -> tuple[dict[str, int | float], Path | None]:
     if str(outcome.get("method") or "") != "mobilegpt_offline_retrieval":
         return {}, None
-    if any(
-        _number(outcome.get(field))
-        for field in (
-            "model_calls",
-            "prompt_tokens",
-            "completion_tokens",
-            "total_tokens",
-            "actions_executed",
-            "episode_duration_sec",
-        )
-    ):
-        return {}, None
     task_log = Path(str(outcome.get("task_log") or "")).expanduser()
-    if not task_log.is_file():
-        return {}, None
-    text = task_log.read_text(encoding="utf-8", errors="replace")
     candidates: list[Path] = []
-    for match in _MOBILEGPT_SOURCE_STATS_PATTERN.finditer(text):
-        stats_path = Path(match.group("path")).expanduser().resolve()
-        source_root = stats_path.parent
-        if not stats_path.is_file() or source_root in candidates:
+
+    artifact_root = Path(str(outcome.get("artifact_root") or "")).expanduser()
+    roots = [artifact_root.resolve()] if artifact_root.is_dir() else []
+    if task_log.is_file():
+        text = task_log.read_text(encoding="utf-8", errors="replace")
+        roots.extend(
+            Path(match.group("path")).expanduser().resolve().parent
+            for match in _MOBILEGPT_SOURCE_STATS_PATTERN.finditer(text)
+        )
+    for source_root in roots:
+        if source_root in candidates or not list(source_root.glob("*stats.jsonl")):
             continue
         failure = _json_object(source_root / "prep_failure.json")
         command = _json_object(source_root / "source_episode_command.json")

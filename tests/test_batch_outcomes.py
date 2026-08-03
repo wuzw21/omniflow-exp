@@ -407,7 +407,7 @@ def test_batch_report_recovers_native_source_failure_accounting(
         "ValueError: mobilegpt_cold_memory_not_task_local\n",
         encoding="utf-8",
     )
-    record_cell_outcome(
+    outcome_path = record_cell_outcome(
         outcomes_root=tmp_path / "outcomes",
         task_name="BrowserDraw",
         method="mobilegpt_offline_retrieval",
@@ -421,6 +421,18 @@ def test_batch_report_recovers_native_source_failure_accounting(
         task_log=task_log,
         artifact_root=tmp_path / "unrelated_target_attempt",
     )
+    legacy_outcome = json.loads(outcome_path.read_text(encoding="utf-8"))
+    legacy_outcome.update(
+        {
+            "model_calls": 2,
+            "prompt_tokens": 98,
+            "completion_tokens": 10,
+            "total_tokens": 100,
+            "actions_executed": 1,
+            "episode_duration_sec": 7.5,
+        }
+    )
+    outcome_path.write_text(json.dumps(legacy_outcome), encoding="utf-8")
 
     report = write_batch_report(
         report_root=tmp_path / "report",
@@ -439,7 +451,7 @@ def test_batch_report_recovers_native_source_failure_accounting(
     assert row["model_calls"] == 2
     assert row["prompt_tokens"] == 98
     assert row["completion_tokens"] == 10
-    assert row["total_tokens"] == 100
+    assert row["total_tokens"] == 108
     assert row["actions_executed"] == 1
     assert row["episode_duration_sec"] == 7.5
     assert row["accounting_recovered"] is True
