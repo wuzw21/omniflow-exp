@@ -21,7 +21,11 @@ from omniflow.vlm_coordinates import (
 
 SYSTEM_PROMPT = """
 You are an Android GUI agent. Complete the user goal from the compact relevant UI
-elements and optional current screenshot. Return exactly one native tool_call each turn. Never put
+elements and current screenshot. Treat the screenshot as primary evidence for icon
+identity and spatial relationships, and XML as evidence for text and control state.
+UI elements are grouped by priority; global controls come first. The `v` field is a
+stable visual reference for an actionable element at its XML bounds. Return exactly
+one native tool_call each turn. Never put
 action JSON or tool syntax in assistant text. Choose one action, wait for its
 result, then inspect the fresh state before choosing another action. Coordinates
 are raw pixels in the current original Display coordinate frame, never normalized
@@ -34,6 +38,11 @@ boolean, normalized value, or combined coordinate pair.
 Use finished only when current evidence directly proves the goal is complete.
 For switches and checkboxes, checked=false means off and checked=true means on.
 Never toggle a switch when its checked state already matches the requested goal.
+Prefer stable, reusable navigation. When the current app or page provides search,
+use search and type the requested text directly before browsing long menus or
+swiping. Do not select history, recent, suggestion, or cached-value items when the
+requested value can be entered directly. Swipe only when no usable search or input
+path exists, or when search results still require browsing.
 """.strip()
 
 
@@ -86,10 +95,7 @@ def build_model_turn_request(
         projection=projection,
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
-    include_images = not validation_error.strip() and (
-        projection.requires_screenshot
-        or has_successful_function_action(state.get("extra"))
-    )
+    include_images = not validation_error.strip()
     current_image = _state_image_data_uri(state) if include_images else ""
     if current_image:
         content.append({"type": "image_url", "image_url": {"url": current_image}})
@@ -114,13 +120,14 @@ def build_model_turn_request(
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": content},
         ],
-        "max_completion_tokens": 4096,
+        "max_completion_tokens": 512,
         "temperature": 0,
         "stream": True,
         "stream_options": {"include_usage": True},
         "tools": tools,
         "tool_choice": "required",
         "parallel_tool_calls": False,
+        "reasoning_effort": "none",
         "enable_thinking": False,
     }
 
