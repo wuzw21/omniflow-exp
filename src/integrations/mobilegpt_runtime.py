@@ -36,16 +36,6 @@ _MOBILEGPT_SUPPORTED_ACTIONS = {
     "speak",
     "__omniflow_launch_package",
 }
-_MOBILEGPT_DERIVE_ACTIONS = {
-    "ask",
-    "back",
-    "click",
-    "go-back",
-    "input",
-    "long-click",
-    "repeat-click",
-    "scroll",
-}
 _LATEST_MOBILEGPT_XML = ""
 
 
@@ -240,63 +230,18 @@ def install_mobilegpt_select_schema_repair(select_agent_class: type) -> None:
         if isinstance(response, dict):
             response.setdefault("completion_rate", 0)
             response.setdefault("speak", "Continuing the task.")
-            if isinstance(response.get("action"), dict):
-                response["action"] = normalize_mobilegpt_action(
-                    response["action"]
-                )
-                if response["action"].get("name") == "speak":
-                    response["action"]["parameters"].setdefault(
+            action = response.get("action")
+            if isinstance(action, dict) and action.get("name") == "speak":
+                parameters = action.get("parameters")
+                if isinstance(parameters, dict):
+                    parameters.setdefault(
                         "completion_rate",
                         response["completion_rate"],
                     )
         try:
-            if original_check(self, response, available_subtasks):
-                return True
+            return bool(original_check(self, response, available_subtasks))
         except (KeyError, TypeError):
             return False
-        if not isinstance(response, dict):
-            return False
-        action = response.get("action")
-        if not isinstance(action, dict):
-            return False
-        name = str(action.get("name") or "").strip()
-        if not name:
-            return False
-        if name in _MOBILEGPT_DERIVE_ACTIONS:
-            _write_stats_event(
-                {
-                    "event": "mobilegpt_select_rejected_derive_action",
-                    "action": action,
-                }
-            )
-            return False
-        concrete_parameters = (
-            dict(action.get("parameters"))
-            if isinstance(action.get("parameters"), dict)
-            else {}
-        )
-        new_action = {
-            "name": name,
-            "description": str(
-                response.get("reasoning")
-                or response.get("speak")
-                or f"Perform {name}."
-            ),
-            "parameters": {
-                key: f"Value required for {key}."
-                for key in concrete_parameters
-            },
-        }
-        response["new_action"] = new_action
-        available_subtasks.append(new_action)
-        _write_stats_event(
-            {
-                "event": "mobilegpt_select_schema_repaired",
-                "selected_action": action,
-                "new_action": new_action,
-            }
-        )
-        return True
 
     setattr(select_agent_class, method_name, _check)
     select_agent_class._omniflow_schema_repair_installed = True

@@ -12,17 +12,18 @@ import xml.etree.ElementTree as ET
 from PIL import Image
 
 from src.experiment import androidworld as pipeline
-from src.integrations.android_world.mobilegpt_agent import (
-    _socket_timeout,
-    build_mobilegpt_agent,
-)
 from src.integrations.android_world.launch import (
     _mobilegpt_runtime_integrity_error,
     _mobilegpt_runtime_integrity_exit_code,
 )
+from src.integrations.android_world.mobilegpt_agent import (
+    _socket_timeout,
+    build_mobilegpt_agent,
+)
 from src.integrations.mobilegpt_runtime import (
     _parse_mobilegpt_model_response,
     install_mobilegpt_androidworld_observe,
+    install_mobilegpt_select_schema_repair,
     mobilegpt_compatible_xml,
 )
 
@@ -70,6 +71,84 @@ def test_mobilegpt_runtime_integrity_summary_returns_nonzero() -> None:
     assert _mobilegpt_runtime_integrity_error(
         "ValueError: mobilegpt_action_unsupported:unknown"
     ) is None
+
+
+def test_mobilegpt_select_preserves_native_semantic_subtask_names() -> None:
+    def native_check(self, response, available_subtasks):
+        del self
+        action_name = response["action"]["name"]
+        return any(
+            subtask["name"] == action_name for subtask in available_subtasks
+        )
+
+    select_agent_class = type("SelectAgent", (), {})
+    setattr(
+        select_agent_class,
+        "_SelectAgent__check_response_validity",
+        native_check,
+    )
+    install_mobilegpt_select_schema_repair(select_agent_class)
+    response = {
+        "action": {
+            "name": "type_text",
+            "parameters": {"text_to_type": "hello"},
+        }
+    }
+
+    accepted = select_agent_class()._SelectAgent__check_response_validity(
+        response,
+        [
+            {
+                "name": "type_text",
+                "description": "Enter text into the current field.",
+                "parameters": {"text_to_type": "Text to enter."},
+            }
+        ],
+    )
+
+    assert accepted is True
+    assert response["action"]["name"] == "type_text"
+
+
+def test_mobilegpt_select_does_not_synthesize_unknown_subtasks() -> None:
+    def native_check(self, response, available_subtasks):
+        del self
+        action_name = response["action"]["name"]
+        return any(
+            subtask["name"] == action_name for subtask in available_subtasks
+        )
+
+    select_agent_class = type("SelectAgent", (), {})
+    setattr(
+        select_agent_class,
+        "_SelectAgent__check_response_validity",
+        native_check,
+    )
+    install_mobilegpt_select_schema_repair(select_agent_class)
+    response = {
+        "action": {
+            "name": "invented_subtask",
+            "parameters": {"value": "example"},
+        }
+    }
+    available_subtasks = [
+        {
+            "name": "known_subtask",
+            "description": "A native semantic subtask.",
+            "parameters": {},
+        }
+    ]
+
+    accepted = select_agent_class()._SelectAgent__check_response_validity(
+        response,
+        available_subtasks,
+    )
+
+    assert accepted is False
+    assert "new_action" not in response
+    assert [subtask["name"] for subtask in available_subtasks] == [
+        "known_subtask"
+    ]
 
 
 def test_mobilegpt_xml_preserves_action_indices_and_indexes_structural_children() -> None:

@@ -2740,6 +2740,7 @@ def inspect_mobilegpt_memory(memory_root: str | Path) -> dict[str, Any]:
         "pretty.xml",
     }
     root_task_rows: list[dict[str, str]] = []
+    app_task_rows: list[tuple[str, dict[str, str]]] = []
     task_names: list[str] = []
     root_task_apps: list[str] = []
     app_task_names: list[str] = []
@@ -2752,6 +2753,11 @@ def inspect_mobilegpt_memory(memory_root: str | Path) -> dict[str, Any]:
     action_rows = 0
     non_finish_action_rows = 0
     action_file_rows: list[dict[str, Any]] = []
+    subtask_names_by_page: dict[tuple[str, str], set[str]] = {}
+    task_path_reference_count = 0
+    recallable_task_path_reference_count = 0
+    task_path_errors: list[dict[str, str]] = []
+    missing_task_path_subtasks: list[dict[str, str]] = []
 
     if root_task_file.is_file():
         try:
@@ -2777,6 +2783,7 @@ def inspect_mobilegpt_memory(memory_root: str | Path) -> dict[str, Any]:
         except Exception:
             rows = []
         task_rows += len(rows)
+        app_task_rows.extend((task_file.parent.name, row) for row in rows)
         app_task_names.extend(
             str(row.get("name") or "").strip()
             for row in rows
@@ -2816,6 +2823,66 @@ def inspect_mobilegpt_memory(memory_root: str | Path) -> dict[str, Any]:
         except Exception:
             rows = []
         subtask_rows += len(rows)
+        subtask_names_by_page[
+            (subtask_file.parents[2].name, subtask_file.parent.name)
+        ] = {
+            str(row.get("name") or "").strip()
+            for row in rows
+            if str(row.get("name") or "").strip()
+        }
+
+    native_primitive_subtasks = {"finish", "scroll_screen"}
+    for app_name, row in app_task_rows:
+        task_name = str(row.get("name") or "").strip()
+        raw_path = str(row.get("path") or "").strip()
+        try:
+            task_path = json.loads(raw_path)
+        except (TypeError, ValueError):
+            task_path_errors.append(
+                {
+                    "app": app_name,
+                    "task_name": task_name,
+                    "reason": "invalid_json",
+                }
+            )
+            continue
+        if not isinstance(task_path, dict):
+            task_path_errors.append(
+                {
+                    "app": app_name,
+                    "task_name": task_name,
+                    "reason": "path_not_object",
+                }
+            )
+            continue
+        for raw_page_index, raw_subtasks in task_path.items():
+            page_index = str(raw_page_index).strip()
+            if not isinstance(raw_subtasks, list):
+                task_path_errors.append(
+                    {
+                        "app": app_name,
+                        "task_name": task_name,
+                        "page_index": page_index,
+                        "reason": "subtasks_not_list",
+                    }
+                )
+                continue
+            page_subtasks = subtask_names_by_page.get((app_name, page_index), set())
+            for raw_subtask_name in raw_subtasks:
+                subtask_name = str(raw_subtask_name or "").strip()
+                task_path_reference_count += 1
+                if subtask_name in native_primitive_subtasks:
+                    continue
+                recallable_task_path_reference_count += 1
+                if not subtask_name or subtask_name not in page_subtasks:
+                    missing_task_path_subtasks.append(
+                        {
+                            "app": app_name,
+                            "task_name": task_name,
+                            "page_index": page_index,
+                            "subtask_name": subtask_name,
+                        }
+                    )
 
     for action_file in action_files:
         file_action_rows = 0
@@ -2881,6 +2948,10 @@ def inspect_mobilegpt_memory(memory_root: str | Path) -> dict[str, Any]:
         and len(action_files) == page_rows
         and len(screen_directories) == page_rows
         and complete_screen_directories == page_rows
+        and task_path_reference_count > 0
+        and recallable_task_path_reference_count > 0
+        and not task_path_errors
+        and not missing_task_path_subtasks
     )
 
     return {
@@ -2893,6 +2964,10 @@ def inspect_mobilegpt_memory(memory_root: str | Path) -> dict[str, Any]:
         "task_rows": task_rows,
         "app_task_names": app_task_names,
         "task_local_memory": task_local_memory,
+        "task_path_reference_count": task_path_reference_count,
+        "recallable_task_path_reference_count": recallable_task_path_reference_count,
+        "task_path_errors": task_path_errors,
+        "missing_task_path_subtasks": missing_task_path_subtasks,
         "page_file_count": len(page_files),
         "page_rows": page_rows,
         "page_indexes": sorted(page_indexes),

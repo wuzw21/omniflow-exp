@@ -13,8 +13,7 @@ from runlog_fixtures import (
 )
 
 from src.experiment import androidworld as pipeline
-from src.experiment import mobilegpt_source
-from src.experiment import preflight
+from src.experiment import mobilegpt_source, preflight
 from src.integrations.mobilegpt_runtime import _mobilegpt_chat_model
 
 
@@ -246,6 +245,31 @@ def test_mobilegpt_memory_inventory_rejects_incomplete_native_page(
     inventory = pipeline.inspect_mobilegpt_memory(memory)
 
     assert inventory["native_memory_complete"] is False
+
+
+def test_mobilegpt_memory_inventory_rejects_dangling_task_subtask(
+    tmp_path: Path,
+) -> None:
+    memory = tmp_path / "memory"
+    _write_mobilegpt_memory(memory)
+    task_file = memory / "com.android.settings" / "tasks.csv"
+    task_file.write_text(
+        'name,path\ntoggleBluetooth,"{'
+        '""0"": [""type_text""]}"\n',
+        encoding="utf-8",
+    )
+
+    inventory = pipeline.inspect_mobilegpt_memory(memory)
+
+    assert inventory["native_memory_complete"] is False
+    assert inventory["missing_task_path_subtasks"] == [
+        {
+            "app": "com.android.settings",
+            "task_name": "toggleBluetooth",
+            "page_index": "0",
+            "subtask_name": "type_text",
+        }
+    ]
 
 
 @pytest.mark.parametrize("official_success", (True, False))
