@@ -6,7 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 import xml.etree.ElementTree as ET
 
 from omniflow.core.trajectory import state_id as observation_state_id
@@ -32,6 +32,7 @@ def select_source_asset_revision(
     expected_schema_version: str = "",
     expected_source_method: str = "",
     environment_repair_reason: str = "",
+    candidate_validator: Callable[[Path, dict[str, Any]], bool] | None = None,
 ) -> Path:
     """Reuse the first frozen source asset or allocate a fresh revision path.
 
@@ -91,6 +92,10 @@ def select_source_asset_revision(
                         not source_method
                         or str(payload.get("source_method") or "").strip()
                         == source_method
+                    )
+                    and (
+                        candidate_validator is None
+                        or candidate_validator(candidate.resolve(), payload)
                     )
                 ):
                     matches.append(candidate.resolve())

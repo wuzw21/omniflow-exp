@@ -1315,6 +1315,41 @@ def test_source_revision_skips_incompatible_mobilegpt_memory_contract(
     assert selected == base / f"source_{expected[:12]}_r2"
 
 
+def test_source_revision_skips_frozen_asset_rejected_by_validator(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "mobilegpt_offline_retrieval"
+    expected = "2" * 64
+    frozen = base / f"source_{expected[:12]}"
+    frozen.mkdir(parents=True)
+    manifest = {
+        "schema_version": "omniflow.mobilegpt-native-cold-memory.v1",
+        "source_method": "mobilegpt_native_source_cold",
+        "source_model": "qwen3-vl-plus",
+        "source_run_log": {"sha256": expected},
+    }
+    (frozen / "cold_memory_manifest.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    validated: list[tuple[Path, dict]] = []
+
+    selected = select_source_asset_revision(
+        base,
+        manifest_name="cold_memory_manifest.json",
+        expected_source_sha256=expected,
+        expected_source_model="qwen3-vl-plus",
+        expected_schema_version="omniflow.mobilegpt-native-cold-memory.v1",
+        expected_source_method="mobilegpt_native_source_cold",
+        candidate_validator=lambda candidate, payload: (
+            validated.append((candidate, payload)) or False
+        ),
+    )
+
+    assert selected == base / f"source_{expected[:12]}_r2"
+    assert validated == [(frozen, manifest)]
+
+
 def test_source_revision_ignores_terminal_failure_from_old_method(
     tmp_path: Path,
 ) -> None:

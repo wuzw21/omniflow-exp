@@ -835,6 +835,30 @@ if lineage is not None:
     ):
         raise SystemExit(f"canonical_source_run_log_lineage_invalid:{sys.argv[5]}")
     compatible_source_sha256s.append(str(lineage.get("source_sha256") or ""))
+candidate_validator = None
+if sys.argv[8] == "omniflow.mobilegpt-native-cold-memory.v1":
+    from src.experiment.androidworld import validate_mobilegpt_adapted_memory
+
+    source_run_log = str(
+        source_row.get("retained_source_run_log")
+        or source_row.get("source_run_log")
+        or ""
+    ).strip()
+
+    def candidate_validator(candidate, _payload):
+        try:
+            validate_mobilegpt_adapted_memory(
+                candidate / "memory",
+                task_name=sys.argv[5],
+                source_seed=111,
+                source_run_log=source_run_log,
+                compatible_source_sha256s=compatible_source_sha256s,
+                expected_model=sys.argv[7],
+                expected_source_method=sys.argv[9],
+            )
+        except (OSError, TypeError, ValueError):
+            return False
+        return True
 try:
     selected = select_source_asset_revision(
         sys.argv[2],
@@ -845,6 +869,7 @@ try:
         expected_schema_version=sys.argv[8],
         expected_source_method=sys.argv[9],
         environment_repair_reason=sys.argv[6],
+        candidate_validator=candidate_validator,
     )
 except ValueError as error:
     message = str(error)
