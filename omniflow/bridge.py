@@ -18,7 +18,6 @@ from omniflow.core.model import (
     Observation,
     ToolCall,
 )
-from omniflow.core.trajectory import canonicalize_state
 from omniflow.functions.artifact import parse_function_artifact
 from omniflow.functions.compiler import compile_runlog_to_store
 from omniflow.functions.management import edit_function, enhance_function
@@ -602,7 +601,7 @@ class JsonLineBridge:
         _require_contract(
             body,
             {"function_id"},
-            {"function_id", "mode", "patch", "dry_run", "run_id"},
+            {"function_id", "mode", "patch", "dry_run", "run_id", "instruction"},
         )
         function_id = str(body.get("function_id") or "").strip()
         if not function_id:
@@ -685,6 +684,7 @@ class JsonLineBridge:
                     "function_id": function_id,
                     "run_log": run_log,
                     "dry_run": body.get("dry_run") is True,
+                    "instruction": str(body.get("instruction") or "").strip()[:2000],
                 },
             )
         except Exception as error:  # noqa: BLE001
@@ -753,6 +753,7 @@ class JsonLineBridge:
             function.to_dict(),
             run_log,
             complete_json,
+            instruction=str(body.get("instruction") or "").strip()[:2000],
         )
         dry_run = body.get("dry_run") is True
         if not dry_run:
@@ -1327,9 +1328,37 @@ def _state_from_observation(
         state["activity_name"] = str(value.activity_name)
     if canonical_display is not None:
         state["display"] = canonical_display
-    canonical = canonicalize_state(state)
+    canonical = _canonicalize_bridge_state(state)
     if include_xml and value.xml:
         canonical["xml"] = value.xml
+    return canonical
+
+
+def _canonicalize_bridge_state(value: dict[str, Any]) -> dict[str, Any]:
+    state_id = str(value.get("state_id") or "").strip()
+    if not state_id:
+        raise ValueError("bridge_state_id_required")
+    canonical: dict[str, Any] = {"state_id": state_id}
+    for field in ("package_name", "activity_name"):
+        item = value.get(field)
+        if item is not None:
+            canonical[field] = str(item)
+    display = value.get("display")
+    if display is not None:
+        if not isinstance(display, dict) or set(display) != {"width", "height"}:
+            raise ValueError("bridge_state_display_invalid")
+        width = display.get("width")
+        height = display.get("height")
+        if (
+            not isinstance(width, int)
+            or isinstance(width, bool)
+            or width <= 0
+            or not isinstance(height, int)
+            or isinstance(height, bool)
+            or height <= 0
+        ):
+            raise ValueError("bridge_state_display_invalid")
+        canonical["display"] = {"width": width, "height": height}
     return canonical
 
 
