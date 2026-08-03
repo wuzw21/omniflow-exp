@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import re
 import xml.etree.ElementTree as ET
@@ -42,18 +42,20 @@ _GLOBAL_CONTROL_MARKERS = (
     "菜单",
     "购物车",
 )
-_GROUP_ORDER = ("global", "goal", "visual", "other")
+_GROUP_ORDER = ("global", "goal", "goal_control", "visual", "other")
 _GROUP_HEADERS = {
     "global": "[global_controls]",
     "goal": "[goal_matches]",
+    "goal_control": "[goal_controls]",
     "visual": "[visual_controls]",
     "other": "[other_context]",
 }
 _GROUP_LIMITS = {
-    "global": 8,
-    "goal": 12,
-    "visual": 6,
-    "other": 4,
+    "global": 6,
+    "goal": 10,
+    "goal_control": 8,
+    "visual": 4,
+    "other": 2,
 }
 
 
@@ -109,6 +111,11 @@ def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection
         ]
         if not semantic_values and not actions:
             continue
+        descendant_context = (
+            _descendant_context(element) if actions and not visible_semantic_values else ""
+        )
+        if descendant_context:
+            compact["c"] = descendant_context
         bounds = str(element.attrib.get("bounds") or "").strip()
         parsed_bounds = _parse_bounds(bounds)
         if bounds:
@@ -118,7 +125,7 @@ def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection
         checked = str(element.attrib.get("checked") or "").strip().lower()
         if checked in {"true", "false"}:
             compact["checked"] = checked == "true"
-        candidate_terms = _terms(" ".join(semantic_values))
+        candidate_terms = _terms(" ".join((*semantic_values, descendant_context)))
         overlap = goal_terms.intersection(candidate_terms)
         goal_match = bool(overlap)
         score = len(overlap) * 1000
@@ -131,7 +138,7 @@ def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection
             group = "goal"
         elif visual_control:
             group = "visual"
-            score += 200
+            score += 200 + _visual_specificity(parsed_bounds)
         else:
             group = "other"
         score += 400 if "edit" in actions or "focus" in actions else 0
@@ -147,6 +154,7 @@ def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection
                 bounds=parsed_bounds,
             )
         )
+    candidates = _promote_goal_controls(candidates)
     selected = _select_candidates(candidates, max_nodes=max_nodes)
     text = _render_candidates(selected)
     return UIProjection(
@@ -158,9 +166,36 @@ def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection
             marker in str(goal or "").casefold() for marker in _VISUAL_GOAL_MARKERS
         ),
         visual_candidate_count=sum(
-            1 for item in selected if item.group == "visual"
+            1 for item in selected if item.group in {"goal_control", "visual"}
         ),
     )
+
+
+def _promote_goal_controls(candidates: list[_Candidate]) -> list[_Candidate]:
+    goal_bounds = [
+        item.bounds
+        for item in candidates
+        if item.group == "goal" and item.bounds is not None
+    ]
+    if not goal_bounds:
+        return candidates
+    promoted: list[_Candidate] = []
+    for item in candidates:
+        if item.group != "visual" or item.bounds is None:
+            promoted.append(item)
+            continue
+        proximity = min(_rectangle_gap(item.bounds, target) for target in goal_bounds)
+        if proximity > 180:
+            promoted.append(item)
+            continue
+        promoted.append(
+            replace(
+                item,
+                group="goal_control",
+                score=item.score + 2000 - proximity * 5,
+            )
+        )
+    return promoted
 
 
 def _select_candidates(
@@ -238,6 +273,46 @@ def _is_global_control(semantic_values: list[str], actions: list[str]) -> bool:
         return False
     semantic_text = " ".join(semantic_values).casefold()
     return any(marker in semantic_text for marker in _GLOBAL_CONTROL_MARKERS)
+
+
+def _descendant_context(element: ET.Element) -> str:
+    values: list[str] = []
+    for descendant in element.iter():
+        if descendant is element:
+            continue
+        for attribute in ("text", "content-desc", "hint-text"):
+            value = str(descendant.attrib.get(attribute) or "").strip()
+            if value and value not in values:
+                values.append(value)
+                if len(values) == 2:
+                    break
+        if len(values) == 2:
+            break
+    return " | ".join(values)[:80]
+
+
+def _visual_specificity(bounds: tuple[int, int, int, int] | None) -> int:
+    if bounds is None:
+        return 0
+    left, top, right, bottom = bounds
+    width = right - left
+    height = bottom - top
+    longest = max(width, height)
+    score = 500 if longest <= 160 else 300 if longest <= 320 else 100 if longest <= 640 else 0
+    if min(width, height) / longest >= 0.7:
+        score += 100
+    return score
+
+
+def _rectangle_gap(
+    left_bounds: tuple[int, int, int, int],
+    right_bounds: tuple[int, int, int, int],
+) -> int:
+    left_left, left_top, left_right, left_bottom = left_bounds
+    right_left, right_top, right_right, right_bottom = right_bounds
+    horizontal = max(right_left - left_right, left_left - right_right, 0)
+    vertical = max(right_top - left_bottom, left_top - right_bottom, 0)
+    return horizontal + vertical
 
 
 def _parse_bounds(value: str) -> tuple[int, int, int, int] | None:

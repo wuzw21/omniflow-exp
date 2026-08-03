@@ -55,9 +55,34 @@ def test_projection_reserves_global_and_unlabeled_visual_controls() -> None:
     assert projection.text.index('"d":"搜索"') < projection.text.index(
         '"t":"拿铁咖啡 0"'
     )
-    assert "[visual_controls]" in projection.text
+    assert "[goal_controls]" in projection.text
     assert '"v":"A' in projection.text
     assert '"b":"[910,340][990,420]"' in projection.text
+
+
+def test_projection_promotes_bottom_control_near_goal_text() -> None:
+    generic_controls = "".join(
+        _node(
+            bounds=f"[20,{220 + index * 35}][100,{280 + index * 35}]",
+            clickable=True,
+        )
+        for index in range(35)
+    )
+    xml = (
+        f"<hierarchy>{generic_controls}"
+        '<node text="摩卡拿铁" bounds="[113,1933][359,2039]" />'
+        '<node id="add-latte" bounds="[299,2041][359,2101]" '
+        'clickable="true" /></hierarchy>'
+    )
+
+    projection = project_ui(xml, "点一杯拿铁")
+
+    assert projection.selected_count == 30
+    assert "[goal_controls]" in projection.text
+    assert '"i":"add-latte"' in projection.text
+    assert projection.text.index('"t":"摩卡拿铁"') < projection.text.index(
+        '"i":"add-latte"'
+    )
 
 
 def test_vlm_turn_keeps_visual_evidence_when_xml_matches_goal() -> None:
