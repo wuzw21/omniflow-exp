@@ -6,11 +6,184 @@ from omniflow.core.config import PluginSet
 from omniflow.core.model import (
     Action,
     CheckerContext,
+    Function,
+    FunctionStep,
     Observation,
     TransferResult,
 )
 from omniflow.runtime.checker import default_checker
-from omniflow.runtime.execution import execute_action, prepare_action
+from omniflow.runtime.execution import execute_action, execute_function, prepare_action
+
+
+def test_function_uses_catalog_state_when_host_state_is_missing(monkeypatch) -> None:
+    import omniflow.runtime.execution as execution
+
+    monkeypatch.setattr(execution, "_ACTION_SETTLE_SECONDS", 0.0)
+    source = Observation(
+        xml='<hierarchy><node text="Search" bounds="[0,0][100,100]"/></hierarchy>',
+        package_name="com.example",
+    )
+    current = Observation(
+        xml='<hierarchy><node text="Search" bounds="[0,0][100,100]"/></hierarchy>',
+        package_name="com.example",
+    )
+    transferred_sources: list[Observation] = []
+
+    async def transfer(action, observation, source_state):
+        transferred_sources.append(source_state)
+        return TransferResult(action, reason="mapped")
+
+    class Host:
+        def get_state(self, _source_state_id):
+            return None
+
+        def act(self, _action):
+            return {"success": True}
+
+        def observe(self, **_kwargs):
+            return current
+
+    function = Function(
+        function_id="catalog_function",
+        name="catalog function",
+        description="catalog state fallback",
+        steps=(
+            FunctionStep(0, Action("click", {"x": 50, "y": 50}), "source-1"),
+        ),
+        schema_version="omniflow.function.v2",
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+        agent_visible=True,
+    )
+
+    result = asyncio.run(
+        execute_function(
+            function,
+            host=Host(),
+            plugins=PluginSet(transfer=transfer),
+            observation=current,
+            state_loader=lambda state_id: source if state_id == "source-1" else None,
+        )
+    )
+
+    assert result.success is True
+    assert transferred_sources == [source]
+
+
+def test_delayed_checker_recovery_retries_the_same_function_step(monkeypatch) -> None:
+    import omniflow.runtime.execution as execution
+
+    monkeypatch.setattr(execution, "_ACTION_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(execution, "_TRANSFER_REOBSERVE_POLL_SECONDS", 0.0)
+    monkeypatch.setattr(execution, "_TRANSFER_REOBSERVE_MAX_ATTEMPTS", 1)
+    source = Observation(
+        xml='<hierarchy><node text="购买" bounds="[0,0][100,100]"/></hierarchy>',
+        package_name="com.example",
+    )
+    initial = Observation(
+        xml='<hierarchy><node text="加载中" bounds="[0,0][100,100]"/></hierarchy>',
+        package_name="com.example",
+    )
+    advertisement = Observation(
+        xml='<hierarchy><node text="跳过广告" bounds="[0,0][100,100]"/></hierarchy>',
+        package_name="com.example",
+    )
+    target = Observation(
+        xml='<hierarchy><node text="购买" bounds="[0,0][100,100]"/></hierarchy>',
+        package_name="com.example",
+    )
+    transfer_calls = 0
+
+    async def transfer(action, observation, _source_state):
+        nonlocal transfer_calls
+        transfer_calls += 1
+        if "购买" not in str(observation.xml):
+            return TransferResult(
+                None,
+                reason="omnitransfer_target_semantic_missing",
+            )
+        return TransferResult(action, reason="mapped")
+
+    class Host:
+        def __init__(self) -> None:
+            self.observations = [advertisement, target, target]
+            self.actions: list[Action] = []
+
+        def act(self, action):
+            self.actions.append(action)
+            return {"success": True}
+
+        def observe(self, **_kwargs):
+            return self.observations.pop(0)
+
+    function = Function(
+        function_id="recovery_function",
+        name="recovery function",
+        description="retry after delayed ad",
+        steps=(),
+        schema_version="omniflow.function.v2",
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+        checker_rules=(
+            {
+                "schema_version": "omniflow.checker_rule.v1",
+                "trigger": 'text_contains("跳过广告")',
+                "source_state_id": "checker-anchor",
+                "action": {"tool": "press_key", "args": {"key": "back"}},
+            },
+        ),
+        agent_visible=True,
+    )
+    host = Host()
+
+    result = asyncio.run(
+        execute_action(
+            Action("click", {"x": 50, "y": 50}),
+            observation=initial,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            function=function,
+            source_state=source,
+        )
+    )
+
+    assert result.success is True
+    assert host.actions == [
+        Action("press_key", {"key": "back"}),
+        Action("click", {"x": 50, "y": 50}),
+    ]
+    assert transfer_calls == 3
+    assert result.executed_steps[0].origin == "checker"
+
+
+def test_payment_confirmation_screen_blocks_interactive_action() -> None:
+    class Host:
+        def act(self, _action):
+            raise AssertionError("payment screen action must not be dispatched")
+
+    result = asyncio.run(
+        execute_action(
+            Action("click", {"x": 900, "y": 2200}),
+            observation=Observation(
+                xml='<hierarchy><node text="立即支付" bounds="[0,0][100,100]"/></hierarchy>',
+                package_name="com.example",
+            ),
+            host=Host(),
+            plugins=PluginSet(),
+        )
+    )
+
+    assert result.success is False
+    assert result.error == "payment_confirmation_blocked"
+    assert result.origin == "blocked"
 
 
 def test_global_actions_skip_page_recovery_checker() -> None:

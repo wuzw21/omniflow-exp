@@ -22,7 +22,7 @@ dependencies = [
 llm = ["openai>=1.99.9"]
 
 [tool.setuptools.package-data]
-"*" = ["*.json", "*.yaml", "*.yml", "*.md"]
+"*" = ["*.json", "*.yaml", "*.yml", "*.md", "*.b64"]
 
 [tool.setuptools]
 include-package-data = false

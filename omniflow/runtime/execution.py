@@ -7,7 +7,7 @@ import inspect
 import json
 import math
 import re
-from typing import Any
+from typing import Any, Callable
 import unicodedata
 import xml.etree.ElementTree as ET
 
@@ -48,6 +48,7 @@ _TRANSFER_REOBSERVE_REASONS = frozenset(
 # threshold.
 _ALIGNMENT_MIN_PROBABILITY = 0.0
 _ALIGNMENT_SOURCE_SKIP_PENALTY = math.log(3.0)
+StateLoader = Callable[[str], Any]
 
 
 async def execute_function(
@@ -61,6 +62,7 @@ async def execute_function(
     trace_start_index: int = 0,
     resume_metadata: dict[str, Any] | None = None,
     installed_packages: frozenset[str] | None = None,
+    state_loader: StateLoader | None = None,
 ) -> RunResult:
     current = observation or Observation.from_value(
         await _await(host.observe(xml=True, app_info=True))
@@ -99,7 +101,11 @@ async def execute_function(
                     "next_step_index": function_step.step_index,
                 },
             )
-        source_state = await _load_state(host, function_step.source_state_id)
+        source_state = await _load_state(
+            host,
+            function_step.source_state_id,
+            state_loader=state_loader,
+        )
         step = await execute_action(
             action,
             observation=current,
@@ -108,6 +114,7 @@ async def execute_function(
             function=function,
             source_state=source_state,
             installed_packages=installed_packages,
+            state_loader=state_loader,
         )
         executed += step.actions_executed
         trace.extend(
@@ -160,6 +167,7 @@ async def align_function_resume(
     plugins: PluginSet,
     observations: list[Observation],
     start_step_index: int,
+    state_loader: StateLoader | None = None,
 ) -> dict[str, Any] | None:
     transfer_fn = plugins.transfer
     if transfer_fn is None or len(observations) < 2:
@@ -173,7 +181,11 @@ async def align_function_resume(
 
     probabilities: list[list[float | None]] = []
     for function_step in candidate_steps:
-        source_state = await _load_state(host, function_step.source_state_id)
+        source_state = await _load_state(
+            host,
+            function_step.source_state_id,
+            state_loader=state_loader,
+        )
         row: list[float | None] = []
         for observation in observations:
             if source_state is None:
@@ -305,8 +317,19 @@ async def execute_action(
     function: Function | None = None,
     source_state: Observation | None = None,
     installed_packages: frozenset[str] | None = None,
+    state_loader: StateLoader | None = None,
+    _allow_delayed_checker_retry: bool = True,
 ) -> StepResult:
     function_id = function.id if function is not None else None
+    if _payment_confirmation_visible(observation, action):
+        return StepResult(
+            False,
+            action=action,
+            before=observation,
+            error="payment_confirmation_blocked",
+            origin="blocked",
+            function_id=function_id,
+        )
     executed_steps: list[StepResult] = []
     recovery_action: Action | None = None
     recovery_trigger: str | None = None
@@ -317,7 +340,11 @@ async def execute_action(
         )
         if recovery is not None:
             recovery_trigger = recovery.trigger
-            recovery_source_state = await _load_state(host, recovery.source_state_id)
+            recovery_source_state = await _load_state(
+                host,
+                recovery.source_state_id,
+                state_loader=state_loader,
+            )
             recovery_decision = await prepare_action(
                 recovery.action,
                 observation=observation,
@@ -408,6 +435,40 @@ async def execute_action(
         plugins=plugins,
         source_state=source_state,
     )
+    if (
+        _allow_delayed_checker_retry
+        and function is not None
+        and decision.kind == "block"
+    ):
+        try:
+            delayed_recovery = match_checker_rule(
+                CheckerContext(source_state, observation, action),
+                function.checker_rules,
+            )
+        except Exception:  # noqa: BLE001
+            delayed_recovery = None
+        if delayed_recovery is not None:
+            retried = await execute_action(
+                action,
+                observation=observation,
+                host=host,
+                plugins=plugins,
+                function=function,
+                source_state=source_state,
+                installed_packages=installed_packages,
+                state_loader=state_loader,
+                _allow_delayed_checker_retry=False,
+            )
+            return replace(
+                retried,
+                detail={
+                    **retried.detail,
+                    "semantic_step_retry": {
+                        "trigger": delayed_recovery.trigger,
+                        "initial_reason": decision.reason,
+                    },
+                },
+            )
     if decision.kind == "block" or decision.action is None:
         blocked = StepResult(
             False,
@@ -501,6 +562,29 @@ def _transfer_decision_needs_reobservation(decision: ActionDecision) -> bool:
     return (
         decision.action is not None
         and "coordinate_stretch_fallback" in mapping_mode
+    )
+
+
+def _payment_confirmation_visible(
+    observation: Observation,
+    action: Action,
+) -> bool:
+    if action.tool not in {"click", "long_press", "input_text", "swipe"}:
+        return False
+    normalized = " ".join(str(observation.xml or "").lower().split())
+    return any(
+        marker in normalized
+        for marker in (
+            "确认支付",
+            "立即支付",
+            "去支付",
+            "支付密码",
+            "付款密码",
+            "收银台",
+            "pay now",
+            "confirm payment",
+            "payment password",
+        )
     )
 
 
@@ -1095,13 +1179,32 @@ def _display_detail(value: Any) -> dict[str, float]:
     return {"width": width, "height": height}
 
 
-async def _load_state(host: Host, source_state_id: str | None) -> Observation | None:
+async def _load_state(
+    host: Host,
+    source_state_id: str | None,
+    *,
+    state_loader: StateLoader | None = None,
+) -> Observation | None:
     if not source_state_id:
         return None
-    loader = getattr(host, "get_state", None)
-    if not callable(loader):
-        return None
-    return Observation.from_value(await _await(loader(source_state_id)))
+    host_loader = getattr(host, "get_state", None)
+    if callable(host_loader):
+        try:
+            loaded = Observation.from_value(
+                await _await(host_loader(source_state_id))
+            )
+        except Exception:  # noqa: BLE001
+            loaded = None
+        if loaded is not None and (loaded.package_name or loaded.xml):
+            return loaded
+    if state_loader is not None:
+        loaded = Observation.from_value(await _await(state_loader(source_state_id)))
+        if loaded.package_name or loaded.xml:
+            return loaded
+    # A referenced-but-missing source state must remain a transfer failure.  It
+    # must never become ``None`` because ``None`` means that replay can safely
+    # skip transfer (only valid for actions recorded without a source state).
+    return Observation(extra={"state_id": source_state_id})
 
 
 def _relative_source_point(

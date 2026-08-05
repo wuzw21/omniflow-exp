@@ -10,6 +10,7 @@ import tempfile
 import time
 from typing import Any, TextIO
 
+from omniflow.catalog import CatalogSnapshot, load_catalog, load_default_catalog
 from omniflow.core.config import OmniFlowConfig, RuntimeSettings
 from omniflow.core.model import (
     Action,
@@ -62,10 +63,12 @@ class JsonLineBridge:
         *,
         reader: TextIO = sys.stdin,
         writer: TextIO = sys.stdout,
+        catalog: CatalogSnapshot | None = None,
     ):
         self.reader = reader
         self.writer = writer
-        self.flow = OmniFlow(store_path)
+        self.catalog = catalog
+        self.flow = OmniFlow(store_path, catalog=catalog)
         self._host_call_index = 0
 
     def serve_forever(self) -> None:
@@ -275,6 +278,7 @@ class JsonLineBridge:
             planner=planner,
             installed_apps=installed_apps,
             config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=max_steps)),
+            catalog=self.catalog,
         )
         return _run_result(flow.run(goal), body=body, function=None)
 
@@ -296,6 +300,7 @@ class JsonLineBridge:
             host=host,
             installed_apps=host.installed_apps(),
             config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=max_steps)),
+            catalog=self.catalog,
         )
         function = flow.store.get_function(tool_call.name)
         result = flow.call_tool(tool_call)
@@ -1416,9 +1421,20 @@ def _bridge_identity() -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--store", required=True)
+    parser.add_argument(
+        "--catalog",
+        help="Catalog release directory, or 'default' for the packaged release.",
+    )
     parser.add_argument("--once", action="store_true")
     arguments = parser.parse_args(argv)
-    bridge = JsonLineBridge(arguments.store)
+    catalog = None
+    if arguments.catalog:
+        catalog = (
+            load_default_catalog()
+            if arguments.catalog == "default"
+            else load_catalog(arguments.catalog)
+        )
+    bridge = JsonLineBridge(arguments.store, catalog=catalog)
     if arguments.once:
         bridge.serve_once()
     else:

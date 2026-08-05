@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from omniflow.catalog import CatalogSnapshot
 from omniflow.core.config import Experiment, OmniFlowConfig
 from omniflow.core.model import (
     Action,
@@ -47,9 +48,14 @@ class OmniFlow:
         function_router: FunctionRouter | None = None,
         installed_apps: dict[str, str] | None = None,
         config: OmniFlowConfig | None = None,
+        catalog: CatalogSnapshot | None = None,
     ):
         self.config = config or OmniFlowConfig()
-        self.store = FunctionStore(store_path)
+        self.catalog = catalog
+        self.store = FunctionStore(
+            store_path,
+            seed_functions=(catalog.functions.values() if catalog is not None else ()),
+        )
         self.host = host
         self.planner = planner
         self.function_router = function_router
@@ -194,6 +200,9 @@ class OmniFlow:
                     observation=observation,
                     max_actions=self.config.runtime.max_steps,
                     installed_packages=self.installed_packages,
+                    state_loader=(
+                        self.catalog.get_state if self.catalog is not None else None
+                    ),
                 )
             actions_executed += replay.actions_executed
             trace.extend(replay.detail.get("trace") or ())
@@ -503,6 +512,9 @@ class OmniFlow:
                     ),
                     trace_start_index=len(trace),
                     installed_packages=self.installed_packages,
+                    state_loader=(
+                        self.catalog.get_state if self.catalog is not None else None
+                    ),
                 )
                 actions_executed += replay.actions_executed
                 replay_trace = list(replay.detail.get("trace") or ())
@@ -668,6 +680,9 @@ class OmniFlow:
                     plugins=self.plugins,
                     observations=fallback_observations,
                     start_step_index=failed_step_index,
+                    state_loader=(
+                        self.catalog.get_state if self.catalog is not None else None
+                    ),
                 )
                 if alignment is not None:
                     replay = await execute_function(
@@ -683,6 +698,9 @@ class OmniFlow:
                         trace_start_index=len(trace),
                         resume_metadata=alignment,
                         installed_packages=self.installed_packages,
+                        state_loader=(
+                            self.catalog.get_state if self.catalog is not None else None
+                        ),
                     )
                     actions_executed += replay.actions_executed
                     replay_trace = list(replay.detail.get("trace") or ())

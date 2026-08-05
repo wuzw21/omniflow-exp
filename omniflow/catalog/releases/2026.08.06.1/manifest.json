@@ -1,0 +1,17 @@
+{
+  "schema_version": "omniflow.catalog-manifest.v1",
+  "release_id": "2026.08.06.1",
+  "description": "Verified starter catalog for the foolproof offline/online runtime.",
+  "acceptance": {
+    "device_model": "PJE110",
+    "android_version": "16",
+    "run_id": "tool-b6379d89-a056-434a-84ef-00b3d5d1bcb3",
+    "function_id": "order_beverage_meituan",
+    "steps_succeeded": 9,
+    "stops_before_submit_order": true
+  },
+  "files": {
+    "function_store.json": "5e7b5b61b879255ad119fe5a682c61432fd1e10075b04ae50d6b0a9e22600142",
+    "states.json.xz.b64": "a13506bb7cdf4f7593d33fbb43cd22103af3061a09c18a40bc3a6e22e50c36de"
+  }
+}

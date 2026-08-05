@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Iterable
 
 from omniflow.core.model import Function
 from omniflow.functions.artifact import (
@@ -13,11 +14,17 @@ STORE_VERSION = "omniflow.store.v2"
 
 
 class FunctionStore:
-    def __init__(self, path: str | Path):
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        seed_functions: Iterable[Function] = (),
+    ):
         self.path = Path(path)
         self.functions: dict[str, Function] = {}
         self.load_errors: dict[str, str] = {}
         self._load()
+        self._seed(seed_functions)
 
     def list_functions(
         self,
@@ -104,3 +111,14 @@ class FunctionStore:
             loaded[function.id] = function
         self.functions = loaded
         self.load_errors = load_errors
+
+    def _seed(self, seed_functions: Iterable[Function]) -> None:
+        changed = False
+        for function in seed_functions:
+            validate_function_artifact(function)
+            if function.id in self.functions:
+                continue
+            self.functions[function.id] = function
+            changed = True
+        if changed:
+            self.save()
