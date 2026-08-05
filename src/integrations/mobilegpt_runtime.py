@@ -84,6 +84,7 @@ def install_mobilegpt_memory_only_guard(
     _guard_fallback(derive_agent_class, "derive", "derive")
 
     original_get_next_action = mobilegpt_class.get_next_action
+    finish_name = f"_{mobilegpt_class.__name__}__finish_task"
 
     def _get_next_action(self, *args, **kwargs):
         try:
@@ -103,7 +104,10 @@ def install_mobilegpt_memory_only_guard(
                     ),
                 }
             )
-            return {"name": "finish", "parameters": {}}
+            finish_task = getattr(self, finish_name, None)
+            if not callable(finish_task):
+                raise RuntimeError("mobilegpt_memory_only_finish_unavailable")
+            return finish_task()
 
     mobilegpt_class.get_next_action = _get_next_action
     mobilegpt_class._omniflow_memory_only_guard_installed = True

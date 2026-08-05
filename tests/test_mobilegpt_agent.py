@@ -174,6 +174,10 @@ def test_mobilegpt_memory_only_guard_stops_instead_of_calling_fallback(
             self.instruction = "Use only recalled memory."
             self.current_page_index = 3
             self.current_subtask = {"name": "known_subtask"}
+            self.finished = False
+
+        def __finish_task(self):
+            self.finished = True
 
         def get_next_action(self):
             if self.stage == "explore":
@@ -193,10 +197,9 @@ def test_mobilegpt_memory_only_guard_stops_instead_of_calling_fallback(
     )
 
     for stage in ("explore", "select", "derive"):
-        assert MobileGPT(stage).get_next_action() == {
-            "name": "finish",
-            "parameters": {},
-        }
+        agent = MobileGPT(stage)
+        assert agent.get_next_action() is None
+        assert agent.finished is True
 
     events = [json.loads(line) for line in stats_path.read_text().splitlines()]
     assert [event["stage"] for event in events] == [
