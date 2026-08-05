@@ -790,6 +790,8 @@ def _mock_episode_sample(
     *,
     limit_episodes: int,
 ) -> list[tuple[_BaselineTrace, _BaselineTrace, dict[int, int], dict[int, int]]]:
+    if limit_episodes >= len(pairs):
+        return list(pairs)
     by_task: dict[
         str,
         list[tuple[_BaselineTrace, _BaselineTrace, dict[int, int], dict[int, int]]],
