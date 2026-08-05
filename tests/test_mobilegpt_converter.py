@@ -396,6 +396,40 @@ def test_direct_conversion_uses_runlog_actions_without_semantic_agents(
     assert result["official_reader_validation"]["source_direct_hit_count"] == 2
 
 
+def test_direct_conversion_grounds_container_click_to_visible_child(
+    tmp_path: Path,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "click", "x": 50, "y": 50}],
+        forests=[
+            '<hierarchy><node clickable="true" bounds="[0,0][100,100]">'
+            '<node text="task.html" bounds="[0,0][100,50]" />'
+            '<node text="4.77 kB" bounds="[0,50][100,100]" />'
+            "</node></hierarchy>"
+        ],
+    )
+    memory = tmp_path / "memory"
+    audit = tmp_path / "audit.json"
+
+    result = convert_runlog_to_mobilegpt_memory(
+        source_run_log=source,
+        mobilegpt_root=MOBILEGPT_ROOT,
+        memory_root=memory,
+        stats_path=tmp_path / "stats.jsonl",
+        audit_path=audit,
+        model="unused-offline",
+        embedding_provider=lambda _screen: [0.25, 0.75],
+    )
+
+    payload = json.loads(audit.read_text(encoding="utf-8"))
+    row = payload["validation_rows"][0]
+    assert row["selected_subtask"]["parameters"] == {
+        "target_text": "task.html"
+    }
+    assert result["official_reader_validation"]["source_direct_hit_count"] == 1
+
+
 def test_conversion_grounds_coordinate_free_input_to_focused_field(
     tmp_path: Path,
 ) -> None:

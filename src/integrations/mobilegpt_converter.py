@@ -690,29 +690,83 @@ def _parameter_schema(parameters: dict[str, str]) -> dict[str, str]:
     }
 
 
+def _element_semantic_label(element: ET.Element | None) -> str:
+    if element is None:
+        return ""
+    for candidate in element.iter():
+        for value in (
+            candidate.text,
+            candidate.get("text"),
+            candidate.get("description"),
+        ):
+            label = str(value or "").strip()
+            if label:
+                return label
+    return ""
+
+
 def _direct_subtask_from_runlog(
     transition: _RunLogTransition,
+    parsed_xml: str,
+    encoded_xml: str,
+    instruction: str,
     task_parameters: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Describe one verified source transition in MobileGPT's subtask schema."""
 
     action_type = _action_type(transition.action)
     name = f"source_step_{transition.step_index:03d}_{action_type}"
-    parameter_values = _parameter_values(task_parameters)
+    target: ET.Element | None = None
+    if action_type in {"click", "double_tap", "input_text", "long_press"}:
+        target = _target_element(
+            transition.action,
+            parsed_xml,
+            step_index=transition.step_index,
+            source_forest=transition.forest,
+        )
+    parameter_values = _action_parameter_bindings(
+        transition.action,
+        target,
+        task_parameters,
+    )
+    parameter_descriptions = _parameter_schema(parameter_values)
+    target_label = _element_semantic_label(target)
+    if target_label and target_label not in parameter_values.values():
+        parameter_values["target_text"] = target_label
+        parameter_descriptions["target_text"] = (
+            "Visible text or content description of the UI target"
+        )
+    input_text = str(transition.action.get("text") or "").strip()
+    if (
+        action_type == "input_text"
+        and input_text
+        and input_text not in parameter_values.values()
+    ):
+        parameter_values["input_text"] = input_text
+        parameter_descriptions["input_text"] = "Text to enter into the UI target"
     metadata = {
         "name": name,
         "description": (
             f"Execute verified source transition {transition.step_index}: "
             f"{action_type}"
         ),
-        "parameters": _parameter_schema(parameter_values),
+        "parameters": parameter_descriptions,
     }
     selected = {
         "name": name,
         "description": metadata["description"],
         "parameters": parameter_values,
     }
-    return metadata, selected, {}
+    example = {
+        "instruction": instruction,
+        "response": {
+            "action": selected,
+            "reasoning": "Compiled from a verified successful source transition.",
+            "speak": "",
+        },
+        "screen": encoded_xml,
+    }
+    return metadata, selected, example
 
 
 def _mobilegpt_action_from_runlog(
@@ -797,15 +851,7 @@ def _mobilegpt_action_from_runlog(
             },
             generalization_screen,
         )
-    label = ""
-    if target is not None:
-        label = str(
-            target.text
-            or target.get("text")
-            or target.get("description")
-            or target.get("id")
-            or ""
-        ).strip()
+    label = _element_semantic_label(target)
     return converted, bindings, label
 
 
@@ -1393,6 +1439,9 @@ def convert_runlog_to_mobilegpt_memory(
             else:
                 subtask, selected_subtask, example = _direct_subtask_from_runlog(
                     transition,
+                    parsed_xml,
+                    encoded_xml,
+                    trajectory["instruction"],
                     trajectory["task_parameters"],
                 )
                 page["available_subtasks"].append(subtask)
