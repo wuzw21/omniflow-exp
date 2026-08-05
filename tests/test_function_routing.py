@@ -167,6 +167,7 @@ class SequencePlanner(FinishingPlanner):
         _installed_apps: dict[str, str],
     ) -> ToolCall:
         self.visible_function_ids.append(tuple(function.id for function in functions))
+        self.observations.append(observation)
         self.previous_action_errors.append(
             observation.extra.get("previous_action_error")
         )
@@ -257,6 +258,28 @@ def test_run_routes_recalled_function_before_gui_planner(tmp_path) -> None:
     assert "Function `complete_run_turn_bluetooth_on`" in str(
         planner.observations[0].extra.get("execution_history")
     )
+    assert planner.observations[0].extra["function_execution"] == {
+        "schema_version": "omniflow.function-execution-evidence.v1",
+        "function_id": function_id,
+        "function_name": "Turn bluetooth on",
+        "function_description": "Complete the exact goal: turn bluetooth on.",
+        "replay_status": "actions_succeeded",
+        "official_validator_status": "pending",
+        "steps": [
+            {
+                "step_index": 0,
+                "before_state_id": "state_0",
+                "after_state_id": "state_1",
+                "tool": "open_app",
+                "success": True,
+            }
+        ],
+        "final_observation": {
+            "state_id": "state_1",
+            "package_name": "com.android.settings",
+            "activity_name": "MainActivity",
+        },
+    }
     assert result.detail["function_resolution"] == {
         "candidate_count": 1,
         "candidate_function_ids": [function_id],
@@ -414,6 +437,29 @@ def test_transfer_failure_falls_back_without_replaying_source_coordinates(
     assert all(action.tool != "click" for action in host.actions)
     assert planner.visible_function_ids == [(), ()]
     assert planner.previous_action_errors[0] == "omnitransfer_missing_target_page"
+    assert planner.observations[0].extra["function_execution"] == {
+        "schema_version": "omniflow.function-execution-evidence.v1",
+        "function_id": function_id,
+        "function_name": "Turn bluetooth on",
+        "function_description": "Complete the exact goal: turn bluetooth on.",
+        "replay_status": "actions_failed",
+        "official_validator_status": "pending",
+        "steps": [
+            {
+                "step_index": 0,
+                "before_state_id": "state_0",
+                "after_state_id": "state_0",
+                "tool": "click",
+                "success": False,
+                "error": "omnitransfer_missing_target_page",
+            }
+        ],
+        "final_observation": {
+            "state_id": "state_0",
+            "package_name": "com.android.launcher",
+            "activity_name": "MainActivity",
+        },
+    }
 
 
 def test_vlm_history_blocks_successful_repeat_on_same_logical_ui_state(
@@ -633,6 +679,20 @@ def test_vlm_planner_sends_execution_history_to_model() -> None:
                         }
                     ],
                     "execution_history": "1. [Planner] Clicked the item successfully.",
+                    "function_execution": {
+                        "schema_version": (
+                            "omniflow.function-execution-evidence.v1"
+                        ),
+                        "function_id": "add_item",
+                        "replay_status": "actions_succeeded",
+                        "official_validator_status": "pending",
+                        "steps": [],
+                        "final_observation": {
+                            "state_id": "state_after",
+                            "package_name": "com.example.shop",
+                            "activity_name": "CartActivity",
+                        },
+                    },
                 }
             ),
             (),
@@ -643,6 +703,14 @@ def test_vlm_planner_sends_execution_history_to_model() -> None:
     payload = json.loads(completions.requests[0]["messages"][1]["content"][0]["text"])
     assert payload["screen_context"]["recent_actions"][0]["tool"] == "click"
     assert payload["screen_context"]["execution_history"].startswith("1.")
+    assert payload["screen_context"]["function_execution"][
+        "official_validator_status"
+    ] == "pending"
+    assert payload["screen_context"]["function_execution"]["final_observation"] == {
+        "state_id": "state_after",
+        "package_name": "com.example.shop",
+        "activity_name": "CartActivity",
+    }
     assert "must not be issued again" in payload["history_policy"]
 
 

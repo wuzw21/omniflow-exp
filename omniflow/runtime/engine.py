@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import inspect
+import json
 from pathlib import Path
 from typing import Any
 
@@ -392,11 +392,25 @@ class OmniFlow:
                 if trace
                 else None
             )
+            evidence_function = completed_function or (
+                bound_function if failed_function_id is not None else None
+            )
+            function_execution = (
+                _function_execution_evidence(
+                    trace,
+                    function=evidence_function,
+                    final_observation=observation,
+                    succeeded=completed_function is not None,
+                )
+                if evidence_function is not None
+                else None
+            )
             if (
                 previous_action_error
                 or recent_actions
                 or pending_user_input
                 or execution_history
+                or function_execution
             ):
                 observation = Observation(
                     xml=observation.xml,
@@ -415,6 +429,11 @@ class OmniFlow:
                         **(
                             {"execution_history": execution_history}
                             if execution_history
+                            else {}
+                        ),
+                        **(
+                            {"function_execution": function_execution}
+                            if function_execution
                             else {}
                         ),
                         **(
@@ -946,6 +965,59 @@ def _execution_history(
         ]
     )
     return "\n".join(lines)
+
+
+def _function_execution_evidence(
+    trace: list[dict[str, Any]],
+    *,
+    function: Function,
+    final_observation: Observation,
+    succeeded: bool,
+) -> dict[str, Any]:
+    steps: list[dict[str, Any]] = []
+    for raw_step in trace:
+        if not isinstance(raw_step, dict):
+            continue
+        metadata = raw_step.get("metadata")
+        if not isinstance(metadata, dict) or str(
+            metadata.get("function_id") or ""
+        ).strip() != function.id:
+            continue
+        try:
+            action = Action.from_value(raw_step.get("action"))
+        except (TypeError, ValueError):
+            continue
+        result = raw_step.get("result")
+        success = isinstance(result, dict) and result.get("success") is True
+        step = {
+            "step_index": int(raw_step.get("step_index") or len(steps)),
+            "before_state_id": str(raw_step.get("before_state_id") or ""),
+            "after_state_id": str(raw_step.get("after_state_id") or ""),
+            "tool": action.tool,
+            "success": success,
+        }
+        if not success and isinstance(result, dict) and str(
+            result.get("error") or ""
+        ).strip():
+            step["error"] = str(result["error"])
+        steps.append(step)
+    final_state_id = str(final_observation.extra.get("state_id") or "").strip()
+    if not final_state_id and steps:
+        final_state_id = str(steps[-1]["after_state_id"] or "").strip()
+    return {
+        "schema_version": "omniflow.function-execution-evidence.v1",
+        "function_id": function.id,
+        "function_name": function.name,
+        "function_description": function.description,
+        "replay_status": "actions_succeeded" if succeeded else "actions_failed",
+        "official_validator_status": "pending",
+        "steps": steps,
+        "final_observation": {
+            "state_id": final_state_id,
+            "package_name": str(final_observation.package_name or ""),
+            "activity_name": str(final_observation.activity_name or ""),
+        },
+    }
 
 
 def _describe_completed_action(action: Action) -> str:
