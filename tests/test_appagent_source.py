@@ -120,6 +120,31 @@ def _copy_labeled_screenshot(source, destination, *_args, **_kwargs) -> None:
     Path(destination).write_bytes(Path(source).read_bytes())
 
 
+def test_appagent_document_uid_is_stable_across_display_bounds() -> None:
+    source_xml = (
+        '<hierarchy bounds="[0,0][1080,2400]"><node index="" '
+        'class="android.widget.ImageView" content-desc="Shutter" '
+        'clickable="true" bounds="[0,2085][1080,2400]" /></hierarchy>'
+    )
+    target_xml = (
+        '<hierarchy bounds="[0,0][720,1280]"><node index="" '
+        'class="android.widget.ImageView" content-desc="Shutter" '
+        'clickable="true" bounds="[0,1070][720,1280]" /></hierarchy>'
+    )
+
+    source_elements = appagent_adapter.appagent_elements_from_xml(
+        source_xml,
+        min_dist=0.0,
+    )
+    target_elements = appagent_adapter.appagent_elements_from_xml(
+        target_xml,
+        min_dist=0.0,
+    )
+
+    assert source_elements[0].uid == "_android.widget.ImageView_Shutter_"
+    assert target_elements[0].uid == source_elements[0].uid
+
+
 def _install_androidworld_app_registry(
     monkeypatch: pytest.MonkeyPatch,
     controller: object,

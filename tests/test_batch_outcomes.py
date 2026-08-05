@@ -8,6 +8,7 @@ from src.experiment.batch_outcomes import (
     record_cell_outcome,
     write_batch_report,
 )
+from src.experiment.mobilegpt_contract import MOBILEGPT_SOURCE_METHOD
 
 
 def test_record_prep_failure_preserves_reason_tokens_and_time(tmp_path: Path) -> None:
@@ -346,7 +347,7 @@ def test_batch_report_uses_current_attempt_failure_outcome(tmp_path: Path) -> No
     assert row["outer_wall_sec"] == 34.0
 
 
-def test_batch_report_recovers_native_source_failure_accounting(
+def test_batch_report_recovers_runlog_teacher_source_failure_accounting(
     tmp_path: Path,
 ) -> None:
     source_index = tmp_path / "source_index.json"
@@ -394,10 +395,10 @@ def test_batch_report_recovers_native_source_failure_accounting(
     )
     (source_attempt / "source_episode_command.json").write_text(
         json.dumps(
-            {
-                "task_name": "BrowserDraw",
-                "source_method": "mobilegpt_native_source_cold",
-            }
+                {
+                    "task_name": "BrowserDraw",
+                    "source_method": MOBILEGPT_SOURCE_METHOD,
+                }
         ),
         encoding="utf-8",
     )

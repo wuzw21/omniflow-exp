@@ -5,6 +5,8 @@ import json
 import sys
 from types import SimpleNamespace
 
+from runlog_fixtures import androidworld_run_log, androidworld_state
+
 from omniflow import (
     Action,
     ActionResult,
@@ -13,19 +15,19 @@ from omniflow import (
     OmniFlow,
     ToolCall,
 )
+from omniflow.core.config import OmniFlowConfig, RuntimeSettings
 from omniflow.core.model import FunctionStep
 from omniflow.core.trajectory import state_id
 from omniflow.functions.artifact import FUNCTION_ARTIFACT_VERSION
 from omniflow.functions.store import FunctionStore
 from omniflow.vlm.function_router import VLMFunctionRouter
-from omniflow.vlm.gui import build_model_turn_request
+from omniflow.vlm.gui import SYSTEM_PROMPT, build_model_turn_request
 from omniflow.vlm.planner import VLMPlanner
 from src.integrations.android_world.agent import (
-    _TaskHost,
     _androidworld_run_log_steps,
+    _TaskHost,
     build_agent,
 )
-from runlog_fixtures import androidworld_run_log, androidworld_state
 
 
 class RecordingHost:
@@ -76,6 +78,16 @@ class RejectingRouter(AcceptingRouter):
     ) -> None:
         self.calls.append((goal, functions))
         return None
+
+
+class FailingRouter(AcceptingRouter):
+    def route_function(
+        self,
+        goal: str,
+        functions: tuple[Function, ...],
+    ) -> None:
+        self.calls.append((goal, functions))
+        raise RuntimeError("router unavailable")
 
 
 def test_androidworld_trace_keeps_the_captured_official_state() -> None:
@@ -245,6 +257,58 @@ def test_run_routes_recalled_function_before_gui_planner(tmp_path) -> None:
     assert "Function `complete_run_turn_bluetooth_on`" in str(
         planner.observations[0].extra.get("execution_history")
     )
+    assert result.detail["function_resolution"] == {
+        "candidate_count": 1,
+        "candidate_function_ids": [function_id],
+        "router_configured": True,
+        "status": "selected",
+        "selected_function_id": function_id,
+        "arguments": {},
+        "binding_status": "succeeded",
+        "binding_error": None,
+        "replay_status": "succeeded",
+        "replay_error": None,
+        "failed_step_index": None,
+    }
+    assert result.detail["runtime_limits"] == {
+        "max_steps": 20,
+        "max_fallback_steps": None,
+    }
+
+
+def test_zero_fallback_budget_never_calls_gui_planner(tmp_path) -> None:
+    store_path = tmp_path / "store.json"
+    function_id = _store_with_open_settings_function(store_path)
+    host = RecordingHost()
+    router = AcceptingRouter()
+    planner = FinishingPlanner()
+    flow = OmniFlow(
+        store_path,
+        host=host,
+        function_router=router,
+        planner=planner,
+        installed_apps={"Settings": "com.android.settings"},
+        config=OmniFlowConfig(
+            runtime=RuntimeSettings(max_steps=20, max_fallback_steps=0),
+        ),
+    )
+
+    result = flow.run("Turn bluetooth on")
+
+    assert result.success is False
+    assert result.error == "fallback_budget_exhausted"
+    assert result.function_id == function_id
+    assert [action.tool for action in host.actions] == ["open_app"]
+    assert len(router.calls) == 1
+    assert planner.visible_function_ids == []
+    assert result.fallback_steps == 0
+    assert result.detail["function_resolution"]["status"] == "selected"
+    assert result.detail["function_resolution"]["binding_status"] == "succeeded"
+    assert result.detail["function_resolution"]["replay_status"] == "succeeded"
+    assert result.detail["runtime_limits"] == {
+        "max_steps": 20,
+        "max_fallback_steps": 0,
+    }
 
 
 def test_rejected_function_enters_gui_planner_without_function_tools(tmp_path) -> None:
@@ -268,6 +332,39 @@ def test_rejected_function_enters_gui_planner_without_function_tools(tmp_path) -
     assert host.actions == []
     assert len(router.calls) == 1
     assert planner.visible_function_ids == [()]
+    assert result.detail["function_resolution"]["status"] == "rejected"
+    assert result.detail["function_resolution"]["selected_function_id"] is None
+    assert result.detail["function_resolution"]["arguments"] == {}
+
+
+def test_function_router_error_is_preserved_for_result_audit(tmp_path) -> None:
+    store_path = tmp_path / "store.json"
+    function_id = _store_with_open_settings_function(store_path)
+    router = FailingRouter()
+    flow = OmniFlow(
+        store_path,
+        host=RecordingHost(),
+        function_router=router,
+        installed_apps={"Settings": "com.android.settings"},
+    )
+
+    result = flow.run("Turn bluetooth on")
+
+    assert result.success is False
+    assert result.detail["function_resolution"] == {
+        "candidate_count": 1,
+        "candidate_function_ids": [function_id],
+        "router_configured": True,
+        "status": "error",
+        "selected_function_id": None,
+        "arguments": {},
+        "binding_status": "not_attempted",
+        "binding_error": None,
+        "replay_status": "not_started",
+        "replay_error": None,
+        "failed_step_index": None,
+        "router_error": "RuntimeError:router unavailable",
+    }
 
 
 def test_gui_planner_never_receives_function_tools_without_router(tmp_path) -> None:
@@ -507,6 +604,53 @@ def test_bridge_planner_exposes_packages_only_through_open_app_tool() -> None:
         else:
             assert "com.android.chrome" not in serialized
             assert "com.android.settings" not in serialized
+
+
+def test_bridge_planner_uses_unified_short_decision_policy() -> None:
+    request = build_model_turn_request(
+        goal="Search for a contact",
+        model="test-model",
+        state={"xml": "", "display": {"width": 720, "height": 1280}},
+        max_steps=8,
+        turn_index=0,
+    )
+
+    assert request["max_completion_tokens"] == 512
+    assert request["reasoning_effort"] == "none"
+    assert request["enable_thinking"] is False
+    assert "provides search" in SYSTEM_PROMPT
+    assert "history, recent, suggestion" in SYSTEM_PROMPT
+
+
+def test_transient_obstruction_fast_path_runs_before_planner(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import omniflow.runtime.engine as engine
+    import omniflow.runtime.execution as execution
+
+    host = RecordingHost()
+    planner = FinishingPlanner()
+    recovery = Action("click", {"x": 500.0, "y": 500.0})
+    calls = 0
+
+    def recover(_observation: Observation) -> Action | None:
+        nonlocal calls
+        calls += 1
+        return recovery if calls == 1 else None
+
+    monkeypatch.setattr(engine, "transient_obstruction_recovery", recover)
+    monkeypatch.setattr(execution, "_ACTION_SETTLE_SECONDS", 0.0)
+    flow = OmniFlow(tmp_path / "store.json", host=host, planner=planner)
+
+    result = flow.run("Dismiss the blocker and finish")
+
+    assert result.success is True
+    assert host.actions == [recovery]
+    assert planner.visible_function_ids == [()]
+    assert result.detail["trace"][0]["metadata"]["decision_origin"] == (
+        "harness_fast_path"
+    )
 
 
 def test_function_completion_review_keeps_final_screenshot_and_checked_state() -> None:

@@ -118,6 +118,8 @@ def _setup_click_is_already_complete(
     visible: set[str],
     target_text: str,
 ) -> bool:
+    if target_text == "NEXT" and "Shutter" in visible:
+        return True
     if "Search or type web address" in visible:
         return target_text in {"Accept & continue", "No thanks"}
     if target_text == "Accept & continue":

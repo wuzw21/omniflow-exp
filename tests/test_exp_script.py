@@ -69,6 +69,42 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "--require-contacts-ready" in native_preflight
 
 
+def test_experiment_script_prefers_existing_miniconda_base_python(
+    tmp_path: Path,
+) -> None:
+    account_root = tmp_path / "account"
+    base_python = account_root / "miniconda3" / "bin" / "python"
+    base_python.parent.mkdir(parents=True)
+    base_python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    base_python.chmod(0o755)
+    script_prefix = tmp_path / "script-prefix.sh"
+    script_prefix.write_text(
+        SCRIPT.read_text(encoding="utf-8").split("\nenv_file=", maxsplit=1)[0]
+        + "\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "source \"$SCRIPT_PREFIX\"; printf '%s\\n' \"$python_bin\"",
+        ],
+        cwd=REPO,
+        env={
+            **os.environ,
+            "HOME": str(account_root),
+            "SCRIPT_PREFIX": str(script_prefix),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == str(base_python)
+
+
 @pytest.mark.parametrize(
     ("host_machine", "expected_abi"),
     [
@@ -562,7 +598,7 @@ exit 0
         "MOBILEGPT_INSTALL_MARKER": str(mobilegpt_install_marker),
         "APPAGENT_MARKER": str(appagent_marker),
         "MOBILEGPT_MANIFEST": str(
-            assets / "mobilegpt-source" / "cold_memory_manifest.json"
+            assets / "mobilegpt-source" / "mobilegpt_memory_manifest.json"
         ),
         "APPAGENT_MANIFEST": str(
             assets / "appagent-source" / "appagent_demo_manifest.json"
@@ -862,7 +898,7 @@ if [ "$1" = "-" ] && [ "$2" = "$SOURCE_INDEX" ] && [ "$#" -eq 3 ]; then
   exit 0
 fi
 if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ] && { [ "$5" = "$SOURCE_INDEX" ] || [ "$5" = "$STORE_INDEX" ]; }; then
-  if [ "$4" = "cold_memory_manifest.json" ]; then
+  if [ "$4" = "mobilegpt_memory_manifest.json" ]; then
     if [ "$5" != "$SOURCE_INDEX" ]; then
       exit 44
     fi

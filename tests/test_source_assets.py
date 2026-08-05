@@ -15,9 +15,7 @@ from src.experiment.source_assets import (
     select_source_asset_revision,
 )
 from src.integrations.appagent_adapter import build_appagent_teacher_source
-from src.integrations.mobilegpt_teacher import (
-    preflight_teacher_source_run_log,
-)
+from src.integrations.mobilegpt_converter import preflight_runlog_conversion
 from src.integrations.runlog import convert_legacy_run_log
 
 
@@ -95,7 +93,7 @@ def _write_source_bundle(root: Path) -> tuple[Path, Path, Path]:
     return source, states, provenance
 
 
-def test_frozen_source_evidence_grounds_both_baseline_teachers(
+def test_frozen_source_evidence_grounds_appagent_teacher(
     tmp_path: Path,
 ) -> None:
     source, states, provenance = _write_source_bundle(tmp_path)
@@ -114,26 +112,12 @@ def test_frozen_source_evidence_grounds_both_baseline_teachers(
     grounded_path = tmp_path / "grounded.teacher.run_log.json"
     grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
 
-    mobilegpt = preflight_teacher_source_run_log(grounded_path)
-    mobilegpt_artifact = pipeline.build_mobilegpt_teacher_source(
-        grounded_path,
-        task_name="RecordWithName",
-        provenance_source_run_log=source,
-    )
     appagent = build_appagent_teacher_source(
         grounded_path,
         task_name="RecordWithName",
         provenance_source_run_log=source,
     )
 
-    assert mobilegpt["teacher_action_count"] == 2
-    assert mobilegpt["groundable_action_count"] == 2
-    assert mobilegpt_artifact["source_run_log"] == str(source)
-    assert mobilegpt_artifact["source_run_log_sha256"] == source_sha256
-    assert (
-        mobilegpt_artifact["grounded_teacher_run_log_sha256"]
-        == hashlib.sha256(grounded_path.read_bytes()).hexdigest()
-    )
     assert appagent["action_count"] == 2
     assert appagent["source_run_log"] == str(source)
     assert appagent["source_run_log_sha256"] == source_sha256
@@ -793,10 +777,9 @@ def test_canonical_grounding_uses_unique_structural_child_target(
     }
     grounded_path = tmp_path / "grounded-anonymous-child.run_log.json"
     grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
-    preflight = preflight_teacher_source_run_log(grounded_path)
-    assert (
-        preflight["groundable_action_count"] == preflight["teacher_action_count"] == 1
-    )
+    preflight = preflight_runlog_conversion(grounded_path)
+    assert preflight["ready"] is True
+    assert preflight["transition_count"] == audit["semantic_action_count"]
     assert audit["semantic_action_count"] == 1
 
 
@@ -851,10 +834,9 @@ def test_canonical_grounding_uses_unique_anonymous_editable_role(
     }
     grounded_path = tmp_path / "grounded-anonymous-input.run_log.json"
     grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
-    preflight = preflight_teacher_source_run_log(grounded_path)
-    assert (
-        preflight["groundable_action_count"] == preflight["teacher_action_count"] == 2
-    )
+    preflight = preflight_runlog_conversion(grounded_path)
+    assert preflight["ready"] is True
+    assert preflight["transition_count"] == audit["semantic_action_count"]
     assert audit["semantic_action_count"] == 1
 
 
@@ -917,10 +899,9 @@ def test_canonical_grounding_inherits_adjacent_unique_editable_target(
         assert step["metadata"]["source_context"]["element"] == {"text": ".md"}
     grounded_path = tmp_path / "grounded-adjacent-editable.run_log.json"
     grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
-    preflight = preflight_teacher_source_run_log(grounded_path)
-    assert (
-        preflight["groundable_action_count"] == preflight["teacher_action_count"] == 2
-    )
+    preflight = preflight_runlog_conversion(grounded_path)
+    assert preflight["ready"] is True
+    assert preflight["transition_count"] == audit["semantic_action_count"]
     assert audit["semantic_action_count"] == 2
 
 
@@ -1025,9 +1006,9 @@ def test_canonical_grounding_recovers_source_display_from_xml(
     }
     grounded_path = tmp_path / "grounded-missing-display.run_log.json"
     grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
-    assert (
-        preflight_teacher_source_run_log(grounded_path)["groundable_action_count"] == 1
-    )
+    preflight = preflight_runlog_conversion(grounded_path)
+    assert preflight["ready"] is True
+    assert preflight["transition_count"] == audit["semantic_action_count"]
     assert audit["semantic_action_count"] == 1
 
 

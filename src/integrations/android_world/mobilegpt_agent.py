@@ -18,7 +18,6 @@ from src.integrations.mobilegpt_runtime import (
     normalize_mobilegpt_action,
 )
 
-
 _BOUNDS_PATTERN = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
 
 
@@ -270,7 +269,7 @@ def build_mobilegpt_agent(
             name = str(normalized.get("name") or "").strip()
             parameters = normalized.get("parameters")
             parameters = dict(parameters) if isinstance(parameters, dict) else {}
-            if name in {"click", "long-click", "input"}:
+            if name in {"click", "long-click", "repeat-click", "input"}:
                 if parameters.get("index") is None:
                     raise ValueError(f"mobilegpt_action_index_required:{name}")
                 x, y = _center(
@@ -278,6 +277,15 @@ def build_mobilegpt_agent(
                 )
                 if name == "click":
                     self._execute(action_type="click", x=x, y=y)
+                elif name == "repeat-click":
+                    try:
+                        count = int(parameters.get("number") or 0)
+                    except (TypeError, ValueError) as error:
+                        raise ValueError("mobilegpt_repeat_click_count_invalid") from error
+                    if count <= 0:
+                        raise ValueError("mobilegpt_repeat_click_count_invalid")
+                    for _ in range(count):
+                        self._execute(action_type="click", x=x, y=y)
                 elif name == "long-click":
                     self._execute(action_type="long_press", x=x, y=y)
                 else:

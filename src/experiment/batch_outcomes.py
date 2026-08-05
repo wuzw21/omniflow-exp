@@ -14,6 +14,8 @@ import shutil
 import tempfile
 from typing import Any, Iterable
 
+from src.experiment.mobilegpt_contract import MOBILEGPT_SUPPORTED_SOURCE_METHODS
+
 SCHEMA_VERSION = "omniflow.androidworld.cell_outcome.v1"
 _MOBILEGPT_SOURCE_STATS_PATTERN = re.compile(
     r"MOBILEGPT_STATS_JSONL=(?P<path>[^\s'\"]+source_stats\.jsonl)"
@@ -138,7 +140,7 @@ def _recover_mobilegpt_source_accounting(
             or str(command.get("task_name") or "")
             != str(outcome.get("task_name") or "")
             or str(command.get("source_method") or "")
-            != "mobilegpt_native_source_cold"
+            not in MOBILEGPT_SUPPORTED_SOURCE_METHODS
         ):
             continue
         candidates.append(source_root)
@@ -393,7 +395,9 @@ def _registered_report_row(
         "conclusion": "validator_success" if success else "validator_failure",
         "status": "completed",
         "failure_summary": "" if success else str(
-            row.get("error") or "official_validator_returned_false"
+            row.get("failure_summary")
+            or row.get("error")
+            or "official_validator_returned_false"
         ),
         "official_validator_used": bool(row.get("official_validator_used", True)),
         "official_validator_success": success,
@@ -421,16 +425,26 @@ def _registered_report_row(
             )
         ),
         "episode_duration_sec": _number(
-            row.get("duration_sec") or row.get("episode_task_elapsed_sec")
+            row.get("episode_duration_sec")
+            or row.get("duration_sec")
+            or row.get("episode_task_elapsed_sec")
         ),
         "outer_wall_sec": _number(
             row.get("outer_wall_sec") or row.get("wall_sec")
         ),
         "attempt_id": str(row.get("attempt_id") or ""),
-        "evidence_path": str(row.get("run_dir") or row.get("output_path") or ""),
+        "evidence_path": str(
+            row.get("evidence_path")
+            or row.get("run_dir")
+            or row.get("output_path")
+            or ""
+        ),
         "accounting_recovered": False,
         "accounting_evidence_path": str(
-            row.get("run_dir") or row.get("output_path") or ""
+            row.get("evidence_path")
+            or row.get("run_dir")
+            or row.get("output_path")
+            or ""
         ),
     }
 

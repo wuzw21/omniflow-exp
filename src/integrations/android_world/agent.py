@@ -216,6 +216,16 @@ def build_agent(
             trace,
             state["captured_androidworld_states"],
         )
+        diagnostics = {
+            "done_reason": result.error or "goal_completed",
+            "step_count": len(steps),
+            "function_id": result.function_id,
+            "execution_summary": result.execution_summary,
+        }
+        for detail_key in ("function_resolution", "runtime_limits"):
+            detail_value = result.detail.get(detail_key)
+            if isinstance(detail_value, dict):
+                diagnostics[detail_key] = _json_copy(detail_value)
         run_log = canonicalize_run_log(
             {
                 "schema_version": OMNIFLOW_RUN_LOG_SCHEMA_VERSION,
@@ -235,12 +245,7 @@ def build_agent(
                 "started_at_ms": started_at_ms,
                 "finished_at_ms": int(time.time() * 1000),
                 "steps": steps,
-                "diagnostics": {
-                    "done_reason": result.error or "goal_completed",
-                    "step_count": len(steps),
-                    "function_id": result.function_id,
-                    "execution_summary": result.execution_summary,
-                },
+                "diagnostics": diagnostics,
             }
         )
         state.update(last_result=result, last_run_id=run_id, last_run_log=run_log)

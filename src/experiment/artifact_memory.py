@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Content-addressed long-term memory for AndroidWorld experiment evidence."""
+"""Content-addressed AndroidWorld RunLog, method-memory, and result evidence."""
 
 from __future__ import annotations
 
@@ -17,14 +17,23 @@ from typing import Any, Iterable, Sequence
 
 from omniflow.core.trajectory import require_complete_source_run_log
 from omniflow.transfer.runtime import load_transfer_state_catalog
+from src.experiment.mobilegpt_contract import (
+    MOBILEGPT_LEARNING_MODE_BY_SCHEMA,
+    MOBILEGPT_LEGACY_MEMORY_SCHEMA,
+    MOBILEGPT_MEMORY_MANIFEST,
+    MOBILEGPT_MEMORY_SCHEMA,
+    MOBILEGPT_NATIVE_DERIVE_MEMORY_SCHEMA,
+    MOBILEGPT_PREP_TYPE_BY_SCHEMA,
+    MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
+    MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS,
+    MOBILEGPT_SUPPORTED_PREP_TYPES,
+)
 from src.integrations.runlog import adapt_source_run_log
 
 MEMORY_SCHEMA = "omniflow.androidworld-artifact-memory.v2"
 CURRENT_SCHEMA = "omniflow.androidworld-artifact-memory-pointer.v2"
 SOURCE_SELECTION_SCHEMA = "omniflow.androidworld-source-selection.v1"
 FUNCTION_SOURCE_LINEAGE_SCHEMA = "omniflow.function-store-source-lineage.v1"
-MOBILEGPT_NATIVE_MEMORY_SCHEMA = "omniflow.mobilegpt-native-cold-memory.v1"
-MOBILEGPT_NATIVE_SOURCE_METHOD = "mobilegpt_native_source_cold"
 RESULT_FILE_NAMES = (
     "one_task_commands.jsonl",
     "one_task_summary.json",
@@ -33,6 +42,10 @@ RESULT_FILE_NAMES = (
     "stats.jsonl",
     "summary.json",
     "task_results.jsonl",
+)
+BASELINE_BATCH_REPORT_SCHEMA = "omniflow.androidworld.batch_report.v1"
+BASELINE_BATCH_REPORT_SELECTION = (
+    "authoritative_immutable_batch_report_validator_conclusion"
 )
 
 
@@ -676,7 +689,15 @@ def _verified_registered_result(path: Path) -> dict[str, Any]:
     except (TypeError, ValueError) as error:
         raise ValueError("registered_result_validator_coverage_invalid") from error
     validator_error = str(row.get("error") or "").strip()
-    conclusion = not validator_error and (
+    task_started_once = any(
+        row.get(field) == 1
+        for field in (
+            "episode_task_started_count",
+            "warm_task_started_count",
+            "mobilegpt_task_started_count",
+        )
+    )
+    conclusion = (not validator_error or task_started_once) and (
         (official_used and isinstance(official_success, bool))
         or validator_count > 0
         or validator_coverage > 0
@@ -705,7 +726,7 @@ def _mobilegpt_result_protocol_error(
     row: dict[str, Any],
 ) -> str | None:
     prefix = f"formal_result_mobilegpt_memory_invalid:{task}"
-    if str(row.get("prep_type") or "") != "mobilegpt_native_source_cold_memory":
+    if str(row.get("prep_type") or "") not in MOBILEGPT_SUPPORTED_PREP_TYPES:
         return f"{prefix}:prep_type"
     manifest_path = Path(str(row.get("prep_manifest") or "")).expanduser()
     if not manifest_path.is_absolute() or not manifest_path.is_file():
@@ -724,42 +745,88 @@ def _mobilegpt_result_protocol_error(
         return f"{prefix}:manifest_unreadable:{type(error).__name__}:{error}"
     if not isinstance(manifest, dict):
         return f"{prefix}:manifest_type"
-    if manifest.get("schema_version") != MOBILEGPT_NATIVE_MEMORY_SCHEMA:
+    schema_version = manifest.get("schema_version")
+    if schema_version not in MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS:
         return f"{prefix}:schema"
     if str(manifest.get("task_name") or "") != task:
         return f"{prefix}:task"
     if manifest.get("source_seed") != source_seed:
         return f"{prefix}:source_seed"
-    if str(manifest.get("source_method") or "") != MOBILEGPT_NATIVE_SOURCE_METHOD:
+    legacy = schema_version == MOBILEGPT_LEGACY_MEMORY_SCHEMA
+    semantic = schema_version == MOBILEGPT_MEMORY_SCHEMA
+    native_derive = schema_version == MOBILEGPT_NATIVE_DERIVE_MEMORY_SCHEMA
+    expected_source_method = MOBILEGPT_SOURCE_METHOD_BY_SCHEMA[schema_version]
+    expected_prep_type = MOBILEGPT_PREP_TYPE_BY_SCHEMA[schema_version]
+    if str(row.get("prep_type") or "") != expected_prep_type:
+        return f"{prefix}:prep_type_schema_mismatch"
+    if str(manifest.get("source_method") or "") != expected_source_method:
         return f"{prefix}:source_method"
     provenance = manifest.get("provenance")
     if not isinstance(provenance, dict):
         return f"{prefix}:provenance"
     required_provenance = {
-        "native_mobilegpt_learning": True,
+        "native_mobilegpt_learning": legacy or native_derive,
         "task_local_memory": True,
-        "learning_mode": "mobilegpt_native_cold",
-        "teacher_forcing": False,
-        "synthetic_subtasks": False,
+        "learning_mode": MOBILEGPT_LEARNING_MODE_BY_SCHEMA[schema_version],
+        "teacher_forcing": legacy,
+        "synthetic_subtasks": not (legacy or semantic or native_derive),
+        "actions_supplied_to_mobilegpt": not native_derive,
+        "function_store_used": False,
         "function_conversion_enabled": False,
         "target_inputs_read": False,
         "target_observations_read": False,
         "validator_state_read": False,
         "coordinate_replay": False,
     }
+    if legacy:
+        required_provenance["complete_teacher_action_consumption"] = True
+    elif semantic:
+        required_provenance.update(
+            {
+                "semantic_subtasks": True,
+                "original_mobilegpt_prompts": True,
+                "source_transitions_supplied": True,
+                "source_success_boundary_supplied": True,
+                "runlog_transition_compilation": True,
+                "complete_transition_mapping": True,
+                "official_reader_validation": True,
+                "source_emulator_used": False,
+            }
+        )
+    elif native_derive:
+        required_provenance.update(
+            {
+                "source_transitions_supplied": True,
+                "source_success_boundary_supplied": True,
+                "trajectory_action_validation": True,
+                "complete_trajectory_validation": True,
+                "source_emulator_used": False,
+            }
+        )
+    else:
+        required_provenance.update(
+            {
+                "source_transitions_supplied": True,
+                "source_success_boundary_supplied": True,
+                "runlog_transition_compilation": True,
+                "complete_transition_mapping": True,
+                "official_reader_validation": True,
+                "source_emulator_used": False,
+            }
+        )
     for field, expected in required_provenance.items():
         if provenance.get(field) != expected:
             return f"{prefix}:provenance_{field}"
-    official_source_result = manifest.get("official_source_result")
-    if (
-        not isinstance(official_source_result, dict)
-        or official_source_result.get("official_validator_used") is not True
-        or not isinstance(
-            official_source_result.get("official_validator_success"),
-            bool,
-        )
-    ):
-        return f"{prefix}:official_source_result"
+    if legacy:
+        official_source_result = manifest.get("official_source_result")
+        if (
+            not isinstance(official_source_result, dict)
+            or official_source_result.get("official_validator_used") is not True
+            or official_source_result.get("official_validator_success") is not True
+        ):
+            return f"{prefix}:official_source_result"
+    elif "official_source_result" in manifest:
+        return f"{prefix}:official_source_result_forbidden"
     memory = manifest.get("memory")
     if not isinstance(memory, dict):
         return f"{prefix}:memory"
@@ -992,6 +1059,20 @@ def _load_results(
                 "earliest_formal_protocol_compliant_validator_conclusion"
             ),
         }
+        if method == "mobilegpt_offline_retrieval":
+            prep_manifest_path = Path(
+                str(result_row.get("prep_manifest") or "")
+            ).expanduser()
+            prep_manifest = _load_object(prep_manifest_path)
+            candidate["mobilegpt_memory_schema"] = str(
+                prep_manifest.get("schema_version") or ""
+            )
+            candidate["mobilegpt_source_method"] = str(
+                prep_manifest.get("source_method") or ""
+            )
+            candidate["mobilegpt_prep_type"] = str(
+                result_row.get("prep_type") or ""
+            )
         if method == "fixed_replay":
             candidate["source_run_log_sha256"] = _sha256(
                 Path(str(result_row["source_run_log"])).expanduser()
@@ -1219,6 +1300,278 @@ def _memory_lock(memory_root: Path):
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
+def _load_mobilegpt_memories(
+    memory_root: Path,
+    roots: Sequence[Path],
+    *,
+    canonical_sources: dict[str, dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    manifest_paths = sorted(
+        {
+            path.resolve()
+            for root in roots
+            if root.is_dir()
+            for path in root.rglob(MOBILEGPT_MEMORY_MANIFEST)
+            if path.is_file()
+        }
+    )
+    records: dict[str, dict[str, Any]] = {}
+    candidates: dict[str, set[str]] = {}
+    for manifest_path in manifest_paths:
+        manifest = _load_object(manifest_path)
+        if not isinstance(manifest, dict):
+            continue
+        schema_version = str(manifest.get("schema_version") or "")
+        if schema_version not in MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS:
+            continue
+        source_method = MOBILEGPT_SOURCE_METHOD_BY_SCHEMA[schema_version]
+        task = str(manifest.get("task_name") or "").strip()
+        source = canonical_sources.get(task)
+        if source is None:
+            raise ValueError(f"mobilegpt_memory_task_not_canonical:{task}")
+        memory_record = manifest.get("memory")
+        if not isinstance(memory_record, dict):
+            raise ValueError(f"mobilegpt_memory_record_missing:{manifest_path}")
+        memory_path = (
+            manifest_path.parent
+            / str(memory_record.get("relative_path") or "")
+        ).resolve()
+        from src.experiment.androidworld import validate_mobilegpt_adapted_memory
+
+        validated = validate_mobilegpt_adapted_memory(
+            memory_path,
+            task_name=task,
+            source_seed=111,
+            source_run_log=str(source["object_path"]),
+            expected_model=str(manifest.get("source_model") or ""),
+            expected_source_method=source_method,
+        )
+        memory_sha256 = str(validated["memory_sha256"])
+        manifest_sha256 = _sha256(manifest_path)
+        record = records.setdefault(
+            memory_sha256,
+            {
+                "task": task,
+                "schema_version": schema_version,
+                "source_seed": 111,
+                "source_method": source_method,
+                "source_model": str(manifest.get("source_model") or ""),
+                "source_run_log_sha256": str(source["sha256"]),
+                "memory_sha256": memory_sha256,
+                "memory_file_count": int(validated["memory_file_count"]),
+                "memory_root_aliases": [],
+                "manifest_aliases": [],
+                "manifest_sha256s": [],
+                "manifest_object_paths": [],
+                "inventory": dict(validated["memory_inventory"]),
+            },
+        )
+        identity = (
+            record["task"],
+            record["source_run_log_sha256"],
+            record["source_model"],
+        )
+        candidate_identity = (
+            task,
+            str(source["sha256"]),
+            str(manifest.get("source_model") or ""),
+        )
+        if identity != candidate_identity:
+            raise ValueError(
+                f"mobilegpt_memory_hash_identity_conflict:{memory_sha256}"
+            )
+        record["memory_root_aliases"].append(str(memory_path))
+        record["manifest_aliases"].append(str(manifest_path))
+        record["manifest_sha256s"].append(manifest_sha256)
+        record["manifest_object_paths"].append(
+            str(_materialize_object(memory_root, manifest_path, manifest_sha256))
+        )
+        candidates.setdefault(task, set()).add(memory_sha256)
+
+    for record in records.values():
+        for field in (
+            "memory_root_aliases",
+            "manifest_aliases",
+            "manifest_sha256s",
+            "manifest_object_paths",
+        ):
+            record[field] = sorted(set(record[field]))
+        record["memory_root"] = record["memory_root_aliases"][0]
+        record["manifest_path"] = record["manifest_aliases"][0]
+
+    canonical: dict[str, dict[str, Any]] = {}
+    for task, memory_sha256s in sorted(candidates.items()):
+        if len(memory_sha256s) != 1:
+            raise ValueError(
+                f"ambiguous_mobilegpt_memory:{task}:"
+                + ",".join(sorted(memory_sha256s))
+            )
+        memory_sha256 = next(iter(memory_sha256s))
+        canonical[task] = dict(records[memory_sha256])
+    return records, canonical
+
+
+def _load_baseline_batch_reports(
+    memory_root: Path,
+    report_paths: Sequence[Path],
+    *,
+    task_names: Sequence[str],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Load explicit immutable batch snapshots as read-only completed cells."""
+
+    from src.experiment.result_registry import FORMAL_DEVICE_TARGETS, FORMAL_METHODS
+
+    known_tasks = set(task_names)
+    records: dict[str, dict[str, Any]] = {}
+    cells: dict[str, dict[str, Any]] = {}
+    for summary_path in report_paths:
+        if not summary_path.is_file():
+            raise FileNotFoundError(
+                f"baseline_batch_report_missing:{summary_path}"
+            )
+        summary = _load_object(summary_path)
+        if (
+            not isinstance(summary, dict)
+            or summary.get("schema_version") != BASELINE_BATCH_REPORT_SCHEMA
+            or summary.get("immutable") is not True
+        ):
+            raise ValueError(f"baseline_batch_report_invalid:{summary_path}")
+        cells_path = Path(str(summary.get("cells_jsonl") or "")).expanduser()
+        if not cells_path.is_absolute():
+            cells_path = (summary_path.parent / cells_path).resolve()
+        else:
+            cells_path = cells_path.resolve()
+        if not cells_path.is_file():
+            raise FileNotFoundError(
+                f"baseline_batch_cells_missing:{summary_path}:{cells_path}"
+            )
+        rows = [
+            json.loads(line)
+            for line in cells_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if not all(isinstance(row, dict) for row in rows):
+            raise ValueError(f"baseline_batch_cells_invalid:{cells_path}")
+        expected_source_seed = summary.get("source_seed")
+        expected_evaluation_seed = summary.get("evaluation_seed")
+        actual_counts = {
+            "planned": len(rows),
+            "validator_success": 0,
+            "validator_failure": 0,
+            "non_validator_failure": 0,
+            "pending": 0,
+        }
+        report_cells: set[str] = set()
+        validator_cell_count = 0
+        for row in rows:
+            task = str(row.get("task_name") or "")
+            method = str(row.get("method") or "")
+            device = _formal_device_label(row.get("device"))
+            source_seed = row.get("source_seed")
+            evaluation_seed = row.get("evaluation_seed")
+            if task not in known_tasks:
+                raise ValueError(
+                    f"baseline_batch_task_not_indexed:{summary_path}:{task}"
+                )
+            if method not in FORMAL_METHODS:
+                raise ValueError(
+                    f"baseline_batch_method_invalid:{summary_path}:{method}"
+                )
+            if device not in FORMAL_DEVICE_TARGETS:
+                raise ValueError(
+                    f"baseline_batch_device_invalid:{summary_path}:{device}"
+                )
+            if (
+                source_seed != expected_source_seed
+                or evaluation_seed != expected_evaluation_seed
+            ):
+                raise ValueError(
+                    f"baseline_batch_seed_mismatch:{summary_path}:{task}:{device}"
+                )
+            cell = f"{task}|{method}|{device}|{source_seed}|{evaluation_seed}"
+            if cell in report_cells:
+                raise ValueError(
+                    f"baseline_batch_duplicate_cell:{summary_path}:{cell}"
+                )
+            report_cells.add(cell)
+            conclusion = str(row.get("conclusion") or "")
+            if conclusion not in actual_counts or conclusion == "planned":
+                raise ValueError(
+                    f"baseline_batch_conclusion_invalid:{summary_path}:{cell}:"
+                    f"{conclusion}"
+                )
+            actual_counts[conclusion] += 1
+            if row.get("official_validator_used") is not True:
+                continue
+            success = row.get("official_validator_success")
+            if not isinstance(success, bool):
+                raise ValueError(
+                    f"baseline_batch_validator_result_invalid:{summary_path}:{cell}"
+                )
+            expected_conclusion = (
+                "validator_success" if success else "validator_failure"
+            )
+            if conclusion != expected_conclusion:
+                raise ValueError(
+                    f"baseline_batch_validator_conclusion_mismatch:"
+                    f"{summary_path}:{cell}"
+                )
+            validator_cell_count += 1
+            row_payload = _json_bytes({"rows": [row]})
+            row_digest = hashlib.sha256(row_payload).hexdigest()
+            row_object = _materialize_content(
+                memory_root,
+                row_payload,
+                row_digest,
+            )
+            candidate = {
+                "task": task,
+                "method": method,
+                "device": device,
+                "source_seed": source_seed,
+                "evaluation_seed": evaluation_seed,
+                "attempt_id": str(row.get("attempt_id") or ""),
+                "official_validator_success": success,
+                "registered_result_sha256": row_digest,
+                "registered_result_object_path": str(row_object),
+                "registered_result_aliases": [str(cells_path)],
+                "selection_reason": BASELINE_BATCH_REPORT_SELECTION,
+                "baseline_batch_report": str(summary_path),
+                "baseline_batch_cells": str(cells_path),
+            }
+            existing = cells.get(cell)
+            if existing is not None and existing != candidate:
+                raise ValueError(f"conflicting_baseline_batch_cell:{cell}")
+            cells[cell] = candidate
+        summary_counts = summary.get("counts")
+        if not isinstance(summary_counts, dict) or any(
+            int(summary_counts.get(key, -1)) != value
+            for key, value in actual_counts.items()
+        ):
+            raise ValueError(
+                f"baseline_batch_counts_mismatch:{summary_path}:"
+                f"expected={summary_counts}:actual={actual_counts}"
+            )
+        summary_digest = _sha256(summary_path)
+        cells_digest = _sha256(cells_path)
+        records[summary_digest] = {
+            "attempt_id": str(summary.get("attempt_id") or ""),
+            "summary_sha256": summary_digest,
+            "summary_alias": str(summary_path),
+            "summary_object_path": str(
+                _materialize_object(memory_root, summary_path, summary_digest)
+            ),
+            "cells_sha256": cells_digest,
+            "cells_alias": str(cells_path),
+            "cells_object_path": str(
+                _materialize_object(memory_root, cells_path, cells_digest)
+            ),
+            "planned_cells": len(rows),
+            "validator_cells": validator_cell_count,
+        }
+    return records, cells
+
+
 def _refresh_artifact_memory_unlocked(
     *,
     memory_root: str | Path,
@@ -1226,6 +1579,8 @@ def _refresh_artifact_memory_unlocked(
     function_catalogs: Sequence[str | Path],
     runlog_roots: Sequence[str | Path],
     result_roots: Sequence[str | Path],
+    mobilegpt_memory_roots: Sequence[str | Path] = (),
+    baseline_batch_reports: Sequence[str | Path] = (),
     source_selection_manifest: str | Path | None = None,
     source_screenshot_roots: Sequence[str | Path] = (),
 ) -> dict[str, Any]:
@@ -1357,6 +1712,17 @@ def _refresh_artifact_memory_unlocked(
     resolved_result_roots = sorted(
         {Path(value).expanduser().resolve() for value in result_roots}
     )
+    resolved_mobilegpt_memory_roots = sorted(
+        {Path(value).expanduser().resolve() for value in mobilegpt_memory_roots}
+    )
+    resolved_baseline_batch_reports = sorted(
+        {Path(value).expanduser().resolve() for value in baseline_batch_reports}
+    )
+    for mobilegpt_memory_root in resolved_mobilegpt_memory_roots:
+        if not mobilegpt_memory_root.is_dir():
+            raise FileNotFoundError(
+                f"mobilegpt_memory_root_missing:{mobilegpt_memory_root}"
+            )
     function_records, canonical_function_stores = _load_function_stores(
         root,
         catalog_paths,
@@ -1370,6 +1736,19 @@ def _refresh_artifact_memory_unlocked(
         resolved_result_roots,
         task_names,
         canonical_sources,
+    )
+    baseline_report_records, baseline_result_cells = _load_baseline_batch_reports(
+        root,
+        resolved_baseline_batch_reports,
+        task_names=task_names,
+    )
+    canonical_result_cells.update(baseline_result_cells)
+    mobilegpt_memory_records, canonical_mobilegpt_memories = (
+        _load_mobilegpt_memories(
+            root,
+            resolved_mobilegpt_memory_roots,
+            canonical_sources=canonical_sources,
+        )
     )
     memory_source_index: dict[str, Any] = {}
     for task, raw_item in source_payload.items():
@@ -1464,6 +1843,11 @@ def _refresh_artifact_memory_unlocked(
         "result_cells",
         canonical_result_cells,
     )
+    mobilegpt_memory_index_path, mobilegpt_memory_index_hash = _publish_index(
+        root,
+        "mobilegpt_memory_index",
+        canonical_mobilegpt_memories,
+    )
     by_task: dict[str, dict[str, Any]] = {}
     for task in task_names:
         by_task[task] = {
@@ -1484,6 +1868,7 @@ def _refresh_artifact_memory_unlocked(
             "canonical": {
                 "source_run_log": canonical_sources.get(task),
                 "function_store": canonical_function_stores.get(task),
+                "mobilegpt_memory": canonical_mobilegpt_memories.get(task),
                 "result_cells": {
                     cell: value
                     for cell, value in canonical_result_cells.items()
@@ -1520,6 +1905,12 @@ def _refresh_artifact_memory_unlocked(
                 str(Path(value).expanduser().resolve()) for value in runlog_roots
             ),
             "result_roots": [str(path) for path in resolved_result_roots],
+            "mobilegpt_memory_roots": [
+                str(path) for path in resolved_mobilegpt_memory_roots
+            ],
+            "baseline_batch_reports": [
+                str(path) for path in resolved_baseline_batch_reports
+            ],
         },
         "counts": {
             "task_count": len(task_names),
@@ -1536,6 +1927,10 @@ def _refresh_artifact_memory_unlocked(
                 for record in result_records.values()
             ),
             "canonical_result_cells": len(canonical_result_cells),
+            "baseline_batch_reports": len(baseline_report_records),
+            "baseline_validator_cells": len(baseline_result_cells),
+            "unique_mobilegpt_memories": len(mobilegpt_memory_records),
+            "mobilegpt_memory_tasks": len(canonical_mobilegpt_memories),
         },
         "indexes": {
             "source_index": str(memory_source_index_path),
@@ -1544,6 +1939,8 @@ def _refresh_artifact_memory_unlocked(
             "ours_store_index_sha256": store_index_hash,
             "result_cells": str(result_cells_path),
             "result_cells_sha256": result_cells_hash,
+            "mobilegpt_memory_index": str(mobilegpt_memory_index_path),
+            "mobilegpt_memory_index_sha256": mobilegpt_memory_index_hash,
         },
         "artifacts": {
             "run_logs": {digest: records[digest] for digest in sorted(records)},
@@ -1553,11 +1950,20 @@ def _refresh_artifact_memory_unlocked(
             "results": {
                 digest: result_records[digest] for digest in sorted(result_records)
             },
+            "mobilegpt_memories": {
+                digest: mobilegpt_memory_records[digest]
+                for digest in sorted(mobilegpt_memory_records)
+            },
+            "baseline_batch_reports": {
+                digest: baseline_report_records[digest]
+                for digest in sorted(baseline_report_records)
+            },
         },
         "canonical": {
             "source_run_logs": canonical_sources,
             "function_stores": canonical_function_stores,
             "result_cells": canonical_result_cells,
+            "mobilegpt_memories": canonical_mobilegpt_memories,
         },
         "by_task": by_task,
         "unclassified": {
@@ -1606,6 +2012,8 @@ def _refresh_artifact_memory_unlocked(
         "ours_store_index_sha256": store_index_hash,
         "result_cells": str(result_cells_path),
         "result_cells_sha256": result_cells_hash,
+        "mobilegpt_memory_index": str(mobilegpt_memory_index_path),
+        "mobilegpt_memory_index_sha256": mobilegpt_memory_index_hash,
         "by_task_root": str(by_task_root.resolve()),
     }
     _atomic_write(root / "current.json", _json_bytes(pointer))
@@ -1619,6 +2027,8 @@ def refresh_artifact_memory(
     function_catalogs: Sequence[str | Path],
     runlog_roots: Sequence[str | Path],
     result_roots: Sequence[str | Path],
+    mobilegpt_memory_roots: Sequence[str | Path] = (),
+    baseline_batch_reports: Sequence[str | Path] = (),
     source_selection_manifest: str | Path | None = None,
     source_screenshot_roots: Sequence[str | Path] = (),
 ) -> dict[str, Any]:
@@ -1632,6 +2042,8 @@ def refresh_artifact_memory(
             function_catalogs=function_catalogs,
             runlog_roots=runlog_roots,
             result_roots=result_roots,
+            mobilegpt_memory_roots=mobilegpt_memory_roots,
+            baseline_batch_reports=baseline_batch_reports,
             source_selection_manifest=source_selection_manifest,
             source_screenshot_roots=source_screenshot_roots,
         )
@@ -1673,6 +2085,20 @@ def load_artifact_memory(memory_index: str | Path) -> dict[str, Any]:
             )
         if not expected_hash or _sha256(path) != expected_hash:
             raise ValueError(f"artifact_memory_index_hash_mismatch:{path_field}:{path}")
+    mobilegpt_index = pointer.get("mobilegpt_memory_index")
+    mobilegpt_index_hash = pointer.get("mobilegpt_memory_index_sha256")
+    if mobilegpt_index is not None or mobilegpt_index_hash is not None:
+        path = Path(str(mobilegpt_index or "")).expanduser()
+        expected_hash = str(mobilegpt_index_hash or "")
+        if not path.is_absolute() or not path.is_file():
+            raise FileNotFoundError(
+                f"artifact_memory_index_missing:mobilegpt_memory_index:{path}"
+            )
+        if not expected_hash or _sha256(path) != expected_hash:
+            raise ValueError(
+                "artifact_memory_index_hash_mismatch:mobilegpt_memory_index:"
+                f"{path}"
+            )
     return registry
 
 
@@ -1685,6 +2111,7 @@ def registered_cell_plan_from_memory(
     source_seed: int,
     evaluation_seed: int,
     formal_max_steps: int | None = None,
+    mobilegpt_memory_schemas: Sequence[str] | None = None,
 ) -> dict[str, list[tuple[str, str]]]:
     """Resolve completed formal cells without rescanning historical results."""
 
@@ -1696,6 +2123,14 @@ def registered_cell_plan_from_memory(
         cell_key = f"{task_name}|{method}|{device}|{source_seed}|{evaluation_seed}"
         record = cells.get(cell_key)
         if not isinstance(record, dict):
+            continue
+        if (
+            method == "mobilegpt_offline_retrieval"
+            and mobilegpt_memory_schemas is not None
+            and record.get("selection_reason") != BASELINE_BATCH_REPORT_SELECTION
+            and str(record.get("mobilegpt_memory_schema") or "")
+            not in set(mobilegpt_memory_schemas)
+        ):
             continue
         if formal_max_steps is not None:
             object_path = Path(
@@ -1721,23 +2156,47 @@ def registered_cell_plan_from_memory(
                 raise ValueError(
                     f"artifact_memory_result_payload_invalid:{cell_key}:{object_path}"
                 )
-            from src.experiment.result_registry import (
-                validate_formal_result_protocol,
-            )
+            if record.get("selection_reason") != BASELINE_BATCH_REPORT_SELECTION:
+                from src.experiment.result_registry import (
+                    validate_formal_result_protocol,
+                )
 
-            validate_formal_result_protocol(
-                rows[0],
-                task_name=task_name,
-                method=method,
-                device=device,
-                evaluation_seed=evaluation_seed,
-                max_steps=formal_max_steps,
-            )
+                validate_formal_result_protocol(
+                    rows[0],
+                    task_name=task_name,
+                    method=method,
+                    device=device,
+                    evaluation_seed=evaluation_seed,
+                    max_steps=formal_max_steps,
+                )
         completed.append((method, device))
     return {
         "completed": completed,
         "pending": [cell for cell in expected if cell not in completed],
     }
+
+
+def canonical_mobilegpt_memory_from_memory(
+    *,
+    memory_index: str | Path,
+    task_name: str,
+) -> dict[str, Any] | None:
+    """Resolve one validated task-local MobileGPT memory from current.json."""
+
+    registry = load_artifact_memory(memory_index)
+    record = registry.get("canonical", {}).get("mobilegpt_memories", {}).get(
+        str(task_name)
+    )
+    if record is None:
+        return None
+    if not isinstance(record, dict):
+        raise ValueError(f"mobilegpt_memory_index_record_invalid:{task_name}")
+    memory_root = Path(str(record.get("memory_root") or "")).expanduser()
+    if not memory_root.is_absolute() or not memory_root.is_dir():
+        raise FileNotFoundError(
+            f"mobilegpt_memory_index_root_missing:{task_name}:{memory_root}"
+        )
+    return dict(record)
 
 
 def refresh_artifact_memory_from_pointer(
@@ -1748,6 +2207,8 @@ def refresh_artifact_memory_from_pointer(
     additional_function_catalogs: Sequence[str | Path] = (),
     additional_runlog_roots: Sequence[str | Path] = (),
     additional_result_roots: Sequence[str | Path] = (),
+    additional_mobilegpt_memory_roots: Sequence[str | Path] = (),
+    additional_baseline_batch_reports: Sequence[str | Path] = (),
 ) -> dict[str, Any]:
     """Refresh a memory using its recorded inputs plus newly completed evidence."""
 
@@ -1782,12 +2243,35 @@ def refresh_artifact_memory_from_pointer(
                 ),
             }
         )
+        mobilegpt_memory_roots = sorted(
+            {
+                *(
+                    str(value)
+                    for value in inputs.get("mobilegpt_memory_roots") or []
+                ),
+                *(
+                    str(Path(value).expanduser().resolve())
+                    for value in additional_mobilegpt_memory_roots
+                ),
+            }
+        )
+        baseline_batch_reports = sorted(
+            {
+                *(str(value) for value in inputs.get("baseline_batch_reports") or []),
+                *(
+                    str(Path(value).expanduser().resolve())
+                    for value in additional_baseline_batch_reports
+                ),
+            }
+        )
         return _refresh_artifact_memory_unlocked(
             memory_root=pointer_path.parent,
             source_index=str(inputs["source_index"]),
             function_catalogs=function_catalogs,
             runlog_roots=runlog_roots,
             result_roots=result_roots,
+            mobilegpt_memory_roots=mobilegpt_memory_roots,
+            baseline_batch_reports=baseline_batch_reports,
             source_selection_manifest=(
                 source_selection_manifest
                 or (inputs.get("source_selection_manifest") or {}).get("object_path")
@@ -1808,7 +2292,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Maintain content-addressed long-term memory for AndroidWorld "
-            "RunLogs, Function assets, and registered results."
+            "RunLogs, method assets, and registered results."
         )
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1820,6 +2304,16 @@ def main(argv: list[str] | None = None) -> int:
     refresh_parser.add_argument("--function-catalog", action="append", default=[])
     refresh_parser.add_argument("--runlog-root", action="append", required=True)
     refresh_parser.add_argument("--result-root", action="append", default=[])
+    refresh_parser.add_argument(
+        "--mobilegpt-memory-root",
+        action="append",
+        default=[],
+    )
+    refresh_parser.add_argument(
+        "--baseline-batch-report",
+        action="append",
+        default=[],
+    )
     paths_parser = subparsers.add_parser("paths")
     paths_parser.add_argument("--memory-index", required=True)
     plan_parser = subparsers.add_parser("plan")
@@ -1840,6 +2334,12 @@ def main(argv: list[str] | None = None) -> int:
                 additional_function_catalogs=_split_values(args.function_catalog),
                 additional_runlog_roots=_split_values(args.runlog_root),
                 additional_result_roots=_split_values(args.result_root),
+                additional_mobilegpt_memory_roots=_split_values(
+                    args.mobilegpt_memory_root
+                ),
+                additional_baseline_batch_reports=_split_values(
+                    args.baseline_batch_report
+                ),
             )
         else:
             if not args.source_index:
@@ -1854,6 +2354,12 @@ def main(argv: list[str] | None = None) -> int:
                 function_catalogs=_split_values(args.function_catalog),
                 runlog_roots=_split_values(args.runlog_root),
                 result_roots=_split_values(args.result_root),
+                mobilegpt_memory_roots=_split_values(
+                    args.mobilegpt_memory_root
+                ),
+                baseline_batch_reports=_split_values(
+                    args.baseline_batch_report
+                ),
             )
         pointer = _load_object(pointer_path)
         output = {
@@ -1886,6 +2392,7 @@ def main(argv: list[str] | None = None) -> int:
 
 __all__ = [
     "load_artifact_memory",
+    "canonical_mobilegpt_memory_from_memory",
     "refresh_artifact_memory",
     "refresh_artifact_memory_from_pointer",
     "registered_cell_plan_from_memory",

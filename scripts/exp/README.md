@@ -14,7 +14,8 @@ One normal single-task invocation performs the complete workflow:
    - `fixed_replay`: use the canonical recorded actions;
    - `ours`: compile the RunLog, call the existing `enhance_function(...)`
      exactly once, validate, freeze, and register the Store;
-   - `mobilegpt_offline_retrieval`: resolve or create native source memory;
+   - `mobilegpt_offline_retrieval`: teach MobileGPT from the canonical RunLog,
+     then save its native task/page/subtask/action memory;
    - `appagent_demo`: resolve or create the native demonstration;
    - `t3a_hint`: derive the semantic hint from the same Function and RunLog.
 3. Reuse every already registered or frozen source asset without regeneration.
@@ -43,6 +44,7 @@ All data paths are absolute and outside the repository.
 | `OMNIFLOW_OURS_CONVERTED_ASSET_ROOT` | A new, empty conversion version directory |
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
 | `OMNIFLOW_OURS_AUTHORING_MANIFEST` | Immutable offline Function authoring manifest |
+| `OMNIFLOW_MEMORY_MOBILEGPT_ROOTS` | Optional colon-separated roots containing sealed MobileGPT teacher memory |
 
 The source RunLog index defaults to
 `$OMNIFLOW_EXP_ASSET_ROOT/runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json`.

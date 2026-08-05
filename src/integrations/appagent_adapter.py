@@ -1442,19 +1442,28 @@ def _traverse_appagent_elements(
 
 
 def _appagent_element_id(element: ET.Element) -> str:
-    bbox = _element_bbox(element)
-    if bbox is None:
-        raise ValueError("appagent_element_bounds_missing")
-    width = bbox[1][0] - bbox[0][0]
-    height = bbox[1][1] - bbox[0][1]
     resource_id = str(element.attrib.get("resource-id") or "")
     if resource_id:
         element_id = resource_id.replace(":", ".").replace("/", "_")
-    else:
-        element_id = f"{element.attrib.get('class', '')}_{width}_{height}"
-    content_desc = str(element.attrib.get("content-desc") or "")
-    if content_desc and len(content_desc) < 20:
-        cleaned = content_desc.replace("/", "_").replace(" ", "").replace(":", "_")
+        content_desc = str(element.attrib.get("content-desc") or "")
+        if content_desc and len(content_desc) < 20:
+            cleaned = (
+                content_desc.replace("/", "_")
+                .replace(" ", "")
+                .replace(":", "_")
+            )
+            element_id += f"_{cleaned}"
+        return element_id
+    element_id = str(element.attrib.get("class") or "")
+    semantic_label = str(
+        element.attrib.get("content-desc") or element.attrib.get("text") or ""
+    )
+    if semantic_label and len(semantic_label) < 20:
+        cleaned = (
+            semantic_label.replace("/", "_")
+            .replace(" ", "")
+            .replace(":", "_")
+        )
         element_id += f"_{cleaned}"
     return element_id
 

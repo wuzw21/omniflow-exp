@@ -43,6 +43,14 @@ _EXPLICIT_LABELS = (
     "skip ad",
     "skip advertisement",
 )
+_TRANSIENT_DISMISS_LABELS = {
+    "以后再说",
+    "稍后",
+    "暂不",
+    "不了，谢谢",
+    "not now",
+    "no thanks",
+}
 _EXACT_SKIP_LABELS = {"跳过", "skip"}
 _GENERIC_CLOSE_LABELS = {"关闭", "close", "×", "✕"}
 _AD_WORDS = {"ad", "ads", "advert", "advertisement", "sponsored"}
@@ -94,7 +102,7 @@ def match_checker_rule(
 
 
 def default_checker(context: CheckerContext) -> Action | None:
-    if context.action.tool == "open_app":
+    if context.action.tool in {"open_app", "press_key"}:
         return None
     source_package = str(context.source.package_name or "") if context.source else ""
     current_package = str(context.current.package_name or "")
@@ -107,6 +115,10 @@ def default_checker(context: CheckerContext) -> Action | None:
     ):
         return Action("open_app", {"package_name": source_package})
     return _advertisement_recovery(context.current, context.action)
+
+
+def transient_obstruction_recovery(observation: Any) -> Action | None:
+    return _transient_recovery(observation, original_action=None)
 
 
 def default_checker_trigger(
@@ -234,8 +246,16 @@ def _advertisement_recovery(
     observation: Any,
     original_action: Action,
 ) -> Action | None:
+    return _transient_recovery(observation, original_action=original_action)
+
+
+def _transient_recovery(
+    observation: Any,
+    *,
+    original_action: Action | None,
+) -> Action | None:
     xml = str(observation.xml or "")
-    if not xml or not _might_contain_ad_recovery(xml):
+    if not xml or not _might_contain_transient_recovery(xml):
         return None
     try:
         load_omnitransfer()
@@ -243,7 +263,14 @@ def _advertisement_recovery(
             "omnitransfer.ui_graph"
         ).graph_from_record
         graph = graph_from_record({"xml": xml}, graph_id="checker-current")
-    except (AttributeError, ImportError, RuntimeError, SyntaxError, TypeError, ValueError):
+    except (
+        AttributeError,
+        ImportError,
+        RuntimeError,
+        SyntaxError,
+        TypeError,
+        ValueError,
+    ):
         return None
     nodes_by_id = {node.node_id: node for node in graph.nodes}
     page_has_ad_evidence = any(_node_has_ad_evidence(node) for node in graph.nodes)
@@ -263,12 +290,14 @@ def _advertisement_recovery(
         return None
     _, _, target = min(candidates, key=lambda item: (item[0], item[1], item[2].node_id))
     point = _relative_center(target.bbox, graph.width, graph.height)
-    if point is None or _original_targets(original_action, point):
+    if point is None or (
+        original_action is not None and _original_targets(original_action, point)
+    ):
         return None
     return Action(
         "click",
         {
-            "target_description": "关闭广告",
+            "target_description": "关闭临时遮挡",
             "x": point[0],
             "y": point[1],
         },
@@ -282,7 +311,7 @@ def _is_transient_package(package_name: str) -> bool:
     )
 
 
-def _might_contain_ad_recovery(xml: str) -> bool:
+def _might_contain_transient_recovery(xml: str) -> bool:
     normalized = xml.casefold()
     return any(
         marker in normalized
@@ -298,6 +327,7 @@ def _might_contain_ad_recovery(xml: str) -> bool:
             'content-desc="跳过"',
             'text="skip"',
             'content-desc="skip"',
+            *_TRANSIENT_DISMISS_LABELS,
         )
     )
 
@@ -313,6 +343,8 @@ def _close_signal_priority(node: Any, page_has_ad_evidence: bool) -> int | None:
         or any(explicit in label for explicit in _EXPLICIT_LABELS)
         for label in labels
     ):
+        return 0
+    if any(label in _TRANSIENT_DISMISS_LABELS for label in labels):
         return 0
     if _resource_has_ad_close_signal(node.resource_id):
         return 1
@@ -335,12 +367,8 @@ def _node_has_ad_evidence(node: Any) -> bool:
 def _resource_has_ad_close_signal(resource_id: str) -> bool:
     words = _resource_words(resource_id)
     normalized = _normalize(resource_id)
-    return (
-        bool(words & _AD_WORDS)
-        and bool(words & _CLOSE_WORDS)
-    ) or any(
-        marker in normalized
-        for marker in ("adclose", "closead", "adskip", "skipad")
+    return (bool(words & _AD_WORDS) and bool(words & _CLOSE_WORDS)) or any(
+        marker in normalized for marker in ("adclose", "closead", "adskip", "skipad")
     )
 
 

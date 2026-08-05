@@ -208,6 +208,37 @@ def test_mobilegpt_repairs_native_task_app_nested_in_parameters(monkeypatch) -> 
     }
 
 
+def test_mobilegpt_executes_repeat_click_as_multiple_androidworld_clicks(
+    tmp_path: Path,
+) -> None:
+    class FakeEnv:
+        def __init__(self) -> None:
+            self.actions: list[SimpleNamespace] = []
+
+        def execute_action(self, action: SimpleNamespace) -> None:
+            self.actions.append(action)
+
+    env = FakeEnv()
+    agent = build_mobilegpt_agent(
+        env=env,
+        evidence_root=tmp_path,
+        action_factory=lambda **payload: SimpleNamespace(**payload),
+    )
+
+    should_continue, answer = agent._execute_server_action(
+        {"name": "repeat-click", "parameters": {"index": 0, "number": 2}},
+        xml_text=(
+            '<hierarchy><node index="0" clickable="true" '
+            'bounds="[10,20][30,60]" /></hierarchy>'
+        ),
+    )
+
+    assert should_continue is True
+    assert answer == ""
+    assert [action.action_type for action in env.actions] == ["click", "click"]
+    assert [(action.x, action.y) for action in env.actions] == [(20, 40), (20, 40)]
+
+
 def test_mobilegpt_executes_server_click_through_androidworld_state_and_action(
     tmp_path: Path,
     monkeypatch,

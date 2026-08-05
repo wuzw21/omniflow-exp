@@ -29,7 +29,8 @@ from omniflow.vlm.gui import (
 )
 
 PROTOCOL_VERSION = "2025-11-25"
-_DEFAULT_GUI_MAX_STEPS = 12
+_DEFAULT_GUI_MAX_STEPS = 20
+_MAX_GUI_MAX_STEPS = 64
 _MODEL_TOOL_CALL_ATTEMPTS = 2
 
 _FUNCTION_CATALOG_ACTIONS = {
@@ -104,11 +105,15 @@ class JsonLineBridge:
     def _handle(self, request_id: str, operation: str, payload: Any) -> Any:
         body = payload if isinstance(payload, dict) else {}
         if operation == "initialize":
-            _require_contract(body, {"protocolVersion", "capabilities", "clientInfo"}, {
-                "protocolVersion",
-                "capabilities",
-                "clientInfo",
-            })
+            _require_contract(
+                body,
+                {"protocolVersion", "capabilities", "clientInfo"},
+                {
+                    "protocolVersion",
+                    "capabilities",
+                    "clientInfo",
+                },
+            )
             if body["protocolVersion"] != PROTOCOL_VERSION:
                 raise ValueError("unsupported_protocol_version")
             self.flow.store.reload()
@@ -248,13 +253,7 @@ class JsonLineBridge:
                 code="MODEL_REQUIRED",
                 message="model_required",
             )
-        max_steps = max(
-            1,
-            min(
-                int(body.get("max_steps") or _DEFAULT_GUI_MAX_STEPS),
-                64,
-            ),
-        )
+        max_steps = _gui_max_steps(body.get("max_steps"))
         host = _BridgeHost(
             self,
             request_id,
@@ -286,13 +285,7 @@ class JsonLineBridge:
         metadata: Any,
     ) -> dict[str, Any]:
         run_metadata = dict(metadata) if isinstance(metadata, dict) else {}
-        max_steps = max(
-            1,
-            min(
-                int(run_metadata.get("max_steps") or _DEFAULT_GUI_MAX_STEPS),
-                64,
-            ),
-        )
+        max_steps = _gui_max_steps(run_metadata.get("max_steps"))
         host = _BridgeHost(
             self,
             request_id,
@@ -1188,6 +1181,13 @@ def _enhancement_diagnostics(
     return diagnostics
 
 
+def _gui_max_steps(value: Any) -> int:
+    return max(
+        1,
+        min(int(value or _DEFAULT_GUI_MAX_STEPS), _MAX_GUI_MAX_STEPS),
+    )
+
+
 def _run_result(
     result,
     *,
@@ -1256,6 +1256,8 @@ def _run_result(
         "model_calls": int(result.model_calls),
         "fallback_steps": int(result.fallback_steps),
         "planner_diagnostics": result.detail.get("planner_diagnostics") or None,
+        "function_resolution": result.detail.get("function_resolution") or None,
+        "runtime_limits": result.detail.get("runtime_limits") or None,
         "missing_required_arguments": (
             [
                 value
@@ -1405,9 +1407,7 @@ def _bridge_identity() -> dict[str, Any]:
         "omniflow_commit": properties.get("omniflow.commit", ""),
         "omniflow_source_sha256": properties.get("omniflow.source.sha256", ""),
         "omnitransfer_commit": properties.get("omnitransfer.commit", ""),
-        "omnitransfer_source_sha256": properties.get(
-            "omnitransfer.source.sha256", ""
-        ),
+        "omnitransfer_source_sha256": properties.get("omnitransfer.source.sha256", ""),
         "omnitransfer_ready": transfer["ready"],
         "omnitransfer_backend": transfer["backend"],
     }

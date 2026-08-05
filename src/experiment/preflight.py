@@ -19,6 +19,14 @@ import time
 from typing import Any
 
 from omniflow.core.trajectory import canonicalize_run_log as import_run_log
+from src.experiment.mobilegpt_contract import (
+    MOBILEGPT_LEARNING_MODE_BY_SCHEMA,
+    MOBILEGPT_LEGACY_MEMORY_SCHEMA,
+    MOBILEGPT_MEMORY_MANIFEST,
+    MOBILEGPT_MEMORY_SCHEMA,
+    MOBILEGPT_NATIVE_DERIVE_MEMORY_SCHEMA,
+    MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS,
+)
 
 APPAGENT_OFFICIAL_REVISION = "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
 REQUIRED_DISTRIBUTION_VERSIONS = {"android-env": "1.2.3"}
@@ -160,12 +168,13 @@ def _source_memory_files(memory_root: Path) -> tuple[list[Path], list[Path]]:
     return files, task_files
 
 
-def _validate_mobilegpt_cold_manifest(memory_root: Path) -> dict[str, Any]:
+def _validate_mobilegpt_manifest(memory_root: Path) -> dict[str, Any]:
     root = memory_root.expanduser().resolve()
-    manifest_path = root.parent / "cold_memory_manifest.json"
+    manifest_path = root.parent / MOBILEGPT_MEMORY_MANIFEST
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or payload.get("schema_version") != (
-        "omniflow.mobilegpt-native-cold-memory.v1"
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") not in MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS
     ):
         raise ValueError("mobilegpt_cold_memory_manifest_schema_invalid")
     if payload.get("source_seed") != 111:
@@ -173,12 +182,56 @@ def _validate_mobilegpt_cold_manifest(memory_root: Path) -> dict[str, Any]:
     provenance = payload.get("provenance")
     if not isinstance(provenance, dict):
         raise ValueError("mobilegpt_cold_memory_provenance_missing")
-    if (
-        provenance.get("native_mobilegpt_learning") is not True
-        or provenance.get("learning_mode") != "mobilegpt_native_cold"
-        or provenance.get("teacher_forcing") is not False
-        or provenance.get("synthetic_subtasks") is not False
-    ):
+    schema_version = str(payload.get("schema_version") or "")
+    legacy = schema_version == MOBILEGPT_LEGACY_MEMORY_SCHEMA
+    semantic = schema_version == MOBILEGPT_MEMORY_SCHEMA
+    native_derive = schema_version == MOBILEGPT_NATIVE_DERIVE_MEMORY_SCHEMA
+    required_provenance = {
+        "native_mobilegpt_learning": legacy or native_derive,
+        "task_local_memory": True,
+        "learning_mode": MOBILEGPT_LEARNING_MODE_BY_SCHEMA[schema_version],
+        "teacher_forcing": legacy,
+        "synthetic_subtasks": not (legacy or semantic or native_derive),
+        "actions_supplied_to_mobilegpt": not native_derive,
+        "function_store_used": False,
+    }
+    if semantic:
+        required_provenance.update(
+            {
+                "semantic_subtasks": True,
+                "original_mobilegpt_prompts": True,
+                "source_transitions_supplied": True,
+                "source_success_boundary_supplied": True,
+                "runlog_transition_compilation": True,
+                "complete_transition_mapping": True,
+                "official_reader_validation": True,
+                "source_emulator_used": False,
+            }
+        )
+    elif native_derive:
+        required_provenance.update(
+            {
+                "source_transitions_supplied": True,
+                "source_success_boundary_supplied": True,
+                "trajectory_action_validation": True,
+                "complete_trajectory_validation": True,
+                "source_emulator_used": False,
+            }
+        )
+    elif legacy:
+        required_provenance["complete_teacher_action_consumption"] = True
+    else:
+        required_provenance.update(
+            {
+                "source_transitions_supplied": True,
+                "source_success_boundary_supplied": True,
+                "runlog_transition_compilation": True,
+                "complete_transition_mapping": True,
+                "official_reader_validation": True,
+                "source_emulator_used": False,
+            }
+        )
+    if any(provenance.get(key) != value for key, value in required_provenance.items()):
         raise ValueError("mobilegpt_cold_memory_native_learning_incomplete")
     forbidden = [
         key
@@ -205,11 +258,17 @@ def _validate_mobilegpt_cold_manifest(memory_root: Path) -> dict[str, Any]:
         raise ValueError("mobilegpt_cold_memory_hash_mismatch")
     if len(files) != int(memory.get("file_count") or -1):
         raise ValueError("mobilegpt_cold_memory_file_count_mismatch")
-    for label in (
-        "source_run_log",
-        "source_stats",
-        "official_source_result",
-    ):
+    evidence_labels = (
+        (
+            "teacher_source",
+            "source_run_log",
+            "source_stats",
+            "official_source_result",
+        )
+        if legacy
+        else ("source_run_log", "source_stats", "trajectory_audit")
+    )
+    for label in evidence_labels:
         record = payload.get(label)
         if not isinstance(record, dict):
             raise ValueError(f"mobilegpt_cold_memory_{label}_missing")
@@ -225,6 +284,18 @@ def _validate_mobilegpt_cold_manifest(memory_root: Path) -> dict[str, Any]:
         actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
         if actual_sha256 != str(record.get("sha256") or ""):
             raise ValueError(f"mobilegpt_cold_memory_{label}_hash_mismatch")
+    if not legacy:
+        if "official_source_result" in payload:
+            raise ValueError("mobilegpt_cold_memory_official_source_forbidden")
+        return {
+            "manifest": str(manifest_path),
+            "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+            "task_name": str(payload.get("task_name") or ""),
+            "source_seed": int(payload["source_seed"]),
+            "memory_sha256": digest,
+            "memory_file_count": len(files),
+            "task_file_count": len(task_files),
+        }
     official = payload["official_source_result"]
     validator_used = official.get("official_validator_used")
     validator_success = official.get("official_validator_success")
@@ -629,8 +700,8 @@ def _required_files(profile: str) -> list[str]:
     if profile == "mobilegpt":
         return [
             "src/experiment/androidworld.py",
+            "src/integrations/mobilegpt_converter.py",
             "src/integrations/mobilegpt_runtime.py",
-            "src/integrations/mobilegpt_teacher.py",
             "runtime/external/mobilegpt/Server/main.py",
             "runtime/external/droidrun-android-world/android_world/android_world/env/setup_device/apps.py",
         ]
@@ -787,14 +858,14 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
             try:
-                cold_manifest = _validate_mobilegpt_cold_manifest(memory_root)
+                mobilegpt_manifest = _validate_mobilegpt_manifest(memory_root)
             except (OSError, ValueError, json.JSONDecodeError) as error:
-                add("cold_memory_manifest", False, str(error))
+                add("mobilegpt_memory_manifest", False, str(error))
             else:
                 add(
-                    "cold_memory_manifest",
+                    "mobilegpt_memory_manifest",
                     True,
-                    json.dumps(cold_manifest, sort_keys=True),
+                    json.dumps(mobilegpt_manifest, sort_keys=True),
                 )
 
     disk = shutil.disk_usage(repo if repo.exists() else Path.home())

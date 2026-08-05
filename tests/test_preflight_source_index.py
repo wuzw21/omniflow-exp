@@ -17,9 +17,9 @@ from src.experiment.preflight import (
 from runlog_fixtures import androidworld_run_log
 
 
-def test_mobilegpt_teacher_imports_in_clean_process() -> None:
+def test_mobilegpt_converter_imports_in_clean_process() -> None:
     completed = subprocess.run(
-        [sys.executable, "-c", "import src.integrations.mobilegpt_teacher"],
+        [sys.executable, "-c", "import src.integrations.mobilegpt_converter"],
         cwd=Path(__file__).resolve().parents[1],
         check=False,
         capture_output=True,

@@ -157,11 +157,13 @@ It preserves the recorded generating method, including an explicit
 `unrecorded` value for legacy records without that field. Source assets are
 authored once and frozen. The entry point may create method-native MobileGPT
 and AppAgent assets once from the same valid source RunLog; failed or partial
-creation is immutable and is never retried. MobileGPT runs its native
-source-seed-`111` cold-learning path and writes one task-local memory through
-its stock `TaskAgent`, `Explore`, `Select`, `Derive`, and `Memory.save_task()`
-flow. The RunLog and Function Store are audit inputs only and never provide
-MobileGPT actions or synthetic subtasks. AppAgent separately uses source-only
+creation is immutable and is never retried. MobileGPT consumes the canonical
+source-seed-`111` RunLog through the offline teacher server and writes one
+task-local memory through its stock `TaskAgent`, `Explore`, `Select`, `Derive`,
+and `Memory.save_task()` flow. The teacher supplies only the recorded source
+trajectory; MobileGPT still creates its own pages, subtasks, and action memory.
+It never reads the Function Store or synthetic OmniFlow subtasks, and a teacher
+miss returns to MobileGPT's native VLM planner. AppAgent separately uses source-only
 UI evidence to ground its native human-demo capture without mutating the
 canonical RunLog.
 Environment setup and preflight logs are written to a separate unique external

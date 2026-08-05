@@ -11,6 +11,7 @@ import pytest
 from omniflow import Action
 from src.integrations.android_world.host import AndroidWorldHost
 from src.integrations.android_world.launch import (
+    _androidworld_a11y_method_for_agent,
     _native_androidworld_a11y_method,
     _result_has_official_validator_conclusion,
 )
@@ -156,6 +157,32 @@ def test_androidworld_native_observation_uses_accessibility_forest() -> None:
     )
 
     assert _native_androidworld_a11y_method(controller_module) is forwarder
+
+
+def test_appagent_native_observation_uses_androidworld_uiautomator() -> None:
+    forwarder = object()
+    uiautomator = object()
+    controller_module = SimpleNamespace(
+        A11yMethod=SimpleNamespace(
+            A11Y_FORWARDER_APP=forwarder,
+            UIAUTOMATOR=uiautomator,
+        )
+    )
+
+    assert (
+        _androidworld_a11y_method_for_agent(
+            controller_module,
+            native_appagent=True,
+        )
+        is uiautomator
+    )
+    assert (
+        _androidworld_a11y_method_for_agent(
+            controller_module,
+            native_appagent=False,
+        )
+        is forwarder
+    )
 
 
 def test_androidworld_host_cannot_be_switched_to_oob(monkeypatch) -> None:

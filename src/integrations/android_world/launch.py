@@ -2131,6 +2131,16 @@ def _native_androidworld_a11y_method(android_world_controller: Any) -> Any:
     return android_world_controller.A11yMethod.A11Y_FORWARDER_APP
 
 
+def _androidworld_a11y_method_for_agent(
+    android_world_controller: Any,
+    *,
+    native_appagent: bool,
+) -> Any:
+    if native_appagent:
+        return android_world_controller.A11yMethod.UIAUTOMATOR
+    return _native_androidworld_a11y_method(android_world_controller)
+
+
 def _patch_androidworld_ui_debug_settings(
     android_world_controller: Any,
 ) -> Any | None:
@@ -2251,10 +2261,17 @@ def _prepare_native_androidworld_a11y_runtime(
     adb_serial: str,
     adb_path: str = "",
 ) -> dict[str, Any]:
-    forwarder = _quiesce_androidworld_accessibility_forwarder(
-        adb_serial=adb_serial,
-        adb_path=adb_path,
+    controller = getattr(env, "controller", None)
+    a11y_method = getattr(controller, "_a11y_method", None)
+    uses_forwarder = str(getattr(a11y_method, "value", "")) == (
+        "a11y_forwarder_app"
     )
+    forwarder: dict[str, Any] = {}
+    if uses_forwarder:
+        forwarder = _quiesce_androidworld_accessibility_forwarder(
+            adb_serial=adb_serial,
+            adb_path=adb_path,
+        )
     for setting_name in ("pointer_location", "show_touches"):
         disabled = _run_adb_command(
             adb_serial=adb_serial,
@@ -2290,9 +2307,8 @@ def _prepare_native_androidworld_a11y_runtime(
             or str(checked.get("stdout") or "").strip() != "0"
         ):
             raise RuntimeError(f"androidworld_{setting_name}_still_enabled")
-    controller = getattr(env, "controller", None)
     refresh_env = getattr(controller, "refresh_env", None)
-    if callable(refresh_env):
+    if uses_forwarder and callable(refresh_env):
         refresh_env()
     _close_android_system_dialogs(
         adb_serial=adb_serial,
@@ -2322,7 +2338,7 @@ def _prepare_native_androidworld_a11y_runtime(
     for readiness_attempt in range(3):
         if readiness_attempt:
             time.sleep(0.5)
-            if callable(refresh_env):
+            if uses_forwarder and callable(refresh_env):
                 refresh_env()
             _close_android_system_dialogs(
                 adb_serial=adb_serial,
@@ -2339,8 +2355,12 @@ def _prepare_native_androidworld_a11y_runtime(
             return {
                 "ready": True,
                 "ui_element_count": len(ui_elements),
-                "controller_refreshed": callable(refresh_env),
+                "controller_refreshed": uses_forwarder
+                and callable(refresh_env),
                 "forwarder_quiesced": bool(forwarder.get("removed")),
+                "a11y_method": str(
+                    getattr(a11y_method, "value", a11y_method) or ""
+                ),
                 "readiness_attempts": readiness_attempt + 1,
             }
         last_state_error = RuntimeError(
@@ -4729,7 +4749,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         original_get_controller = getattr(
             android_world_controller, "get_controller", None
         )
-        if callable(original_get_controller) and not native_appagent:
+        if callable(original_get_controller):
 
             def _get_controller_without_reinstall(
                 console_port: int = 5554,
@@ -4810,10 +4830,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 logging.info("Setting up AndroidWorldController.")
                 controller_kwargs: dict[str, object] = {
                     "install_a11y_forwarding_app": bool(
-                        install_a11y_forwarding_app
+                        install_a11y_forwarding_app and not native_appagent
                     ),
-                    "a11y_method": _native_androidworld_a11y_method(
-                        android_world_controller
+                    "a11y_method": _androidworld_a11y_method_for_agent(
+                        android_world_controller,
+                        native_appagent=native_appagent,
                     ),
                 }
                 return android_world_controller.AndroidWorldController(
@@ -4944,7 +4965,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         if (
             bool(args.perform_emulator_setup)
             and not _use_oob_observe_backend()
-            and not native_appagent
         ):
             setup_forwarder = _quiesce_androidworld_accessibility_forwarder(
                 adb_serial=target_adb_serial,
@@ -4965,7 +4985,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ", ".join(selected_task_names) or "<all>",
             )
             aw_setup.setup_apps(env, app_list=setup_app_list)
-        if not _use_oob_observe_backend() and not native_appagent:
+        if not _use_oob_observe_backend():
             a11y_runtime = _prepare_native_androidworld_a11y_runtime(
                 env,
                 adb_serial=target_adb_serial,
@@ -5125,23 +5145,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 exc,
                             )
 
-                    if not native_appagent:
-                        task_adb_serial = str(
-                            os.environ.get("ANDROID_SERIAL")
-                            or f"emulator-{int(args.console_port)}"
-                        ).strip()
-                        _wrap_task_initialize_for_observation_runtime(
-                            task,
-                            agent=agent,
-                            adb_serial=task_adb_serial,
-                            adb_path=str(args.adb_path or ""),
-                            oob_url=str(
-                                os.environ.get("OMNIFLOW_OOB_DEVICE_URL") or ""
-                            ).strip().rstrip("/"),
-                            console_port=int(args.console_port),
-                            restore_app_snapshot=original_restore_snapshot,
-                            after_initialized=_update_context_after_initialize,
-                        )
+                    task_adb_serial = str(
+                        os.environ.get("ANDROID_SERIAL")
+                        or f"emulator-{int(args.console_port)}"
+                    ).strip()
+                    _wrap_task_initialize_for_observation_runtime(
+                        task,
+                        agent=agent,
+                        adb_serial=task_adb_serial,
+                        adb_path=str(args.adb_path or ""),
+                        oob_url=str(
+                            os.environ.get("OMNIFLOW_OOB_DEVICE_URL") or ""
+                        ).strip().rstrip("/"),
+                        console_port=int(args.console_port),
+                        restore_app_snapshot=(
+                            None if native_appagent else original_restore_snapshot
+                        ),
+                        after_initialized=_update_context_after_initialize,
+                    )
                     reference_text = official_goal_hint_text
                     if reference_text:
                         hinted_goal = f"{goal_text}\n\n{reference_text}"

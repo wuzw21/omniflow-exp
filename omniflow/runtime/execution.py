@@ -350,6 +350,12 @@ async def execute_action(
                 origin="blocked",
                 function_id=function_id,
             )
+    if recovery_action is not None and not _recovery_action_available(
+        recovery_action,
+        installed_packages,
+    ):
+        recovery_action = None
+        recovery_trigger = None
     if recovery_action is not None:
         recovery_step = replace(
             await _dispatch_prepared(
@@ -422,7 +428,7 @@ async def prepare_action(
     source_state: Observation | None = None,
 ) -> ActionDecision:
     candidate = action
-    if source_state is None:
+    if source_state is None or action.tool in {"open_app", "press_key"}:
         return ActionDecision("ready", action=candidate)
     transfer_fn = plugins.transfer
     if transfer_fn is None:
@@ -440,6 +446,16 @@ async def prepare_action(
         reason=transfer.reason,
         detail=transfer.detail,
     )
+
+
+def _recovery_action_available(
+    action: Action,
+    installed_packages: frozenset[str] | None,
+) -> bool:
+    if action.tool != "open_app":
+        return True
+    package_name = str(action.args.get("package_name") or "").strip()
+    return installed_packages is not None and package_name in installed_packages
 
 
 async def _dispatch_prepared(
@@ -1046,11 +1062,7 @@ def _document_titles(xml_text: str) -> set[str]:
     root = _xml_root(xml_text)
     if root is None:
         return set()
-    return {
-        title
-        for element in root.iter()
-        if (title := _element_title(element))
-    }
+    return {title for element in root.iter() if (title := _element_title(element))}
 
 
 def _xml_root(xml_text: str) -> ET.Element | None:
@@ -1069,7 +1081,11 @@ def _actionable_element_at_point(
 
     def visit(element: ET.Element, depth: int) -> None:
         bounds = _bounds(element.attrib.get("bounds"))
-        if bounds is not None and bounds[0] <= x <= bounds[2] and bounds[1] <= y <= bounds[3]:
+        if (
+            bounds is not None
+            and bounds[0] <= x <= bounds[2]
+            and bounds[1] <= y <= bounds[3]
+        ):
             containing.append((element, bounds, depth))
         for child in list(element):
             visit(child, depth + 1)
@@ -1132,11 +1148,9 @@ def _element_title(element: ET.Element | None) -> str:
     titles = {
         _text(descendant.attrib.get("text") or descendant.attrib.get("content-desc"))
         for descendant in element.iter()
-        if str(descendant.attrib.get("resource-id") or "").rsplit("/", 1)[-1]
-        == "title"
+        if str(descendant.attrib.get("resource-id") or "").rsplit("/", 1)[-1] == "title"
         and _text(
-            descendant.attrib.get("text")
-            or descendant.attrib.get("content-desc")
+            descendant.attrib.get("text") or descendant.attrib.get("content-desc")
         )
     }
     return next(iter(titles)) if len(titles) == 1 else ""

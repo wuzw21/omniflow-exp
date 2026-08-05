@@ -32,6 +32,7 @@ _MOBILEGPT_SUPPORTED_ACTIONS = {
     "go-back",
     "input",
     "long-click",
+    "repeat-click",
     "scroll",
     "speak",
     "__omniflow_launch_package",
@@ -452,10 +453,13 @@ def _mobilegpt_chat_model(requested_model: Any = None) -> str:
     ).strip()
 
 
-def install_mobilegpt_openai_runtime() -> None:
+def install_mobilegpt_openai_runtime(
+    *,
+    preserve_original_prompts: bool = False,
+) -> None:
     utils_module = importlib.import_module("utils.utils")
 
-    def _query(messages, model=None, is_list=False):
+    def _query(messages, model=None, is_list=False, agent_name="unknown"):
         from openai import OpenAI
 
         selected_model = _mobilegpt_chat_model(model)
@@ -469,7 +473,11 @@ def install_mobilegpt_openai_runtime() -> None:
         )
         client = OpenAI(timeout=timeout_sec, max_retries=0)
         last_error: Exception | None = None
-        active_messages = prepare_mobilegpt_chat_messages(messages)
+        active_messages = (
+            [dict(message) for message in messages]
+            if preserve_original_prompts
+            else prepare_mobilegpt_chat_messages(messages)
+        )
         for attempt in range(1, max_attempts + 1):
             started = time.monotonic()
             try:
@@ -487,6 +495,7 @@ def install_mobilegpt_openai_runtime() -> None:
                 _write_stats_event(
                     {
                         "event": "chat_call",
+                        "agent_name": str(agent_name or "unknown"),
                         "model": selected_model,
                         "attempt": attempt,
                         "latency_sec": round(time.monotonic() - started, 6),
@@ -513,6 +522,7 @@ def install_mobilegpt_openai_runtime() -> None:
                 _write_stats_event(
                     {
                         "event": "chat_schema_error",
+                        "agent_name": str(agent_name or "unknown"),
                         "model": selected_model,
                         "attempt": attempt,
                         "error": schema_error,
@@ -537,6 +547,7 @@ def install_mobilegpt_openai_runtime() -> None:
                 _write_stats_event(
                     {
                         "event": "chat_error",
+                        "agent_name": str(agent_name or "unknown"),
                         "model": selected_model,
                         "attempt": attempt,
                         "latency_sec": round(time.monotonic() - started, 6),

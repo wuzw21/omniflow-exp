@@ -8,6 +8,7 @@ import pytest
 
 from src.integrations.android_world import launch
 from src.integrations.android_world.setup_compat import (
+    _setup_click_is_already_complete,
     patch_androidworld_legacy_apk_install,
     patch_androidworld_open_tracks_setup,
     patch_androidworld_osmand_storage_setup,
@@ -18,6 +19,10 @@ from src.integrations.android_world.setup_compat import (
     resolve_androidworld_task_setup_apps,
     restore_task_app_snapshots_after_initialize,
 )
+
+
+def test_androidworld_camera_setup_accepts_completed_onboarding() -> None:
+    assert _setup_click_is_already_complete({"Options", "Shutter"}, "NEXT")
 
 
 def test_androidworld_rehydrates_receipt_image_from_official_instance_seed() -> None:
