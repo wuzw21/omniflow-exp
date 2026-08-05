@@ -1971,6 +1971,7 @@ export OMNIFLOW_PLANNER_MODEL="$paper_model"
 export MOBILEGPT_CHAT_MODEL="$paper_model"
 export OMNITRANSFER_ROOT="$omnitransfer_root"
 unset OMNIFLOW_OOB_DEVICE_URL
+unset MOBILEGPT_MEMORY_ONLY
 export OMNIFLOW_OBSERVE_BACKEND="androidworld"
 export OMNIFLOW_ACT_BACKEND="androidworld"
 missing_assets=()

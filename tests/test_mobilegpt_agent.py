@@ -23,6 +23,7 @@ from src.integrations.android_world.mobilegpt_agent import (
 from src.integrations.mobilegpt_runtime import (
     _parse_mobilegpt_model_response,
     install_mobilegpt_androidworld_observe,
+    install_mobilegpt_memory_only_guard,
     install_mobilegpt_select_schema_repair,
     mobilegpt_compatible_xml,
 )
@@ -149,6 +150,99 @@ def test_mobilegpt_select_does_not_synthesize_unknown_subtasks() -> None:
     assert [subtask["name"] for subtask in available_subtasks] == [
         "known_subtask"
     ]
+
+
+def test_mobilegpt_memory_only_guard_stops_instead_of_calling_fallback(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class ExploreAgent:
+        def explore(self):
+            return {"name": "explore"}
+
+    class SelectAgent:
+        def select(self):
+            return {"name": "select"}
+
+    class DeriveAgent:
+        def derive(self):
+            return {"name": "derive"}
+
+    class MobileGPT:
+        def __init__(self, stage: str) -> None:
+            self.stage = stage
+            self.instruction = "Use only recalled memory."
+            self.current_page_index = 3
+            self.current_subtask = {"name": "known_subtask"}
+
+        def get_next_action(self):
+            if self.stage == "explore":
+                return ExploreAgent().explore()
+            if self.stage == "select":
+                return SelectAgent().select()
+            return DeriveAgent().derive()
+
+    stats_path = tmp_path / "stats.jsonl"
+    monkeypatch.setenv("MOBILEGPT_MEMORY_ONLY", "1")
+    monkeypatch.setenv("MOBILEGPT_STATS_JSONL", str(stats_path))
+    install_mobilegpt_memory_only_guard(
+        MobileGPT,
+        explore_agent_class=ExploreAgent,
+        select_agent_class=SelectAgent,
+        derive_agent_class=DeriveAgent,
+    )
+
+    for stage in ("explore", "select", "derive"):
+        assert MobileGPT(stage).get_next_action() == {
+            "name": "finish",
+            "parameters": {},
+        }
+
+    events = [json.loads(line) for line in stats_path.read_text().splitlines()]
+    assert [event["stage"] for event in events] == [
+        "explore",
+        "select",
+        "derive",
+    ]
+    assert all(event["event"] == "mobilegpt_memory_only_miss" for event in events)
+    summary = pipeline.summarize_mobilegpt_stats(stats_path)
+    assert summary["memory_only_miss_count"] == 3
+    assert summary["memory_only_stage_counts"] == {
+        "derive": 1,
+        "explore": 1,
+        "select": 1,
+    }
+
+
+def test_mobilegpt_memory_only_guard_is_inert_when_disabled(monkeypatch) -> None:
+    class ExploreAgent:
+        def explore(self):
+            return {"name": "click", "parameters": {"index": 7}}
+
+    class SelectAgent:
+        def select(self):
+            raise AssertionError("not used")
+
+    class DeriveAgent:
+        def derive(self):
+            raise AssertionError("not used")
+
+    class MobileGPT:
+        def get_next_action(self):
+            return ExploreAgent().explore()
+
+    monkeypatch.delenv("MOBILEGPT_MEMORY_ONLY", raising=False)
+    install_mobilegpt_memory_only_guard(
+        MobileGPT,
+        explore_agent_class=ExploreAgent,
+        select_agent_class=SelectAgent,
+        derive_agent_class=DeriveAgent,
+    )
+
+    assert MobileGPT().get_next_action() == {
+        "name": "click",
+        "parameters": {"index": 7},
+    }
 
 
 def test_mobilegpt_xml_preserves_action_indices_and_indexes_structural_children() -> None:

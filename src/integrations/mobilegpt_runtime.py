@@ -40,6 +40,75 @@ _MOBILEGPT_SUPPORTED_ACTIONS = {
 _LATEST_MOBILEGPT_XML = ""
 
 
+class MobileGPTMemoryOnlyMiss(RuntimeError):
+    def __init__(self, stage: str) -> None:
+        self.stage = str(stage)
+        super().__init__(f"mobilegpt_memory_only_miss:{self.stage}")
+
+
+def _mobilegpt_memory_only_enabled() -> bool:
+    return str(os.environ.get("MOBILEGPT_MEMORY_ONLY") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def install_mobilegpt_memory_only_guard(
+    mobilegpt_class: type,
+    *,
+    explore_agent_class: type,
+    select_agent_class: type,
+    derive_agent_class: type,
+) -> None:
+    if bool(getattr(mobilegpt_class, "_omniflow_memory_only_guard_installed", False)):
+        return
+
+    def _guard_fallback(agent_class: type, method_name: str, stage: str) -> None:
+        marker = f"_omniflow_memory_only_{method_name}_installed"
+        if bool(getattr(agent_class, marker, False)):
+            return
+        original = getattr(agent_class, method_name)
+
+        def _guarded(self, *args, **kwargs):
+            if _mobilegpt_memory_only_enabled():
+                raise MobileGPTMemoryOnlyMiss(stage)
+            return original(self, *args, **kwargs)
+
+        setattr(agent_class, method_name, _guarded)
+        setattr(agent_class, marker, True)
+
+    _guard_fallback(explore_agent_class, "explore", "explore")
+    _guard_fallback(select_agent_class, "select", "select")
+    _guard_fallback(derive_agent_class, "derive", "derive")
+
+    original_get_next_action = mobilegpt_class.get_next_action
+
+    def _get_next_action(self, *args, **kwargs):
+        try:
+            return original_get_next_action(self, *args, **kwargs)
+        except MobileGPTMemoryOnlyMiss as error:
+            current_subtask = getattr(self, "current_subtask", None)
+            _write_stats_event(
+                {
+                    "event": "mobilegpt_memory_only_miss",
+                    "stage": error.stage,
+                    "instruction": str(getattr(self, "instruction", "") or ""),
+                    "page_index": getattr(self, "current_page_index", None),
+                    "subtask_name": (
+                        str(current_subtask.get("name") or "")
+                        if isinstance(current_subtask, dict)
+                        else ""
+                    ),
+                }
+            )
+            return {"name": "finish", "parameters": {}}
+
+    mobilegpt_class.get_next_action = _get_next_action
+    mobilegpt_class._omniflow_memory_only_guard_installed = True
+
+
 def install_mobilegpt_package_app_resolution(app_agent_class: type) -> None:
     if bool(
         getattr(app_agent_class, "_omniflow_package_app_resolution_installed", False)
@@ -789,6 +858,8 @@ def run_mobilegpt_server(argv: list[str] | None = None) -> int:
     os.chdir(server_root)
 
     from agents.app_agent import AppAgent
+    from agents.derive_agent import DeriveAgent
+    from agents.explore_agent import ExploreAgent
     from agents.prompts import derive_agent_prompt
     from agents.select_agent import SelectAgent
     import main as mobilegpt_main  # noqa: F401
@@ -807,6 +878,12 @@ def run_mobilegpt_server(argv: list[str] | None = None) -> int:
     install_mobilegpt_select_schema_repair(SelectAgent)
     install_mobilegpt_action_error_recovery(MobileGPT)
     install_mobilegpt_answer_event(MobileGPT)
+    install_mobilegpt_memory_only_guard(
+        MobileGPT,
+        explore_agent_class=ExploreAgent,
+        select_agent_class=SelectAgent,
+        derive_agent_class=DeriveAgent,
+    )
     install_mobilegpt_androidworld_observe(Server)
     _write_stats_event(
         {
@@ -816,6 +893,7 @@ def run_mobilegpt_server(argv: list[str] | None = None) -> int:
             "runtime_observe_backend": str(
                 os.environ.get("MOBILEGPT_RUNTIME_OBSERVE_BACKEND") or "androidworld"
             ),
+            "memory_only": _mobilegpt_memory_only_enabled(),
         }
     )
     Server(

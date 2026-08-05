@@ -63,6 +63,7 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert f'mobilegpt_source_schema="{MOBILEGPT_MEMORY_SCHEMA}"' in script_text
     assert f'mobilegpt_source_method="{MOBILEGPT_SOURCE_METHOD}"' in script_text
     assert "omniflow.mobilegpt-runlog-offline-memory.v3" not in script_text
+    assert "unset MOBILEGPT_MEMORY_ONLY" in script_text
     assert script_text.count('bash "$0"') == 2
     assert "-read-only" in script_text
     assert "-no-snapshot-load" in script_text

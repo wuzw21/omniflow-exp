@@ -2492,6 +2492,9 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
         row for row in teacher_rows if row.get("event") == "mobilegpt_teacher_miss"
     ]
     memory_rows = [row for row in rows if row.get("event") == "memory_lookup"]
+    memory_only_miss_rows = [
+        row for row in rows if row.get("event") == "mobilegpt_memory_only_miss"
+    ]
     action_rows = [row for row in rows if row.get("event") == "mobilegpt_action_sent"]
     device_action_rows = [
         row for row in action_rows if row.get("is_device_action") is True
@@ -2659,6 +2662,10 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
         "fallback_count": in_context_fallback_count + derive_fallback_count,
         "in_context_fallback_count": in_context_fallback_count,
         "derive_fallback_count": derive_fallback_count,
+        "memory_only_miss_count": len(memory_only_miss_rows),
+        "memory_only_stage_counts": dict(
+            Counter(str(row.get("stage") or "unknown") for row in memory_only_miss_rows)
+        ),
         "action_sent_count": len(action_rows),
         "actions_executed": len(device_action_rows),
         "action_name_counts": dict(
