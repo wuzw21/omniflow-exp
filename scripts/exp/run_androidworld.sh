@@ -26,8 +26,8 @@ formal_fixed_task_params=0
 formal_fold_state=2
 formal_fold_size="2208x1840"
 formal_model="qwen3-vl-plus"
-mobilegpt_source_schema="omniflow.mobilegpt-runlog-offline-memory.v3"
-mobilegpt_source_method="mobilegpt_runlog_offline_memory"
+mobilegpt_source_schema="omniflow.mobilegpt-runlog-semantic-memory.v1"
+mobilegpt_source_method="mobilegpt_runlog_semantic_memory"
 mobilegpt_source_manifest_name="mobilegpt_memory_manifest.json"
 expected_source_seed="${OMNIFLOW_SINGLE_TASK_SOURCE_SEED:-$formal_source_seed}"
 evaluation_seed="${OMNIFLOW_SINGLE_TASK_EVALUATION_SEED:-$formal_evaluation_seed}"
@@ -644,7 +644,7 @@ if [[ "$prepare_mobilegpt_memory" -eq 1 ]]; then
       echo "Set OMNIFLOW_MOBILEGPT_MEMORY_OUTPUT_ROOT or OMNIFLOW_EXP_ASSET_ROOT." >&2
       exit 2
     fi
-    mobilegpt_memory_output_root="$asset_root/runtime/evals/androidworld_mobilegpt_runlog_offline_memory/attempt-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    mobilegpt_memory_output_root="$asset_root/runtime/evals/androidworld_mobilegpt_runlog_semantic_memory/attempt-$(date -u +%Y%m%dT%H%M%SZ)-$$"
   fi
   if [[ "$mobilegpt_memory_output_root" != /* ]]; then
     echo "OMNIFLOW_MOBILEGPT_MEMORY_OUTPUT_ROOT must be absolute." >&2
@@ -962,7 +962,7 @@ if lineage is not None:
     compatible_source_sha256s.append(str(lineage.get("source_sha256") or ""))
 candidate_validator = None
 if sys.argv[8] in {
-    "omniflow.mobilegpt-runlog-offline-memory.v3",
+    "omniflow.mobilegpt-runlog-semantic-memory.v1",
     "omniflow.mobilegpt-runlog-teacher-memory.v1",
     "omniflow.mobilegpt-runlog-native-derive-memory.v2",
 }:
@@ -982,7 +982,21 @@ if sys.argv[8] in {
             memory_index=memory_index,
             task_name=sys.argv[5],
         )
-        if indexed_memory is not None:
+        if (
+            indexed_memory is not None
+            and (
+                not sys.argv[8]
+                or indexed_memory.get("schema_version") == sys.argv[8]
+            )
+            and (
+                not sys.argv[9]
+                or indexed_memory.get("source_method") == sys.argv[9]
+            )
+            and (
+                not sys.argv[7]
+                or indexed_memory.get("source_model") == sys.argv[7]
+            )
+        ):
             print(Path(indexed_memory["memory_root"]).resolve().parent)
             raise SystemExit(0)
 
