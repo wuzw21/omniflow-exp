@@ -605,6 +605,8 @@ def evaluate_mock_e2e(
     *,
     target_environments: Sequence[str] = ("101", "105"),
     limit_episodes: int = 10,
+    methods: Sequence[str] = _MOCK_E2E_METHODS,
+    selector_use_resource_id: bool = True,
 ) -> dict[str, Any]:
     """Run a deterministic closed-loop replay simulation on successful traces.
 
@@ -618,10 +620,19 @@ def evaluate_mock_e2e(
 
     if limit_episodes <= 0:
         raise ValueError("limit_episodes_must_be_positive")
+    resolved_methods = tuple(dict.fromkeys(str(method) for method in methods))
+    invalid_methods = sorted(set(resolved_methods) - set(_MOCK_E2E_METHODS))
+    if not resolved_methods or invalid_methods:
+        raise ValueError(
+            "mock_methods_invalid:"
+            + ",".join(invalid_methods or ["empty"])
+        )
     started = time.perf_counter()
-    load_omnitransfer()
-    transfer_runtime = importlib.import_module("omnitransfer.runtime")
-    matcher_preflight = transfer_runtime.runtime_preflight()
+    matcher_preflight = None
+    if any(method.startswith("omnitransfer_") for method in resolved_methods):
+        load_omnitransfer()
+        transfer_runtime = importlib.import_module("omnitransfer.runtime")
+        matcher_preflight = transfer_runtime.runtime_preflight()
     root = Path(corpus_root).expanduser().resolve()
     manifest = _read_object(root / "manifest.json")
     if manifest.get("schema_version") != _CORPUS_VERSION:
@@ -685,9 +696,9 @@ def evaluate_mock_e2e(
             source_start_sequence = 0
             target_start_sequence = page_map.get(0)
             start_policy = "offline_page_alignment_fallback"
-        methods = {}
-        for method in _MOCK_E2E_METHODS:
-            methods[method] = _simulate_mock_episode(
+        method_results = {}
+        for method in resolved_methods:
+            method_results[method] = _simulate_mock_episode(
                 method=method,
                 source=source,
                 target=target,
@@ -700,6 +711,7 @@ def evaluate_mock_e2e(
                 encoder=encoder,
                 page_cache=page_cache,
                 transfer_cache=transfer_cache,
+                selector_use_resource_id=selector_use_resource_id,
             )
         episodes.append(
             {
@@ -715,7 +727,7 @@ def evaluate_mock_e2e(
                 "source_bootstrap_action_count": source_start_sequence,
                 "target_bootstrap_action_count": target_start_sequence,
                 "start_policy": start_policy,
-                "methods": methods,
+                "methods": method_results,
             }
         )
 
@@ -724,7 +736,10 @@ def evaluate_mock_e2e(
         "configuration": {
             "source_environment_id": "100",
             "target_environment_ids": sorted(targets),
-            "methods": list(_MOCK_E2E_METHODS),
+            "methods": list(resolved_methods),
+            "selector_resource_id": (
+                "enabled" if selector_use_resource_id else "disabled"
+            ),
             "episode_selection": "evenly_spaced_tasks_then_target_environment",
             "episode_limit": limit_episodes,
             "runtime": "recorded_success_trace_transition_oracle",
@@ -746,7 +761,7 @@ def evaluate_mock_e2e(
             "task_count": len({item["task_id"] for item in episodes}),
             "methods": {
                 method: _aggregate_mock_method(episodes, method=method)
-                for method in _MOCK_E2E_METHODS
+                for method in resolved_methods
             },
             "transfer_score_cache_entry_count": len(transfer_cache),
             "wall_seconds": time.perf_counter() - started,
@@ -835,6 +850,7 @@ def _simulate_mock_episode(
     encoder: PageEncoder,
     page_cache: dict[tuple[str, str], TreeEmbedding],
     transfer_cache: dict[tuple[str, int, str, int], TransferMatchScore],
+    selector_use_resource_id: bool,
 ) -> dict[str, Any]:
     all_source_steps = _mock_steps(source_runlog)
     all_target_steps = _mock_steps(target_runlog)
@@ -926,6 +942,7 @@ def _simulate_mock_episode(
             encoder=encoder,
             page_cache=page_cache,
             transfer_cache=transfer_cache,
+            selector_use_resource_id=selector_use_resource_id,
         )
         source_kind = _mock_action_kind(source_step)
         target_kind = _mock_action_kind(target_step)
@@ -1097,6 +1114,7 @@ def _mock_prediction(
     encoder: PageEncoder,
     page_cache: dict[tuple[str, str], TreeEmbedding],
     transfer_cache: dict[tuple[str, int, str, int], TransferMatchScore],
+    selector_use_resource_id: bool,
 ) -> dict[str, Any]:
     action_kind = _mock_action_kind(source_step)
     if action_kind in _DIRECT_ACTIONS:
@@ -1139,7 +1157,15 @@ def _mock_prediction(
         cache=page_cache,
     )
     source_point = _baseline_action_point(source_step, source_state, source_page)
-    source_node = _baseline_action_element(source_page, source_point)
+    source_node = _baseline_action_element(
+        source_page,
+        source_point,
+        use_resource_id=(
+            selector_use_resource_id
+            if method in {"identity_fixed", "structured_fixed"}
+            else True
+        ),
+    )
     if source_point is None or source_node is None:
         return {
             "execute": False,
@@ -1153,7 +1179,12 @@ def _mock_prediction(
             if method == "identity_fixed"
             else _baseline_structured_selector
         )
-        selected = selector(source_page, target_page, source_node)
+        selected = selector(
+            source_page,
+            target_page,
+            source_node,
+            use_resource_id=selector_use_resource_id,
+        )
         point = (
             _baseline_project_offset(
                 source_point,
@@ -1781,6 +1812,8 @@ def _baseline_page_dimensions(
 def _baseline_action_element(
     page: TreeEmbedding,
     point: tuple[float, float] | None,
+    *,
+    use_resource_id: bool = True,
 ) -> ElementEmbedding | None:
     if point is None:
         return None
@@ -1790,7 +1823,10 @@ def _baseline_action_element(
         actionable or containing,
         key=lambda item: (
             _area(item.bounds),
-            not _baseline_stable_identity(item),
+            not _baseline_stable_identity(
+                item,
+                use_resource_id=use_resource_id,
+            ),
             -item.depth,
             item.id,
         ),
@@ -1802,10 +1838,19 @@ def _baseline_identity_selector(
     source_page: TreeEmbedding,
     target_page: TreeEmbedding,
     source: ElementEmbedding,
+    *,
+    use_resource_id: bool = True,
 ) -> _SelectorResult:
     del source_page
     scored = [
-        (_baseline_identity_score(source, target), target)
+        (
+            _baseline_identity_score(
+                source,
+                target,
+                use_resource_id=use_resource_id,
+            ),
+            target,
+        )
         for target in _baseline_selector_candidates(target_page)
     ]
     scored = [item for item in scored if item[0] > 0.0]
@@ -1828,10 +1873,18 @@ def _baseline_structured_selector(
     source_page: TreeEmbedding,
     target_page: TreeEmbedding,
     source: ElementEmbedding,
+    *,
+    use_resource_id: bool = True,
 ) -> _SelectorResult:
     scored = [
         (
-            _baseline_structured_score(source_page, target_page, source, target),
+            _baseline_structured_score(
+                source_page,
+                target_page,
+                source,
+                target,
+                use_resource_id=use_resource_id,
+            ),
             target,
         )
         for target in _baseline_selector_candidates(target_page)
@@ -1855,6 +1908,8 @@ def _baseline_structured_selector(
 def _baseline_identity_score(
     source: ElementEmbedding,
     target: ElementEmbedding,
+    *,
+    use_resource_id: bool = True,
 ) -> float:
     source_attributes = source.attributes
     target_attributes = target.attributes
@@ -1862,11 +1917,12 @@ def _baseline_identity_score(
     stable = False
     source_resource = _baseline_normalized(source_attributes.get("resource_id"))
     target_resource = _baseline_normalized(target_attributes.get("resource_id"))
-    if source_resource and source_resource == target_resource:
+    if use_resource_id and source_resource and source_resource == target_resource:
         score += 8.0
         stable = True
     elif (
-        _baseline_tail(source_resource)
+        use_resource_id
+        and _baseline_tail(source_resource)
         and _baseline_tail(source_resource) == _baseline_tail(target_resource)
     ):
         score += 6.0
@@ -1893,6 +1949,8 @@ def _baseline_structured_score(
     target_page: TreeEmbedding,
     source: ElementEmbedding,
     target: ElementEmbedding,
+    *,
+    use_resource_id: bool = True,
 ) -> tuple[int, ...]:
     source_resource = _baseline_normalized(source.attributes.get("resource_id"))
     target_resource = _baseline_normalized(target.attributes.get("resource_id"))
@@ -1902,16 +1960,45 @@ def _baseline_structured_score(
         == _baseline_normalized(target.attributes.get(key))
         for key in ("text", "content_description")
     )
-    source_subtree = _baseline_subtree_tokens(source_page, source)
-    target_subtree = _baseline_subtree_tokens(target_page, target)
-    source_parent = _baseline_parent_tokens(source_page, source)
-    target_parent = _baseline_parent_tokens(target_page, target)
-    source_siblings = _baseline_sibling_tokens(source_page, source)
-    target_siblings = _baseline_sibling_tokens(target_page, target)
+    source_subtree = _baseline_subtree_tokens(
+        source_page,
+        source,
+        use_resource_id=use_resource_id,
+    )
+    target_subtree = _baseline_subtree_tokens(
+        target_page,
+        target,
+        use_resource_id=use_resource_id,
+    )
+    source_parent = _baseline_parent_tokens(
+        source_page,
+        source,
+        use_resource_id=use_resource_id,
+    )
+    target_parent = _baseline_parent_tokens(
+        target_page,
+        target,
+        use_resource_id=use_resource_id,
+    )
+    source_siblings = _baseline_sibling_tokens(
+        source_page,
+        source,
+        use_resource_id=use_resource_id,
+    )
+    target_siblings = _baseline_sibling_tokens(
+        target_page,
+        target,
+        use_resource_id=use_resource_id,
+    )
     return (
-        int(bool(source_resource) and source_resource == target_resource),
         int(
-            bool(_baseline_tail(source_resource))
+            use_resource_id
+            and bool(source_resource)
+            and source_resource == target_resource
+        ),
+        int(
+            use_resource_id
+            and bool(_baseline_tail(source_resource))
             and _baseline_tail(source_resource) == _baseline_tail(target_resource)
         ),
         direct_text,
@@ -1943,6 +2030,8 @@ def _baseline_selector_candidates(
 def _baseline_subtree_tokens(
     page: TreeEmbedding,
     root: ElementEmbedding,
+    *,
+    use_resource_id: bool = True,
 ) -> frozenset[str]:
     by_id = {element.id: element for element in page.elements}
     pending = [root.id]
@@ -1951,7 +2040,12 @@ def _baseline_subtree_tokens(
         node = by_id.get(pending.pop())
         if node is None:
             continue
-        tokens.update(_baseline_semantic_tokens(node))
+        tokens.update(
+            _baseline_semantic_tokens(
+                node,
+                use_resource_id=use_resource_id,
+            )
+        )
         pending.extend(node.children_ids)
     return frozenset(tokens)
 
@@ -1959,15 +2053,23 @@ def _baseline_subtree_tokens(
 def _baseline_parent_tokens(
     page: TreeEmbedding,
     node: ElementEmbedding,
+    *,
+    use_resource_id: bool = True,
 ) -> frozenset[str]:
     by_id = {element.id: element for element in page.elements}
     parent = by_id.get(str(node.parent_id or ""))
-    return _baseline_semantic_tokens(parent) if parent is not None else frozenset()
+    return (
+        _baseline_semantic_tokens(parent, use_resource_id=use_resource_id)
+        if parent is not None
+        else frozenset()
+    )
 
 
 def _baseline_sibling_tokens(
     page: TreeEmbedding,
     node: ElementEmbedding,
+    *,
+    use_resource_id: bool = True,
 ) -> frozenset[str]:
     by_id = {element.id: element for element in page.elements}
     parent = by_id.get(str(node.parent_id or ""))
@@ -1977,14 +2079,26 @@ def _baseline_sibling_tokens(
         token
         for child_id in parent.children_ids
         if child_id != node.id and child_id in by_id
-        for token in _baseline_semantic_tokens(by_id[child_id])
+        for token in _baseline_semantic_tokens(
+            by_id[child_id],
+            use_resource_id=use_resource_id,
+        )
     )
 
 
-def _baseline_semantic_tokens(node: ElementEmbedding) -> frozenset[str]:
+def _baseline_semantic_tokens(
+    node: ElementEmbedding,
+    *,
+    use_resource_id: bool = True,
+) -> frozenset[str]:
+    keys = (
+        ("resource_id", "text", "content_description")
+        if use_resource_id
+        else ("text", "content_description")
+    )
     return frozenset(
         f"{key}:{value}"
-        for key in ("resource_id", "text", "content_description")
+        for key in keys
         if (value := _baseline_normalized(node.attributes.get(key)))
     )
 
@@ -2197,10 +2311,19 @@ def _baseline_actionable(element: ElementEmbedding) -> bool:
     )
 
 
-def _baseline_stable_identity(element: ElementEmbedding) -> bool:
+def _baseline_stable_identity(
+    element: ElementEmbedding,
+    *,
+    use_resource_id: bool = True,
+) -> bool:
+    keys = (
+        ("resource_id", "text", "content_description")
+        if use_resource_id
+        else ("text", "content_description")
+    )
     return any(
         _baseline_normalized(element.attributes.get(key))
-        for key in ("resource_id", "text", "content_description")
+        for key in keys
     )
 
 
@@ -2631,6 +2754,13 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--target-env", action="append", dest="target_environments")
     parser.add_argument("--limit-tasks", type=int)
     parser.add_argument("--limit-episodes", type=int, default=10)
+    parser.add_argument(
+        "--mock-method",
+        action="append",
+        choices=_MOCK_E2E_METHODS,
+        dest="mock_methods",
+    )
+    parser.add_argument("--disable-selector-resource-id", action="store_true")
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--full-matrix", action="store_true")
     return parser.parse_args(argv)
@@ -2644,6 +2774,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.corpus,
             target_environments=environments,
             limit_episodes=args.limit_episodes,
+            methods=tuple(args.mock_methods or _MOCK_E2E_METHODS),
+            selector_use_resource_id=not args.disable_selector_resource_id,
         )
         _write_report(args.output.expanduser().resolve(), report)
         print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
