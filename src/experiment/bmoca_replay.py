@@ -12,6 +12,7 @@ import argparse
 from collections import Counter, defaultdict
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import asdict, dataclass
+import importlib
 import json
 import math
 from pathlib import Path
@@ -45,6 +46,13 @@ _REPLAY_BASELINES = (
     "structured_unique",
     "normalized_coordinate",
 )
+_MOCK_E2E_METHODS = (
+    "identity_fixed",
+    "structured_fixed",
+    "omnitransfer_fixed",
+    "omnitransfer_prefix_dp",
+)
+_MOCK_SKIPPABLE_SOURCE_ACTIONS = frozenset({"open_app", "press_key", "wait"})
 _BOUNDS_PATTERN = re.compile(
     r"\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]"
     r"\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]"
@@ -592,6 +600,161 @@ def evaluate_replay_baselines(
     }
 
 
+def evaluate_mock_e2e(
+    corpus_root: str | Path,
+    *,
+    target_environments: Sequence[str] = ("101", "105"),
+    limit_episodes: int = 10,
+) -> dict[str, Any]:
+    """Run a deterministic closed-loop replay simulation on successful traces.
+
+    The target trace supplies a transition oracle, not inference evidence.  A
+    method sees only the current target page.  The target action and its bounds
+    are revealed only after prediction to decide whether the simulated runtime
+    advances to the next recorded state.  Launcher/bootstrap prefixes are
+    removed independently by entering each trace's final application package;
+    offline page alignment is only a fallback when that package is unavailable.
+    """
+
+    if limit_episodes <= 0:
+        raise ValueError("limit_episodes_must_be_positive")
+    started = time.perf_counter()
+    load_omnitransfer()
+    transfer_runtime = importlib.import_module("omnitransfer.runtime")
+    matcher_preflight = transfer_runtime.runtime_preflight()
+    root = Path(corpus_root).expanduser().resolve()
+    manifest = _read_object(root / "manifest.json")
+    if manifest.get("schema_version") != _CORPUS_VERSION:
+        raise ValueError("unsupported_bmoca_corpus_version")
+    traces = _load_baseline_traces(manifest, root=root)
+    alignment_ref = manifest.get("alignments")
+    if not isinstance(alignment_ref, dict):
+        raise ValueError("bmoca_alignment_reference_invalid")
+    targets = frozenset(str(item) for item in target_environments)
+    pairs = []
+    for raw_alignment in _read_jsonl(_asset_path(root, alignment_ref)):
+        normalized = _normalize_baseline_alignment(
+            raw_alignment,
+            traces=traces,
+            target_environments=targets,
+        )
+        if normalized is None:
+            continue
+        source, target, action_map, page_map = normalized
+        pairs.append((source, target, action_map, page_map))
+    pairs.sort(key=lambda item: (item[0].task_id, item[1].environment_id))
+    pairs = _mock_episode_sample(pairs, limit_episodes=limit_episodes)
+
+    encoder = PageEncoder()
+    artifact_cache: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    page_cache: dict[tuple[str, str], TreeEmbedding] = {}
+    transfer_cache: dict[
+        tuple[str, int, str, int], TransferMatchScore
+    ] = {}
+    episodes = []
+    for source, target, action_map, page_map in pairs:
+        source_runlog, source_states = _baseline_trace_artifacts(
+            source,
+            cache=artifact_cache,
+        )
+        target_runlog, target_states = _baseline_trace_artifacts(
+            target,
+            cache=artifact_cache,
+        )
+        source_start_sequence = _mock_application_start(
+            source_runlog,
+            source_states,
+        )
+        target_start_sequence = _mock_application_start(
+            target_runlog,
+            target_states,
+        )
+        start_policy = "first_aligned_in_application_action"
+        aligned_start = _mock_aligned_application_start(
+            source_runlog=source_runlog,
+            target_runlog=target_runlog,
+            action_map=action_map,
+            source_floor=source_start_sequence,
+            target_floor=target_start_sequence,
+        )
+        if aligned_start is not None:
+            source_start_sequence, target_start_sequence = aligned_start
+        else:
+            start_policy = "final_application_package_fallback"
+        if source_start_sequence is None or target_start_sequence is None:
+            source_start_sequence = 0
+            target_start_sequence = page_map.get(0)
+            start_policy = "offline_page_alignment_fallback"
+        methods = {}
+        for method in _MOCK_E2E_METHODS:
+            methods[method] = _simulate_mock_episode(
+                method=method,
+                source=source,
+                target=target,
+                source_runlog=source_runlog,
+                target_runlog=target_runlog,
+                source_states=source_states,
+                target_states=target_states,
+                source_start_sequence=source_start_sequence,
+                target_start_sequence=target_start_sequence,
+                encoder=encoder,
+                page_cache=page_cache,
+                transfer_cache=transfer_cache,
+            )
+        episodes.append(
+            {
+                "episode_id": (
+                    f"{source.task_id}:env100-env{target.environment_id}"
+                ),
+                "task_id": source.task_id,
+                "source_trace_id": source.trace_id,
+                "target_trace_id": target.trace_id,
+                "target_environment_id": target.environment_id,
+                "source_start_sequence_index": source_start_sequence,
+                "target_start_sequence_index": target_start_sequence,
+                "source_bootstrap_action_count": source_start_sequence,
+                "target_bootstrap_action_count": target_start_sequence,
+                "start_policy": start_policy,
+                "methods": methods,
+            }
+        )
+
+    return {
+        "schema_version": "omniflow.bmoca-mock-e2e.v1",
+        "configuration": {
+            "source_environment_id": "100",
+            "target_environment_ids": sorted(targets),
+            "methods": list(_MOCK_E2E_METHODS),
+            "episode_selection": "evenly_spaced_tasks_then_target_environment",
+            "episode_limit": limit_episodes,
+            "runtime": "recorded_success_trace_transition_oracle",
+            "inference_target_evidence": "current_page_only",
+            "target_action_visibility": "post_prediction_hit_check_only",
+            "start_page_policy": (
+                "first_offline-aligned_action_inside_final_application_package;"
+                "setup_only_then_closed_loop"
+            ),
+            "failure_policy": "first_unusable_action_terminates_episode",
+            "completion_policy": "source_and_target_suffix_fully_consumed",
+            "official_validator_execution": False,
+            "vlm_fallback": "disabled",
+            "source_coordinate_fallback": "disabled",
+            "omnitransfer_preflight": matcher_preflight,
+        },
+        "summary": {
+            "episode_count": len(episodes),
+            "task_count": len({item["task_id"] for item in episodes}),
+            "methods": {
+                method: _aggregate_mock_method(episodes, method=method)
+                for method in _MOCK_E2E_METHODS
+            },
+            "transfer_score_cache_entry_count": len(transfer_cache),
+            "wall_seconds": time.perf_counter() - started,
+        },
+        "episodes": episodes,
+    }
+
+
 def _load_baseline_traces(
     manifest: dict[str, Any],
     *,
@@ -620,6 +783,620 @@ def _load_baseline_traces(
             state_catalog_path=_asset_path(root, catalog),
         )
     return traces
+
+
+def _mock_episode_sample(
+    pairs: list[tuple[_BaselineTrace, _BaselineTrace, dict[int, int], dict[int, int]]],
+    *,
+    limit_episodes: int,
+) -> list[tuple[_BaselineTrace, _BaselineTrace, dict[int, int], dict[int, int]]]:
+    by_task: dict[
+        str,
+        list[tuple[_BaselineTrace, _BaselineTrace, dict[int, int], dict[int, int]]],
+    ] = defaultdict(list)
+    for pair in pairs:
+        by_task[pair[0].task_id].append(pair)
+    tasks = sorted(by_task)
+    if not tasks:
+        return []
+    maximum_targets = max(len(values) for values in by_task.values())
+    desired_tasks = min(
+        len(tasks),
+        math.ceil(limit_episodes / max(1, maximum_targets)),
+    )
+    if desired_tasks == 1:
+        selected_indices = [len(tasks) // 2]
+    else:
+        selected_indices = [
+            round(index * (len(tasks) - 1) / (desired_tasks - 1))
+            for index in range(desired_tasks)
+        ]
+    selected = []
+    for index in selected_indices:
+        selected.extend(
+            sorted(by_task[tasks[index]], key=lambda item: item[1].environment_id)
+        )
+    return selected[:limit_episodes]
+
+
+def _simulate_mock_episode(
+    *,
+    method: str,
+    source: _BaselineTrace,
+    target: _BaselineTrace,
+    source_runlog: dict[str, Any],
+    target_runlog: dict[str, Any],
+    source_states: dict[str, Any],
+    target_states: dict[str, Any],
+    source_start_sequence: int,
+    target_start_sequence: int | None,
+    encoder: PageEncoder,
+    page_cache: dict[tuple[str, str], TreeEmbedding],
+    transfer_cache: dict[tuple[str, int, str, int], TransferMatchScore],
+) -> dict[str, Any]:
+    all_source_steps = _mock_steps(source_runlog)
+    all_target_steps = _mock_steps(target_runlog)
+    if target_start_sequence is None:
+        return _mock_episode_result(
+            success=False,
+            source_step_count=len(all_source_steps),
+            target_suffix_step_count=0,
+            source_cursor=0,
+            target_cursor=0,
+            target_start_sequence=0,
+            actions=[],
+            failure_reason="start_page_alignment_missing",
+        )
+    if not 0 <= source_start_sequence <= len(all_source_steps):
+        return _mock_episode_result(
+            success=False,
+            source_step_count=len(all_source_steps),
+            target_suffix_step_count=0,
+            source_cursor=0,
+            target_cursor=0,
+            target_start_sequence=0,
+            actions=[],
+            failure_reason="source_start_sequence_out_of_range",
+        )
+    if not 0 <= target_start_sequence <= len(all_target_steps):
+        return _mock_episode_result(
+            success=False,
+            source_step_count=len(all_source_steps),
+            target_suffix_step_count=0,
+            source_cursor=0,
+            target_cursor=target_start_sequence,
+            target_start_sequence=target_start_sequence,
+            actions=[],
+            failure_reason="start_page_alignment_out_of_range",
+        )
+    source_steps = _mock_suffix(all_source_steps, source_start_sequence)
+    target_steps = _mock_suffix(all_target_steps, target_start_sequence)
+
+    source_cursor = 0
+    target_cursor = 0
+    observed_target_sequences: list[int] = []
+    actions: list[dict[str, Any]] = []
+    failure_reason = ""
+    while source_cursor < len(source_steps) and target_cursor < len(target_steps):
+        if target_cursor not in observed_target_sequences:
+            observed_target_sequences.append(target_cursor)
+        if method == "omnitransfer_prefix_dp":
+            selected_cursor, dp_reason = _mock_dp_source_cursor(
+                source=source,
+                target=target,
+                source_steps=source_steps,
+                target_steps=target_steps,
+                source_states=source_states,
+                target_states=target_states,
+                observed_target_sequences=observed_target_sequences,
+                encoder=encoder,
+                page_cache=page_cache,
+                transfer_cache=transfer_cache,
+            )
+            if selected_cursor is None:
+                failure_reason = dp_reason
+                break
+            if selected_cursor < source_cursor:
+                failure_reason = "dp_non_monotonic_source_regression"
+                break
+            skipped = source_steps[source_cursor:selected_cursor]
+            if any(
+                _mock_action_kind(step) not in _MOCK_SKIPPABLE_SOURCE_ACTIONS
+                for step in skipped
+            ):
+                failure_reason = "dp_required_source_action_gap"
+                break
+            source_cursor = selected_cursor
+            if source_cursor >= len(source_steps):
+                failure_reason = "dp_source_endpoint_invalid"
+                break
+
+        source_step = source_steps[source_cursor]
+        target_step = target_steps[target_cursor]
+        prediction = _mock_prediction(
+            method=method,
+            source=source,
+            target=target,
+            source_step=source_step,
+            target_step=target_step,
+            source_states=source_states,
+            target_states=target_states,
+            encoder=encoder,
+            page_cache=page_cache,
+            transfer_cache=transfer_cache,
+        )
+        source_kind = _mock_action_kind(source_step)
+        target_kind = _mock_action_kind(target_step)
+        compatible = source_kind == target_kind
+        target_bounds = _mock_gold_bounds(
+            target=target,
+            target_step=target_step,
+            target_states=target_states,
+            encoder=encoder,
+            page_cache=page_cache,
+        )
+        point = prediction.get("predicted_point")
+        point_hit = bool(
+            source_kind in _SELECTOR_ACTIONS
+            and target_bounds is not None
+            and isinstance(point, list)
+            and len(point) == 2
+            and _contains(target_bounds, (float(point[0]), float(point[1])))
+        )
+        if source_kind in _DIRECT_ACTIONS:
+            point_hit = True
+        hit = bool(prediction["execute"] and compatible and point_hit)
+        action_record = {
+            "source_sequence_index": source_cursor,
+            "target_sequence_index": target_cursor,
+            "source_step_index": int(source_step["step_index"]),
+            "target_step_index": int(target_step["step_index"]),
+            "source_action_kind": source_kind,
+            "target_action_kind": target_kind,
+            "execute": prediction["execute"],
+            "action_kind_compatible": compatible,
+            "point_inside_target_actionable_bounds": point_hit,
+            "hit": hit,
+            "reason": prediction["reason"],
+            "predicted_point": prediction.get("predicted_point"),
+            "target_actionable_bounds": (
+                list(target_bounds) if target_bounds is not None else None
+            ),
+            "score": prediction.get("score"),
+        }
+        actions.append(action_record)
+        if not hit:
+            if not prediction["execute"]:
+                failure_reason = f"abstained:{prediction['reason']}"
+            elif not compatible:
+                failure_reason = "action_kind_mismatch"
+            elif target_bounds is None and source_kind in _SELECTOR_ACTIONS:
+                failure_reason = "target_actionable_endpoint_missing"
+            else:
+                failure_reason = "wrong_actionable_target"
+            break
+        source_cursor += 1
+        target_cursor += 1
+
+    success = source_cursor == len(source_steps) and target_cursor == len(target_steps)
+    if not success and not failure_reason:
+        failure_reason = (
+            "target_trace_exhausted"
+            if target_cursor == len(target_steps)
+            else "source_trace_exhausted_with_target_suffix"
+        )
+    return _mock_episode_result(
+        success=success,
+        source_step_count=len(source_steps),
+        target_suffix_step_count=len(target_steps),
+        source_cursor=source_cursor,
+        target_cursor=target_cursor,
+        target_start_sequence=0,
+        actions=actions,
+        failure_reason=failure_reason,
+    )
+
+
+def _mock_steps(runlog: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_steps = runlog.get("steps")
+    if not isinstance(raw_steps, list):
+        raise ValueError("bmoca_runlog_steps_invalid")
+    result = []
+    for sequence, raw in enumerate(raw_steps):
+        if not isinstance(raw, dict) or not isinstance(raw.get("action"), dict):
+            raise ValueError("bmoca_runlog_step_invalid")
+        step = dict(raw)
+        step["step_index"] = int(raw.get("step_index", sequence))
+        step["_sequence_index"] = sequence
+        result.append(step)
+    return result
+
+
+def _mock_suffix(
+    steps: list[dict[str, Any]],
+    start_sequence: int,
+) -> list[dict[str, Any]]:
+    result = []
+    for sequence, raw in enumerate(steps[start_sequence:]):
+        step = dict(raw)
+        step["_original_sequence_index"] = int(raw["_sequence_index"])
+        step["_sequence_index"] = sequence
+        result.append(step)
+    return result
+
+
+def _mock_application_start(
+    runlog: dict[str, Any],
+    states: dict[str, Any],
+) -> int | None:
+    final_state_id = str(runlog.get("final_state_id") or "")
+    final_state = states.get(final_state_id)
+    if not isinstance(final_state, dict):
+        return None
+    final_package = str(final_state.get("package_name") or "").strip()
+    if not final_package:
+        return None
+    for sequence, step in enumerate(_mock_steps(runlog)):
+        state = states.get(str(step.get("before_state_id") or ""))
+        if (
+            isinstance(state, dict)
+            and str(state.get("package_name") or "").strip() == final_package
+        ):
+            return sequence
+    return None
+
+
+def _mock_aligned_application_start(
+    *,
+    source_runlog: dict[str, Any],
+    target_runlog: dict[str, Any],
+    action_map: dict[int, int],
+    source_floor: int | None,
+    target_floor: int | None,
+) -> tuple[int, int] | None:
+    if source_floor is None or target_floor is None:
+        return None
+    source_by_step = {
+        int(step["step_index"]): int(step["_sequence_index"])
+        for step in _mock_steps(source_runlog)
+    }
+    target_by_step = {
+        int(step["step_index"]): int(step["_sequence_index"])
+        for step in _mock_steps(target_runlog)
+    }
+    candidates = sorted(
+        (
+            source_by_step[source_step],
+            target_by_step[target_step],
+        )
+        for source_step, target_step in action_map.items()
+        if source_step in source_by_step
+        and target_step in target_by_step
+        and source_by_step[source_step] >= source_floor
+        and target_by_step[target_step] >= target_floor
+    )
+    return candidates[0] if candidates else None
+
+
+def _mock_action_kind(step: dict[str, Any]) -> str:
+    action = step.get("action")
+    return str(action.get("tool") or "") if isinstance(action, dict) else ""
+
+
+def _mock_prediction(
+    *,
+    method: str,
+    source: _BaselineTrace,
+    target: _BaselineTrace,
+    source_step: dict[str, Any],
+    target_step: dict[str, Any],
+    source_states: dict[str, Any],
+    target_states: dict[str, Any],
+    encoder: PageEncoder,
+    page_cache: dict[tuple[str, str], TreeEmbedding],
+    transfer_cache: dict[tuple[str, int, str, int], TransferMatchScore],
+) -> dict[str, Any]:
+    action_kind = _mock_action_kind(source_step)
+    if action_kind in _DIRECT_ACTIONS:
+        return {
+            "execute": True,
+            "reason": "direct_action",
+            "predicted_point": None,
+            "score": None,
+        }
+    if action_kind not in _SELECTOR_ACTIONS:
+        return {
+            "execute": False,
+            "reason": "unsupported_source_action",
+            "predicted_point": None,
+            "score": None,
+        }
+    source_state_id = str(source_step.get("before_state_id") or "")
+    target_state_id = str(target_step.get("before_state_id") or "")
+    source_state = source_states.get(source_state_id)
+    target_state = target_states.get(target_state_id)
+    if not isinstance(source_state, dict) or not isinstance(target_state, dict):
+        return {
+            "execute": False,
+            "reason": "current_page_state_missing",
+            "predicted_point": None,
+            "score": None,
+        }
+    source_page = _baseline_page(
+        source.trace_id,
+        source_state_id,
+        source_state,
+        encoder=encoder,
+        cache=page_cache,
+    )
+    target_page = _baseline_page(
+        target.trace_id,
+        target_state_id,
+        target_state,
+        encoder=encoder,
+        cache=page_cache,
+    )
+    source_point = _baseline_action_point(source_step, source_state, source_page)
+    source_node = _baseline_action_element(source_page, source_point)
+    if source_point is None or source_node is None:
+        return {
+            "execute": False,
+            "reason": "source_node_missing",
+            "predicted_point": None,
+            "score": None,
+        }
+    if method in {"identity_fixed", "structured_fixed"}:
+        selector = (
+            _baseline_identity_selector
+            if method == "identity_fixed"
+            else _baseline_structured_selector
+        )
+        selected = selector(source_page, target_page, source_node)
+        point = (
+            _baseline_project_offset(
+                source_point,
+                source_node.bounds,
+                selected.selected.bounds,
+            )
+            if selected.execute and selected.selected is not None
+            else None
+        )
+        return {
+            "execute": selected.execute,
+            "reason": selected.reason,
+            "predicted_point": list(point) if point is not None else None,
+            "score": None,
+        }
+    evidence = _mock_transfer_evidence(
+        source=source,
+        target=target,
+        source_step=source_step,
+        target_step=target_step,
+        source_state=source_state,
+        target_state=target_state,
+        source_page=source_page,
+        transfer_cache=transfer_cache,
+    )
+    execute = evidence.mapped and evidence.mapped_point is not None
+    return {
+        "execute": execute,
+        "reason": evidence.reason or ("ok" if execute else "transfer_unmapped"),
+        "predicted_point": (
+            list(evidence.mapped_point) if evidence.mapped_point is not None else None
+        ),
+        "score": evidence.top_probability,
+    }
+
+
+def _mock_transfer_evidence(
+    *,
+    source: _BaselineTrace,
+    target: _BaselineTrace,
+    source_step: dict[str, Any],
+    target_step: dict[str, Any],
+    source_state: dict[str, Any],
+    target_state: dict[str, Any],
+    source_page: TreeEmbedding,
+    transfer_cache: dict[tuple[str, int, str, int], TransferMatchScore],
+) -> TransferMatchScore:
+    source_sequence = int(
+        source_step.get("_original_sequence_index", source_step["_sequence_index"])
+    )
+    target_sequence = int(
+        target_step.get("_original_sequence_index", target_step["_sequence_index"])
+    )
+    key = source.trace_id, source_sequence, target.trace_id, target_sequence
+    cached = transfer_cache.get(key)
+    if cached is not None:
+        return cached
+    source_point = _baseline_action_point(source_step, source_state, source_page)
+    if source_point is None:
+        evidence = TransferMatchScore(reason="source_point_missing")
+    else:
+        evidence = score_transfer_match(
+            source_xml=str(source_state.get("xml") or ""),
+            target_xml=str(target_state.get("xml") or ""),
+            source_point=source_point,
+        )
+    transfer_cache[key] = evidence
+    return evidence
+
+
+def _mock_dp_source_cursor(
+    *,
+    source: _BaselineTrace,
+    target: _BaselineTrace,
+    source_steps: list[dict[str, Any]],
+    target_steps: list[dict[str, Any]],
+    source_states: dict[str, Any],
+    target_states: dict[str, Any],
+    observed_target_sequences: list[int],
+    encoder: PageEncoder,
+    page_cache: dict[tuple[str, str], TreeEmbedding],
+    transfer_cache: dict[tuple[str, int, str, int], TransferMatchScore],
+) -> tuple[int | None, str]:
+    probabilities: list[list[float | None]] = []
+    for source_step in source_steps:
+        row = []
+        source_state_id = str(source_step.get("before_state_id") or "")
+        source_state = source_states.get(source_state_id)
+        action_kind = _mock_action_kind(source_step)
+        if not isinstance(source_state, dict) or action_kind not in _SELECTOR_ACTIONS:
+            probabilities.append([None] * len(observed_target_sequences))
+            continue
+        source_page = _baseline_page(
+            source.trace_id,
+            source_state_id,
+            source_state,
+            encoder=encoder,
+            cache=page_cache,
+        )
+        for target_sequence in observed_target_sequences:
+            target_step = target_steps[target_sequence]
+            target_state_id = str(target_step.get("before_state_id") or "")
+            target_state = target_states.get(target_state_id)
+            if not isinstance(target_state, dict):
+                row.append(None)
+                continue
+            evidence = _mock_transfer_evidence(
+                source=source,
+                target=target,
+                source_step=source_step,
+                target_step=target_step,
+                source_state=source_state,
+                target_state=target_state,
+                source_page=source_page,
+                transfer_cache=transfer_cache,
+            )
+            row.append(evidence.top_probability)
+        probabilities.append(row)
+    alignment = align_transfer_replay(
+        tuple(
+            ReplayToken(int(step["_sequence_index"]), _mock_action_kind(step))
+            for step in source_steps
+        ),
+        tuple(ReplayToken(sequence, "") for sequence in observed_target_sequences),
+        tuple(tuple(row) for row in probabilities),
+        mode="target_prefix",
+    )
+    if not alignment.pairs:
+        return None, "dp_current_page_unmatched"
+    current_target = observed_target_sequences[-1]
+    pair = next(
+        (
+            item
+            for item in reversed(alignment.pairs)
+            if item.target_index == current_target
+        ),
+        None,
+    )
+    if pair is None:
+        return None, "dp_current_page_is_gap"
+    return pair.source_index, "ok"
+
+
+def _mock_gold_bounds(
+    *,
+    target: _BaselineTrace,
+    target_step: dict[str, Any],
+    target_states: dict[str, Any],
+    encoder: PageEncoder,
+    page_cache: dict[tuple[str, str], TreeEmbedding],
+) -> tuple[float, float, float, float] | None:
+    if _mock_action_kind(target_step) not in _SELECTOR_ACTIONS:
+        return None
+    state_id = str(target_step.get("before_state_id") or "")
+    state = target_states.get(state_id)
+    if not isinstance(state, dict):
+        return None
+    page = _baseline_page(
+        target.trace_id,
+        state_id,
+        state,
+        encoder=encoder,
+        cache=page_cache,
+    )
+    point = _baseline_action_point(target_step, state, page)
+    node = _baseline_action_element(page, point)
+    return node.bounds if node is not None else None
+
+
+def _mock_episode_result(
+    *,
+    success: bool,
+    source_step_count: int,
+    target_suffix_step_count: int,
+    source_cursor: int,
+    target_cursor: int,
+    target_start_sequence: int,
+    actions: list[dict[str, Any]],
+    failure_reason: str,
+) -> dict[str, Any]:
+    return {
+        "mock_success": success,
+        "source_step_count": source_step_count,
+        "target_suffix_step_count": target_suffix_step_count,
+        "completed_source_step_count": source_cursor,
+        "completed_target_suffix_step_count": target_cursor - target_start_sequence,
+        "attempted_action_count": len(actions),
+        "executed_action_count": sum(item["execute"] for item in actions),
+        "action_hit_count": sum(item["hit"] for item in actions),
+        "failure_reason": failure_reason or None,
+        "actions": actions,
+    }
+
+
+def _aggregate_mock_method(
+    episodes: list[dict[str, Any]],
+    *,
+    method: str,
+) -> dict[str, Any]:
+    values = [item["methods"][method] for item in episodes]
+    successes = sum(item["mock_success"] for item in values)
+    attempted = sum(item["attempted_action_count"] for item in values)
+    executed = sum(item["executed_action_count"] for item in values)
+    hits = sum(item["action_hit_count"] for item in values)
+    reasons = Counter(
+        str(item["failure_reason"])
+        for item in values
+        if item["failure_reason"] is not None
+    )
+    return {
+        "mock_success_episode_count": successes,
+        "mock_success_rate": _baseline_rate(successes, len(values)),
+        "attempted_action_count": attempted,
+        "executed_action_count": executed,
+        "action_hit_count": hits,
+        "action_hit_rate": _baseline_rate(hits, attempted),
+        "executed_action_precision": _baseline_rate(hits, executed),
+        "failure_reasons": dict(sorted(reasons.items())),
+        "by_target_environment": {
+            environment: {
+                "episode_count": len(environment_values),
+                "mock_success_episode_count": sum(
+                    item["methods"][method]["mock_success"]
+                    for item in environment_values
+                ),
+                "mock_success_rate": _baseline_rate(
+                    sum(
+                        item["methods"][method]["mock_success"]
+                        for item in environment_values
+                    ),
+                    len(environment_values),
+                ),
+            }
+            for environment in sorted(
+                {item["target_environment_id"] for item in episodes}
+            )
+            if (
+                environment_values := [
+                    item
+                    for item in episodes
+                    if item["target_environment_id"] == environment
+                ]
+            )
+        },
+    }
 
 
 def _normalize_baseline_alignment(
@@ -1846,11 +2623,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument(
         "--suite",
-        choices=("transfer-dp", "replay-baselines"),
+        choices=("transfer-dp", "replay-baselines", "mock-e2e"),
         default="transfer-dp",
     )
     parser.add_argument("--target-env", action="append", dest="target_environments")
     parser.add_argument("--limit-tasks", type=int)
+    parser.add_argument("--limit-episodes", type=int, default=10)
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--full-matrix", action="store_true")
     return parser.parse_args(argv)
@@ -1859,6 +2637,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     environments = tuple(args.target_environments or ("101", "105"))
+    if args.suite == "mock-e2e":
+        report = evaluate_mock_e2e(
+            args.corpus,
+            target_environments=environments,
+            limit_episodes=args.limit_episodes,
+        )
+        _write_report(args.output.expanduser().resolve(), report)
+        print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
+        return 0
     if args.suite == "replay-baselines":
         report = evaluate_replay_baselines(
             args.corpus,
@@ -1909,6 +2696,7 @@ __all__ = [
     "BmocaStep",
     "BmocaTrace",
     "evaluate_bmoca_corpus",
+    "evaluate_mock_e2e",
     "evaluate_replay_baselines",
     "evaluate_trace_pair",
     "load_bmoca_traces",
