@@ -994,7 +994,8 @@ if sys.argv[8] in {
                 or indexed_memory.get("source_method") == sys.argv[9]
             )
             and (
-                not sys.argv[7]
+                sys.argv[8] == "omniflow.mobilegpt-runlog-direct-memory.v1"
+                or not sys.argv[7]
                 or indexed_memory.get("source_model") == sys.argv[7]
             )
         ):
