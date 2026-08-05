@@ -416,6 +416,31 @@ def test_transfer_failure_falls_back_without_replaying_source_coordinates(
     assert planner.previous_action_errors[0] == "omnitransfer_missing_target_page"
 
 
+def test_vlm_history_blocks_successful_repeat_on_same_logical_ui_state(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import omniflow.runtime.execution as execution
+
+    monkeypatch.setattr(execution, "_ACTION_SETTLE_SECONDS", 0.0)
+    host = RecordingHost()
+    repeated_click = ToolCall("click", {"x": 120, "y": 240})
+    planner = SequencePlanner(
+        [repeated_click, repeated_click, ToolCall("finished", {})]
+    )
+    flow = OmniFlow(tmp_path / "store.json", host=host, planner=planner)
+
+    result = flow.run("Add this item to the cart")
+
+    assert result.success is True
+    assert host.actions == [Action("click", {"x": 120, "y": 240})]
+    assert planner.previous_action_errors[0] is None
+    assert planner.previous_action_errors[-1] == (
+        "action_already_succeeded_on_current_state"
+    )
+    assert len(planner.previous_action_errors) <= 3
+
+
 class CapturingCompletions:
     def __init__(self, response: object) -> None:
         self.response = response
@@ -568,6 +593,57 @@ def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:
         else:
             assert "com.android.chrome" not in serialized
             assert "com.android.settings" not in serialized
+
+
+def test_vlm_planner_sends_execution_history_to_model() -> None:
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    tool_calls=[
+                        SimpleNamespace(
+                            function=SimpleNamespace(
+                                name="finished",
+                                arguments="{}",
+                            )
+                        )
+                    ]
+                )
+            )
+        ],
+        usage=None,
+    )
+    completions = CapturingCompletions(response)
+    planner = VLMPlanner(
+        model="test-model",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+    )
+    asyncio.run(
+        planner.one_step_tool_call(
+            "Add the item to the cart",
+            Observation(
+                extra={
+                    "display": {"width": 720, "height": 1280},
+                    "previous_action_error": "action_completed_without_state_change",
+                    "recent_actions": [
+                        {
+                            "tool": "click",
+                            "args": {"x": 120, "y": 240},
+                            "success": True,
+                        }
+                    ],
+                    "execution_history": "1. [Planner] Clicked the item successfully.",
+                }
+            ),
+            (),
+            {},
+        )
+    )
+
+    payload = json.loads(completions.requests[0]["messages"][1]["content"][0]["text"])
+    assert payload["screen_context"]["recent_actions"][0]["tool"] == "click"
+    assert payload["screen_context"]["execution_history"].startswith("1.")
+    assert "must not be issued again" in payload["history_policy"]
 
 
 def test_bridge_planner_exposes_packages_only_through_open_app_tool() -> None:

@@ -19,9 +19,12 @@ DEFAULT_PLANNER_SYSTEM_PROMPT = (
     "screen_context contains previous_action_error, correct that action through "
     "the same normal tool path. Treat execution_history as the shared history of "
     "all canonical actions, regardless of whether they came from Function replay "
-    "or the planner. Use recent_actions to advance the goal and never repeat an "
-    "already successful action on an unchanged screen. Treat checked=false as an "
-    "off switch or checkbox and checked=true as on."
+    "or the planner. If an error starts with `omnitransfer_` or says low "
+    "confidence, continue from the current screen with a fresh action; do not "
+    "abort only because replay mapping failed, and do not reuse source-device "
+    "coordinates as target coordinates. Use recent_actions to advance the goal "
+    "and never repeat an already successful action on an unchanged screen. Treat "
+    "checked=false as an off switch or checkbox and checked=true as on."
 )
 
 

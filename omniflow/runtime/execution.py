@@ -682,10 +682,16 @@ def default_transfer(
         return TransferResult(None, reason=f"omnitransfer_error:{exc}")
     if result.get("mapped") is not True:
         reason = result.get("reason") or result.get("mapping_mode") or "failed"
+        detail = _transfer_detail(result)
+        if "low_confidence" in str(reason):
+            return _recoverable_transfer_failure(
+                "omnitransfer_low_confidence",
+                detail,
+            )
         return TransferResult(
             None,
             reason=f"omnitransfer_{reason}",
-            detail=_transfer_detail(result),
+            detail=detail,
         )
     if _is_full_screen_candidate(result.get("target_bbox"), display_size):
         return TransferResult(
@@ -704,6 +710,13 @@ def default_transfer(
             None,
             reason="omnitransfer_semantic_conflict",
             detail={**_transfer_detail(result), **semantic_conflict},
+        )
+    transfer_detail = _transfer_detail(result)
+    probability = _alignment_probability(transfer_detail)
+    if probability is not None and probability < _ALIGNMENT_MIN_PROBABILITY:
+        return _recoverable_transfer_failure(
+            "omnitransfer_low_confidence",
+            transfer_detail,
         )
     try:
         target_x = float(result["new_x"])
@@ -772,10 +785,16 @@ def _transfer_swipe(
             return TransferResult(None, reason=f"omnitransfer_error:{exc}")
         if result.get("mapped") is not True:
             reason = result.get("reason") or result.get("mapping_mode") or "failed"
+            detail = _transfer_detail(result)
+            if "low_confidence" in str(reason):
+                return _recoverable_transfer_failure(
+                    "omnitransfer_low_confidence",
+                    detail,
+                )
             return TransferResult(
                 None,
                 reason=f"omnitransfer_{reason}",
-                detail=_transfer_detail(result),
+                detail=detail,
             )
         try:
             target_x = float(result["new_x"])
@@ -788,6 +807,21 @@ def _transfer_swipe(
         params[y_key] = target_y / height * 1000.0
         mapping_modes.append(str(result.get("mapping_mode") or "omnitransfer_mapped"))
         endpoint_details.append(_transfer_detail(result))
+        endpoint_probability = _alignment_probability(endpoint_details[-1])
+        if (
+            endpoint_probability is not None
+            and endpoint_probability < _ALIGNMENT_MIN_PROBABILITY
+        ):
+            return _recoverable_transfer_failure(
+                "omnitransfer_low_confidence",
+                {
+                    "mapping_mode": str(
+                        result.get("mapping_mode") or "omnitransfer_mapped"
+                    ),
+                    "endpoints": endpoint_details,
+                    "score": endpoint_probability,
+                },
+            )
     reason = mapping_modes[0] if len(set(mapping_modes)) == 1 else "omnitransfer_mapped"
     detail: dict[str, Any] = {
         "mapping_mode": reason,
@@ -813,6 +847,24 @@ def _transfer_swipe(
         Action(action.tool, params),
         reason=reason,
         detail=detail,
+    )
+
+
+def _recoverable_transfer_failure(
+    reason: str,
+    detail: dict[str, Any],
+) -> TransferResult:
+    """Make low-confidence transfer recoverable by the normal online VLM loop."""
+
+    return TransferResult(
+        None,
+        reason=reason,
+        detail={
+            **dict(detail),
+            "recoverable": True,
+            "fallback": "online_vlm",
+            "continue": True,
+        },
     )
 
 

@@ -109,6 +109,18 @@ class VLMPlanner:
             "coordinate_space": "current_display_pixels",
             "screen_context": screen_context,
         }
+        if isinstance(screen_context, dict) and (
+            screen_context.get("recent_actions")
+            or screen_context.get("execution_history")
+            or screen_context.get("previous_action_error")
+        ):
+            turn_payload["history_policy"] = (
+                "The screen_context history is authoritative for this run. A "
+                "successful action already recorded on the same logical UI state "
+                "must not be issued again; choose finished or a different action. "
+                "A low-confidence OmniTransfer entry is recoverable: continue "
+                "from the current screenshot with a fresh current-screen action."
+            )
         if completion_review:
             turn_payload["completion_review"] = (
                 "A recalled Function selected for the complete goal finished all "

@@ -213,6 +213,43 @@ def test_transfer_keeps_semantically_consistent_row_match(monkeypatch) -> None:
     assert request["source_element"] == {"text": "bluetooth"}
 
 
+def test_transfer_marks_low_confidence_as_recoverable_vlm_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(
+        execution,
+        "transfer_action",
+        lambda **_kwargs: {
+            "mapped": True,
+            "mapping_mode": "omnitransfer_local_alignment_v9",
+            "new_x": 1505.0,
+            "new_y": 621.5,
+            "target_bbox": [802.0, 544.0, 2208.0, 699.0],
+            "score": 0.72,
+            "margin": 0.2,
+        },
+    )
+
+    result = execution.default_transfer(
+        Action("click", {"x": 500.0, "y": 428.90625}),
+        Observation(
+            xml=TARGET_XML,
+            package_name="com.android.settings",
+            extra={"display": {"width": 2208, "height": 1840}},
+        ),
+        Observation(
+            xml=SOURCE_XML,
+            package_name="com.android.settings",
+            extra={"display": {"width": 720, "height": 1280}},
+        ),
+    )
+
+    assert result.action is None
+    assert result.reason == "omnitransfer_low_confidence"
+    assert result.detail["score"] == 0.72
+    assert result.detail["recoverable"] is True
+    assert result.detail["fallback"] == "online_vlm"
+    assert result.detail["continue"] is True
+
+
 def test_transfer_recovers_generic_source_row_title_and_rejects_wrong_fold_row(
     monkeypatch,
 ) -> None:

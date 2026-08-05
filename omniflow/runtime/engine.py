@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import inspect
 from pathlib import Path
 from typing import Any
@@ -327,6 +328,7 @@ class OmniFlow:
         pending_user_input: str | None = None
         planner_diagnostics: dict[str, Any] = {}
         handled_transient_obstructions: set[tuple[str, str]] = set()
+        successful_action_states: set[tuple[str, tuple[str, str, str]]] = set()
         while runtime_steps_used < self.config.runtime.max_steps:
             max_fallback_steps = self.config.runtime.max_fallback_steps
             if max_fallback_steps is not None and fallback_steps >= max(
@@ -515,6 +517,7 @@ class OmniFlow:
                 trace,
                 planned,
                 observation,
+                successful_action_states=successful_action_states,
             ):
                 previous_action_error = "action_already_succeeded_on_current_state"
                 previous_action = planned
@@ -634,6 +637,10 @@ class OmniFlow:
                     stalled_action = planned
                 continue
             observation = step.after or observation
+            if step.success:
+                successful_action_states.add(
+                    (_action_fingerprint(planned), _ui_fingerprint(observation))
+                )
             if bound_function is not None and failed_step_index is not None:
                 fallback_observations.append(observation)
                 alignment = await align_function_resume(
@@ -997,7 +1004,14 @@ def _action_already_succeeded_on_current_state(
     trace: list[dict[str, Any]],
     action: Action,
     observation: Observation,
+    *,
+    successful_action_states: set[tuple[str, tuple[str, str, str]]] | None = None,
 ) -> bool:
+    if successful_action_states and (
+        _action_fingerprint(action),
+        _ui_fingerprint(observation),
+    ) in successful_action_states:
+        return True
     state_id = str(observation.extra.get("state_id") or "").strip()
     if not state_id:
         return False
@@ -1019,6 +1033,25 @@ def _action_already_succeeded_on_current_state(
         if completed == action:
             return True
     return False
+
+
+def _action_fingerprint(action: Action) -> str:
+    return json.dumps(
+        action.to_dict(),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _ui_fingerprint(observation: Observation) -> tuple[str, str, str]:
+    """Identify the logical UI state without volatile screenshot/state ids."""
+
+    return (
+        str(observation.package_name or ""),
+        str(observation.activity_name or ""),
+        str(observation.xml or ""),
+    )
 
 
 def _optional_step_index(value: Any) -> int | None:
