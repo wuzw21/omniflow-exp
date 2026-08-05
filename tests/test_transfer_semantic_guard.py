@@ -78,6 +78,48 @@ COMPACT_ANDROIDWORLD_XML = """\
 </hierarchy>
 """
 
+PRIVATE_GLYPH_TOOLBAR_XML = """\
+<hierarchy width="1080" height="2376">
+  <node package="com.sankuai.meituan" bounds="[0,0][1080,2376]">
+    <node class="android.view.ViewGroup" clickable="true"
+          bounds="[585,120][705,252]">
+      <node class="android.widget.TextView" text=""
+            bounds="[615,144][675,228]" />
+    </node>
+  </node>
+</hierarchy>
+"""
+
+GENERIC_SEARCH_FIELD_XML = """\
+<hierarchy width="1080" height="2376">
+  <node package="com.sankuai.meituan" bounds="[0,0][1080,2376]">
+    <node class="android.view.ViewGroup" clickable="true"
+          bounds="[36,120][960,252]">
+      <node class="android.widget.EditText"
+            text="搜索商家、品类或商圈" bounds="[90,135][900,237]" />
+    </node>
+  </node>
+</hierarchy>
+"""
+
+PURCHASE_BUTTON_XML = """\
+<hierarchy width="1080" height="2376">
+  <node package="com.sankuai.meituan" bounds="[0,0][1080,2376]">
+    <node class="android.view.ViewGroup" clickable="true"
+          content-desc="团购套餐抢购按钮区域" bounds="[866,737][1022,827]" />
+  </node>
+</hierarchy>
+"""
+
+TOOLBAR_ONLY_XML = """\
+<hierarchy width="1080" height="2376">
+  <node package="com.sankuai.meituan" bounds="[0,0][1080,2376]">
+    <node class="android.view.ViewGroup" clickable="true"
+          bounds="[930,120][1062,252]" />
+  </node>
+</hierarchy>
+"""
+
 
 def test_omnitransfer_loads_only_from_configured_canonical_root(
     tmp_path: Path,
@@ -213,7 +255,112 @@ def test_transfer_keeps_semantically_consistent_row_match(monkeypatch) -> None:
     assert request["source_element"] == {"text": "bluetooth"}
 
 
-def test_transfer_marks_low_confidence_as_recoverable_vlm_fallback(monkeypatch) -> None:
+def test_transfer_treats_private_use_toolbar_glyph_as_structural_not_semantic(
+    monkeypatch,
+) -> None:
+    request = {}
+
+    def transfer_action(**kwargs):
+        request.update(kwargs)
+        return {
+            "mapped": True,
+            "mapping_mode": "mutual_graph_matcher_no_null_v3",
+            "new_x": 645.0,
+            "new_y": 186.0,
+            "target_bbox": [585.0, 120.0, 705.0, 252.0],
+            "score": 1.0,
+            "margin": 1.0,
+        }
+
+    monkeypatch.setattr(execution, "transfer_action", transfer_action)
+
+    result = execution.default_transfer(
+        Action("click", {"x": 597.2222222222222, "y": 78.28282828282829}),
+        Observation(
+            xml=PRIVATE_GLYPH_TOOLBAR_XML,
+            package_name="com.sankuai.meituan",
+            extra={"display": {"width": 1080, "height": 2376}},
+        ),
+        Observation(
+            xml=PRIVATE_GLYPH_TOOLBAR_XML,
+            package_name="com.sankuai.meituan",
+            extra={"display": {"width": 1080, "height": 2376}},
+        ),
+    )
+
+    assert result.action is not None
+    assert result.action.args == {
+        "x": 597.2222222222222,
+        "y": 78.28282828282829,
+    }
+    assert "source_element" not in request
+
+
+def test_transfer_indexes_generic_target_text_outside_android_title_nodes(
+    monkeypatch,
+) -> None:
+    request = {}
+
+    def transfer_action(**kwargs):
+        request.update(kwargs)
+        return {
+            "mapped": True,
+            "mapping_mode": "mutual_graph_matcher_no_null_v3",
+            "new_x": 498.0,
+            "new_y": 186.0,
+            "target_bbox": [36.0, 120.0, 960.0, 252.0],
+            "score": 1.0,
+            "margin": 1.0,
+        }
+
+    monkeypatch.setattr(execution, "transfer_action", transfer_action)
+
+    result = execution.default_transfer(
+        Action("click", {"x": 461.1111111111111, "y": 78.28282828282829}),
+        Observation(
+            xml=GENERIC_SEARCH_FIELD_XML,
+            package_name="com.sankuai.meituan",
+            extra={"display": {"width": 1080, "height": 2376}},
+        ),
+        Observation(
+            xml=GENERIC_SEARCH_FIELD_XML,
+            package_name="com.sankuai.meituan",
+            extra={"display": {"width": 1080, "height": 2376}},
+        ),
+    )
+
+    assert result.action is not None
+    assert request["source_element"] == {"text": "搜索商家、品类或商圈"}
+
+
+def test_transfer_reobserves_instead_of_mapping_stable_content_description_to_toolbar(
+    monkeypatch,
+) -> None:
+    def transfer_action(**_kwargs):
+        raise AssertionError("missing purchase semantics must not map to toolbar")
+
+    monkeypatch.setattr(execution, "transfer_action", transfer_action)
+
+    result = execution.default_transfer(
+        Action("click", {"x": 874.074074074074, "y": 329.1245791245791}),
+        Observation(
+            xml=TOOLBAR_ONLY_XML,
+            package_name="com.sankuai.meituan",
+            extra={"display": {"width": 1080, "height": 2376}},
+        ),
+        Observation(
+            xml=PURCHASE_BUTTON_XML,
+            package_name="com.sankuai.meituan",
+            extra={"display": {"width": 1080, "height": 2376}},
+        ),
+    )
+
+    assert result.action is None
+    assert result.reason == "omnitransfer_target_semantic_missing"
+    assert result.detail["source_title"] == "团购套餐抢购按钮区域"
+
+
+def test_transfer_executes_any_mapped_result_without_a_confidence_abstain(monkeypatch) -> None:
     monkeypatch.setattr(
         execution,
         "transfer_action",
@@ -223,7 +370,7 @@ def test_transfer_marks_low_confidence_as_recoverable_vlm_fallback(monkeypatch) 
             "new_x": 1505.0,
             "new_y": 621.5,
             "target_bbox": [802.0, 544.0, 2208.0, 699.0],
-            "score": 0.72,
+            "score": 0.002186,
             "margin": 0.2,
         },
     )
@@ -242,12 +389,10 @@ def test_transfer_marks_low_confidence_as_recoverable_vlm_fallback(monkeypatch) 
         ),
     )
 
-    assert result.action is None
-    assert result.reason == "omnitransfer_low_confidence"
-    assert result.detail["score"] == 0.72
-    assert result.detail["recoverable"] is True
-    assert result.detail["fallback"] == "online_vlm"
-    assert result.detail["continue"] is True
+    assert result.action is not None
+    assert result.action.tool == "click"
+    assert result.reason == "omnitransfer_local_alignment_v9"
+    assert result.detail["score"] == 0.002186
 
 
 def test_transfer_recovers_generic_source_row_title_and_rejects_wrong_fold_row(

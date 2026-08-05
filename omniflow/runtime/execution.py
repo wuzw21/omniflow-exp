@@ -8,6 +8,7 @@ import json
 import math
 import re
 from typing import Any
+import unicodedata
 import xml.etree.ElementTree as ET
 
 from omniflow.core.config import PluginSet
@@ -27,7 +28,25 @@ from omniflow.runtime.checker import default_checker_trigger, match_checker_rule
 from omniflow.transfer.runtime import transfer_action
 
 _ACTION_SETTLE_SECONDS = 1.0
-_ALIGNMENT_MIN_PROBABILITY = 0.9
+_OPEN_APP_READY_POLL_SECONDS = 0.5
+_OPEN_APP_READY_MAX_ATTEMPTS = 30
+_OBSERVATION_READY_POLL_SECONDS = 0.25
+_OBSERVATION_READY_MAX_ATTEMPTS = 20
+_TRANSFER_REOBSERVE_POLL_SECONDS = 0.5
+_TRANSFER_REOBSERVE_MAX_ATTEMPTS = 8
+_TRANSFER_REOBSERVE_REASONS = frozenset(
+    {
+        "omnitransfer_target_semantic_missing",
+        "omnitransfer_missing_target_page",
+        "omnitransfer_target_graph_incomplete",
+        "omnitransfer_low_confidence",
+    }
+)
+# OmniTransfer already applies the deployment acceptance floor.  Keep only a
+# minimal sanity floor here so OmniFlow does not reject a valid mapped target a
+# second time merely because its confidence is below a conservative benchmark
+# threshold.
+_ALIGNMENT_MIN_PROBABILITY = 0.0
 _ALIGNMENT_SOURCE_SKIP_PENALTY = math.log(3.0)
 
 
@@ -381,6 +400,14 @@ async def execute_action(
         plugins=plugins,
         source_state=source_state,
     )
+    decision, observation = await _reobserve_for_transfer(
+        action,
+        decision=decision,
+        observation=observation,
+        host=host,
+        plugins=plugins,
+        source_state=source_state,
+    )
     if decision.kind == "block" or decision.action is None:
         blocked = StepResult(
             False,
@@ -417,6 +444,63 @@ async def execute_action(
         result,
         actions_executed=sum(item.actions_executed for item in executed_steps),
         executed_steps=tuple(executed_steps),
+    )
+
+
+async def _reobserve_for_transfer(
+    action: Action,
+    *,
+    decision: ActionDecision,
+    observation: Observation,
+    host: Host,
+    plugins: PluginSet,
+    source_state: Observation | None,
+) -> tuple[ActionDecision, Observation]:
+    initial_reason = str(decision.reason or "")
+    if (
+        not _transfer_decision_needs_reobservation(decision)
+        or source_state is None
+    ):
+        return decision, observation
+
+    attempts = 0
+    current = observation
+    while attempts < _TRANSFER_REOBSERVE_MAX_ATTEMPTS:
+        await asyncio.sleep(_TRANSFER_REOBSERVE_POLL_SECONDS)
+        current = await _observe_ready(host)
+        attempts += 1
+        decision = await prepare_action(
+            action,
+            observation=current,
+            plugins=plugins,
+            source_state=source_state,
+        )
+        if not _transfer_decision_needs_reobservation(decision):
+            break
+
+    return (
+        replace(
+            decision,
+            detail={
+                **decision.detail,
+                "observation_retry": {
+                    "attempts": attempts,
+                    "initial_reason": initial_reason,
+                },
+            },
+        ),
+        current,
+    )
+
+
+def _transfer_decision_needs_reobservation(decision: ActionDecision) -> bool:
+    reason = str(decision.reason or "")
+    if decision.kind == "block":
+        return reason in _TRANSFER_REOBSERVE_REASONS
+    mapping_mode = str(decision.detail.get("mapping_mode") or reason)
+    return (
+        decision.action is not None
+        and "coordinate_stretch_fallback" in mapping_mode
     )
 
 
@@ -491,12 +575,20 @@ async def _dispatch_prepared(
             result=action_result,
             error=action_result.error or "action_failed",
         )
-    after = Observation.from_value(
-        await _await(host.observe(xml=True, screenshot=True, app_info=True))
-    )
+    after = await _observe_ready(host)
     if action.tool == "open_app":
         expected_package = str(action.args.get("package_name") or "").strip()
         observed_package = str(after.package_name or "").strip()
+        attempts = 1
+        while (
+            expected_package
+            and observed_package != expected_package
+            and attempts < _OPEN_APP_READY_MAX_ATTEMPTS
+        ):
+            await asyncio.sleep(_OPEN_APP_READY_POLL_SECONDS)
+            after = await _observe_ready(host)
+            observed_package = str(after.package_name or "").strip()
+            attempts += 1
         if expected_package and observed_package != expected_package:
             error = (
                 "open_app_target_not_ready:"
@@ -523,6 +615,54 @@ async def _dispatch_prepared(
         after=after,
         result=action_result,
         actions_executed=1,
+    )
+
+
+async def _observe_ready(host: Host) -> Observation:
+    after = Observation()
+    for attempt in range(_OBSERVATION_READY_MAX_ATTEMPTS):
+        after = Observation.from_value(
+            await _await(host.observe(xml=True, screenshot=True, app_info=True))
+        )
+        if not _observation_window_outside_display(after):
+            return after
+        if attempt + 1 < _OBSERVATION_READY_MAX_ATTEMPTS:
+            await asyncio.sleep(_OBSERVATION_READY_POLL_SECONDS)
+    return after
+
+
+def _observation_window_outside_display(observation: Observation) -> bool:
+    display = observation.extra.get("display")
+    if not isinstance(display, dict):
+        return False
+    try:
+        width = float(display.get("width") or 0)
+        height = float(display.get("height") or 0)
+    except (TypeError, ValueError):
+        return False
+    if width <= 0 or height <= 0:
+        return False
+    try:
+        root = ET.fromstring(str(observation.xml or ""))
+    except ET.ParseError:
+        return False
+    bounds = next(
+        (
+            parsed
+            for element in root.iter()
+            if (parsed := _bounds(element.attrib.get("bounds"))) is not None
+        ),
+        None,
+    )
+    if bounds is None:
+        return False
+    tolerance_x = max(2.0, width * 0.01)
+    tolerance_y = max(2.0, height * 0.01)
+    return (
+        bounds[0] < -tolerance_x
+        or bounds[1] < -tolerance_y
+        or bounds[2] > width + tolerance_x
+        or bounds[3] > height + tolerance_y
     )
 
 
@@ -1090,10 +1230,15 @@ def _source_semantic_title(
     if root is None:
         return ""
     source = _actionable_element_at_point(root, source_point)
-    if source is None or _element_has_stable_identity(source):
+    if source is None:
         return ""
+    direct_label = _text(
+        source.attrib.get("text") or source.attrib.get("content-desc")
+    )
+    if _is_semantic_label(direct_label):
+        return direct_label
     title = _element_title(source)
-    if title:
+    if _is_semantic_label(title):
         return title
     return next(
         (
@@ -1105,8 +1250,18 @@ def _source_semantic_title(
                     or descendant.attrib.get("content-desc")
                 )
             )
+            if _is_semantic_label(label)
         ),
         "",
+    )
+
+
+def _is_semantic_label(value: str) -> bool:
+    normalized = _text(value)
+    return bool(normalized) and any(
+        unicodedata.category(character) != "Co"
+        for character in normalized
+        if not character.isspace()
     )
 
 
@@ -1114,7 +1269,17 @@ def _document_titles(xml_text: str) -> set[str]:
     root = _xml_root(xml_text)
     if root is None:
         return set()
-    return {title for element in root.iter() if (title := _element_title(element))}
+    titles: set[str] = set()
+    for element in root.iter():
+        title = _element_title(element)
+        if _is_semantic_label(title):
+            titles.add(title)
+        direct_label = _text(
+            element.attrib.get("text") or element.attrib.get("content-desc")
+        )
+        if _is_semantic_label(direct_label):
+            titles.add(direct_label)
+    return titles
 
 
 def _xml_root(xml_text: str) -> ET.Element | None:
