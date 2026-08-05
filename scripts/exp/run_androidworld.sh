@@ -962,6 +962,7 @@ if lineage is not None:
     compatible_source_sha256s.append(str(lineage.get("source_sha256") or ""))
 candidate_validator = None
 if sys.argv[8] in {
+    "omniflow.mobilegpt-runlog-direct-memory.v1",
     "omniflow.mobilegpt-runlog-semantic-memory.v1",
     "omniflow.mobilegpt-runlog-teacher-memory.v1",
     "omniflow.mobilegpt-runlog-native-derive-memory.v2",

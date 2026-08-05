@@ -62,6 +62,7 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
     assert f'mobilegpt_source_schema="{MOBILEGPT_DIRECT_MEMORY_SCHEMA}"' in script_text
     assert f'mobilegpt_source_method="{MOBILEGPT_DIRECT_SOURCE_METHOD}"' in script_text
+    assert script_text.count(MOBILEGPT_DIRECT_MEMORY_SCHEMA) >= 2
     assert "omniflow.mobilegpt-runlog-offline-memory.v3" not in script_text
     assert "unset MOBILEGPT_MEMORY_ONLY" in script_text
     assert script_text.count('bash "$0"') == 2
