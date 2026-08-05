@@ -18,6 +18,7 @@ from typing import Any, Iterable, Sequence
 from omniflow.core.trajectory import require_complete_source_run_log
 from omniflow.transfer.runtime import load_transfer_state_catalog
 from src.experiment.mobilegpt_contract import (
+    MOBILEGPT_DIRECT_SOURCE_METHOD,
     MOBILEGPT_LEARNING_MODE_BY_SCHEMA,
     MOBILEGPT_LEGACY_MEMORY_SCHEMA,
     MOBILEGPT_MEMORY_MANIFEST,
@@ -1401,14 +1402,46 @@ def _load_mobilegpt_memories(
 
     canonical: dict[str, dict[str, Any]] = {}
     for task, memory_sha256s in sorted(candidates.items()):
-        if len(memory_sha256s) != 1:
-            raise ValueError(
-                f"ambiguous_mobilegpt_memory:{task}:"
-                + ",".join(sorted(memory_sha256s))
-            )
-        memory_sha256 = next(iter(memory_sha256s))
-        canonical[task] = dict(records[memory_sha256])
+        canonical[task] = _select_canonical_mobilegpt_memory(
+            task=task,
+            memory_sha256s=memory_sha256s,
+            records=records,
+        )
     return records, canonical
+
+
+def _select_canonical_mobilegpt_memory(
+    *,
+    task: str,
+    memory_sha256s: set[str],
+    records: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    direct_memory_sha256s = {
+        memory_sha256
+        for memory_sha256 in memory_sha256s
+        if records[memory_sha256]["source_method"]
+        == MOBILEGPT_DIRECT_SOURCE_METHOD
+    }
+    if len(direct_memory_sha256s) > 1:
+        raise ValueError(
+            f"ambiguous_mobilegpt_memory:{task}:"
+            + ",".join(sorted(direct_memory_sha256s))
+        )
+    if direct_memory_sha256s:
+        memory_sha256 = next(iter(direct_memory_sha256s))
+        selection_reason = "active_mobilegpt_direct_source_method"
+    elif len(memory_sha256s) == 1:
+        memory_sha256 = next(iter(memory_sha256s))
+        selection_reason = "only_valid_mobilegpt_memory"
+    else:
+        raise ValueError(
+            f"ambiguous_mobilegpt_memory:{task}:"
+            + ",".join(sorted(memory_sha256s))
+        )
+    return {
+        **records[memory_sha256],
+        "selection_reason": selection_reason,
+    }
 
 
 def _load_baseline_batch_reports(

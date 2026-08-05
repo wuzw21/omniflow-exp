@@ -32,6 +32,10 @@ from omniflow.functions.store import FunctionStore
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
     MOBILEGPT_AUDIT_SCHEMA_BY_SCHEMA,
+    MOBILEGPT_DIRECT_AUDIT_SCHEMA,
+    MOBILEGPT_DIRECT_LEARNING_MODE,
+    MOBILEGPT_DIRECT_MEMORY_SCHEMA,
+    MOBILEGPT_DIRECT_SOURCE_METHOD,
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_LEARNING_MODE_BY_SCHEMA,
     MOBILEGPT_LEGACY_LEARNING_MODE,
@@ -3455,6 +3459,7 @@ def validate_mobilegpt_adapted_memory(
     schema_version = manifest.get("schema_version")
     if schema_version in {
         MOBILEGPT_MEMORY_SCHEMA,
+        MOBILEGPT_DIRECT_MEMORY_SCHEMA,
         MOBILEGPT_NATIVE_DERIVE_MEMORY_SCHEMA,
     }:
         validated = _validate_mobilegpt_converted_memory(
@@ -3468,7 +3473,10 @@ def validate_mobilegpt_adapted_memory(
             expected_model=expected_model,
             expected_source_method=expected_source_method,
         )
-        if schema_version == MOBILEGPT_MEMORY_SCHEMA:
+        if schema_version in {
+            MOBILEGPT_MEMORY_SCHEMA,
+            MOBILEGPT_DIRECT_MEMORY_SCHEMA,
+        }:
             from src.integrations.mobilegpt_converter import (
                 validate_mobilegpt_memory,
             )
@@ -3918,8 +3926,31 @@ def seal_mobilegpt_source_memory(
     target_app: str = "",
     source_wall_sec: float = 0.0,
     source_model: str = "",
+    memory_schema: str = MOBILEGPT_MEMORY_SCHEMA,
 ) -> dict[str, Any]:
     """Seal one offline RunLog-to-MobileGPT memory database."""
+
+    if memory_schema not in {
+        MOBILEGPT_MEMORY_SCHEMA,
+        MOBILEGPT_DIRECT_MEMORY_SCHEMA,
+    }:
+        raise ValueError(f"mobilegpt_source_memory_schema_invalid:{memory_schema}")
+    semantic_conversion = memory_schema == MOBILEGPT_MEMORY_SCHEMA
+    audit_schema = (
+        MOBILEGPT_AUDIT_SCHEMA
+        if semantic_conversion
+        else MOBILEGPT_DIRECT_AUDIT_SCHEMA
+    )
+    source_method = (
+        MOBILEGPT_SOURCE_METHOD
+        if semantic_conversion
+        else MOBILEGPT_DIRECT_SOURCE_METHOD
+    )
+    learning_mode = (
+        MOBILEGPT_LEARNING_MODE
+        if semantic_conversion
+        else MOBILEGPT_DIRECT_LEARNING_MODE
+    )
 
     if int(source_seed) != 111:
         raise ValueError("mobilegpt_virtual_memory_requires_source_seed_111")
@@ -3953,7 +3984,7 @@ def seal_mobilegpt_source_memory(
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
     if (
         not isinstance(audit, dict)
-        or audit.get("schema_version") != MOBILEGPT_AUDIT_SCHEMA
+        or audit.get("schema_version") != audit_schema
         or str(audit.get("task_name") or "") != str(task_name)
     ):
         raise ValueError("mobilegpt_virtual_memory_audit_invalid")
@@ -4010,35 +4041,48 @@ def seal_mobilegpt_source_memory(
     chat_attempts = [
         _coerce_int(value) for value in stats_summary.get("chat_attempts") or []
     ]
-    if not normalized_model:
-        raise ValueError("mobilegpt_semantic_memory_source_model_required")
-    if int(stats_summary.get("chat_model_calls") or 0) <= 0:
-        raise ValueError("mobilegpt_semantic_memory_chat_calls_required")
     if int(stats_summary.get("embedding_model_calls") or 0) <= 0:
-        raise ValueError("mobilegpt_semantic_memory_embedding_calls_required")
-    if chat_models != {normalized_model}:
-        raise ValueError(
-            "mobilegpt_semantic_memory_chat_model_mismatch:"
-            f"expected={normalized_model}:actual={','.join(sorted(chat_models))}"
-        )
-    if chat_attempts != [1]:
-        raise ValueError(
-            "mobilegpt_semantic_memory_chat_attempts_invalid:"
-            + ",".join(str(value) for value in chat_attempts)
-        )
-    if stats_summary.get("token_usage_status") != "tracked":
-        raise ValueError("mobilegpt_semantic_memory_token_usage_incomplete")
-
-    required_audit = {
-        "original_mobilegpt_prompts": True,
-        "explore_agent_used": True,
-        "select_agent_used": True,
-        "derive_agent_fallback_allowed": True,
-        "generalize_action_used": True,
-        "source_direct_hit_validation": True,
+        raise ValueError("mobilegpt_memory_embedding_calls_required")
+    if semantic_conversion:
+        if not normalized_model:
+            raise ValueError("mobilegpt_semantic_memory_source_model_required")
+        if int(stats_summary.get("chat_model_calls") or 0) <= 0:
+            raise ValueError("mobilegpt_semantic_memory_chat_calls_required")
+        if chat_models != {normalized_model}:
+            raise ValueError(
+                "mobilegpt_semantic_memory_chat_model_mismatch:"
+                f"expected={normalized_model}:actual={','.join(sorted(chat_models))}"
+            )
+        if chat_attempts != [1]:
+            raise ValueError(
+                "mobilegpt_semantic_memory_chat_attempts_invalid:"
+                + ",".join(str(value) for value in chat_attempts)
+            )
+        if stats_summary.get("token_usage_status") != "tracked":
+            raise ValueError("mobilegpt_semantic_memory_token_usage_incomplete")
+        required_audit = {
+            "original_mobilegpt_prompts": True,
+            "explore_agent_used": True,
+            "select_agent_used": True,
+            "derive_agent_fallback_allowed": True,
+            "generalize_action_used": True,
+            "source_direct_hit_validation": True,
+        }
+    else:
+        if int(stats_summary.get("chat_model_calls") or 0) != 0:
+            raise ValueError("mobilegpt_direct_memory_chat_calls_forbidden")
+        required_audit = {
+            "conversion_mode": "runlog_direct",
+            "original_mobilegpt_prompts": False,
+            "explore_agent_used": False,
+            "select_agent_used": False,
+            "derive_agent_fallback_allowed": False,
+            "generalize_action_used": True,
+            "source_direct_hit_validation": True,
+            "direct_subtasks_from_runlog": True,
     }
     for audit_field, expected in required_audit.items():
-        if audit.get(audit_field) is not expected:
+        if audit.get(audit_field) != expected:
             raise ValueError(
                 f"mobilegpt_semantic_memory_audit_invalid:{audit_field}"
             )
@@ -4048,7 +4092,11 @@ def seal_mobilegpt_source_memory(
             "mobilegpt_semantic_memory_audit_invalid:derive_agent_fallback_count"
         )
 
-    provenance_root = bundle_root / "provenance_mobilegpt_runlog_semantic_v1"
+    provenance_root = bundle_root / (
+        "provenance_mobilegpt_runlog_semantic_v1"
+        if semantic_conversion
+        else "provenance_mobilegpt_runlog_direct_v1"
+    )
     provenance_root.mkdir(exist_ok=False)
 
     def copy_evidence(source: Path, name: str) -> Path:
@@ -4061,11 +4109,11 @@ def seal_mobilegpt_source_memory(
     copied_audit = copy_evidence(audit_path, "trajectory_audit.json")
     memory_sha256, memory_file_count = _mobilegpt_memory_digest(memory)
     manifest = {
-        "schema_version": MOBILEGPT_MEMORY_SCHEMA,
+        "schema_version": memory_schema,
         "task_name": str(task_name),
         "source_seed": int(source_seed),
-        "source_method": MOBILEGPT_SOURCE_METHOD,
-        "source_model": normalized_model,
+        "source_method": source_method,
+        "source_model": normalized_model if semantic_conversion else "",
         "target_package": str(target_package),
         "target_app": str(target_app or target_package),
         "memory": {
@@ -4113,11 +4161,11 @@ def seal_mobilegpt_source_memory(
         "provenance": {
             "native_mobilegpt_learning": False,
             "task_local_memory": True,
-            "learning_mode": MOBILEGPT_LEARNING_MODE,
+            "learning_mode": learning_mode,
             "teacher_forcing": False,
-            "synthetic_subtasks": False,
-            "semantic_subtasks": True,
-            "original_mobilegpt_prompts": True,
+            "synthetic_subtasks": not semantic_conversion,
+            "semantic_subtasks": semantic_conversion,
+            "original_mobilegpt_prompts": semantic_conversion,
             "actions_supplied_to_mobilegpt": True,
             "source_transitions_supplied": True,
             "source_success_boundary_supplied": True,
@@ -4144,8 +4192,8 @@ def seal_mobilegpt_source_memory(
         task_name=task_name,
         source_seed=source_seed,
         source_run_log=source_path,
-        expected_model=normalized_model,
-        expected_source_method=MOBILEGPT_SOURCE_METHOD,
+        expected_model=normalized_model if semantic_conversion else "",
+        expected_source_method=source_method,
     )
 
 

@@ -26,8 +26,8 @@ formal_fixed_task_params=0
 formal_fold_state=2
 formal_fold_size="2208x1840"
 formal_model="qwen3-vl-plus"
-mobilegpt_source_schema="omniflow.mobilegpt-runlog-semantic-memory.v1"
-mobilegpt_source_method="mobilegpt_runlog_semantic_memory"
+mobilegpt_source_schema="omniflow.mobilegpt-runlog-direct-memory.v1"
+mobilegpt_source_method="mobilegpt_runlog_direct_memory"
 mobilegpt_source_manifest_name="mobilegpt_memory_manifest.json"
 expected_source_seed="${OMNIFLOW_SINGLE_TASK_SOURCE_SEED:-$formal_source_seed}"
 evaluation_seed="${OMNIFLOW_SINGLE_TASK_EVALUATION_SEED:-$formal_evaluation_seed}"
@@ -644,7 +644,7 @@ if [[ "$prepare_mobilegpt_memory" -eq 1 ]]; then
       echo "Set OMNIFLOW_MOBILEGPT_MEMORY_OUTPUT_ROOT or OMNIFLOW_EXP_ASSET_ROOT." >&2
       exit 2
     fi
-    mobilegpt_memory_output_root="$asset_root/runtime/evals/androidworld_mobilegpt_runlog_semantic_memory/attempt-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    mobilegpt_memory_output_root="$asset_root/runtime/evals/androidworld_mobilegpt_runlog_direct_memory/attempt-$(date -u +%Y%m%dT%H%M%SZ)-$$"
   fi
   if [[ "$mobilegpt_memory_output_root" != /* ]]; then
     echo "OMNIFLOW_MOBILEGPT_MEMORY_OUTPUT_ROOT must be absolute." >&2

@@ -15,6 +15,10 @@ from src.experiment.artifact_memory import (
 )
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
+    MOBILEGPT_DIRECT_AUDIT_SCHEMA,
+    MOBILEGPT_DIRECT_LEARNING_MODE,
+    MOBILEGPT_DIRECT_MEMORY_SCHEMA,
+    MOBILEGPT_DIRECT_SOURCE_METHOD,
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
@@ -194,6 +198,71 @@ def _write_audit(path: Path, *, matched: bool = True) -> None:
     )
 
 
+def _write_direct_stats(path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {"event": "task_started"},
+                {
+                    "event": "embedding_call",
+                    "model": "text-embedding-v3",
+                    "prompt_tokens": 10,
+                    "completion_tokens": 0,
+                    "total_tokens": 10,
+                },
+                {"event": "task_finished"},
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_direct_audit(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": MOBILEGPT_DIRECT_AUDIT_SCHEMA,
+                "conversion_mode": "runlog_direct",
+                "task_name": "SystemBluetoothTurnOn",
+                "original_mobilegpt_prompts": False,
+                "explore_agent_used": False,
+                "select_agent_used": False,
+                "derive_agent_fallback_allowed": False,
+                "derive_agent_fallback_count": 0,
+                "generalize_action_used": True,
+                "direct_subtasks_from_runlog": True,
+                "source_direct_hit_validation": True,
+                "transition_count": 1,
+                "validated_transition_count": 1,
+                "validation_rows": [
+                    {
+                        "source_step_index": 0,
+                        "matched": True,
+                        "consumed_transitions": 1,
+                    }
+                ],
+                "actions_supplied_to_mobilegpt": True,
+                "source_transitions_supplied": True,
+                "source_success_boundary_supplied": True,
+                "source_success_boundary": {
+                    "status": "succeeded",
+                    "success": True,
+                },
+                "official_reader_validation": {
+                    "task_path_pages": 1,
+                    "page_count": 1,
+                    "action_row_count": 2,
+                    "loadable": True,
+                },
+                "complete": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_converted_memory_seals_and_registers(tmp_path: Path) -> None:
     index, source_run_log = _write_source_index(tmp_path / "source")
     registry_root = tmp_path / "registry"
@@ -282,6 +351,39 @@ def test_converted_memory_rejects_incomplete_trajectory(tmp_path: Path) -> None:
     assert not (bundle / MOBILEGPT_MEMORY_MANIFEST).exists()
 
 
+def test_direct_converted_memory_seals_without_chat_calls(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    memory = bundle / "memory"
+    _write_mobilegpt_memory(memory)
+    _, source_run_log = _write_source_index(tmp_path / "source")
+    stats = bundle / "source_stats.jsonl"
+    audit = bundle / "trajectory_audit.json"
+    _write_direct_stats(stats)
+    _write_direct_audit(audit)
+
+    sealed = pipeline.seal_mobilegpt_source_memory(
+        memory_root=memory,
+        source_run_log=source_run_log,
+        source_stats=stats,
+        trajectory_audit=audit,
+        task_name="SystemBluetoothTurnOn",
+        source_model="qwen3-vl-plus",
+        memory_schema=MOBILEGPT_DIRECT_MEMORY_SCHEMA,
+    )
+
+    manifest = sealed["manifest"]
+    assert manifest["schema_version"] == MOBILEGPT_DIRECT_MEMORY_SCHEMA
+    assert manifest["source_method"] == MOBILEGPT_DIRECT_SOURCE_METHOD
+    assert manifest["source_model"] == ""
+    assert manifest["source_stats"]["chat_model_calls"] == 0
+    assert manifest["source_stats"]["embedding_model_calls"] == 1
+    assert manifest["provenance"]["learning_mode"] == (
+        MOBILEGPT_DIRECT_LEARNING_MODE
+    )
+    assert manifest["provenance"]["synthetic_subtasks"] is True
+    assert manifest["provenance"]["semantic_subtasks"] is False
+
+
 def test_source_preflight_is_read_only_and_uses_no_function_store(
     tmp_path: Path,
 ) -> None:
@@ -296,7 +398,7 @@ def test_source_preflight_is_read_only_and_uses_no_function_store(
     after = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
     assert before == after
     assert Path(result["source_run_log"]) == source_run_log
-    assert result["source_method"] == MOBILEGPT_SOURCE_METHOD
+    assert result["source_method"] == MOBILEGPT_DIRECT_SOURCE_METHOD
     assert result["teacher_forcing"] is False
     assert result["actions_supplied_to_mobilegpt"] is True
     assert result["function_store_used"] is False
@@ -371,6 +473,7 @@ def test_source_cli_has_no_teacher_or_cold_learning_commands() -> None:
     ("schema_version", "strict_reader_expected"),
     (
         (MOBILEGPT_MEMORY_SCHEMA, True),
+        (MOBILEGPT_DIRECT_MEMORY_SCHEMA, True),
         (MOBILEGPT_NATIVE_DERIVE_MEMORY_SCHEMA, False),
     ),
 )

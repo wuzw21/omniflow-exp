@@ -12,10 +12,10 @@ from typing import Any
 
 from src.experiment import androidworld as pipeline
 from src.experiment.mobilegpt_contract import (
-    MOBILEGPT_LEARNING_MODE,
+    MOBILEGPT_DIRECT_LEARNING_MODE,
+    MOBILEGPT_DIRECT_MEMORY_SCHEMA,
+    MOBILEGPT_DIRECT_SOURCE_METHOD,
     MOBILEGPT_MEMORY_MANIFEST,
-    MOBILEGPT_MEMORY_SCHEMA,
-    MOBILEGPT_SOURCE_METHOD,
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
 )
 from src.integrations.mobilegpt_converter import (
@@ -170,17 +170,17 @@ def preflight_mobilegpt_source(
     _, _, source_audit, target_info = _source_preflight(item)
     report = dict(source_audit["report"])
     return {
-        "schema_version": "omniflow.mobilegpt-source-preflight.v3",
+        "schema_version": "omniflow.mobilegpt-source-preflight.v4",
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
-        "source_method": MOBILEGPT_SOURCE_METHOD,
+        "source_method": MOBILEGPT_DIRECT_SOURCE_METHOD,
         "source_run_log": source_audit["source_run_log"],
         "source_run_log_sha256": source_audit["source_run_log_sha256"],
-        "learning_mode": MOBILEGPT_LEARNING_MODE,
+        "learning_mode": MOBILEGPT_DIRECT_LEARNING_MODE,
         "teacher_forcing": False,
-        "synthetic_subtasks": False,
-        "semantic_subtasks": True,
-        "original_mobilegpt_prompts": True,
+        "synthetic_subtasks": True,
+        "semantic_subtasks": False,
+        "original_mobilegpt_prompts": False,
         "actions_supplied_to_mobilegpt": True,
         "source_transitions_supplied": True,
         "source_success_boundary_supplied": True,
@@ -222,7 +222,7 @@ def validate_mobilegpt_source_memory(
         expected_source_method=source_method,
     )
     result = {
-        "schema_version": "omniflow.mobilegpt-source-validation.v3",
+        "schema_version": "omniflow.mobilegpt-source-validation.v4",
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
         "source_method": source_method,
@@ -328,20 +328,21 @@ def prepare_mobilegpt_source_memory(
         target_app=str(target_info.get("target_app") or ""),
         source_wall_sec=wall_sec,
         source_model=normalized_model,
+        memory_schema=MOBILEGPT_DIRECT_MEMORY_SCHEMA,
     )
     result = {
-        "schema_version": "omniflow.mobilegpt-source-prepare.v6",
+        "schema_version": "omniflow.mobilegpt-source-prepare.v7",
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
-        "source_method": MOBILEGPT_SOURCE_METHOD,
+        "source_method": MOBILEGPT_DIRECT_SOURCE_METHOD,
         "source_run_log": str(source_run_log),
         "model": normalized_model,
         "memory_root": str(memory_root),
-        "learning_mode": MOBILEGPT_LEARNING_MODE,
+        "learning_mode": MOBILEGPT_DIRECT_LEARNING_MODE,
         "teacher_forcing": False,
-        "synthetic_subtasks": False,
-        "semantic_subtasks": True,
-        "original_mobilegpt_prompts": True,
+        "synthetic_subtasks": True,
+        "semantic_subtasks": False,
+        "original_mobilegpt_prompts": False,
         "actions_supplied_to_mobilegpt": True,
         "source_transitions_supplied": True,
         "source_success_boundary_supplied": True,
@@ -560,9 +561,9 @@ def prepare_mobilegpt_source_batch(
     batch_root.mkdir(parents=True, exist_ok=True)
     manifest_path = batch_root / "batch_manifest.json"
     expected_manifest = {
-        "schema_version": "omniflow.mobilegpt-source-batch.v2",
-        "source_memory_schema": MOBILEGPT_MEMORY_SCHEMA,
-        "source_method": MOBILEGPT_SOURCE_METHOD,
+        "schema_version": "omniflow.mobilegpt-source-batch.v3",
+        "source_memory_schema": MOBILEGPT_DIRECT_MEMORY_SCHEMA,
+        "source_method": MOBILEGPT_DIRECT_SOURCE_METHOD,
         "model": str(model),
         "index_path": str(Path(index_path).expanduser().resolve()),
         "memory_index": str(Path(memory_index).expanduser().resolve()),
@@ -586,7 +587,11 @@ def prepare_mobilegpt_source_batch(
             task_name=task_name,
         )
         task_root = batch_root / task_name
-        if canonical is not None:
+        if (
+            canonical is not None
+            and canonical.get("schema_version") == MOBILEGPT_DIRECT_MEMORY_SCHEMA
+            and canonical.get("source_method") == MOBILEGPT_DIRECT_SOURCE_METHOD
+        ):
             row = {
                 "task_name": task_name,
                 "ordinal": ordinal,
@@ -651,7 +656,7 @@ def prepare_mobilegpt_source_batch(
         _write_batch_report(
             report_path,
             {
-                "schema_version": "omniflow.mobilegpt-source-batch-report.v2",
+                "schema_version": "omniflow.mobilegpt-source-batch-report.v3",
                 "batch_root": str(batch_root),
                 "complete": counts["pending"] == 0,
                 "counts": counts,

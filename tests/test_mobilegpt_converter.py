@@ -313,6 +313,7 @@ def test_conversion_writes_runlog_action_and_official_reader_loads_it(
         model="unused-offline",
         embedding_provider=lambda _screen: [0.25, 0.75],
         semantic_query_provider=_semantic_query,
+        conversion_mode="mobilegpt_semantic",
     )
 
     with (
@@ -341,6 +342,60 @@ def test_conversion_writes_runlog_action_and_official_reader_loads_it(
     assert audit_payload["official_reader_validation"]["loadable"] is True
 
 
+def test_direct_conversion_uses_runlog_actions_without_semantic_agents(
+    tmp_path: Path,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [
+            {"action_type": "click", "x": 50, "y": 50},
+            {"action_type": "navigate_back"},
+        ],
+        forests=[
+            '<hierarchy><node text="Draw" clickable="true" '
+            'bounds="[0,0][100,100]" /></hierarchy>',
+            '<hierarchy><node text="Back target" clickable="true" '
+            'bounds="[0,0][100,100]" /></hierarchy>',
+        ],
+    )
+    memory = tmp_path / "memory"
+    audit = tmp_path / "audit.json"
+
+    def reject_semantic_query(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("direct conversion must not call semantic agents")
+
+    result = convert_runlog_to_mobilegpt_memory(
+        source_run_log=source,
+        mobilegpt_root=MOBILEGPT_ROOT,
+        memory_root=memory,
+        stats_path=tmp_path / "stats.jsonl",
+        audit_path=audit,
+        model="unused-offline",
+        embedding_provider=lambda _screen: [0.25, 0.75],
+        semantic_query_provider=reject_semantic_query,
+    )
+
+    with (memory / "com.example.app" / "tasks.csv").open(
+        encoding="utf-8"
+    ) as handle:
+        task_rows = list(csv.DictReader(handle))
+    task_path = json.loads(task_rows[0]["path"])
+    assert task_path == {
+        "0": [
+            "source_step_000_click",
+            "source_step_001_navigate_back",
+            "finish",
+        ],
+    }
+    payload = json.loads(audit.read_text(encoding="utf-8"))
+    assert payload["conversion_mode"] == "runlog_direct"
+    assert payload["explore_agent_used"] is False
+    assert payload["select_agent_used"] is False
+    assert payload["derive_agent_fallback_allowed"] is False
+    assert payload["validated_transition_count"] == 2
+    assert result["official_reader_validation"]["source_direct_hit_count"] == 2
+
+
 def test_conversion_grounds_coordinate_free_input_to_focused_field(
     tmp_path: Path,
 ) -> None:
@@ -364,6 +419,7 @@ def test_conversion_grounds_coordinate_free_input_to_focused_field(
         model="unused-offline",
         embedding_provider=lambda _screen: [0.25, 0.75],
         semantic_query_provider=_semantic_query,
+        conversion_mode="mobilegpt_semantic",
     )
 
     with (
@@ -404,6 +460,7 @@ def test_conversion_uses_native_derive_for_ambiguous_coordinate_free_input(
         model="unused-offline",
         embedding_provider=lambda _screen: [0.25, 0.75],
         semantic_query_provider=_input_derive_semantic_query,
+        conversion_mode="mobilegpt_semantic",
     )
 
     with (
@@ -443,6 +500,7 @@ def test_conversion_preserves_repeated_selected_subtask_episodes(
         model="unused-offline",
         embedding_provider=lambda _screen: [0.25, 0.75],
         semantic_query_provider=_semantic_query,
+        conversion_mode="mobilegpt_semantic",
     )
 
     with (memory / "com.example.app" / "tasks.csv").open(
@@ -483,6 +541,7 @@ def test_conversion_persists_select_new_action_in_semantic_closure(
         model="unused-offline",
         embedding_provider=lambda _screen: [0.25, 0.75],
         semantic_query_provider=_new_action_semantic_query,
+        conversion_mode="mobilegpt_semantic",
     )
 
     with (
@@ -523,6 +582,7 @@ def test_conversion_rejects_input_when_native_derive_cannot_match_source(
             model="unused-offline",
             embedding_provider=lambda _screen: [0.25, 0.75],
             semantic_query_provider=_mismatched_derive_semantic_query,
+            conversion_mode="mobilegpt_semantic",
         )
 
 
@@ -587,6 +647,7 @@ def test_memory_validation_rejects_malformed_screen_xml(tmp_path: Path) -> None:
         model="unused-offline",
         embedding_provider=lambda _screen: [0.25, 0.75],
         semantic_query_provider=_semantic_query,
+        conversion_mode="mobilegpt_semantic",
     )
     screen_xml = memory / "com.example.app" / "pages" / "0" / "screen" / "raw.xml"
     screen_xml.write_text("<hierarchy>", encoding="utf-8")

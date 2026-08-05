@@ -16,7 +16,10 @@ import time
 from typing import Any, Callable, Iterator, Sequence
 import xml.etree.ElementTree as ET
 
-from src.experiment.mobilegpt_contract import MOBILEGPT_AUDIT_SCHEMA
+from src.experiment.mobilegpt_contract import (
+    MOBILEGPT_AUDIT_SCHEMA,
+    MOBILEGPT_DIRECT_AUDIT_SCHEMA,
+)
 from src.integrations.mobilegpt_runtime import (
     install_mobilegpt_openai_runtime,
     install_mobilegpt_select_schema_repair,
@@ -25,7 +28,9 @@ from src.integrations.mobilegpt_runtime import (
 from src.integrations.runlog import import_run_log
 
 CONVERSION_SOURCE_SCHEMA = "omniflow.mobilegpt-runlog-conversion-source.v1"
-CONVERSION_AUDIT_SCHEMA = MOBILEGPT_AUDIT_SCHEMA
+CONVERSION_MODE_DIRECT = "runlog_direct"
+CONVERSION_MODE_SEMANTIC = "mobilegpt_semantic"
+CONVERSION_AUDIT_SCHEMA = MOBILEGPT_DIRECT_AUDIT_SCHEMA
 
 __all__ = [
     "MobileGPTConversionError",
@@ -685,6 +690,31 @@ def _parameter_schema(parameters: dict[str, str]) -> dict[str, str]:
     }
 
 
+def _direct_subtask_from_runlog(
+    transition: _RunLogTransition,
+    task_parameters: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Describe one verified source transition in MobileGPT's subtask schema."""
+
+    action_type = _action_type(transition.action)
+    name = f"source_step_{transition.step_index:03d}_{action_type}"
+    parameter_values = _parameter_values(task_parameters)
+    metadata = {
+        "name": name,
+        "description": (
+            f"Execute verified source transition {transition.step_index}: "
+            f"{action_type}"
+        ),
+        "parameters": _parameter_schema(parameter_values),
+    }
+    selected = {
+        "name": name,
+        "description": metadata["description"],
+        "parameters": parameter_values,
+    }
+    return metadata, selected, {}
+
+
 def _mobilegpt_action_from_runlog(
     transition: _RunLogTransition,
     parsed_xml: str,
@@ -1093,6 +1123,7 @@ def write_conversion_failure_audit(
     wall_sec: float,
     target_package: str = "",
     target_app: str = "",
+    conversion_mode: str = CONVERSION_MODE_DIRECT,
 ) -> dict[str, Any]:
     """Persist partial evidence after an interrupted offline conversion."""
 
@@ -1130,8 +1161,14 @@ def write_conversion_failure_audit(
         if isinstance(error, MobileGPTConversionError)
         else {"error": str(error)}
     )
+    audit_schema = (
+        MOBILEGPT_AUDIT_SCHEMA
+        if conversion_mode == CONVERSION_MODE_SEMANTIC
+        else MOBILEGPT_DIRECT_AUDIT_SCHEMA
+    )
     payload = {
-        "schema_version": CONVERSION_AUDIT_SCHEMA,
+        "schema_version": audit_schema,
+        "conversion_mode": conversion_mode,
         "task_name": trajectory["task_name"],
         "source_run_log": trajectory["source_run_log"],
         "target_package": trajectory["target_package"],
@@ -1173,8 +1210,16 @@ def convert_runlog_to_mobilegpt_memory(
     target_app: str = "",
     embedding_provider: Callable[[str], Sequence[float]] | None = None,
     semantic_query_provider: Callable[..., Any] | None = None,
+    conversion_mode: str = CONVERSION_MODE_DIRECT,
 ) -> dict[str, Any]:
     """Write one RunLog as an exact native-format MobileGPT database."""
+
+    if conversion_mode not in {
+        CONVERSION_MODE_DIRECT,
+        CONVERSION_MODE_SEMANTIC,
+    }:
+        raise ValueError(f"mobilegpt_conversion_mode_invalid:{conversion_mode}")
+    semantic_conversion = conversion_mode == CONVERSION_MODE_SEMANTIC
 
     trajectory = _load_runlog_trajectory(
         source_run_log,
@@ -1222,7 +1267,7 @@ def convert_runlog_to_mobilegpt_memory(
         from utils.action_utils import generalize_action
         from utils.utils import get_openai_embedding
 
-        if semantic_query_provider is None:
+        if semantic_conversion and semantic_query_provider is None:
             install_mobilegpt_openai_runtime(preserve_original_prompts=True)
             install_mobilegpt_select_schema_repair(SelectAgent)
 
@@ -1297,18 +1342,25 @@ def convert_runlog_to_mobilegpt_memory(
                         "mobilegpt_page_embedding_empty",
                         step_index=transition.step_index,
                     )
-                with _temporary_agent_query_provider(
-                    (explore_agent_module,),
-                    semantic_query_provider,
-                ):
-                    explored = _explore_page_with_mobilegpt(
-                        ExploreAgent,
-                        parsed_xml=parsed_xml,
-                        hierarchy_xml=hierarchy_xml,
-                        encoded_xml=encoded_xml,
-                        screen_index=screen_index,
-                        source_step_index=transition.step_index,
-                    )
+                if semantic_conversion:
+                    with _temporary_agent_query_provider(
+                        (explore_agent_module,),
+                        semantic_query_provider,
+                    ):
+                        explored = _explore_page_with_mobilegpt(
+                            ExploreAgent,
+                            parsed_xml=parsed_xml,
+                            hierarchy_xml=hierarchy_xml,
+                            encoded_xml=encoded_xml,
+                            screen_index=screen_index,
+                            source_step_index=transition.step_index,
+                        )
+                else:
+                    explored = {
+                        "available_subtasks": [],
+                        "trigger_uis": {},
+                        "extra_uis": [],
+                    }
                 page = {
                     "index": page_index,
                     "parsed_xml": parsed_xml,
@@ -1323,20 +1375,27 @@ def convert_runlog_to_mobilegpt_memory(
                 }
                 pages_by_identity[identity] = page
             page_index = int(page["index"])
-            with _temporary_agent_query_provider(
-                (select_agent_module,),
-                semantic_query_provider,
-            ):
-                subtask, selected_subtask, example = _select_subtask_with_mobilegpt(
-                    SelectAgent,
-                    default_subtasks,
-                    instruction=trajectory["instruction"],
-                    available_subtasks=page["available_subtasks"],
-                    subtask_history=subtask_history,
-                    encoded_xml=encoded_xml,
-                    source_action_type=_action_type(transition.action),
-                    source_step_index=transition.step_index,
+            if semantic_conversion:
+                with _temporary_agent_query_provider(
+                    (select_agent_module,),
+                    semantic_query_provider,
+                ):
+                    subtask, selected_subtask, example = _select_subtask_with_mobilegpt(
+                        SelectAgent,
+                        default_subtasks,
+                        instruction=trajectory["instruction"],
+                        available_subtasks=page["available_subtasks"],
+                        subtask_history=subtask_history,
+                        encoded_xml=encoded_xml,
+                        source_action_type=_action_type(transition.action),
+                        source_step_index=transition.step_index,
+                    )
+            else:
+                subtask, selected_subtask, example = _direct_subtask_from_runlog(
+                    transition,
+                    trajectory["task_parameters"],
                 )
+                page["available_subtasks"].append(subtask)
             derive_fallback_used = False
             try:
                 converted, bindings, label = _mobilegpt_action_from_runlog(
@@ -1348,6 +1407,8 @@ def convert_runlog_to_mobilegpt_memory(
                 )
             except MobileGPTConversionError as error:
                 if (
+                    not semantic_conversion
+                    or
                     error.code != "source_action_target_unresolved"
                     or _action_type(transition.action) != "input_text"
                 ):
@@ -1411,7 +1472,11 @@ def convert_runlog_to_mobilegpt_memory(
                 "reason": (
                     "mobilegpt_explore_select_derive_compiled"
                     if derive_fallback_used
-                    else "mobilegpt_explore_select_compiled"
+                    else (
+                        "mobilegpt_explore_select_compiled"
+                        if semantic_conversion
+                        else "runlog_direct_compiled"
+                    )
                 ),
                 "derive_fallback_used": derive_fallback_used,
                 "consumed_transitions": 1,
@@ -1549,18 +1614,24 @@ def convert_runlog_to_mobilegpt_memory(
         )
 
     audit_payload = {
-        "schema_version": CONVERSION_AUDIT_SCHEMA,
+        "schema_version": (
+            MOBILEGPT_AUDIT_SCHEMA
+            if semantic_conversion
+            else MOBILEGPT_DIRECT_AUDIT_SCHEMA
+        ),
+        "conversion_mode": conversion_mode,
         "task_name": trajectory["task_name"],
         "source_run_log": trajectory["source_run_log"],
         "target_package": trajectory["target_package"],
-        "original_mobilegpt_prompts": True,
-        "explore_agent_used": True,
-        "select_agent_used": True,
-        "derive_agent_fallback_allowed": True,
+        "original_mobilegpt_prompts": semantic_conversion,
+        "explore_agent_used": semantic_conversion,
+        "select_agent_used": semantic_conversion,
+        "derive_agent_fallback_allowed": semantic_conversion,
         "derive_agent_fallback_count": sum(
             row["derive_fallback_used"] is True for row in audit_rows
         ),
         "generalize_action_used": True,
+        "direct_subtasks_from_runlog": not semantic_conversion,
         "source_direct_hit_validation": True,
         "transition_count": len(transitions),
         "validated_transition_count": sum(row["consumed_transitions"] for row in audit_rows),

@@ -10,6 +10,7 @@ import pytest
 from runlog_fixtures import androidworld_run_log
 
 from src.experiment.artifact_memory import (
+    _select_canonical_mobilegpt_memory,
     load_artifact_memory,
     refresh_artifact_memory,
     refresh_artifact_memory_from_pointer,
@@ -17,6 +18,7 @@ from src.experiment.artifact_memory import (
 )
 from src.experiment.artifact_memory import main as artifact_memory_main
 from src.experiment.mobilegpt_contract import (
+    MOBILEGPT_DIRECT_SOURCE_METHOD,
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_LEGACY_LEARNING_MODE,
     MOBILEGPT_LEGACY_MEMORY_SCHEMA,
@@ -46,6 +48,51 @@ def _canonical_json_bytes(value: object) -> bytes:
     return (
         json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
+
+
+def test_direct_mobilegpt_memory_supersedes_preserved_semantic_memory() -> None:
+    semantic_sha = "a" * 64
+    direct_sha = "b" * 64
+    records = {
+        semantic_sha: {
+            "memory_sha256": semantic_sha,
+            "source_method": MOBILEGPT_SOURCE_METHOD,
+        },
+        direct_sha: {
+            "memory_sha256": direct_sha,
+            "source_method": MOBILEGPT_DIRECT_SOURCE_METHOD,
+        },
+    }
+
+    selected = _select_canonical_mobilegpt_memory(
+        task="RecordWithName",
+        memory_sha256s={semantic_sha, direct_sha},
+        records=records,
+    )
+
+    assert selected["memory_sha256"] == direct_sha
+    assert selected["selection_reason"] == (
+        "active_mobilegpt_direct_source_method"
+    )
+
+
+def test_multiple_direct_mobilegpt_memories_remain_ambiguous() -> None:
+    first_sha = "a" * 64
+    second_sha = "b" * 64
+    records = {
+        digest: {
+            "memory_sha256": digest,
+            "source_method": MOBILEGPT_DIRECT_SOURCE_METHOD,
+        }
+        for digest in (first_sha, second_sha)
+    }
+
+    with pytest.raises(ValueError, match="ambiguous_mobilegpt_memory"):
+        _select_canonical_mobilegpt_memory(
+            task="RecordWithName",
+            memory_sha256s={first_sha, second_sha},
+            records=records,
+        )
 
 
 def _write_source_run_log(tmp_path: Path) -> Path:
