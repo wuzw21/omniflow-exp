@@ -1,0 +1,110 @@
+from types import SimpleNamespace
+
+import omniflow.transfer.runtime as transfer_runtime
+
+
+def _ranking(*, candidates, reason="learned_low_confidence"):
+    return {
+        "schema_version": "omnitransfer.candidate-ranking.v1",
+        "status": "scored" if candidates else "no_candidates",
+        "reason": reason,
+        "mapping_mode": "omnitransfer_test",
+        "score": 0.0001,
+        "margin": 0.0,
+        "candidates": candidates,
+        "top_candidates": candidates[:1],
+    }
+
+
+def test_omniflow_selects_rank_one_without_a_confidence_gate(monkeypatch) -> None:
+    calls = []
+    module = SimpleNamespace(
+        rank_action_candidates=lambda **kwargs: calls.append(kwargs)
+        or _ranking(
+            candidates=[
+                {
+                    "candidate_id": "first",
+                    "score": 0.51,
+                    "bbox": [10.0, 20.0, 30.0, 40.0],
+                    "new_x": 15.0,
+                    "new_y": 25.0,
+                },
+                {
+                    "candidate_id": "second",
+                    "score": 0.49,
+                    "bbox": [50.0, 60.0, 70.0, 80.0],
+                    "new_x": 55.0,
+                    "new_y": 65.0,
+                },
+            ]
+        ),
+        action_transfer=lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("legacy action_transfer must not be used")
+        ),
+    )
+    monkeypatch.setattr(transfer_runtime, "load_omnitransfer", lambda: module)
+
+    result = transfer_runtime.transfer_action(
+        source_xml="<hierarchy />",
+        target_xml="<hierarchy />",
+        source_point=(1.0, 2.0),
+        source_package_name="com.example",
+        target_package_name="com.example",
+    )
+
+    assert len(calls) == 1
+    assert result["mapped"] is True
+    assert result["selection_policy"] == "omniflow_top_candidate"
+    assert result["target_candidate_id"] == "first"
+    assert (result["new_x"], result["new_y"]) == (15.0, 25.0)
+    assert len(result["candidates"]) == 2
+
+
+def test_omniflow_not_omnitransfer_owns_page_identity_rejection(monkeypatch) -> None:
+    module = SimpleNamespace(
+        rank_action_candidates=lambda **_kwargs: _ranking(
+            candidates=[
+                {
+                    "candidate_id": "wrong-page-candidate",
+                    "score": 1.0,
+                    "bbox": [10.0, 20.0, 30.0, 40.0],
+                    "new_x": 15.0,
+                    "new_y": 25.0,
+                }
+            ]
+        )
+    )
+    monkeypatch.setattr(transfer_runtime, "load_omnitransfer", lambda: module)
+
+    result = transfer_runtime.transfer_action(
+        source_xml="<hierarchy />",
+        target_xml="<hierarchy />",
+        source_point=(1.0, 2.0),
+        source_package_name="com.source",
+        target_package_name="com.target",
+    )
+
+    assert result["mapped"] is False
+    assert result["reason"] == "target_page_identity_mismatch"
+    assert result["mapping_mode"] == "page_identity"
+    assert result["candidates"][0]["candidate_id"] == "wrong-page-candidate"
+
+
+def test_omniflow_owns_empty_candidate_fallback(monkeypatch) -> None:
+    module = SimpleNamespace(
+        rank_action_candidates=lambda **_kwargs: _ranking(
+            candidates=[],
+            reason="target_candidates_missing",
+        )
+    )
+    monkeypatch.setattr(transfer_runtime, "load_omnitransfer", lambda: module)
+
+    result = transfer_runtime.transfer_action(
+        source_xml="<hierarchy />",
+        target_xml="<hierarchy />",
+        source_point=(1.0, 2.0),
+    )
+
+    assert result["mapped"] is False
+    assert result["reason"] == "target_candidates_missing"
+    assert result["candidates"] == []

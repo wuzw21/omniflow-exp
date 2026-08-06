@@ -464,10 +464,71 @@ def _require_raw_source_target(
 
 
 def transfer_action(**kwargs: Any) -> dict[str, Any]:
-    action_transfer = getattr(load_omnitransfer(), "action_transfer", None)
+    module = load_omnitransfer()
+    rank_candidates = getattr(module, "rank_action_candidates", None)
+    if callable(rank_candidates):
+        ranking = rank_candidates(**kwargs)
+        if not isinstance(ranking, dict):
+            raise RuntimeError("omnitransfer_result_invalid")
+        return _select_transfer_candidate(ranking, kwargs)
+    action_transfer = getattr(module, "action_transfer", None)
     if not callable(action_transfer):
         raise RuntimeError("omnitransfer_action_transfer_unavailable")
     result = action_transfer(**kwargs)
     if not isinstance(result, dict):
         raise RuntimeError("omnitransfer_result_invalid")
     return result
+
+
+def _select_transfer_candidate(
+    ranking: dict[str, Any],
+    request: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply OmniFlow policy to an OmniTransfer candidate ranking."""
+
+    source_package = str(request.get("source_package_name") or "").strip()
+    target_package = str(request.get("target_package_name") or "").strip()
+    if source_package and target_package and source_package != target_package:
+        return {
+            **ranking,
+            "mapped": False,
+            "mapping_mode": "page_identity",
+            "reason": "target_page_identity_mismatch",
+        }
+    candidates = ranking.get("candidates")
+    if not isinstance(candidates, list):
+        raise RuntimeError("omnitransfer_candidates_invalid")
+    if not candidates:
+        return {
+            **ranking,
+            "mapped": False,
+            "reason": str(
+                ranking.get("reason")
+                or ranking.get("status")
+                or "target_candidates_missing"
+            ),
+        }
+    selected = candidates[0]
+    if not isinstance(selected, dict):
+        raise RuntimeError("omnitransfer_candidate_invalid")
+    try:
+        new_x = float(selected["new_x"])
+        new_y = float(selected["new_y"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise RuntimeError("omnitransfer_candidate_coordinates_invalid") from error
+    bounds = list(selected.get("bbox") or ())
+    return {
+        **ranking,
+        "mapped": True,
+        "selection_policy": "omniflow_top_candidate",
+        "new_x": new_x,
+        "new_y": new_y,
+        "target_candidate_id": str(selected.get("candidate_id") or ""),
+        "target_bbox": bounds,
+        "target_center": (
+            [(float(bounds[0]) + float(bounds[2])) / 2.0,
+             (float(bounds[1]) + float(bounds[3])) / 2.0]
+            if len(bounds) == 4
+            else []
+        ),
+    }
