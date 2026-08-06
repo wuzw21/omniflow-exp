@@ -563,7 +563,23 @@ def _transfer_decision_needs_reobservation(decision: ActionDecision) -> bool:
     mapping_mode = str(decision.detail.get("mapping_mode") or reason)
     return (
         decision.action is not None
-        and "coordinate_stretch_fallback" in mapping_mode
+        and (
+            "coordinate_stretch_fallback" in mapping_mode
+            or _named_source_mapped_to_anonymous_candidate(decision.detail)
+        )
+    )
+
+
+def _named_source_mapped_to_anonymous_candidate(detail: dict[str, Any]) -> bool:
+    """Wait for page readiness when a named source has no named target yet."""
+
+    identity_fields = ("resource_id", "text", "content_desc")
+    source = detail.get("source") if isinstance(detail.get("source"), dict) else {}
+    candidates = detail.get("candidates")
+    target = candidates[0] if isinstance(candidates, list) and candidates else {}
+    target = target if isinstance(target, dict) else {}
+    return any(_text(source.get(field)) for field in identity_fields) and not any(
+        _text(target.get(field)) for field in identity_fields
     )
 
 
