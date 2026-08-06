@@ -157,6 +157,7 @@ class SequencePlanner(FinishingPlanner):
     def __init__(self, responses: list[ToolCall]) -> None:
         super().__init__()
         self.responses = list(responses)
+        self.goals: list[str] = []
         self.previous_action_errors: list[str | None] = []
 
     def one_step_tool_call(
@@ -166,6 +167,7 @@ class SequencePlanner(FinishingPlanner):
         functions: tuple[Function, ...],
         _installed_apps: dict[str, str],
     ) -> ToolCall:
+        self.goals.append(_goal)
         self.visible_function_ids.append(tuple(function.id for function in functions))
         self.observations.append(observation)
         self.previous_action_errors.append(
@@ -460,6 +462,37 @@ def test_transfer_failure_falls_back_without_replaying_source_coordinates(
             "activity_name": "MainActivity",
         },
     }
+
+
+def test_direct_function_transfer_failure_continues_with_gui_planner(tmp_path) -> None:
+    store_path = tmp_path / "store.json"
+    function_id = _store_with_untransferable_click_function(store_path)
+    host = RecordingHost()
+    planner = SequencePlanner(
+        [
+            ToolCall("open_app", {"package_name": "com.android.settings"}),
+            ToolCall("finished", {"content": ""}),
+        ]
+    )
+    flow = OmniFlow(
+        store_path,
+        host=host,
+        planner=planner,
+        installed_apps={"Settings": "com.android.settings"},
+    )
+
+    result = flow.call_tool(ToolCall(function_id, {}))
+
+    assert result.success is True
+    assert result.function_id == function_id
+    assert [action.tool for action in host.actions] == ["open_app"]
+    assert all(action.tool != "click" for action in host.actions)
+    assert planner.visible_function_ids == [(), ()]
+    assert planner.previous_action_errors[0] == "omnitransfer_missing_target_page"
+    assert "Continue Function" in planner.goals[0]
+    assert "Do not repeat actions that already succeeded" in planner.goals[0]
+    assert result.detail["function_resolution"]["status"] == "direct"
+    assert result.detail["function_resolution"]["replay_status"] == "failed"
 
 
 def test_vlm_history_blocks_successful_repeat_on_same_logical_ui_state(

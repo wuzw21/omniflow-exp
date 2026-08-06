@@ -295,9 +295,28 @@ class JsonLineBridge:
             request_id,
             defer_user_input=run_metadata.get("defer_user_input") is True,
         )
+        model = str(run_metadata.get("model") or "").strip()
+        planner = (
+            _BridgePlanner(
+                self,
+                request_id,
+                host,
+                model=model,
+                target_package_name=str(
+                    run_metadata.get("target_package_name") or ""
+                ),
+                step_skill_guidance=str(
+                    run_metadata.get("step_skill_guidance") or ""
+                ),
+                max_steps=max_steps,
+            )
+            if model
+            else None
+        )
         flow = OmniFlow(
             self.flow.store.path,
             host=host,
+            planner=planner,
             installed_apps=host.installed_apps(),
             config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=max_steps)),
             catalog=self.catalog,

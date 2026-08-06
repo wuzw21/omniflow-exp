@@ -177,6 +177,11 @@ class OmniFlow:
             function_resolution["arguments"] = dict(resolved_arguments)
             if selected_function is None:
                 function_resolution["status"] = "unknown_selection"
+            elif direct_tool_call is not None and not goal:
+                goal = _direct_function_fallback_goal(
+                    selected_function,
+                    resolved_arguments,
+                )
 
         if selected_function is not None:
             replayed_function_id = selected_function.id
@@ -229,25 +234,23 @@ class OmniFlow:
                 if bound_function is not None and failed_step_index is not None:
                     fallback_observations = [observation]
 
-            if direct_tool_call is not None:
+            if direct_tool_call is not None and replay.success:
                 return finish(
-                    replay.success,
+                    True,
                     profile=profile,
                     trace=trace,
                     function_id=direct_tool_call.name,
                     actions_executed=actions_executed,
                     model_calls=model_calls,
                     llm_usage=llm_usage,
-                    error=None if replay.success else last_error,
+                    error=None,
                     final_state=observation,
                     terminal_detail={
-                        "done_reason": (
-                            "function_completed" if replay.success else "error"
-                        )
+                        "done_reason": "function_completed"
                     },
                 )
 
-        if direct_tool_call is not None:
+        if direct_tool_call is not None and selected_function is None:
             try:
                 direct_action = _action_from_tool_call(direct_tool_call)
             except ValueError as error:
@@ -899,6 +902,19 @@ def _action_from_tool_call(tool_call: ToolCall) -> Action:
             allow_non_action=True,
         )
     )
+
+
+def _direct_function_fallback_goal(
+    function: Function,
+    arguments: dict[str, Any],
+) -> str:
+    return (
+        f'Continue Function "{function.name}" from the current screen after '
+        "offline replay could not map its next step. Do not repeat actions that "
+        "already succeeded. "
+        f"Requested arguments: {json.dumps(arguments, ensure_ascii=False, sort_keys=True)}. "
+        f"{function.description}"
+    ).strip()
 
 
 def _recent_actions(
