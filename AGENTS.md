@@ -64,8 +64,10 @@ or a private device command as an AndroidWorld action.
 This contract is defined by OmniFlow source and the checked-in schema, never by
 `current.json`; experiment memory only indexes immutable assets and results.
 
-OmniTransfer failures must return to the normal OmniFlow fallback path. Never
-replay source-device coordinates directly on a target device.
+OmniTransfer failures with no valid target candidate must return to the normal
+OmniFlow fallback path. Low confidence alone is not a transfer failure when a
+ranked target candidate with valid bounds exists. Never replay source-device
+coordinates directly on a target device.
 
 ## Long-term experiment memory
 

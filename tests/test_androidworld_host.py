@@ -373,3 +373,38 @@ def test_open_app_waits_on_the_official_state() -> None:
     result = host.act(Action("open_app", {"package_name": "com.android.settings"}))
 
     assert result.success is True
+
+
+def test_open_app_dismisses_transient_permission_window_once() -> None:
+    state = _official_state(ui_elements=[_ui_element()])
+
+    class Env:
+        device_screen_size = (4, 3)
+        logical_screen_size = (4, 3)
+        foreground_activity_name = (
+            "com.google.android.permissioncontroller/.permission.ui.GrantPermissionsActivity"
+        )
+
+        def get_state(self):
+            return state
+
+    env = Env()
+    host = AndroidWorldHost(
+        env,
+        adb_serial="emulator-5564",
+        open_app_ready_timeout_seconds=0.001,
+    )
+    commands: list[tuple[str, ...]] = []
+
+    def adb(*args, **_kwargs):
+        commands.append(args)
+        if args == ("shell", "input", "keyevent", "BACK"):
+            env.foreground_activity_name = "com.android.settings/.Settings"
+        return SimpleNamespace(returncode=0, stderr="")
+
+    host._adb = adb
+
+    result = host.act(Action("open_app", {"package_name": "com.android.settings"}))
+
+    assert result.success is True
+    assert ("shell", "input", "keyevent", "BACK") in commands

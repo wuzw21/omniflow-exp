@@ -20,6 +20,14 @@ from src.integrations.android_world.accessibility import (
 )
 from src.integrations.android_world.state import snapshot_androidworld_state
 
+_TRANSIENT_SYSTEM_PACKAGES = {
+    "com.android.systemui",
+}
+_TRANSIENT_SYSTEM_PACKAGE_PARTS = (
+    "packageinstaller",
+    "permissioncontroller",
+)
+
 
 def _read(value: Any, name: str, default: Any = None) -> Any:
     if isinstance(value, dict):
@@ -343,6 +351,22 @@ class AndroidWorldHost:
                 return False, observed_package
             time.sleep(min(0.1, remaining))
 
+    def _dismiss_transient_system_window(self, package_name: str) -> bool:
+        normalized = str(package_name or "").strip().casefold()
+        if not normalized or not (
+            normalized in _TRANSIENT_SYSTEM_PACKAGES
+            or any(part in normalized for part in _TRANSIENT_SYSTEM_PACKAGE_PARTS)
+        ):
+            return False
+        result = self._adb(
+            "shell",
+            "input",
+            "keyevent",
+            "BACK",
+            timeout=15,
+        )
+        return result.returncode == 0
+
     def _json_action(self, action: Action) -> Any:
         if action.tool == "android_world_raw":
             return dict(action.args.get("payload") or {})
@@ -522,6 +546,10 @@ class AndroidWorldHost:
                 and self.open_app_ready_timeout_seconds > 0
             ):
                 ready, observed_package = self._wait_for_package(open_app_package)
+                if not ready and self._dismiss_transient_system_window(
+                    observed_package
+                ):
+                    ready, observed_package = self._wait_for_package(open_app_package)
                 if not ready:
                     return ActionResult(
                         False,
