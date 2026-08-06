@@ -69,3 +69,12 @@ def test_function_store_seeds_catalog_without_overwriting_user_copy(
         seed_functions=catalog.functions.values(),
     )
     assert reloaded.functions["order_beverage_meituan"].description == "user copy"
+
+    upgraded = FunctionStore(
+        store_path,
+        seed_functions=catalog.functions.values(),
+        replace_seeded=True,
+    )
+    assert upgraded.functions["order_beverage_meituan"] == catalog.functions[
+        "order_beverage_meituan"
+    ]

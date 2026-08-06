@@ -19,12 +19,13 @@ class FunctionStore:
         path: str | Path,
         *,
         seed_functions: Iterable[Function] = (),
+        replace_seeded: bool = False,
     ):
         self.path = Path(path)
         self.functions: dict[str, Function] = {}
         self.load_errors: dict[str, str] = {}
         self._load()
-        self._seed(seed_functions)
+        self._seed(seed_functions, replace=replace_seeded)
 
     def list_functions(
         self,
@@ -112,11 +113,18 @@ class FunctionStore:
         self.functions = loaded
         self.load_errors = load_errors
 
-    def _seed(self, seed_functions: Iterable[Function]) -> None:
+    def _seed(
+        self,
+        seed_functions: Iterable[Function],
+        *,
+        replace: bool,
+    ) -> None:
         changed = False
         for function in seed_functions:
             validate_function_artifact(function)
-            if function.id in self.functions:
+            if function.id in self.functions and not replace:
+                continue
+            if self.functions.get(function.id) == function:
                 continue
             self.functions[function.id] = function
             changed = True

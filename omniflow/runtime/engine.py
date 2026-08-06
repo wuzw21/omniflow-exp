@@ -55,6 +55,7 @@ class OmniFlow:
         self.store = FunctionStore(
             store_path,
             seed_functions=(catalog.functions.values() if catalog is not None else ()),
+            replace_seeded=catalog is not None,
         )
         self.host = host
         self.planner = planner
