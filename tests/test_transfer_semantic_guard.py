@@ -182,7 +182,9 @@ def test_source_audit_accepts_native_compact_androidworld_semantics(
     assert audit["source_target_count"] == 1
 
 
-def test_transfer_rejects_semantically_conflicting_row_match(monkeypatch) -> None:
+def test_transfer_accepts_omnitransfer_mapped_row_without_second_semantic_gate(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(
         execution,
         "transfer_action",
@@ -211,10 +213,11 @@ def test_transfer_rejects_semantically_conflicting_row_match(monkeypatch) -> Non
         ),
     )
 
-    assert result.action is None
-    assert result.reason == "omnitransfer_semantic_conflict"
-    assert result.detail["source_title"] == "bluetooth"
-    assert result.detail["target_title"] == "cast"
+    assert result.action == Action(
+        "click",
+        {"x": 1505.0 / 2208.0 * 1000.0, "y": 802.0 / 1840.0 * 1000.0},
+    )
+    assert result.reason == "mutual_graph_matcher_no_null_v3"
 
 
 def test_transfer_keeps_semantically_consistent_row_match(monkeypatch) -> None:
@@ -333,11 +336,22 @@ def test_transfer_indexes_generic_target_text_outside_android_title_nodes(
     assert request["source_element"] == {"text": "搜索商家、品类或商圈"}
 
 
-def test_transfer_reobserves_instead_of_mapping_stable_content_description_to_toolbar(
+def test_transfer_delegates_missing_source_label_to_omnitransfer(
     monkeypatch,
 ) -> None:
-    def transfer_action(**_kwargs):
-        raise AssertionError("missing purchase semantics must not map to toolbar")
+    request = {}
+
+    def transfer_action(**kwargs):
+        request.update(kwargs)
+        return {
+            "mapped": True,
+            "mapping_mode": "omnitransfer_local_alignment_v9",
+            "new_x": 900.0,
+            "new_y": 200.0,
+            "target_bbox": [800.0, 150.0, 1000.0, 250.0],
+            "score": 0.8,
+            "margin": 0.2,
+        }
 
     monkeypatch.setattr(execution, "transfer_action", transfer_action)
 
@@ -355,9 +369,11 @@ def test_transfer_reobserves_instead_of_mapping_stable_content_description_to_to
         ),
     )
 
-    assert result.action is None
-    assert result.reason == "omnitransfer_target_semantic_missing"
-    assert result.detail["source_title"] == "团购套餐抢购按钮区域"
+    assert result.action == Action(
+        "click",
+        {"x": 900.0 / 1080.0 * 1000.0, "y": 200.0 / 2376.0 * 1000.0},
+    )
+    assert request["source_element"] == {"text": "团购套餐抢购按钮区域"}
 
 
 def test_transfer_executes_any_mapped_result_without_a_confidence_abstain(monkeypatch) -> None:
@@ -395,7 +411,7 @@ def test_transfer_executes_any_mapped_result_without_a_confidence_abstain(monkey
     assert result.detail["score"] == 0.002186
 
 
-def test_transfer_recovers_generic_source_row_title_and_rejects_wrong_fold_row(
+def test_transfer_passes_generic_source_row_title_without_post_mapping_gate(
     monkeypatch,
 ) -> None:
     request = {}
@@ -434,10 +450,11 @@ def test_transfer_recovers_generic_source_row_title_and_rejects_wrong_fold_row(
         ),
     )
 
-    assert result.action is None
-    assert result.reason == "omnitransfer_semantic_conflict"
-    assert result.detail["source_title"] == "internet"
-    assert result.detail["target_title"] == "calls & sms"
+    assert result.action == Action(
+        "click",
+        {"x": 1505.0 / 2208.0 * 1000.0, "y": 853.0 / 1840.0 * 1000.0},
+    )
+    assert result.reason == "mutual_graph_matcher_no_null_v3"
     assert request["source_element"] == {"text": "internet"}
 
 
@@ -517,11 +534,22 @@ def test_transfer_rejects_full_screen_root_candidate(monkeypatch) -> None:
     assert result.reason == "omnitransfer_invalid_root_candidate"
 
 
-def test_transfer_falls_back_when_source_title_is_missing_from_target(
+def test_transfer_calls_omnitransfer_when_source_title_is_missing_from_target(
     monkeypatch,
 ) -> None:
-    def transfer_action(**_kwargs):
-        raise AssertionError("missing source semantics must not use structural match")
+    request = {}
+
+    def transfer_action(**kwargs):
+        request.update(kwargs)
+        return {
+            "mapped": True,
+            "mapping_mode": "omnitransfer_local_alignment_v9",
+            "new_x": 1505.0,
+            "new_y": 853.0,
+            "target_bbox": [802.0, 750.0, 2208.0, 956.0],
+            "score": 0.8,
+            "margin": 0.2,
+        }
 
     monkeypatch.setattr(execution, "transfer_action", transfer_action)
     calls_only_xml = FOLD_NETWORK_XML.replace(
@@ -557,6 +585,8 @@ def test_transfer_falls_back_when_source_title_is_missing_from_target(
         ),
     )
 
-    assert result.action is None
-    assert result.reason == "omnitransfer_target_semantic_missing"
-    assert result.detail["source_title"] == "internet"
+    assert result.action == Action(
+        "click",
+        {"x": 1505.0 / 2208.0 * 1000.0, "y": 853.0 / 1840.0 * 1000.0},
+    )
+    assert request["source_element"] == {"text": "internet"}

@@ -36,7 +36,6 @@ _TRANSFER_REOBSERVE_POLL_SECONDS = 0.5
 _TRANSFER_REOBSERVE_MAX_ATTEMPTS = 8
 _TRANSFER_REOBSERVE_REASONS = frozenset(
     {
-        "omnitransfer_target_semantic_missing",
         "omnitransfer_missing_target_page",
         "omnitransfer_target_graph_incomplete",
         "omnitransfer_low_confidence",
@@ -890,16 +889,6 @@ def default_transfer(
     source_title = _source_semantic_title(source_xml, source_point)
     if source_title:
         request["source_element"] = {"text": source_title}
-        target_titles = _document_titles(target_xml)
-        if source_title not in target_titles:
-            return TransferResult(
-                None,
-                reason="omnitransfer_target_semantic_missing",
-                detail={
-                    "source_title": source_title,
-                    "target_titles": sorted(target_titles),
-                },
-            )
     try:
         result = transfer_action(**request)
     except Exception as exc:
@@ -922,18 +911,6 @@ def default_transfer(
             None,
             reason="omnitransfer_invalid_root_candidate",
             detail=_transfer_detail(result),
-        )
-    semantic_conflict = _semantic_transfer_conflict(
-        source_xml=source_xml,
-        source_point=source_point,
-        target_xml=target_xml,
-        target_bbox=result.get("target_bbox"),
-    )
-    if semantic_conflict is not None:
-        return TransferResult(
-            None,
-            reason="omnitransfer_semantic_conflict",
-            detail={**_transfer_detail(result), **semantic_conflict},
         )
     transfer_detail = _transfer_detail(result)
     probability = _alignment_probability(transfer_detail)
@@ -1295,36 +1272,6 @@ def _bounds(value: Any) -> tuple[int, int, int, int] | None:
     return numbers[0], numbers[1], numbers[2], numbers[3]
 
 
-def _semantic_transfer_conflict(
-    *,
-    source_xml: str,
-    source_point: tuple[float, float],
-    target_xml: str,
-    target_bbox: Any,
-) -> dict[str, Any] | None:
-    source_root = _xml_root(source_xml)
-    target_root = _xml_root(target_xml)
-    mapped_bounds = _numeric_bounds(target_bbox)
-    if source_root is None or target_root is None or mapped_bounds is None:
-        return None
-    source_title = _source_semantic_title(source_xml, source_point)
-    target = _element_with_bounds(target_root, mapped_bounds)
-    target_title = _element_title(target) if target is not None else ""
-    available_titles = _document_titles(target_xml)
-    if (
-        not source_title
-        or not target_title
-        or source_title == target_title
-        or source_title not in available_titles
-    ):
-        return None
-    return {
-        "source_title": source_title,
-        "target_title": target_title,
-        "target_bbox": list(mapped_bounds),
-    }
-
-
 def _source_semantic_title(
     source_xml: str,
     source_point: tuple[float, float],
@@ -1366,23 +1313,6 @@ def _is_semantic_label(value: str) -> bool:
         for character in normalized
         if not character.isspace()
     )
-
-
-def _document_titles(xml_text: str) -> set[str]:
-    root = _xml_root(xml_text)
-    if root is None:
-        return set()
-    titles: set[str] = set()
-    for element in root.iter():
-        title = _element_title(element)
-        if _is_semantic_label(title):
-            titles.add(title)
-        direct_label = _text(
-            element.attrib.get("text") or element.attrib.get("content-desc")
-        )
-        if _is_semantic_label(direct_label):
-            titles.add(direct_label)
-    return titles
 
 
 def _xml_root(xml_text: str) -> ET.Element | None:
@@ -1431,28 +1361,6 @@ def _actionable_element_at_point(
             -item[2],
         ),
     )[0]
-
-
-def _element_with_bounds(
-    root: ET.Element,
-    expected: tuple[float, float, float, float],
-) -> ET.Element | None:
-    matches = [
-        element
-        for element in root.iter()
-        if (_bounds(element.attrib.get("bounds")) is not None)
-        and tuple(float(value) for value in _bounds(element.attrib.get("bounds")) or ())
-        == expected
-    ]
-    actionable = [
-        element
-        for element in matches
-        if any(
-            str(element.attrib.get(attribute) or "").lower() == "true"
-            for attribute in ("clickable", "editable", "scrollable")
-        )
-    ]
-    return (actionable or matches or [None])[0]
 
 
 def _element_has_stable_identity(element: ET.Element) -> bool:

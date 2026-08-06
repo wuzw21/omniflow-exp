@@ -104,7 +104,7 @@ def test_delayed_checker_recovery_retries_the_same_function_step(monkeypatch) ->
         if "购买" not in str(observation.xml):
             return TransferResult(
                 None,
-                reason="omnitransfer_target_semantic_missing",
+                reason="omnitransfer_low_confidence",
             )
         return TransferResult(action, reason="mapped")
 
@@ -386,8 +386,8 @@ def test_transfer_reobserves_until_target_semantic_appears(monkeypatch) -> None:
         if observation == loading:
             return TransferResult(
                 None,
-                reason="omnitransfer_target_semantic_missing",
-                detail={"source_title": "24小时营业", "target_titles": []},
+                reason="omnitransfer_low_confidence",
+                detail={"score": 0.1},
             )
         assert observation == ready
         return TransferResult(
@@ -427,7 +427,7 @@ def test_transfer_reobserves_until_target_semantic_appears(monkeypatch) -> None:
     assert transfer_observations == [loading, ready]
     assert result.detail["observation_retry"] == {
         "attempts": 1,
-        "initial_reason": "omnitransfer_target_semantic_missing",
+        "initial_reason": "omnitransfer_low_confidence",
     }
 
 
@@ -512,8 +512,8 @@ def test_transfer_falls_back_only_after_reobservation_budget(monkeypatch) -> Non
         transfer_observations.append(observation)
         return TransferResult(
             None,
-            reason="omnitransfer_target_semantic_missing",
-            detail={"source_title": "商家搜索", "target_titles": []},
+            reason="omnitransfer_low_confidence",
+            detail={"score": 0.1},
         )
 
     class Host:
@@ -549,13 +549,13 @@ def test_transfer_falls_back_only_after_reobservation_budget(monkeypatch) -> Non
     )
 
     assert result.success is False
-    assert result.error == "omnitransfer_target_semantic_missing"
+    assert result.error == "omnitransfer_low_confidence"
     assert host.observe_calls == 2
     assert len(transfer_observations) == 3
     assert result.before == transfer_observations[-1]
     assert result.detail["observation_retry"] == {
         "attempts": 2,
-        "initial_reason": "omnitransfer_target_semantic_missing",
+        "initial_reason": "omnitransfer_low_confidence",
     }
 
 
