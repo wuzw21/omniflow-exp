@@ -16,6 +16,39 @@ def _ranking(*, candidates, reason="learned_low_confidence"):
     }
 
 
+def test_omniflow_owns_candidate_api_preflight(monkeypatch) -> None:
+    module = SimpleNamespace(
+        rank_action_candidates=lambda **_kwargs: {
+            **_ranking(
+                candidates=[
+                    {
+                        "candidate_id": "search",
+                        "bbox": [40.0, 100.0, 120.0, 260.0],
+                        "score": 1.0,
+                        "new_x": 80.0,
+                        "new_y": 180.0,
+                    }
+                ],
+                reason="equivalent_ui_graph",
+            ),
+            "matcher_backend": "test",
+            "matcher_release": "test-release",
+            "matcher_checkpoint_sha256": "abc",
+            "matcher_feature_schema": "test-schema",
+            "matcher_feature_schema_sha256": "def",
+        }
+    )
+    monkeypatch.setattr(transfer_runtime, "load_omnitransfer", lambda: module)
+
+    result = transfer_runtime.preflight_omnitransfer()
+
+    assert result["ready"] is True
+    assert result["backend"] == "test"
+    assert result["candidate_ranking_schema"] == (
+        "omnitransfer.candidate-ranking.v1"
+    )
+
+
 def test_omniflow_selects_rank_one_without_a_confidence_gate(monkeypatch) -> None:
     calls = []
     module = SimpleNamespace(

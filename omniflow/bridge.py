@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib
 import json
 from pathlib import Path
 import sys
@@ -1409,12 +1408,9 @@ def _bridge_identity() -> dict[str, Any]:
             properties[key.strip()] = value.strip()
     transfer = {"ready": False, "backend": "unavailable"}
     try:
-        from omniflow.transfer.runtime import load_omnitransfer
+        from omniflow.transfer.runtime import preflight_omnitransfer
 
-        transfer_runtime = importlib.import_module(
-            f"{load_omnitransfer().__name__}.runtime"
-        )
-        transfer = transfer_runtime.runtime_preflight()
+        transfer = preflight_omnitransfer()
     except (ImportError, RuntimeError, ValueError):
         pass
     operations: list[str] = []

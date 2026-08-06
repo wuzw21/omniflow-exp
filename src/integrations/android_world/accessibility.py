@@ -15,9 +15,11 @@ def _forest_bounds(value: Any) -> tuple[int, int, int, int] | None:
     if value is None:
         return None
     try:
-        bounds = tuple(
-            int(float(_read(value, key)))
-            for key in ("left", "top", "right", "bottom")
+        bounds = (
+            int(float(_read(value, "left", 0) or 0)),
+            int(float(_read(value, "top", 0) or 0)),
+            int(float(_read(value, "right"))),
+            int(float(_read(value, "bottom"))),
         )
     except (TypeError, ValueError):
         return None
@@ -178,6 +180,66 @@ def xml_covers_screen(
     )
 
 
+def forest_has_complete_active_application_window(
+    forest: Any,
+    *,
+    package_name: str,
+) -> bool:
+    """Returns whether the official forest fully represents an active app window.
+
+    Android modal dialogs intentionally occupy only part of the physical screen.
+    They are complete transfer pages when the active/focused application window
+    has a package root covering that window and exposes semantic or actionable
+    descendants.
+    """
+    if forest is None or not package_name:
+        return False
+    for window in list(_read(forest, "windows", ()) or ()):
+        window_type = _read(window, "window_type", "")
+        normalized_window_type = str(
+            getattr(window_type, "name", "") or window_type or ""
+        ).upper()
+        if window_type != 1 and normalized_window_type not in {
+            "1",
+            "TYPE_APPLICATION",
+        }:
+            continue
+        if not (
+            bool(_read(window, "is_active", False))
+            or bool(_read(window, "is_focused", False))
+        ):
+            continue
+        window_bounds = _forest_bounds(_read(window, "bounds_in_screen"))
+        if window_bounds is None:
+            continue
+        nodes = list(_read(_read(window, "tree"), "nodes", ()) or ())
+        package_nodes = [
+            node
+            for node in nodes
+            if str(_read(node, "package_name", "") or "") == package_name
+            and bool(_read(node, "is_visible_to_user", True))
+        ]
+        roots_cover_window = any(
+            (bounds := _forest_bounds(_read(node, "bounds_in_screen"))) is not None
+            and bounds[0] <= window_bounds[0]
+            and bounds[1] <= window_bounds[1]
+            and bounds[2] >= window_bounds[2]
+            and bounds[3] >= window_bounds[3]
+            for node in package_nodes
+        )
+        has_semantic_or_actionable_node = any(
+            str(_read(node, "text", "") or "").strip()
+            or str(_read(node, "content_description", "") or "").strip()
+            or str(_read(node, "view_id_resource_name", "") or "").strip()
+            or bool(_read(node, "is_clickable", False))
+            or bool(_read(node, "is_editable", False))
+            for node in package_nodes
+        )
+        if roots_cover_window and has_semantic_or_actionable_node:
+            return True
+    return False
+
+
 def xml_with_screen_size(
     xml_text: str,
     *,
@@ -198,6 +260,7 @@ def xml_with_screen_size(
 
 __all__ = [
     "androidworld_forest_xml",
+    "forest_has_complete_active_application_window",
     "xml_covers_screen",
     "xml_with_screen_size",
 ]

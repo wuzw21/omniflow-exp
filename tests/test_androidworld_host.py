@@ -258,6 +258,124 @@ def test_observe_derives_internal_xml_from_official_forest() -> None:
     assert internet.attrib["bounds"] == "[991,586][1171,657]"
 
 
+def test_observe_treats_complete_active_modal_window_as_complete_graph() -> None:
+    def bounds(left, top, right, bottom):
+        return SimpleNamespace(left=left, top=top, right=right, bottom=bottom)
+
+    root = SimpleNamespace(
+        unique_id=1,
+        bounds_in_screen=bounds(0, 330, 720, 950),
+        child_ids=[2],
+        package_name="net.gsantner.markor",
+        class_name="android.widget.FrameLayout",
+        is_visible_to_user=True,
+    )
+    confirm = SimpleNamespace(
+        unique_id=2,
+        bounds_in_screen=bounds(64, 806, 224, 918),
+        child_ids=[],
+        text="FOLDER",
+        package_name="net.gsantner.markor",
+        class_name="android.widget.Button",
+        is_visible_to_user=True,
+        is_clickable=True,
+    )
+    forest = SimpleNamespace(
+        windows=[
+            SimpleNamespace(
+                id=7,
+                window_type="TYPE_APPLICATION",
+                is_active=True,
+                is_focused=True,
+                bounds_in_screen=bounds(0, 330, 720, 950),
+                tree=SimpleNamespace(nodes=[root, confirm]),
+            )
+        ]
+    )
+    ui_element = SimpleNamespace(
+        text="FOLDER",
+        package_name="net.gsantner.markor",
+        class_name="android.widget.Button",
+        is_clickable=True,
+        bbox_pixels=SimpleNamespace(x_min=64, y_min=806, x_max=224, y_max=918),
+    )
+    env = SimpleNamespace(
+        get_state=lambda: _official_state(forest=forest, ui_elements=[ui_element]),
+        device_screen_size=(720, 1280),
+        logical_screen_size=(720, 1280),
+        foreground_activity_name="net.gsantner.markor/.MainActivity",
+    )
+
+    observation = AndroidWorldHost(env).observe()
+
+    assert observation.extra["ui_graph_complete"] is True
+    assert not observation.extra["ui_graph_source"].endswith("_partial")
+    assert "FOLDER" in str(observation.xml)
+
+
+def test_observe_accepts_serialized_modal_bounds_with_omitted_zero_edges() -> None:
+    forest = {
+        "windows": [
+            {
+                "id": 7,
+                "window_type": 1,
+                "is_active": True,
+                "is_focused": True,
+                "bounds_in_screen": {"top": 330, "right": 720, "bottom": 950},
+                "tree": {
+                    "nodes": [
+                        {
+                            "unique_id": 1,
+                            "bounds_in_screen": {
+                                "top": 330,
+                                "right": 720,
+                                "bottom": 950,
+                            },
+                            "child_ids": [2],
+                            "package_name": "net.gsantner.markor",
+                            "class_name": "android.widget.FrameLayout",
+                            "is_visible_to_user": True,
+                        },
+                        {
+                            "unique_id": 2,
+                            "bounds_in_screen": {
+                                "left": 64,
+                                "top": 806,
+                                "right": 224,
+                                "bottom": 918,
+                            },
+                            "child_ids": [],
+                            "text": "FOLDER",
+                            "package_name": "net.gsantner.markor",
+                            "class_name": "android.widget.Button",
+                            "is_visible_to_user": True,
+                            "is_clickable": True,
+                        },
+                    ]
+                },
+            }
+        ]
+    }
+    ui_element = SimpleNamespace(
+        text="FOLDER",
+        package_name="net.gsantner.markor",
+        class_name="android.widget.Button",
+        is_clickable=True,
+        bbox_pixels=SimpleNamespace(x_min=64, y_min=806, x_max=224, y_max=918),
+    )
+    env = SimpleNamespace(
+        get_state=lambda: _official_state(forest=forest, ui_elements=[ui_element]),
+        device_screen_size=(720, 1280),
+        logical_screen_size=(720, 1280),
+        foreground_activity_name="net.gsantner.markor/.MainActivity",
+    )
+
+    observation = AndroidWorldHost(env).observe()
+
+    assert observation.extra["ui_graph_complete"] is True
+    assert not observation.extra["ui_graph_source"].endswith("_partial")
+
+
 def test_observe_prefers_semantically_richer_official_ui_elements() -> None:
     sparse_node = SimpleNamespace(
         unique_id=1,

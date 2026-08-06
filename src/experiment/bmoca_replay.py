@@ -12,7 +12,6 @@ import argparse
 from collections import Counter, defaultdict
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import asdict, dataclass
-import importlib
 import json
 import math
 from pathlib import Path
@@ -284,10 +283,10 @@ def evaluate_bmoca_corpus(
     if workers <= 0:
         raise ValueError("workers_must_be_positive")
 
-    omnitransfer = load_omnitransfer()
-    preflight = getattr(omnitransfer, "runtime_preflight", None)
-    if callable(preflight):
-        preflight()
+    load_omnitransfer()
+    from omniflow.transfer.runtime import preflight_omnitransfer
+
+    preflight_omnitransfer()
 
     results = []
     missing = []
@@ -630,9 +629,9 @@ def evaluate_mock_e2e(
     started = time.perf_counter()
     matcher_preflight = None
     if any(method.startswith("omnitransfer_") for method in resolved_methods):
-        load_omnitransfer()
-        transfer_runtime = importlib.import_module("omnitransfer.runtime")
-        matcher_preflight = transfer_runtime.runtime_preflight()
+        from omniflow.transfer.runtime import preflight_omnitransfer
+
+        matcher_preflight = preflight_omnitransfer()
     root = Path(corpus_root).expanduser().resolve()
     manifest = _read_object(root / "manifest.json")
     if manifest.get("schema_version") != _CORPUS_VERSION:

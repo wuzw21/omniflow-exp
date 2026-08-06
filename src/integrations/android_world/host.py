@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 from omniflow import Action, ActionResult, Observation
 from src.integrations.android_world.accessibility import (
     androidworld_forest_xml,
+    forest_has_complete_active_application_window,
     xml_covers_screen,
     xml_with_screen_size,
 )
@@ -297,11 +298,18 @@ class AndroidWorldHost:
             xml_text = elements_xml
             graph_source = "androidworld_state_ui_elements"
         package = package or _package_from_xml(xml_text)
-        if xml and xml_text and not xml_covers_screen(
-            xml_text,
-            package_name=package,
-            screen_size=(display_width, display_height),
-        ):
+        graph_complete = bool(xml_text) and (
+            xml_covers_screen(
+                xml_text,
+                package_name=package,
+                screen_size=(display_width, display_height),
+            )
+            or forest_has_complete_active_application_window(
+                forest,
+                package_name=package,
+            )
+        )
+        if xml and xml_text and not graph_complete:
             xml_text = xml_with_screen_size(
                 xml_text,
                 screen_size=(display_width, display_height),
@@ -317,8 +325,7 @@ class AndroidWorldHost:
                 "androidworld_state": official_state,
                 "ui_element_count": len(elements),
                 "ui_graph_source": graph_source,
-                "ui_graph_complete": bool(xml_text)
-                and not graph_source.endswith("_partial"),
+                "ui_graph_complete": bool(xml_text) and graph_complete,
                 "display": {
                     "width": int(display_width),
                     "height": int(display_height),

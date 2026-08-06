@@ -505,6 +505,57 @@ def transfer_action(**kwargs: Any) -> dict[str, Any]:
     return result
 
 
+def preflight_omnitransfer() -> dict[str, Any]:
+    """Exercise the candidate API while keeping readiness policy in OmniFlow."""
+
+    module = load_omnitransfer()
+    rank_candidates = getattr(module, "rank_action_candidates", None)
+    if not callable(rank_candidates):
+        raise RuntimeError("omnitransfer_candidate_ranking_unavailable")
+    source_xml = (
+        '<hierarchy bounds="[0,0][100,100]">'
+        '<node resource-id="preflight:id/search" text="Search" '
+        'class="android.widget.Button" clickable="true" enabled="true" '
+        'bounds="[10,20][50,60]" />'
+        "</hierarchy>"
+    )
+    target_xml = (
+        '<hierarchy bounds="[0,0][200,400]">'
+        '<node resource-id="preflight:id/search" text="Search" '
+        'class="android.widget.Button" clickable="true" enabled="true" '
+        'bounds="[40,100][120,260]" />'
+        "</hierarchy>"
+    )
+    result = rank_candidates(
+        source_xml=source_xml,
+        target_xml=target_xml,
+        source_point=(30.0, 40.0),
+    )
+    if not isinstance(result, dict):
+        raise RuntimeError("omnitransfer_result_invalid")
+    candidates = result.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        reason = str(result.get("reason") or "candidates_missing")
+        error = str(result.get("error") or "")
+        raise RuntimeError(
+            f"omnitransfer_preflight_failed:{reason}:{error}".rstrip(":")
+        )
+    return {
+        "ready": True,
+        "backend": str(result.get("matcher_backend") or "unknown"),
+        "mapping_mode": str(result.get("mapping_mode") or ""),
+        "candidate_ranking_schema": str(result.get("schema_version") or ""),
+        "matcher_release": str(result.get("matcher_release") or ""),
+        "matcher_checkpoint_sha256": str(
+            result.get("matcher_checkpoint_sha256") or ""
+        ),
+        "matcher_feature_schema": str(result.get("matcher_feature_schema") or ""),
+        "matcher_feature_schema_sha256": str(
+            result.get("matcher_feature_schema_sha256") or ""
+        ),
+    }
+
+
 def _select_transfer_candidate(
     ranking: dict[str, Any],
     request: dict[str, Any],

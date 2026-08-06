@@ -6,7 +6,11 @@ or compatibility layers.
 
 ## OmniFlow / OmniTransfer boundary
 
-- OmniTransfer is responsible only for mapping and mapped points.
+- OmniTransfer is responsible only for producing complete ranked target
+  candidates and their evidence. It owns no harness, accept/reject decision,
+  page gate, selected action, or fallback policy.
+- OmniFlow owns OmniTransfer preflight, page checks, candidate selection,
+  execution, failure classification, and fallback.
 - OmniFlow-exp owns the experiment's core logic, including the native 512D
   pole encoding and page encoding. Do not substitute OmniTransfer matcher
   embeddings for these OmniFlow embeddings.
@@ -64,7 +68,7 @@ or a private device command as an AndroidWorld action.
 This contract is defined by OmniFlow source and the checked-in schema, never by
 `current.json`; experiment memory only indexes immutable assets and results.
 
-OmniTransfer failures with no valid target candidate must return to the normal
+An empty or unusable OmniTransfer candidate ranking must return to the normal
 OmniFlow fallback path. Low confidence alone is not a transfer failure when a
 ranked target candidate with valid bounds exists. Never replay source-device
 coordinates directly on a target device.
