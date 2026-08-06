@@ -16,7 +16,7 @@ def test_default_catalog_contains_verified_parameterized_beverage_function() -> 
     assert catalog.release_id == "2026.08.06.1"
     assert set(catalog.functions) == {"order_beverage_meituan"}
     function = catalog.functions["order_beverage_meituan"]
-    assert len(function.steps) == 9
+    assert len(function.steps) == 8
     assert len(function.bindings) == 2
     assert len(function.checker_rules) >= 10
     assert "never submits or pays" in function.description
