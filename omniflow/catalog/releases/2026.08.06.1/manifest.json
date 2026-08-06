@@ -5,7 +5,7 @@
   "acceptance": {
     "device_model": "PJE110",
     "android_version": "16",
-    "run_id": "tool-b6379d89-a056-434a-84ef-00b3d5d1bcb3",
+    "run_id": "tool-a7a95bde-426a-4a41-99af-1d280bb68fbe",
     "function_id": "order_beverage_meituan",
     "steps_succeeded": 8,
     "stops_before_submit_order": true
