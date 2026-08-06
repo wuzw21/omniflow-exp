@@ -10,17 +10,28 @@ from omniflow.catalog import load_catalog, load_default_catalog
 from omniflow.functions.store import FunctionStore
 
 
-def test_default_catalog_contains_verified_parameterized_beverage_function() -> None:
+def test_default_catalog_contains_both_verified_beverage_functions() -> None:
     catalog = load_default_catalog()
 
-    assert catalog.release_id == "2026.08.06.1"
-    assert set(catalog.functions) == {"order_beverage_meituan"}
+    assert catalog.release_id == "2026.08.06.2"
+    assert set(catalog.functions) == {
+        "manual_americano_checkout_20260806",
+        "order_beverage_meituan",
+    }
     function = catalog.functions["order_beverage_meituan"]
     assert len(function.steps) == 8
     assert len(function.bindings) == 2
     assert len(function.checker_rules) >= 10
     assert "never submits or pays" in function.description
     assert all(catalog.get_state(step.source_state_id) for step in function.steps)
+
+    manual = catalog.functions["manual_americano_checkout_20260806"]
+    assert len(manual.steps) == 14
+    assert manual.bindings == ()
+    assert manual.checker_rules == ()
+    assert [step.action.tool for step in manual.steps].count("input_text") == 3
+    assert "不提交、不支付" in manual.description
+    assert all(catalog.get_state(step.source_state_id) for step in manual.steps)
 
 
 def test_catalog_rejects_modified_release_file(tmp_path: Path) -> None:
@@ -58,7 +69,10 @@ def test_function_store_seeds_catalog_without_overwriting_user_copy(
         store_path,
         seed_functions=catalog.functions.values(),
     )
-    assert set(store.functions) == {"order_beverage_meituan"}
+    assert set(store.functions) == {
+        "manual_americano_checkout_20260806",
+        "order_beverage_meituan",
+    }
 
     payload = json.loads(store_path.read_text())
     payload["functions"]["order_beverage_meituan"]["description"] = "user copy"
