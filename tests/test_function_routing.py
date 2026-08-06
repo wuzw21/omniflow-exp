@@ -466,9 +466,9 @@ def test_vlm_history_blocks_successful_repeat_on_same_logical_ui_state(
     tmp_path,
     monkeypatch,
 ) -> None:
-    import omniflow.runtime.execution as execution
+    import omniflow.runtime.core as core
 
-    monkeypatch.setattr(execution, "_ACTION_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     host = RecordingHost()
     repeated_click = ToolCall("click", {"x": 120, "y": 240})
     planner = SequencePlanner(
@@ -770,8 +770,8 @@ def test_transient_obstruction_fast_path_runs_before_planner(
     tmp_path,
     monkeypatch,
 ) -> None:
+    import omniflow.runtime.core as core
     import omniflow.runtime.engine as engine
-    import omniflow.runtime.execution as execution
 
     host = RecordingHost()
     planner = FinishingPlanner()
@@ -784,7 +784,7 @@ def test_transient_obstruction_fast_path_runs_before_planner(
         return recovery if calls == 1 else None
 
     monkeypatch.setattr(engine, "transient_obstruction_recovery", recover)
-    monkeypatch.setattr(execution, "_ACTION_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     flow = OmniFlow(tmp_path / "store.json", host=host, planner=planner)
 
     result = flow.run("Dismiss the blocker and finish")

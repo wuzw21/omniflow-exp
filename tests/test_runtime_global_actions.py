@@ -12,13 +12,18 @@ from omniflow.core.model import (
     TransferResult,
 )
 from omniflow.runtime.checker import default_checker
-from omniflow.runtime.execution import execute_action, execute_function, prepare_action
+from omniflow.runtime.execution import (
+    execute_function,
+    execute_robust_action,
+    prepare_action,
+)
 
 
 def test_function_uses_catalog_state_when_host_state_is_missing(monkeypatch) -> None:
+    import omniflow.runtime.core as core
     import omniflow.runtime.execution as execution
 
-    monkeypatch.setattr(execution, "_ACTION_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     source = Observation(
         xml='<hierarchy><node text="Search" bounds="[0,0][100,100]"/></hierarchy>',
         package_name="com.example",
@@ -75,9 +80,10 @@ def test_function_uses_catalog_state_when_host_state_is_missing(monkeypatch) -> 
 
 
 def test_delayed_checker_recovery_retries_the_same_function_step(monkeypatch) -> None:
+    import omniflow.runtime.core as core
     import omniflow.runtime.execution as execution
 
-    monkeypatch.setattr(execution, "_ACTION_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     monkeypatch.setattr(execution, "_TRANSFER_REOBSERVE_POLL_SECONDS", 0.0)
     monkeypatch.setattr(execution, "_TRANSFER_REOBSERVE_MAX_ATTEMPTS", 1)
     source = Observation(
@@ -145,7 +151,7 @@ def test_delayed_checker_recovery_retries_the_same_function_step(monkeypatch) ->
     host = Host()
 
     result = asyncio.run(
-        execute_action(
+        execute_robust_action(
             Action("click", {"x": 50, "y": 50}),
             observation=initial,
             host=host,
@@ -170,7 +176,7 @@ def test_payment_confirmation_screen_blocks_interactive_action() -> None:
             raise AssertionError("payment screen action must not be dispatched")
 
     result = asyncio.run(
-        execute_action(
+        execute_robust_action(
             Action("click", {"x": 900, "y": 2200}),
             observation=Observation(
                 xml='<hierarchy><node text="立即支付" bounds="[0,0][100,100]"/></hierarchy>',
@@ -227,9 +233,10 @@ def test_global_actions_skip_transfer_validation() -> None:
 
 
 def test_open_app_waits_for_cold_launch_target_package(monkeypatch) -> None:
+    import omniflow.runtime.core as core
     import omniflow.runtime.execution as execution
 
-    monkeypatch.setattr(execution, "_ACTION_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     monkeypatch.setattr(execution, "_OPEN_APP_READY_POLL_SECONDS", 0.0)
     monkeypatch.setattr(execution, "_OPEN_APP_READY_MAX_ATTEMPTS", 3)
 
@@ -254,7 +261,7 @@ def test_open_app_waits_for_cold_launch_target_package(monkeypatch) -> None:
 
     host = Host()
     result = asyncio.run(
-        execute_action(
+        execute_robust_action(
             Action("open_app", {"package_name": "com.sankuai.meituan"}),
             observation=Observation(package_name="com.android.launcher"),
             host=host,
@@ -270,9 +277,10 @@ def test_open_app_waits_for_cold_launch_target_package(monkeypatch) -> None:
 
 
 def test_open_app_reports_not_ready_after_retry_budget(monkeypatch) -> None:
+    import omniflow.runtime.core as core
     import omniflow.runtime.execution as execution
 
-    monkeypatch.setattr(execution, "_ACTION_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     monkeypatch.setattr(execution, "_OPEN_APP_READY_POLL_SECONDS", 0.0)
     monkeypatch.setattr(execution, "_OPEN_APP_READY_MAX_ATTEMPTS", 3)
 
@@ -289,7 +297,7 @@ def test_open_app_reports_not_ready_after_retry_budget(monkeypatch) -> None:
 
     host = Host()
     result = asyncio.run(
-        execute_action(
+        execute_robust_action(
             Action("open_app", {"package_name": "com.sankuai.meituan"}),
             observation=Observation(package_name="com.android.launcher"),
             host=host,
@@ -307,9 +315,10 @@ def test_open_app_reports_not_ready_after_retry_budget(monkeypatch) -> None:
 
 
 def test_action_waits_for_transition_window_to_enter_display(monkeypatch) -> None:
+    import omniflow.runtime.core as core
     import omniflow.runtime.execution as execution
 
-    monkeypatch.setattr(execution, "_ACTION_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     monkeypatch.setattr(execution, "_OBSERVATION_READY_POLL_SECONDS", 0.0)
     monkeypatch.setattr(execution, "_OBSERVATION_READY_MAX_ATTEMPTS", 3)
 
@@ -347,7 +356,7 @@ def test_action_waits_for_transition_window_to_enter_display(monkeypatch) -> Non
 
     host = Host()
     result = asyncio.run(
-        execute_action(
+        execute_robust_action(
             Action("click", {"x": 500, "y": 500}),
             observation=Observation(package_name="com.sankuai.meituan"),
             host=host,
@@ -362,9 +371,10 @@ def test_action_waits_for_transition_window_to_enter_display(monkeypatch) -> Non
 
 
 def test_transfer_reobserves_until_target_semantic_appears(monkeypatch) -> None:
+    import omniflow.runtime.core as core
     import omniflow.runtime.execution as execution
 
-    monkeypatch.setattr(execution, "_ACTION_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     monkeypatch.setattr(execution, "_TRANSFER_REOBSERVE_POLL_SECONDS", 0.0)
     monkeypatch.setattr(execution, "_TRANSFER_REOBSERVE_MAX_ATTEMPTS", 3)
 
@@ -412,7 +422,7 @@ def test_transfer_reobserves_until_target_semantic_appears(monkeypatch) -> None:
 
     host = Host()
     result = asyncio.run(
-        execute_action(
+        execute_robust_action(
             Action("click", {"x": 472, "y": 336}),
             observation=loading,
             source_state=source,
@@ -434,9 +444,10 @@ def test_transfer_reobserves_until_target_semantic_appears(monkeypatch) -> None:
 def test_transfer_reobserves_before_executing_coordinate_stretch_fallback(
     monkeypatch,
 ) -> None:
+    import omniflow.runtime.core as core
     import omniflow.runtime.execution as execution
 
-    monkeypatch.setattr(execution, "_ACTION_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     monkeypatch.setattr(execution, "_TRANSFER_REOBSERVE_POLL_SECONDS", 0.0)
     monkeypatch.setattr(execution, "_TRANSFER_REOBSERVE_MAX_ATTEMPTS", 2)
 
@@ -477,7 +488,7 @@ def test_transfer_reobserves_before_executing_coordinate_stretch_fallback(
 
     host = Host()
     result = asyncio.run(
-        execute_action(
+        execute_robust_action(
             Action("click", {"x": 472, "y": 336}),
             observation=loading,
             source_state=Observation(
@@ -536,7 +547,7 @@ def test_transfer_falls_back_only_after_reobservation_budget(monkeypatch) -> Non
         xml="<loading attempt='0'/>",
     )
     result = asyncio.run(
-        execute_action(
+        execute_robust_action(
             Action("click", {"x": 400, "y": 200}),
             observation=initial,
             source_state=Observation(
@@ -568,7 +579,7 @@ def test_unlaunchable_checker_recovery_falls_back_to_transfer_failure() -> None:
             raise AssertionError(f"unexpected action dispatch: {action}")
 
     result = asyncio.run(
-        execute_action(
+        execute_robust_action(
             Action("click", {"x": 77, "y": 83}),
             observation=Observation(package_name="cn.com.omnimind.bot.debug"),
             source_state=Observation(package_name="com.oplus.battery"),

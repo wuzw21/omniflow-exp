@@ -25,7 +25,7 @@ from omniflow.functions.store import FunctionStore
 from omniflow.runtime.checker import transient_obstruction_recovery
 from omniflow.runtime.execution import (
     align_function_resume,
-    execute_action,
+    execute_robust_action,
     execute_function,
     record_execution,
 )
@@ -288,7 +288,7 @@ class OmniFlow:
                     error=f"tool_not_directly_invokable:{direct_action.tool}",
                     final_state=observation,
                 )
-            step = await execute_action(
+            step = await execute_robust_action(
                 direct_action,
                 observation=observation,
                 host=self.host,
@@ -367,7 +367,7 @@ class OmniFlow:
                 )
                 if obstruction_key not in handled_transient_obstructions:
                     handled_transient_obstructions.add(obstruction_key)
-                    step = await execute_action(
+                    step = await execute_robust_action(
                         transient_action,
                         observation=observation,
                         host=self.host,
@@ -642,7 +642,7 @@ class OmniFlow:
                 previous_action_error = None
                 previous_action = None
                 continue
-            step = await execute_action(
+            step = await execute_robust_action(
                 planned,
                 observation=observation,
                 host=self.host,

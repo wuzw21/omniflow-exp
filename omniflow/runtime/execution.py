@@ -25,9 +25,12 @@ from omniflow.core.model import (
     TransferResult,
 )
 from omniflow.runtime.checker import default_checker_trigger, match_checker_rule
+from omniflow.runtime.core import (
+    execute_action as execute_core_action,
+    prepare_action as prepare_core_action,
+)
 from omniflow.transfer.runtime import transfer_action
 
-_ACTION_SETTLE_SECONDS = 1.0
 _OPEN_APP_READY_POLL_SECONDS = 0.5
 _OPEN_APP_READY_MAX_ATTEMPTS = 30
 _OBSERVATION_READY_POLL_SECONDS = 0.25
@@ -105,7 +108,7 @@ async def execute_function(
             function_step.source_state_id,
             state_loader=state_loader,
         )
-        step = await execute_action(
+        step = await execute_robust_action(
             action,
             observation=current,
             host=host,
@@ -307,7 +310,7 @@ async def align_function_resume(
     }
 
 
-async def execute_action(
+async def execute_robust_action(
     action: Action,
     *,
     observation: Observation,
@@ -447,7 +450,7 @@ async def execute_action(
         except Exception:  # noqa: BLE001
             delayed_recovery = None
         if delayed_recovery is not None:
-            retried = await execute_action(
+            retried = await execute_robust_action(
                 action,
                 observation=observation,
                 host=host,
@@ -594,24 +597,11 @@ async def prepare_action(
     plugins: PluginSet,
     source_state: Observation | None = None,
 ) -> ActionDecision:
-    candidate = action
-    if source_state is None or action.tool in {"open_app", "press_key"}:
-        return ActionDecision("ready", action=candidate)
-    transfer_fn = plugins.transfer
-    if transfer_fn is None:
-        return ActionDecision("block", reason="transfer_not_configured")
-    transfer = await _await(transfer_fn(candidate, observation, source_state))
-    if transfer.action is None:
-        return ActionDecision(
-            "block",
-            reason=transfer.reason or "transfer_failed",
-            detail=transfer.detail,
-        )
-    return ActionDecision(
-        "ready",
-        action=transfer.action,
-        reason=transfer.reason,
-        detail=transfer.detail,
+    return await prepare_core_action(
+        action,
+        observation=observation,
+        plugins=plugins,
+        source_state=source_state,
     )
 
 
@@ -648,17 +638,17 @@ async def _dispatch_prepared(
                 before=observation,
                 error=f"open_app_package_not_installed:{package_name}",
             )
-    action_result = ActionResult.from_value(await _await(host.act(action)))
-    await asyncio.sleep(_ACTION_SETTLE_SECONDS)
-    if not action_result.success:
-        return StepResult(
-            False,
-            action=action,
-            before=observation,
-            result=action_result,
-            error=action_result.error or "action_failed",
-        )
-    after = await _observe_ready(host)
+    core_step = await execute_core_action(
+        action,
+        observation=observation,
+        host=host,
+        plugins=PluginSet(),
+    )
+    if not core_step.success:
+        return replace(core_step, origin="action")
+    after = core_step.after or observation
+    if _observation_window_outside_display(after):
+        after = await _observe_ready(host)
     if action.tool == "open_app":
         expected_package = str(action.args.get("package_name") or "").strip()
         observed_package = str(after.package_name or "").strip()
@@ -686,19 +676,18 @@ async def _dispatch_prepared(
                 result=ActionResult(
                     False,
                     error=error,
-                    extra={"dispatch_result": action_result.to_dict()},
+                    extra={
+                        "dispatch_result": (
+                            core_step.result.to_dict()
+                            if core_step.result is not None
+                            else {}
+                        )
+                    },
                 ),
                 actions_executed=1,
                 error=error,
             )
-    return StepResult(
-        True,
-        action=action,
-        before=observation,
-        after=after,
-        result=action_result,
-        actions_executed=1,
-    )
+    return replace(core_step, after=after, origin="action")
 
 
 async def _observe_ready(host: Host) -> Observation:
