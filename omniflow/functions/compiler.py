@@ -430,6 +430,7 @@ def _normalize_source_state(value: Any, expected_state_id: str) -> dict[str, Any
         "xml": ("xml", "page", "observation_xml"),
         "package_name": ("package_name", "packageName"),
         "activity_name": ("activity_name", "activityName"),
+        "screenshot_path": ("screenshot_path",),
     }
     for output, names in aliases.items():
         item = next(

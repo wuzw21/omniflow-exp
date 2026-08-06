@@ -19,10 +19,22 @@ _TRANSFER_STATE_FIELDS = {
     "package_name",
     "activity_name",
     "display",
+    "screenshot_path",
 }
 
 
 def capture_transfer_state(observation: Any) -> dict[str, Any]:
+    extra = observation.extra if isinstance(observation.extra, dict) else {}
+    androidworld_state = (
+        extra.get("androidworld_state")
+        if isinstance(extra.get("androidworld_state"), dict)
+        else {}
+    )
+    pixels = (
+        androidworld_state.get("pixels")
+        if isinstance(androidworld_state.get("pixels"), dict)
+        else {}
+    )
     identity = {
         key: value
         for key, value in observation.to_dict().items()
@@ -31,13 +43,18 @@ def capture_transfer_state(observation: Any) -> dict[str, Any]:
     identity.update(
         {
             key: value
-            for key, value in observation.extra.items()
+            for key, value in extra.items()
             if key in {"display", "screenshot_path"}
             and value is not None
             and value != ""
         }
     )
-    explicit_state_id = str(observation.extra.get("state_id") or "").strip()
+    screenshot_path = str(
+        extra.get("screenshot_path") or pixels.get("path") or ""
+    ).strip()
+    if screenshot_path:
+        identity["screenshot_path"] = screenshot_path
+    explicit_state_id = str(extra.get("state_id") or "").strip()
     encoded = json.dumps(
         identity,
         ensure_ascii=False,
@@ -55,6 +72,9 @@ def capture_transfer_state(observation: Any) -> dict[str, Any]:
     display = identity.get("display")
     if isinstance(display, dict) and set(display) == {"width", "height"}:
         state["display"] = dict(display)
+    screenshot_path = identity.get("screenshot_path")
+    if isinstance(screenshot_path, str) and screenshot_path:
+        state["screenshot_path"] = screenshot_path
     return state
 
 
@@ -117,6 +137,11 @@ def _canonicalize_transfer_state(value: Any) -> dict[str, Any]:
         ):
             raise ValueError("transfer_state_display_invalid")
         state["display"] = {"width": width, "height": height}
+    screenshot_path = value.get("screenshot_path")
+    if screenshot_path is not None:
+        if not isinstance(screenshot_path, str) or not screenshot_path.strip():
+            raise ValueError("transfer_state_screenshot_path_invalid")
+        state["screenshot_path"] = screenshot_path.strip()
     return state
 
 

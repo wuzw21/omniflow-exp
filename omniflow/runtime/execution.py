@@ -423,6 +423,12 @@ async def execute_robust_action(
                 executed_steps=tuple(executed_steps),
             )
         observation = recovery_step.after or observation
+    if (
+        _action_uses_transfer_target(action)
+        and _observation_screenshot_path(source_state)
+        and not _observation_screenshot_path(observation)
+    ):
+        observation = await _observe_ready(host)
     decision = await prepare_action(
         action,
         observation=observation,
@@ -866,6 +872,7 @@ def default_transfer(
         "action_type": action.tool,
         "top_k": 3,
     }
+    _attach_visual_evidence(request, source_state, observation)
     try:
         source_point = _relative_source_point(
             source_state,
@@ -967,6 +974,7 @@ def _transfer_swipe(
                 "action_type": action.tool,
                 "top_k": 3,
             }
+            _attach_visual_evidence(request, source_state, observation)
             request["source_point"] = source_point
             result = transfer_action(
                 **request,
@@ -1038,6 +1046,43 @@ def _transfer_swipe(
         reason=reason,
         detail=detail,
     )
+
+
+def _observation_screenshot_path(observation: Observation | None) -> str:
+    if observation is None:
+        return ""
+    return str(observation.extra.get("screenshot_path") or "").strip()
+
+
+def _attach_visual_evidence(
+    request: dict[str, Any],
+    source: Observation,
+    target: Observation,
+) -> None:
+    evidence = {
+        "source_screenshot_path": _observation_screenshot_path(source),
+        "target_screenshot_path": _observation_screenshot_path(target),
+        "source_visual_rgb": source.extra.get("visual_rgb"),
+        "target_visual_rgb": target.extra.get("visual_rgb"),
+    }
+    request.update(
+        {
+            key: value
+            for key, value in evidence.items()
+            if value and (not key.endswith("visual_rgb") or isinstance(value, dict))
+        }
+    )
+
+
+def _action_uses_transfer_target(action: Action) -> bool:
+    if action.tool in {"click", "input_text", "long_press"}:
+        return all(action.args.get(key) is not None for key in ("x", "y"))
+    if action.tool == "swipe":
+        return all(
+            action.args.get(key) is not None
+            for key in ("x1", "y1", "x2", "y2")
+        )
+    return False
 
 
 def _recoverable_transfer_failure(
