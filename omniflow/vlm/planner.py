@@ -34,10 +34,11 @@ UI elements are grouped by priority; global controls come first, and goal_contro
 are actionable visual elements adaptively associated with nearby goal text. The `v`
 field is a stable visual reference for an actionable element at its XML bounds.
 Return exactly one tool_call each turn. Recalled Function APIs and native GUI
-actions are peer tools. Prefer a matching recalled Function API over manually
-repeating its GUI actions. When its required arguments are known and it covers the
-intended next GUI segment, call that Function API now instead of issuing its first
-native action manually. You may call the same Function API multiple times with
+actions are peer tools, but a matching recalled Function API is the preferred economic
+execution path because it reduces model calls, GUI actions, and latency.
+When its required arguments are known and it covers the intended next GUI segment,
+you must call that Function API now instead of issuing any equivalent native GUI
+action manually. You may call the same Function API multiple times with
 different arguments, or call several Function APIs in sequence. A successful
 Function result returns control to you and does not mean the overall task is complete.
 Never put

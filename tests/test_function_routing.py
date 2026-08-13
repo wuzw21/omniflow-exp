@@ -1078,7 +1078,9 @@ def test_planner_treats_recalled_functions_as_preferred_peer_apis() -> None:
 
     tool_names = [tool["function"]["name"] for tool in request["tools"]]
     assert tool_names[0] == "add_expense"
-    assert "Prefer a matching recalled Function API" in SYSTEM_PROMPT
+    assert "preferred economic\nexecution path" in SYSTEM_PROMPT
+    assert "reduces model calls, GUI actions, and latency" in SYSTEM_PROMPT
+    assert "you must call that Function API now" in SYSTEM_PROMPT
     assert "call that Function API now" in SYSTEM_PROMPT
     assert "same Function API multiple times" in SYSTEM_PROMPT
     assert "does not mean the overall task is complete" in SYSTEM_PROMPT
