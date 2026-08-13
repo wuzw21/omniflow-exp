@@ -282,6 +282,12 @@ def test_human_runlog_uses_offline_manifest_and_preserves_actions(
     assert provenance["target_inputs_read"] is False
     assert provenance["target_observations_read"] is False
     assert provenance["source_target_audit"]["source_target_audit_complete"] is True
+    assert provenance["source_calls"] == [
+        {
+            "function_id": "record_audio_with_filename",
+            "arguments": {"filename": "source_name.m4a"},
+        }
+    ]
 
 
 def test_conversion_rejects_manifest_for_different_source_index(

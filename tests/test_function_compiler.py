@@ -185,3 +185,78 @@ def test_compiler_rejects_agent_action_not_grounded_in_runlog(
                 }
             },
         )
+
+
+def test_compiler_preserves_multiple_semantic_functions_and_source_calls(
+    tmp_path: Path,
+) -> None:
+    run_log = androidworld_run_log(
+        [
+            {"action_type": "input_text", "text": "Theater Show"},
+            {"action_type": "input_text", "text": "Museum Tickets"},
+            {"action_type": "input_text", "text": "Household Items"},
+        ],
+        observations=[
+            androidworld_state("category-six"),
+            androidworld_state("category-six-after-first-expense"),
+            androidworld_state("category-one"),
+        ],
+        goal="Add three expenses.",
+    )
+    bundle = {
+        "schema_version": "omniflow.function-bundle.v2",
+        "run_id": "source-run",
+        "arguments": {
+            "add_category_six_expense": [
+                {"name": "Theater Show"},
+                {"name": "Museum Tickets"},
+            ],
+            "add_category_one_expense": [
+                {"name": "Household Items"},
+            ],
+        },
+        "functions": [
+            _single_input_bundle("name", text="Theater Show")["functions"][0]
+            | {
+                "function_id": "add_category_six_expense",
+                "name": "Add one category-six expense",
+                "description": "Add one expense using the category-six path.",
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "source_state_id": "category-six",
+                        "action": {"tool": "input_text", "args": {"text": ""}},
+                    }
+                ],
+            },
+            _single_input_bundle("name", text="Household Items")["functions"][0]
+            | {
+                "function_id": "add_category_one_expense",
+                "name": "Add one category-one expense",
+                "description": "Add one expense using the category-one path.",
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "source_state_id": "category-one",
+                        "action": {"tool": "input_text", "args": {"text": ""}},
+                    }
+                ],
+            },
+        ],
+    }
+
+    result = compile_runlog_to_store(
+        run_log,
+        tmp_path / "output",
+        function_bundle=bundle,
+        source_states={
+            "category-six": {"state_id": "category-six"},
+            "category-one": {"state_id": "category-one"},
+        },
+    )
+
+    assert result["function_ids"] == [
+        "add_category_six_expense",
+        "add_category_one_expense",
+    ]
+    assert result["source_arguments"] == bundle["arguments"]

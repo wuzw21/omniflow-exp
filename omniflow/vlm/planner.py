@@ -89,6 +89,7 @@ def build_model_turn_request(
     rejected_tool_call: dict[str, Any] | None = None,
     lightweight_retry: bool = False,
     system_prompt: str = SYSTEM_PROMPT,
+    history: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
 ) -> dict[str, Any]:
     projection = (
         UIProjection("<omitted>", 0, 0, 0)
@@ -131,6 +132,7 @@ def build_model_turn_request(
         "model": str(model),
         "messages": [
             {"role": "system", "content": str(system_prompt)},
+            *deepcopy(list(history)),
             {"role": "user", "content": content},
         ],
         "max_completion_tokens": 512,
@@ -279,8 +281,9 @@ def function_tools(
                 "summary": {
                     "type": "string",
                     "description": (
-                        "Why this single tool is the best next step, in at most "
-                        "20 Chinese characters or one short sentence."
+                        "Concise running task memory: preserve observed values "
+                        "still needed later, completed work, and why this tool "
+                        "is next."
                     ),
                 },
                 **properties,
@@ -555,6 +558,7 @@ class VLMPlanner:
         self._turn_index = 0
         self._metadata: dict[str, Any] = {}
         self._usage = LLMUsageTracker(component="planner", model=self.model)
+        self._history: list[dict[str, Any]] = []
 
     async def one_step_tool_call(
         self,
@@ -585,6 +589,7 @@ class VLMPlanner:
                 rejected_tool_call=rejected_tool_call,
                 lightweight_retry=attempt > 0 and not retry_tool_name,
                 system_prompt=self.system_prompt,
+                history=self._history,
             )
             self._usage.start_call()
             try:
@@ -631,10 +636,60 @@ class VLMPlanner:
             if rejected_calls:
                 metadata["rejected_tool_calls"] = rejected_calls
             self._metadata = metadata
+            self._remember_turn(request, tool_call, metadata)
             if self._metadata_sink is not None:
                 self._metadata_sink(dict(metadata))
             return tool_call
         raise AssertionError("unreachable")
+
+    def _remember_turn(
+        self,
+        request: dict[str, Any],
+        tool_call: ToolCall,
+        metadata: dict[str, Any],
+    ) -> None:
+        call_id = f"omniflow_planner_{self._turn_index}"
+        arguments = {
+            "summary": str(metadata.get("summary") or "").strip(),
+            **dict(tool_call.arguments),
+        }
+        self._history.extend(
+            (
+                {
+                    "role": "user",
+                    "content": (
+                        "Prior device evidence is summarized by the following "
+                        "tool call. Preserve its summary while using the fresh "
+                        "state in the next user message."
+                    ),
+                },
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_call.name,
+                                "arguments": json.dumps(
+                                    arguments,
+                                    ensure_ascii=False,
+                                    separators=(",", ":"),
+                                ),
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": (
+                        "The tool was dispatched. Its execution result and fresh "
+                        "device state are provided in the next user message."
+                    ),
+                },
+            )
+        )
 
     def take_metadata(self) -> dict[str, Any]:
         metadata = dict(self._metadata)

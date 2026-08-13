@@ -567,11 +567,13 @@ def compile_runlog_to_store(
     if set(arguments_by_function) - set(function_ids):
         raise ValueError("function_bundle_source_arguments_unknown_function")
     for function in functions:
-        arguments = arguments_by_function.get(function.id, {})
-        if not isinstance(arguments, dict):
+        raw_arguments = arguments_by_function.get(function.id, {})
+        calls = raw_arguments if isinstance(raw_arguments, list) else [raw_arguments]
+        if not calls or any(not isinstance(arguments, dict) for arguments in calls):
             raise ValueError("function_bundle_source_arguments_invalid")
-        bound = bind_function(function, arguments)
-        _validate_action_grounding(bound, steps)
+        for arguments in calls:
+            bound = bind_function(function, arguments)
+            _validate_action_grounding(bound, steps)
 
     if source_states is not None and state_loader is not None:
         raise ValueError("function_source_state_provider_ambiguous")
@@ -740,23 +742,21 @@ def _normalize_source_state(value: Any, expected_state_id: str) -> dict[str, Any
     return state
 
 
-def _validate_action_grounding(function: Any, source_steps: list[dict[str, Any]]) -> None:
-    source_index = 0
-    for function_step in function.steps:
-        expected_action = function_step.action.to_dict()
-        while source_index < len(source_steps):
-            source_step = source_steps[source_index]
-            source_index += 1
-            if (
-                source_step["before_state_id"] == function_step.source_state_id
-                and source_step["action"] == expected_action
-            ):
-                break
-        else:
-            raise ValueError(
-                "function_action_not_grounded:"
-                f"{function.id}:{function_step.step_index}"
-            )
+def _validate_action_grounding(
+    function: Any,
+    source_steps: list[dict[str, Any]],
+) -> None:
+    expected = [step.action.to_dict() for step in function.steps]
+    width = len(expected)
+    if any(
+        [step["action"] for step in source_steps[start : start + width]] == expected
+        for start in range(len(source_steps) - width + 1)
+    ):
+        return
+    raise ValueError(
+        "function_action_not_grounded:"
+        f"{function.id}:{function.steps[0].step_index}"
+    )
 
 
 def _validate_checker_evidence(

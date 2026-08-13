@@ -221,6 +221,13 @@ def _convert_runlog_to_function_asset(
         }
 
     provenance_path = output_path.parent / "provenance_manifest.json"
+    source_calls = [
+        {"function_id": function_id, "arguments": arguments}
+        for function_id, raw_arguments in compile_result["source_arguments"].items()
+        for arguments in (
+            raw_arguments if isinstance(raw_arguments, list) else [raw_arguments]
+        )
+    ]
     provenance = {
         "schema_version": "omniflow.function-asset-conversion-provenance.v1",
         "task": task_name,
@@ -239,6 +246,7 @@ def _convert_runlog_to_function_asset(
             "model_calls": 0,
         },
         "function_ids": [function.id for function in store.list_functions()],
+        "source_calls": source_calls,
         "store_path": str(store_path),
         "store_sha256": _sha256(store_path),
         "transfer_states_path": str(transfer_path),

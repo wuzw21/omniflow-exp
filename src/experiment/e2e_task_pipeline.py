@@ -633,19 +633,24 @@ def prepare_function_asset(
     store_path = Path(str(existing["store_path"])).resolve()
     provenance_path = Path(str(existing["provenance_path"])).resolve()
     provenance = _read_object(provenance_path)
-    source_call = provenance.get("source_call")
+    source_calls = provenance.get("source_calls")
     if (
-        not isinstance(source_call, dict)
-        or not str(source_call.get("function_id") or "").strip()
-        or not isinstance(source_call.get("arguments"), dict)
+        not isinstance(source_calls, list)
+        or not source_calls
+        or any(
+            not isinstance(source_call, dict)
+            or not str(source_call.get("function_id") or "").strip()
+            or not isinstance(source_call.get("arguments"), dict)
+            for source_call in source_calls
+        )
     ):
-        raise ValueError(f"canonical_function_source_call_missing:{args.task}")
+        raise ValueError(f"canonical_function_source_calls_missing:{args.task}")
     return existing, {
         "status": "reused",
         "tool_calls": 0,
         "tokens": 0,
         "store": str(store_path),
-        "source_call": source_call,
+        "source_calls": source_calls,
     }
 
 

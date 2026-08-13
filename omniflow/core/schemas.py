@@ -82,8 +82,8 @@ def openai_action_tools(*, include_summary: bool = False) -> list[dict[str, Any]
             properties["summary"] = {
                 "type": "string",
                 "description": (
-                    "Why this single action is the best next step, in at most "
-                    "20 Chinese characters or one short sentence."
+                    "Concise running task memory: preserve observed values still "
+                    "needed later, completed work, and why this action is next."
                 ),
             }
             required.append("summary")

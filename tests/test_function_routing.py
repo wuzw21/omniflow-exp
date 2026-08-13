@@ -882,7 +882,6 @@ def test_vlm_planner_sends_execution_history_to_model() -> None:
             {},
         )
     )
-
     payload = completions.requests[0]["messages"][1]["content"][0]["text"]
     assert '"tool":"click"' in payload
     assert "1. [Planner] Clicked the item successfully." in payload
@@ -890,6 +889,85 @@ def test_vlm_planner_sends_execution_history_to_model() -> None:
     assert '"state_id":"state_after"' in payload
     assert "Do not repeat the same action" in payload
 
+
+def test_vlm_planner_keeps_prior_visual_turn_for_multi_function_task() -> None:
+    requests: list[dict[str, object]] = []
+    responses = iter(
+        [
+            {
+                "requested_model": "test-model",
+                "resolved_model": "test-model",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "open_app",
+                            "arguments": json.dumps(
+                                {
+                                    "summary": (
+                                        "Read Theater Show, Museum Tickets, and "
+                                        "Household Items; open target app."
+                                    ),
+                                    "package_name": "com.arduia.expense",
+                                }
+                            ),
+                        }
+                    }
+                ],
+            },
+            {
+                "requested_model": "test-model",
+                "resolved_model": "test-model",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "finished",
+                            "arguments": json.dumps(
+                                {"summary": "All three expenses added"}
+                            ),
+                        }
+                    }
+                ],
+            },
+        ]
+    )
+
+    def transport(envelope: dict[str, object]) -> dict[str, object]:
+        request = envelope["request"]
+        assert isinstance(request, dict)
+        requests.append(request)
+        return next(responses)
+
+    planner = VLMPlanner(model="test-model", transport=transport)
+    first = Observation(
+        image_base64="gallery-image",
+        package_name="com.simplemobiletools.gallery.pro",
+        extra={"display": {"width": 720, "height": 1280}},
+    )
+    second = Observation(
+        image_base64="expense-image",
+        package_name="com.arduia.expense",
+        extra={"display": {"width": 720, "height": 1280}},
+    )
+
+    asyncio.run(planner.one_step_tool_call("Add three expenses", first))
+    asyncio.run(planner.one_step_tool_call("Add three expenses", second))
+
+    messages = requests[1]["messages"]
+    assert isinstance(messages, list)
+    assert [message["role"] for message in messages] == [
+        "system",
+        "user",
+        "assistant",
+        "tool",
+        "user",
+    ]
+    first_user = messages[1]
+    assert isinstance(first_user["content"], str)
+    assert "gallery-image" not in first_user["content"]
+    assistant_call = messages[2]["tool_calls"][0]["function"]
+    assert "Theater Show" in assistant_call["arguments"]
+    assert "Museum Tickets" in assistant_call["arguments"]
+    assert "Household Items" in assistant_call["arguments"]
 
 def test_bridge_planner_exposes_packages_only_through_open_app_tool() -> None:
     installed_apps = {
