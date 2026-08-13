@@ -27,10 +27,8 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
-from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import token_usage_status
 from src.experiment.observation_evidence import (
-    AndroidWorldEpisodeRecorder,
     persist_target_run_evidence,
     transfer_state_coverage_audit,
 )
@@ -38,7 +36,15 @@ from src.integrations.android_world.agent import (
     MODE_OMNIFLOW,
     build_agent,
 )
+from src.integrations.android_world.environment import (
+    AndroidWorldEnvironmentConfig,
+    AndroidWorldExperimentEnvironment,
+)
 from src.integrations.android_world.host import make_agent_result
+from src.integrations.android_world.methods import (
+    MethodAdapterContext,
+    default_method_adapter_registry,
+)
 from src.integrations.android_world.setup_compat import (
     patch_androidworld_legacy_apk_install,
     patch_androidworld_open_tracks_setup,
@@ -83,13 +89,6 @@ def utc_now_iso() -> str:
 def read_env_text(name: str) -> str | None:
     value = str(os.environ.get(name) or "").strip()
     return value or None
-
-
-def read_env_bool(name: str, default: bool) -> bool:
-    value = read_env_text(name)
-    if value is None:
-        return default
-    return value.lower() in {"1", "true", "yes", "on"}
 
 
 def read_env_int(name: str, default: int, *, minimum: int = 0) -> int:
@@ -4390,110 +4389,31 @@ def _build_launch_agent(
     """
 
     resolved_agent = str(agent or MODE_OMNIFLOW).strip() or MODE_OMNIFLOW
-    if resolved_agent in {MODE_OMNIFLOW, "fixed_replay"}:
-        planner = None
-        resolved_planner_model = str(
-            planner_model or os.environ.get("OMNIFLOW_PLANNER_MODEL") or ""
-        ).strip()
-        resolved_planner_provider = str(
-            planner_provider or os.environ.get("OMNIFLOW_PLANNER_PROVIDER") or ""
-        ).strip()
-        resolved_planner_timeout = float(
-            planner_timeout_sec
-            or os.environ.get("OMNIFLOW_PLANNER_TIMEOUT_SEC")
-            or 60.0
-        )
-        planner_api_key, planner_base_url = resolve_openai_compatible_config()
-        if resolved_planner_model or resolved_planner_provider or read_env_bool(
-            "OMNIFLOW_ENABLE_ONLINE_PLANNER",
-            False,
-        ):
-            from omniflow.vlm.planner import VLMPlanner
-
-            planner = VLMPlanner(
-                provider=resolved_planner_provider or None,
-                model=resolved_planner_model or None,
-                api_key=planner_api_key,
-                base_url=planner_base_url,
-                timeout=resolved_planner_timeout,
-            )
-        build_kwargs: dict[str, Any] = {
-            "env": env,
-            "store_path": store_path,
-            "adb_serial": adb_serial,
-            "adb_path": adb_path,
-            "task_seed": task_seed,
-            "evidence_root": evidence_root or None,
-        }
-        if planner is not None:
-            build_kwargs["planner"] = planner
-        built_agent = build_agent(**build_kwargs)
-        if resolved_agent == "fixed_replay":
-            run_log_json_path = str(raw_replay_run_log or "").strip()
-            if not run_log_json_path:
-                raise ValueError("fixed_replay requires --raw-replay-run-log")
-            return _apply_fixed_replay(
-                built_agent,
-                run_log_json_path=run_log_json_path,
-                adb_path=adb_path,
-            )
-        return built_agent
-    if resolved_agent == "external:mobilegpt":
-        from src.integrations.android_world.mobilegpt_agent import build_mobilegpt_agent
-
-        return build_mobilegpt_agent(
+    return default_method_adapter_registry().build(
+        MethodAdapterContext(
+            selector=resolved_agent,
             env=env,
-            evidence_root=evidence_root or None,
+            store_path=store_path,
+            adb_serial=adb_serial,
+            adb_path=adb_path,
+            planner_provider=planner_provider,
+            planner_model=planner_model,
+            planner_timeout_sec=planner_timeout_sec,
+            raw_replay_run_log=raw_replay_run_log,
+            appagent_root=appagent_root,
+            appagent_workspace_root=appagent_workspace_root,
+            appagent_docs_root=appagent_docs_root,
+            appagent_action_source=appagent_action_source,
+            appagent_teacher_source=appagent_teacher_source,
+            appagent_demo_name=appagent_demo_name,
+            appagent_output_root=appagent_output_root,
+            task_seed=task_seed,
+            evidence_root=evidence_root,
+            build_omniflow_agent=build_agent,
+            apply_fixed_replay=_apply_fixed_replay,
+            build_official_agent=_build_official_androidworld_agent,
+            appagent_llm_factory=_OpenAICompatibleMultimodalWrapper,
         )
-    if resolved_agent in {"external:appagent", "external:appagent_teacher"}:
-        from src.integrations.appagent_adapter import (
-            AppAgentAndroidWorldAgent,
-            AppAgentTeacherAgent,
-            OfficialAppAgentRuntime,
-        )
-
-        runtime = OfficialAppAgentRuntime(appagent_root)
-        if resolved_agent == "external:appagent_teacher":
-            if not str(appagent_teacher_source or "").strip():
-                raise ValueError(
-                    "external:appagent_teacher requires --appagent-teacher-source"
-                )
-            if not str(appagent_workspace_root or "").strip():
-                raise ValueError(
-                    "external:appagent_teacher requires --appagent-workspace-root"
-                )
-            return AppAgentTeacherAgent(
-                env=env,
-                official_runtime=runtime,
-                teacher_source=appagent_teacher_source,
-                workspace_root=appagent_workspace_root,
-                demo_name=appagent_demo_name,
-            )
-        llm = _OpenAICompatibleMultimodalWrapper()
-        return AppAgentAndroidWorldAgent(
-            env=env,
-            official_runtime=runtime,
-            llm=llm,
-            output_root=appagent_output_root,
-            docs_root=(appagent_docs_root or None),
-            action_source=(appagent_action_source or None),
-        )
-    if resolved_agent.startswith("official:"):
-        official_agent_name = str(
-            resolved_agent.split(":", maxsplit=1)[1] or ""
-        ).strip()
-        if not official_agent_name:
-            raise ValueError(
-                "--agent official:<name> requires one upstream AndroidWorld agent name"
-            )
-        return _build_official_androidworld_agent(
-            env=env,
-            official_agent_name=official_agent_name,
-        )
-    raise ValueError(
-        "Unsupported AndroidWorld agent selector. Use `omniflow`, `fixed_replay`, "
-        "`external:mobilegpt`, `external:appagent`, "
-        "`external:appagent_teacher`, or `official:<name>`."
     )
 
 
@@ -5096,6 +5016,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             task_seed=int(args.task_random_seed),
             evidence_root=str(run_output_dir),
         )
+        experiment_environment = AndroidWorldExperimentEnvironment(
+            env,
+            AndroidWorldEnvironmentConfig(evidence_root=run_output_dir),
+        )
 
         checkpoint_dir = (
             str(Path(args.checkpoint_dir).expanduser().resolve())
@@ -5133,47 +5057,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 task_context: dict[str, Any] = {}
                 started_at = utc_now_iso()
                 started_perf = perf_counter()
-                original_get_state = getattr(env, "get_state", None)
-                original_execute_action = getattr(env, "execute_action", None)
-                host_action_owner = getattr(agent, "host", None)
-                original_host_act = getattr(host_action_owner, "act", None)
-                episode_recorder = None
-                episode_recorder_error = None
-                if callable(original_get_state) and callable(original_execute_action):
-                    try:
-                        episode_recorder = AndroidWorldEpisodeRecorder(
-                            original_get_state,
-                            original_execute_action,
-                            evidence_root=run_output_dir,
-                        )
-                        env.get_state = episode_recorder.get_state
-                        env.execute_action = episode_recorder.execute_action
-                        raw_androidworld_host = getattr(
-                            host_action_owner,
-                            "host",
-                            host_action_owner,
-                        )
-                        project_host_action = getattr(
-                            raw_androidworld_host,
-                            "_json_action",
-                            None,
-                        )
-                        if callable(original_host_act) and callable(project_host_action):
-                            def _recorded_host_act(value, **kwargs):
-                                return episode_recorder.execute_host_action(
-                                    value,
-                                    execute=lambda: original_host_act(value, **kwargs),
-                                    project=project_host_action,
-                                )
-
-                            host_action_owner.act = _recorded_host_act
-                    except Exception as exc:  # noqa: BLE001
-                        episode_recorder = None
-                        episode_recorder_error = (
-                            f"episode_recorder_install_failed:{exc}"
-                        )
-                else:
-                    episode_recorder_error = "environment_episode_methods_unavailable"
+                recording_session = experiment_environment.install_episode_recorder(
+                    agent
+                )
+                episode_recorder = recording_session.recorder
+                episode_recorder_error = recording_session.error
                 official_llm_usage_before = (
                     _get_agent_llm_usage(agent)
                     if selected_agent.startswith("official:")
@@ -5248,7 +5136,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
                         def _run_episode_with_goal_hint(episode_task):
                             if episode_recorder is not None:
-                                episode_recorder.start_episode()
+                                recording_session.start_episode()
                             return run_episode(_TaskGoalProxy(episode_task, hinted_goal))
 
                         result = original_run_task(
@@ -5260,7 +5148,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     else:
                         def _recorded_run_episode(episode_task):
                             if episode_recorder is not None:
-                                episode_recorder.start_episode()
+                                recording_session.start_episode()
                             return run_episode(episode_task)
 
                         result = original_run_task(
@@ -5355,7 +5243,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 diagnostics["function_resume"] = dict(
                                     function_resume
                                 )
-                            canonical_run = episode_recorder.seal_run_log(
+                            canonical_run = recording_session.seal_run_log(
                                 task_name=task_name,
                                 goal=goal_text,
                                 task_parameters=(
@@ -5372,12 +5260,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                             if canonical_run is not None:
                                 canonical_run_id = canonical_run["run_id"]
                         if episode_recorder is not None:
-                            try:
-                                observation_evidence = (
-                                    episode_recorder.persist_observations()
-                                )
-                            except (OSError, TypeError, ValueError) as exc:
-                                episode_recorder_error = str(exc)
+                            observation_evidence = (
+                                recording_session.persist_observations()
+                            )
+                            episode_recorder_error = recording_session.error
                         mobilegpt_agent_result: dict[str, Any] = {}
                         mobilegpt_agent_error = ""
                         runtime_integrity_error = None
@@ -5736,30 +5622,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             f"[warn] failed to aggregate canonical run log for {task_name}: {exc}"
                         )
                     finally:
-                        if callable(original_get_state):
-                            try:
-                                env.get_state = original_get_state
-                            except Exception as exc:  # noqa: BLE001
-                                print(
-                                    "[warn] failed to restore AndroidWorld get_state "
-                                    f"for {task_name}: {exc}"
-                                )
-                        if callable(original_execute_action):
-                            try:
-                                env.execute_action = original_execute_action
-                            except Exception as exc:  # noqa: BLE001
-                                print(
-                                    "[warn] failed to restore AndroidWorld execute_action "
-                                    f"for {task_name}: {exc}"
-                                )
-                        if callable(original_host_act):
-                            try:
-                                host_action_owner.act = original_host_act
-                            except Exception as exc:  # noqa: BLE001
-                                print(
-                                    "[warn] failed to restore AndroidWorld host action "
-                                    f"for {task_name}: {exc}"
-                                )
+                        recording_session.close()
 
             suite_utils._run_task = _wrapped_run_task
         mainline_name = str(args.agent or MODE_OMNIFLOW).strip() or MODE_OMNIFLOW
