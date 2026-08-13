@@ -1022,6 +1022,36 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert "not claim that a RunLog or reusable Function was registered" in SYSTEM_PROMPT
 
 
+def test_planner_treats_recalled_functions_as_preferred_peer_apis() -> None:
+    function = Function(
+        function_id="add_expense",
+        name="Add one expense",
+        description="Add one expense using the provided values.",
+        steps=(),
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    )
+
+    request = build_model_turn_request(
+        goal="Add three expenses",
+        model="test-model",
+        state={"xml": "", "display": {"width": 720, "height": 1280}},
+        max_steps=8,
+        turn_index=0,
+        functions=(function,),
+    )
+
+    tool_names = [tool["function"]["name"] for tool in request["tools"]]
+    assert tool_names[0] == "add_expense"
+    assert "Prefer a matching recalled Function API" in SYSTEM_PROMPT
+    assert "same Function API multiple times" in SYSTEM_PROMPT
+    assert "does not mean the overall task is complete" in SYSTEM_PROMPT
+
+
 def test_function_completion_review_keeps_final_screenshot_and_checked_state() -> None:
     request = build_model_turn_request(
         goal="Turn bluetooth off",

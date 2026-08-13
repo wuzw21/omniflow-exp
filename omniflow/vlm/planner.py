@@ -33,7 +33,12 @@ identity and spatial relationships, and XML as evidence for text and control sta
 UI elements are grouped by priority; global controls come first, and goal_controls
 are actionable visual elements adaptively associated with nearby goal text. The `v`
 field is a stable visual reference for an actionable element at its XML bounds.
-Return exactly one native tool_call each turn. Never put
+Return exactly one tool_call each turn. Recalled Function APIs and native GUI
+actions are peer tools. Prefer a matching recalled Function API over manually
+repeating its GUI actions. You may call the same Function API multiple times with
+different arguments, or call several Function APIs in sequence. A successful
+Function result returns control to you and does not mean the overall task is complete.
+Never put
 action JSON or tool syntax in assistant text. Choose one action, wait for its
 result, then inspect the fresh state before choosing another action. Coordinates
 are raw pixels in the current original Display coordinate frame, never normalized
@@ -114,12 +119,12 @@ def build_model_turn_request(
     if current_image:
         content.append({"type": "image_url", "image_url": {"url": current_image}})
     display = state.get("display") if isinstance(state.get("display"), dict) else None
-    tools = screen_pixel_tools(
+    tools = function_tools(functions, include_summary=True)
+    tools.extend(screen_pixel_tools(
         vlm_action_tools(include_summary=True),
         display,
-    )
+    ))
     tools = constrain_open_app_tool(tools, installed_apps or {})
-    tools.extend(function_tools(functions, include_summary=True))
     if retry_tool_name:
         tools = [
             tool
