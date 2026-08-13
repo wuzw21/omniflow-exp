@@ -5,7 +5,7 @@ import json
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from omniflow.bridge import JsonLineBridge
-from omniflow.functions.management import enhance_function
+from omniflow.functions.assets import enhance_function
 
 
 def _function() -> dict:

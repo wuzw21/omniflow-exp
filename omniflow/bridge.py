@@ -19,12 +19,10 @@ from omniflow.core.model import (
     ToolCall,
 )
 from omniflow.core.trajectory import canonicalize_run_log
-from omniflow.functions.artifact import parse_function_artifact
-from omniflow.functions.compiler import compile_runlog_to_store
+from omniflow.functions.assets import compile_runlog_to_store, parse_function_artifact
 from omniflow.runlog import import_run_log_evidence
 from omniflow.runtime.engine import InputRequired, OmniFlow
-from omniflow.vlm.guidance import resolve_step_guidance
-from omniflow.vlm.planner import VLMPlanner
+from omniflow.vlm.planner import VLMPlanner, resolve_step_guidance
 
 PROTOCOL_VERSION = "2025-11-25"
 _DEFAULT_GUI_MAX_STEPS = 20

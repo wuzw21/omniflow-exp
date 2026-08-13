@@ -27,7 +27,7 @@ from omniflow.core.trajectory import (
     canonicalize_run_log,
     canonicalize_run_log_step,
 )
-from omniflow.functions.artifact import FUNCTION_ARTIFACT_VERSION
+from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION
 from omniflow.runtime.engine import OmniFlow
 from omniflow.transfer.embedding import (
     ElementEmbedding,
@@ -45,7 +45,7 @@ from omniflow.transfer.memory import (
 
 def __getattr__(name: str) -> Any:
     if name == "compile_runlog_to_store":
-        from omniflow.functions.compiler import compile_runlog_to_store
+        from omniflow.functions.assets import compile_runlog_to_store
 
         globals()[name] = compile_runlog_to_store
         return compile_runlog_to_store

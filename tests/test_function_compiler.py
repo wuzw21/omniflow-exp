@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from omniflow.functions.compiler import compile_runlog_to_store
+from omniflow.functions.assets import compile_runlog_to_store
 
 
 def _run_log(step_count: int) -> dict:

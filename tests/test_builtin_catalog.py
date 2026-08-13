@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from omniflow.catalog import load_catalog, load_default_catalog
-from omniflow.functions.store import FunctionStore
+from omniflow.functions.assets import FunctionStore
 
 
 def test_default_catalog_contains_both_verified_beverage_functions() -> None:

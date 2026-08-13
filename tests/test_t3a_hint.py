@@ -3,8 +3,7 @@ from pathlib import Path
 import pytest
 
 from omniflow.core.model import Action, Function, FunctionStep
-from omniflow.functions.artifact import FUNCTION_ARTIFACT_VERSION
-from omniflow.functions.store import FunctionStore
+from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION, FunctionStore
 from src.experiment.androidworld import (
     ArchivedRunLog,
     _parse_one_task_methods,

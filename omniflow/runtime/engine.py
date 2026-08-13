@@ -20,9 +20,8 @@ from omniflow.core.model import (
     ToolCall,
 )
 from omniflow.core.schemas import canonicalize_action
-from omniflow.functions.artifact import bind_function
+from omniflow.functions.assets import FunctionStore, bind_function
 from omniflow.functions.recall import RecallResult, recall_functions
-from omniflow.functions.store import FunctionStore
 from omniflow.runtime.execution import (
     align_function_resume,
     execute_function,

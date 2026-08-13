@@ -28,7 +28,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from omniflow.core.trajectory import canonicalize_run_log
-from omniflow.functions.store import FunctionStore
+from omniflow.functions.assets import FunctionStore
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
     MOBILEGPT_AUDIT_SCHEMA_BY_SCHEMA,
@@ -2031,7 +2031,7 @@ def validate_ours_transfer_assets(
     *,
     require_action_transfer: bool = True,
 ) -> dict[str, Any]:
-    from omniflow.functions.store import FunctionStore
+    from omniflow.functions.assets import FunctionStore
     from omniflow.transfer.runtime import (
         TRANSFER_STATE_CATALOG_FILENAME,
         audit_transfer_action_sources,

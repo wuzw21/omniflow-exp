@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from omniflow.vlm.gui import build_model_turn_request
-from omniflow.vlm.ui_projection import project_ui
+from omniflow.vlm.planner import build_model_turn_request, project_ui
 
 
 def _node(

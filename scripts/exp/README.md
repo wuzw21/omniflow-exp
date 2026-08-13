@@ -8,7 +8,7 @@ seams, not alternate launchers:
 | Component | Role | Used by the normal E2E command? |
 | --- | --- | --- |
 | `src/experiment/e2e_task_pipeline.py` | Source qualification and 10-cell orchestration | Yes |
-| `omniflow/functions/compiler.py` | Shared validation and freezing of a skill-produced Function bundle | Yes, for every `ours` Function asset |
+| `omniflow/functions/assets.py` | Function validation, storage, editing, and freezing of a skill-produced bundle | Yes, for every `ours` Function asset |
 | `src/experiment/function_assets.py` | Immutable skill-manifest conversion | Used when the configured skill manifest supplies the missing task |
 | `src/experiment/direct_function_launch.py` | Seed-111 atomic Function qualification runner | Called by the E2E pipeline |
 | `src/experiment/batch_outcomes.py` | Immutable cell and table accounting | Called by the E2E pipeline |

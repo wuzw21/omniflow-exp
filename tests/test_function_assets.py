@@ -9,8 +9,7 @@ import stat
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from omniflow.functions.artifact import bind_function
-from omniflow.functions.store import FunctionStore
+from omniflow.functions.assets import FunctionStore, bind_function
 from src.experiment.artifact_memory import (
     load_artifact_memory,
     refresh_artifact_memory,

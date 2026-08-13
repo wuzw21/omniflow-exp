@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from omniflow import compile_runlog_to_store
-from omniflow.functions.store import FunctionStore
+from omniflow.functions.assets import FunctionStore
 from omniflow.transfer.runtime import (
     audit_transfer_action_sources,
     load_transfer_state_catalog,

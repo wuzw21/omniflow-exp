@@ -8,7 +8,7 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from omniflow.core.config import PluginSet
 from omniflow.core.model import Action, ActionResult, Observation, TransferResult
-from omniflow.functions.compiler import compile_runlog_to_store
+from omniflow.functions.assets import compile_runlog_to_store
 from omniflow.runtime import execution
 from omniflow.transfer.runtime import capture_transfer_state
 

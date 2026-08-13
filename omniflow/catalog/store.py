@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from omniflow.core.model import Function, Observation
-from omniflow.functions.artifact import parse_function_artifact
+from omniflow.functions.assets import parse_function_artifact
 
 CATALOG_POINTER_SCHEMA = "omniflow.catalog-pointer.v1"
 CATALOG_MANIFEST_SCHEMA = "omniflow.catalog-manifest.v1"

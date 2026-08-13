@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from omniflow.bridge import _run_result
 from omniflow.core.model import Function, RunResult
-from omniflow.vlm.gui import build_model_turn_request
-from omniflow.vlm.guidance import (
+from omniflow.vlm.planner import (
     DEFAULT_STEP_GUIDANCE,
     ORDERING_STEP_GUIDANCE,
+    build_model_turn_request,
     resolve_step_guidance,
 )
 

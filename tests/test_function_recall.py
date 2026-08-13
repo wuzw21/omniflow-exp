@@ -3,13 +3,12 @@ from __future__ import annotations
 from omniflow import Action, ActionResult, Function, Observation, OmniFlow, ToolCall
 from omniflow.core.config import OmniFlowConfig, PluginSet
 from omniflow.core.model import FunctionStep, TransferResult
-from omniflow.functions.artifact import FUNCTION_ARTIFACT_VERSION
+from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION, FunctionStore
 from omniflow.functions.recall import (
     GOAL_LEXICAL_WEIGHT,
     PAGE_SIMILARITY_WEIGHT,
     recall_functions,
 )
-from omniflow.functions.store import FunctionStore
 
 
 def _page(
