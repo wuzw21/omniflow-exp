@@ -190,7 +190,7 @@ def test_compiler_rejects_agent_action_not_grounded_in_runlog(
         )
 
 
-def test_agent_prompt_includes_source_page_and_transfer_capability(
+def test_agent_prompt_uses_actions_without_source_page_and_explains_transfer(
     tmp_path: Path,
 ) -> None:
     captured: dict = {}
@@ -242,5 +242,10 @@ def test_agent_prompt_includes_source_page_and_transfer_capability(
     assert "best-effort target-element ranker" in system_prompt
     assert "does not infer what a Function parameter means" in system_prompt
     assert "what adjacent, repeated, dynamic" in system_prompt
-    source_observation = user_payload["run_log"]["steps"][0]["source_observation"]
-    assert 'text="Note"' in source_observation["forest"]
+    assert "Do not request or\nre-read screenshots" in system_prompt
+    authoring_step = user_payload["run_log"]["steps"][0]
+    assert "source_observation" not in authoring_step
+    assert authoring_step["action"] == {
+        "tool": "input_text",
+        "args": {"text": "Paid by card"},
+    }

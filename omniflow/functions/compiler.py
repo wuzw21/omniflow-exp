@@ -101,9 +101,6 @@ def compile_runlog_to_store(
                     "result": {"success": True},
                     "after_state_id": after_state_id,
                     "metadata": action_metadata,
-                    "source_observation": json.loads(
-                        json.dumps(observation, ensure_ascii=False)
-                    ),
                 }
             )
     if not steps:

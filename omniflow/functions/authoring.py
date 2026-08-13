@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 
-FUNCTION_AUTHORING_INSTRUCTIONS_VERSION = "omniflow.function-agent-authoring.v1"
+FUNCTION_AUTHORING_INSTRUCTIONS_VERSION = "omniflow.function-agent-authoring.v2"
 
 OMNITRANSFER_CAPABILITY = """OmniTransfer is a best-effort target-element ranker, not a semantic planner.
 For a recorded click, long press, or text-input target, OmniTransfer can compare
@@ -16,9 +16,11 @@ value, discover dynamic task data, choose a different workflow, decide that a
 candidate is acceptable, verify task completion, or guarantee that a matching
 target exists. It never replays source-device coordinates when mapping fails.
 An empty or unusable ranking returns to OmniFlow so the normal VLM fallback can
-continue. Therefore author only the semantic capability demonstrated by the
-recorded actions and source-page evidence; never broaden a Function because
-transfer may relocate its controls on another page or device."""
+continue. Function authoring does not need to inspect those page representations:
+OmniTransfer consumes the preserved source states later, during execution.
+Therefore author only the semantic capability demonstrated by the recorded goal,
+ordered actions, and action metadata; never broaden a Function because transfer
+may relocate its controls on another page or device."""
 
 FUNCTION_AUTHORING_AGENT_INSTRUCTIONS = f"""You are the offline Agent that converts one successful GUI RunLog into reusable OmniFlow Functions.
 Return exactly {{"reason": string, "bundle": object|null}}. You—not a heuristic
@@ -71,13 +73,16 @@ Copy this exact JSON shape. Replace values but never move, rename, or omit keys:
   }}
 }}
 
-Inspect every supplied source_observation, including its accessibility forest,
-UI elements, package/activity, and screenshot reference, together with the goal,
-action, and action metadata. The top-level reason must account for every source
-step index and state whether it was kept, grouped, parameterized, fixed, or
-omitted. Never infer a parameter's meaning from its recorded value alone. Bind
-it only when the source page identifies the receiving control or the surrounding
-RunLog evidence makes that semantic identity explicit.
+Analyze only the supplied goal and ordered action sequence, including action
+arguments, state identifiers, and existing action metadata. Do not request or
+re-read screenshots, accessibility forests, UI elements, or other page
+representations. Those source states are preserved separately for OmniTransfer
+at execution time. The top-level reason must account for every source step index
+and state whether it was kept, grouped, parameterized, fixed, or omitted. Never
+infer a parameter's meaning from its recorded value or coordinates alone. Bind
+it only when the goal, action type, argument name, or existing action metadata
+makes that semantic identity explicit. If the action sequence is insufficient,
+use a narrower description, keep the value fixed, or omit the Function.
 
 Each Function description is part of the runtime routing contract. It must say:
 1. the exact atomic effect produced by one successful call;

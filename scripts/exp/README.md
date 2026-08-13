@@ -27,8 +27,9 @@ One normal single-task invocation performs the complete workflow:
    source index.
 2. Resolve or create the native source asset for every selected method:
    - `fixed_replay`: use the canonical recorded actions;
-   - `ours`: have an Agent interpret the complete RunLog and source-page
-     evidence, then validate, freeze, and register its Function bundle;
+   - `ours`: have an Agent interpret the RunLog goal, ordered actions, and
+     existing action metadata without re-reading page representations, then
+     validate, freeze, and register its Function bundle;
    - `mobilegpt_offline_retrieval`: teach MobileGPT from the canonical RunLog,
      then save its native task/page/subtask/action memory;
    - `appagent_demo`: resolve or create the native demonstration;

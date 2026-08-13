@@ -828,9 +828,9 @@ def _management_tool_definition(name: str) -> dict[str, Any]:
     return {
         "name": name,
         "description": (
-            "Save one Agent-authored reusable Function. First inspect the complete "
-            "RunLog and its source-page evidence with get_run_log, then pass run_id "
-            "or run_log together with one complete Function and its exact source "
+            "Save one Agent-authored reusable Function. Analyze the RunLog goal, "
+            "ordered actions, and existing action metadata, then pass run_id or "
+            "run_log together with one complete Function and its exact source "
             "arguments. The Function description must state its atomic effect, "
             "parameter meanings, fixed choices, and excluded work. Preserve recorded "
             "actions in order; do not invent actions, UI evidence, or checker rules."
