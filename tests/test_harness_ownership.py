@@ -56,6 +56,14 @@ def test_bridge_planner_exposes_function_with_native_actions() -> None:
     assert function.id in tool_names
 
 
+def test_core_has_one_planner_implementation() -> None:
+    import omniflow.bridge as bridge
+    from omniflow.vlm.planner import VLMPlanner
+
+    assert not hasattr(bridge, "_BridgePlanner")
+    assert VLMPlanner.__name__ == "VLMPlanner"
+
+
 def test_successful_online_run_requests_registration_after_run() -> None:
     payload = _run_result(
         RunResult(

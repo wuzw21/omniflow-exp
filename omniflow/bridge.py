@@ -23,17 +23,12 @@ from omniflow.functions.artifact import parse_function_artifact
 from omniflow.functions.compiler import compile_runlog_to_store
 from omniflow.runlog import import_run_log_evidence
 from omniflow.runtime.engine import InputRequired, OmniFlow
-from omniflow.vlm.gui import (
-    ModelToolCallError,
-    build_model_turn_request,
-    parse_model_turn_response,
-)
 from omniflow.vlm.guidance import resolve_step_guidance
+from omniflow.vlm.planner import VLMPlanner
 
 PROTOCOL_VERSION = "2025-11-25"
 _DEFAULT_GUI_MAX_STEPS = 20
 _MAX_GUI_MAX_STEPS = 64
-_MODEL_TOOL_CALL_ATTEMPTS = 2
 
 _FUNCTION_CATALOG_ACTIONS = {
     "list_functions": "list",
@@ -260,16 +255,23 @@ class JsonLineBridge:
             defer_user_input=body.get("defer_user_input") is True,
         )
         installed_apps = host.installed_apps()
-        planner = _BridgePlanner(
-            self,
-            request_id,
-            host,
+        target_package_name = str(body.get("target_package_name") or "")
+        step_skill_guidance = resolve_step_guidance(
+            goal,
+            str(body.get("step_skill_guidance") or ""),
+        )
+        planner = VLMPlanner(
             model=model,
-            target_package_name=str(body.get("target_package_name") or ""),
-            step_skill_guidance=resolve_step_guidance(
-                goal,
-                str(body.get("step_skill_guidance") or ""),
+            metadata_sink=lambda value: setattr(
+                host, "current_action_metadata", dict(value)
             ),
+            transport=lambda envelope: self.host_call(
+                request_id,
+                "model_turn",
+                envelope,
+            ),
+            target_package_name=target_package_name,
+            step_skill_guidance=step_skill_guidance,
             max_steps=max_steps,
         )
         flow = OmniFlow(
@@ -297,11 +299,16 @@ class JsonLineBridge:
         )
         model = str(run_metadata.get("model") or "").strip()
         planner = (
-            _BridgePlanner(
-                self,
-                request_id,
-                host,
+            VLMPlanner(
                 model=model,
+                metadata_sink=lambda value: setattr(
+                    host, "current_action_metadata", dict(value)
+                ),
+                transport=lambda envelope: self.host_call(
+                    request_id,
+                    "model_turn",
+                    envelope,
+                ),
                 target_package_name=str(
                     run_metadata.get("target_package_name") or ""
                 ),
@@ -659,134 +666,6 @@ class _BridgeHost:
         return response
 
 
-class _BridgePlanner:
-    def __init__(
-        self,
-        bridge: JsonLineBridge,
-        request_id: str,
-        host: _BridgeHost,
-        *,
-        model: str,
-        target_package_name: str,
-        step_skill_guidance: str,
-        max_steps: int,
-    ):
-        self.bridge = bridge
-        self.request_id = request_id
-        self.host = host
-        self.model = str(model).strip()
-        self.target_package_name = str(target_package_name).strip()
-        self.step_skill_guidance = str(step_skill_guidance)
-        self.max_steps = int(max_steps)
-        self._metadata: dict[str, Any] = {}
-        self._rejected_tool_calls: list[dict[str, Any]] = []
-        self._turn_index = 0
-
-    def one_step_tool_call(
-        self,
-        goal: str,
-        observation: Observation,
-        functions: tuple[Function, ...] = (),
-        installed_apps: dict[str, str] | None = None,
-    ) -> ToolCall:
-        state = _planner_state(observation)
-        validation_error = ""
-        retry_tool_name = ""
-        rejected_tool_call: dict[str, Any] | None = None
-        lightweight_retry = False
-        self._rejected_tool_calls.clear()
-        for attempt in range(_MODEL_TOOL_CALL_ATTEMPTS):
-            self._turn_index += 1
-            request = build_model_turn_request(
-                goal=str(goal),
-                model=self.model,
-                state=state,
-                target_package_name=self.target_package_name,
-                step_skill_guidance=self.step_skill_guidance,
-                installed_apps=installed_apps or {},
-                functions=functions,
-                max_steps=self.max_steps,
-                turn_index=self._turn_index,
-                validation_error=validation_error,
-                retry_tool_name=retry_tool_name,
-                rejected_tool_call=rejected_tool_call,
-                lightweight_retry=lightweight_retry,
-            )
-            response = self.bridge.host_call(
-                self.request_id,
-                "model_turn",
-                {
-                    "goal": str(goal),
-                    "model": self.model,
-                    "state": state,
-                    "target_package_name": self.target_package_name,
-                    "step_skill_guidance": self.step_skill_guidance,
-                    "max_steps": self.max_steps,
-                    "request": request,
-                },
-            )
-            try:
-                tool_call, metadata = parse_model_turn_response(
-                    response,
-                    requested_model=self.model,
-                    turn_index=self._turn_index,
-                    functions=functions,
-                    display=(
-                        state.get("display")
-                        if isinstance(state.get("display"), dict)
-                        else None
-                    ),
-                )
-                break
-            except ModelToolCallError as error:
-                rejected_entry = {
-                    "turn_index": self._turn_index,
-                    "tool": error.tool_name or None,
-                    "error": str(error),
-                }
-                if error.arguments is not None:
-                    rejected_entry["arguments"] = error.arguments
-                self._rejected_tool_calls.append(rejected_entry)
-                if attempt == _MODEL_TOOL_CALL_ATTEMPTS - 1:
-                    self._metadata = {
-                        "rejected_tool_calls": list(self._rejected_tool_calls)
-                    }
-                    raise
-                validation_error = str(error)
-                retry_tool_name = error.tool_name
-                rejected_tool_call = {
-                    "tool": error.tool_name or None,
-                    "arguments": error.arguments,
-                }
-                lightweight_retry = error.code.endswith(
-                    "expected_one_native_tool_call:got_0"
-                )
-        if self._rejected_tool_calls:
-            metadata["rejected_tool_calls"] = list(self._rejected_tool_calls)
-        self._metadata = metadata
-        self.host.current_action_metadata = dict(self._metadata)
-        return tool_call
-
-    def take_metadata(self) -> dict[str, Any]:
-        metadata = dict(self._metadata)
-        self._metadata.clear()
-        return metadata
-
-
-def _planner_state(observation: Observation) -> dict[str, Any]:
-    state = observation.to_dict()
-    state["state_id"] = str(observation.extra.get("state_id") or "").strip()
-    for key in ("display", "screenshot_path"):
-        if observation.extra.get(key) is not None:
-            state[key] = observation.extra[key]
-    state["extra"] = {
-        key: value
-        for key, value in observation.extra.items()
-        if key not in {"state_id", "display", "screenshot_path"}
-    }
-    return {key: value for key, value in state.items() if value is not None}
-
-
 def _state_observation(value: Any) -> Observation:
     if not isinstance(value, dict):
         raise ValueError("state_must_be_object")
@@ -882,14 +761,14 @@ def _save_compile_error(error: ValueError) -> dict[str, Any]:
     code = {
         "successful_source_actions_required": "RUN_LOG_NO_REPLAYABLE_STEPS",
         "semantic_functions_required": "RUN_LOG_NO_REPLAYABLE_STEPS",
-        "function_author_agent_required": "FUNCTION_AUTHOR_AGENT_REQUIRED",
+        "function_bundle_required_from_authoring_skill": "FUNCTION_SKILL_BUNDLE_REQUIRED",
         "successful_source_goal_required": "RUN_LOG_GOAL_EMPTY",
     }.get(message, "RUN_LOG_COMPILE_FAILED")
     user_message = {
         "RUN_LOG_NO_REPLAYABLE_STEPS": "RunLog has no replayable steps",
         "RUN_LOG_GOAL_EMPTY": "RunLog goal is required",
-        "FUNCTION_AUTHOR_AGENT_REQUIRED": (
-            "An Agent-authored Function and source arguments are required"
+        "FUNCTION_SKILL_BUNDLE_REQUIRED": (
+            "A Function bundle produced by the authoring skill is required"
         ),
     }.get(code, message)
     return _save_error(code, user_message)

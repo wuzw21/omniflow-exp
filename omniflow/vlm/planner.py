@@ -1,61 +1,25 @@
 from __future__ import annotations
 
-import json
-import re
+from collections.abc import Callable
 from typing import Any
 
 from omniflow.core.config import PromptSet
 from omniflow.core.model import Function, Observation, ToolCall
-from omniflow.core.schemas import canonicalize_action, vlm_action_tools
-from omniflow.functions.artifact import validate_arguments
 from omniflow.vlm.gui import (
-    constrain_open_app_tool,
-    function_tools,
-    has_successful_function_action,
+    ModelToolCallError,
+    SYSTEM_PROMPT,
+    build_model_turn_request,
+    parse_model_turn_response,
 )
-from omniflow.vlm.model_adapter import adapt_tool_arguments
 from omniflow.vlm.model_config import resolve_openai_compatible_config
-from omniflow.vlm.tool_arguments import load_tool_arguments
-from omniflow.vlm.ui_projection import project_ui
 from omniflow.vlm.usage import LLMUsageTracker
-from omniflow.vlm_coordinates import (
-    display_size,
-    screen_context_to_pixels,
-    screen_pixel_args_to_canonical,
-    screen_pixel_tools,
-)
 
-_ORPHANED_Y_COORDINATE = re.compile(
-    r'^(?P<prefix>\{.*"x"\s*:\s*-?(?:\d+(?:\.\d*)?|\.\d+))'
-    r"\s*,\s*(?P<y>-?(?:\d+(?:\.\d*)?|\.\d+))\s*\}$",
-    re.DOTALL,
-)
-
-
-def _parse_tool_arguments(tool_name: str, raw_arguments: Any) -> dict[str, Any]:
-    text = str(raw_arguments or "{}")
-    try:
-        arguments = json.loads(text)
-    except json.JSONDecodeError as error:
-        match = (
-            _ORPHANED_Y_COORDINATE.fullmatch(text.strip())
-            if tool_name in {"click", "long_press"}
-            else None
-        )
-        if match is not None:
-            repaired = f'{match.group("prefix")}, "y": {match.group("y")}}}'
-            try:
-                arguments = json.loads(repaired)
-            except (json.JSONDecodeError, TypeError):
-                raise error
-        else:
-            arguments, _repaired = load_tool_arguments(text)
-    if not isinstance(arguments, dict):
-        raise ValueError("planner_tool_arguments_must_be_object")
-    return arguments
+ModelTransport = Callable[[dict[str, Any]], Any]
 
 
 class VLMPlanner:
+    """Choose one native GUI or recalled Function tool per model turn."""
+
     def __init__(
         self,
         *,
@@ -65,18 +29,32 @@ class VLMPlanner:
         base_url: str | None = None,
         timeout: float = 60.0,
         client: Any | None = None,
+        transport: ModelTransport | None = None,
+        metadata_sink: Callable[[dict[str, Any]], None] | None = None,
         prompts: PromptSet | None = None,
+        target_package_name: str = "",
+        step_skill_guidance: str = "",
+        max_steps: int = 20,
     ):
         if provider not in {"openai", "openai_compatible"}:
             raise ValueError("VLMPlanner supports OpenAI-compatible providers only")
-        self.model = model
-        self.timeout = timeout
+        if client is not None and transport is not None:
+            raise ValueError("planner_model_transport_ambiguous")
+        self.model = str(model).strip()
+        self.timeout = float(timeout)
         self._client = client
+        self._transport = transport
+        self._metadata_sink = metadata_sink
         self._api_key, self._base_url = resolve_openai_compatible_config(
             api_key=api_key,
             base_url=base_url,
         )
-        self.prompts = prompts or PromptSet()
+        self.system_prompt = prompts.planner_system if prompts is not None else SYSTEM_PROMPT
+        self.target_package_name = str(target_package_name).strip()
+        self.step_skill_guidance = str(step_skill_guidance).strip()
+        self.max_steps = max(1, int(max_steps))
+        self._turn_index = 0
+        self._metadata: dict[str, Any] = {}
         self._usage = LLMUsageTracker(component="planner", model=self.model)
 
     async def one_step_tool_call(
@@ -86,185 +64,151 @@ class VLMPlanner:
         functions: tuple[Function, ...] = (),
         installed_apps: dict[str, str] | None = None,
     ) -> ToolCall:
-        client = self._client or self._build_client()
-        projection = project_ui(str(observation.xml or ""), goal)
-        display = (
-            observation.extra.get("display")
-            if isinstance(observation.extra.get("display"), dict)
-            else None
-        )
-        width, height = display_size(display)
-        screen_context = screen_context_to_pixels(
-            {
-                key: value
-                for key, value in observation.extra.items()
-                if key not in {"display", "installed_apps"}
-            },
-            display,
-        )
-        completion_review_marker = observation.extra.get("completion_review_pending")
-        completion_review = (
-            bool(completion_review_marker)
-            if isinstance(completion_review_marker, bool)
-            else has_successful_function_action(observation.extra)
-        )
-        turn_payload: dict[str, Any] = {
-            "goal": goal,
-            "relevant_ui_elements": projection.text,
-            "ui_candidate_count": projection.candidate_count,
-            "display": {"width": width, "height": height},
-            "coordinate_space": "current_display_pixels",
-            "screen_context": screen_context,
-        }
-        if isinstance(screen_context, dict) and (
-            screen_context.get("recent_actions")
-            or screen_context.get("execution_history")
-            or screen_context.get("previous_action_error")
-        ):
-            turn_payload["history_policy"] = (
-                "The screen_context history is authoritative for this run. A "
-                "successful action already recorded on the same logical UI state "
-                "must not be issued again; choose finished or a different action. "
-                "A low-confidence OmniTransfer entry is recoverable: continue "
-                "from the current screenshot with a fresh current-screen action."
-            )
-        if completion_review:
-            turn_payload["completion_review"] = (
-                "The previous recalled Function tool call finished all of its "
-                "actions successfully, and those actions are already applied. "
-                "Judge the complete user goal from the current screenshot and UI "
-                "state. Call finished only if the whole goal is satisfied; "
-                "otherwise choose exactly one next tool. Never repeat or toggle "
-                "the last successful action merely to verify it, because that can "
-                "undo the completed operation."
-            )
-        content: list[dict[str, Any]] = [
-            {
-                "type": "text",
-                "text": json.dumps(turn_payload, ensure_ascii=False),
-            }
-        ]
-        if observation.image_base64 and (
-            projection.requires_screenshot or completion_review
-        ):
-            image = str(observation.image_base64)
-            image_url = (
-                image
-                if image.startswith("data:image/")
-                else f"data:image/png;base64,{image}"
-            )
-            content.append({"type": "image_url", "image_url": {"url": image_url}})
-        messages: list[dict[str, Any]] = [
-            {
-                "role": "system",
-                "content": (
-                    f"{self.prompts.planner_system}\n\n"
-                    "Mandatory coordinate contract: all tool coordinates are raw "
-                    f"pixels in the current original Display (X 0..{int(width)}, "
-                    f"Y 0..{int(height)}), never normalized 0..1000 values. XML "
-                    "bounds use the same frame. Transport image resizing does not "
-                    "change the coordinate frame."
-                ),
-            },
-            {"role": "user", "content": content},
-        ]
-        function_catalog = {function.id: function for function in functions}
-        tools = screen_pixel_tools(vlm_action_tools(), display)
-        tools = constrain_open_app_tool(tools, installed_apps or {})
-        tools.extend(
-            function_tools(tuple(function_catalog.values()), include_summary=False)
-        )
-        visible_tool_names = {
-            str(tool.get("function", {}).get("name") or "")
-            for tool in tools
-            if isinstance(tool, dict) and isinstance(tool.get("function"), dict)
-        }
+        state = _planner_state(observation)
+        validation_error = ""
+        retry_tool_name = ""
+        rejected_tool_call: dict[str, Any] | None = None
+        rejected_calls: list[dict[str, Any]] = []
         for attempt in range(2):
+            self._turn_index += 1
+            request = build_model_turn_request(
+                goal=str(goal),
+                model=self.model,
+                state=state,
+                target_package_name=self.target_package_name,
+                step_skill_guidance=self.step_skill_guidance,
+                installed_apps=installed_apps or {},
+                functions=functions,
+                max_steps=self.max_steps,
+                turn_index=self._turn_index,
+                validation_error=validation_error,
+                retry_tool_name=retry_tool_name,
+                rejected_tool_call=rejected_tool_call,
+                lightweight_retry=attempt > 0 and not retry_tool_name,
+                system_prompt=self.system_prompt,
+            )
             self._usage.start_call()
             try:
-                response = client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    tools=tools,
-                    tool_choice="required",
-                    temperature=0,
-                    timeout=self.timeout,
+                response = self._call_model(
+                    {
+                        "goal": str(goal),
+                        "model": self.model,
+                        "target_package_name": self.target_package_name,
+                        "step_skill_guidance": self.step_skill_guidance,
+                        "max_steps": self.max_steps,
+                        "request": request,
+                    }
                 )
+                self._usage.record_response(response)
+                tool_call, metadata = parse_model_turn_response(
+                    _normalize_response(response, requested_model=self.model),
+                    requested_model=self.model,
+                    turn_index=self._turn_index,
+                    functions=functions,
+                    display=state.get("display"),
+                )
+            except ModelToolCallError as error:
+                rejected = {
+                    "turn_index": self._turn_index,
+                    "tool": error.tool_name or None,
+                    "error": str(error),
+                }
+                if error.arguments is not None:
+                    rejected["arguments"] = error.arguments
+                rejected_calls.append(rejected)
+                if attempt == 1:
+                    self._metadata = {"rejected_tool_calls": rejected_calls}
+                    raise
+                validation_error = str(error)
+                retry_tool_name = error.tool_name
+                rejected_tool_call = {
+                    "tool": error.tool_name or None,
+                    "arguments": error.arguments,
+                }
+                continue
             except Exception:
                 self._usage.record_failure()
                 raise
-            self._usage.record_response(response)
-            message = response.choices[0].message
-            tool_calls = getattr(message, "tool_calls", None) or ()
-            if len(tool_calls) != 1:
-                raise ValueError(
-                    "planner_native_tool_call_contract_violation:"
-                    f"expected_one:got_{len(tool_calls)}"
-                )
-            call = tool_calls[0].function
-            try:
-                tool_name = str(call.name or "").strip()
-                if tool_name not in visible_tool_names:
-                    raise ValueError(f"planner_tool_not_visible:{tool_name}")
-                arguments = _parse_tool_arguments(
-                    tool_name,
-                    call.arguments,
-                )
-                if tool_name in function_catalog:
-                    validate_arguments(
-                        function_catalog[tool_name].input_schema,
-                        arguments,
-                    )
-                else:
-                    arguments, _adapter_metadata = adapt_tool_arguments(
-                        tool=tool_name,
-                        arguments=arguments,
-                        requested_model=self.model,
-                        resolved_model=self.model,
-                        display=display,
-                    )
-                    arguments, _coordinate_metadata = screen_pixel_args_to_canonical(
-                        tool=tool_name,
-                        args=arguments,
-                        display=display,
-                    )
-                    canonical = canonicalize_action(
-                        {"tool": tool_name, "args": arguments},
-                        persisted_only=False,
-                        allow_non_action=True,
-                    )
-                    arguments = dict(canonical["args"])
-            except (json.JSONDecodeError, TypeError, ValueError) as exc:
-                if attempt == 0:
-                    messages = [
-                        *messages,
-                        {
-                            "role": "user",
-                            "content": (
-                                "The previous tool call arguments were invalid "
-                                f"({exc}). "
-                                "Return exactly one provided GUI tool call whose "
-                                "arguments are valid JSON and satisfy its schema, "
-                                "including raw current-Display pixel coordinates."
-                            ),
-                        },
-                    ]
-                    continue
-                if isinstance(exc, json.JSONDecodeError):
-                    raise ValueError("planner_tool_arguments_must_be_json") from exc
-                raise
-            return ToolCall(tool_name, arguments)
+            if rejected_calls:
+                metadata["rejected_tool_calls"] = rejected_calls
+            self._metadata = metadata
+            if self._metadata_sink is not None:
+                self._metadata_sink(dict(metadata))
+            return tool_call
         raise AssertionError("unreachable")
+
+    def take_metadata(self) -> dict[str, Any]:
+        metadata = dict(self._metadata)
+        self._metadata.clear()
+        return metadata
 
     def take_usage(self) -> dict[str, Any]:
         return self._usage.take_usage()
+
+    def _call_model(self, envelope: dict[str, Any]) -> Any:
+        if self._transport is not None:
+            return self._transport(envelope)
+        client = self._client or self._build_client()
+        options = dict(envelope["request"])
+        options.pop("enable_thinking", None)
+        options["stream"] = False
+        options.pop("stream_options", None)
+        options["timeout"] = self.timeout
+        return client.chat.completions.create(**options)
 
     def _build_client(self):
         try:
             from openai import OpenAI
         except ImportError as exc:
             raise RuntimeError("Install omniflow[llm] to use VLMPlanner") from exc
-        options: dict[str, Any] = {"api_key": self._api_key or "not-required"}
+        options: dict[str, Any] = {
+            "api_key": self._api_key or "not-required",
+            "max_retries": 0,
+        }
         if self._base_url:
             options["base_url"] = self._base_url
         return OpenAI(**options)
+
+
+def _planner_state(observation: Observation) -> dict[str, Any]:
+    state = observation.to_dict()
+    state["state_id"] = str(observation.extra.get("state_id") or "").strip()
+    for key in ("display", "screenshot_path"):
+        if observation.extra.get(key) is not None:
+            state[key] = observation.extra[key]
+    return state
+
+
+def _normalize_response(value: Any, *, requested_model: str) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    choices = getattr(value, "choices", None) or ()
+    message = getattr(choices[0], "message", None) if choices else None
+    calls = getattr(message, "tool_calls", None) or ()
+    usage = getattr(value, "usage", None)
+    return {
+        "requested_model": requested_model,
+        "resolved_model": str(getattr(value, "model", None) or requested_model),
+        "reasoning": str(getattr(message, "reasoning", None) or ""),
+        "tool_calls": [
+            {
+                "function": {
+                    "name": str(getattr(call.function, "name", "") or ""),
+                    "arguments": str(getattr(call.function, "arguments", "") or ""),
+                }
+            }
+            for call in calls
+        ],
+        "usage": (
+            {
+                "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+                "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+                "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+            }
+            if usage is not None
+            else None
+        ),
+    }
+
+
+__all__ = ["ModelTransport", "VLMPlanner"]

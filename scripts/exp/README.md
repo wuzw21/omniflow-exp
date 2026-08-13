@@ -8,16 +8,15 @@ seams, not alternate launchers:
 | Component | Role | Used by the normal E2E command? |
 | --- | --- | --- |
 | `src/experiment/e2e_task_pipeline.py` | Source qualification and 10-cell orchestration | Yes |
-| `omniflow/functions/compiler.py` | Shared Agent-authored RunLog-to-Function validation and freezing | Yes, for every `ours` Function asset |
-| `src/experiment/function_assets.py` | Immutable offline Agent-response conversion | Used when the configured Agent authoring manifest supplies the missing task |
+| `omniflow/functions/compiler.py` | Shared validation and freezing of a skill-produced Function bundle | Yes, for every `ours` Function asset |
+| `src/experiment/function_assets.py` | Immutable skill-manifest conversion | Used when the configured skill manifest supplies the missing task |
 | `src/experiment/direct_function_launch.py` | Seed-111 atomic Function qualification runner | Called by the E2E pipeline |
 | `src/experiment/batch_outcomes.py` | Immutable cell and table accounting | Called by the E2E pipeline |
 
 The E2E pipeline does not reuse a Store merely because its RunLog hash matches.
-The Store provenance must identify either direct semantic-model authoring or an
-offline Agent response produced with the repository's exact versioned authoring
-instructions. A default action wrapper or a legacy mechanical manifest is not
-a valid Function asset.
+The Store provenance must identify the `androidworld-runlog-harvester` skill.
+A default action wrapper or a legacy mechanical manifest is not a valid
+Function asset.
 
 ## Pipeline
 
@@ -67,7 +66,7 @@ All data paths are absolute and outside the repository.
 | `OMNIFLOW_SINGLE_TASK_EVALUATION_SEED` | Target evaluation seed; formal value is `113` |
 | `OMNIFLOW_OURS_CONVERTED_ASSET_ROOT` | A new, empty conversion version directory |
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
-| `OMNIFLOW_OURS_AUTHORING_MANIFEST` | Immutable offline Agent response using `omniflow.function-agent-authoring-manifest.v2` |
+| `OMNIFLOW_OURS_AUTHORING_MANIFEST` | Immutable bundle manifest produced by `androidworld-runlog-harvester` using `omniflow.function-agent-skill-manifest.v1` |
 | `OMNIFLOW_MEMORY_MOBILEGPT_ROOTS` | Optional colon-separated roots containing sealed MobileGPT semantic memory |
 
 The source RunLog index defaults to

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
-
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
@@ -29,16 +27,15 @@ def _run_log(step_count: int) -> dict:
     )
 
 
-def test_compiler_requires_agent_authoring(
+def test_compiler_requires_skill_bundle(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(ValueError, match="function_author_agent_required"):
+    with pytest.raises(ValueError, match="function_bundle_required_from_authoring_skill"):
         compile_runlog_to_store(
             _run_log(1),
             tmp_path / "output",
             source_states={"state_0": {"state_id": "state_0"}},
         )
-
 
 def test_compiler_freezes_only_function_referenced_states(
     tmp_path: Path,
@@ -188,64 +185,3 @@ def test_compiler_rejects_agent_action_not_grounded_in_runlog(
                 }
             },
         )
-
-
-def test_agent_prompt_uses_actions_without_source_page_and_explains_transfer(
-    tmp_path: Path,
-) -> None:
-    captured: dict = {}
-
-    class Completions:
-        def create(self, **kwargs):
-            captured.update(kwargs)
-            return SimpleNamespace(
-                choices=[
-                    SimpleNamespace(
-                        message=SimpleNamespace(
-                            content=json.dumps(
-                                {
-                                    "reason": "Step 0 enters the visible Note field.",
-                                    "bundle": _single_input_bundle("note"),
-                                }
-                            )
-                        )
-                    )
-                ],
-                usage=SimpleNamespace(
-                    prompt_tokens=10,
-                    completion_tokens=5,
-                    total_tokens=15,
-                ),
-            )
-
-    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
-    result = compile_runlog_to_store(
-        _note_input_run_log(),
-        tmp_path / "output",
-        model="offline-agent-model",
-        client=client,
-        source_states={
-            "note-state": {
-                "state_id": "note-state",
-                "xml": (
-                    '<hierarchy><node text="Note" resource-id="app:id/note" '
-                    'class="android.widget.EditText" editable="true" '
-                    'focused="true" bounds="[0,0][100,100]" /></hierarchy>'
-                ),
-            }
-        },
-    )
-
-    assert result["function_ids"] == ["enter_expense_field"]
-    system_prompt = captured["messages"][0]["content"]
-    user_payload = json.loads(captured["messages"][1]["content"])
-    assert "best-effort target-element ranker" in system_prompt
-    assert "does not infer what a Function parameter means" in system_prompt
-    assert "what adjacent, repeated, dynamic" in system_prompt
-    assert "Do not request or\nre-read screenshots" in system_prompt
-    authoring_step = user_payload["run_log"]["steps"][0]
-    assert "source_observation" not in authoring_step
-    assert authoring_step["action"] == {
-        "tool": "input_text",
-        "args": {"text": "Paid by card"},
-    }

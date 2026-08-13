@@ -81,6 +81,7 @@ def build_model_turn_request(
     retry_tool_name: str = "",
     rejected_tool_call: dict[str, Any] | None = None,
     lightweight_retry: bool = False,
+    system_prompt: str = SYSTEM_PROMPT,
 ) -> dict[str, Any]:
     projection = (
         UIProjection("<omitted>", 0, 0, 0)
@@ -122,7 +123,7 @@ def build_model_turn_request(
     return {
         "model": str(model),
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": str(system_prompt)},
             {"role": "user", "content": content},
         ],
         "max_completion_tokens": 512,

@@ -92,7 +92,8 @@ class OmniFlow:
         )
         self.host = host
         self.planner = planner
-        self.function_router = function_router
+        if function_router is not None:
+            raise ValueError("function_router_removed_use_planner")
         self.installed_apps = (
             {
                 str(label).strip(): str(package).strip()
@@ -778,29 +779,6 @@ class OmniFlow:
             functions=self.store.functions,
             source_states=source_states,
             limit=max(0, int(resolved_limit)),
-        )
-
-    def recall(
-        self,
-        goal: str,
-        *,
-        observation: Observation,
-        source_states: dict[str, Observation | None],
-        limit: int | None = None,
-    ) -> list[Function]:
-        """Synchronously inspect page-aware recall with explicit source states."""
-
-        resolved_limit = (
-            self.config.runtime.max_function_tools if limit is None else int(limit)
-        )
-        return list(
-            recall_functions(
-                str(goal),
-                observation=Observation.from_value(observation),
-                functions=self.store.functions,
-                source_states=source_states,
-                limit=max(0, int(resolved_limit)),
-            ).functions
         )
 
     def call_tool(

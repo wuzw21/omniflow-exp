@@ -9,10 +9,6 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from omniflow import compile_runlog_to_store
-from omniflow.functions.authoring import (
-    FUNCTION_AUTHORING_INSTRUCTIONS_VERSION,
-    function_authoring_instructions_sha256,
-)
 from omniflow.functions.store import FunctionStore
 from omniflow.transfer.runtime import (
     audit_transfer_action_sources,
@@ -23,7 +19,7 @@ from src.integrations.android_world.apps import resolve_androidworld_package
 from src.integrations.runlog import import_run_log_evidence
 
 CATALOG_SCHEMA = "omniflow.function-asset-catalog.v1"
-AUTHORING_SCHEMA = "omniflow.function-agent-authoring-manifest.v2"
+AUTHORING_SCHEMA = "omniflow.function-agent-skill-manifest.v1"
 
 
 def convert_function_assets(
@@ -49,7 +45,7 @@ def convert_function_assets(
         source_index_path=source_index_path,
     )
     raw_authoring_tasks = authoring["tasks"]
-    authoring_agent = authoring["agent"]
+    producer = authoring["producer"]
     raw_source_rows = source_index.get("assets", source_index)
     if not isinstance(raw_source_rows, dict):
         raise ValueError("source_asset_index_tasks_required")
@@ -100,7 +96,7 @@ def convert_function_assets(
             source_run_log=source_path,
             source_index_path=source_index_path,
             authoring_manifest_path=authoring_path,
-            authoring_agent=authoring_agent,
+            producer=producer,
             authoring_task=raw_authoring_tasks[task_name],
             output_root=task_root / "function_store",
         )
@@ -152,7 +148,7 @@ def _convert_runlog_to_function_asset(
     source_run_log: str | Path,
     source_index_path: str | Path,
     authoring_manifest_path: str | Path,
-    authoring_agent: dict[str, Any],
+    producer: dict[str, Any],
     authoring_task: dict[str, Any],
     output_root: str | Path,
 ) -> dict[str, Any]:
@@ -234,10 +230,10 @@ def _convert_runlog_to_function_asset(
         "source_asset_index": str(index_path),
         "source_asset_index_sha256": _sha256(index_path),
         "semantic_collection": {
-            "function": "offline_agent_function_authoring",
+            "function": "androidworld_runlog_harvester_skill",
             "manifest_path": str(authoring_path),
             "manifest_sha256": _sha256(authoring_path),
-            "agent": json.loads(json.dumps(authoring_agent)),
+            "producer": json.loads(json.dumps(producer)),
             "reason": author_response["reason"],
             "model": None,
             "model_calls": 0,
@@ -281,12 +277,7 @@ def _validate_authoring_manifest(
     *,
     source_index_path: Path,
 ) -> None:
-    if set(value) != {
-        "schema_version",
-        "source_asset_index_sha256",
-        "agent",
-        "tasks",
-    }:
+    if set(value) != {"schema_version", "source_asset_index_sha256", "producer", "tasks"}:
         raise ValueError("function_authoring_manifest_contract_invalid")
     if value.get("schema_version") != AUTHORING_SCHEMA:
         raise ValueError("unsupported_function_authoring_manifest_version")
@@ -297,22 +288,9 @@ def _validate_authoring_manifest(
             "function_authoring_source_index_hash_mismatch:"
             f"expected={expected_hash or 'missing'}:actual={actual_hash}"
         )
-    agent = value.get("agent")
-    if not isinstance(agent, dict) or set(agent) != {
-        "kind",
-        "instructions_version",
-        "instructions_sha256",
-    }:
-        raise ValueError("function_authoring_agent_contract_invalid")
-    if agent.get("kind") != "offline_agent":
-        raise ValueError("function_authoring_agent_required")
-    if (
-        agent.get("instructions_version")
-        != FUNCTION_AUTHORING_INSTRUCTIONS_VERSION
-        or agent.get("instructions_sha256")
-        != function_authoring_instructions_sha256()
-    ):
-        raise ValueError("function_authoring_instructions_mismatch")
+    producer = value.get("producer")
+    if not isinstance(producer, dict) or producer.get("kind") != "androidworld_runlog_harvester_skill":
+        raise ValueError("function_authoring_skill_producer_required")
     tasks = value.get("tasks")
     if not isinstance(tasks, dict):
         raise ValueError("function_authoring_tasks_required")

@@ -76,7 +76,7 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert completed.stderr == ""
     script_text = SCRIPT.read_text(encoding="utf-8")
     assert "ours_store_index_mechanical_asset" in script_text
-    assert "compile_runlog_to_store" in script_text
+    assert "androidworld_runlog_harvester_skill" in script_text
     assert f'mobilegpt_source_schema="{MOBILEGPT_DIRECT_MEMORY_SCHEMA}"' in script_text
     assert f'mobilegpt_source_method="{MOBILEGPT_DIRECT_SOURCE_METHOD}"' in script_text
     assert script_text.count(MOBILEGPT_DIRECT_MEMORY_SCHEMA) >= 2

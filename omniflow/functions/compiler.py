@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import os
 from pathlib import Path
 from typing import Any
 
 from omniflow.core.schemas import canonicalize_action
 from omniflow.core.trajectory import canonicalize_run_log, state_id
-from omniflow.functions.authoring import FUNCTION_AUTHORING_AGENT_INSTRUCTIONS
 from omniflow.runlog import project_androidworld_step_actions
 from omniflow.runtime.checker import validate_checker_rule
 
@@ -113,70 +110,21 @@ def compile_runlog_to_store(
         "success": True,
         "steps": steps,
     }
-    authoring_prompt = FUNCTION_AUTHORING_AGENT_INSTRUCTIONS
-    if prompt is not None:
-        authoring_prompt += f"\n\nAdditional caller instructions:\n{prompt}"
-    selected_model = str(model or "").strip() or None
     usage = {
         "model_calls": 0,
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "total_tokens": 0,
     }
-    if function_bundle is not None:
-        if selected_model is not None or client is not None or prompt is not None:
-            raise ValueError("function_bundle_cannot_use_author_model_options")
-        authored = {
-            "reason": "Registered offline Agent-authored Functions.",
-            "bundle": json.loads(json.dumps(function_bundle, ensure_ascii=False)),
-        }
-    elif selected_model is None:
-        if client is not None or prompt is not None:
-            raise ValueError("author_model_required_for_author_options")
-        raise ValueError("function_author_agent_required")
-    else:
-        if client is None:
-            try:
-                from openai import OpenAI
-            except ImportError as exc:
-                raise RuntimeError("Install omniflow[llm] to compile RunLogs") from exc
-            options: dict[str, Any] = {
-                "api_key": os.getenv("OPENAI_API_KEY") or "not-required"
-            }
-            if os.getenv("OPENAI_BASE_URL"):
-                options["base_url"] = os.environ["OPENAI_BASE_URL"]
-            client = OpenAI(**options)
-        response = client.chat.completions.create(
-            model=selected_model,
-            messages=[
-                {"role": "system", "content": authoring_prompt},
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {"run_log": facts, "recovery_examples": recovery_examples},
-                        ensure_ascii=False,
-                    ),
-                },
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=16384,
-            temperature=0,
-            timeout=float(timeout),
-        )
-        response_usage = getattr(response, "usage", None)
-        prompt_tokens = int(getattr(response_usage, "prompt_tokens", 0) or 0)
-        completion_tokens = int(
-            getattr(response_usage, "completion_tokens", 0) or 0
-        )
-        total_tokens = int(getattr(response_usage, "total_tokens", 0) or 0)
-        usage = {
-            "model_calls": 1,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens
-            or prompt_tokens + completion_tokens,
-        }
-        authored = json.loads(str(response.choices[0].message.content or ""))
+    if model is not None or client is not None or prompt is not None:
+        raise ValueError("runtime_function_authoring_removed_use_skill_bundle")
+    _ = timeout
+    if function_bundle is None:
+        raise ValueError("function_bundle_required_from_authoring_skill")
+    authored = {
+        "reason": "Registered Function bundle produced by the authoring skill.",
+        "bundle": json.loads(json.dumps(function_bundle, ensure_ascii=False)),
+    }
     if not isinstance(authored, dict) or set(authored) != {"reason", "bundle"}:
         raise ValueError("function_author_response_contract_invalid")
     if not isinstance(authored["reason"], str):
@@ -294,12 +242,8 @@ def compile_runlog_to_store(
         "live_probe_allowed": True,
         "classification": "ready_for_live_probe",
         "reason": authored["reason"],
-        "model": selected_model,
-        "prompt_sha256": (
-            hashlib.sha256(authoring_prompt.encode()).hexdigest()
-            if selected_model is not None
-            else None
-        ),
+        "model": None,
+        "prompt_sha256": None,
         "store_path": str(store_path),
         "transfer_state_catalog": str(transfer_state_catalog_path),
         "transfer_state_count": len(frozen_states),

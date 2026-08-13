@@ -771,7 +771,7 @@ def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:
                         SimpleNamespace(
                             function=SimpleNamespace(
                                 name="finished",
-                                arguments="{}",
+                                arguments='{"summary":"Goal complete"}',
                             )
                         )
                     ]
@@ -830,7 +830,7 @@ def test_vlm_planner_sends_execution_history_to_model() -> None:
                         SimpleNamespace(
                             function=SimpleNamespace(
                                 name="finished",
-                                arguments="{}",
+                                arguments='{"summary":"Goal complete"}',
                             )
                         )
                     ]
@@ -880,18 +880,12 @@ def test_vlm_planner_sends_execution_history_to_model() -> None:
         )
     )
 
-    payload = json.loads(completions.requests[0]["messages"][1]["content"][0]["text"])
-    assert payload["screen_context"]["recent_actions"][0]["tool"] == "click"
-    assert payload["screen_context"]["execution_history"].startswith("1.")
-    assert payload["screen_context"]["function_execution"][
-        "official_validator_status"
-    ] == "pending"
-    assert payload["screen_context"]["function_execution"]["final_observation"] == {
-        "state_id": "state_after",
-        "package_name": "com.example.shop",
-        "activity_name": "CartActivity",
-    }
-    assert "must not be issued again" in payload["history_policy"]
+    payload = completions.requests[0]["messages"][1]["content"][0]["text"]
+    assert '"tool":"click"' in payload
+    assert "1. [Planner] Clicked the item successfully." in payload
+    assert '"official_validator_status":"pending"' in payload
+    assert '"state_id":"state_after"' in payload
+    assert "Do not repeat the same action" in payload
 
 
 def test_bridge_planner_exposes_packages_only_through_open_app_tool() -> None:
@@ -992,7 +986,7 @@ def test_vlm_planner_function_completion_review_uses_final_screenshot() -> None:
                         SimpleNamespace(
                             function=SimpleNamespace(
                                 name="finished",
-                                arguments="{}",
+                                arguments='{"summary":"Goal complete"}',
                             )
                         )
                     ]
@@ -1038,9 +1032,9 @@ def test_vlm_planner_function_completion_review_uses_final_screenshot() -> None:
     request = completions.requests[0]
     content = request["messages"][1]["content"]
     assert [item["type"] for item in content] == ["text", "image_url"]
-    turn_payload = json.loads(content[0]["text"])
-    assert '"checked":false' in turn_payload["relevant_ui_elements"]
-    assert "Never repeat or toggle" in turn_payload["completion_review"]
+    turn_payload = content[0]["text"]
+    assert '"checked":false' in turn_payload
+    assert "Never repeat or toggle" in turn_payload
 
 
 def test_androidworld_launcher_configures_one_unified_planner(

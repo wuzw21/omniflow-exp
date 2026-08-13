@@ -146,8 +146,8 @@ Options:
   --tasks TASK1,TASK2,...   Run an ordered task-major subset, or limit
                             --convert-ours-assets. Implies --all-tasks during
                             experiment execution.
-  --convert-ours-assets     Compile human-recorded source RunLogs with an
-                            immutable offline authoring manifest, then validate,
+  --convert-ours-assets     Validate and freeze Function bundles from an
+                            immutable skill manifest, then
                             freeze, and register the assets.
   --convert-source-runlogs  Convert the indexed legacy source RunLogs once to
                             omniflow.run_log.v1.
@@ -186,7 +186,7 @@ Optional runtime overrides:
 Asset conversion inputs:
   OMNIFLOW_OURS_SOURCE_ASSET_INDEX Source RunLog index; defaults to the master
                                    source index.
-  OMNIFLOW_OURS_AUTHORING_MANIFEST Immutable offline Function authoring manifest.
+  OMNIFLOW_OURS_AUTHORING_MANIFEST Immutable Function bundle skill manifest.
   OMNIFLOW_OURS_CONVERTED_ASSET_ROOT New immutable conversion output root.
   OMNIFLOW_EXP_MEMORY_INDEX          Existing memory current.json.
 
@@ -862,21 +862,15 @@ if not provenance_path.is_absolute() or not provenance_path.is_file():
 provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
 collection = provenance.get("semantic_collection")
 semantic_function = str(collection.get("function") or "") if isinstance(collection, dict) else ""
-model_authored = (
-    semantic_function == "compile_runlog_to_store"
-    and bool(str(collection.get("model") or "").strip())
+skill_authored = (
+    semantic_function == "androidworld_runlog_harvester_skill"
+    and isinstance(collection.get("producer"), dict)
+    and collection["producer"].get("kind") == "androidworld_runlog_harvester_skill"
 )
-offline_agent_authored = (
-    semantic_function == "offline_agent_function_authoring"
-    and isinstance(collection.get("agent"), dict)
-    and collection["agent"].get("kind") == "offline_agent"
-    and bool(str(collection["agent"].get("instructions_version") or "").strip())
-    and bool(str(collection["agent"].get("instructions_sha256") or "").strip())
-)
-if not (model_authored or offline_agent_authored):
+if not skill_authored:
     raise SystemExit(
         f"ours_store_index_mechanical_asset:{task_name}:"
-        "create a model- or offline-Agent-authored Function registration"
+        "create a Function registration from the androidworld-runlog-harvester skill"
     )
 store_path = Path(str(row["store_path"])).resolve()
 transfer_path = Path(str(row["transfer_states_path"])).resolve()

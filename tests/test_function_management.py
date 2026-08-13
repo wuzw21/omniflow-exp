@@ -133,8 +133,8 @@ def test_save_function_rejects_run_log_without_agent_authored_function(tmp_path)
     assert set(result) == {"success", "function_id", "function", "error"}
     assert result["success"] is False
     assert result["error"] == {
-        "code": "FUNCTION_AUTHOR_AGENT_REQUIRED",
-        "message": "An Agent-authored Function and source arguments are required",
+        "code": "FUNCTION_SKILL_BUNDLE_REQUIRED",
+        "message": "A Function bundle produced by the authoring skill is required",
     }
 
 
@@ -158,7 +158,7 @@ def test_save_function_requires_agent_for_run_log_object_or_file(tmp_path) -> No
         bridge = Bridge(tmp_path / f"functions-{index}.json")
         result = bridge._save_function("request-1", {"run_log": source})
         assert result["success"] is False
-        assert result["error"]["code"] == "FUNCTION_AUTHOR_AGENT_REQUIRED"
+        assert result["error"]["code"] == "FUNCTION_SKILL_BUNDLE_REQUIRED"
 
 
 def test_save_function_accepts_agent_authored_semantic_function(tmp_path) -> None:

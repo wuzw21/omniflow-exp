@@ -10,10 +10,6 @@ import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from omniflow.functions.artifact import bind_function
-from omniflow.functions.authoring import (
-    FUNCTION_AUTHORING_INSTRUCTIONS_VERSION,
-    function_authoring_instructions_sha256,
-)
 from omniflow.functions.store import FunctionStore
 from src.experiment.artifact_memory import (
     load_artifact_memory,
@@ -112,12 +108,10 @@ def _authoring_manifest(root: Path, source_index: Path) -> Path:
     return _write_json(
         root / "authoring_manifest.json",
         {
-            "schema_version": "omniflow.function-agent-authoring-manifest.v2",
+            "schema_version": "omniflow.function-agent-skill-manifest.v1",
             "source_asset_index_sha256": _sha256(source_index),
-            "agent": {
-                "kind": "offline_agent",
-                "instructions_version": FUNCTION_AUTHORING_INSTRUCTIONS_VERSION,
-                "instructions_sha256": function_authoring_instructions_sha256(),
+            "producer": {
+                "kind": "androidworld_runlog_harvester_skill",
             },
             "tasks": {
                 "RecordWithName": {
@@ -272,13 +266,11 @@ def test_human_runlog_uses_offline_manifest_and_preserves_actions(
     )
     assert provenance["source_run_id"] == "human-source"
     assert provenance["semantic_collection"] == {
-        "function": "offline_agent_function_authoring",
+        "function": "androidworld_runlog_harvester_skill",
         "manifest_path": str(authoring_manifest.resolve()),
         "manifest_sha256": _sha256(authoring_manifest),
-        "agent": {
-            "kind": "offline_agent",
-            "instructions_version": FUNCTION_AUTHORING_INSTRUCTIONS_VERSION,
-            "instructions_sha256": function_authoring_instructions_sha256(),
+        "producer": {
+            "kind": "androidworld_runlog_harvester_skill",
         },
         "reason": (
             "Steps 0-3 form one recorded audio workflow. The Agent parameterized "
@@ -412,12 +404,10 @@ def test_conversion_rejects_legacy_run_log_at_formal_boundary(
     authoring_manifest = _write_json(
         tmp_path / "authoring.json",
         {
-            "schema_version": "omniflow.function-agent-authoring-manifest.v2",
+            "schema_version": "omniflow.function-agent-skill-manifest.v1",
             "source_asset_index_sha256": _sha256(source_index),
-            "agent": {
-                "kind": "offline_agent",
-                "instructions_version": FUNCTION_AUTHORING_INSTRUCTIONS_VERSION,
-                "instructions_sha256": function_authoring_instructions_sha256(),
+            "producer": {
+                "kind": "androidworld_runlog_harvester_skill",
             },
             "tasks": {
                 "SystemCopyToClipboard": {
