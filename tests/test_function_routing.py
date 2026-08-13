@@ -22,6 +22,7 @@ from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION, FunctionStore
 from omniflow.vlm.planner import (
     SYSTEM_PROMPT,
     VLMPlanner,
+    adapt_tool_arguments,
     build_model_turn_request,
     function_tools,
 )
@@ -765,6 +766,36 @@ class CapturingCompletions:
         return self.response
 
 
+def test_qwen_adapter_converts_unambiguous_normalized_scalar_coordinates() -> None:
+    adapted, metadata = adapt_tool_arguments(
+        tool="click",
+        arguments={"x": 876, "y": 869},
+        requested_model="qwen3-vl-plus",
+        resolved_model="qwen3-vl-plus",
+        display={"width": 720, "height": 1280},
+    )
+
+    assert adapted == {"x": pytest.approx(630.72), "y": pytest.approx(1112.32)}
+    assert metadata is not None
+    assert metadata["changes"] == [
+        {
+            "source_fields": ["x", "y"],
+            "source_shape": "normalized_0_1000_scalar_pair",
+            "target_fields": ["x", "y"],
+        }
+    ]
+
+    raw_pixels, raw_metadata = adapt_tool_arguments(
+        tool="click",
+        arguments={"x": 632, "y": 1112},
+        requested_model="qwen3-vl-plus",
+        resolved_model="qwen3-vl-plus",
+        display={"width": 720, "height": 1280},
+    )
+    assert raw_pixels == {"x": 632, "y": 1112}
+    assert raw_metadata is None
+
+
 def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:
     response = SimpleNamespace(
         choices=[
@@ -1048,9 +1079,16 @@ def test_planner_treats_recalled_functions_as_preferred_peer_apis() -> None:
     tool_names = [tool["function"]["name"] for tool in request["tools"]]
     assert tool_names[0] == "add_expense"
     assert "Prefer a matching recalled Function API" in SYSTEM_PROMPT
+    assert "call that Function API now" in SYSTEM_PROMPT
     assert "same Function API multiple times" in SYSTEM_PROMPT
     assert "does not mean the overall task is complete" in SYSTEM_PROMPT
     assert "copy every needed" in SYSTEM_PROMPT
+    summaries = [
+        tool["function"]["parameters"]["properties"]["summary"]["description"]
+        for tool in request["tools"]
+    ]
+    assert all("copy every such field and value exactly" in text for text in summaries)
+    assert all("never shorten away required facts" in text for text in summaries)
 
 
 def test_vlm_planner_retries_empty_required_function_string() -> None:

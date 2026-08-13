@@ -35,7 +35,9 @@ are actionable visual elements adaptively associated with nearby goal text. The 
 field is a stable visual reference for an actionable element at its XML bounds.
 Return exactly one tool_call each turn. Recalled Function APIs and native GUI
 actions are peer tools. Prefer a matching recalled Function API over manually
-repeating its GUI actions. You may call the same Function API multiple times with
+repeating its GUI actions. When its required arguments are known and it covers the
+intended next GUI segment, call that Function API now instead of issuing its first
+native action manually. You may call the same Function API multiple times with
 different arguments, or call several Function APIs in sequence. A successful
 Function result returns control to you and does not mean the overall task is complete.
 Never put
@@ -289,9 +291,11 @@ def function_tools(
                 "summary": {
                     "type": "string",
                     "description": (
-                        "Concise running task memory: preserve observed values "
-                        "still needed later, completed work, and why this tool "
-                        "is next."
+                        "Running task memory and next-tool reason. Before leaving "
+                        "a screen that contains facts needed later, copy every "
+                        "such field and value exactly here; never shorten away "
+                        "required facts. Also preserve completed work and why "
+                        "this tool is next."
                     ),
                 },
                 **properties,
@@ -884,6 +888,28 @@ def _adapt_coordinate_pair(
 ) -> None:
     x_value = arguments.get(x_field, _MISSING)
     y_value = arguments.get(y_field, _MISSING)
+    if (
+        display_width is not None
+        and display_height is not None
+        and _is_number(x_value)
+        and _is_number(y_value)
+        and 0 <= float(x_value) <= 1000
+        and 0 <= float(y_value) <= 1000
+        and (
+            float(x_value) > display_width
+            or float(y_value) > display_height
+        )
+    ):
+        arguments[x_field] = float(x_value) / 1000.0 * display_width
+        arguments[y_field] = float(y_value) / 1000.0 * display_height
+        changes.append(
+            {
+                "source_fields": [x_field, y_field],
+                "source_shape": "normalized_0_1000_scalar_pair",
+                "target_fields": [x_field, y_field],
+            }
+        )
+        return
     if (
         display_width is not None
         and display_height is not None

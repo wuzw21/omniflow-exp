@@ -82,8 +82,10 @@ def openai_action_tools(*, include_summary: bool = False) -> list[dict[str, Any]
             properties["summary"] = {
                 "type": "string",
                 "description": (
-                    "Concise running task memory: preserve observed values still "
-                    "needed later, completed work, and why this action is next."
+                    "Running task memory and next-action reason. Before leaving "
+                    "a screen that contains facts needed later, copy every such "
+                    "field and value exactly here; never shorten away required "
+                    "facts. Also preserve completed work and why this action is next."
                 ),
             }
             required.append("summary")
