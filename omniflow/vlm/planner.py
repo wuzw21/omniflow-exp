@@ -46,6 +46,9 @@ are raw pixels in the current original Display coordinate frame, never normalize
 resized for transport, but its coordinates must still refer to the original
 Display. Every tool call
 must include a concise summary explaining why that action is the best next step.
+When a later step needs facts visible only on the current screen, copy every needed
+fact exactly into the summary before navigating away; do not infer, abbreviate, or
+drop field values.
 Every coordinate is one scalar raw-pixel number, never an array, object, string,
 boolean, normalized value, or combined coordinate pair.
 Use finished only when current evidence directly proves the goal is complete.

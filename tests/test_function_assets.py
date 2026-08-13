@@ -149,6 +149,7 @@ def _authoring_manifest(root: Path, source_index: Path) -> Path:
                                         "properties": {
                                             "filename": {
                                                 "type": "string",
+                                                "minLength": 1,
                                                 "description": (
                                                     "Exact text to enter in the visible "
                                                     "File name field."
@@ -259,6 +260,11 @@ def test_human_runlog_uses_offline_manifest_and_preserves_actions(
         {"tool": "click", "args": {"x": 500, "y": 200}},
         {"tool": "input_text", "args": {"text": "source_name.m4a"}},
     ]
+    with pytest.raises(
+        ValueError,
+        match="function_arguments_invalid:minLength:filename",
+    ):
+        bind_function(function, {"filename": "   "})
 
     provenance = json.loads(
         Path(task["provenance_path"]).read_text(encoding="utf-8")

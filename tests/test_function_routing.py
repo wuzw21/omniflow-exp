@@ -1050,6 +1050,82 @@ def test_planner_treats_recalled_functions_as_preferred_peer_apis() -> None:
     assert "Prefer a matching recalled Function API" in SYSTEM_PROMPT
     assert "same Function API multiple times" in SYSTEM_PROMPT
     assert "does not mean the overall task is complete" in SYSTEM_PROMPT
+    assert "copy every needed" in SYSTEM_PROMPT
+
+
+def test_vlm_planner_retries_empty_required_function_string() -> None:
+    requests: list[dict[str, object]] = []
+    responses = iter(
+        [
+            {
+                "requested_model": "test-model",
+                "resolved_model": "test-model",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "finish_expense",
+                            "arguments": json.dumps(
+                                {"summary": "Save the expense.", "note": "   "}
+                            ),
+                        }
+                    }
+                ],
+            },
+            {
+                "requested_model": "test-model",
+                "resolved_model": "test-model",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "finish_expense",
+                            "arguments": json.dumps(
+                                {
+                                    "summary": "Save the expense with its note.",
+                                    "note": "Paid by card",
+                                }
+                            ),
+                        }
+                    }
+                ],
+            },
+        ]
+    )
+
+    def transport(envelope: dict[str, object]) -> dict[str, object]:
+        request = envelope["request"]
+        assert isinstance(request, dict)
+        requests.append(request)
+        return next(responses)
+
+    function = Function(
+        function_id="finish_expense",
+        name="Finish expense",
+        description="Enter the note and save the current expense.",
+        steps=(),
+        input_schema={
+            "type": "object",
+            "properties": {"note": {"type": "string", "minLength": 1}},
+            "required": ["note"],
+            "additionalProperties": False,
+        },
+    )
+    planner = VLMPlanner(model="test-model", transport=transport)
+
+    call = asyncio.run(
+        planner.one_step_tool_call(
+            "Add the expense",
+            Observation(extra={"display": {"width": 720, "height": 1280}}),
+            (function,),
+        )
+    )
+
+    assert call == ToolCall("finish_expense", {"note": "Paid by card"})
+    assert len(requests) == 2
+    assert [tool["function"]["name"] for tool in requests[1]["tools"]] == [
+        "finish_expense"
+    ]
+    retry_text = requests[1]["messages"][-1]["content"][0]["text"]
+    assert "function_arguments_invalid:minLength:note" in retry_text
 
 
 def test_function_completion_review_keeps_final_screenshot_and_checked_state() -> None:

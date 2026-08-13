@@ -184,6 +184,12 @@ def validate_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> Non
         expected_type = str(definition.get("type") or "")
         if expected_type and not _matches_json_type(value, expected_type):
             raise ValueError(f"function_arguments_invalid:type:{name}")
+        if (
+            isinstance(value, str)
+            and "minLength" in definition
+            and len(value.strip()) < int(definition["minLength"])
+        ):
+            raise ValueError(f"function_arguments_invalid:minLength:{name}")
         enum_values = definition.get("enum")
         if isinstance(enum_values, list) and value not in enum_values:
             raise ValueError(f"function_arguments_invalid:enum:{name}")
