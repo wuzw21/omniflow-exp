@@ -93,7 +93,7 @@ def test_omniflow_selects_rank_one_without_a_confidence_gate(monkeypatch) -> Non
     assert len(result["candidates"]) == 2
 
 
-def test_omniflow_not_omnitransfer_owns_page_identity_rejection(monkeypatch) -> None:
+def test_omniflow_does_not_gate_candidates_by_page_identity(monkeypatch) -> None:
     module = SimpleNamespace(
         rank_action_candidates=lambda **_kwargs: _ranking(
             candidates=[
@@ -117,10 +117,10 @@ def test_omniflow_not_omnitransfer_owns_page_identity_rejection(monkeypatch) -> 
         target_package_name="com.target",
     )
 
-    assert result["mapped"] is False
-    assert result["reason"] == "target_page_identity_mismatch"
-    assert result["mapping_mode"] == "page_identity"
-    assert result["candidates"][0]["candidate_id"] == "wrong-page-candidate"
+    assert result["mapped"] is True
+    assert result["selection_policy"] == "omniflow_top_candidate"
+    assert result["target_candidate_id"] == "wrong-page-candidate"
+    assert (result["new_x"], result["new_y"]) == (15.0, 25.0)
 
 
 def test_omniflow_owns_empty_candidate_fallback(monkeypatch) -> None:

@@ -552,19 +552,10 @@ def preflight_omnitransfer() -> dict[str, Any]:
 
 def _select_transfer_candidate(
     ranking: dict[str, Any],
-    request: dict[str, Any],
+    _request: dict[str, Any],
 ) -> dict[str, Any]:
     """Apply OmniFlow policy to an OmniTransfer candidate ranking."""
 
-    source_package = str(request.get("source_package_name") or "").strip()
-    target_package = str(request.get("target_package_name") or "").strip()
-    if source_package and target_package and source_package != target_package:
-        return {
-            **ranking,
-            "mapped": False,
-            "mapping_mode": "page_identity",
-            "reason": "target_page_identity_mismatch",
-        }
     candidates = ranking.get("candidates")
     if not isinstance(candidates, list):
         raise RuntimeError("omnitransfer_candidates_invalid")
