@@ -99,6 +99,39 @@ def test_source_device_uses_independent_small_phone_avd() -> None:
     assert parser.get_default("source_avd") == "SmallPhone"
 
 
+def test_cell_environment_uses_orchestrator_budget_and_child_guard(
+    tmp_path: Path,
+) -> None:
+    from src.experiment.e2e_task_pipeline import PHASE_TIMEOUTS_SEC, _cell_environment
+
+    environment = _cell_environment(
+        args=_args(tmp_path),
+        attempt_id="attempt-test",
+        attempt_root=tmp_path / "attempt",
+        method="t3a_hint",
+        device=DEVICES[0],
+        store_path=tmp_path / "store.json",
+        mobilegpt_memory=None,
+        appagent_memory=None,
+    )
+
+    cell_attempt_id = "attempt-test.t3a_hint.small5554"
+    assert environment["OMNIFLOW_BATCH_CHILD"] == "1"
+    assert environment["OMNIFLOW_BATCH_ATTEMPT_ID"] == cell_attempt_id
+    assert environment["OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT"] == str(
+        tmp_path
+        / "attempt"
+        / "target_attempts"
+        / "small5554"
+        / "t3a_hint"
+        / cell_attempt_id
+    )
+    assert environment["OMNIFLOW_SINGLE_TASK_TIMEOUT_SEC"] == str(
+        PHASE_TIMEOUTS_SEC["target_episode"]
+    )
+    assert PHASE_TIMEOUTS_SEC["target_cell"] > PHASE_TIMEOUTS_SEC["target_episode"]
+
+
 def test_source_device_ready_requires_exact_avd_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

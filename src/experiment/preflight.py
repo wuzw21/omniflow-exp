@@ -681,7 +681,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-memory-tasks", type=int)
     parser.add_argument("--appagent-root")
     parser.add_argument("--appagent-demo-memory-root")
-    parser.add_argument("--minimum-free-gb", type=float, default=40.0)
+    parser.add_argument("--minimum-free-gb", type=float, default=20.0)
     parser.add_argument("--server-port", type=int, default=12345)
     parser.add_argument("--require-kvm", action="store_true")
     parser.add_argument("--require-device", action="store_true")

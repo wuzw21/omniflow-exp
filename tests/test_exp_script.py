@@ -103,6 +103,9 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
         'if [[ "$profile" == "mobilegpt" && "$task" == Contacts* ]]'
         in script_text
     )
+    assert 'while [[ -n "$(device_state "$serial")" ]] || grpc_ready "$grpc_port"; do' in script_text
+    assert 'echo "[emulator] already stopped serial=$serial"' in script_text
+    assert "No emulator process found while device remained visible" in script_text
 
 
 def test_experiment_script_prefers_existing_miniconda_base_python(

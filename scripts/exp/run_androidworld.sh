@@ -47,7 +47,7 @@ formal_device_targets="small5554:emulator-5554:5554,fold5564:emulator-5564:5564"
 device_targets="${OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS:-$formal_device_targets}"
 fixed_task_params="${OMNIFLOW_SINGLE_TASK_FIXED_TASK_PARAMS:-$formal_fixed_task_params}"
 timeout_sec="${OMNIFLOW_SINGLE_TASK_TIMEOUT_SEC:-600}"
-preflight_minimum_free_gb="${OMNIFLOW_PREFLIGHT_MINIMUM_FREE_GB:-40}"
+preflight_minimum_free_gb="${OMNIFLOW_PREFLIGHT_MINIMUM_FREE_GB:-20}"
 max_steps="${OMNIFLOW_SINGLE_TASK_MAX_STEPS:-$formal_max_steps}"
 max_fallback_steps="${OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS:-$formal_max_fallback_steps}"
 store_path="${OMNIFLOW_SINGLE_TASK_STORE_PATH:-}"
@@ -2524,7 +2524,9 @@ managed_emulator_pids_by_port() {
 
 force_stop_managed_emulator() {
   local serial="$1"
-  local avd process_ids process_id stop_deadline
+  local avd console_port grpc_port process_ids process_id stop_deadline
+  console_port="${serial#emulator-}"
+  grpc_port="$(( console_port + 3000 ))"
   if ! avd="$(avd_for_serial "$serial")"; then
     echo "Cannot identify managed emulator AVD for forced stop: $serial" >&2
     return 1
@@ -2543,8 +2545,16 @@ force_stop_managed_emulator() {
     fi
   fi
   if [[ -z "$process_ids" ]]; then
-    echo "No emulator process found for exact console port: serial=$serial" >&2
-    return 1
+    stop_deadline="$(( $(date +%s) + emulator_forced_shutdown_timeout_sec ))"
+    while [[ -n "$(device_state "$serial")" ]] || grpc_ready "$grpc_port"; do
+      if (( $(date +%s) >= stop_deadline )); then
+        echo "No emulator process found while device remained visible: serial=$serial grpc=$grpc_port" >&2
+        return 1
+      fi
+      sleep 1
+    done
+    echo "[emulator] already stopped serial=$serial"
+    return 0
   fi
   if [[ "$process_ids" == *$'\n'* ]]; then
     echo "Ambiguous managed emulator processes: serial=$serial avd=$avd pids=${process_ids//$'\n'/,}" >&2

@@ -41,12 +41,16 @@ def test_native_a11y_runtime_retries_transient_state_failure(
     refresh_count = 0
     state_count = 0
 
+    initial_env = object()
+
     def refresh_env() -> None:
         nonlocal refresh_count
         refresh_count += 1
+        controller._env = object()
 
     controller = SimpleNamespace(
         _a11y_method=SimpleNamespace(value="a11y_forwarder_app"),
+        _env=initial_env,
         refresh_env=refresh_env,
     )
 
@@ -90,5 +94,8 @@ def test_native_a11y_runtime_retries_transient_state_failure(
     assert result["ready"] is True
     assert result["ui_element_count"] == 1
     assert result["readiness_attempts"] == 2
+    assert result["controller_refreshed"] is True
     assert state_count == 2
     assert refresh_count == 2
+    assert controller._omniflow_retired_envs[0] is initial_env
+    assert len(controller._omniflow_retired_envs) == 2

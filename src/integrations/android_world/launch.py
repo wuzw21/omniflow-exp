@@ -2271,6 +2271,22 @@ def _androidworld_accessibility_forwarder_installed(
     )
 
 
+def _refresh_androidworld_controller(controller: Any) -> bool:
+    refresh_env = getattr(controller, "refresh_env", None)
+    if not callable(refresh_env):
+        return False
+    previous_env = getattr(controller, "_env", None)
+    refresh_env()
+    refreshed_env = getattr(controller, "_env", None)
+    if previous_env is not None and previous_env is not refreshed_env:
+        retained_envs = getattr(controller, "_omniflow_retired_envs", None)
+        if not isinstance(retained_envs, list):
+            retained_envs = []
+            setattr(controller, "_omniflow_retired_envs", retained_envs)
+        retained_envs.append(previous_env)
+    return True
+
+
 def _prepare_native_androidworld_a11y_runtime(
     env: Any,
     *,
@@ -2323,9 +2339,9 @@ def _prepare_native_androidworld_a11y_runtime(
             or str(checked.get("stdout") or "").strip() != "0"
         ):
             raise RuntimeError(f"androidworld_{setting_name}_still_enabled")
-    refresh_env = getattr(controller, "refresh_env", None)
-    if uses_forwarder and callable(refresh_env):
-        refresh_env()
+    controller_refreshed = uses_forwarder and _refresh_androidworld_controller(
+        controller
+    )
     _close_android_system_dialogs(
         adb_serial=adb_serial,
         adb_path=adb_path,
@@ -2354,8 +2370,11 @@ def _prepare_native_androidworld_a11y_runtime(
     for readiness_attempt in range(3):
         if readiness_attempt:
             time.sleep(0.5)
-            if uses_forwarder and callable(refresh_env):
-                refresh_env()
+            if uses_forwarder:
+                controller_refreshed = (
+                    _refresh_androidworld_controller(controller)
+                    or controller_refreshed
+                )
             _close_android_system_dialogs(
                 adb_serial=adb_serial,
                 adb_path=adb_path,
@@ -2371,8 +2390,7 @@ def _prepare_native_androidworld_a11y_runtime(
             return {
                 "ready": True,
                 "ui_element_count": len(ui_elements),
-                "controller_refreshed": uses_forwarder
-                and callable(refresh_env),
+                "controller_refreshed": controller_refreshed,
                 "forwarder_quiesced": bool(forwarder.get("removed")),
                 "a11y_method": str(
                     getattr(a11y_method, "value", a11y_method) or ""

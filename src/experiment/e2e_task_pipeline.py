@@ -54,7 +54,8 @@ PHASE_TIMEOUTS_SEC = {
     "source_qualification": 300,
     "mobilegpt_memory": 300,
     "appagent_memory": 360,
-    "target_cell": 240,
+    "target_episode": 600,
+    "target_cell": 720,
 }
 
 
@@ -942,6 +943,10 @@ def _cell_environment(
     appagent_memory: Path | None,
 ) -> dict[str, str]:
     label, serial, port = device
+    cell_attempt_id = f"{attempt_id}.{method}.{label}"
+    cell_attempt_root = (
+        attempt_root / "target_attempts" / label / method / cell_attempt_id
+    )
     environment = dict(os.environ)
     environment.update(
         {
@@ -954,7 +959,8 @@ def _cell_environment(
             "OMNITRANSFER_ROOT": str(args.omnitransfer_root),
             "OMNIFLOW_MOBILEGPT_ROOT": str(args.mobilegpt_root),
             "OMNIFLOW_APPAGENT_ROOT": str(args.appagent_root),
-            "OMNIFLOW_BATCH_ATTEMPT_ID": attempt_id,
+            "OMNIFLOW_BATCH_ATTEMPT_ID": cell_attempt_id,
+            "OMNIFLOW_BATCH_CHILD": "1",
             "OMNIFLOW_SINGLE_TASK_TASK": args.task,
             "OMNIFLOW_SINGLE_TASK_METHODS": method,
             "OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS": f"{label}:{serial}:{port}",
@@ -964,10 +970,10 @@ def _cell_environment(
             "OMNIFLOW_SINGLE_TASK_FIXED_TASK_PARAMS": "0",
             "OMNIFLOW_SINGLE_TASK_MAX_STEPS": str(FORMAL_MAX_STEPS),
             "OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS": str(MAX_FALLBACK_STEPS),
-            "OMNIFLOW_SINGLE_TASK_TIMEOUT_SEC": "180",
-            "OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT": str(
-                attempt_root / "target_attempts" / label / method
+            "OMNIFLOW_SINGLE_TASK_TIMEOUT_SEC": str(
+                PHASE_TIMEOUTS_SEC["target_episode"]
             ),
+            "OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT": str(cell_attempt_root),
             "OMNIFLOW_SINGLE_TASK_PREFLIGHT_OUTPUT_ROOT": str(
                 attempt_root / "preflight" / label / method
             ),
@@ -1079,7 +1085,13 @@ def run_target_workers(
                     ),
                     stage="target_episode",
                     task_log=log_path,
-                    artifact_root=attempt_root / "target_attempts" / label / method,
+                    artifact_root=(
+                        attempt_root
+                        / "target_attempts"
+                        / label
+                        / method
+                        / f"{attempt_id}.{method}.{label}"
+                    ),
                     outer_wall_sec=float(result.get("wall_sec") or 0),
                 )
             worker_results.append({"method": method, "device": label, **result})
