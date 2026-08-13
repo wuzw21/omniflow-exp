@@ -828,13 +828,12 @@ def _management_tool_definition(name: str) -> dict[str, Any]:
     return {
         "name": name,
         "description": (
-            "Save one reusable Function. Pass run_id, a RunLog object, or an absolute "
-            "RunLog JSON path to mechanically preserve the complete successful action "
-            "sequence without a model call. For optional "
-            "semantic authoring, first inspect the RunLog with get_run_log, then pass "
-            "run_id plus one complete Function and its source arguments. Preserve recorded "
-            "actions in order; do not invent actions, UI evidence, or checker rules. "
-            "Parameterize only action values supported by the RunLog."
+            "Save one Agent-authored reusable Function. First inspect the complete "
+            "RunLog and its source-page evidence with get_run_log, then pass run_id "
+            "or run_log together with one complete Function and its exact source "
+            "arguments. The Function description must state its atomic effect, "
+            "parameter meanings, fixed choices, and excluded work. Preserve recorded "
+            "actions in order; do not invent actions, UI evidence, or checker rules."
         ),
         "inputSchema": {
             "type": "object",
@@ -883,12 +882,15 @@ def _save_compile_error(error: ValueError) -> dict[str, Any]:
     code = {
         "successful_source_actions_required": "RUN_LOG_NO_REPLAYABLE_STEPS",
         "semantic_functions_required": "RUN_LOG_NO_REPLAYABLE_STEPS",
-        "default_bundle_actions_required": "RUN_LOG_NO_REPLAYABLE_STEPS",
+        "function_author_agent_required": "FUNCTION_AUTHOR_AGENT_REQUIRED",
         "successful_source_goal_required": "RUN_LOG_GOAL_EMPTY",
     }.get(message, "RUN_LOG_COMPILE_FAILED")
     user_message = {
         "RUN_LOG_NO_REPLAYABLE_STEPS": "RunLog has no replayable steps",
         "RUN_LOG_GOAL_EMPTY": "RunLog goal is required",
+        "FUNCTION_AUTHOR_AGENT_REQUIRED": (
+            "An Agent-authored Function and source arguments are required"
+        ),
     }.get(code, message)
     return _save_error(code, user_message)
 

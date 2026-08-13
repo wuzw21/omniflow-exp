@@ -75,6 +75,49 @@ def test_function_compiler_preserves_source_screenshot_reference(
     result = compile_runlog_to_store(
         run_log,
         tmp_path / "output",
+        function_bundle={
+            "schema_version": "omniflow.function-bundle.v2",
+            "run_id": "source-run",
+            "arguments": {"open_example_and_wait": {}},
+            "functions": [
+                {
+                    "schema_version": "omniflow.function.v2",
+                    "function_id": "open_example_and_wait",
+                    "name": "Open the recorded example app and wait once",
+                    "description": (
+                        "Open the fixed recorded example package and wait once. "
+                        "This Function does not perform or verify another task."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                        "additionalProperties": False,
+                    },
+                    "bindings": [],
+                    "steps": [
+                        {
+                            "step_index": 0,
+                            "source_state_id": "state_0",
+                            "action": {
+                                "tool": "open_app",
+                                "args": {"package_name": "com.example"},
+                            },
+                        },
+                        {
+                            "step_index": 1,
+                            "source_state_id": "state_1",
+                            "action": {
+                                "tool": "wait",
+                                "args": {"duration_ms": 1000},
+                            },
+                        },
+                    ],
+                    "checker_rules": [],
+                    "agent_visible": True,
+                }
+            ],
+        },
         source_states={
             "state_0": {
                 "state_id": "state_0",

@@ -8,6 +8,7 @@ from typing import Any
 
 from omniflow.core.schemas import canonicalize_action
 from omniflow.core.trajectory import canonicalize_run_log, state_id
+from omniflow.functions.authoring import FUNCTION_AUTHORING_AGENT_INSTRUCTIONS
 from omniflow.runlog import project_androidworld_step_actions
 from omniflow.runtime.checker import validate_checker_rule
 
@@ -100,6 +101,9 @@ def compile_runlog_to_store(
                     "result": {"success": True},
                     "after_state_id": after_state_id,
                     "metadata": action_metadata,
+                    "source_observation": json.loads(
+                        json.dumps(observation, ensure_ascii=False)
+                    ),
                 }
             )
     if not steps:
@@ -112,109 +116,9 @@ def compile_runlog_to_store(
         "success": True,
         "steps": steps,
     }
-    default_bundle = _default_bundle(facts, recovery_examples)
-    authoring_prompt = (
-        prompt
-        or """Convert the successful replayable GUI RunLog facts into reusable OmniFlow Functions.
-Return exactly {"reason": string, "bundle": object|null}.
-
-The bundle must use schema_version "omniflow.function-bundle.v2" and contain
-run_id, arguments, and one or more ordinary
-"omniflow.function.v2" Functions. Every Function contains exactly
-schema_version, function_id, name, description, input_schema, bindings, steps,
-checker_rules, and agent_visible.
-
-Copy this exact JSON shape. Replace values but never move, rename, or omit keys:
-{
-  "reason": "step-by-step keep, group, parameterize, or omit decisions",
-  "bundle": {
-    "schema_version": "omniflow.function-bundle.v2",
-    "run_id": "copy the supplied run_id exactly",
-    "arguments": {
-      "enter_requested_name": {"name": "Alice"}
-    },
-    "functions": [
-      {
-        "schema_version": "omniflow.function.v2",
-        "function_id": "enter_requested_name",
-        "name": "Enter requested name",
-        "description": "Enter the name requested by the user.",
-        "input_schema": {
-          "type": "object",
-          "properties": {"name": {"type": "string"}},
-          "required": ["name"],
-          "additionalProperties": false
-        },
-        "bindings": [
-          {
-            "source": "$.arguments.name",
-            "target": "$.steps[0].action.args.text"
-          }
-        ],
-        "steps": [
-          {
-            "step_index": 0,
-            "source_state_id": "copy the matching before_state_id",
-            "action": {"tool": "input_text", "args": {"text": ""}}
-          }
-        ],
-        "checker_rules": [],
-        "agent_visible": true
-      }
-    ]
-  }
-}
-
-`arguments` is an object keyed by function_id. `bindings` is always an
-array of {"source", "target"} objects. `steps` is always a non-empty array and
-each step contains only step_index, source_state_id, and action. Every action
-contains only tool and args. Every Function repeats schema_version
-"omniflow.function.v2". Never place a JSON path or template in an action value;
-bound action values use empty type-correct placeholders.
-
-Treat this as action-grounded compilation of a raw human Record.
-Inspect every supplied run_log step in step_index order before authoring. The
-top-level reason must account for every source step index and say whether it was
-kept, grouped with neighboring steps, parameterized, or omitted, with a brief
-evidence-based explanation.
-
-Actions and args are execution truth. Explicitly preserve meaningful values such
-as input_text.text, open_app.package_name, press_key.key, and wait.duration_ms.
-Use the original RunLog goal plus step metadata.summary, metadata.thinking, and
-metadata.action_description only to explain the work represented by those
-actions. Never replace or contradict the recorded Action with prose.
-
-Create reusable Functions for meaningful actions or tightly coupled contiguous
-action groups. Every retained replayable action must appear in at least one
-Function; every omitted action must be explained in reason. Do not label or
-classify Functions as semantic, full-flow, complete-task, root, or child.
-
-Do not create a Function merely because one recorded action exists. A coordinate
-click without supporting goal, metadata, or neighboring-action evidence is not a
-named capability. Do not reinterpret an accidental installer, permission page,
-advertisement, error page, or other side effect as the intended task. Mechanical
-waits and navigation scaffolding should stay inside the workflow they support,
-not become misleading standalone Functions. If the complete task needs fresh UI
-discovery, a dynamic loop, visual transcription, or a hidden runtime answer,
-omit that complete Function but keep safe understandable subsequences. Never
-emit kind, parent, Root, Child, recovery, task name, or routing metadata.
-
-input_schema values are strict JSON Schema objects with additionalProperties=false.
-Parameterize only action-ready values inferable from the fresh goal and consumed
-by Function actions. Every required parameter must have direct bindings from
-$.arguments.NAME or a fixed array index to an existing
-$.steps[INDEX].action.args.FIELD. Put exact successful values in
-arguments. Use empty type-correct placeholders in bound action fields.
-
-Preserve selected source actions in order and do not invent actions or UI
-evidence. Coordinate fields in the supplied facts are already normalized to
-0..1000. Copy each supplied canonical action without adding fields. Return
-bundle=null only when no safe reusable action-grounded Function exists.
-
-This compilation prompt does not author recovery behavior.
-Set checker_rules=[] in every generated Function.
-"""
-    )
+    authoring_prompt = FUNCTION_AUTHORING_AGENT_INSTRUCTIONS
+    if prompt is not None:
+        authoring_prompt += f"\n\nAdditional caller instructions:\n{prompt}"
     selected_model = str(model or "").strip() or None
     usage = {
         "model_calls": 0,
@@ -226,18 +130,13 @@ Set checker_rules=[] in every generated Function.
         if selected_model is not None or client is not None or prompt is not None:
             raise ValueError("function_bundle_cannot_use_author_model_options")
         authored = {
-            "reason": "Registered offline Codex-authored Functions.",
+            "reason": "Registered offline Agent-authored Functions.",
             "bundle": json.loads(json.dumps(function_bundle, ensure_ascii=False)),
         }
     elif selected_model is None:
         if client is not None or prompt is not None:
             raise ValueError("author_model_required_for_author_options")
-        if default_bundle is None:
-            raise ValueError("default_bundle_actions_required")
-        authored = {
-            "reason": "Registered one complete recorded Function.",
-            "bundle": default_bundle,
-        }
+        raise ValueError("function_author_agent_required")
     else:
         if client is None:
             try:
@@ -319,7 +218,8 @@ Set checker_rules=[] in every generated Function.
         arguments = arguments_by_function.get(function.id, {})
         if not isinstance(arguments, dict):
             raise ValueError("function_bundle_source_arguments_invalid")
-        bind_function(function, arguments)
+        bound = bind_function(function, arguments)
+        _validate_action_grounding(bound, steps)
 
     if source_states is not None and state_loader is not None:
         raise ValueError("function_source_state_provider_ambiguous")
@@ -372,7 +272,6 @@ Set checker_rules=[] in every generated Function.
     frozen_states = {
         state_id: states[state_id] for state_id in referenced_state_ids
     }
-
     root.mkdir(parents=True, exist_ok=True)
     store_path = root / "store.json"
     store = FunctionStore(store_path)
@@ -493,6 +392,25 @@ def _normalize_source_state(value: Any, expected_state_id: str) -> dict[str, Any
     return state
 
 
+def _validate_action_grounding(function: Any, source_steps: list[dict[str, Any]]) -> None:
+    source_index = 0
+    for function_step in function.steps:
+        expected_action = function_step.action.to_dict()
+        while source_index < len(source_steps):
+            source_step = source_steps[source_index]
+            source_index += 1
+            if (
+                source_step["before_state_id"] == function_step.source_state_id
+                and source_step["action"] == expected_action
+            ):
+                break
+        else:
+            raise ValueError(
+                "function_action_not_grounded:"
+                f"{function.id}:{function_step.step_index}"
+            )
+
+
 def _validate_checker_evidence(
     functions: list[Any],
     recovery_examples: list[dict[str, Any]],
@@ -532,64 +450,3 @@ def _validate_checker_evidence(
             }
             if captured_triggers and rule.get("trigger") not in captured_triggers:
                 raise ValueError("function_checker_rule_trigger_mismatch")
-
-
-def _default_bundle(
-    facts: dict[str, Any],
-    recovery_examples: list[dict[str, Any]],
-) -> dict[str, Any] | None:
-    source_steps = list(facts.get("steps") or ())
-    if len(source_steps) < 2:
-        return None
-    steps = [
-        {
-            "step_index": index,
-            "source_state_id": str(step["before_state_id"]),
-            "action": json.loads(json.dumps(step["action"], ensure_ascii=False)),
-        }
-        for index, step in enumerate(source_steps)
-    ]
-    digest = hashlib.sha256(
-        json.dumps(
-            {"goal": facts["goal"], "steps": steps},
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()[:12]
-    function_id = f"recorded_{digest}"
-    checker_rules = [
-        validate_checker_rule(
-            {
-                "schema_version": "omniflow.checker_rule.v1",
-                "trigger": example["trigger"],
-                "source_state_id": example["source_state_id"],
-                "action": example["action"],
-            }
-        )
-        for example in recovery_examples
-        if str(example.get("trigger") or "").strip()
-    ]
-    return {
-        "schema_version": "omniflow.function-bundle.v2",
-        "run_id": facts["run_id"],
-        "arguments": {function_id: {}},
-        "functions": [
-            {
-                "schema_version": "omniflow.function.v2",
-                "function_id": function_id,
-                "name": str(facts["goal"])[:120],
-                "description": f"Replay the recorded workflow: {facts['goal']}",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": [],
-                    "additionalProperties": False,
-                },
-                "bindings": [],
-                "steps": steps,
-                "checker_rules": checker_rules,
-                "agent_visible": True,
-            }
-        ],
-    }

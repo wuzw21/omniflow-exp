@@ -861,10 +861,22 @@ if not provenance_path.is_absolute() or not provenance_path.is_file():
     )
 provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
 collection = provenance.get("semantic_collection")
-if not isinstance(collection, dict) or str(collection.get("function") or "") != "compile_runlog_to_store" or not str(collection.get("model") or "").strip():
+semantic_function = str(collection.get("function") or "") if isinstance(collection, dict) else ""
+model_authored = (
+    semantic_function == "compile_runlog_to_store"
+    and bool(str(collection.get("model") or "").strip())
+)
+offline_agent_authored = (
+    semantic_function == "offline_agent_function_authoring"
+    and isinstance(collection.get("agent"), dict)
+    and collection["agent"].get("kind") == "offline_agent"
+    and bool(str(collection["agent"].get("instructions_version") or "").strip())
+    and bool(str(collection["agent"].get("instructions_sha256") or "").strip())
+)
+if not (model_authored or offline_agent_authored):
     raise SystemExit(
         f"ours_store_index_mechanical_asset:{task_name}:"
-        "run --e2e-task to perform model semantic Function registration"
+        "create a model- or offline-Agent-authored Function registration"
     )
 store_path = Path(str(row["store_path"])).resolve()
 transfer_path = Path(str(row["transfer_states_path"])).resolve()

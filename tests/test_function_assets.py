@@ -10,6 +10,10 @@ import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from omniflow.functions.artifact import bind_function
+from omniflow.functions.authoring import (
+    FUNCTION_AUTHORING_INSTRUCTIONS_VERSION,
+    function_authoring_instructions_sha256,
+)
 from omniflow.functions.store import FunctionStore
 from src.experiment.artifact_memory import (
     load_artifact_memory,
@@ -108,41 +112,107 @@ def _authoring_manifest(root: Path, source_index: Path) -> Path:
     return _write_json(
         root / "authoring_manifest.json",
         {
-            "schema_version": "omniflow.function-authoring-manifest.v1",
+            "schema_version": "omniflow.function-agent-authoring-manifest.v2",
             "source_asset_index_sha256": _sha256(source_index),
+            "agent": {
+                "kind": "offline_agent",
+                "instructions_version": FUNCTION_AUTHORING_INSTRUCTIONS_VERSION,
+                "instructions_sha256": function_authoring_instructions_sha256(),
+            },
             "tasks": {
                 "RecordWithName": {
                     "source_run_log_sha256": source_row[
                         "retained_source_run_log_sha256"
                     ],
-                    "functions": [
-                        {
-                            "function_id": "record_audio_with_filename",
-                            "name": "Record audio with a chosen filename",
-                            "description": (
-                                "Open the recorder, start recording, and save "
-                                "the audio using the filename supplied by the user."
-                            ),
-                            "source_step_indexes": [0, 1, 2, 3],
-                            "parameters": [
+                    "author_response": {
+                        "reason": (
+                            "Steps 0-3 form one recorded audio workflow. The Agent "
+                            "parameterized only the text entered in the visible File "
+                            "name field and kept the recorder controls fixed."
+                        ),
+                        "bundle": {
+                            "schema_version": "omniflow.function-bundle.v2",
+                            "run_id": "human-source",
+                            "arguments": {
+                                "record_audio_with_filename": {
+                                    "filename": "source_name.m4a"
+                                }
+                            },
+                            "functions": [
                                 {
-                                    "name": "filename",
-                                    "schema": {
-                                        "type": "string",
-                                        "description": (
-                                            "Exact filename requested by the user."
-                                        ),
+                                    "schema_version": "omniflow.function.v2",
+                                    "function_id": "record_audio_with_filename",
+                                    "name": "Record one audio clip with a filename",
+                                    "description": (
+                                        "Open the recorded audio recorder, use its "
+                                        "record controls, and enter one caller-supplied "
+                                        "filename in the visible File name field. The "
+                                        "recording controls and save flow remain fixed; "
+                                        "this Function does not choose another recorder, "
+                                        "repeat clips, or verify the final task result."
+                                    ),
+                                    "input_schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "filename": {
+                                                "type": "string",
+                                                "description": (
+                                                    "Exact text to enter in the visible "
+                                                    "File name field."
+                                                ),
+                                            }
+                                        },
+                                        "required": ["filename"],
+                                        "additionalProperties": False,
                                     },
                                     "bindings": [
                                         {
-                                            "source_step_index": 3,
-                                            "arg_name": "text",
+                                            "source": "$.arguments.filename",
+                                            "target": "$.steps[3].action.args.text",
                                         }
                                     ],
+                                    "steps": [
+                                        {
+                                            "step_index": 0,
+                                            "source_state_id": "state-open",
+                                            "action": {
+                                                "tool": "open_app",
+                                                "args": {
+                                                    "package_name": "com.example.recorder"
+                                                },
+                                            },
+                                        },
+                                        {
+                                            "step_index": 1,
+                                            "source_state_id": "state-menu",
+                                            "action": {
+                                                "tool": "click",
+                                                "args": {"x": 500, "y": 800},
+                                            },
+                                        },
+                                        {
+                                            "step_index": 2,
+                                            "source_state_id": "state-input",
+                                            "action": {
+                                                "tool": "click",
+                                                "args": {"x": 500, "y": 200},
+                                            },
+                                        },
+                                        {
+                                            "step_index": 3,
+                                            "source_state_id": "state-input",
+                                            "action": {
+                                                "tool": "input_text",
+                                                "args": {"text": ""},
+                                            },
+                                        },
+                                    ],
+                                    "checker_rules": [],
+                                    "agent_visible": True,
                                 }
                             ],
-                        }
-                    ],
+                        },
+                    },
                 }
             },
         },
@@ -178,7 +248,7 @@ def test_human_runlog_uses_offline_manifest_and_preserves_actions(
     functions = store.list_functions()
     assert len(functions) == 1
     function = functions[0]
-    assert function.name == "Record audio with a chosen filename"
+    assert function.name == "Record one audio clip with a filename"
     assert function.input_schema["required"] == ["filename"]
     assert function.bindings == (
         {
@@ -202,9 +272,19 @@ def test_human_runlog_uses_offline_manifest_and_preserves_actions(
     )
     assert provenance["source_run_id"] == "human-source"
     assert provenance["semantic_collection"] == {
-        "function": "offline_codex_authoring_manifest",
+        "function": "offline_agent_function_authoring",
         "manifest_path": str(authoring_manifest.resolve()),
         "manifest_sha256": _sha256(authoring_manifest),
+        "agent": {
+            "kind": "offline_agent",
+            "instructions_version": FUNCTION_AUTHORING_INSTRUCTIONS_VERSION,
+            "instructions_sha256": function_authoring_instructions_sha256(),
+        },
+        "reason": (
+            "Steps 0-3 form one recorded audio workflow. The Agent parameterized "
+            "only the text entered in the visible File name field and kept the "
+            "recorder controls fixed."
+        ),
         "model": None,
         "model_calls": 0,
     }
@@ -332,23 +412,25 @@ def test_conversion_rejects_legacy_run_log_at_formal_boundary(
     authoring_manifest = _write_json(
         tmp_path / "authoring.json",
         {
-            "schema_version": "omniflow.function-authoring-manifest.v1",
+            "schema_version": "omniflow.function-agent-authoring-manifest.v2",
             "source_asset_index_sha256": _sha256(source_index),
+            "agent": {
+                "kind": "offline_agent",
+                "instructions_version": FUNCTION_AUTHORING_INSTRUCTIONS_VERSION,
+                "instructions_sha256": function_authoring_instructions_sha256(),
+            },
             "tasks": {
                 "SystemCopyToClipboard": {
                     "source_run_log_sha256": _sha256(source_run_log),
-                    "functions": [
-                        {
-                            "function_id": "open_clipboard_manager",
-                            "name": "Open clipboard manager",
-                            "description": (
-                                "Open the clipboard manager before entering "
-                                "the currently requested clipboard text."
-                            ),
-                            "source_step_indexes": [0],
-                            "parameters": [],
-                        }
-                    ],
+                    "author_response": {
+                        "reason": "Keep the recorded open-app action.",
+                        "bundle": {
+                            "schema_version": "omniflow.function-bundle.v2",
+                            "run_id": "legacy-source",
+                            "arguments": {},
+                            "functions": [],
+                        },
+                    },
                 }
             },
         },

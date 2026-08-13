@@ -9,7 +9,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from omniflow import compile_runlog_to_store
-from omniflow.core.trajectory import state_id
+from omniflow.functions.authoring import (
+    FUNCTION_AUTHORING_INSTRUCTIONS_VERSION,
+    function_authoring_instructions_sha256,
+)
 from omniflow.functions.store import FunctionStore
 from omniflow.transfer.runtime import (
     audit_transfer_action_sources,
@@ -17,13 +20,10 @@ from omniflow.transfer.runtime import (
     transfer_state_coverage,
 )
 from src.integrations.android_world.apps import resolve_androidworld_package
-from src.integrations.runlog import (
-    import_run_log_evidence,
-    project_androidworld_step_actions,
-)
+from src.integrations.runlog import import_run_log_evidence
 
 CATALOG_SCHEMA = "omniflow.function-asset-catalog.v1"
-AUTHORING_SCHEMA = "omniflow.function-authoring-manifest.v1"
+AUTHORING_SCHEMA = "omniflow.function-agent-authoring-manifest.v2"
 
 
 def convert_function_assets(
@@ -49,6 +49,7 @@ def convert_function_assets(
         source_index_path=source_index_path,
     )
     raw_authoring_tasks = authoring["tasks"]
+    authoring_agent = authoring["agent"]
     raw_source_rows = source_index.get("assets", source_index)
     if not isinstance(raw_source_rows, dict):
         raise ValueError("source_asset_index_tasks_required")
@@ -99,6 +100,7 @@ def convert_function_assets(
             source_run_log=source_path,
             source_index_path=source_index_path,
             authoring_manifest_path=authoring_path,
+            authoring_agent=authoring_agent,
             authoring_task=raw_authoring_tasks[task_name],
             output_root=task_root / "function_store",
         )
@@ -150,6 +152,7 @@ def _convert_runlog_to_function_asset(
     source_run_log: str | Path,
     source_index_path: str | Path,
     authoring_manifest_path: str | Path,
+    authoring_agent: dict[str, Any],
     authoring_task: dict[str, Any],
     output_root: str | Path,
 ) -> dict[str, Any]:
@@ -177,14 +180,11 @@ def _convert_runlog_to_function_asset(
         package_resolver=resolve_androidworld_package,
     )
 
+    author_response = authoring_task["author_response"]
     compile_result = compile_runlog_to_store(
         run_log,
         output_path,
-        function_bundle=_build_function_bundle(
-            task_name=task_name,
-            run_log=run_log,
-            authoring_task=authoring_task,
-        ),
+        function_bundle=author_response["bundle"],
         source_states=source_states,
     )
     store_path = Path(compile_result["store_path"]).resolve()
@@ -234,9 +234,11 @@ def _convert_runlog_to_function_asset(
         "source_asset_index": str(index_path),
         "source_asset_index_sha256": _sha256(index_path),
         "semantic_collection": {
-            "function": "offline_codex_authoring_manifest",
+            "function": "offline_agent_function_authoring",
             "manifest_path": str(authoring_path),
             "manifest_sha256": _sha256(authoring_path),
+            "agent": json.loads(json.dumps(authoring_agent)),
+            "reason": author_response["reason"],
             "model": None,
             "model_calls": 0,
         },
@@ -282,6 +284,7 @@ def _validate_authoring_manifest(
     if set(value) != {
         "schema_version",
         "source_asset_index_sha256",
+        "agent",
         "tasks",
     }:
         raise ValueError("function_authoring_manifest_contract_invalid")
@@ -294,219 +297,40 @@ def _validate_authoring_manifest(
             "function_authoring_source_index_hash_mismatch:"
             f"expected={expected_hash or 'missing'}:actual={actual_hash}"
         )
+    agent = value.get("agent")
+    if not isinstance(agent, dict) or set(agent) != {
+        "kind",
+        "instructions_version",
+        "instructions_sha256",
+    }:
+        raise ValueError("function_authoring_agent_contract_invalid")
+    if agent.get("kind") != "offline_agent":
+        raise ValueError("function_authoring_agent_required")
+    if (
+        agent.get("instructions_version")
+        != FUNCTION_AUTHORING_INSTRUCTIONS_VERSION
+        or agent.get("instructions_sha256")
+        != function_authoring_instructions_sha256()
+    ):
+        raise ValueError("function_authoring_instructions_mismatch")
     tasks = value.get("tasks")
     if not isinstance(tasks, dict):
         raise ValueError("function_authoring_tasks_required")
     for task_name, task in tasks.items():
         if not str(task_name).strip() or not isinstance(task, dict):
             raise ValueError("function_authoring_task_invalid")
-        if set(task) != {"source_run_log_sha256", "functions"}:
+        if set(task) != {"source_run_log_sha256", "author_response"}:
             raise ValueError(f"function_authoring_task_contract_invalid:{task_name}")
         if not str(task.get("source_run_log_sha256") or "").strip():
             raise ValueError(f"function_authoring_source_hash_required:{task_name}")
-        if not isinstance(task.get("functions"), list) or not task["functions"]:
-            raise ValueError(f"function_authoring_functions_required:{task_name}")
-
-
-def _build_function_bundle(
-    *,
-    task_name: str,
-    run_log: dict[str, Any],
-    authoring_task: dict[str, Any],
-) -> dict[str, Any]:
-    source_steps = run_log["steps"]
-    functions: list[dict[str, Any]] = []
-    arguments: dict[str, dict[str, Any]] = {}
-    function_ids: set[str] = set()
-    for raw_function in authoring_task["functions"]:
-        function, source_arguments = _build_function(
-            task_name=task_name,
-            source_steps=source_steps,
-            raw_function=raw_function,
-        )
-        function_id = function["function_id"]
-        if function_id in function_ids:
-            raise ValueError(
-                f"function_authoring_duplicate_function_id:{task_name}:{function_id}"
-            )
-        function_ids.add(function_id)
-        functions.append(function)
-        arguments[function_id] = source_arguments
-    return {
-        "schema_version": "omniflow.function-bundle.v2",
-        "run_id": run_log["run_id"],
-        "arguments": arguments,
-        "functions": functions,
-    }
-
-
-def _build_function(
-    *,
-    task_name: str,
-    source_steps: list[dict[str, Any]],
-    raw_function: Any,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    if not isinstance(raw_function, dict) or set(raw_function) != {
-        "function_id",
-        "name",
-        "description",
-        "source_step_indexes",
-        "parameters",
-    }:
-        raise ValueError(f"function_authoring_function_contract_invalid:{task_name}")
-    function_id = str(raw_function.get("function_id") or "").strip()
-    raw_indexes = raw_function.get("source_step_indexes")
-    if (
-        not function_id
-        or not isinstance(raw_indexes, list)
-        or not raw_indexes
-        or any(
-            isinstance(index, bool) or not isinstance(index, int)
-            for index in raw_indexes
-        )
-    ):
-        raise ValueError(f"function_authoring_step_indexes_invalid:{task_name}")
-    if raw_indexes != sorted(set(raw_indexes)):
-        raise ValueError(
-            f"function_authoring_step_indexes_not_strictly_increasing:"
-            f"{task_name}:{function_id}"
-        )
-    if raw_indexes[0] < 0 or raw_indexes[-1] >= len(source_steps):
-        raise ValueError(
-            f"function_authoring_step_index_out_of_range:{task_name}:{function_id}"
-        )
-    selected_steps = [source_steps[index] for index in raw_indexes]
-    if any(
-        step.get("result", {}).get("success") is not True
-        for step in selected_steps
-    ):
-        raise ValueError(
-            f"function_authoring_unsuccessful_step_selected:{task_name}:{function_id}"
-        )
-    steps: list[dict[str, Any]] = []
-    source_to_local: dict[int, list[int]] = {}
-    for source_index, source_step in zip(raw_indexes, selected_steps, strict=True):
-        source_to_local[source_index] = []
-        source_state_id = state_id(source_step["observation"])
-        for action in project_androidworld_step_actions(source_step):
-            local_index = len(steps)
-            source_to_local[source_index].append(local_index)
-            steps.append(
-                {
-                    "step_index": local_index,
-                    "source_state_id": source_state_id,
-                    "action": json.loads(json.dumps(action)),
-                }
-            )
-    raw_parameters = raw_function.get("parameters")
-    if not isinstance(raw_parameters, list):
-        raise ValueError(
-            f"function_authoring_parameters_invalid:{task_name}:{function_id}"
-        )
-    properties: dict[str, dict[str, Any]] = {}
-    source_arguments: dict[str, Any] = {}
-    bindings: list[dict[str, str]] = []
-    for raw_parameter in raw_parameters:
-        if not isinstance(raw_parameter, dict) or set(raw_parameter) != {
-            "name",
-            "schema",
-            "bindings",
-        }:
-            raise ValueError(
-                f"function_authoring_parameter_contract_invalid:{task_name}:{function_id}"
-            )
-        name = str(raw_parameter.get("name") or "").strip()
-        schema = raw_parameter.get("schema")
-        raw_bindings = raw_parameter.get("bindings")
-        if (
-            not name
-            or name in properties
-            or not isinstance(schema, dict)
-            or not isinstance(raw_bindings, list)
-            or not raw_bindings
-        ):
-            raise ValueError(
-                f"function_authoring_parameter_invalid:{task_name}:{function_id}"
-            )
-        parameter_values: list[Any] = []
-        for raw_binding in raw_bindings:
-            if not isinstance(raw_binding, dict) or set(raw_binding) != {
-                "source_step_index",
-                "arg_name",
-            }:
-                raise ValueError(
-                    f"function_authoring_binding_contract_invalid:{task_name}:{function_id}"
-                )
-            source_index = raw_binding.get("source_step_index")
-            arg_name = str(raw_binding.get("arg_name") or "").strip()
-            if source_index not in source_to_local or not arg_name.isidentifier():
-                raise ValueError(
-                    f"function_authoring_binding_invalid:{task_name}:{function_id}:{name}"
-                )
-            local_candidates = [
-                local_index
-                for local_index in source_to_local[source_index]
-                if arg_name in steps[local_index]["action"]["args"]
-            ]
-            if len(local_candidates) != 1:
-                raise ValueError(
-                    f"function_authoring_binding_target_not_unique:{task_name}:"
-                    f"{function_id}:{source_index}:{arg_name}:"
-                    f"matches={len(local_candidates)}"
-                )
-            local_index = local_candidates[0]
-            action_args = steps[local_index]["action"]["args"]
-            parameter_values.append(action_args[arg_name])
-            action_args[arg_name] = _empty_json_value(schema)
-            bindings.append(
-                {
-                    "source": f"$.arguments.{name}",
-                    "target": (
-                        f"$.steps[{local_index}].action.args.{arg_name}"
-                    ),
-                }
-            )
-        first_value = parameter_values[0]
-        if any(value != first_value for value in parameter_values[1:]):
-            raise ValueError(
-                f"function_authoring_parameter_values_conflict:{task_name}:"
-                f"{function_id}:{name}"
-            )
-        properties[name] = json.loads(json.dumps(schema))
-        source_arguments[name] = first_value
-    function = {
-        "schema_version": "omniflow.function.v2",
-        "function_id": function_id,
-        "name": str(raw_function.get("name") or "").strip(),
-        "description": str(raw_function.get("description") or "").strip(),
-        "input_schema": {
-            "type": "object",
-            "properties": properties,
-            "required": list(properties),
-            "additionalProperties": False,
-        },
-        "bindings": bindings,
-        "steps": steps,
-        "checker_rules": [],
-        "agent_visible": True,
-    }
-    return function, source_arguments
-
-
-def _empty_json_value(schema: dict[str, Any]) -> Any:
-    value_type = schema.get("type")
-    placeholders = {
-        "string": "",
-        "number": 0,
-        "integer": 0,
-        "boolean": False,
-        "array": [],
-        "object": {},
-        "null": None,
-    }
-    if value_type not in placeholders:
-        raise ValueError(f"function_authoring_parameter_type_invalid:{value_type}")
-    return json.loads(json.dumps(placeholders[value_type]))
+        response = task.get("author_response")
+        if not isinstance(response, dict) or set(response) != {"reason", "bundle"}:
+            raise ValueError(f"function_authoring_response_invalid:{task_name}")
+        if not str(response.get("reason") or "").strip():
+            raise ValueError(f"function_authoring_reason_required:{task_name}")
+        bundle = response.get("bundle")
+        if not isinstance(bundle, dict):
+            raise ValueError(f"function_authoring_bundle_required:{task_name}")
 
 
 def _source_run_log_path(

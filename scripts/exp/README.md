@@ -8,15 +8,16 @@ seams, not alternate launchers:
 | Component | Role | Used by the normal E2E command? |
 | --- | --- | --- |
 | `src/experiment/e2e_task_pipeline.py` | Source qualification and 10-cell orchestration | Yes |
-| `omniflow/functions/compiler.py` | Model semantic RunLog-to-Function compilation | Yes, for `ours` when the canonical Store is mechanical or missing |
-| `src/experiment/function_assets.py` | Explicit offline authoring-manifest conversion | Only `--convert-ours-assets`; never silently used by E2E |
+| `omniflow/functions/compiler.py` | Shared Agent-authored RunLog-to-Function validation and freezing | Yes, for every `ours` Function asset |
+| `src/experiment/function_assets.py` | Immutable offline Agent-response conversion | Used when the configured Agent authoring manifest supplies the missing task |
 | `src/experiment/direct_function_launch.py` | Seed-111 atomic Function qualification runner | Called by the E2E pipeline |
 | `src/experiment/batch_outcomes.py` | Immutable cell and table accounting | Called by the E2E pipeline |
 
 The E2E pipeline does not reuse a Store merely because its RunLog hash matches.
-The Store provenance must identify `compile_runlog_to_store` and a semantic
-model. A Store produced by `offline_codex_authoring_manifest` is a legacy
-mechanical asset and automatically starts a new semantic conversion version.
+The Store provenance must identify either direct semantic-model authoring or an
+offline Agent response produced with the repository's exact versioned authoring
+instructions. A default action wrapper or a legacy mechanical manifest is not
+a valid Function asset.
 
 ## Pipeline
 
@@ -26,8 +27,8 @@ One normal single-task invocation performs the complete workflow:
    source index.
 2. Resolve or create the native source asset for every selected method:
    - `fixed_replay`: use the canonical recorded actions;
-   - `ours`: compile the RunLog with the configured semantic model, validate,
-     freeze, and register the Store;
+   - `ours`: have an Agent interpret the complete RunLog and source-page
+     evidence, then validate, freeze, and register its Function bundle;
    - `mobilegpt_offline_retrieval`: teach MobileGPT from the canonical RunLog,
      then save its native task/page/subtask/action memory;
    - `appagent_demo`: resolve or create the native demonstration;
@@ -65,7 +66,7 @@ All data paths are absolute and outside the repository.
 | `OMNIFLOW_SINGLE_TASK_EVALUATION_SEED` | Target evaluation seed; formal value is `113` |
 | `OMNIFLOW_OURS_CONVERTED_ASSET_ROOT` | A new, empty conversion version directory |
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
-| `OMNIFLOW_OURS_AUTHORING_MANIFEST` | Immutable offline Function authoring manifest |
+| `OMNIFLOW_OURS_AUTHORING_MANIFEST` | Immutable offline Agent response using `omniflow.function-agent-authoring-manifest.v2` |
 | `OMNIFLOW_MEMORY_MOBILEGPT_ROOTS` | Optional colon-separated roots containing sealed MobileGPT semantic memory |
 
 The source RunLog index defaults to
@@ -112,8 +113,10 @@ bash scripts/exp/run_androidworld.sh --check-only
 ```
 
 `--convert-ours-assets` remains available for conversion-only maintenance. It
-uses no external authoring model, does not replay a task, and is not the normal
-experiment workflow.
+does not mechanically create Function semantics: it accepts a complete offline
+Agent response, verifies its instruction version and source RunLog hash, audits
+its actions against the RunLog, then freezes and registers it without replaying
+a task.
 
 ## Full and bounded matrices
 

@@ -66,10 +66,11 @@ is retained as evaluation evidence rather than retried with changed rules.
 2. Resolve the canonical successful source-seed-`111` RunLog by exact SHA-256.
    In `auto` mode, a missing or unusable canonical source triggers one online
    collection with `glm-5.1`; only official-validator success is harvested.
-3. Semantically compile the selected RunLog into a Function Store with
-   `glm-5.1`, unless a hash-compatible canonical Store already exists. The
-   model call belongs to offline preparation and is recorded separately from
-   target online cost.
+3. Have an offline Agent interpret the selected RunLog, its source pages, and
+   the fixed OmniTransfer capability boundary, then emit complete Function
+   descriptions, parameters, bindings, fixed choices, and exclusions. The
+   compiler only audits the Agent's actions against the RunLog and freezes the
+   Store; it does not mechanically invent Function semantics.
 4. Invoke that exact Function and its source arguments directly on
    `emulator-5560`. Qualification requires full replay, official validator
    success, `model_calls=0`, and `fallback_steps=0`. A failed qualification

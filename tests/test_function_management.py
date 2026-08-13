@@ -74,7 +74,9 @@ def test_tools_expose_one_function_save_interface(tmp_path) -> None:
     assert "update_function" not in tools
     assert "convert_run_log" not in tools
     save = next(item for item in definitions if item["name"] == "save_function")
-    assert "optional semantic authoring" in save["description"]
+    assert "Agent-authored reusable Function" in save["description"]
+    assert "atomic effect" in save["description"]
+    assert "fixed choices" in save["description"]
     assert set(save["inputSchema"]["properties"]) == {
         "run_id",
         "run_log",
@@ -102,7 +104,7 @@ def test_save_function_accepts_complete_function(tmp_path) -> None:
     assert bridge.flow.store.get_function("open_settings") is not None
 
 
-def test_save_function_compiles_run_log_without_model_and_saves_once(tmp_path) -> None:
+def test_save_function_rejects_run_log_without_agent_authored_function(tmp_path) -> None:
     run_log = androidworld_run_log(
         [
             {"action_type": "open_app", "app_name": "com.android.settings"},
@@ -121,15 +123,6 @@ def test_save_function_compiles_run_log_without_model_and_saves_once(tmp_path) -
             raise AssertionError(method)
 
     bridge = Bridge(tmp_path / "functions.json")
-    writes: list[dict] = []
-    original_put = bridge.flow.store.put_function
-
-    def put_once(value):
-        writes.append(dict(value))
-        return original_put(value)
-
-    bridge.flow.store.put_function = put_once
-
     result = bridge._save_function(
         "request-1",
         {
@@ -138,12 +131,14 @@ def test_save_function_compiles_run_log_without_model_and_saves_once(tmp_path) -
     )
 
     assert set(result) == {"success", "function_id", "function", "error"}
-    assert result["success"] is True
-    assert result["function"]["name"] == "Open Settings and wait."
-    assert writes == [result["function"]]
+    assert result["success"] is False
+    assert result["error"] == {
+        "code": "FUNCTION_AUTHOR_AGENT_REQUIRED",
+        "message": "An Agent-authored Function and source arguments are required",
+    }
 
 
-def test_save_function_accepts_run_log_object_or_file(tmp_path) -> None:
+def test_save_function_requires_agent_for_run_log_object_or_file(tmp_path) -> None:
     run_log = androidworld_run_log(
         [
             {"action_type": "open_app", "app_name": "com.android.settings"},
@@ -162,7 +157,8 @@ def test_save_function_accepts_run_log_object_or_file(tmp_path) -> None:
     for index, source in enumerate((run_log, str(run_log_path))):
         bridge = Bridge(tmp_path / f"functions-{index}.json")
         result = bridge._save_function("request-1", {"run_log": source})
-        assert result["success"] is True
+        assert result["success"] is False
+        assert result["error"]["code"] == "FUNCTION_AUTHOR_AGENT_REQUIRED"
 
 
 def test_save_function_accepts_agent_authored_semantic_function(tmp_path) -> None:
