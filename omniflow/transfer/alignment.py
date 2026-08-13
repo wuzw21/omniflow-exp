@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 
 from omniflow.core.model import Observation
-from omniflow.core.trajectory import canonicalize_run_log, state_id
+from omniflow.core.trajectory import canonicalize_run_log, observation_xml, state_id
 from omniflow.transfer.embedding import ElementEmbedding, PageEncoder, TreeEmbedding
 
 _POINT_ACTIONS = frozenset({"click", "input_text", "long_press"})
@@ -227,8 +227,8 @@ def _step_observation(step: dict[str, Any]) -> dict[str, Any]:
 
 
 def _encode_page(observation: dict[str, Any], encoder: PageEncoder) -> TreeEmbedding | None:
-    xml = observation.get("forest")
-    if not isinstance(xml, str) or not xml.strip():
+    xml = observation_xml(observation)
+    if not xml.strip():
         return None
     embedded = encoder.embed(
         Observation(

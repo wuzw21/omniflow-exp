@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 
-from omniflow import Action, ActionResult, Observation, PluginSet
-from omniflow.core.model import TransferResult
-from omniflow.runtime import core
+from omniflow import Action, ActionResult, Function, Observation, PluginSet
+from omniflow.core.model import FunctionStep, StepResult, TransferResult
+from omniflow.runtime import core, execution
 
 
 class RecordingHost:
@@ -119,3 +119,65 @@ def test_core_has_no_open_app_catalog_gate(monkeypatch) -> None:
 
     assert result.success is True
     assert host.actions == [action]
+
+
+def test_function_execution_counts_all_auxiliary_actions(monkeypatch) -> None:
+    before = Observation(extra={"state_id": "before"})
+    host = RecordingHost(before)
+    function = Function(
+        function_id="two_steps",
+        name="Two steps",
+        description="Two semantic steps with one auxiliary action each.",
+        steps=(
+            FunctionStep(0, Action("wait", {"duration_ms": 0}), ""),
+            FunctionStep(1, Action("wait", {"duration_ms": 0}), ""),
+        ),
+    )
+
+    async def execute_with_auxiliary(action, **kwargs):
+        auxiliary = StepResult(
+            True,
+            action=Action("press_back", {}),
+            before=kwargs["observation"],
+            after=kwargs["observation"],
+            result=ActionResult(True),
+            actions_executed=1,
+            origin="page_gate",
+        )
+        primary = StepResult(
+            True,
+            action=action,
+            before=kwargs["observation"],
+            after=kwargs["observation"],
+            result=ActionResult(True),
+            actions_executed=1,
+        )
+        return StepResult(
+            True,
+            action=action,
+            before=kwargs["observation"],
+            after=kwargs["observation"],
+            result=ActionResult(True),
+            actions_executed=2,
+            executed_steps=(primary, auxiliary),
+        )
+
+    monkeypatch.setattr(execution, "execute_robust_action", execute_with_auxiliary)
+
+    result = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(),
+            observation=before,
+        )
+    )
+
+    assert result.success is True
+    assert result.actions_executed == 4
+    assert [step["metadata"]["function_step_index"] for step in result.detail["trace"]] == [
+        0,
+        0,
+        1,
+        1,
+    ]

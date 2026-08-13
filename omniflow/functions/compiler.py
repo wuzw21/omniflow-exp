@@ -8,8 +8,8 @@ from typing import Any
 
 from omniflow.core.schemas import canonicalize_action
 from omniflow.core.trajectory import canonicalize_run_log, state_id
+from omniflow.runlog import project_androidworld_step_actions
 from omniflow.runtime.checker import validate_checker_rule
-from src.integrations.runlog import project_androidworld_step_actions
 
 
 def compile_runlog_to_store(
@@ -86,7 +86,7 @@ def compile_runlog_to_store(
                     example["trigger"] = trigger
                 recovery_examples.append(example)
             continue
-        semantic_metadata = {
+        action_metadata = {
             key: metadata[key]
             for key in ("summary", "thinking", "action_description")
             if str(metadata.get(key) or "").strip()
@@ -99,7 +99,7 @@ def compile_runlog_to_store(
                     "action": action,
                     "result": {"success": True},
                     "after_state_id": after_state_id,
-                    "metadata": semantic_metadata,
+                    "metadata": action_metadata,
                 }
             )
     if not steps:
@@ -172,7 +172,7 @@ contains only tool and args. Every Function repeats schema_version
 "omniflow.function.v2". Never place a JSON path or template in an action value;
 bound action values use empty type-correct placeholders.
 
-Treat this as semantic compilation of a raw human Record, not a generic summary.
+Treat this as action-grounded compilation of a raw human Record.
 Inspect every supplied run_log step in step_index order before authoring. The
 top-level reason must account for every source step index and say whether it was
 kept, grouped with neighboring steps, parameterized, or omitted, with a brief
@@ -184,14 +184,10 @@ Use the original RunLog goal plus step metadata.summary, metadata.thinking, and
 metadata.action_description only to explain the work represented by those
 actions. Never replace or contradict the recorded Action with prose.
 
-Create the complete reusable Function only when the selected ordered actions
-actually implement the original goal. Its name must describe the user's task,
-and its description must explain the visible workflow, fixed inputs or
-parameters, and expected final state in language another person can understand.
-Also create the smallest useful semantic Functions for meaningful individual
-actions or tightly coupled contiguous action groups. Every retained replayable
-action must appear in at least one Function; every omitted action must be
-explained in reason.
+Create reusable Functions for meaningful actions or tightly coupled contiguous
+action groups. Every retained replayable action must appear in at least one
+Function; every omitted action must be explained in reason. Do not label or
+classify Functions as semantic, full-flow, complete-task, root, or child.
 
 Do not create a Function merely because one recorded action exists. A coordinate
 click without supporting goal, metadata, or neighboring-action evidence is not a
@@ -215,16 +211,22 @@ evidence. Coordinate fields in the supplied facts are already normalized to
 0..1000. Copy each supplied canonical action without adding fields. Return
 bundle=null only when no safe reusable action-grounded Function exists.
 
-This Record semantic-compilation prompt does not author recovery behavior.
+This compilation prompt does not author recovery behavior.
 Set checker_rules=[] in every generated Function.
 """
     )
     selected_model = str(model or "").strip() or None
+    usage = {
+        "model_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
     if function_bundle is not None:
         if selected_model is not None or client is not None or prompt is not None:
             raise ValueError("function_bundle_cannot_use_author_model_options")
         authored = {
-            "reason": "Registered offline Codex-authored semantic Functions.",
+            "reason": "Registered offline Codex-authored Functions.",
             "bundle": json.loads(json.dumps(function_bundle, ensure_ascii=False)),
         }
     elif selected_model is None:
@@ -265,6 +267,19 @@ Set checker_rules=[] in every generated Function.
             temperature=0,
             timeout=float(timeout),
         )
+        response_usage = getattr(response, "usage", None)
+        prompt_tokens = int(getattr(response_usage, "prompt_tokens", 0) or 0)
+        completion_tokens = int(
+            getattr(response_usage, "completion_tokens", 0) or 0
+        )
+        total_tokens = int(getattr(response_usage, "total_tokens", 0) or 0)
+        usage = {
+            "model_calls": 1,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens
+            or prompt_tokens + completion_tokens,
+        }
         authored = json.loads(str(response.choices[0].message.content or ""))
     if not isinstance(authored, dict) or set(authored) != {"reason", "bundle"}:
         raise ValueError("function_author_response_contract_invalid")
@@ -273,7 +288,7 @@ Set checker_rules=[] in every generated Function.
 
     bundle = authored["bundle"]
     if bundle is None:
-        raise ValueError("semantic_functions_required")
+        raise ValueError("functions_required")
     if not isinstance(bundle, dict):
         raise ValueError("function_author_bundle_must_be_object_or_null")
     if set(bundle) != {
@@ -394,6 +409,10 @@ Set checker_rules=[] in every generated Function.
         "transfer_state_count": len(frozen_states),
         "function_ids": function_ids,
         "function_count": len(function_ids),
+        "source_arguments": json.loads(
+            json.dumps(arguments_by_function, ensure_ascii=False)
+        ),
+        **usage,
     }
     (root / "compile_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n"
@@ -538,7 +557,7 @@ def _default_bundle(
             separators=(",", ":"),
         ).encode()
     ).hexdigest()[:12]
-    function_id = f"complete_run_{digest}"
+    function_id = f"recorded_{digest}"
     checker_rules = [
         validate_checker_rule(
             {
@@ -560,10 +579,7 @@ def _default_bundle(
                 "schema_version": "omniflow.function.v2",
                 "function_id": function_id,
                 "name": str(facts["goal"])[:120],
-                "description": (
-                    "Complete this exact user request with the full recorded "
-                    f"action sequence: {facts['goal']}"
-                ),
+                "description": f"Replay the recorded workflow: {facts['goal']}",
                 "input_schema": {
                     "type": "object",
                     "properties": {},

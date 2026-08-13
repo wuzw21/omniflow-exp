@@ -29,6 +29,14 @@ from src.experiment.mobilegpt_contract import (
 )
 
 APPAGENT_OFFICIAL_REVISION = "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
+APPAGENT_REQUIRED_MODULES = (
+    "colorama",
+    "cv2",
+    "dashscope",
+    "pyshine",
+    "requests",
+    "yaml",
+)
 REQUIRED_DISTRIBUTION_VERSIONS = {"android-env": "1.2.3"}
 
 
@@ -883,6 +891,8 @@ def main(argv: list[str] | None = None) -> int:
         "openai",
         "pandas",
     ]
+    if appagent_mode:
+        module_names.extend(APPAGENT_REQUIRED_MODULES)
     module_names.append("uiautomator2")
     for module_name in module_names:
         try:

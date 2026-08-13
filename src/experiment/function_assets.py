@@ -366,10 +366,10 @@ def _build_function(
         )
     ):
         raise ValueError(f"function_authoring_step_indexes_invalid:{task_name}")
-    expected_indexes = list(range(raw_indexes[0], raw_indexes[-1] + 1))
-    if raw_indexes != expected_indexes:
+    if raw_indexes != sorted(set(raw_indexes)):
         raise ValueError(
-            f"function_authoring_steps_not_contiguous:{task_name}:{function_id}"
+            f"function_authoring_step_indexes_not_strictly_increasing:"
+            f"{task_name}:{function_id}"
         )
     if raw_indexes[0] < 0 or raw_indexes[-1] >= len(source_steps):
         raise ValueError(

@@ -202,8 +202,8 @@ MASTER_PROGRESS_COMMON_FIELDS = (
     "record_root",
     "eval_summary",
     "stats_summary",
-    "model_calls",
-    "total_tokens",
+    "tool_calls",
+    "tokens",
 )
 MOBILEGPT_PROGRESS_METHODS = (
     "mobilegpt_offline_retrieval",
@@ -212,10 +212,6 @@ MOBILEGPT_PROGRESS_FIELDS = (
     "official_success_count",
     "official_task_count",
     "stats_jsonl",
-    "chat_model_calls",
-    "embedding_model_calls",
-    "prompt_tokens",
-    "completion_tokens",
     "task_elapsed_sec",
     "chat_models",
     "embedding_models",
@@ -1047,10 +1043,10 @@ def build_master_progress(
                 out[f"{method}_record_root"] = latest_row.get("record_root", "")
                 out[f"{method}_eval_summary"] = latest_row.get("eval_summary", "")
                 out[f"{method}_stats_summary"] = latest_row.get("stats_summary", "")
-                out[f"{method}_model_calls"] = str(
+                out[f"{method}_tool_calls"] = str(
                     sum(int(float(row.get("model_calls") or 0)) for row in rows)
                 )
-                out[f"{method}_total_tokens"] = str(
+                out[f"{method}_tokens"] = str(
                     sum(int(float(row.get("total_tokens") or 0)) for row in rows)
                 )
             if method in MOBILEGPT_PROGRESS_METHODS and rows:
@@ -1067,21 +1063,6 @@ def build_master_progress(
                     )
                 )
                 out[f"{method}_stats_jsonl"] = rows[-1].get("stats_jsonl", "")
-                out[f"{method}_chat_model_calls"] = str(
-                    sum(int(float(row.get("chat_model_calls") or 0)) for row in rows)
-                )
-                out[f"{method}_embedding_model_calls"] = str(
-                    sum(
-                        int(float(row.get("embedding_model_calls") or 0))
-                        for row in rows
-                    )
-                )
-                out[f"{method}_prompt_tokens"] = str(
-                    sum(int(float(row.get("prompt_tokens") or 0)) for row in rows)
-                )
-                out[f"{method}_completion_tokens"] = str(
-                    sum(int(float(row.get("completion_tokens") or 0)) for row in rows)
-                )
                 out[f"{method}_task_elapsed_sec"] = str(
                     round(sum(float(row.get("task_elapsed_sec") or 0) for row in rows), 6)
                 ).rstrip("0").rstrip(".")
@@ -1475,7 +1456,30 @@ def sync(
 
     matrix_columns = list(dict.fromkeys([*METHOD_MATRIX_COLUMNS, *matrix_columns]))
     run_record_columns = list(dict.fromkeys([*RUN_RECORD_COLUMNS, *run_record_columns]))
-    master_columns = list(dict.fromkeys([*MASTER_PROGRESS_COLUMNS, *master_columns]))
+    retired_master_usage_columns = {
+        f"{method}_{field}"
+        for method in MASTER_PROGRESS_METHODS
+        for field in (
+            "model_calls",
+            "total_tokens",
+            "chat_model_calls",
+            "embedding_model_calls",
+            "prompt_tokens",
+            "completion_tokens",
+        )
+    }
+    master_columns = list(
+        dict.fromkeys(
+            [
+                *MASTER_PROGRESS_COLUMNS,
+                *(
+                    column
+                    for column in master_columns
+                    if column not in retired_master_usage_columns
+                ),
+            ]
+        )
+    )
 
     synced_rows = load_summary_rows(runs_root, source_index, matrix_existing)
     matrix_rows, matrix_stats = merge_method_matrix(matrix_existing, synced_rows)

@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 
 import pytest
+from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from omniflow.functions.compiler import compile_runlog_to_store
-from runlog_fixtures import androidworld_run_log, androidworld_state
 
 
 def _run_log(step_count: int) -> dict:
@@ -58,3 +58,8 @@ def test_compiler_freezes_only_function_referenced_states(
     )
     assert set(catalog["states"]) == {"state_0", "state_1"}
     assert result["transfer_state_count"] == 2
+    assert result["source_arguments"] == {result["function_ids"][0]: {}}
+    assert result["model_calls"] == 0
+    assert result["prompt_tokens"] == 0
+    assert result["completion_tokens"] == 0
+    assert result["total_tokens"] == 0

@@ -18,15 +18,17 @@ from omniflow.core.model import (
     Observation,
     ToolCall,
 )
+from omniflow.core.trajectory import canonicalize_run_log
 from omniflow.functions.artifact import parse_function_artifact
 from omniflow.functions.compiler import compile_runlog_to_store
-from omniflow.functions.management import edit_function, enhance_function
+from omniflow.runlog import import_run_log_evidence
 from omniflow.runtime.engine import InputRequired, OmniFlow
 from omniflow.vlm.gui import (
     ModelToolCallError,
     build_model_turn_request,
     parse_model_turn_response,
 )
+from omniflow.vlm.guidance import resolve_step_guidance
 
 PROTOCOL_VERSION = "2025-11-25"
 _DEFAULT_GUI_MAX_STEPS = 20
@@ -36,7 +38,6 @@ _MODEL_TOOL_CALL_ATTEMPTS = 2
 _FUNCTION_CATALOG_ACTIONS = {
     "list_functions": "list",
     "get_function": "get",
-    "create_function": "put",
     "delete_function": "delete",
     "clear_functions": "clear",
 }
@@ -44,11 +45,10 @@ _FUNCTION_CATALOG_ACTIONS = {
 _MANAGEMENT_TOOL_NAMES = frozenset(
     {
         *_FUNCTION_CATALOG_ACTIONS,
-        "update_function",
+        "save_function",
         "list_run_logs",
         "get_run_log",
         "get_run_log_state",
-        "convert_run_log",
     }
 )
 
@@ -137,7 +137,7 @@ class JsonLineBridge:
             _require_contract(body, set(), {"cursor"})
             return {
                 "tools": [
-                    {"name": name, "inputSchema": {"type": "object"}}
+                    _management_tool_definition(name)
                     for name in sorted({*_MANAGEMENT_TOOL_NAMES, _RUN_GUI_TOOL})
                 ]
             }
@@ -174,10 +174,8 @@ class JsonLineBridge:
                 function = result.get("function")
                 return dict(function) if isinstance(function, dict) else {}
             return result
-        if tool == "update_function":
-            return self._update_function(request_id, args)
-        if tool == "convert_run_log":
-            return self._compile(request_id, args)
+        if tool == "save_function":
+            return self._save_function(request_id, args)
         if tool == "list_run_logs":
             response = self.host_call(
                 request_id,
@@ -268,7 +266,10 @@ class JsonLineBridge:
             host,
             model=model,
             target_package_name=str(body.get("target_package_name") or ""),
-            step_skill_guidance=str(body.get("step_skill_guidance") or ""),
+            step_skill_guidance=resolve_step_guidance(
+                goal,
+                str(body.get("step_skill_guidance") or ""),
+            ),
             max_steps=max_steps,
         )
         flow = OmniFlow(
@@ -369,43 +370,6 @@ class JsonLineBridge:
                 "function": function.to_dict(),
                 "source": "omniflow_python",
             }
-        if action == "put":
-            value = dict(body.get("function") or {})
-            function_id = str(value.get("function_id") or "").strip()
-            expected_value = body.get("expected_function")
-            if expected_value is not None:
-                try:
-                    expected = parse_function_artifact(dict(expected_value)).to_dict()
-                except (TypeError, ValueError) as error:
-                    return _management_error("FUNCTION_SCHEMA_INVALID", str(error))
-                current = self.flow.store.get_function(function_id)
-                if (
-                    expected.get("function_id") != function_id
-                    or current is None
-                    or current.to_dict() != expected
-                ):
-                    return _management_error(
-                        "FUNCTION_ENHANCEMENT_CONFLICT",
-                        "Function changed before offline enhancement could be saved",
-                        function_id=function_id,
-                    )
-            already_exists = bool(
-                function_id and self.flow.store.get_function(function_id) is not None
-            )
-            try:
-                function = self.flow.store.put_function(value)
-            except ValueError as error:
-                return _management_error("FUNCTION_SCHEMA_INVALID", str(error))
-            saved = function.to_dict()
-            return {
-                "success": True,
-                "function": saved,
-                "function_id": function.function_id,
-                "imported": True,
-                "already_exists": already_exists,
-                "agent_visible": saved["agent_visible"],
-                "source": "omniflow_python",
-            }
         if action == "delete":
             function_id = str(body.get("function_id") or "").strip()
             deleted = self.flow.store.delete_function(function_id)
@@ -429,397 +393,116 @@ class JsonLineBridge:
             }
         raise ValueError(f"unsupported_catalog_action:{action}")
 
-    def _compile(self, request_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        _require_contract(
-            body,
-            {"run_id"},
-            {
-                "run_id",
-                "register",
-                "agent_visible",
-                "function_id",
-                "name",
-                "description",
-                "enhance",
-            },
-        )
-        run_id = str(body.get("run_id") or "").strip()
-        if not run_id:
-            return _management_error("RUN_LOG_ID_EMPTY", "run_id is required")
-        run_log = self.host_call(request_id, "get_run_log", {"run_id": run_id})
-        if not isinstance(run_log, dict):
-            return _management_error(
-                "RUN_LOG_NOT_FOUND",
-                f"RunLog not found: {run_id}",
-                run_id=run_id,
-            )
-        if run_log.get("error_code"):
-            return _management_error(
-                str(run_log["error_code"]),
-                str(run_log.get("error_message") or f"RunLog not found: {run_id}"),
-                run_id=run_id,
-            )
-
-        try:
-            with tempfile.TemporaryDirectory(prefix="omniflow-compile-") as output_root:
-                report = compile_runlog_to_store(
-                    run_log,
-                    output_root,
-                    state_loader=lambda state_id: self.host_call(
-                        request_id,
-                        "get_state",
-                        {"state_id": state_id},
-                    ),
-                )
-                compiled = OmniFlow(Path(output_root) / "store.json")
-                function_id = next(iter(report["function_ids"]), "")
-                function = compiled.store.get_function(function_id)
-        except ValueError as error:
-            return _compile_error(run_id, error)
-        if function is None:
-            return _management_error(
-                "RUN_LOG_NO_REPLAYABLE_STEPS",
-                "RunLog has no replayable steps",
-                run_id=run_id,
-            )
-
-        value = function.to_dict()
-        for field in ("function_id", "name", "description"):
-            replacement = str(body.get(field) or "").strip()
-            if replacement:
-                value[field] = replacement
-        value["agent_visible"] = body.get("agent_visible") is True
-        try:
-            value = parse_function_artifact(value).to_dict()
-        except ValueError as error:
-            return _management_error(
-                "FUNCTION_SCHEMA_INVALID",
-                str(error),
-                run_id=run_id,
-            )
-
-        register = body.get("register") is True
-        should_enhance = body.get("enhance") is True
-        changes: list[dict[str, Any]] = []
-        enhancement_status = "none"
-        enhancement_message = ""
-        if should_enhance and not register:
-            try:
-                value, changes, enhancement_status = enhance_function(
-                    value,
-                    run_log,
-                    lambda prompt: self._complete_json(request_id, prompt),
-                )
-            except Exception as error:
-                enhancement_status = "failed"
-                enhancement_message = str(error)
-        function_id = value["function_id"]
-        self.flow.store.reload()
-        already_exists = self.flow.store.get_function(function_id) is not None
-        if register:
-            state_error = self._validate_function_source_states(request_id, value)
-            if state_error:
-                return _management_error(
-                    "FUNCTION_SOURCE_STATE_NOT_FOUND",
-                    state_error,
-                    function_id=function_id,
-                    run_id=run_id,
-                )
-            self.flow.store.put_function(value)
-            if should_enhance:
-                try:
-                    scheduled = self.host_call(
-                        request_id,
-                        "schedule_operation",
-                        {
-                            "operation": "tools/call",
-                            "payload": {
-                                "name": "update_function",
-                                "arguments": {
-                                    "function_id": function_id,
-                                    "mode": "enhance",
-                                    "run_id": run_id,
-                                },
-                            },
-                        },
-                    )
-                    if (
-                        not isinstance(scheduled, dict)
-                        or scheduled.get("accepted") is not True
-                    ):
-                        raise RuntimeError("background_operation_not_accepted")
-                    enhancement_status = "enhancing"
-                    enhancement_message = (
-                        "Base Function registered; offline enhancement is running."
-                    )
-                except Exception as error:  # noqa: BLE001
-                    enhancement_status = "failed"
-                    enhancement_message = str(error) or type(error).__name__
-        status = "converted"
-        if register:
-            status = "updated" if already_exists else "created"
-        step_count = len(run_log.get("steps") or ())
-        return {
-            "success": True,
-            "accepted": True,
-            "status": status,
-            "run_id": run_id,
-            "function_id": function_id,
-            "function": value,
-            "registered": register,
-            "already_exists": already_exists,
-            "step_count": step_count,
-            "successful_step_count": sum(
-                1
-                for step in run_log.get("steps") or ()
-                if isinstance(step, dict)
-                and isinstance(step.get("result"), dict)
-                and step["result"].get("success") is True
-            ),
-            "compiled_step_count": len(value["steps"]),
-            "enhancement_status": enhancement_status,
-            "changes": changes,
-            "message": enhancement_message,
-            "error": None,
-            "source": "omniflow_python",
-        }
-
-    def _validate_function_source_states(
-        self,
-        request_id: str,
-        function: dict[str, Any],
-    ) -> str:
-        state_ids = dict.fromkeys(
-            str(item.get("source_state_id") or "").strip()
-            for collection in (function.get("steps"), function.get("checker_rules"))
-            for item in (collection if isinstance(collection, list) else ())
-            if isinstance(item, dict)
-        )
-        for state_id in state_ids:
-            if not state_id:
-                continue
-            try:
-                state = self.host_call(request_id, "get_state", {"state_id": state_id})
-            except (EOFError, RuntimeError, ValueError) as error:
-                return str(error) or f"state_not_found:{state_id}"
-            if (
-                not isinstance(state, dict)
-                or str(state.get("state_id") or "") != state_id
-            ):
-                return f"state_not_found:{state_id}"
-        return ""
-
-    def _update_function(
+    def _save_function(
         self,
         request_id: str,
         body: dict[str, Any],
     ) -> dict[str, Any]:
         _require_contract(
             body,
-            {"function_id"},
-            {"function_id", "mode", "patch", "dry_run", "run_id", "instruction"},
-        )
-        function_id = str(body.get("function_id") or "").strip()
-        if not function_id:
-            return _management_error("FUNCTION_ID_EMPTY", "function_id is required")
-        self.flow.store.reload()
-        original = self.flow.store.get_function(function_id)
-        if original is None:
-            return _management_error(
-                "FUNCTION_NOT_FOUND",
-                f"Function not found: {function_id}",
-                function_id=function_id,
-            )
-
-        patch = body.get("patch")
-        if patch is not None and not isinstance(patch, dict):
-            return _management_error(
-                "FUNCTION_PATCH_INVALID",
-                "patch must be an object",
-                function_id=function_id,
-            )
-        mode = str(body.get("mode") or "").strip().lower()
-        if isinstance(patch, dict) or mode == "edit":
-            edits = (patch or {}).get("action_edits", [])
-            if not isinstance(edits, list):
-                return _management_error(
-                    "FUNCTION_PATCH_INVALID",
-                    "patch.action_edits must be an array",
-                    function_id=function_id,
-                )
-            updated, changes = edit_function(original.to_dict(), edits)
-            dry_run = body.get("dry_run") is True
-            if changes and not dry_run:
-                self.flow.store.put_function(updated)
-            return {
-                "success": True,
-                "function_id": function_id,
-                "found": True,
-                "function": original.to_dict(),
-                "updated_function": updated,
-                "changed": bool(changes),
-                "saved": bool(changes) and not dry_run,
-                "dry_run": dry_run,
-                "changes": changes,
-                "message": (
-                    "No applicable action edits."
-                    if not changes
-                    else "Function update preview generated."
-                    if dry_run
-                    else "Function updated."
-                ),
-                "source": "omniflow_python",
-            }
-        if mode != "enhance":
-            return _management_error(
-                "FUNCTION_UPDATE_MODE_REQUIRED",
-                "mode must be edit or enhance",
-                function_id=function_id,
-            )
-        run_log: dict[str, Any] = {}
-        run_id = str(body.get("run_id") or "").strip()
-        if run_id:
-            self._write_enhancement_diagnostics(
-                request_id,
-                run_id,
-                {
-                    "status": "enhancing",
-                    "function_id": function_id,
-                    "message": "Base Function registered; offline enhancement is running.",
-                    "changes": [],
-                },
-            )
-        if run_id:
-            loaded = self.host_call(request_id, "get_run_log", {"run_id": run_id})
-            if isinstance(loaded, dict):
-                run_log = loaded
-        try:
-            result = self._enhance(
-                request_id,
-                {
-                    "function_id": function_id,
-                    "run_log": run_log,
-                    "dry_run": body.get("dry_run") is True,
-                    "instruction": str(body.get("instruction") or "").strip()[:2000],
-                },
-            )
-        except Exception as error:  # noqa: BLE001
-            original_value = original.to_dict()
-            message = str(error) or type(error).__name__
-            result = {
-                "success": False,
-                "function_id": function_id,
-                "found": True,
-                "function": original_value,
-                "updated_function": original_value,
-                "changed": False,
-                "saved": False,
-                "dry_run": body.get("dry_run") is True,
-                "changes": [],
-                "enhancement_status": "failed",
-                "message": message,
-                "error_code": "FUNCTION_ENHANCEMENT_FAILED",
-                "error_message": message,
-                "source": "omniflow_python",
-            }
-        if run_id:
-            self._write_enhancement_diagnostics(
-                request_id,
-                run_id,
-                _enhancement_diagnostics(function_id, result),
-            )
-        return result
-
-    def _write_enhancement_diagnostics(
-        self,
-        request_id: str,
-        run_id: str,
-        diagnostics: dict[str, Any],
-    ) -> None:
-        try:
-            self.host_call(
-                request_id,
-                "update_run_log_diagnostics",
-                {
-                    "run_id": run_id,
-                    "diagnostics": {"function_enhancement": diagnostics},
-                },
-            )
-        except (EOFError, RuntimeError, ValueError):
-            pass
-
-    def _enhance(self, request_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        function_id = str(body.get("function_id") or "").strip()
-        self.flow.store.reload()
-        function = self.flow.store.get_function(function_id)
-        if function is None:
-            return _management_error(
-                "FUNCTION_NOT_FOUND",
-                f"Function not found: {function_id}",
-                function_id=function_id,
-            ) | {"found": False}
-        run_log = body.get("run_log")
-        if not isinstance(run_log, dict):
-            run_log = {}
-
-        def complete_json(prompt: str) -> str:
-            return self._complete_json(request_id, prompt)
-
-        updated, changes, status = enhance_function(
-            function.to_dict(),
-            run_log,
-            complete_json,
-            instruction=str(body.get("instruction") or "").strip()[:2000],
-        )
-        dry_run = body.get("dry_run") is True
-        if not dry_run:
-            self.flow.store.reload()
-            current = self.flow.store.get_function(function_id)
-            if current is None or current.to_dict() != function.to_dict():
-                return _management_error(
-                    "FUNCTION_ENHANCEMENT_CONFLICT",
-                    "Function changed before offline enhancement could be saved",
-                    function_id=function_id,
-                ) | {
-                    "found": current is not None,
-                    "function": function.to_dict(),
-                    "updated_function": updated,
-                    "changed": bool(changes),
-                    "saved": False,
-                    "dry_run": False,
-                    "changes": changes,
-                    "enhancement_status": "conflict",
-                }
-            self.flow.store.put_function(updated)
-        return {
-            "success": True,
-            "function_id": function_id,
-            "found": True,
-            "function": function.to_dict(),
-            "updated_function": updated,
-            "changed": bool(changes),
-            "saved": not dry_run,
-            "dry_run": dry_run,
-            "changes": changes,
-            "enhancement_status": status,
-            "message": "Function enhancement completed.",
-            "source": "omniflow_python",
-        }
-
-    def _complete_json(self, request_id: str, prompt: str) -> str:
-        response = self.host_call(
-            request_id,
-            "complete_json",
+            set(),
             {
-                "model": "scene.dispatch.model",
-                "prompt": prompt,
-                "max_tokens": 1800,
-                "temperature": 0.1,
+                "run_id",
+                "run_log",
+                "function",
+                "arguments",
+                "agent_visible",
             },
         )
-        if not isinstance(response, dict):
-            raise ValueError("complete_json_response_invalid")
-        return str(response.get("content") or "")
+        supplied_function = body.get("function")
+        run_id = str(body.get("run_id") or "").strip()
+        supplied_run_log = body.get("run_log")
+        if supplied_function is not None and not isinstance(supplied_function, dict):
+            return _save_error("FUNCTION_SCHEMA_INVALID", "function must be an object")
+        supplied_arguments = body.get("arguments")
+        if supplied_arguments is not None and not isinstance(supplied_arguments, dict):
+            return _save_error("FUNCTION_ARGUMENTS_INVALID", "arguments must be an object")
+        if supplied_run_log is not None:
+            try:
+                run_log = _load_run_log_input(supplied_run_log)
+            except (OSError, ValueError) as error:
+                return _save_error("RUN_LOG_INVALID", str(error))
+            embedded_run_id = str(run_log.get("run_id") or "").strip()
+            if run_id and run_id != embedded_run_id:
+                return _save_error("RUN_LOG_ID_MISMATCH", "run_id does not match run_log")
+            run_id = embedded_run_id
+        else:
+            run_log = None
+        if not run_id and run_log is None:
+            if supplied_function is None:
+                return _save_error(
+                    "FUNCTION_SAVE_INPUT_REQUIRED",
+                    "run_id, run_log, or function is required",
+                )
+            try:
+                function = parse_function_artifact(supplied_function)
+                saved = self.flow.store.put_function(function)
+            except ValueError as error:
+                return _save_error("FUNCTION_SCHEMA_INVALID", str(error))
+            return _save_success(saved)
+
+        if run_log is None:
+            run_log = self.host_call(request_id, "get_run_log", {"run_id": run_id})
+        if not isinstance(run_log, dict):
+            return _save_error(
+                "RUN_LOG_NOT_FOUND",
+                f"RunLog not found: {run_id}",
+            )
+        if run_log.get("error_code"):
+            return _save_error(
+                str(run_log["error_code"]),
+                str(run_log.get("error_message") or f"RunLog not found: {run_id}"),
+            )
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="omniflow-compile-") as output_root:
+                function_bundle = None
+                if supplied_function is not None:
+                    function_id = str(supplied_function.get("function_id") or "").strip()
+                    function_bundle = {
+                        "schema_version": "omniflow.function-bundle.v2",
+                        "run_id": run_id,
+                        "arguments": {
+                            function_id: dict(supplied_arguments or {})
+                        },
+                        "functions": [supplied_function],
+                    }
+                compile_options: dict[str, Any] = {}
+                if supplied_run_log is not None:
+                    _, source_states = import_run_log_evidence(run_log)
+                    compile_options["source_states"] = source_states
+                else:
+                    compile_options["state_loader"] = lambda state_id: self.host_call(
+                        request_id,
+                        "get_state",
+                        {"state_id": state_id},
+                    )
+                report = compile_runlog_to_store(
+                    run_log,
+                    output_root,
+                    function_bundle=function_bundle,
+                    **compile_options,
+                )
+                compiled = OmniFlow(Path(output_root) / "store.json")
+                function_id = next(iter(report["function_ids"]), "")
+                function = compiled.store.get_function(function_id)
+        except ValueError as error:
+            return _save_compile_error(error)
+        if function is None:
+            return _save_error(
+                "RUN_LOG_NO_REPLAYABLE_STEPS",
+                "RunLog has no replayable steps",
+            )
+
+        value = function.to_dict()
+        if "agent_visible" in body:
+            value["agent_visible"] = body.get("agent_visible") is True
+        try:
+            value = parse_function_artifact(value).to_dict()
+        except ValueError as error:
+            return _save_error("FUNCTION_SCHEMA_INVALID", str(error))
+        saved = self.flow.store.put_function(value)
+        return _save_success(saved)
 
     def host_call(self, request_id: str, method: str, payload: dict[str, Any]) -> Any:
         self._host_call_index += 1
@@ -1139,6 +822,55 @@ def _require_contract(
         raise ValueError(f"request_unknown_fields:{','.join(unknown)}")
 
 
+def _management_tool_definition(name: str) -> dict[str, Any]:
+    if name != "save_function":
+        return {"name": name, "inputSchema": {"type": "object"}}
+    return {
+        "name": name,
+        "description": (
+            "Save one reusable Function. Pass run_id, a RunLog object, or an absolute "
+            "RunLog JSON path to mechanically preserve the complete successful action "
+            "sequence without a model call. For optional "
+            "semantic authoring, first inspect the RunLog with get_run_log, then pass "
+            "run_id plus one complete Function and its source arguments. Preserve recorded "
+            "actions in order; do not invent actions, UI evidence, or checker rules. "
+            "Parameterize only action values supported by the RunLog."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string"},
+                "run_log": {
+                    "anyOf": [{"type": "object"}, {"type": "string"}]
+                },
+                "function": {"type": "object"},
+                "arguments": {"type": "object"},
+                "agent_visible": {"type": "boolean"},
+            },
+            "additionalProperties": False,
+            "anyOf": [
+                {"required": ["run_id"]},
+                {"required": ["run_log"]},
+                {"required": ["function"]},
+            ],
+        },
+    }
+
+
+def _load_run_log_input(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return canonicalize_run_log(value)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("run_log must be an object or absolute JSON path")
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise ValueError("run_log path must be absolute")
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise ValueError("run_log file must contain one object")
+    return canonicalize_run_log(loaded)
+
+
 def _int_arg(value: Any, default: int) -> int:
     try:
         return int(value)
@@ -1146,7 +878,7 @@ def _int_arg(value: Any, default: int) -> int:
         return default
 
 
-def _compile_error(run_id: str, error: ValueError) -> dict[str, Any]:
+def _save_compile_error(error: ValueError) -> dict[str, Any]:
     message = str(error)
     code = {
         "successful_source_actions_required": "RUN_LOG_NO_REPLAYABLE_STEPS",
@@ -1158,7 +890,25 @@ def _compile_error(run_id: str, error: ValueError) -> dict[str, Any]:
         "RUN_LOG_NO_REPLAYABLE_STEPS": "RunLog has no replayable steps",
         "RUN_LOG_GOAL_EMPTY": "RunLog goal is required",
     }.get(code, message)
-    return _management_error(code, user_message, run_id=run_id)
+    return _save_error(code, user_message)
+
+
+def _save_success(function: Function) -> dict[str, Any]:
+    return {
+        "success": True,
+        "function_id": function.function_id,
+        "function": function.to_dict(),
+        "error": None,
+    }
+
+
+def _save_error(code: str, message: str) -> dict[str, Any]:
+    return {
+        "success": False,
+        "function_id": "",
+        "function": None,
+        "error": {"code": code, "message": message},
+    }
 
 
 def _management_error(
@@ -1181,27 +931,6 @@ def _management_error(
         "error_message": message,
         "source": "omniflow_python",
     }
-
-
-def _enhancement_diagnostics(
-    function_id: str,
-    result: dict[str, Any],
-) -> dict[str, Any]:
-    status = str(result.get("enhancement_status") or "").strip()
-    if result.get("success") is not True:
-        status = "failed"
-    elif not status:
-        status = "enhanced" if result.get("changed") is True else "unchanged"
-    diagnostics: dict[str, Any] = {
-        "status": status,
-        "function_id": function_id,
-        "message": str(result.get("message") or result.get("error_message") or ""),
-        "changes": list(result.get("changes") or ()),
-    }
-    error_code = str(result.get("error_code") or "").strip()
-    if error_code:
-        diagnostics["error_code"] = error_code
-    return diagnostics
 
 
 def _gui_max_steps(value: Any) -> int:
@@ -1252,6 +981,28 @@ def _run_result(
             if error.startswith("function_arguments_invalid:missing:")
             else "FUNCTION_CALL_FAILED"
         )
+    function_resolution = result.detail.get("function_resolution") or None
+    recalled_function_id = str(result.function_id or "").strip()
+    recall_hit = bool(recalled_function_id)
+    post_run_actions: list[dict[str, Any]] = []
+    done_reason = result.detail.get("done_reason") or (
+        "finished" if result.success else "error"
+    )
+    if (
+        result.success
+        and done_reason == "finished"
+        and not recall_hit
+        and int(result.actions_executed) > 0
+    ):
+        post_run_actions.append(
+            {
+                "name": "save_function",
+                "arguments": {
+                    "run_id": str(body.get("run_id") or ""),
+                    "agent_visible": True,
+                },
+            }
+        )
     payload: dict[str, Any] = {
         "success": result.success,
         "status": "succeeded" if result.success else "failed",
@@ -1272,14 +1023,19 @@ def _run_result(
         "duration_ms": max(0, finished_at_ms - started_at_ms),
         "error_code": error_code,
         "error_message": error or None,
-        "done_reason": result.detail.get("done_reason")
-        or ("finished" if result.success else "error"),
+        "done_reason": done_reason,
         "finished_content": result.detail.get("finished_content"),
         "model": str(body.get("model") or "") or None,
         "model_calls": int(result.model_calls),
         "fallback_steps": int(result.fallback_steps),
+        "completion_review_calls": int(
+            result.detail.get("completion_review_calls") or 0
+        ),
         "planner_diagnostics": result.detail.get("planner_diagnostics") or None,
-        "function_resolution": result.detail.get("function_resolution") or None,
+        "function_resolution": function_resolution,
+        "recall_hit": recall_hit,
+        "recalled_function_id": recalled_function_id or None,
+        "post_run_actions": post_run_actions or None,
         "runtime_limits": result.detail.get("runtime_limits") or None,
         "missing_required_arguments": (
             [
@@ -1435,13 +1191,18 @@ def _bridge_identity() -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--store", required=True)
+    parser.add_argument("--store")
     parser.add_argument(
         "--catalog",
         help="Catalog release directory, or 'default' for the packaged release.",
     )
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--self-test", action="store_true")
     arguments = parser.parse_args(argv)
+    if arguments.self_test:
+        return self_test()
+    if not arguments.store:
+        parser.error("the following arguments are required: --store")
     catalog = None
     if arguments.catalog:
         catalog = (
@@ -1454,6 +1215,18 @@ def main(argv: list[str] | None = None) -> int:
         bridge.serve_once()
     else:
         bridge.serve_forever()
+    return 0
+
+
+def self_test() -> int:
+    identity = _bridge_identity()
+    if not identity.get("runtime_version"):
+        raise RuntimeError("runtime_version_missing")
+    if not identity.get("contract_sha256"):
+        raise RuntimeError("bridge_contract_missing")
+    if identity.get("omnitransfer_ready") is not True:
+        raise RuntimeError("omnitransfer_not_ready")
+    print(json.dumps({"ok": True, "runtime": identity}, sort_keys=True))
     return 0
 
 

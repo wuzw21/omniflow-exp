@@ -52,7 +52,8 @@ async def execute_action(
             detail=decision.detail,
         )
     action_result = ActionResult.from_value(await _await(host.act(decision.action)))
-    await asyncio.sleep(_ACTION_SETTLE_SECONDS)
+    if _ACTION_SETTLE_SECONDS > 0.0:
+        await asyncio.sleep(_ACTION_SETTLE_SECONDS)
     if not action_result.success:
         return StepResult(
             False,
@@ -89,7 +90,11 @@ async def prepare_action(
 ) -> ActionDecision:
     """Return the real transfer adapter's decision without a second gate."""
 
-    if source_state is None or action.tool in {"open_app", "press_key"}:
+    if (
+        source_state is None
+        or action.tool in {"open_app", "press_key"}
+        or (action.tool == "swipe" and action.args.get("direction") is not None)
+    ):
         return ActionDecision("ready", action=action)
     if plugins.transfer is None:
         return ActionDecision("block", reason="transfer_not_configured")

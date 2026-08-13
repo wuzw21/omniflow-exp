@@ -27,6 +27,8 @@ from omniflow.core.model import (
 from omniflow.runtime.checker import default_checker_trigger, match_checker_rule
 from omniflow.runtime.core import (
     execute_action as execute_core_action,
+)
+from omniflow.runtime.core import (
     prepare_action as prepare_core_action,
 )
 from omniflow.transfer.runtime import transfer_action
@@ -35,15 +37,7 @@ _OPEN_APP_READY_POLL_SECONDS = 0.5
 _OPEN_APP_READY_MAX_ATTEMPTS = 30
 _OBSERVATION_READY_POLL_SECONDS = 0.25
 _OBSERVATION_READY_MAX_ATTEMPTS = 20
-_TRANSFER_REOBSERVE_POLL_SECONDS = 0.5
-_TRANSFER_REOBSERVE_MAX_ATTEMPTS = 8
-_TRANSFER_REOBSERVE_REASONS = frozenset(
-    {
-        "omnitransfer_missing_target_page",
-        "omnitransfer_target_graph_incomplete",
-        "omnitransfer_low_confidence",
-    }
-)
+_CHECKER_RECOVERY_MAX_ATTEMPTS = 8
 # OmniTransfer already applies the deployment acceptance floor.  Keep only a
 # minimal sanity floor here so OmniFlow does not reject a valid mapped target a
 # second time merely because its confidence is below a conservative benchmark
@@ -59,7 +53,6 @@ async def execute_function(
     host: Host,
     plugins: PluginSet,
     observation: Observation | None = None,
-    max_actions: int | None = None,
     start_step_index: int = 0,
     trace_start_index: int = 0,
     resume_metadata: dict[str, Any] | None = None,
@@ -72,37 +65,11 @@ async def execute_function(
     steps = tuple(
         step for step in function.steps if step.step_index >= int(start_step_index)
     )
-    if max_actions is not None and len(steps) > max_actions:
-        return RunResult(
-            False,
-            function.id,
-            0,
-            error="function_exceeds_action_budget",
-            final_state=current,
-            detail={
-                "trace": [],
-                "required_actions": len(steps),
-                "max_actions": max_actions,
-                "next_step_index": int(start_step_index),
-            },
-        )
     executed = 0
     trace: list[dict[str, Any]] = []
     resume_metadata_pending = dict(resume_metadata or {})
     for function_step in steps:
         action = function_step.action
-        if max_actions is not None and executed >= max_actions:
-            return RunResult(
-                False,
-                function.id,
-                executed,
-                error="max_steps_exceeded",
-                final_state=current,
-                detail={
-                    "trace": trace,
-                    "next_step_index": function_step.step_index,
-                },
-            )
         source_state = await _load_state(
             host,
             function_step.source_state_id,
@@ -320,18 +287,9 @@ async def execute_robust_action(
     source_state: Observation | None = None,
     installed_packages: frozenset[str] | None = None,
     state_loader: StateLoader | None = None,
-    _allow_delayed_checker_retry: bool = True,
+    _checker_recovery_attempts_remaining: int = _CHECKER_RECOVERY_MAX_ATTEMPTS,
 ) -> StepResult:
     function_id = function.id if function is not None else None
-    if _payment_confirmation_visible(observation, action):
-        return StepResult(
-            False,
-            action=action,
-            before=observation,
-            error="payment_confirmation_blocked",
-            origin="blocked",
-            function_id=function_id,
-        )
     executed_steps: list[StepResult] = []
     recovery_action: Action | None = None
     recovery_trigger: str | None = None
@@ -405,6 +363,15 @@ async def execute_robust_action(
         recovery_action = None
         recovery_trigger = None
     if recovery_action is not None:
+        if _checker_recovery_attempts_remaining <= 0:
+            return StepResult(
+                False,
+                action=action,
+                before=observation,
+                error="checker_recovery_limit_exceeded",
+                origin="blocked",
+                function_id=function_id,
+            )
         recovery_step = replace(
             await _dispatch_prepared(
                 recovery_action,
@@ -423,6 +390,26 @@ async def execute_robust_action(
                 executed_steps=tuple(executed_steps),
             )
         observation = recovery_step.after or observation
+        retried = await execute_robust_action(
+            action,
+            observation=observation,
+            host=host,
+            plugins=plugins,
+            function=function,
+            source_state=source_state,
+            installed_packages=installed_packages,
+            state_loader=state_loader,
+            _checker_recovery_attempts_remaining=(
+                _checker_recovery_attempts_remaining - 1
+            ),
+        )
+        retried_steps = tuple(retried.executed_steps or (retried,))
+        all_steps = (recovery_step, *retried_steps)
+        return replace(
+            retried,
+            actions_executed=sum(item.actions_executed for item in all_steps),
+            executed_steps=all_steps,
+        )
     if (
         _action_uses_transfer_target(action)
         and _observation_screenshot_path(source_state)
@@ -435,48 +422,6 @@ async def execute_robust_action(
         plugins=plugins,
         source_state=source_state,
     )
-    decision, observation = await _reobserve_for_transfer(
-        action,
-        decision=decision,
-        observation=observation,
-        host=host,
-        plugins=plugins,
-        source_state=source_state,
-    )
-    if (
-        _allow_delayed_checker_retry
-        and function is not None
-        and decision.kind == "block"
-    ):
-        try:
-            delayed_recovery = match_checker_rule(
-                CheckerContext(source_state, observation, action),
-                function.checker_rules,
-            )
-        except Exception:  # noqa: BLE001
-            delayed_recovery = None
-        if delayed_recovery is not None:
-            retried = await execute_robust_action(
-                action,
-                observation=observation,
-                host=host,
-                plugins=plugins,
-                function=function,
-                source_state=source_state,
-                installed_packages=installed_packages,
-                state_loader=state_loader,
-                _allow_delayed_checker_retry=False,
-            )
-            return replace(
-                retried,
-                detail={
-                    **retried.detail,
-                    "semantic_step_retry": {
-                        "trigger": delayed_recovery.trigger,
-                        "initial_reason": decision.reason,
-                    },
-                },
-            )
     if decision.kind == "block" or decision.action is None:
         blocked = StepResult(
             False,
@@ -513,86 +458,6 @@ async def execute_robust_action(
         result,
         actions_executed=sum(item.actions_executed for item in executed_steps),
         executed_steps=tuple(executed_steps),
-    )
-
-
-async def _reobserve_for_transfer(
-    action: Action,
-    *,
-    decision: ActionDecision,
-    observation: Observation,
-    host: Host,
-    plugins: PluginSet,
-    source_state: Observation | None,
-) -> tuple[ActionDecision, Observation]:
-    initial_reason = str(decision.reason or "")
-    if (
-        not _transfer_decision_needs_reobservation(decision)
-        or source_state is None
-    ):
-        return decision, observation
-
-    attempts = 0
-    current = observation
-    while attempts < _TRANSFER_REOBSERVE_MAX_ATTEMPTS:
-        await asyncio.sleep(_TRANSFER_REOBSERVE_POLL_SECONDS)
-        current = await _observe_ready(host)
-        attempts += 1
-        decision = await prepare_action(
-            action,
-            observation=current,
-            plugins=plugins,
-            source_state=source_state,
-        )
-        if not _transfer_decision_needs_reobservation(decision):
-            break
-
-    return (
-        replace(
-            decision,
-            detail={
-                **decision.detail,
-                "observation_retry": {
-                    "attempts": attempts,
-                    "initial_reason": initial_reason,
-                },
-            },
-        ),
-        current,
-    )
-
-
-def _transfer_decision_needs_reobservation(decision: ActionDecision) -> bool:
-    reason = str(decision.reason or "")
-    if decision.kind == "block":
-        return reason in _TRANSFER_REOBSERVE_REASONS
-    mapping_mode = str(decision.detail.get("mapping_mode") or reason)
-    return (
-        decision.action is not None
-        and "coordinate_stretch_fallback" in mapping_mode
-    )
-
-
-def _payment_confirmation_visible(
-    observation: Observation,
-    action: Action,
-) -> bool:
-    if action.tool not in {"click", "long_press", "input_text", "swipe"}:
-        return False
-    normalized = " ".join(str(observation.xml or "").lower().split())
-    return any(
-        marker in normalized
-        for marker in (
-            "确认支付",
-            "立即支付",
-            "去支付",
-            "支付密码",
-            "付款密码",
-            "收银台",
-            "pay now",
-            "confirm payment",
-            "payment password",
-        )
     )
 
 
@@ -1255,6 +1120,7 @@ def _elements(xml_text: str) -> list[dict[str, Any]]:
                 "class": str(element.attrib.get("class") or element.tag).rsplit(".", 1)[
                     -1
                 ],
+                "package": str(element.attrib.get("package") or ""),
                 "clickable": str(element.attrib.get("clickable") or "").lower()
                 == "true",
             }
@@ -1266,9 +1132,7 @@ def _display_size(
     observation: Observation,
     elements: list[dict[str, Any]],
 ) -> tuple[float, float] | None:
-    xml_size = _xml_size(elements)
     display = observation.extra.get("display")
-    action_size = None
     if isinstance(display, dict) and set(display) == {"width", "height"}:
         try:
             width = float(display.get("width") or 0)
@@ -1276,12 +1140,8 @@ def _display_size(
         except (TypeError, ValueError):
             width = height = 0.0
         if width > 0 and height > 0:
-            action_size = (width, height)
-    if xml_size is None:
-        return action_size
-    if action_size is None:
-        return xml_size
-    return max(xml_size[0], action_size[0]), max(xml_size[1], action_size[1])
+            return width, height
+    return _xml_size(elements)
 
 
 def _xml_size(elements: list[dict[str, Any]]) -> tuple[float, float] | None:

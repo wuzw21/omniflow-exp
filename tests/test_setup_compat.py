@@ -21,6 +21,55 @@ from src.integrations.android_world.setup_compat import (
 )
 
 
+def _sqlite_utils_with_reader(reader):
+    return SimpleNamespace(
+        delete_all_rows_from_table=lambda *args, **kwargs: None,
+        insert_rows_to_remote_db=lambda *args, **kwargs: None,
+        get_rows_from_remote_device=reader,
+        sqlite3=SimpleNamespace(),
+        os=SimpleNamespace(),
+        time=SimpleNamespace(),
+        file_utils=SimpleNamespace(),
+        adb_utils=SimpleNamespace(),
+        sqlite_schema_utils=SimpleNamespace(),
+    )
+
+
+def test_androidworld_sqlite_reader_retries_disappearing_sidecar() -> None:
+    calls = 0
+
+    def read_rows(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError(
+                "adb pull /data/data/app/databases/accounting.db-journal: "
+                "No such file or directory"
+            )
+        return ["row"]
+
+    sqlite_utils = _sqlite_utils_with_reader(read_rows)
+    launch._patch_androidworld_sqlite_writeback(sqlite_utils)
+
+    assert sqlite_utils.get_rows_from_remote_device("table", "db", object()) == [
+        "row"
+    ]
+    assert calls == 2
+
+
+def test_androidworld_sqlite_reader_does_not_hide_missing_main_db() -> None:
+    def read_rows(*args, **kwargs):
+        raise RuntimeError(
+            "adb pull /data/data/app/databases/accounting.db: No such file or directory"
+        )
+
+    sqlite_utils = _sqlite_utils_with_reader(read_rows)
+    launch._patch_androidworld_sqlite_writeback(sqlite_utils)
+
+    with pytest.raises(RuntimeError, match="accounting.db"):
+        sqlite_utils.get_rows_from_remote_device("table", "db", object())
+
+
 def test_androidworld_camera_setup_accepts_completed_onboarding() -> None:
     assert _setup_click_is_already_complete({"Options", "Shutter"}, "NEXT")
 
@@ -83,6 +132,12 @@ def _setup_element(text: str) -> SimpleNamespace:
         package_name="com.android.chrome",
         text=text,
         content_description="",
+        bbox_pixels=SimpleNamespace(
+            x_min=100,
+            y_min=180,
+            x_max=500,
+            y_max=220,
+        ),
     )
 
 
@@ -565,7 +620,7 @@ def test_androidworld_setup_retries_before_saving_snapshot() -> None:
     env = SimpleNamespace(controller=object())
 
     class App:
-        app_name = "chrome"
+        app_name = "files"
 
         @classmethod
         def setup(cls, actual_env) -> None:
@@ -586,7 +641,126 @@ def test_androidworld_setup_retries_before_saving_snapshot() -> None:
     setup_module.setup_app(App, env)
 
     assert setup_calls == [env, env]
-    assert snapshot_calls == [("chrome", env.controller)]
+    assert snapshot_calls == [("files", env.controller)]
+
+
+def test_androidworld_setup_drains_ok_for_every_snapshot_app() -> None:
+    events: list[str] = []
+    visible = ["OK"]
+    confirmation_count = 0
+
+    class Controller:
+        def get_ui_elements(self):
+            return [_setup_element(label) for label in visible]
+
+    class AndroidToolController:
+        def __init__(self, env) -> None:
+            self._env = env
+
+        def click_element(self, element_text: str) -> None:
+            raise AssertionError("bounded setup confirmations must use native tap")
+
+    class App:
+        app_name = "files"
+
+        @classmethod
+        def setup(cls, env) -> None:
+            events.append("setup")
+
+    def issue_generic_request(command, controller):
+        nonlocal confirmation_count
+        events.append(f"tap:{command[3]}:{command[4]}")
+        confirmation_count += 1
+        visible[:] = ["OK"] if confirmation_count == 1 else []
+        return SimpleNamespace(status="ok")
+
+    setup_module = SimpleNamespace(
+        setup_app=lambda app, env: None,
+        apps=SimpleNamespace(
+            tools=SimpleNamespace(AndroidToolController=AndroidToolController)
+        ),
+        adb_utils=SimpleNamespace(
+            issue_generic_request=issue_generic_request,
+            check_ok=lambda response, message: None,
+        ),
+        app_snapshot=SimpleNamespace(
+            save_snapshot=lambda name, controller: events.append(f"snapshot:{name}")
+        ),
+    )
+
+    patch_androidworld_setup_fail_closed(
+        setup_module,
+        attempts=1,
+        delay_seconds=0,
+    )
+    setup_module.setup_app(App, SimpleNamespace(controller=Controller()))
+
+    assert events == [
+        "setup",
+        "tap:300:200",
+        "tap:300:200",
+        "snapshot:files",
+    ]
+
+
+def test_androidworld_setup_completes_visible_onboarding_before_snapshot() -> None:
+    events: list[str] = []
+    visible = ["Get started"]
+
+    class Controller:
+        def get_ui_elements(self):
+            return [_setup_element(label) for label in visible]
+
+    class AndroidToolController:
+        def __init__(self, env) -> None:
+            self._env = env
+
+    class App:
+        app_name = "audio recorder"
+
+        @classmethod
+        def setup(cls, env) -> None:
+            events.append("setup")
+
+    def issue_generic_request(command, controller):
+        events.append(f"tap:{command[3]}:{command[4]}")
+        if visible == ["Get started"]:
+            visible[:] = ["Setup", "Apply"]
+        else:
+            visible.clear()
+        return SimpleNamespace(status="ok")
+
+    setup_module = SimpleNamespace(
+        setup_app=lambda app, env: None,
+        apps=SimpleNamespace(
+            tools=SimpleNamespace(AndroidToolController=AndroidToolController)
+        ),
+        adb_utils=SimpleNamespace(
+            launch_app=lambda name, controller: events.append(f"launch:{name}"),
+            close_app=lambda name, controller: events.append(f"close:{name}"),
+            issue_generic_request=issue_generic_request,
+            check_ok=lambda response, message: None,
+        ),
+        app_snapshot=SimpleNamespace(
+            save_snapshot=lambda name, controller: events.append(f"snapshot:{name}")
+        ),
+    )
+
+    patch_androidworld_setup_fail_closed(
+        setup_module,
+        attempts=1,
+        delay_seconds=0,
+    )
+    setup_module.setup_app(App, SimpleNamespace(controller=Controller()))
+
+    assert events == [
+        "setup",
+        "launch:audio recorder",
+        "tap:300:200",
+        "tap:300:200",
+        "close:audio recorder",
+        "snapshot:audio recorder",
+    ]
 
 
 def test_androidworld_setup_failure_does_not_save_snapshot() -> None:

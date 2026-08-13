@@ -4,7 +4,9 @@ import hashlib
 import json
 import mimetypes
 from pathlib import Path
+import re
 from typing import Any, Callable, Iterable
+import xml.etree.ElementTree as ET
 
 from PIL import Image
 
@@ -13,7 +15,14 @@ from omniflow.core.trajectory import (
     OMNIFLOW_RUN_LOG_SCHEMA_VERSION,
     canonicalize_run_log,
     observation_display,
+    observation_xml,
     state_id,
+)
+from omniflow.runlog import (
+    import_run_log_evidence as _import_run_log_evidence,
+)
+from omniflow.runlog import (
+    project_androidworld_step_actions as _project_androidworld_step_actions,
 )
 
 _EXECUTION_TIMING_ARGS = {
@@ -169,31 +178,69 @@ def import_run_log_evidence(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Load a production RunLog and derive its source transfer-state catalog."""
     del evidence_root, package_resolver
-    run_log = canonicalize_run_log(value)
-    states: dict[str, dict[str, Any]] = {}
+    return _import_run_log_evidence(value)
+
+
+def _hydrate_run_log_display(run_log: dict[str, Any]) -> dict[str, Any]:
+    observations: list[dict[str, Any]] = []
     for step in run_log["steps"]:
-        observations = [step["observation"]]
-        if isinstance(step.get("next_observation"), dict):
-            observations.append(step["next_observation"])
-        for observation in observations:
-            source_state = _transfer_state(observation)
-            existing = states.get(source_state["state_id"])
-            if existing is not None and existing != source_state:
-                raise ValueError(f"source_state_conflict:{source_state['state_id']}")
-            states[source_state["state_id"]] = source_state
+        observations.append(step["observation"])
+        next_observation = step.get("next_observation")
+        if isinstance(next_observation, dict):
+            observations.append(next_observation)
     final_observation = run_log.get("final_observation")
     if isinstance(final_observation, dict):
-        observation = final_observation
-        source_state = _transfer_state(observation)
-        existing = states.get(source_state["state_id"])
-        if existing is not None and existing != source_state:
-            raise ValueError(f"source_state_conflict:{source_state['state_id']}")
-        states[source_state["state_id"]] = source_state
-    return run_log, {
-        "schema_version": "omniflow.transfer-state-catalog.v1",
-        "run_id": run_log["run_id"],
-        "states": states,
+        observations.append(final_observation)
+
+    explicit_displays = {
+        display
+        for observation in observations
+        if (display := observation_display(observation)) is not None
     }
+    if len(explicit_displays) > 1:
+        raise ValueError("androidworld_run_log_display_conflict")
+    if explicit_displays:
+        width, height = next(iter(explicit_displays))
+    else:
+        xml_displays = {
+            display
+            for observation in observations
+            if (display := _fullscreen_xml_display(observation_xml(observation)))
+            is not None
+        }
+        if len(xml_displays) > 1:
+            raise ValueError("androidworld_run_log_display_conflict")
+        if not xml_displays:
+            return run_log
+        width, height = next(iter(xml_displays))
+
+    for observation in observations:
+        if observation_display(observation) is not None:
+            continue
+        auxiliaries = dict(observation.get("auxiliaries") or {})
+        auxiliaries["display"] = {"width": width, "height": height}
+        observation["auxiliaries"] = auxiliaries
+    return canonicalize_run_log(run_log)
+
+
+def _fullscreen_xml_display(xml: str) -> tuple[int, int] | None:
+    if not xml.strip():
+        return None
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return None
+    first_node = next(root.iter("node"), None)
+    if first_node is None:
+        return None
+    match = re.fullmatch(
+        r"\[0,0\]\[(\d+),(\d+)\]",
+        str(first_node.attrib.get("bounds") or ""),
+    )
+    if match is None:
+        return None
+    width, height = (int(value) for value in match.groups())
+    return (width, height) if width > 0 and height > 0 else None
 
 
 def convert_legacy_run_log(
@@ -376,33 +423,50 @@ def convert_legacy_run_log(
 
 def project_androidworld_step_actions(value: dict[str, Any]) -> list[dict[str, Any]]:
     """Project one official RunLog step to OmniFlow Function action fields."""
-    if not isinstance(value, dict) or not isinstance(value.get("observation"), dict):
-        raise ValueError("androidworld_run_log_step_required")
-    action = dict(value.get("action") or {})
-    projected: list[dict[str, Any]] = []
-    if (
-        action.get("action_type") == "input_text"
-        and _androidworld_action_point(action, value["observation"]) is not None
-    ):
-        projected.append(
-            canonicalize_action(
-                {
-                    "tool": "click",
-                    "args": _androidworld_action_point(
-                        action,
-                        value["observation"],
-                    ),
-                },
-                replayable_only=True,
-            )
-        )
-    projected.append(
-        _androidworld_action_to_omniflow(
-            action,
-            observation=value["observation"],
-        )
+    return _project_androidworld_step_actions(value)
+
+
+def _androidworld_input_point_is_editable(
+    action: dict[str, Any],
+    observation: dict[str, Any],
+) -> bool:
+    point = _androidworld_action_point(action, observation)
+    if point is None:
+        return False
+    display = observation_display(observation)
+    if display is None:
+        return False
+    x = point["x"] / 1000.0 * display[0]
+    y = point["y"] / 1000.0 * display[1]
+    xml = observation_xml(observation)
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return False
+    for node in root.iter():
+        bounds = _parse_xml_bounds(node.attrib.get("bounds"))
+        if bounds is None or not (
+            bounds[0] <= x <= bounds[2] and bounds[1] <= y <= bounds[3]
+        ):
+            continue
+        if (
+            str(node.attrib.get("editable") or "").casefold() == "true"
+            or str(node.attrib.get("class") or "").endswith("EditText")
+        ):
+            return True
+    return False
+
+
+def _parse_xml_bounds(value: Any) -> tuple[float, float, float, float] | None:
+    match = re.fullmatch(
+        r"\[(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)\]"
+        r"\[(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)\]",
+        str(value or ""),
     )
-    return projected
+    if match is None:
+        return None
+    left, top, right, bottom = map(float, match.groups())
+    return (left, top, right, bottom) if right > left and bottom > top else None
 
 
 def _androidworld_action_to_omniflow(
@@ -472,15 +536,16 @@ def _androidworld_action_point(
     if x is None or y is None:
         index = action.get("index")
         elements = observation.get("ui_elements")
+        bounds = None
         if (
-            not isinstance(index, int)
-            or isinstance(index, bool)
-            or not isinstance(elements, list)
-            or index < 0
-            or index >= len(elements)
+            isinstance(index, int)
+            and not isinstance(index, bool)
+            and isinstance(elements, list)
+            and 0 <= index < len(elements)
         ):
-            return None
-        bounds = _ui_element_bounds(elements[index])
+            bounds = _ui_element_bounds(elements[index])
+        if bounds is None and isinstance(index, int) and not isinstance(index, bool):
+            bounds = _xml_index_bounds(observation_xml(observation), index)
         if bounds is None:
             return None
         left, top, right, bottom = bounds
@@ -494,6 +559,36 @@ def _androidworld_action_point(
         "x": float(x) / width * 1000.0,
         "y": float(y) / height * 1000.0,
     }
+
+
+def _xml_index_bounds(xml: str, index: int) -> tuple[float, float, float, float] | None:
+    if not xml.strip():
+        return None
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return None
+    node = next(
+        (
+            item
+            for item in root.iter("node")
+            if str(item.attrib.get("id") or "") == str(index)
+        ),
+        None,
+    )
+    if node is None:
+        return None
+    match = re.fullmatch(
+        r"\[(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)\]"
+        r"\[(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)\]",
+        str(node.attrib.get("bounds") or ""),
+    )
+    if match is None:
+        return None
+    left, top, right, bottom = map(float, match.groups())
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right, bottom
 
 
 def _ui_element_bounds(value: Any) -> tuple[float, float, float, float] | None:
@@ -782,9 +877,12 @@ def _androidworld_state(
 def _transfer_state(observation: dict[str, Any]) -> dict[str, Any]:
     identifier = state_id(observation)
     state: dict[str, Any] = {"state_id": identifier}
-    forest = observation.get("forest")
-    if isinstance(forest, str) and forest:
-        state["xml"] = forest
+    xml = observation_xml(observation)
+    if xml:
+        state["xml"] = xml
+    pixels = observation.get("pixels")
+    if isinstance(pixels, dict) and str(pixels.get("path") or "").strip():
+        state["screenshot_path"] = str(pixels["path"]).strip()
     auxiliaries = observation.get("auxiliaries")
     if isinstance(auxiliaries, dict):
         for key in ("package_name", "activity_name"):

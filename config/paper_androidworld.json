@@ -7,6 +7,7 @@
     "output_root": "runtime/evals/androidworld_single_task_attempt_override_required",
     "methods": "fixed_replay,ours,mobilegpt_offline_retrieval,appagent_demo,t3a_hint",
     "store_path": "runtime/evals/androidworld_single_task_assets/source_seed_111/SystemBluetoothTurnOn/ours/store_r1/store.json",
+    "source_device": "source5560:emulator-5560:5560",
     "device_targets": "small5554:emulator-5554:5554,fold5564:emulator-5564:5564",
     "source_format": "all",
     "accepted_first30": false,

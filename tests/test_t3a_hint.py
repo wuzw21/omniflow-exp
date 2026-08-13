@@ -10,6 +10,8 @@ from src.experiment.androidworld import (
     _parse_one_task_methods,
     _promote_one_task_metadata_to_row,
     _select_complete_function,
+    _t3a_hint_action_identity,
+    _t3a_hint_step_action,
     build_official_androidworld_command,
 )
 
@@ -28,6 +30,41 @@ def test_formal_one_task_method_set_is_exact() -> None:
 
 def test_t3a_hint_is_a_supported_one_task_method() -> None:
     assert _parse_one_task_methods("t3a_hint") == ["t3a_hint"]
+
+
+def test_t3a_hint_reads_androidworld_action_type() -> None:
+    assert _t3a_hint_step_action(
+        {"action": {"action_type": "open_app", "app_name": "settings"}}
+    ) == ("open_app", {})
+
+
+@pytest.mark.parametrize(
+    ("function_action", "runlog_action", "identity"),
+    [
+        (
+            {"action": {"tool": "press_key", "args": {"key": "back"}}},
+            {"action": {"action_type": "navigate_back"}},
+            "navigate_back",
+        ),
+        (
+            {"action": {"tool": "press_key", "args": {"key": "home"}}},
+            {"action": {"action_type": "navigate_home"}},
+            "navigate_home",
+        ),
+        (
+            {"action": {"tool": "press_key", "args": {"key": "enter"}}},
+            {"action": {"action_type": "keyboard_enter"}},
+            "keyboard_enter",
+        ),
+    ],
+)
+def test_t3a_hint_alignment_normalizes_androidworld_key_aliases(
+    function_action: dict[str, object],
+    runlog_action: dict[str, object],
+    identity: str,
+) -> None:
+    assert _t3a_hint_action_identity(function_action) == identity
+    assert _t3a_hint_action_identity(runlog_action) == identity
 
 
 def test_fixed_replay_source_xml_metadata_is_promoted() -> None:

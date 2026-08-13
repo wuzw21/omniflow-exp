@@ -21,7 +21,6 @@ from omniflow.runtime.execution import (
 
 def test_function_uses_catalog_state_when_host_state_is_missing(monkeypatch) -> None:
     import omniflow.runtime.core as core
-    import omniflow.runtime.execution as execution
 
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     source = Observation(
@@ -79,44 +78,13 @@ def test_function_uses_catalog_state_when_host_state_is_missing(monkeypatch) -> 
     assert transferred_sources == [source]
 
 
-def test_delayed_checker_recovery_retries_the_same_function_step(monkeypatch) -> None:
+def test_payment_text_does_not_create_hidden_runtime_policy(monkeypatch) -> None:
     import omniflow.runtime.core as core
-    import omniflow.runtime.execution as execution
 
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
-    monkeypatch.setattr(execution, "_TRANSFER_REOBSERVE_POLL_SECONDS", 0.0)
-    monkeypatch.setattr(execution, "_TRANSFER_REOBSERVE_MAX_ATTEMPTS", 1)
-    source = Observation(
-        xml='<hierarchy><node text="购买" bounds="[0,0][100,100]"/></hierarchy>',
-        package_name="com.example",
-    )
-    initial = Observation(
-        xml='<hierarchy><node text="加载中" bounds="[0,0][100,100]"/></hierarchy>',
-        package_name="com.example",
-    )
-    advertisement = Observation(
-        xml='<hierarchy><node text="跳过广告" bounds="[0,0][100,100]"/></hierarchy>',
-        package_name="com.example",
-    )
-    target = Observation(
-        xml='<hierarchy><node text="购买" bounds="[0,0][100,100]"/></hierarchy>',
-        package_name="com.example",
-    )
-    transfer_calls = 0
-
-    async def transfer(action, observation, _source_state):
-        nonlocal transfer_calls
-        transfer_calls += 1
-        if "购买" not in str(observation.xml):
-            return TransferResult(
-                None,
-                reason="omnitransfer_low_confidence",
-            )
-        return TransferResult(action, reason="mapped")
 
     class Host:
         def __init__(self) -> None:
-            self.observations = [advertisement, target, target]
             self.actions: list[Action] = []
 
         def act(self, action):
@@ -124,72 +92,82 @@ def test_delayed_checker_recovery_retries_the_same_function_step(monkeypatch) ->
             return {"success": True}
 
         def observe(self, **_kwargs):
-            return self.observations.pop(0)
+            return Observation(package_name="com.example")
 
-    function = Function(
-        function_id="recovery_function",
-        name="recovery function",
-        description="retry after delayed ad",
-        steps=(),
-        schema_version="omniflow.function.v2",
-        input_schema={
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": False,
-        },
-        checker_rules=(
-            {
-                "schema_version": "omniflow.checker_rule.v1",
-                "trigger": 'text_contains("跳过广告")',
-                "source_state_id": "checker-anchor",
-                "action": {"tool": "press_key", "args": {"key": "back"}},
-            },
-        ),
-        agent_visible=True,
-    )
     host = Host()
-
+    action = Action("click", {"x": 900, "y": 2200})
     result = asyncio.run(
         execute_robust_action(
-            Action("click", {"x": 50, "y": 50}),
-            observation=initial,
-            host=host,
-            plugins=PluginSet(transfer=transfer),
-            function=function,
-            source_state=source,
-        )
-    )
-
-    assert result.success is True
-    assert host.actions == [
-        Action("press_key", {"key": "back"}),
-        Action("click", {"x": 50, "y": 50}),
-    ]
-    assert transfer_calls == 3
-    assert result.executed_steps[0].origin == "checker"
-
-
-def test_payment_confirmation_screen_blocks_interactive_action() -> None:
-    class Host:
-        def act(self, _action):
-            raise AssertionError("payment screen action must not be dispatched")
-
-    result = asyncio.run(
-        execute_robust_action(
-            Action("click", {"x": 900, "y": 2200}),
+            action,
             observation=Observation(
                 xml='<hierarchy><node text="立即支付" bounds="[0,0][100,100]"/></hierarchy>',
                 package_name="com.example",
             ),
-            host=Host(),
+            host=host,
             plugins=PluginSet(),
         )
     )
 
-    assert result.success is False
-    assert result.error == "payment_confirmation_blocked"
-    assert result.origin == "blocked"
+    assert result.success is True
+    assert host.actions == [action]
+
+
+def test_checker_drains_consecutive_explicit_obstructions_before_function_action(
+    monkeypatch,
+) -> None:
+    import omniflow.runtime.core as core
+
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    obstruction = Observation(
+        xml=(
+            '<hierarchy><node text="Not now" class="android.widget.Button" '
+            'clickable="true" enabled="true" bounds="[100,100][300,200]"/>'
+            "</hierarchy>"
+        ),
+        package_name="com.example",
+    )
+    target = Observation(
+        xml='<hierarchy><node text="Target" bounds="[0,0][100,100]"/></hierarchy>',
+        package_name="com.example",
+    )
+
+    async def transfer(action, observation, source_state):
+        return TransferResult(action, reason="mapped")
+
+    class Host:
+        def __init__(self) -> None:
+            self.observations = [
+                obstruction,
+                obstruction,
+                obstruction,
+                target,
+                target,
+            ]
+            self.actions: list[Action] = []
+
+        def act(self, action):
+            self.actions.append(action)
+            return {"success": True}
+
+        def observe(self, **kwargs):
+            return self.observations.pop(0)
+
+    host = Host()
+    original_action = Action("click", {"x": 500, "y": 500})
+    result = asyncio.run(
+        execute_robust_action(
+            original_action,
+            observation=obstruction,
+            host=host,
+            plugins=PluginSet(checker=default_checker, transfer=transfer),
+            source_state=target,
+        )
+    )
+
+    assert result.success is True
+    assert all(step.origin == "checker" for step in result.executed_steps[:-1])
+    assert result.executed_steps[-1].origin == "action"
+    assert host.actions[-1] == original_action
 
 
 def test_global_actions_skip_page_recovery_checker() -> None:
@@ -229,6 +207,37 @@ def test_global_actions_skip_transfer_validation() -> None:
         assert decision.kind == "ready"
         assert decision.action == action
 
+    assert transferred == []
+
+
+def test_direction_swipe_skips_element_transfer_validation() -> None:
+    transferred: list[str] = []
+
+    async def transfer(action, observation, source_state):
+        transferred.append(action.tool)
+        return TransferResult(None, reason="unexpected_transfer")
+
+    action = Action(
+        "swipe",
+        {
+            "direction": "right",
+            "x1": 1000,
+            "y1": 500,
+            "x2": 0,
+            "y2": 500,
+        },
+    )
+    decision = asyncio.run(
+        prepare_action(
+            action,
+            observation=Observation(package_name="com.android.camera2"),
+            plugins=PluginSet(transfer=transfer),
+            source_state=Observation(package_name="com.android.camera2"),
+        )
+    )
+
+    assert decision.kind == "ready"
+    assert decision.action == action
     assert transferred == []
 
 
@@ -368,206 +377,6 @@ def test_action_waits_for_transition_window_to_enter_display(monkeypatch) -> Non
     assert result.after is not None
     assert result.after.xml == settled_xml
     assert host.observe_calls == 2
-
-
-def test_transfer_reobserves_until_target_semantic_appears(monkeypatch) -> None:
-    import omniflow.runtime.core as core
-    import omniflow.runtime.execution as execution
-
-    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
-    monkeypatch.setattr(execution, "_TRANSFER_REOBSERVE_POLL_SECONDS", 0.0)
-    monkeypatch.setattr(execution, "_TRANSFER_REOBSERVE_MAX_ATTEMPTS", 3)
-
-    source = Observation(package_name="com.sankuai.meituan", xml="<source/>")
-    loading = Observation(
-        package_name="com.sankuai.meituan",
-        xml="<hierarchy><node text='拿铁'/></hierarchy>",
-    )
-    ready = Observation(
-        package_name="com.sankuai.meituan",
-        xml="<hierarchy><node text='24小时营业'/></hierarchy>",
-    )
-    after = Observation(package_name="com.sankuai.meituan", xml="<merchant/>")
-    transfer_observations: list[Observation] = []
-
-    async def transfer(action, observation, source_state):
-        assert source_state == source
-        transfer_observations.append(observation)
-        if observation == loading:
-            return TransferResult(
-                None,
-                reason="omnitransfer_low_confidence",
-                detail={"score": 0.1},
-            )
-        assert observation == ready
-        return TransferResult(
-            Action("click", {"x": 500, "y": 800}),
-            reason="equivalent_ui_graph",
-            detail={"score": 1.0},
-        )
-
-    class Host:
-        def __init__(self) -> None:
-            self.observations = [ready, after]
-            self.observe_calls = 0
-            self.actions: list[Action] = []
-
-        def act(self, action):
-            self.actions.append(action)
-            return {"success": True}
-
-        def observe(self, **kwargs):
-            self.observe_calls += 1
-            return self.observations.pop(0)
-
-    host = Host()
-    result = asyncio.run(
-        execute_robust_action(
-            Action("click", {"x": 472, "y": 336}),
-            observation=loading,
-            source_state=source,
-            host=host,
-            plugins=PluginSet(transfer=transfer),
-        )
-    )
-
-    assert result.success is True
-    assert host.actions == [Action("click", {"x": 500, "y": 800})]
-    assert host.observe_calls == 2
-    assert transfer_observations == [loading, ready]
-    assert result.detail["observation_retry"] == {
-        "attempts": 1,
-        "initial_reason": "omnitransfer_low_confidence",
-    }
-
-
-def test_transfer_reobserves_before_executing_coordinate_stretch_fallback(
-    monkeypatch,
-) -> None:
-    import omniflow.runtime.core as core
-    import omniflow.runtime.execution as execution
-
-    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
-    monkeypatch.setattr(execution, "_TRANSFER_REOBSERVE_POLL_SECONDS", 0.0)
-    monkeypatch.setattr(execution, "_TRANSFER_REOBSERVE_MAX_ATTEMPTS", 2)
-
-    loading = Observation(package_name="com.sankuai.meituan", xml="<loading/>")
-    ready = Observation(package_name="com.sankuai.meituan", xml="<results/>")
-    after = Observation(package_name="com.sankuai.meituan", xml="<merchant/>")
-
-    async def transfer(action, observation, source_state):
-        if observation == loading:
-            return TransferResult(
-                Action("click", {"x": 472, "y": 336}),
-                reason="mutual_graph_matcher_no_null_v3_coordinate_stretch_fallback",
-                detail={
-                    "mapping_mode": (
-                        "mutual_graph_matcher_no_null_v3_coordinate_stretch_fallback"
-                    ),
-                    "score": 0.0068,
-                },
-            )
-        assert observation == ready
-        return TransferResult(
-            Action("click", {"x": 500, "y": 800}),
-            reason="equivalent_ui_graph",
-            detail={"mapping_mode": "equivalent_ui_graph", "score": 1.0},
-        )
-
-    class Host:
-        def __init__(self) -> None:
-            self.observations = [ready, after]
-            self.actions: list[Action] = []
-
-        def act(self, action):
-            self.actions.append(action)
-            return {"success": True}
-
-        def observe(self, **kwargs):
-            return self.observations.pop(0)
-
-    host = Host()
-    result = asyncio.run(
-        execute_robust_action(
-            Action("click", {"x": 472, "y": 336}),
-            observation=loading,
-            source_state=Observation(
-                package_name="com.sankuai.meituan",
-                xml="<source-results/>",
-            ),
-            host=host,
-            plugins=PluginSet(transfer=transfer),
-        )
-    )
-
-    assert result.success is True
-    assert host.actions == [Action("click", {"x": 500, "y": 800})]
-    assert result.detail["mapping_mode"] == "equivalent_ui_graph"
-    assert result.detail["observation_retry"] == {
-        "attempts": 1,
-        "initial_reason": (
-            "mutual_graph_matcher_no_null_v3_coordinate_stretch_fallback"
-        ),
-    }
-
-
-def test_transfer_falls_back_only_after_reobservation_budget(monkeypatch) -> None:
-    import omniflow.runtime.execution as execution
-
-    monkeypatch.setattr(execution, "_TRANSFER_REOBSERVE_POLL_SECONDS", 0.0)
-    monkeypatch.setattr(execution, "_TRANSFER_REOBSERVE_MAX_ATTEMPTS", 2)
-
-    transfer_observations: list[Observation] = []
-
-    async def transfer(action, observation, source_state):
-        transfer_observations.append(observation)
-        return TransferResult(
-            None,
-            reason="omnitransfer_low_confidence",
-            detail={"score": 0.1},
-        )
-
-    class Host:
-        def __init__(self) -> None:
-            self.observe_calls = 0
-
-        def act(self, action):
-            raise AssertionError(f"unexpected action dispatch: {action}")
-
-        def observe(self, **kwargs):
-            self.observe_calls += 1
-            return Observation(
-                package_name="com.sankuai.meituan",
-                xml=f"<loading attempt='{self.observe_calls}'/>",
-            )
-
-    host = Host()
-    initial = Observation(
-        package_name="com.sankuai.meituan",
-        xml="<loading attempt='0'/>",
-    )
-    result = asyncio.run(
-        execute_robust_action(
-            Action("click", {"x": 400, "y": 200}),
-            observation=initial,
-            source_state=Observation(
-                package_name="com.sankuai.meituan",
-                xml="<source/>",
-            ),
-            host=host,
-            plugins=PluginSet(transfer=transfer),
-        )
-    )
-
-    assert result.success is False
-    assert result.error == "omnitransfer_low_confidence"
-    assert host.observe_calls == 2
-    assert len(transfer_observations) == 3
-    assert result.before == transfer_observations[-1]
-    assert result.detail["observation_retry"] == {
-        "attempts": 2,
-        "initial_reason": "omnitransfer_low_confidence",
-    }
 
 
 def test_unlaunchable_checker_recovery_falls_back_to_transfer_failure() -> None:

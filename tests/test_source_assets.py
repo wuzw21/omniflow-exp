@@ -8,7 +8,6 @@ from types import SimpleNamespace
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from src.experiment import androidworld as pipeline
 from src.experiment.source_assets import (
     build_grounded_teacher_run_log,
     build_grounded_teacher_run_log_from_item,
@@ -617,6 +616,92 @@ def test_canonical_grounding_rejects_legacy_action_mismatch(
     with pytest.raises(
         ValueError,
         match="source_legacy_provenance_action_mismatch:0",
+    ):
+        build_grounded_teacher_run_log_from_item(
+            index_path=tmp_path / "source_index.json",
+            item=item,
+        )
+
+
+def test_canonical_grounding_accepts_removed_legacy_wait_steps(
+    tmp_path: Path,
+) -> None:
+    raw_path, canonical_path, _, raw = _write_legacy_backed_canonical_source(
+        tmp_path,
+        xml=(
+            '<hierarchy><node text="Continue" resource-id="app:id/continue" '
+            'clickable="true" bounds="[0,0][20,20]" /></hierarchy>'
+        ),
+        target_description="Continue",
+    )
+    raw["steps"].insert(
+        0,
+        {
+            "observation_before_act": {
+                "xml": '<hierarchy><node text="Ready" /></hierarchy>',
+                "width": 100,
+                "height": 100,
+            },
+            "action": {"type": "wait", "params": {}},
+            "success": True,
+        },
+    )
+    raw_path.write_text(json.dumps(raw), encoding="utf-8")
+    canonical = json.loads(canonical_path.read_text(encoding="utf-8"))
+    canonical["provenance"]["source_sha256"] = hashlib.sha256(
+        raw_path.read_bytes()
+    ).hexdigest()
+    canonical_path.write_text(json.dumps(canonical), encoding="utf-8")
+    item = SimpleNamespace(
+        task="LegacyTargetTask",
+        source_run_log=canonical_path,
+        meta={
+            "retained_source_run_log_sha256": hashlib.sha256(
+                canonical_path.read_bytes()
+            ).hexdigest()
+        },
+    )
+
+    grounded, audit = build_grounded_teacher_run_log_from_item(
+        index_path=tmp_path / "source_index.json",
+        item=item,
+    )
+
+    assert grounded["steps"][0]["metadata"]["source_context"]["element"] == {
+        "text": "Continue",
+        "resource_id": "app:id/continue",
+    }
+    assert audit["source_target_evidence_source"] == "verified_legacy_provenance"
+
+
+def test_canonical_grounding_rejects_removed_non_wait_step(
+    tmp_path: Path,
+) -> None:
+    raw_path, canonical_path, _, raw = _write_legacy_backed_canonical_source(
+        tmp_path,
+        xml='<hierarchy><node text="Continue" /></hierarchy>',
+        target_description="Continue",
+    )
+    raw["steps"].insert(0, dict(raw["steps"][0]))
+    raw_path.write_text(json.dumps(raw), encoding="utf-8")
+    canonical = json.loads(canonical_path.read_text(encoding="utf-8"))
+    canonical["provenance"]["source_sha256"] = hashlib.sha256(
+        raw_path.read_bytes()
+    ).hexdigest()
+    canonical_path.write_text(json.dumps(canonical), encoding="utf-8")
+    item = SimpleNamespace(
+        task="LegacyTargetTask",
+        source_run_log=canonical_path,
+        meta={
+            "retained_source_run_log_sha256": hashlib.sha256(
+                canonical_path.read_bytes()
+            ).hexdigest()
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="source_legacy_provenance_step_count_mismatch",
     ):
         build_grounded_teacher_run_log_from_item(
             index_path=tmp_path / "source_index.json",

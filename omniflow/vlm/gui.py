@@ -37,6 +37,10 @@ must include a concise summary explaining why that action is the best next step.
 Every coordinate is one scalar raw-pixel number, never an array, object, string,
 boolean, normalized value, or combined coordinate pair.
 Use finished only when current evidence directly proves the goal is complete.
+When calling finished, keep content to one short factual sentence describing only
+the outcome directly supported by the current screen or previous tool result. Do
+not claim that a RunLog or reusable Function was registered; the host reports the
+real registration state after execution.
 For switches and checkboxes, checked=false means off and checked=true means on.
 Never toggle a switch when its checked state already matches the requested goal.
 Prefer stable, reusable navigation. When the current app or page provides search,
@@ -164,9 +168,7 @@ def parse_model_turn_response(
         for item in vlm_action_tools()
         if isinstance(item, dict) and isinstance(item.get("function"), dict)
     }
-    function_catalog = {
-        function.id: function for function in functions if function.agent_visible
-    }
+    function_catalog = {function.id: function for function in functions}
     model_visible_tools.update(function_catalog)
     if tool not in model_visible_tools:
         raise ModelToolCallError(f"model_turn_tool_not_visible:{tool}")
@@ -260,9 +262,7 @@ def function_tools(
     include_summary: bool,
 ) -> list[dict[str, Any]]:
     tools: list[dict[str, Any]] = []
-    for function in sorted(functions, key=lambda item: item.id):
-        if not function.agent_visible:
-            continue
+    for function in functions:
         parameters = deepcopy(function.input_schema)
         properties = parameters.setdefault("properties", {})
         required = list(parameters.get("required") or ())
@@ -381,12 +381,13 @@ def _turn_text(
         execution_history = str(context.pop("execution_history", "") or "").strip()
         if has_successful_function_action(context):
             lines.append(
-                "A recalled Function selected for the complete goal finished all "
-                "of its actions successfully. Those actions are already applied. "
-                "Judge the goal from the current screenshot and UI state; if they "
-                "match the goal, choose finished now. Never repeat or toggle the "
-                "last successful action merely to verify it, because that can undo "
-                "the completed operation."
+                "The previous recalled Function tool call finished all of its "
+                "actions successfully. Those actions are already applied. Judge "
+                "the complete user goal from the current screenshot and UI state. "
+                "Choose finished only if the whole goal is satisfied; otherwise "
+                "choose exactly one next tool. Never repeat or toggle the last "
+                "successful action merely to verify it, because that can undo the "
+                "completed operation."
             )
         if context.get("previous_action_error") or context.get("recent_actions"):
             lines.append(

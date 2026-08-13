@@ -393,9 +393,7 @@ def _state_display_size(
     state: dict[str, Any],
     xml_text: str,
 ) -> tuple[float, float] | None:
-    xml_size = _xml_display_size(xml_text)
     display = state.get("display")
-    action_size = None
     if isinstance(display, dict) and set(display) == {"width", "height"}:
         try:
             width = float(display.get("width") or 0)
@@ -403,12 +401,8 @@ def _state_display_size(
         except (TypeError, ValueError):
             width = height = 0.0
         if width > 0 and height > 0:
-            action_size = (width, height)
-    if xml_size is None:
-        return action_size
-    if action_size is None:
-        return xml_size
-    return max(xml_size[0], action_size[0]), max(xml_size[1], action_size[1])
+            return width, height
+    return _xml_display_size(xml_text)
 
 
 def _require_raw_source_target(

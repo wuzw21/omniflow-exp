@@ -12,10 +12,46 @@ from src.experiment.artifact_memory import (
     refresh_artifact_memory,
 )
 from src.experiment.result_registry import (
+    build_master_progress,
     load_summary_rows,
     register_attempt_summary,
     registered_cell_plan,
 )
+
+
+def test_master_progress_usage_is_not_split_by_component() -> None:
+    rows = build_master_progress(
+        [
+            {
+                "task_name": "BrowserDraw",
+                "method": "mobilegpt_offline_retrieval",
+                "device_label": "small5554",
+                "official_validator_success": "true",
+                "is_latest_for_task_method": "true",
+                "model_calls": "3",
+                "total_tokens": "150",
+                "chat_model_calls": "2",
+                "embedding_model_calls": "1",
+                "prompt_tokens": "120",
+                "completion_tokens": "30",
+            }
+        ],
+        {"BrowserDraw": {"task_index": 1}},
+        [],
+    )
+
+    row = rows[0]
+    assert row["mobilegpt_offline_retrieval_tool_calls"] == "3"
+    assert row["mobilegpt_offline_retrieval_tokens"] == "150"
+    for detailed_field in (
+        "model_calls",
+        "total_tokens",
+        "chat_model_calls",
+        "embedding_model_calls",
+        "prompt_tokens",
+        "completion_tokens",
+    ):
+        assert f"mobilegpt_offline_retrieval_{detailed_field}" not in row
 
 
 def _write_json(path: Path, payload: dict) -> None:

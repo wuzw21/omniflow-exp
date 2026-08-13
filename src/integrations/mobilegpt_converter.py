@@ -16,6 +16,7 @@ import time
 from typing import Any, Callable, Iterator, Sequence
 import xml.etree.ElementTree as ET
 
+from omniflow.core.trajectory import observation_xml
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
     MOBILEGPT_DIRECT_AUDIT_SCHEMA,
@@ -381,7 +382,7 @@ def _load_runlog_trajectory(
                 step_index=step_index,
                 action_type=action_type or "missing",
             )
-        forest = str(observation.get("forest") or "").strip()
+        forest = observation_xml(observation).strip()
         if not forest:
             raise MobileGPTConversionError(
                 "source_observation_missing",

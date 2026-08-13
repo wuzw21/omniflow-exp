@@ -8,11 +8,11 @@ from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
+from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment import androidworld as pipeline
 from src.experiment import appagent_source
 from src.integrations import appagent_adapter
-from runlog_fixtures import androidworld_run_log, androidworld_state
 
 
 def _write_appagent_teacher_source(
@@ -145,6 +145,55 @@ def test_appagent_document_uid_is_stable_across_display_bounds() -> None:
     assert target_elements[0].uid == source_elements[0].uid
 
 
+def test_appagent_teacher_grounds_anonymous_source_fab_without_coordinates(
+    tmp_path: Path,
+) -> None:
+    source_xml = (
+        '<hierarchy bounds="[0,0][720,1280]">'
+        '<node clickable="true" focusable="true" '
+        'bounds="[0,48][112,160]" />'
+        '<node focusable="true" scrollable="true" '
+        'bounds="[0,160][720,1232]" />'
+        '<node clickable="true" focusable="true" '
+        'bounds="[576,1056][688,1168]" />'
+        "</hierarchy>"
+    )
+    source_run_log = tmp_path / "source.run_log.json"
+    source_run_log.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [{"action_type": "click", "x": 632, "y": 1112}],
+                observations=[
+                    androidworld_state(
+                        "expense-home",
+                        forest=source_xml,
+                        width=720,
+                        height=1280,
+                    )
+                ],
+                task_name="ExpenseAddMultiple",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    teacher_source = appagent_adapter.build_appagent_teacher_source(
+        source_run_log,
+        task_name="ExpenseAddMultiple",
+    )
+
+    params = teacher_source["actions"][0]["action"]["params"]
+    assert params == {"source_appagent_tag": 2}
+    assert appagent_adapter._contains_source_coordinates(params) is False
+    grounded = appagent_adapter.ground_appagent_teacher_action(
+        source_xml,
+        teacher_source["actions"][0]["action"],
+        min_dist=30.0,
+    )
+    assert grounded.tag == 2
+    assert grounded.match_reason == "source_appagent_tag"
+
+
 def _install_androidworld_app_registry(
     monkeypatch: pytest.MonkeyPatch,
     controller: object,
@@ -255,7 +304,13 @@ def test_appagent_teacher_executes_open_app_through_androidworld(
     assert launch_result.done is False
     assert launch_result.data["teacher_actions_consumed"] == 1
     assert events == [
-        ("action", {"action_type": "open_app", "app_name": "files"})
+        (
+            "action",
+            {
+                "action_type": "open_app",
+                "app_name": "com.google.android.documentsui",
+            },
+        )
     ]
 
     action_result = agent.step("Open task.html and draw.")
@@ -278,6 +333,84 @@ def test_appagent_teacher_executes_open_app_through_androidworld(
         expected_teacher_action_count=2,
         expected_demo_action_count=1,
     )
+
+
+def test_appagent_teacher_executes_back_as_unrecorded_androidworld_control(
+    tmp_path: Path,
+) -> None:
+    source_run_log = tmp_path / "source.run_log.json"
+    run_log = androidworld_run_log(
+        [
+            {"action_type": "navigate_back"},
+            {"action_type": "click", "x": 50, "y": 50},
+        ],
+        observations=[
+            androidworld_state("keyboard", width=100, height=100),
+            androidworld_state("form", width=100, height=100),
+        ],
+        task_name="BrowserDraw",
+        run_id="browser-draw-back-source",
+    )
+    run_log["steps"][1]["metadata"] = {
+        "source_context": {"element": {"text": "6.50 kB"}}
+    }
+    source_run_log.write_text(json.dumps(run_log), encoding="utf-8")
+    teacher_source = tmp_path / "teacher_source.json"
+    teacher_source.write_text(
+        json.dumps(
+            appagent_adapter.build_appagent_teacher_source(
+                source_run_log,
+                task_name="BrowserDraw",
+            )
+        ),
+        encoding="utf-8",
+    )
+    events: list[tuple[str, object]] = []
+    xml = (
+        '<hierarchy><node text="6.50 kB" clickable="true" '
+        'bounds="[0,0][100,100]" /></hierarchy>'
+    )
+
+    def get_state():
+        events.append(("observe", None))
+        return SimpleNamespace(
+            xml=xml,
+            pixels=np.zeros((100, 100, 3), dtype=np.uint8),
+        )
+
+    agent = appagent_adapter.AppAgentTeacherAgent(
+        env=SimpleNamespace(
+            execute_action=lambda action: events.append(("action", action)),
+            get_state=get_state,
+        ),
+        official_runtime=SimpleNamespace(
+            min_dist=0.0,
+            request_interval=0.0,
+            draw_elements=_copy_labeled_screenshot,
+        ),
+        teacher_source=teacher_source,
+        workspace_root=tmp_path / "workspace",
+        demo_name="browser_draw",
+        action_factory=lambda **kwargs: kwargs,
+    )
+    agent.set_current_task(
+        "BrowserDraw",
+        "Open task.html and draw.",
+        {"app_names": ["chrome"]},
+    )
+
+    back_result = agent.step("Open task.html and draw.")
+    click_result = agent.step("Open task.html and draw.")
+
+    assert back_result.done is False
+    assert click_result.done is False
+    assert events == [
+        ("action", {"action_type": "navigate_back"}),
+        ("observe", None),
+        ("action", {"action_type": "click", "x": 50, "y": 50}),
+    ]
+    assert back_result.data["demo_actions_consumed"] == 0
+    assert click_result.data["demo_actions_consumed"] == 1
 
 
 def test_appagent_deployment_consumes_open_app_before_observation(
@@ -329,7 +462,13 @@ def test_appagent_deployment_consumes_open_app_before_observation(
 
     assert result.done is True
     assert events[:2] == [
-        ("action", {"action_type": "open_app", "app_name": "files"}),
+        (
+            "action",
+            {
+                "action_type": "open_app",
+                "app_name": "com.google.android.documentsui",
+            },
+        ),
         ("observe", None),
     ]
 
@@ -462,6 +601,38 @@ def test_appagent_preflight_uses_canonical_runlog_not_store_provenance(
     assert result["grounding"]["grounding_source"] == (
         "canonical_androidworld_run_log"
     )
+
+
+def test_appagent_preflight_skips_back_control_grounding(
+    tmp_path: Path,
+) -> None:
+    index = _write_source_index(tmp_path / "source")
+    payload = json.loads(index.read_text(encoding="utf-8"))
+    row = payload["SystemBluetoothTurnOn"]
+    source_run_log = Path(row["retained_source_run_log"])
+    source_payload = json.loads(source_run_log.read_text(encoding="utf-8"))
+    click_step = dict(source_payload["steps"][0])
+    back_step = dict(click_step)
+    back_step["step_index"] = 0
+    back_step["action"] = {"action_type": "navigate_back"}
+    click_step["step_index"] = 1
+    source_payload["steps"] = [back_step, click_step]
+    source_run_log.write_text(json.dumps(source_payload), encoding="utf-8")
+    row["step_count"] = 2
+    row["source_run_log_sha256"] = hashlib.sha256(
+        source_run_log.read_bytes()
+    ).hexdigest()
+    index.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = appagent_source.preflight_appagent_source(
+        index_path=index,
+        task_name="SystemBluetoothTurnOn",
+    )
+
+    assert result["ready"] is True
+    assert result["action_count"] == 2
+    assert result["demo_action_count"] == 1
+    assert result["grounding"]["appagent_groundable_action_count"] == 1
 
 
 def test_appagent_source_generation_runs_each_phase_once(

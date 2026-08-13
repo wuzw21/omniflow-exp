@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 import inspect
 import json
 from pathlib import Path
@@ -20,13 +21,12 @@ from omniflow.core.model import (
 )
 from omniflow.core.schemas import canonicalize_action
 from omniflow.functions.artifact import bind_function
-from omniflow.functions.recall import recall_functions
+from omniflow.functions.recall import RecallResult, recall_functions
 from omniflow.functions.store import FunctionStore
-from omniflow.runtime.checker import transient_obstruction_recovery
 from omniflow.runtime.execution import (
     align_function_resume,
-    execute_robust_action,
     execute_function,
+    execute_robust_action,
     record_execution,
 )
 from omniflow.vlm.usage import merge_usage, token_usage_status
@@ -36,6 +36,39 @@ class InputRequired(RuntimeError):
     def __init__(self, question: str):
         self.question = str(question).strip()
         super().__init__(self.question or "input_required")
+
+
+@dataclass
+class _FunctionSession:
+    selected_id: str | None = None
+    bound: Function | None = None
+    failed: bool = False
+    failed_step_index: int | None = None
+    fallback_observations: list[Observation] = field(default_factory=list)
+    completed: Function | None = None
+    resume_events: list[dict[str, Any]] = field(default_factory=list)
+    resume_trigger: str | None = None
+
+    @property
+    def failed_id(self) -> str | None:
+        return self.selected_id if self.failed else None
+
+    def mark_completed(self) -> None:
+        self.completed = self.bound
+        self.failed = False
+        self.failed_step_index = None
+        self.fallback_observations.clear()
+        self.resume_trigger = None
+
+    def mark_failed(self, replay: RunResult, observation: Observation) -> None:
+        self.failed = True
+        self.failed_step_index = _optional_step_index(
+            replay.detail.get("failed_step_index")
+        )
+        self.fallback_observations = (
+            [observation] if self.failed_step_index is not None else []
+        )
+        self.resume_trigger = "function_replay_failure"
 
 
 class OmniFlow:
@@ -94,84 +127,52 @@ class OmniFlow:
         actions_executed = 0
         model_calls = 0
         fallback_steps = 0
+        completion_review_calls = 0
         trace: list[dict[str, Any]] = []
         last_error = "tool_not_selected"
         llm_usage: dict[str, Any] = {}
-        failed_function_id: str | None = None
-        replayed_function_id: str | None = None
-        bound_function: Function | None = None
-        failed_step_index: int | None = None
-        fallback_observations: list[Observation] = []
-        completed_function: Function | None = None
+        function_session = _FunctionSession()
         observation = await self._observe(screenshot=False)
-        planner_functions = tuple(self.recall(goal))
-        planner_function_catalog = {
-            function.id: function for function in planner_functions
-        }
+        planner_functions: tuple[Function, ...] = ()
+        planner_function_catalog: dict[str, Function] = {}
+        recall_events: list[dict[str, Any]] = []
+        recall_source_states: dict[str, Observation | None] = {}
         function_resolution: dict[str, Any] = {
-            "candidate_count": len(planner_functions),
-            "candidate_function_ids": [
-                function.id for function in planner_functions
-            ],
-            "router_configured": self.function_router is not None,
-            "status": "not_attempted",
-            "selected_function_id": None,
-            "arguments": {},
-            "binding_status": "not_attempted",
-            "binding_error": None,
-            "replay_status": "not_started",
-            "replay_error": None,
-            "failed_step_index": None,
+            "candidate_count": 0,
+            "candidate_function_ids": [],
+            "status": "direct" if direct_tool_call is not None else "planner_tool_space",
         }
 
         def finish(success: bool, **kwargs: Any) -> RunResult:
+            kwargs.setdefault("completion_review_calls", completion_review_calls)
+            if recall_events:
+                function_resolution["recall"] = {
+                    "schema_version": "omniflow.function-recall-events.v1",
+                    "events": [dict(event) for event in recall_events],
+                }
+            if function_session.resume_events:
+                terminal_detail = dict(kwargs.get("terminal_detail") or {})
+                terminal_detail["function_resume"] = {
+                    "schema_version": "omniflow.function-resume-audit.v1",
+                    "events": [dict(event) for event in function_session.resume_events],
+                    "attempt_count": len(function_session.resume_events),
+                    "success_count": sum(
+                        event.get("status") == "succeeded"
+                        for event in function_session.resume_events
+                    ),
+                }
+                kwargs["terminal_detail"] = terminal_detail
             return self._result(
                 success,
                 function_resolution=function_resolution,
                 **kwargs,
             )
 
-        routed_tool_call: ToolCall | None = None
-        if direct_tool_call is not None:
-            function_resolution["status"] = "direct"
-        elif not planner_functions:
-            function_resolution["status"] = "no_candidates"
-        elif self.function_router is None:
-            function_resolution["status"] = "router_unavailable"
-        else:
-            try:
-                routed_value = await _await(
-                    self.function_router.route_function(goal, planner_functions)
-                )
-                routed_tool_call = (
-                    ToolCall.from_value(routed_value)
-                    if routed_value is not None
-                    else None
-                )
-                function_resolution["status"] = (
-                    "selected" if routed_tool_call is not None else "rejected"
-                )
-            except Exception as error:  # noqa: BLE001
-                routed_tool_call = None
-                function_resolution["status"] = "error"
-                function_resolution["router_error"] = (
-                    f"{type(error).__name__}:{error}"
-                )
-            router_usage = _take_llm_usage(self.function_router)
-            merge_usage(llm_usage, router_usage, component="function_router")
-            model_calls += _usage_model_calls(router_usage, fallback=1)
-        # Function selection belongs exclusively to the small semantic router.
-        # The GUI planner must never receive Function tools, including when a
-        # caller omitted the router or the router rejected/failed.
-        planner_functions = ()
-
         selected_function: Function | None = None
         resolved_arguments: dict[str, Any] = {}
-        selected_tool_call = direct_tool_call or routed_tool_call
+        selected_tool_call = direct_tool_call
         if selected_tool_call is not None:
-            selected_function = planner_function_catalog.get(selected_tool_call.name)
-            if direct_tool_call is not None:
-                selected_function = self.store.get_function(selected_tool_call.name)
+            selected_function = self.store.get_function(selected_tool_call.name)
             resolved_arguments = dict(selected_tool_call.arguments)
             function_resolution["selected_function_id"] = selected_tool_call.name
             function_resolution["arguments"] = dict(resolved_arguments)
@@ -184,9 +185,11 @@ class OmniFlow:
                 )
 
         if selected_function is not None:
-            replayed_function_id = selected_function.id
+            function_session.selected_id = selected_function.id
             try:
-                bound_function = bind_function(selected_function, resolved_arguments)
+                function_session.bound = bind_function(
+                    selected_function, resolved_arguments
+                )
             except ValueError as error:
                 function_resolution["binding_status"] = "failed"
                 function_resolution["binding_error"] = str(error)
@@ -200,11 +203,10 @@ class OmniFlow:
             else:
                 function_resolution["binding_status"] = "succeeded"
                 replay = await execute_function(
-                    bound_function,
+                    function_session.bound,
                     host=self.host,
                     plugins=self.plugins,
                     observation=observation,
-                    max_actions=self.config.runtime.max_steps,
                     installed_packages=self.installed_packages,
                     state_loader=(
                         self.catalog.get_state if self.catalog is not None else None
@@ -216,23 +218,19 @@ class OmniFlow:
                 function_resolution["replay_status"] = "succeeded"
                 observation = replay.final_state or observation
                 last_error = "function_replay_completed_e2e_unverified"
-                if bound_function is not None:
-                    completed_function = bound_function
+                function_session.mark_completed()
             else:
                 function_resolution["replay_status"] = "failed"
                 function_resolution["replay_error"] = (
                     replay.error or "function_replay_failed"
                 )
-                failed_function_id = selected_function.id
             observation = replay.final_state or observation
             if not replay.success:
                 last_error = replay.error or "function_replay_failed"
-                failed_step_index = _optional_step_index(
-                    replay.detail.get("failed_step_index")
+                function_session.mark_failed(replay, observation)
+                function_resolution["failed_step_index"] = (
+                    function_session.failed_step_index
                 )
-                function_resolution["failed_step_index"] = failed_step_index
-                if bound_function is not None and failed_step_index is not None:
-                    fallback_observations = [observation]
 
             if direct_tool_call is not None and replay.success:
                 return finish(
@@ -324,7 +322,7 @@ class OmniFlow:
                 False,
                 profile=profile,
                 trace=trace,
-                function_id=replayed_function_id or failed_function_id,
+                function_id=function_session.selected_id or function_session.failed_id,
                 actions_executed=actions_executed,
                 model_calls=model_calls,
                 llm_usage=llm_usage,
@@ -332,26 +330,28 @@ class OmniFlow:
                 final_state=observation,
             )
 
-        runtime_steps_used = max(actions_executed, len(trace))
+        runtime_steps_used = 0
         previous_action_error: str | None = (
-            last_error if failed_function_id is not None else None
+            last_error if function_session.failed else None
         )
         previous_action: Action | None = None
-        stalled_action: Action | None = None
         pending_user_input: str | None = None
         planner_diagnostics: dict[str, Any] = {}
-        handled_transient_obstructions: set[tuple[str, str]] = set()
-        successful_action_states: set[tuple[str, tuple[str, str, str]]] = set()
         while runtime_steps_used < self.config.runtime.max_steps:
             max_fallback_steps = self.config.runtime.max_fallback_steps
-            if max_fallback_steps is not None and fallback_steps >= max(
-                0, int(max_fallback_steps)
+            fallback_this_turn = function_session.failed
+            if (
+                fallback_this_turn
+                and max_fallback_steps is not None
+                and fallback_steps >= max(
+                    0, int(max_fallback_steps)
+                )
             ):
                 return finish(
                     False,
                     profile=profile,
                     trace=trace,
-                    function_id=replayed_function_id or failed_function_id,
+                    function_id=function_session.selected_id or function_session.failed_id,
                     actions_executed=actions_executed,
                     model_calls=model_calls,
                     llm_usage=llm_usage,
@@ -362,58 +362,21 @@ class OmniFlow:
                 )
             if not observation.image_base64:
                 observation = await self._observe(screenshot=True)
-            transient_action = transient_obstruction_recovery(observation)
-            if transient_action is not None:
-                obstruction_key = (
-                    str(observation.xml or ""),
-                    str(transient_action.to_dict()),
-                )
-                if obstruction_key not in handled_transient_obstructions:
-                    handled_transient_obstructions.add(obstruction_key)
-                    step = await execute_robust_action(
-                        transient_action,
-                        observation=observation,
-                        host=self.host,
-                        plugins=self.plugins,
-                        installed_packages=self.installed_packages,
-                    )
-                    trace.extend(
-                        await record_execution(
-                            self.host,
-                            step,
-                            trace_start_index=len(trace),
-                            metadata={
-                                "summary": "关闭临时遮挡后继续任务",
-                                "decision_origin": "harness_fast_path",
-                            },
-                        )
-                    )
-                    actions_executed += step.actions_executed
-                    runtime_steps_used += max(1, step.actions_executed)
-                    observation = step.after or observation
-                    if step.success:
-                        previous_action_error = None
-                        previous_action = None
-                        stalled_action = None
-                        continue
-                    previous_action_error = (
-                        step.error or "transient_obstruction_recovery_failed"
-                    )
             recent_actions = _recent_actions(trace)
             execution_history = (
-                _execution_history(trace, completed_function=completed_function)
+                _execution_history(trace, completed_function=function_session.completed)
                 if trace
                 else None
             )
-            evidence_function = completed_function or (
-                bound_function if failed_function_id is not None else None
+            evidence_function = function_session.completed or (
+                function_session.bound if function_session.failed else None
             )
             function_execution = (
                 _function_execution_evidence(
                     trace,
                     function=evidence_function,
                     final_observation=observation,
-                    succeeded=completed_function is not None,
+                    succeeded=function_session.completed is not None,
                 )
                 if evidence_function is not None
                 else None
@@ -457,6 +420,24 @@ class OmniFlow:
                     },
                 )
             pending_user_input = None
+            recall_result = await self._recall(
+                goal,
+                observation=observation,
+                source_states=recall_source_states,
+            )
+            planner_functions = recall_result.functions
+            planner_function_catalog = {
+                function.id: function for function in planner_functions
+            }
+            recall_event = {
+                "planner_turn": runtime_steps_used,
+                **recall_result.audit,
+            }
+            recall_events.append(recall_event)
+            function_resolution["candidate_count"] = len(planner_functions)
+            function_resolution["candidate_function_ids"] = [
+                function.id for function in planner_functions
+            ]
             try:
                 planned_call = ToolCall.from_value(
                     await _await(
@@ -478,7 +459,7 @@ class OmniFlow:
                     False,
                     profile=profile,
                     trace=trace,
-                    function_id=replayed_function_id or failed_function_id,
+                    function_id=function_session.selected_id or function_session.failed_id,
                     actions_executed=actions_executed,
                     model_calls=model_calls,
                     llm_usage=llm_usage,
@@ -490,15 +471,16 @@ class OmniFlow:
             planner_usage = _take_llm_usage(self.planner)
             merge_usage(llm_usage, planner_usage, component="planner")
             model_calls += _usage_model_calls(planner_usage, fallback=1)
-            fallback_steps += 1
+            if fallback_this_turn:
+                fallback_steps += 1
             runtime_steps_used += 1
             planner_metadata = _take_planner_metadata(self.planner)
             _merge_planner_diagnostics(planner_diagnostics, planner_metadata)
             selected_function = planner_function_catalog.get(planned_call.name)
             if selected_function is not None:
-                replayed_function_id = selected_function.id
+                function_session.selected_id = selected_function.id
                 try:
-                    bound_function = bind_function(
+                    function_session.bound = bind_function(
                         selected_function,
                         planned_call.arguments,
                     )
@@ -506,14 +488,10 @@ class OmniFlow:
                     previous_action_error = str(error)
                     continue
                 replay = await execute_function(
-                    bound_function,
+                    function_session.bound,
                     host=self.host,
                     plugins=self.plugins,
                     observation=observation,
-                    max_actions=max(
-                        0,
-                        self.config.runtime.max_steps - (runtime_steps_used - 1),
-                    ),
                     trace_start_index=len(trace),
                     installed_packages=self.installed_packages,
                     state_loader=(
@@ -523,24 +501,12 @@ class OmniFlow:
                 actions_executed += replay.actions_executed
                 replay_trace = list(replay.detail.get("trace") or ())
                 trace.extend(replay_trace)
-                runtime_steps_used += max(
-                    0, max(replay.actions_executed, len(replay_trace)) - 1
-                )
                 observation = replay.final_state or observation
                 if replay.success:
-                    completed_function = bound_function
-                    failed_function_id = None
-                    failed_step_index = None
-                    fallback_observations = []
+                    function_session.mark_completed()
                     previous_action_error = None
                 else:
-                    failed_function_id = bound_function.id
-                    failed_step_index = _optional_step_index(
-                        replay.detail.get("failed_step_index")
-                    )
-                    fallback_observations = (
-                        [observation] if failed_step_index is not None else []
-                    )
+                    function_session.mark_failed(replay, observation)
                     previous_action_error = replay.error or "function_replay_failed"
                 continue
             try:
@@ -548,26 +514,12 @@ class OmniFlow:
             except ValueError as error:
                 previous_action_error = str(error)
                 continue
-            if _action_already_succeeded_on_current_state(
-                trace,
-                planned,
-                observation,
-                successful_action_states=successful_action_states,
-            ):
-                previous_action_error = "action_already_succeeded_on_current_state"
-                previous_action = planned
-                continue
-            if stalled_action is not None and planned == stalled_action:
-                previous_action_error = "repeated_action_without_progress"
-                previous_action = planned
-                continue
-            stalled_action = None
             if planned.tool == "finished":
                 return finish(
                     True,
                     profile=profile,
                     trace=trace,
-                    function_id=replayed_function_id or failed_function_id,
+                    function_id=function_session.selected_id or function_session.failed_id,
                     actions_executed=actions_executed,
                     model_calls=model_calls,
                     llm_usage=llm_usage,
@@ -585,7 +537,7 @@ class OmniFlow:
                     False,
                     profile=profile,
                     trace=trace,
-                    function_id=replayed_function_id or failed_function_id,
+                    function_id=function_session.selected_id or function_session.failed_id,
                     actions_executed=actions_executed,
                     model_calls=model_calls,
                     llm_usage=llm_usage,
@@ -610,7 +562,7 @@ class OmniFlow:
                         False,
                         profile=profile,
                         trace=trace,
-                        function_id=replayed_function_id or failed_function_id,
+                        function_id=function_session.selected_id or function_session.failed_id,
                         actions_executed=actions_executed,
                         model_calls=model_calls,
                         llm_usage=llm_usage,
@@ -628,7 +580,7 @@ class OmniFlow:
                         False,
                         profile=profile,
                         trace=trace,
-                        function_id=replayed_function_id or failed_function_id,
+                        function_id=function_session.selected_id or function_session.failed_id,
                         actions_executed=actions_executed,
                         model_calls=model_calls,
                         llm_usage=llm_usage,
@@ -664,40 +616,44 @@ class OmniFlow:
             if not step.success:
                 previous_action_error = step.error or "fallback_action_failed"
                 previous_action = planned
-                if (
-                    step.actions_executed > 0
-                    and step.after is not None
-                    and _same_observation(step.before, step.after)
-                ):
-                    stalled_action = planned
                 continue
             observation = step.after or observation
-            if step.success:
-                successful_action_states.add(
-                    (_action_fingerprint(planned), _ui_fingerprint(observation))
-                )
-            if bound_function is not None and failed_step_index is not None:
-                fallback_observations.append(observation)
+            if (
+                function_session.bound is not None
+                and function_session.failed_step_index is not None
+            ):
+                function_session.fallback_observations.append(observation)
                 alignment = await align_function_resume(
-                    bound_function,
+                    function_session.bound,
                     host=self.host,
                     plugins=self.plugins,
-                    observations=fallback_observations,
-                    start_step_index=failed_step_index,
+                    observations=function_session.fallback_observations,
+                    start_step_index=function_session.failed_step_index,
                     state_loader=(
                         self.catalog.get_state if self.catalog is not None else None
                     ),
                 )
+                resume_event = {
+                    "start_step_index": int(function_session.failed_step_index),
+                    "status": "aligned" if alignment is not None else "not_aligned",
+                }
+                if function_session.resume_trigger:
+                    resume_event["trigger"] = function_session.resume_trigger
+                if alignment is not None:
+                    resume_event.update(
+                        {
+                            "resume_step_index": int(alignment["resume_step_index"]),
+                            "probability": alignment.get("probability"),
+                            "score": alignment.get("score"),
+                        }
+                    )
+                function_session.resume_events.append(resume_event)
                 if alignment is not None:
                     replay = await execute_function(
-                        bound_function,
+                        function_session.bound,
                         host=self.host,
                         plugins=self.plugins,
                         observation=observation,
-                        max_actions=max(
-                            0,
-                            self.config.runtime.max_steps - runtime_steps_used,
-                        ),
                         start_step_index=int(alignment["resume_step_index"]),
                         trace_start_index=len(trace),
                         resume_metadata=alignment,
@@ -709,35 +665,26 @@ class OmniFlow:
                     actions_executed += replay.actions_executed
                     replay_trace = list(replay.detail.get("trace") or ())
                     trace.extend(replay_trace)
-                    runtime_steps_used += max(
-                        replay.actions_executed,
-                        len(replay_trace),
-                    )
                     observation = replay.final_state or observation
                     if replay.success:
-                        failed_function_id = None
-                        failed_step_index = None
-                        fallback_observations = []
+                        resume_event["status"] = "succeeded"
+                        function_session.mark_completed()
                         last_error = "function_replay_completed_e2e_unverified"
-                        completed_function = bound_function
                         previous_action_error = None
                         previous_action = None
                     else:
-                        failed_function_id = bound_function.id
+                        resume_event["status"] = "failed"
+                        resume_event["error"] = (
+                            replay.error or "function_replay_failed"
+                        )
                         last_error = replay.error or "function_replay_failed"
-                        failed_step_index = _optional_step_index(
-                            replay.detail.get("failed_step_index")
-                        )
-                        fallback_observations = (
-                            [observation] if failed_step_index is not None else []
-                        )
+                        function_session.mark_failed(replay, observation)
                         previous_action_error = last_error
                         previous_action = None
                     continue
             if _same_observation(step.before, step.after):
                 previous_action_error = "action_completed_without_state_change"
                 previous_action = planned
-                stalled_action = planned
             else:
                 previous_action_error = None
                 previous_action = None
@@ -746,7 +693,7 @@ class OmniFlow:
             False,
             profile=profile,
             trace=trace,
-            function_id=replayed_function_id or failed_function_id,
+            function_id=function_session.selected_id or function_session.failed_id,
             actions_executed=actions_executed,
             model_calls=model_calls,
             llm_usage=llm_usage,
@@ -791,16 +738,69 @@ class OmniFlow:
             experiment=experiment,
         )
 
-    def recall(self, goal: str, *, limit: int | None = None) -> list[Function]:
-        """Shortlist Function tools for Planner injection without executing one."""
+    async def _recall(
+        self,
+        goal: str,
+        *,
+        observation: Observation,
+        source_states: dict[str, Observation | None],
+        limit: int | None = None,
+    ) -> RecallResult:
+        for function in self.store.functions.values():
+            if not function.steps:
+                continue
+            source_state_id = function.steps[0].source_state_id
+            if source_state_id in source_states:
+                continue
+            source_state = (
+                self.catalog.get_state(source_state_id)
+                if self.catalog is not None
+                else None
+            )
+            if source_state is None and self.host is not None:
+                get_state = getattr(self.host, "get_state", None)
+                if callable(get_state):
+                    try:
+                        value = await _await(get_state(source_state_id))
+                        source_state = (
+                            Observation.from_value(value) if value is not None else None
+                        )
+                    except Exception:  # noqa: BLE001
+                        source_state = None
+            source_states[source_state_id] = source_state
 
         resolved_limit = (
             self.config.runtime.max_function_tools if limit is None else int(limit)
         )
         return recall_functions(
             str(goal),
+            observation=observation,
             functions=self.store.functions,
+            source_states=source_states,
             limit=max(0, int(resolved_limit)),
+        )
+
+    def recall(
+        self,
+        goal: str,
+        *,
+        observation: Observation,
+        source_states: dict[str, Observation | None],
+        limit: int | None = None,
+    ) -> list[Function]:
+        """Synchronously inspect page-aware recall with explicit source states."""
+
+        resolved_limit = (
+            self.config.runtime.max_function_tools if limit is None else int(limit)
+        )
+        return list(
+            recall_functions(
+                str(goal),
+                observation=Observation.from_value(observation),
+                functions=self.store.functions,
+                source_states=source_states,
+                limit=max(0, int(resolved_limit)),
+            ).functions
         )
 
     def call_tool(
@@ -842,6 +842,7 @@ class OmniFlow:
         model_calls: int = 0,
         llm_usage: dict[str, Any] | None = None,
         fallback_steps: int = 0,
+        completion_review_calls: int = 0,
         error: str | None = None,
         final_state: Observation | None = None,
         planner_diagnostics: dict[str, Any] | None = None,
@@ -867,6 +868,7 @@ class OmniFlow:
             usage["model_calls"] = model_calls
         usage["token_usage_status"] = token_usage_status(usage)
         detail["llm_usage"] = usage
+        detail["completion_review_calls"] = max(0, int(completion_review_calls))
         if planner_diagnostics:
             detail["planner_diagnostics"] = dict(planner_diagnostics)
         if function_resolution is not None:
@@ -1104,60 +1106,6 @@ def _same_observation(
         after.activity_name,
         after.xml,
         after.image_base64,
-    )
-
-
-def _action_already_succeeded_on_current_state(
-    trace: list[dict[str, Any]],
-    action: Action,
-    observation: Observation,
-    *,
-    successful_action_states: set[tuple[str, tuple[str, str, str]]] | None = None,
-) -> bool:
-    if successful_action_states and (
-        _action_fingerprint(action),
-        _ui_fingerprint(observation),
-    ) in successful_action_states:
-        return True
-    state_id = str(observation.extra.get("state_id") or "").strip()
-    if not state_id:
-        return False
-    for step in reversed(trace):
-        if not isinstance(step, dict):
-            continue
-        if (
-            str(step.get("before_state_id") or "") != state_id
-            or str(step.get("after_state_id") or "") != state_id
-        ):
-            continue
-        result = step.get("result")
-        if not isinstance(result, dict) or result.get("success") is not True:
-            continue
-        try:
-            completed = Action.from_value(step.get("action"))
-        except (TypeError, ValueError):
-            continue
-        if completed == action:
-            return True
-    return False
-
-
-def _action_fingerprint(action: Action) -> str:
-    return json.dumps(
-        action.to_dict(),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-
-def _ui_fingerprint(observation: Observation) -> tuple[str, str, str]:
-    """Identify the logical UI state without volatile screenshot/state ids."""
-
-    return (
-        str(observation.package_name or ""),
-        str(observation.activity_name or ""),
-        str(observation.xml or ""),
     )
 
 

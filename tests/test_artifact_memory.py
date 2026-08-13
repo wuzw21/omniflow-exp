@@ -25,6 +25,7 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_LEGACY_SOURCE_METHOD,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
+    MOBILEGPT_NATIVE_DERIVE_LEARNING_MODE,
     MOBILEGPT_NATIVE_DERIVE_MEMORY_SCHEMA,
     MOBILEGPT_PREP_TYPE,
     MOBILEGPT_PREP_TYPE_BY_SCHEMA,
@@ -251,7 +252,11 @@ def _write_mobilegpt_manifest(
         "native_mobilegpt_learning": legacy or native_derive,
         "task_local_memory": True,
         "learning_mode": (
-            MOBILEGPT_LEGACY_LEARNING_MODE if legacy else MOBILEGPT_LEARNING_MODE
+            MOBILEGPT_LEGACY_LEARNING_MODE
+            if legacy
+            else MOBILEGPT_NATIVE_DERIVE_LEARNING_MODE
+            if native_derive
+            else MOBILEGPT_LEARNING_MODE
         ),
         "teacher_forcing": teacher_forcing,
         "synthetic_subtasks": not (legacy or semantic or native_derive),
@@ -649,6 +654,58 @@ def test_refresh_converts_selected_legacy_evidence_to_official_run_log(
     assert converted["seed"] == 111
 
 
+def test_refresh_reuses_registered_legacy_conversion_by_exact_hash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source, legacy, source_index, converted_sha256 = _write_legacy_selection_fixture(
+        tmp_path
+    )
+    selection_manifest = _write_json(
+        tmp_path / "source_selection.json",
+        {
+            "schema_version": "omniflow.androidworld-source-selection.v1",
+            "selections": {
+                "RecordWithName": {
+                    "expected_source_run_log_sha256": _sha256(source),
+                    "selected_source_evidence_sha256": _sha256(legacy),
+                    "expected_converted_source_run_log_sha256": converted_sha256,
+                    "source_seed": 111,
+                    "task_parameters": {"file_name": "selected.m4a"},
+                    "reason": "Legacy evidence contains the complete UI path.",
+                }
+            },
+        },
+    )
+    refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        source_selection_manifest=selection_manifest,
+        function_catalogs=(),
+        runlog_roots=(source.parent, legacy.parent),
+        result_roots=(),
+    )
+    monkeypatch.setattr(
+        "src.experiment.artifact_memory.adapt_source_run_log",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("registered conversion must not be regenerated")
+        ),
+    )
+
+    second = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        source_selection_manifest=selection_manifest,
+        function_catalogs=(),
+        runlog_roots=(source.parent, legacy.parent),
+        result_roots=(),
+    )
+
+    assert second["canonical"]["source_run_logs"]["RecordWithName"]["sha256"] == (
+        converted_sha256
+    )
+
+
 def test_refresh_rejects_wrong_expected_legacy_conversion_hash(
     tmp_path: Path,
 ) -> None:
@@ -908,6 +965,141 @@ def test_refresh_keeps_one_verified_runtime_store_from_duplicate_catalogs(
         "completed": [],
         "pending": [["ours", "small5554"]],
     }
+
+
+def test_refresh_requires_exact_sha_selection_for_conflicting_function_stores(
+    tmp_path: Path,
+) -> None:
+    source = _write_source_run_log(tmp_path)
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    catalogs: list[Path] = []
+    identities: list[str] = []
+    stores: list[Path] = []
+    for revision in ("v1", "v2"):
+        root = tmp_path / revision
+        store = _write_json(
+            root / "function_store" / "store.json",
+            {
+                "schema_version": "omniflow.store.v2",
+                "functions": {
+                    "record_with_name": {
+                        "function_id": "record_with_name",
+                        "description": revision,
+                    }
+                },
+            },
+        )
+        transfer = _write_json(
+            store.with_name("transfer_states.json"),
+            {
+                "schema_version": "omniflow.transfer-state-catalog.v1",
+                "states": {},
+            },
+        )
+        provenance = _write_json(
+            root / "provenance_manifest.json",
+            {"schema_version": "test.provenance.v1", "revision": revision},
+        )
+        catalog = _write_json(
+            root / "catalog.json",
+            {
+                "schema_version": "omniflow.function-asset-catalog.v1",
+                "tasks": {
+                    "RecordWithName": {
+                        "status": "converted",
+                        "source_run_log": str(source),
+                        "source_run_log_sha256": _sha256(source),
+                        "store_path": str(store),
+                        "store_sha256": _sha256(store),
+                        "transfer_states_path": str(transfer),
+                        "transfer_states_sha256": _sha256(transfer),
+                        "provenance_path": str(provenance),
+                        "provenance_sha256": _sha256(provenance),
+                        "target_inputs_read": False,
+                        "target_observations_read": False,
+                    }
+                },
+            },
+        )
+        identities.append(
+            hashlib.sha256(
+                "\0".join(
+                    (
+                        _sha256(source),
+                        _sha256(store),
+                        _sha256(transfer),
+                        _sha256(provenance),
+                    )
+                ).encode("utf-8")
+            ).hexdigest()
+        )
+        catalogs.append(catalog)
+        stores.append(store)
+
+    with pytest.raises(ValueError, match="ambiguous_best_function_store"):
+        refresh_artifact_memory(
+            memory_root=tmp_path / "memory",
+            source_index=source_index,
+            function_catalogs=catalogs,
+            runlog_roots=(tmp_path / "evidence",),
+            result_roots=(),
+        )
+
+    sorted_identities = sorted(identities)
+    selection = _write_json(
+        tmp_path / "function_store_selection.json",
+        {
+            "schema_version": (
+                "omniflow.androidworld-function-store-selection.v1"
+            ),
+            "selections": {
+                "RecordWithName": {
+                    "expected_candidate_identity_sha256s": sorted_identities,
+                    "selected_identity_sha256": identities[1],
+                    "reason": "The second Store passed the audited replay.",
+                }
+            },
+        },
+    )
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=catalogs,
+        runlog_roots=(tmp_path / "evidence",),
+        result_roots=(),
+        function_store_selection_manifest=selection,
+    )
+
+    canonical = report["canonical"]["function_stores"]["RecordWithName"]
+    assert canonical["identity_sha256"] == identities[1]
+    assert canonical["store_sha256"] == _sha256(stores[1])
+    assert canonical["selection"]["reason"] == (
+        "The second Store passed the audited replay."
+    )
+    assert report["counts"]["function_store_selection_tasks"] == 1
+
+    stale_payload = json.loads(selection.read_text(encoding="utf-8"))
+    stale_payload["selections"]["RecordWithName"][
+        "expected_candidate_identity_sha256s"
+    ] = sorted((identities[1], "f" * 64))
+    _write_json(selection, stale_payload)
+    with pytest.raises(ValueError, match="function_store_selection_stale"):
+        refresh_artifact_memory(
+            memory_root=tmp_path / "memory",
+            source_index=source_index,
+            function_catalogs=catalogs,
+            runlog_roots=(tmp_path / "evidence",),
+            result_roots=(),
+            function_store_selection_manifest=selection,
+        )
 
 
 def test_refresh_reports_invalid_indexed_runlog_task_and_path(

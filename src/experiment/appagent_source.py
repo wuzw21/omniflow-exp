@@ -16,6 +16,7 @@ import tempfile
 import time
 from typing import Any
 
+from omniflow.core.trajectory import observation_xml
 from src.experiment import androidworld as pipeline
 from src.experiment.mobilegpt_source import (
     load_canonical_source_item,
@@ -24,6 +25,7 @@ from src.experiment.source_assets import (
     build_grounded_teacher_run_log_from_canonical_item,
 )
 from src.integrations.appagent_adapter import (
+    APPAGENT_DEMO_ACTION_TYPES,
     APPAGENT_DEMO_MANIFEST,
     APPAGENT_OFFICIAL_REVISION,
     OfficialAppAgentRuntime,
@@ -322,7 +324,7 @@ def _preflight_appagent_teacher(
     groundable_action_count = 0
     for record in teacher_source.get("actions") or []:
         action = dict(record.get("action") or {})
-        if str(action.get("type") or "").strip() == "open_app":
+        if str(action.get("type") or "").strip() not in APPAGENT_DEMO_ACTION_TYPES:
             continue
         step_index = int(record.get("source_step_index") or 0)
         step = grounded_steps.get(step_index) or {}
@@ -339,11 +341,7 @@ def _preflight_appagent_teacher(
                 if isinstance(source_context, dict)
                 else ""
             )
-            or (
-                observation.get("forest")
-                if isinstance(observation, dict)
-                else ""
-            )
+            or (observation_xml(observation) if isinstance(observation, dict) else "")
         ).strip()
         if not xml_text:
             raise ValueError(

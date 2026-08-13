@@ -9,6 +9,7 @@ from src.experiment.batch_outcomes import (
     write_batch_report,
 )
 from src.experiment.mobilegpt_contract import MOBILEGPT_SOURCE_METHOD
+from src.integrations.android_world.launch import _write_task_results_summary
 
 
 def test_record_prep_failure_preserves_reason_tokens_and_time(tmp_path: Path) -> None:
@@ -283,6 +284,9 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
         "non_validator_failure": 1,
         "pending": 0,
     }
+    assert report["tool_calls"] == 4
+    assert report["tokens"] == 100
+    assert "total_tokens" not in report
     rows = [
         json.loads(line)
         for line in Path(report["cells_jsonl"]).read_text(encoding="utf-8").splitlines()
@@ -293,6 +297,56 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
         "cell_finished_without_registered_validator_result"
     )
     assert rows[1]["outer_wall_sec"] == 12.0
+    markdown = Path(report["cells_markdown"]).read_text(encoding="utf-8")
+    assert "# AndroidWorld Cell Comparison" in markdown
+    assert (
+        "| method | device | source_seed | evaluation_seed | status | "
+        "validator | tool_calls | tokens | actions | episode_sec | wall_sec | "
+        "error | evidence |"
+    ) in markdown
+    assert (
+        "| mobilegpt_offline_retrieval | small5554 | 111 | 113 | completed | "
+        "1 | 4 | 100 | 3 | 9.5 | 11.0 |"
+    ) in markdown
+
+
+def test_run_summary_keeps_detailed_usage_below_top_level(tmp_path: Path) -> None:
+    task_results = tmp_path / "task_results.jsonl"
+    task_results.write_text(
+        json.dumps(
+            {
+                "task_name": "BrowserDraw",
+                "official_validator_used": True,
+                "official_validator_success": True,
+                "model_calls": 3,
+                "prompt_tokens": 120,
+                "completion_tokens": 30,
+                "total_tokens": 150,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = _write_task_results_summary(
+        task_results_path=task_results,
+        output_dir=tmp_path / "summary",
+        checkpoint_dir="checkpoint",
+        agent="omniflow",
+        tasks=("BrowserDraw",),
+    )
+
+    assert summary["tool_calls"] == 3
+    assert summary["tokens"] == 150
+    for detailed_field in (
+        "model_calls",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+    ):
+        assert detailed_field not in summary
+    assert summary["per_task"][0]["prompt_tokens"] == 120
+    assert summary["per_task"][0]["completion_tokens"] == 30
 
 
 def test_batch_report_uses_current_attempt_failure_outcome(tmp_path: Path) -> None:

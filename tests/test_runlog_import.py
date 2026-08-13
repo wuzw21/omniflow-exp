@@ -24,7 +24,142 @@ from src.integrations.runlog import (
     convert_legacy_run_log,
     import_run_log,
     import_run_log_evidence,
+    project_androidworld_step_actions,
 )
+
+
+def test_production_import_accepts_oob_xml_observation() -> None:
+    payload = androidworld_run_log([{"action_type": "wait"}])
+    payload["steps"][0]["observation"] = {
+        "pixels": None,
+        "xml": '<hierarchy><node text="Settings" /></hierarchy>',
+        "auxiliaries": {
+            "state_id": "source-state-0",
+            "package_name": "com.android.settings",
+            "activity_name": ".Settings",
+            "display": {"width": 1080, "height": 2400},
+        },
+    }
+
+    assert import_run_log(payload) == payload
+
+
+def test_xml_observation_preserves_screenshot_and_index_action(tmp_path: Path) -> None:
+    screenshot = (tmp_path / "screen.png").resolve()
+    screenshot.write_bytes(b"png")
+    payload = androidworld_run_log([{"action_type": "click", "index": 7}])
+    payload["steps"][0]["observation"] = {
+        "pixels": {
+            "path": str(screenshot),
+            "sha256": hashlib.sha256(b"png").hexdigest(),
+            "width": 100,
+            "height": 200,
+            "mime_type": "image/png",
+        },
+        "xml": '<hierarchy><node id="7" bounds="[10,20][50,80]" /></hierarchy>',
+        "auxiliaries": {
+            "state_id": "source-state-0",
+            "display": {"width": 100, "height": 200},
+        },
+    }
+
+    run_log, source_states = import_run_log_evidence(payload)
+
+    assert source_states["states"]["source-state-0"]["screenshot_path"] == str(
+        screenshot
+    )
+    assert project_androidworld_step_actions(run_log["steps"][0]) == [
+        {"tool": "click", "args": {"x": 300.0, "y": 250.0}}
+    ]
+
+
+def test_runlog_import_recovers_missing_display_from_fullscreen_xml() -> None:
+    payload = androidworld_run_log(
+        [
+            {"action_type": "open_app", "app_name": "net.gsantner.markor"},
+            {"action_type": "click", "x": 540, "y": 1200},
+        ]
+    )
+    payload["steps"][0]["observation"] = {
+        "pixels": None,
+        "forest": (
+            '<hierarchy rotation="0"><node class="android.widget.FrameLayout" '
+            'bounds="[0,0][1080,2400]" /></hierarchy>'
+        ),
+        "ui_elements": [],
+        "auxiliaries": {"state_id": "source-state-0"},
+    }
+    payload["steps"][1]["observation"] = {
+        "pixels": None,
+        "forest": (
+            '<hierarchy rotation="0"><node class="android.widget.FrameLayout" '
+            'bounds="[0,408][1080,1236]" /></hierarchy>'
+        ),
+        "ui_elements": [],
+        "auxiliaries": {"state_id": "source-state-1"},
+    }
+
+    run_log, source_states = import_run_log_evidence(payload)
+
+    assert run_log["steps"][1]["observation"]["auxiliaries"]["display"] == {
+        "width": 1080,
+        "height": 2400,
+    }
+    assert source_states["states"]["source-state-1"]["display"] == {
+        "width": 1080,
+        "height": 2400,
+    }
+    assert project_androidworld_step_actions(run_log["steps"][1]) == [
+        {"tool": "click", "args": {"x": 500.0, "y": 500.0}}
+    ]
+
+
+def test_input_text_point_outside_editable_node_does_not_add_click() -> None:
+    payload = androidworld_run_log(
+        [{"action_type": "input_text", "text": "folder", "x": 374, "y": 778}]
+    )
+    payload["steps"][0]["observation"] = {
+        "pixels": None,
+        "forest": (
+            '<hierarchy><node class="android.widget.LinearLayout" '
+            'bounds="[84,492][996,1030]" /></hierarchy>'
+        ),
+        "ui_elements": [],
+        "auxiliaries": {
+            "state_id": "dialog",
+            "display": {"width": 1080, "height": 2400},
+        },
+    }
+
+    assert project_androidworld_step_actions(payload["steps"][0]) == [
+        {"tool": "input_text", "args": {"text": "folder"}}
+    ]
+
+
+def test_runlog_import_rejects_conflicting_fullscreen_display_evidence() -> None:
+    payload = androidworld_run_log(
+        [
+            {"action_type": "click", "x": 360, "y": 640},
+            {"action_type": "click", "x": 540, "y": 1200},
+        ]
+    )
+    for step, bounds in zip(
+        payload["steps"],
+        ("[0,0][720,1280]", "[0,0][1080,2400]"),
+        strict=True,
+    ):
+        step["observation"] = {
+            "pixels": None,
+            "forest": (
+                '<hierarchy rotation="0"><node class="android.widget.FrameLayout" '
+                f'bounds="{bounds}" /></hierarchy>'
+            ),
+            "ui_elements": [],
+            "auxiliaries": {"state_id": bounds},
+        }
+
+    with pytest.raises(ValueError, match="androidworld_run_log_display_conflict"):
+        import_run_log_evidence(payload)
 
 
 def test_production_import_keeps_androidworld_state_and_action() -> None:
@@ -110,13 +245,12 @@ def test_production_import_keeps_androidworld_optional_empty_strings(
     assert import_run_log(run_log) == run_log
 
 
-def test_production_import_rejects_nonofficial_action_type() -> None:
+def test_production_import_accepts_official_press_keyboard_action() -> None:
     run_log = androidworld_run_log(
         [{"action_type": "press_keyboard", "keycode": "KEYCODE_DEL"}]
     )
 
-    with pytest.raises(ValueError, match="run_log_schema_invalid"):
-        import_run_log(run_log)
+    assert import_run_log(run_log) == run_log
 
 
 def test_explicit_converter_emits_only_omniflow_schema(tmp_path: Path) -> None:

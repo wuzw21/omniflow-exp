@@ -5263,13 +5263,9 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
     replay_completed_count = sum(1 for value in replay_states if value is True)
     duration_ms = sum(_coerce_float(row.get("duration_ms")) for _, row in rows)
     actions_executed = 0
-    model_calls = sum(_coerce_int(row.get("model_calls")) for _, row in rows)
+    tool_calls = sum(_coerce_int(row.get("model_calls")) for _, row in rows)
     fallback_steps = sum(_coerce_int(row.get("fallback_steps")) for _, row in rows)
-    prompt_tokens = sum(_coerce_int(row.get("prompt_tokens")) for _, row in rows)
-    completion_tokens = sum(
-        _coerce_int(row.get("completion_tokens")) for _, row in rows
-    )
-    total_tokens = sum(_coerce_int(row.get("total_tokens")) for _, row in rows)
+    tokens = sum(_coerce_int(row.get("total_tokens")) for _, row in rows)
     replay_step_completed = 0
     replay_step_total = 0
     relocation_diagnostic_count = 0
@@ -5329,6 +5325,7 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
                 "replay_step_completed_count": step_completed,
                 "replay_step_total": step_total,
                 "replay_step_completed_rate": _rate(step_completed, step_total),
+                "tool_calls": _coerce_int(row.get("model_calls")),
                 "model_calls": _coerce_int(row.get("model_calls")),
                 "fallback_steps": _coerce_int(row.get("fallback_steps")),
                 "prompt_tokens": _coerce_int(row.get("prompt_tokens")),
@@ -5355,7 +5352,7 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
 
     task_count = len(rows)
     return {
-        "schema_version": "omniflow.androidworld_replay_pipeline_summary.v2",
+        "schema_version": "omniflow.androidworld_replay_pipeline_summary.v3",
         "task_count": task_count,
         "task_results_files": [str(path) for path in task_result_files],
         "official_validator_task_count": official_validator_task_count,
@@ -5391,12 +5388,9 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
             replay_step_completed,
             replay_step_total,
         ),
-        "model_calls": model_calls,
+        "tool_calls": tool_calls,
         "fallback_steps": fallback_steps,
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": total_tokens,
-        "tokens": total_tokens,
+        "tokens": tokens,
         "relocation_diagnostic_count": relocation_diagnostic_count,
         "per_task": per_task,
     }
@@ -5420,12 +5414,10 @@ def write_metrics_summary(summary: dict[str, Any], output_path: str | Path) -> N
         f"- actions_executed: `{summary['actions_executed']}`",
         f"- relocation_diagnostics: `{summary.get('relocation_diagnostic_count', 0)}`",
         f"- duration_s: `{round(_coerce_float(summary['duration_ms']) / 1000.0, 3)}`",
-        f"- model_calls: `{summary.get('model_calls', 0)}`",
-        f"- prompt_tokens: `{summary.get('prompt_tokens', 0)}`",
-        f"- completion_tokens: `{summary.get('completion_tokens', 0)}`",
-        f"- total_tokens: `{summary.get('total_tokens', 0)}`",
+        f"- tool_calls: `{summary.get('tool_calls', 0)}`",
+        f"- tokens: `{summary.get('tokens', 0)}`",
         "",
-        "| task | success | replay_completed | actions | calls | tokens | step_completed | relocation | sec | error |",
+        "| task | success | replay_completed | actions | tool_calls | tokens | step_completed | relocation | sec | error |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for item in summary.get("per_task") or []:
@@ -5706,7 +5698,11 @@ def _t3a_hint_step_action(step: Any) -> tuple[str, dict[str, Any]]:
         if not isinstance(action, dict):
             continue
         name = str(
-            action.get("name") or action.get("type") or action.get("tool") or ""
+            action.get("name")
+            or action.get("type")
+            or action.get("tool")
+            or action.get("action_type")
+            or ""
         ).strip()
         raw_params = action.get("params")
         if raw_params is None:
@@ -5735,6 +5731,26 @@ def _t3a_hint_step_action(step: Any) -> tuple[str, dict[str, Any]]:
                     raw_params, dict
                 ) else {}
     return "", {}
+
+
+def _t3a_hint_action_identity(step: Any) -> str:
+    name, params = _t3a_hint_step_action(step)
+    action = name.strip().lower()
+    key = str(params.get("key") or params.get("key_name") or "").strip().lower()
+    if action in {"press_key", "key_event", "presskey"}:
+        action = {
+            "back": "navigate_back",
+            "home": "navigate_home",
+            "enter": "keyboard_enter",
+        }.get(key, action)
+    action = {
+        "back": "navigate_back",
+        "press_back": "navigate_back",
+        "home": "navigate_home",
+        "press_home": "navigate_home",
+        "enter": "keyboard_enter",
+    }.get(action, action)
+    return action
 
 
 def _t3a_hint_target(
@@ -5897,6 +5913,7 @@ def _source_action_hint_path_for_item(
         source_cursor = 0
         for function_step in raw_function_steps:
             function_action, _ = _t3a_hint_step_action(function_step)
+            function_action_identity = _t3a_hint_action_identity(function_step)
             function_state_id = str(
                 function_step.get("source_state_id")
                 if isinstance(function_step, dict)
@@ -5906,14 +5923,13 @@ def _source_action_hint_path_for_item(
             alignment_mode = "state_identity"
             for source_index in range(source_cursor, len(source_steps)):
                 source_step = source_steps[source_index]
-                source_action, _ = _t3a_hint_step_action(source_step)
                 source_state_id = str(
                     source_step.get("before_state_id")
                     if isinstance(source_step, dict)
                     else ""
                 ).strip()
                 if (
-                    source_action.strip().lower() == function_action.strip().lower()
+                    _t3a_hint_action_identity(source_step) == function_action_identity
                     and source_state_id == function_state_id
                 ):
                     aligned_index = source_index
@@ -5921,8 +5937,10 @@ def _source_action_hint_path_for_item(
             if aligned_index is None:
                 alignment_mode = "ordered_action"
                 for source_index in range(source_cursor, len(source_steps)):
-                    source_action, _ = _t3a_hint_step_action(source_steps[source_index])
-                    if source_action.strip().lower() == function_action.strip().lower():
+                    if (
+                        _t3a_hint_action_identity(source_steps[source_index])
+                        == function_action_identity
+                    ):
                         aligned_index = source_index
                         break
             if aligned_index is None:
@@ -7108,6 +7126,15 @@ def _aggregate_normalized_one_task_rows(
 ) -> dict[str, Any]:
     """Recompute the one-task aggregate from its final canonical rows."""
     aggregate = dict(aggregate_summary)
+    for detailed_usage_field in (
+        "model_calls",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "chat_model_calls",
+        "embedding_model_calls",
+    ):
+        aggregate.pop(detailed_usage_field, None)
     canonical_rows = [dict(row) for row in rows]
     task_count = len(canonical_rows)
     official_rows = [
@@ -7182,19 +7209,13 @@ def _aggregate_normalized_one_task_rows(
                 replay_step_completed,
                 replay_step_total,
             ),
-            "model_calls": sum(
+            "tool_calls": sum(
                 _coerce_int(row.get("model_calls")) for row in canonical_rows
             ),
             "fallback_steps": sum(
                 _coerce_int(row.get("fallback_steps")) for row in canonical_rows
             ),
-            "prompt_tokens": sum(
-                _coerce_int(row.get("prompt_tokens")) for row in canonical_rows
-            ),
-            "completion_tokens": sum(
-                _coerce_int(row.get("completion_tokens")) for row in canonical_rows
-            ),
-            "total_tokens": sum(
+            "tokens": sum(
                 _coerce_int(row.get("total_tokens")) for row in canonical_rows
             ),
             "relocation_diagnostic_count": sum(
@@ -7204,7 +7225,6 @@ def _aggregate_normalized_one_task_rows(
             "per_task": canonical_rows,
         }
     )
-    aggregate["tokens"] = aggregate["total_tokens"]
     return aggregate
 
 
@@ -7227,7 +7247,7 @@ def _write_one_task_summary(
         rows,
     )
     summary = {
-        "schema_version": "omniflow.androidworld_one_task_methods.v1",
+        "schema_version": "omniflow.androidworld_one_task_methods.v2",
         "task_name": task,
         "task_root": str(task_root),
         "rows": rows,
@@ -7249,30 +7269,10 @@ def _write_one_task_summary(
         ("method", "method"),
         ("device", "device"),
         ("status", "status"),
-        ("initialized", "initialized"),
-        ("init_audit_status", "init"),
         ("success", "success"),
-        ("model_calls", "calls"),
-        ("fallback_steps", "fallback"),
-        ("prompt_tokens", "prompt_tokens"),
-        ("completion_tokens", "completion_tokens"),
+        ("model_calls", "tool_calls"),
         ("total_tokens", "tokens"),
-        ("token_usage_status", "token_status"),
-        ("task_params_sha256", "params_sha256"),
-        ("duration_sec", "episode_sec"),
         ("wall_sec", "wall_sec"),
-        ("prep_model_calls", "prep_calls"),
-        ("prep_total_tokens", "prep_tokens"),
-        ("prep_duration_sec", "prep_sec"),
-        ("teacher_model_calls", "teacher_calls"),
-        ("teacher_total_tokens", "teacher_tokens"),
-        ("teacher_wall_sec", "teacher_sec"),
-        ("episode_model_calls", "episode_calls"),
-        ("episode_total_tokens", "episode_tokens"),
-        ("episode_wall_sec", "episode_sec"),
-        ("actions_executed", "actions"),
-        ("replay", "replay"),
-        ("run_dir", "run_dir"),
         ("error", "error"),
     ]
     md_lines = [
@@ -7299,29 +7299,11 @@ def _print_one_task_summary(summary: dict[str, Any]) -> None:
         ("method", "method"),
         ("device", "device"),
         ("status", "status"),
-        ("initialized", "initialized"),
-        ("init_audit_status", "init"),
         ("success", "success"),
-        ("model_calls", "calls"),
-        ("fallback_steps", "fallback"),
-        ("prompt_tokens", "prompt_tokens"),
-        ("completion_tokens", "completion_tokens"),
+        ("model_calls", "tool_calls"),
         ("total_tokens", "tokens"),
-        ("token_usage_status", "token_status"),
-        ("task_params_sha256", "params_sha256"),
-        ("duration_sec", "episode_sec"),
         ("wall_sec", "wall_sec"),
-        ("prep_model_calls", "prep_calls"),
-        ("prep_total_tokens", "prep_tokens"),
-        ("prep_duration_sec", "prep_sec"),
-        ("teacher_model_calls", "teacher_calls"),
-        ("teacher_total_tokens", "teacher_tokens"),
-        ("teacher_wall_sec", "teacher_sec"),
-        ("episode_model_calls", "episode_calls"),
-        ("episode_total_tokens", "episode_tokens"),
-        ("episode_wall_sec", "episode_sec"),
-        ("actions_executed", "actions"),
-        ("replay", "replay"),
+        ("error", "error"),
     ]
     print(
         "| " + " | ".join(label for _, label in visible_columns) + " |",
@@ -8008,7 +7990,8 @@ def cmd_one_task(args: argparse.Namespace) -> int:
         _file_sha256(mobilegpt_source_run_log),
     )
     attempt_root, _ = _task_managed_output_root(args.output_root)
-    output_root = _source_seed_output_root(attempt_root, item.replay_seed)
+    source_seed = int(args.source_seed)
+    output_root = _source_seed_output_root(attempt_root, source_seed)
     attempt_id = attempt_root.name
     task_params_override = _task_params_override_from_args(args)
     task_seed = (
@@ -8020,7 +8003,7 @@ def cmd_one_task(args: argparse.Namespace) -> int:
         attempt_root,
         task=item.task,
         methods=methods,
-        source_seed=item.replay_seed,
+        source_seed=source_seed,
         evaluation_seed=task_seed,
         task_iteration=int(args.task_iteration),
         baseline_environment_repair=str(args.baseline_environment_repair or ""),
@@ -8078,7 +8061,7 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                 task=item.task,
                 method=method,
                 memory_mode="omniflow_function_store",
-                source_seed=item.replay_seed,
+                source_seed=source_seed,
                 evaluation_seed=task_seed,
                 attempt_id=attempt_id,
                 source_run_log=item.source_run_log,
@@ -8087,6 +8070,7 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                     "store_sha256": _file_sha256(store_path)
                     if store_path.is_file()
                     else None,
+                    "recorded_source_seed": item.replay_seed,
                     "function_authoring": "external_agent_skill",
                     "transfer_asset_audit": transfer_asset_audit,
                     "transfer_state_catalog_sha256": (
@@ -8190,7 +8174,7 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                 task=item.task,
                 method=method,
                 memory_mode=memory_mode,
-                source_seed=(item.replay_seed if method == "appagent_demo" else None),
+                source_seed=(source_seed if method == "appagent_demo" else None),
                 evaluation_seed=task_seed,
                 attempt_id=attempt_id,
                 source_run_log=(
@@ -8210,13 +8194,14 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                 task=item.task,
                 method=method,
                 memory_mode="source_runlog_replay",
-                source_seed=item.replay_seed,
+                source_seed=source_seed,
                 evaluation_seed=task_seed,
                 attempt_id=attempt_id,
                 source_run_log=item.source_run_log,
                 artifacts={
                     "source_run_log": str(item.source_run_log),
                     "source_run_log_sha256": _file_sha256(item.source_run_log),
+                    "recorded_source_seed": item.replay_seed,
                     "replay_run_log": str(replay_run_log),
                     "replay_run_log_sha256": _file_sha256(replay_run_log),
                     "source_materialization": replay_materialization,
@@ -8241,13 +8226,14 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                 task=item.task,
                 method=method,
                 memory_mode="source_action_hint",
-                source_seed=item.replay_seed,
+                source_seed=source_seed,
                 evaluation_seed=task_seed,
                 attempt_id=attempt_id,
                 source_run_log=item.source_run_log,
                 artifacts={
                     "source_run_log": str(item.source_run_log),
                     "source_run_log_sha256": _file_sha256(item.source_run_log),
+                    "recorded_source_seed": item.replay_seed,
                     "source_action_hint_path": str(source_action_hint_path),
                     "source_action_hint_sha256": _file_sha256(source_action_hint_path),
                     "semantic_source": (
@@ -8473,7 +8459,7 @@ def cmd_mobilegpt(args: argparse.Namespace) -> int:
             print(
                 "[mobilegpt:stats] "
                 f"tasks={summary['task_finished_count']}/{summary['task_started_count']} "
-                f"calls={summary['model_calls']} tokens={summary['total_tokens']} "
+                f"tool_calls={summary['model_calls']} tokens={summary['total_tokens']} "
                 f"summary={output_path}",
                 flush=True,
             )
@@ -8499,6 +8485,7 @@ def cmd_metrics(args: argparse.Namespace) -> int:
         f"success={summary['success_count']}/{summary['success_total']} "
         f"replay_completed={summary['replay_completed_count']}/"
         f"{summary['replay_task_count']} "
+        f"tool_calls={summary['tool_calls']} tokens={summary['tokens']} "
         f"summary={_repo_path(args.output)}"
     )
     return 0
@@ -8646,6 +8633,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     one_task_parser.add_argument("--tasks", required=True)
+    one_task_parser.add_argument("--source-seed", type=int, default=111)
     one_task_parser.add_argument(
         "--task-iteration",
         type=int,
@@ -8694,6 +8682,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--device-targets",
         default=DEFAULT_DEVICE_TARGETS,
         help="Comma-separated LABEL:SERIAL:PORT entries.",
+    )
+    one_task_parser.add_argument(
+        "--source-device",
+        default="",
+        help=argparse.SUPPRESS,
     )
     one_task_parser.add_argument(
         "--source-format",

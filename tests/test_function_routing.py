@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 from types import SimpleNamespace
 
-from runlog_fixtures import androidworld_run_log, androidworld_state
+import pytest
+from runlog_fixtures import androidworld_state
 
 from omniflow import (
     Action,
@@ -15,16 +15,15 @@ from omniflow import (
     OmniFlow,
     ToolCall,
 )
-from omniflow.core.config import OmniFlowConfig, RuntimeSettings
-from omniflow.core.model import FunctionStep
+from omniflow.core.config import OmniFlowConfig, PluginSet, RuntimeSettings
+from omniflow.core.model import FunctionStep, TransferResult
 from omniflow.core.trajectory import state_id
 from omniflow.functions.artifact import FUNCTION_ARTIFACT_VERSION
 from omniflow.functions.store import FunctionStore
-from omniflow.vlm.function_router import VLMFunctionRouter
-from omniflow.vlm.gui import SYSTEM_PROMPT, build_model_turn_request
+from omniflow.vlm.gui import SYSTEM_PROMPT, build_model_turn_request, function_tools
 from omniflow.vlm.planner import VLMPlanner
+from src.integrations.android_world import launch as androidworld_launch
 from src.integrations.android_world.agent import (
-    _androidworld_run_log_steps,
     _TaskHost,
     build_agent,
 )
@@ -57,40 +56,46 @@ class RecordingHost:
         return None
 
 
-class AcceptingRouter:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, tuple[Function, ...]]] = []
+class ResumableHost(RecordingHost):
+    def observe(self, **kwargs: object) -> Observation:
+        self.observe_requests.append(dict(kwargs))
+        state = f"state_{len(self.actions)}"
+        package = self.package_name
+        xml = (
+            '<hierarchy><node package="%s" class="android.widget.TextView" '
+            'text="Target" bounds="[0,0][1000,1000]" clickable="true" /></hierarchy>'
+            % package
+        )
+        return Observation(
+            xml=xml,
+            package_name=package,
+            activity_name="MainActivity",
+            image_base64=(
+                "final-screenshot" if kwargs.get("screenshot") is True else None
+            ),
+            extra={"state_id": state, "display": {"width": 1000, "height": 1000}},
+        )
 
-    def route_function(
-        self,
-        goal: str,
-        functions: tuple[Function, ...],
-    ) -> ToolCall:
-        self.calls.append((goal, functions))
-        return ToolCall(functions[0].id, {})
+    def get_state(self, source_state_id: str) -> Observation:
+        package = (
+            "com.android.launcher"
+            if source_state_id == "source_home"
+            else "com.android.settings"
+        )
+        xml = (
+            '<hierarchy><node package="%s" class="android.widget.TextView" '
+            'text="Target" bounds="[0,0][1000,1000]" clickable="true" /></hierarchy>'
+            % package
+        )
+        return Observation(
+            xml=xml,
+            package_name=package,
+            activity_name="MainActivity",
+            extra={"state_id": source_state_id, "display": {"width": 1000, "height": 1000}},
+        )
 
 
-class RejectingRouter(AcceptingRouter):
-    def route_function(
-        self,
-        goal: str,
-        functions: tuple[Function, ...],
-    ) -> None:
-        self.calls.append((goal, functions))
-        return None
-
-
-class FailingRouter(AcceptingRouter):
-    def route_function(
-        self,
-        goal: str,
-        functions: tuple[Function, ...],
-    ) -> None:
-        self.calls.append((goal, functions))
-        raise RuntimeError("router unavailable")
-
-
-def test_androidworld_trace_keeps_the_captured_official_state() -> None:
+def test_androidworld_host_keeps_the_captured_transfer_state() -> None:
     official_state = androidworld_state(
         "ignored-derived-id",
         forest={"source": "official"},
@@ -112,28 +117,13 @@ def test_androidworld_trace_keeps_the_captured_official_state() -> None:
     )
     runtime_state = {
         "captured_transfer_states": {},
-        "captured_androidworld_states": {},
     }
     host = _TaskHost(raw_host, runtime_state, {})
 
     observation = host.observe(xml=True, screenshot=True, app_info=True)
-    steps = _androidworld_run_log_steps(
-        [
-            {
-                "before_state_id": identifier,
-                "after_state_id": identifier,
-                "action": {"tool": "wait", "args": {"duration_ms": 1000}},
-                "result": {"success": True},
-            }
-        ],
-        runtime_state["captured_androidworld_states"],
-    )
 
     assert observation.extra["state_id"] == identifier
-    assert runtime_state["captured_androidworld_states"] == {
-        identifier: official_state
-    }
-    assert steps[0]["observation"] == official_state
+    assert set(runtime_state["captured_transfer_states"]) == {identifier}
 
 
 class FinishingPlanner:
@@ -205,6 +195,69 @@ def _store_with_open_settings_function(path: object) -> str:
     return function.id
 
 
+def test_function_tools_preserve_router_order_without_visibility_filter() -> None:
+    def function(function_id: str, *, agent_visible: bool) -> Function:
+        return Function(
+            function_id=function_id,
+            name=function_id,
+            description=function_id,
+            steps=(
+                FunctionStep(
+                    step_index=0,
+                    source_state_id=f"source_{function_id}",
+                    action=Action("press_key", {"key": "back"}),
+                ),
+            ),
+            schema_version=FUNCTION_ARTIFACT_VERSION,
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": False,
+            },
+            agent_visible=agent_visible,
+        )
+
+    ranked = (
+        function("z_top_ranked", agent_visible=False),
+        function("a_second_ranked", agent_visible=True),
+    )
+
+    tools = function_tools(ranked, include_summary=False)
+
+    assert [tool["function"]["name"] for tool in tools] == [
+        "z_top_ranked",
+        "a_second_ranked",
+    ]
+
+
+def _store_with_long_function(path: object) -> str:
+    function = Function(
+        function_id="complete_run_long_function",
+        name="Complete a long replay",
+        description="Execute every recorded Function action before planning.",
+        steps=tuple(
+            FunctionStep(
+                step_index=step_index,
+                source_state_id=f"source_{step_index}",
+                action=Action("press_key", {"key": "back"}),
+            )
+            for step_index in range(3)
+        ),
+        schema_version=FUNCTION_ARTIFACT_VERSION,
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+        agent_visible=True,
+    )
+    store = FunctionStore(path)
+    store.put_function(function)
+    return function.id
+
+
 def _store_with_untransferable_click_function(path: object) -> str:
     function = Function(
         function_id="complete_run_untransferable_click",
@@ -231,16 +284,99 @@ def _store_with_untransferable_click_function(path: object) -> str:
     return function.id
 
 
-def test_run_routes_recalled_function_before_gui_planner(tmp_path) -> None:
+def _store_with_resumable_click_function(path: object) -> str:
+    function = Function(
+        function_id="complete_run_resumable_click",
+        name="Open settings and choose the target",
+        description="Open Settings and choose the requested target.",
+        steps=(
+            FunctionStep(
+                step_index=0,
+                source_state_id="source_home",
+                action=Action(
+                    "open_app",
+                    {"package_name": "com.android.settings"},
+                ),
+            ),
+            FunctionStep(
+                step_index=1,
+                source_state_id="source_target_page",
+                action=Action("click", {"x": 500.0, "y": 500.0}),
+            ),
+        ),
+        schema_version=FUNCTION_ARTIFACT_VERSION,
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+        agent_visible=True,
+    )
+    store = FunctionStore(path)
+    store.put_function(function)
+    return function.id
+
+
+class ResumableTransfer:
+    def __init__(self) -> None:
+        self.target_state_ids: list[str] = []
+
+    def __call__(
+        self,
+        action: Action,
+        observation: Observation,
+        _source_state: Observation | None,
+    ) -> TransferResult:
+        target_state_id = str(observation.extra.get("state_id") or "")
+        self.target_state_ids.append(target_state_id)
+        if target_state_id == "state_2":
+            return TransferResult(
+                Action(action.tool, {"x": 700.0, "y": 700.0}),
+                reason="omnitransfer_test_match",
+                detail={"score": 0.9},
+            )
+        return TransferResult(
+            None,
+            reason="omnitransfer_test_unaligned",
+            detail={"score": 0.1},
+        )
+
+
+class CompletionRecoveryTransfer:
+    def __call__(
+        self,
+        action: Action,
+        observation: Observation,
+        _source_state: Observation | None,
+    ) -> TransferResult:
+        target_state_id = str(observation.extra.get("state_id") or "")
+        if target_state_id == "state_3":
+            return TransferResult(
+                Action(action.tool, {"x": 700.0, "y": 700.0}),
+                reason="omnitransfer_test_match",
+                detail={"score": 0.9},
+            )
+        return TransferResult(
+            Action(action.tool, dict(action.args)),
+            reason="omnitransfer_test_initial_match",
+            detail={"score": 0.9},
+        )
+
+
+def test_planner_selects_recalled_function_as_one_peer_tool(tmp_path) -> None:
     store_path = tmp_path / "store.json"
     function_id = _store_with_open_settings_function(store_path)
     host = RecordingHost()
-    router = AcceptingRouter()
-    planner = FinishingPlanner()
+    planner = SequencePlanner(
+        [
+            ToolCall(function_id, {}),
+            ToolCall("finished", {"content": ""}),
+        ]
+    )
     flow = OmniFlow(
         store_path,
         host=host,
-        function_router=router,
         planner=planner,
         installed_apps={"Settings": "com.android.settings"},
     )
@@ -250,17 +386,17 @@ def test_run_routes_recalled_function_before_gui_planner(tmp_path) -> None:
     assert result.success is True
     assert result.function_id == function_id
     assert [action.tool for action in host.actions] == ["open_app"]
-    assert len(router.calls) == 1
-    assert planner.visible_function_ids == [()]
+    assert planner.visible_function_ids == [(function_id,), (function_id,)]
     assert planner.observations[0].image_base64 == "final-screenshot"
     assert [request.get("screenshot") for request in host.observe_requests] == [
         False,
         True,
+        True,
     ]
     assert "Function `complete_run_turn_bluetooth_on`" in str(
-        planner.observations[0].extra.get("execution_history")
+        planner.observations[1].extra.get("execution_history")
     )
-    assert planner.observations[0].extra["function_execution"] == {
+    assert planner.observations[1].extra["function_execution"] == {
         "schema_version": "omniflow.function-execution-evidence.v1",
         "function_id": function_id,
         "function_name": "Turn bluetooth on",
@@ -282,35 +418,30 @@ def test_run_routes_recalled_function_before_gui_planner(tmp_path) -> None:
             "activity_name": "MainActivity",
         },
     }
-    assert result.detail["function_resolution"] == {
-        "candidate_count": 1,
-        "candidate_function_ids": [function_id],
-        "router_configured": True,
-        "status": "selected",
-        "selected_function_id": function_id,
-        "arguments": {},
-        "binding_status": "succeeded",
-        "binding_error": None,
-        "replay_status": "succeeded",
-        "replay_error": None,
-        "failed_step_index": None,
-    }
+    function_resolution = result.detail["function_resolution"]
+    assert function_resolution["candidate_count"] == 1
+    assert function_resolution["candidate_function_ids"] == [function_id]
+    assert function_resolution["status"] == "planner_tool_space"
+    assert [
+        event["candidate_function_ids"]
+        for event in function_resolution["recall"]["events"]
+    ] == [[function_id], [function_id]]
     assert result.detail["runtime_limits"] == {
         "max_steps": 20,
         "max_fallback_steps": None,
     }
 
 
-def test_zero_fallback_budget_never_calls_gui_planner(tmp_path) -> None:
+def test_zero_fallback_budget_allows_task_planning_after_function(tmp_path) -> None:
     store_path = tmp_path / "store.json"
     function_id = _store_with_open_settings_function(store_path)
     host = RecordingHost()
-    router = AcceptingRouter()
-    planner = FinishingPlanner()
+    planner = SequencePlanner(
+        [ToolCall(function_id, {}), ToolCall("finished", {"content": ""})]
+    )
     flow = OmniFlow(
         store_path,
         host=host,
-        function_router=router,
         planner=planner,
         installed_apps={"Settings": "com.android.settings"},
         config=OmniFlowConfig(
@@ -320,79 +451,48 @@ def test_zero_fallback_budget_never_calls_gui_planner(tmp_path) -> None:
 
     result = flow.run("Turn bluetooth on")
 
-    assert result.success is False
-    assert result.error == "fallback_budget_exhausted"
+    assert result.success is True
+    assert result.error is None
     assert result.function_id == function_id
     assert [action.tool for action in host.actions] == ["open_app"]
-    assert len(router.calls) == 1
-    assert planner.visible_function_ids == []
+    assert planner.visible_function_ids == [(function_id,), (function_id,)]
     assert result.fallback_steps == 0
-    assert result.detail["function_resolution"]["status"] == "selected"
-    assert result.detail["function_resolution"]["binding_status"] == "succeeded"
-    assert result.detail["function_resolution"]["replay_status"] == "succeeded"
+    assert result.detail["completion_review_calls"] == 0
+    assert result.execution_summary["completion_review_calls"] == 0
+    assert result.detail["function_resolution"]["status"] == "planner_tool_space"
     assert result.detail["runtime_limits"] == {
         "max_steps": 20,
         "max_fallback_steps": 0,
     }
 
 
-def test_rejected_function_enters_gui_planner_without_function_tools(tmp_path) -> None:
+def test_max_steps_limits_planner_calls_not_function_actions(tmp_path) -> None:
     store_path = tmp_path / "store.json"
-    _store_with_open_settings_function(store_path)
+    function_id = _store_with_long_function(store_path)
     host = RecordingHost()
-    router = RejectingRouter()
     planner = FinishingPlanner()
     flow = OmniFlow(
         store_path,
         host=host,
-        function_router=router,
         planner=planner,
-        installed_apps={"Settings": "com.android.settings"},
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=1)),
     )
 
-    result = flow.run("Turn bluetooth on")
+    result = flow.call_tool(ToolCall(function_id, {}))
 
     assert result.success is True
-    assert result.function_id is None
-    assert host.actions == []
-    assert len(router.calls) == 1
-    assert planner.visible_function_ids == [()]
-    assert result.detail["function_resolution"]["status"] == "rejected"
-    assert result.detail["function_resolution"]["selected_function_id"] is None
-    assert result.detail["function_resolution"]["arguments"] == {}
+    assert result.function_id == function_id
+    assert [action.tool for action in host.actions] == [
+        "press_key",
+        "press_key",
+        "press_key",
+    ]
+    assert planner.visible_function_ids == []
+    assert result.actions_executed == 3
+    assert result.detail["runtime_limits"]["max_steps"] == 1
 
 
-def test_function_router_error_is_preserved_for_result_audit(tmp_path) -> None:
-    store_path = tmp_path / "store.json"
-    function_id = _store_with_open_settings_function(store_path)
-    router = FailingRouter()
-    flow = OmniFlow(
-        store_path,
-        host=RecordingHost(),
-        function_router=router,
-        installed_apps={"Settings": "com.android.settings"},
-    )
-
-    result = flow.run("Turn bluetooth on")
-
-    assert result.success is False
-    assert result.detail["function_resolution"] == {
-        "candidate_count": 1,
-        "candidate_function_ids": [function_id],
-        "router_configured": True,
-        "status": "error",
-        "selected_function_id": None,
-        "arguments": {},
-        "binding_status": "not_attempted",
-        "binding_error": None,
-        "replay_status": "not_started",
-        "replay_error": None,
-        "failed_step_index": None,
-        "router_error": "RuntimeError:router unavailable",
-    }
-
-
-def test_gui_planner_never_receives_function_tools_without_router(tmp_path) -> None:
+def test_task_planner_receives_recalled_functions(tmp_path) -> None:
     store_path = tmp_path / "store.json"
     _store_with_open_settings_function(store_path)
     planner = FinishingPlanner()
@@ -407,7 +507,9 @@ def test_gui_planner_never_receives_function_tools_without_router(tmp_path) -> N
 
     assert result.success is True
     assert result.function_id is None
-    assert planner.visible_function_ids == [()]
+    assert planner.visible_function_ids == [
+        ("complete_run_turn_bluetooth_on",),
+    ]
 
 
 def test_transfer_failure_falls_back_without_replaying_source_coordinates(
@@ -416,7 +518,6 @@ def test_transfer_failure_falls_back_without_replaying_source_coordinates(
     store_path = tmp_path / "store.json"
     function_id = _store_with_untransferable_click_function(store_path)
     host = RecordingHost()
-    router = AcceptingRouter()
     planner = SequencePlanner(
         [
             ToolCall("open_app", {"package_name": "com.android.settings"}),
@@ -426,18 +527,17 @@ def test_transfer_failure_falls_back_without_replaying_source_coordinates(
     flow = OmniFlow(
         store_path,
         host=host,
-        function_router=router,
         planner=planner,
         installed_apps={"Settings": "com.android.settings"},
     )
 
-    result = flow.run("Turn bluetooth on")
+    result = flow.call_tool(ToolCall(function_id, {}))
 
     assert result.success is True
     assert result.function_id == function_id
     assert [action.tool for action in host.actions] == ["open_app"]
     assert all(action.tool != "click" for action in host.actions)
-    assert planner.visible_function_ids == [(), ()]
+    assert planner.visible_function_ids == [(function_id,), (function_id,)]
     assert planner.previous_action_errors[0] == "omnitransfer_missing_target_page"
     assert planner.observations[0].extra["function_execution"] == {
         "schema_version": "omniflow.function-execution-evidence.v1",
@@ -487,7 +587,7 @@ def test_direct_function_transfer_failure_continues_with_gui_planner(tmp_path) -
     assert result.function_id == function_id
     assert [action.tool for action in host.actions] == ["open_app"]
     assert all(action.tool != "click" for action in host.actions)
-    assert planner.visible_function_ids == [(), ()]
+    assert planner.visible_function_ids == [(function_id,), (function_id,)]
     assert planner.previous_action_errors[0] == "omnitransfer_missing_target_page"
     assert "Continue Function" in planner.goals[0]
     assert "Do not repeat actions that already succeeded" in planner.goals[0]
@@ -495,7 +595,138 @@ def test_direct_function_transfer_failure_continues_with_gui_planner(tmp_path) -
     assert result.detail["function_resolution"]["replay_status"] == "failed"
 
 
-def test_vlm_history_blocks_successful_repeat_on_same_logical_ui_state(
+def test_function_failure_returns_to_offline_resume_after_planner_recovery(
+    tmp_path,
+) -> None:
+    store_path = tmp_path / "store.json"
+    function_id = _store_with_resumable_click_function(store_path)
+    host = ResumableHost()
+    transfer = ResumableTransfer()
+    planner = SequencePlanner(
+        [
+            ToolCall(function_id, {}),
+            ToolCall("click", {"x": 100.0, "y": 100.0}),
+            ToolCall("finished", {"content": ""}),
+        ]
+    )
+    flow = OmniFlow(
+        store_path,
+        host=host,
+        planner=planner,
+        installed_apps={"Settings": "com.android.settings"},
+        config=OmniFlowConfig(
+            runtime=RuntimeSettings(max_steps=10, max_fallback_steps=5),
+            plugins=PluginSet(transfer=transfer),
+        ),
+    )
+
+    result = flow.run("Open settings and choose the target")
+
+    assert result.success is True
+    assert result.function_id == function_id
+    assert result.fallback_steps == 1
+    assert [action.to_dict() for action in host.actions] == [
+        {
+            "tool": "open_app",
+            "args": {"package_name": "com.android.settings"},
+        },
+        {"tool": "click", "args": {"x": 100.0, "y": 100.0}},
+        {"tool": "click", "args": {"x": 700.0, "y": 700.0}},
+    ]
+    assert planner.previous_action_errors[1] == "omnitransfer_test_unaligned"
+    assert planner.observations[1].extra["function_execution"]["replay_status"] == (
+        "actions_failed"
+    )
+    resumed_steps = [
+        step
+        for step in result.detail["trace"]
+        if step.get("metadata", {}).get("function_alignment")
+    ]
+    assert len(resumed_steps) == 1
+    assert resumed_steps[0]["metadata"]["function_alignment"] == {
+        "protocol": "weighted_lcs_v1",
+        "start_step_index": 1,
+        "resume_step_index": 1,
+        "probability": 0.9,
+        "score": pytest.approx(2.1972245773362196),
+        "minimum_probability": 0.0,
+        "source_skip_penalty": pytest.approx(1.0986122886681098),
+        "target_observation_count": 2,
+        "path": [
+            {
+                "function_step_index": 1,
+                "target_observation_index": 1,
+                "probability": 0.9,
+            }
+        ],
+    }
+    assert result.detail["function_resume"] == {
+        "schema_version": "omniflow.function-resume-audit.v1",
+        "events": [
+                {
+                    "start_step_index": 1,
+                    "status": "succeeded",
+                    "trigger": "function_replay_failure",
+                    "resume_step_index": 1,
+                "probability": 0.9,
+                "score": pytest.approx(2.1972245773362196),
+            }
+        ],
+        "attempt_count": 1,
+        "success_count": 1,
+    }
+    assert result.execution_summary["fallback_steps"] == 1
+
+
+def test_successful_function_can_be_called_again_without_resume(tmp_path) -> None:
+    store_path = tmp_path / "store.json"
+    function_id = _store_with_resumable_click_function(store_path)
+    host = ResumableHost()
+    planner = SequencePlanner(
+        [
+            ToolCall(function_id, {}),
+            ToolCall(function_id, {}),
+            ToolCall("finished", {"content": ""}),
+        ]
+    )
+    flow = OmniFlow(
+        store_path,
+        host=host,
+        planner=planner,
+        installed_apps={"Settings": "com.android.settings"},
+        config=OmniFlowConfig(
+            runtime=RuntimeSettings(max_steps=10, max_fallback_steps=5),
+            plugins=PluginSet(transfer=CompletionRecoveryTransfer()),
+        ),
+    )
+
+    result = flow.run("Open settings and choose the target")
+
+    assert result.success is True
+    assert result.function_id == function_id
+    assert result.fallback_steps == 0
+    assert [action.to_dict() for action in host.actions] == [
+        {
+            "tool": "open_app",
+            "args": {"package_name": "com.android.settings"},
+        },
+        {"tool": "click", "args": {"x": 500.0, "y": 500.0}},
+        {
+            "tool": "open_app",
+            "args": {"package_name": "com.android.settings"},
+        },
+        {"tool": "click", "args": {"x": 700.0, "y": 700.0}},
+    ]
+    assert planner.visible_function_ids == [
+        (function_id,),
+        (function_id,),
+        (function_id,),
+    ]
+    assert "function_resume" not in result.detail
+    assert result.detail["completion_review_calls"] == 0
+
+
+def test_planner_can_repeat_action_on_same_logical_ui_state(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -512,11 +743,12 @@ def test_vlm_history_blocks_successful_repeat_on_same_logical_ui_state(
     result = flow.run("Add this item to the cart")
 
     assert result.success is True
-    assert host.actions == [Action("click", {"x": 120, "y": 240})]
+    assert host.actions == [
+        Action("click", {"x": 120, "y": 240}),
+        Action("click", {"x": 120, "y": 240}),
+    ]
     assert planner.previous_action_errors[0] is None
-    assert planner.previous_action_errors[-1] == (
-        "action_already_succeeded_on_current_state"
-    )
+    assert "action_already_succeeded_on_current_state" not in planner.previous_action_errors
     assert len(planner.previous_action_errors) <= 3
 
 
@@ -528,91 +760,6 @@ class CapturingCompletions:
     def create(self, **request: object) -> object:
         self.requests.append(request)
         return self.response
-
-
-def test_vlm_function_router_only_exposes_candidates_and_reject() -> None:
-    function = Function(
-        function_id="connect_device",
-        name="Connect a Bluetooth device",
-        description="Connect the named Bluetooth device from system settings.",
-        steps=(
-            FunctionStep(
-                step_index=0,
-                source_state_id="source_settings",
-                action=Action("press_key", {"key": "ENTER"}),
-            ),
-        ),
-        schema_version=FUNCTION_ARTIFACT_VERSION,
-        input_schema={
-            "type": "object",
-            "properties": {
-                "device_name": {
-                    "type": "string",
-                    "description": "Exact Bluetooth device name from the user goal.",
-                }
-            },
-            "required": ["device_name"],
-            "additionalProperties": False,
-        },
-        agent_visible=True,
-    )
-    response = SimpleNamespace(
-        choices=[
-            SimpleNamespace(
-                message=SimpleNamespace(
-                    tool_calls=[
-                        SimpleNamespace(
-                            function=SimpleNamespace(
-                                name=function.id,
-                                arguments='{"device_name":"Headphones"}',
-                            )
-                        )
-                    ]
-                )
-            )
-        ],
-        usage=None,
-    )
-    completions = CapturingCompletions(response)
-    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
-    router = VLMFunctionRouter(model="test-model", client=client)
-
-    routed = asyncio.run(
-        router.route_function(
-            "Connect Headphones over Bluetooth",
-            (function,),
-        )
-    )
-
-    assert routed == ToolCall(function.id, {"device_name": "Headphones"})
-    request = completions.requests[0]
-    tool_names = [tool["function"]["name"] for tool in request["tools"]]
-    assert tool_names == [function.id, "reject_recalled_function"]
-    candidate_tool = request["tools"][0]["function"]
-    assert function.name in candidate_tool["description"]
-    assert function.description in candidate_tool["description"]
-    assert candidate_tool["parameters"] == function.input_schema
-    assert request["messages"][1]["content"] == (
-        '{"goal":"Connect Headphones over Bluetooth"}'
-    )
-
-
-def test_vlm_function_router_disables_sdk_retries(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    def openai_client(**options: object) -> object:
-        captured.update(options)
-        return object()
-
-    monkeypatch.setitem(
-        sys.modules,
-        "openai",
-        SimpleNamespace(OpenAI=openai_client),
-    )
-
-    VLMFunctionRouter(model="test-model")._build_client()
-
-    assert captured["max_retries"] == 0
 
 
 def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:
@@ -797,37 +944,7 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert request["enable_thinking"] is False
     assert "provides search" in SYSTEM_PROMPT
     assert "history, recent, suggestion" in SYSTEM_PROMPT
-
-
-def test_transient_obstruction_fast_path_runs_before_planner(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    import omniflow.runtime.core as core
-    import omniflow.runtime.engine as engine
-
-    host = RecordingHost()
-    planner = FinishingPlanner()
-    recovery = Action("click", {"x": 500.0, "y": 500.0})
-    calls = 0
-
-    def recover(_observation: Observation) -> Action | None:
-        nonlocal calls
-        calls += 1
-        return recovery if calls == 1 else None
-
-    monkeypatch.setattr(engine, "transient_obstruction_recovery", recover)
-    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
-    flow = OmniFlow(tmp_path / "store.json", host=host, planner=planner)
-
-    result = flow.run("Dismiss the blocker and finish")
-
-    assert result.success is True
-    assert host.actions == [recovery]
-    assert planner.visible_function_ids == [()]
-    assert result.detail["trace"][0]["metadata"]["decision_origin"] == (
-        "harness_fast_path"
-    )
+    assert "not claim that a RunLog or reusable Function was registered" in SYSTEM_PROMPT
 
 
 def test_function_completion_review_keeps_final_screenshot_and_checked_state() -> None:
@@ -926,19 +1043,41 @@ def test_vlm_planner_function_completion_review_uses_final_screenshot() -> None:
     assert "Never repeat or toggle" in turn_payload["completion_review"]
 
 
-def test_androidworld_agent_installs_function_router(tmp_path) -> None:
-    router = RejectingRouter()
+def test_androidworld_launcher_configures_one_unified_planner(
+    monkeypatch,
+) -> None:
+    planner_options: dict[str, object] = {}
 
-    flow = build_agent(
+    class CapturingPlanner:
+        def __init__(self, **options: object) -> None:
+            planner_options.update(options)
+
+    monkeypatch.setattr("omniflow.vlm.planner.VLMPlanner", CapturingPlanner)
+    monkeypatch.setattr(
+        androidworld_launch,
+        "build_agent",
+        lambda **options: SimpleNamespace(**options),
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "not-required")
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.setenv("LLMTHU_KEY", "unified-key")
+    monkeypatch.setenv("LLMTHU_BASE_URL", "https://llmapi.example/v1")
+
+    flow = androidworld_launch._build_launch_agent(
+        agent="omniflow",
         env=SimpleNamespace(),
-        store_path=str(tmp_path / "empty-store.json"),
-        function_router=router,
+        store_path="store.json",
+        adb_serial="emulator-5554",
+        planner_provider="openai",
+        planner_model="test-model",
     )
 
-    assert flow.function_router is router
+    assert planner_options["api_key"] == "unified-key"
+    assert planner_options["base_url"] == "https://llmapi.example/v1"
+    assert flow.planner is not None
 
 
-def test_androidworld_agent_returns_target_states_when_source_catalog_exists(
+def test_androidworld_agent_exposes_target_states_when_source_catalog_exists(
     tmp_path,
 ) -> None:
     store_path = tmp_path / "store.json"
@@ -955,19 +1094,8 @@ def test_androidworld_agent_returns_target_states_when_source_catalog_exists(
     )
     original_source_catalog = source_catalog.read_bytes()
     flow = build_agent(env=SimpleNamespace(), store_path=str(store_path))
-    target_run_log = androidworld_run_log(
-        [{"action_type": "open_app", "app_name": "com.android.settings"}],
-        observations=[androidworld_state("target-before")],
-        task_name="OpenSettings",
-        run_id="target-run",
-        goal="Open Settings.",
-    )
-    target_run_log["steps"][0]["next_observation"] = androidworld_state(
-        "target-after"
-    )
     flow.host.state.update(
         last_result=SimpleNamespace(success=True),
-        last_run_log=target_run_log,
         captured_transfer_states={
             "target-before": {
                 "state_id": "target-before",
@@ -976,21 +1104,12 @@ def test_androidworld_agent_returns_target_states_when_source_catalog_exists(
         },
     )
 
-    payload = flow.save_run_log(success=True)
+    captured = flow.get_captured_transfer_states()
 
     assert source_catalog.read_bytes() == original_source_catalog
-    assert payload["captured_transfer_states"] == {
+    assert captured == {
         "target-before": {
             "state_id": "target-before",
             "xml": "<hierarchy />",
         }
-    }
-    assert payload["transfer_state_audit"] == {
-        "referenced_state_ids": ["target-after", "target-before"],
-        "captured_state_ids": ["target-before"],
-        "missing_state_ids": ["target-after"],
-        "referenced_state_count": 2,
-        "captured_state_count": 1,
-        "missing_state_count": 1,
-        "complete": False,
     }

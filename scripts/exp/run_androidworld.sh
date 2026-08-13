@@ -39,7 +39,6 @@ preflight="$repo/src/experiment/preflight.py"
 task="${OMNIFLOW_SINGLE_TASK_TASK:-SystemBluetoothTurnOn}"
 task_iteration="${OMNIFLOW_SINGLE_TASK_ITERATION:-1}"
 all_methods="fixed_replay,ours,mobilegpt_offline_retrieval,appagent_demo,t3a_hint"
-eight_cell_methods="fixed_replay,ours,mobilegpt_offline_retrieval,appagent_demo"
 baseline_environment_repair="${OMNIFLOW_BASELINE_ENVIRONMENT_REPAIR_REASON:-}"
 mobilegpt_source_environment_repair="${OMNIFLOW_MOBILEGPT_SOURCE_ENVIRONMENT_REPAIR_REASON:-}"
 appagent_source_environment_repair="${OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON:-}"
@@ -48,6 +47,7 @@ formal_device_targets="small5554:emulator-5554:5554,fold5564:emulator-5564:5564"
 device_targets="${OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS:-$formal_device_targets}"
 fixed_task_params="${OMNIFLOW_SINGLE_TASK_FIXED_TASK_PARAMS:-$formal_fixed_task_params}"
 timeout_sec="${OMNIFLOW_SINGLE_TASK_TIMEOUT_SEC:-600}"
+preflight_minimum_free_gb="${OMNIFLOW_PREFLIGHT_MINIMUM_FREE_GB:-40}"
 max_steps="${OMNIFLOW_SINGLE_TASK_MAX_STEPS:-$formal_max_steps}"
 max_fallback_steps="${OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS:-$formal_max_fallback_steps}"
 store_path="${OMNIFLOW_SINGLE_TASK_STORE_PATH:-}"
@@ -63,6 +63,7 @@ memory_result_roots="${OMNIFLOW_MEMORY_RESULT_ROOTS:-${asset_root:+$asset_root/r
 memory_mobilegpt_roots="${OMNIFLOW_MEMORY_MOBILEGPT_ROOTS:-}"
 memory_baseline_batch_reports="${OMNIFLOW_MEMORY_BASELINE_BATCH_REPORTS:-}"
 source_selection_manifest="${OMNIFLOW_SOURCE_SELECTION_MANIFEST:-}"
+function_store_selection_manifest="${OMNIFLOW_FUNCTION_STORE_SELECTION_MANIFEST:-}"
 if [[ -n "$results_root" && ":$memory_result_roots:" != *":$results_root:"* ]]; then
   memory_result_roots="${memory_result_roots:+$memory_result_roots:}$results_root"
 fi
@@ -74,7 +75,7 @@ source_device="${OMNIFLOW_SOURCE_DEVICE:-source5560:emulator-5560:5560}"
 preflight_profile="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_PROFILE:-}"
 preflight_serials="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_SERIALS:-}"
 manage_emulators="${OMNIFLOW_SINGLE_TASK_MANAGE_EMULATORS:-1}"
-emulator_avds="${OMNIFLOW_SINGLE_TASK_EMULATOR_AVDS:-emulator-5554=SmallPhone,emulator-5560=AndroidWorldAvd,emulator-5564=OmniFlowTargetPixelFoldApi34}"
+emulator_avds="${OMNIFLOW_SINGLE_TASK_EMULATOR_AVDS:-emulator-5554=OmniFlowTargetSmall,emulator-5560=SmallPhone,emulator-5564=OmniFlowTargetFold}"
 host_machine="$(uname -m)"
 case "$host_machine" in
   x86_64|amd64)
@@ -87,7 +88,20 @@ case "$host_machine" in
     default_emulator_system_image_abi="arm64-v8a"
     ;;
 esac
-default_emulator_avd_specs="SmallPhone|system-images;android-33;google_apis;$default_emulator_system_image_abi|small_phone,AndroidWorldAvd|system-images;android-33;google_apis;$default_emulator_system_image_abi|pixel_6,OmniFlowTargetPixelFoldApi34|system-images;android-34;google_apis;$default_emulator_system_image_abi|pixel_fold"
+resolve_default_android_sdk_root() {
+  local user_root="${1:-$account_root}"
+  local candidate
+  for candidate in \
+    "$user_root/Library/Android/sdk" \
+    "$user_root/Android/Sdk"; do
+    if [[ -d "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  printf '%s\n' "$user_root/Android/Sdk"
+}
+default_emulator_avd_specs="SmallPhone|system-images;android-33;google_apis;$default_emulator_system_image_abi|small_phone,OmniFlowTargetSmall|system-images;android-33;google_apis;$default_emulator_system_image_abi|small_phone,OmniFlowTargetFold|system-images;android-34;google_apis;$default_emulator_system_image_abi|pixel_fold"
 emulator_avd_specs="${OMNIFLOW_SINGLE_TASK_EMULATOR_AVD_SPECS:-$default_emulator_avd_specs}"
 emulator_gpu="${OMNIFLOW_SINGLE_TASK_EMULATOR_GPU:-swiftshader_indirect}"
 emulator_boot_timeout_sec="${OMNIFLOW_SINGLE_TASK_EMULATOR_BOOT_TIMEOUT_SEC:-240}"
@@ -107,6 +121,10 @@ convert_source_runlogs=0
 prepare_mobilegpt_memory=0
 selected_methods_arg=""
 selected_devices_arg=""
+e2e_task=""
+e2e_source_backend="${OMNIFLOW_E2E_SOURCE_BACKEND:-auto}"
+e2e_source_runlog="${OMNIFLOW_E2E_SOURCE_RUNLOG:-}"
+e2e_task_deadline_sec="${OMNIFLOW_E2E_TASK_DEADLINE_SEC:-1800}"
 mobilegpt_memory_output_root="${OMNIFLOW_MOBILEGPT_MEMORY_OUTPUT_ROOT:-}"
 source_runlog_output_root="${OMNIFLOW_SOURCE_RUNLOG_OUTPUT_ROOT:-${memory_root:+$memory_root/source_runlogs}}"
 source_screenshot_roots="${OMNIFLOW_SOURCE_SCREENSHOT_ROOTS:-}"
@@ -121,7 +139,8 @@ Options:
                             assets, attempts, result directories, or emulators.
   --dry-run                 Build one task command without executing it.
   --all-tasks               Run the selected task set in task-major order.
-  --eight-cells             Select the four non-T3A methods (legacy shorthand).
+  --eight-cells             Deprecated alias for the complete formal matrix:
+                            five methods on both devices, producing ten cells.
   --methods METHOD1,...     Select an ordered subset of the five paper methods.
   --devices DEVICE1,...     Select small5554 and/or fold5564 independently.
   --tasks TASK1,TASK2,...   Run an ordered task-major subset, or limit
@@ -136,6 +155,11 @@ Options:
                             Build task-local MobileGPT memory from canonical
                             RunLogs only. With --check-only, run zero-model
                             preflight and create nothing.
+  --e2e-task TASK           Run one bounded source-to-matrix task pipeline.
+  --source-backend MODE     Source mode for --e2e-task: auto, reuse-only,
+                            manual, or online. Default: auto.
+  --source-runlog PATH      Successful native seed-111 RunLog for manual mode.
+  --task-deadline-sec SEC   Whole-task wall deadline; maximum/default is 1800.
   --refresh-memory          Deduplicate and index all configured RunLogs,
                             method assets, and existing results.
   -h, --help                Show this help and exit.
@@ -155,6 +179,8 @@ Optional runtime overrides:
   OMNIFLOW_MOBILEGPT_SOURCE_ENVIRONMENT_REPAIR_REASON,
   OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON,
   OMNIFLOW_BATCH_ATTEMPT_ID (resume one interrupted immutable batch).
+  OMNIFLOW_E2E_OUTPUT_ROOT, OMNIFLOW_E2E_SOURCE_MODEL,
+  OMNIFLOW_E2E_SEMANTIC_MODEL, OMNIFLOW_E2E_ATTEMPT_ID.
   Managed emulators are cold-restarted before every pending cell.
 
 Asset conversion inputs:
@@ -172,6 +198,9 @@ Long-term-memory refresh inputs:
                                      Colon-separated immutable batch summaries
                                      whose validator cells must remain frozen.
   OMNIFLOW_SOURCE_SELECTION_MANIFEST Optional audited exact-SHA source repairs.
+  OMNIFLOW_FUNCTION_STORE_SELECTION_MANIFEST
+                                     Optional audited exact-SHA Function Store
+                                     conflict selection.
   OMNIFLOW_SOURCE_SCREENSHOT_ROOTS   Optional screenshot roots for legacy repairs.
 
 Source RunLog conversion inputs:
@@ -197,6 +226,9 @@ Examples:
   bash scripts/exp/run_androidworld.sh --check-only --all-tasks --eight-cells
   bash scripts/exp/run_androidworld.sh --all-tasks --eight-cells \
     --tasks AudioRecorderRecordAudioWithFileName,SystemCopyToClipboard
+  bash scripts/exp/run_androidworld.sh \
+    --e2e-task AudioRecorderRecordAudioWithFileName \
+    --source-backend auto --task-deadline-sec 1800
 EOF
 }
 
@@ -246,6 +278,38 @@ while [[ "$#" -gt 0 ]]; do
     --prepare-mobilegpt-memory)
       prepare_mobilegpt_memory=1
       ;;
+    --e2e-task)
+      shift
+      if [[ "$#" -eq 0 || -z "$1" ]]; then
+        echo "--e2e-task requires one AndroidWorld task name." >&2
+        exit 2
+      fi
+      e2e_task="$1"
+      ;;
+    --source-backend)
+      shift
+      if [[ "$#" -eq 0 || -z "$1" ]]; then
+        echo "--source-backend requires auto, reuse-only, manual, or online." >&2
+        exit 2
+      fi
+      e2e_source_backend="$1"
+      ;;
+    --source-runlog)
+      shift
+      if [[ "$#" -eq 0 || -z "$1" ]]; then
+        echo "--source-runlog requires an absolute file path." >&2
+        exit 2
+      fi
+      e2e_source_runlog="$1"
+      ;;
+    --task-deadline-sec)
+      shift
+      if [[ "$#" -eq 0 || -z "$1" ]]; then
+        echo "--task-deadline-sec requires a positive integer no greater than 1800." >&2
+        exit 2
+      fi
+      e2e_task_deadline_sec="$1"
+      ;;
     --tasks)
       shift
       if [[ "$#" -eq 0 || -z "$1" ]]; then
@@ -261,6 +325,128 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
+if [[ -n "$e2e_task" ]]; then
+  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$batch_task_filter" || -n "$selected_methods_arg" || -n "$selected_devices_arg" ]]; then
+    echo "--e2e-task cannot be combined with maintenance or matrix-selection options." >&2
+    exit 2
+  fi
+  case "$e2e_source_backend" in
+    auto|reuse-only|manual|online) ;;
+    *)
+      echo "--source-backend requires auto, reuse-only, manual, or online." >&2
+      exit 2
+      ;;
+  esac
+  if [[ ! "$e2e_task_deadline_sec" =~ ^[1-9][0-9]*$ ]] || (( e2e_task_deadline_sec > 1800 )); then
+    echo "--task-deadline-sec must be a positive integer no greater than 1800." >&2
+    exit 2
+  fi
+  if [[ "$e2e_source_backend" == "manual" ]]; then
+    if [[ -z "$e2e_source_runlog" || "$e2e_source_runlog" != /* || ! -f "$e2e_source_runlog" ]]; then
+      echo "Manual source mode requires an existing absolute --source-runlog." >&2
+      exit 2
+    fi
+  elif [[ -n "$e2e_source_runlog" ]]; then
+    echo "--source-runlog is valid only with --source-backend manual." >&2
+    exit 2
+  fi
+  if [[ -z "$asset_root" || "$asset_root" != /* || -z "$results_root" || "$results_root" != /* ]]; then
+    echo "--e2e-task requires absolute OMNIFLOW_EXP_ASSET_ROOT and OMNIFLOW_EXP_RESULTS_ROOT." >&2
+    exit 2
+  fi
+  if [[ -z "$memory_index" || "$memory_index" != /* || ! -f "$memory_index" ]]; then
+    echo "--e2e-task requires an existing absolute OMNIFLOW_EXP_MEMORY_INDEX." >&2
+    exit 2
+  fi
+  if [[ -z "$android_world_root" || "$android_world_root" != /* || ! -d "$android_world_root/android_world" ]]; then
+    echo "--e2e-task requires an absolute AndroidWorld checkout." >&2
+    exit 2
+  fi
+  canonical_omnitransfer_root="$account_root/Projects/Omni/OmniTransfer"
+  if [[ ! -d "$canonical_omnitransfer_root" || -z "$omnitransfer_root" || ! -d "$omnitransfer_root" ]]; then
+    echo "--e2e-task requires OMNITRANSFER_ROOT=$canonical_omnitransfer_root." >&2
+    exit 2
+  fi
+  resolved_omnitransfer_root="$(cd "$omnitransfer_root" && pwd -P)"
+  if [[ "$resolved_omnitransfer_root" != "$(cd "$canonical_omnitransfer_root" && pwd -P)" ]]; then
+    echo "--e2e-task requires canonical OmniTransfer: $canonical_omnitransfer_root." >&2
+    exit 2
+  fi
+  if [[ -z "$mobilegpt_root" || "$mobilegpt_root" != /* || ! -d "$mobilegpt_root" ]]; then
+    echo "--e2e-task requires an absolute native MobileGPT root." >&2
+    exit 2
+  fi
+  if [[ -z "$appagent_root" || "$appagent_root" != /* || ! -d "$appagent_root" ]]; then
+    echo "--e2e-task requires an absolute native AppAgent root." >&2
+    exit 2
+  fi
+  if ! python_bin="$(command -v "$python_bin")"; then
+    echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
+    exit 1
+  fi
+  e2e_android_sdk_root="${OMNIFLOW_ANDROID_SDK_ROOT:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$(resolve_default_android_sdk_root)}}}"
+  e2e_adb_path="${OMNIFLOW_ADB_PATH:-$e2e_android_sdk_root/platform-tools/adb}"
+  e2e_emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$e2e_android_sdk_root/emulator/emulator}"
+  if [[ "$e2e_adb_path" != /* || ! -x "$e2e_adb_path" ]]; then
+    echo "--e2e-task requires an executable absolute ADB path: $e2e_adb_path" >&2
+    exit 2
+  fi
+  if [[ "$e2e_emulator_bin" != /* || ! -x "$e2e_emulator_bin" ]]; then
+    echo "--e2e-task requires an executable absolute emulator path: $e2e_emulator_bin" >&2
+    exit 2
+  fi
+  if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
+    echo "--e2e-task requires an existing absolute OMNIFLOW_ENV_FILE." >&2
+    exit 2
+  fi
+  set -a
+  source "$env_file"
+  set +a
+  e2e_output_root="${OMNIFLOW_E2E_OUTPUT_ROOT:-$results_root/androidworld_e2e_task_attempts}"
+  if [[ "$e2e_output_root" != /* ]]; then
+    echo "OMNIFLOW_E2E_OUTPUT_ROOT must be absolute." >&2
+    exit 2
+  fi
+  e2e_args=(
+    -m src.experiment.e2e_task_pipeline
+    --repo "$repo"
+    --script "$repo/scripts/exp/run_androidworld.sh"
+    --task "$e2e_task"
+    --source-backend "$e2e_source_backend"
+    --task-deadline-sec "$e2e_task_deadline_sec"
+    --memory-index "$memory_index"
+    --asset-root "$asset_root"
+    --results-root "$results_root"
+    --output-root "$e2e_output_root"
+    --android-world-root "$android_world_root"
+    --omnitransfer-root "$resolved_omnitransfer_root"
+    --mobilegpt-root "$mobilegpt_root"
+    --appagent-root "$appagent_root"
+    --python-bin "$python_bin"
+    --adb-path "$e2e_adb_path"
+    --emulator-bin "$e2e_emulator_bin"
+    --source-avd "${OMNIFLOW_E2E_SOURCE_AVD:-SmallPhone}"
+    --emulator-gpu "${OMNIFLOW_SINGLE_TASK_EMULATOR_GPU:-swiftshader_indirect}"
+    --runtime-preflight "$repo/src/experiment/preflight.py"
+    --source-model "${OMNIFLOW_E2E_SOURCE_MODEL:-glm-5.1}"
+    --semantic-model "${OMNIFLOW_E2E_SEMANTIC_MODEL:-glm-5.1}"
+    --formal-model "$formal_model"
+  )
+  if [[ -n "$e2e_source_runlog" ]]; then
+    e2e_args+=(--source-run-log "$e2e_source_runlog")
+  fi
+  if [[ -n "${OMNIFLOW_E2E_ATTEMPT_ID:-}" ]]; then
+    e2e_args+=(--attempt-id "$OMNIFLOW_E2E_ATTEMPT_ID")
+  fi
+  if [[ -n "$appagent_demo_memory_root" ]]; then
+    e2e_args+=(--appagent-memory-root "$appagent_demo_memory_root")
+  fi
+  if [[ "$dry_run" -eq 1 ]]; then
+    e2e_args+=(--dry-run)
+  fi
+  cd "$repo"
+  exec "$python_bin" "${e2e_args[@]}"
+fi
 if [[ "$convert_source_runlogs" -eq 1 ]]; then
   if [[ "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" ]]; then
     echo "--convert-source-runlogs cannot be combined with experiment or other maintenance options." >&2
@@ -338,6 +524,13 @@ if [[ "$refresh_memory" -eq 1 ]]; then
       exit 2
     fi
     memory_args+=(--source-selection-manifest "$source_selection_manifest")
+  fi
+  if [[ -n "$function_store_selection_manifest" ]]; then
+    if [[ "$function_store_selection_manifest" != /* || ! -f "$function_store_selection_manifest" ]]; then
+      echo "Function Store selection manifest must be an existing absolute file: $function_store_selection_manifest" >&2
+      exit 2
+    fi
+    memory_args+=(--function-store-selection-manifest "$function_store_selection_manifest")
   fi
   if [[ -n "$source_screenshot_roots" ]]; then
     IFS=':' read -r -a configured_screenshot_roots <<< "$source_screenshot_roots"
@@ -465,11 +658,7 @@ if [[ "$prepare_mobilegpt_memory" -eq 1 ]]; then
   fi
 fi
 if [[ "$task_iteration" == "1" ]]; then
-  if [[ "$eight_cells" -eq 1 ]]; then
-    default_methods="$eight_cell_methods"
-  else
-    default_methods="$all_methods"
-  fi
+  default_methods="$all_methods"
 else
   default_methods="ours"
 fi
@@ -508,8 +697,8 @@ validate_method_subset() {
   done
 }
 validate_method_subset "$methods" || exit "$?"
-if [[ "$eight_cells" -eq 1 && "$methods" != "$eight_cell_methods" ]]; then
-  echo "--eight-cells requires exactly: $eight_cell_methods" >&2
+if [[ "$eight_cells" -eq 1 && "$methods" != "$all_methods" ]]; then
+  echo "--eight-cells requires the complete formal method set: $all_methods" >&2
   exit 2
 fi
 if [[ -n "$selected_devices_arg" ]]; then
@@ -537,6 +726,68 @@ if [[ -n "$selected_devices_arg" ]]; then
     device_targets="${device_targets:+$device_targets,}$selected_device_target"
     selected_device_seen+="$selected_device,"
   done
+fi
+target_serials=()
+target_labels_seen=","
+target_serials_seen=","
+target_console_ports_seen=","
+IFS=',' read -r -a target_specs <<< "$device_targets"
+for target_spec in "${target_specs[@]}"; do
+  IFS=':' read -r target_label target_serial target_console_port target_extra <<< "$target_spec"
+  if [[ -z "$target_label" || -z "$target_serial" || ! "$target_console_port" =~ ^[0-9]+$ || -n "${target_extra:-}" ]]; then
+    echo "Invalid device target: $target_spec" >&2
+    exit 2
+  fi
+  if [[ "$target_serial" != "emulator-$target_console_port" ]]; then
+    echo "Device target serial/console mismatch: $target_spec" >&2
+    exit 2
+  fi
+  if [[ "$target_labels_seen" == *",$target_label,"* ]]; then
+    echo "Duplicate target label: $target_label" >&2
+    exit 2
+  fi
+  if [[ "$target_serials_seen" == *",$target_serial,"* ]]; then
+    echo "Duplicate target serial: $target_serial" >&2
+    exit 2
+  fi
+  if [[ "$target_console_ports_seen" == *",$target_console_port,"* ]]; then
+    echo "Duplicate target console port: $target_console_port" >&2
+    exit 2
+  fi
+  target_labels_seen+="$target_label,"
+  target_serials_seen+="$target_serial,"
+  target_console_ports_seen+="$target_console_port,"
+  target_serials+=("$target_serial")
+done
+if [[ ${#target_serials[@]} -eq 0 ]]; then
+  echo "At least one device target is required." >&2
+  exit 2
+fi
+if [[ "$eight_cells" -eq 1 && "$device_targets" != "$formal_device_targets" ]]; then
+  echo "--eight-cells requires exactly both formal target devices: $formal_device_targets" >&2
+  exit 2
+fi
+
+IFS=':' read -r source_label source_serial source_console_port source_extra <<< "$source_device"
+if [[ -z "$source_label" || -z "$source_serial" || ! "$source_console_port" =~ ^[0-9]+$ || -n "${source_extra:-}" ]]; then
+  echo "Invalid source device: $source_device" >&2
+  exit 2
+fi
+if [[ "$source_serial" != "emulator-$source_console_port" ]]; then
+  echo "Source serial/console mismatch: $source_device" >&2
+  exit 2
+fi
+if [[ "$target_labels_seen" == *",$source_label,"* ]]; then
+  echo "Source label must be separate from target labels: $source_label" >&2
+  exit 2
+fi
+if [[ "$target_serials_seen" == *",$source_serial,"* ]]; then
+  echo "Source serial must be separate from target serials: $source_serial" >&2
+  exit 2
+fi
+if [[ "$target_console_ports_seen" == *",$source_console_port,"* ]]; then
+  echo "Source console port must be separate from target console ports: $source_console_port" >&2
+  exit 2
 fi
 if [[ -z "$memory_index" || "$memory_index" != /* || ! -f "$memory_index" ]]; then
   echo "Long-term-memory index missing; run --refresh-memory first: $memory_index" >&2
@@ -603,6 +854,18 @@ for path_field, hash_field in fields:
             f"ours_store_index_hash_mismatch:{task_name}:{path_field}:"
             f"expected={expected or 'missing'}:actual={actual}"
         )
+provenance_path = Path(str(row.get("provenance_path") or "")).expanduser()
+if not provenance_path.is_absolute() or not provenance_path.is_file():
+    raise SystemExit(
+        f"ours_store_index_file_missing:{task_name}:provenance_path:{provenance_path}"
+    )
+provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+collection = provenance.get("semantic_collection")
+if not isinstance(collection, dict) or str(collection.get("function") or "") != "compile_runlog_to_store" or not str(collection.get("model") or "").strip():
+    raise SystemExit(
+        f"ours_store_index_mechanical_asset:{task_name}:"
+        "run --e2e-task to perform model semantic Function registration"
+    )
 store_path = Path(str(row["store_path"])).resolve()
 transfer_path = Path(str(row["transfer_states_path"])).resolve()
 if transfer_path != store_path.with_name("transfer_states.json"):
@@ -870,7 +1133,7 @@ if ! python_bin="$(command -v "$python_bin")"; then
   echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
   exit 1
 fi
-android_sdk_root="${OMNIFLOW_ANDROID_SDK_ROOT:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/home/wuzewen/Android/Sdk}}}"
+android_sdk_root="${OMNIFLOW_ANDROID_SDK_ROOT:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$(resolve_default_android_sdk_root)}}}"
 if [[ "$android_sdk_root" != /* ]]; then
   echo "Android SDK root must be an absolute path: $android_sdk_root" >&2
   exit 2
@@ -880,7 +1143,7 @@ export ANDROID_HOME="$android_sdk_root"
 adb_bin="${OMNIFLOW_ADB_PATH:-$android_sdk_root/platform-tools/adb}"
 emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$android_sdk_root/emulator/emulator}"
 avdmanager_bin="${OMNIFLOW_AVDMANAGER_BIN:-$android_sdk_root/cmdline-tools/latest/bin/avdmanager}"
-export PATH="/home/wuzewen/.local/bin:$android_sdk_root/platform-tools:$PATH"
+export PATH="$account_root/.local/bin:$android_sdk_root/platform-tools:$PATH"
 java_home="${OMNIFLOW_JAVA_HOME:-}"
 if [[ -z "$java_home" ]]; then
   for java_candidate in \
@@ -971,6 +1234,9 @@ if sys.argv[8] in {
     from src.experiment.artifact_memory import (
         canonical_mobilegpt_memory_from_memory,
     )
+    from src.experiment.mobilegpt_contract import (
+        MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
+    )
 
     source_run_log = str(
         source_row.get("retained_source_run_log")
@@ -983,24 +1249,30 @@ if sys.argv[8] in {
             memory_index=memory_index,
             task_name=sys.argv[5],
         )
-        if (
-            indexed_memory is not None
-            and (
-                not sys.argv[8]
-                or indexed_memory.get("schema_version") == sys.argv[8]
+        if indexed_memory is not None:
+            indexed_schema = str(indexed_memory.get("schema_version") or "")
+            indexed_source_method = MOBILEGPT_SOURCE_METHOD_BY_SCHEMA.get(
+                indexed_schema
             )
-            and (
-                not sys.argv[9]
-                or indexed_memory.get("source_method") == sys.argv[9]
-            )
-            and (
-                sys.argv[8] == "omniflow.mobilegpt-runlog-direct-memory.v1"
-                or not sys.argv[7]
-                or indexed_memory.get("source_model") == sys.argv[7]
-            )
-        ):
-            print(Path(indexed_memory["memory_root"]).resolve().parent)
-            raise SystemExit(0)
+            if (
+                indexed_source_method
+                and indexed_memory.get("source_method") == indexed_source_method
+            ):
+                try:
+                    validate_mobilegpt_adapted_memory(
+                        indexed_memory["memory_root"],
+                        task_name=sys.argv[5],
+                        source_seed=111,
+                        source_run_log=source_run_log,
+                        compatible_source_sha256s=compatible_source_sha256s,
+                        expected_model=sys.argv[7],
+                        expected_source_method=indexed_source_method,
+                    )
+                except (OSError, TypeError, ValueError):
+                    pass
+                else:
+                    print(Path(indexed_memory["memory_root"]).resolve().parent)
+                    raise SystemExit(0)
 
     def candidate_validator(candidate, _payload):
         try:
@@ -1110,11 +1382,7 @@ if [[ "$requires_omnitransfer" -eq 1 && "$all_tasks" -eq 0 && "$store_path" != /
   exit 2
 fi
 if [[ "$all_tasks" -eq 1 ]]; then
-  if [[ "$eight_cells" -eq 1 ]]; then
-    batch_methods="$eight_cell_methods"
-  else
-    batch_methods="$methods"
-  fi
+  batch_methods="$methods"
   batch_method_array=()
   IFS=',' read -r -a batch_method_array <<< "$batch_methods"
   batch_method_count="${#batch_method_array[@]}"
@@ -1276,11 +1544,25 @@ PY
     local task_csv
     task_csv="$(IFS=,; echo "${batch_tasks[*]}")"
     "$python_bin" -m src.experiment.batch_outcomes report \
-      --report-root "$batch_report_root" \
+      --report-root "$batch_report_root/aggregate" \
       --memory-index "$memory_index" \
       --outcomes-root "$batch_outcomes_root" \
       --source-index "$source_index" \
       --tasks "$task_csv" \
+      --methods "$batch_methods" \
+      --devices "$(IFS=,; echo "${batch_device_labels[*]}")" \
+      --source-seed "$expected_source_seed" \
+      --evaluation-seed "$evaluation_seed" \
+      --attempt-id "$attempt_id"
+  }
+  write_task_report() {
+    local report_task="$1"
+    "$python_bin" -m src.experiment.batch_outcomes report \
+      --report-root "$batch_report_root/tasks/$report_task" \
+      --memory-index "$memory_index" \
+      --outcomes-root "$batch_outcomes_root" \
+      --source-index "$source_index" \
+      --tasks "$report_task" \
       --methods "$batch_methods" \
       --devices "$(IFS=,; echo "${batch_device_labels[*]}")" \
       --source-seed "$expected_source_seed" \
@@ -1527,22 +1809,82 @@ PY
         task_requires_function_asset=1
         ;;
     esac
+    function_asset_status=0
     if [[ "$check_only" -eq 0 && "$task_requires_function_asset" -eq 1 ]]; then
       prepared_store_path=""
-      prepare_function_asset_for_task "$batch_task"
+      if prepare_function_asset_for_task "$batch_task"; then
+        :
+      else
+        function_asset_status="$?"
+      fi
     fi
     indexed_store_path=""
-    if [[ "$task_requires_function_asset" -eq 1 ]]; then
+    if [[ "$task_requires_function_asset" -eq 1 && "$function_asset_status" -eq 0 ]]; then
       if indexed_store_path="$(indexed_store_path_for_task "$batch_task")"; then
         :
       else
-        store_status="$?"
-        if [[ "$store_status" -eq 3 ]]; then
-          echo "Canonical Function asset missing for task=$batch_task; run --convert-ours-assets for this task before experiment execution." >&2
-        else
-          echo "Canonical Function asset is invalid for task=$batch_task." >&2
+        function_asset_status="$?"
+      fi
+    fi
+    if [[ "$task_requires_function_asset" -eq 1 && "$function_asset_status" -ne 0 ]]; then
+      if [[ "$function_asset_status" -eq 3 ]]; then
+        function_asset_failure="Canonical Function asset missing for task=$batch_task; run --convert-ours-assets for this task before experiment execution."
+      else
+        function_asset_failure="Canonical Function asset is invalid for task=$batch_task."
+      fi
+      echo "$function_asset_failure" >&2
+      function_asset_log=""
+      if [[ "$check_only" -eq 0 ]]; then
+        function_asset_log="$batch_log_root/$batch_task/$attempt_id/function-asset.log"
+        mkdir -p "$(dirname "$function_asset_log")"
+        printf '%s\n' "$function_asset_failure" >"$function_asset_log"
+      fi
+      function_asset_terminal_count=0
+      filtered_runnable_plan=""
+      while IFS=$'\t' read -r asset_row_kind asset_method asset_device asset_serial asset_port; do
+        if [[ "$asset_row_kind" != "pending" ]]; then
+          continue
         fi
-        exit "$store_status"
+        if [[ "$asset_method" != "ours" ]]; then
+          filtered_runnable_plan+="${filtered_runnable_plan:+$'\n'}pending"$'\t'"$asset_method"$'\t'"$asset_device"$'\t'"$asset_serial"$'\t'"$asset_port"
+          continue
+        fi
+        terminal_line=$'terminal\t'"$asset_method"$'\t'"$asset_device"$'\t'"$asset_serial"$'\t'"$asset_port"
+        if grep -Fqx "$terminal_line" <<< "$terminal_plan"; then
+          continue
+        fi
+        terminal_plan+="${terminal_plan:+$'\n'}$terminal_line"
+        function_asset_terminal_count="$((function_asset_terminal_count + 1))"
+        if [[ "$check_only" -eq 0 ]]; then
+          record_batch_outcome \
+            "$batch_task" \
+            "$asset_method" \
+            "$asset_device" \
+            "$asset_serial" \
+            "prep_failed" \
+            "function_asset" \
+            "$function_asset_log" \
+            "" \
+            "0"
+          failed="$((failed + 1))"
+        fi
+      done <<< "$runnable_plan"
+      runnable_plan="$filtered_runnable_plan"
+      terminal_cell_count="$((terminal_cell_count + function_asset_terminal_count))"
+      echo "[batch:static] terminal task=$batch_task method=ours pending=$function_asset_terminal_count"
+    fi
+    runnable_task_methods=""
+    for candidate_method in ${batch_methods//,/ }; do
+      if grep -Fq $'pending\t'"$candidate_method"$'\t' <<< "$runnable_plan"; then
+        runnable_task_methods="${runnable_task_methods:+$runnable_task_methods,}$candidate_method"
+      fi
+    done
+    batch_runnable_plans[$batch_index]="$runnable_plan"
+    batch_terminal_plans[$batch_index]="$terminal_plan"
+    if [[ "$task_requires_function_asset" -eq 1 && "$function_asset_status" -eq 0 ]]; then
+      if [[ -z "$indexed_store_path" ]]; then
+        echo "Canonical Function asset resolution returned no Store: task=$batch_task" >&2
+        exit 1
       fi
     fi
     batch_store_paths[$batch_index]="$indexed_store_path"
@@ -1550,76 +1892,78 @@ PY
       echo "[batch:static] no-runnable-cells task=$batch_task completed=$completed_cells pending=$pending_cells"
       continue
     fi
-    task_output_root="$batch_output_root/$batch_task/$attempt_id/static"
-    child_static_args=(--check-only)
-    echo "[batch:static] check task=$batch_task methods=$runnable_task_methods completed=$completed_cells pending=$pending_cells"
-    static_started_epoch="$(date +%s)"
-    static_log=""
-    run_static_child() {
-      (
-        export OMNIFLOW_BATCH_CHILD=1
-        export OMNIFLOW_SINGLE_TASK_TASK="$batch_task"
-        export OMNIFLOW_SINGLE_TASK_METHODS="$runnable_task_methods"
-        export OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT="$task_output_root"
-        export OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS="$source_index_task_count"
-        unset OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT
-        unset OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT
-        if [[ -n "$selected_mobilegpt_source_root" ]]; then
-          export OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT="$selected_mobilegpt_source_root"
+    for static_method in ${runnable_task_methods//,/ }; do
+      task_output_root="$batch_output_root/$batch_task/$attempt_id/static/$static_method"
+      child_static_args=(--check-only)
+      echo "[batch:static] check task=$batch_task method=$static_method completed=$completed_cells pending=$pending_cells"
+      static_started_epoch="$(date +%s)"
+      static_log=""
+      run_static_child() {
+        (
+          export OMNIFLOW_BATCH_CHILD=1
+          export OMNIFLOW_SINGLE_TASK_TASK="$batch_task"
+          export OMNIFLOW_SINGLE_TASK_METHODS="$static_method"
+          export OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT="$task_output_root"
+          export OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS="$source_index_task_count"
+          unset OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT
+          unset OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT
+          if [[ -n "$selected_mobilegpt_source_root" ]]; then
+            export OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT="$selected_mobilegpt_source_root"
+          fi
+          if [[ -n "$selected_appagent_source_root" ]]; then
+            export OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT="$selected_appagent_source_root"
+          fi
+          if [[ -n "$indexed_store_path" ]]; then
+            export OMNIFLOW_SINGLE_TASK_STORE_PATH="$indexed_store_path"
+          fi
+          bash "$0" "${child_static_args[@]}"
+        )
+      }
+      if [[ "$check_only" -eq 0 ]]; then
+        static_log="$batch_log_root/$batch_task/$attempt_id/static-$static_method.log"
+        mkdir -p "$(dirname "$static_log")"
+        if run_static_child 2>&1 | tee "$static_log"; then
+          static_status=0
+        else
+          static_status="$?"
         fi
-        if [[ -n "$selected_appagent_source_root" ]]; then
-          export OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT="$selected_appagent_source_root"
-        fi
-        if [[ -n "$indexed_store_path" ]]; then
-          export OMNIFLOW_SINGLE_TASK_STORE_PATH="$indexed_store_path"
-        fi
-        bash "$0" "${child_static_args[@]}"
-      )
-    }
-    if [[ "$check_only" -eq 0 ]]; then
-      static_log="$batch_log_root/$batch_task/$attempt_id/static.log"
-      mkdir -p "$(dirname "$static_log")"
-      if run_static_child 2>&1 | tee "$static_log"; then
+      elif run_static_child; then
         static_status=0
       else
         static_status="$?"
       fi
-    elif run_static_child; then
-      static_status=0
-    else
-      static_status="$?"
-    fi
-    static_outer_wall_sec="$(( $(date +%s) - static_started_epoch ))"
-    if [[ "$static_status" -ne 0 ]]; then
-      static_terminal_count=0
-      while IFS=$'\t' read -r row_kind cell_method cell_device cell_serial cell_port; do
-        if [[ "$row_kind" != "pending" ]]; then
-          continue
-        fi
-        terminal_line=$'terminal\t'"$cell_method"$'\t'"$cell_device"$'\t'"$cell_serial"$'\t'"$cell_port"
-        if grep -Fqx "$terminal_line" <<< "$terminal_plan"; then
-          continue
-        fi
-        terminal_plan+="${terminal_plan:+$'\n'}$terminal_line"
-        static_terminal_count="$((static_terminal_count + 1))"
-        if [[ "$check_only" -eq 0 ]]; then
-          record_batch_outcome \
-            "$batch_task" \
-            "$cell_method" \
-            "$cell_device" \
-            "$cell_serial" \
-            "prep_failed" \
-            "static_preflight" \
-            "$static_log" \
-            "$task_output_root" \
-            "$static_outer_wall_sec"
-          failed="$((failed + 1))"
-        fi
-      done <<< "$runnable_plan"
-      batch_terminal_plans[$batch_index]="$terminal_plan"
-      terminal_cell_count="$((terminal_cell_count + static_terminal_count))"
-      echo "[batch:static] terminal task=$batch_task stage=preflight pending=$static_terminal_count status=$static_status"
-    fi
+      static_outer_wall_sec="$(( $(date +%s) - static_started_epoch ))"
+      if [[ "$static_status" -ne 0 ]]; then
+        static_terminal_count=0
+        while IFS=$'\t' read -r row_kind cell_method cell_device cell_serial cell_port; do
+          if [[ "$row_kind" != "pending" || "$cell_method" != "$static_method" ]]; then
+            continue
+          fi
+          terminal_line=$'terminal\t'"$cell_method"$'\t'"$cell_device"$'\t'"$cell_serial"$'\t'"$cell_port"
+          if grep -Fqx "$terminal_line" <<< "$terminal_plan"; then
+            continue
+          fi
+          terminal_plan+="${terminal_plan:+$'\n'}$terminal_line"
+          static_terminal_count="$((static_terminal_count + 1))"
+          if [[ "$check_only" -eq 0 ]]; then
+            record_batch_outcome \
+              "$batch_task" \
+              "$cell_method" \
+              "$cell_device" \
+              "$cell_serial" \
+              "prep_failed" \
+              "static_preflight" \
+              "$static_log" \
+              "$task_output_root" \
+              "$static_outer_wall_sec"
+            failed="$((failed + 1))"
+          fi
+        done <<< "$runnable_plan"
+        batch_terminal_plans[$batch_index]="$terminal_plan"
+        terminal_cell_count="$((terminal_cell_count + static_terminal_count))"
+        echo "[batch:static] terminal task=$batch_task method=$static_method stage=preflight pending=$static_terminal_count status=$static_status"
+      fi
+    done
   done
   echo "[batch:static] ready tasks=$batch_task_count"
   if [[ "$check_only" -eq 1 ]]; then
@@ -1630,6 +1974,9 @@ PY
     exit 0
   fi
   if [[ "$pending_cell_count" -eq 0 ]]; then
+    for batch_task in "${batch_tasks[@]}"; do
+      write_task_report "$batch_task"
+    done
     write_batch_report
     echo "[batch] complete completed=0 skipped=$((batch_task_count * batch_cell_count)) failed=0 total=$((batch_task_count * batch_cell_count))"
     exit 0
@@ -1645,6 +1992,7 @@ PY
     IFS=$'\t' read -r _ completed_cells pending_cells <<< "$registration_header"
     if [[ "$pending_cells" -eq 0 ]]; then
       echo "[batch] skip complete task=$batch_task cells=$batch_cell_count/$batch_cell_count"
+      write_task_report "$batch_task"
       continue
     fi
     runnable_plan="${batch_runnable_plans[$batch_index]}"
@@ -1816,6 +2164,8 @@ PY
         fi
       done <<< "$final_plan"
     fi
+    write_task_report "$batch_task"
+    echo "[batch] task-report task=$batch_task report=$batch_report_root/tasks/$batch_task/cells.md"
   done
   write_batch_report
   echo "[batch] complete completed=$completed skipped=$skipped failed=$failed total=$((batch_task_count * batch_cell_count))"
@@ -2090,46 +2440,6 @@ if [[ "$check_only" -eq 1 ]]; then
   exit 0
 fi
 
-target_serials=()
-IFS=',' read -r -a target_specs <<< "$device_targets"
-for target_spec in "${target_specs[@]}"; do
-  IFS=':' read -r target_label target_serial target_console_port target_extra <<< "$target_spec"
-  if [[ -z "$target_label" || -z "$target_serial" || ! "$target_console_port" =~ ^[0-9]+$ || -n "${target_extra:-}" ]]; then
-    echo "Invalid device target: $target_spec" >&2
-    exit 2
-  fi
-  if [[ "$target_serial" != "emulator-$target_console_port" ]]; then
-    echo "Device target serial/console mismatch: $target_spec" >&2
-    exit 2
-  fi
-  target_serials+=("$target_serial")
-done
-if [[ ${#target_serials[@]} -eq 0 ]]; then
-  echo "At least one device target is required." >&2
-  exit 2
-fi
-
-source_label=""
-source_serial=""
-source_console_port=""
-if [[ "$appagent_source_generation_required" -eq 1 ]]; then
-  IFS=':' read -r source_label source_serial source_console_port source_extra <<< "$source_device"
-  if [[ -z "$source_label" || -z "$source_serial" || ! "$source_console_port" =~ ^[0-9]+$ || -n "${source_extra:-}" ]]; then
-    echo "Invalid source device: $source_device" >&2
-    exit 2
-  fi
-  if [[ "$source_serial" != "emulator-$source_console_port" ]]; then
-    echo "Source serial/console mismatch: $source_device" >&2
-    exit 2
-  fi
-  for target_serial in "${target_serials[@]}"; do
-    if [[ "$target_serial" == "$source_serial" ]]; then
-      echo "Source device must be separate from target devices: $source_serial" >&2
-      exit 2
-    fi
-  done
-fi
-
 avd_for_serial() {
   local wanted_serial="$1"
   local mapping mapping_serial mapping_avd
@@ -2205,6 +2515,13 @@ managed_emulator_pids() {
     --avd "$avd"
 }
 
+managed_emulator_pids_by_port() {
+  local serial="$1"
+  "$python_bin" -m src.experiment.emulator_processes \
+    --serial "$serial" \
+    --any-avd
+}
+
 force_stop_managed_emulator() {
   local serial="$1"
   local avd process_ids process_id stop_deadline
@@ -2217,7 +2534,16 @@ force_stop_managed_emulator() {
     return 1
   fi
   if [[ -z "$process_ids" ]]; then
-    echo "No exact managed emulator process found: serial=$serial avd=$avd" >&2
+    if ! process_ids="$(managed_emulator_pids_by_port "$serial")"; then
+      echo "Cannot inspect emulator process by console port: serial=$serial" >&2
+      return 1
+    fi
+    if [[ -n "$process_ids" ]]; then
+      echo "[emulator] recover mismatched-avd serial=$serial expected_avd=$avd"
+    fi
+  fi
+  if [[ -z "$process_ids" ]]; then
+    echo "No emulator process found for exact console port: serial=$serial" >&2
     return 1
   fi
   if [[ "$process_ids" == *$'\n'* ]]; then
@@ -2423,6 +2749,7 @@ if [[ "$appagent_source_generation_required" -eq 1 ]]; then
     --serial "$source_serial" \
     --require-kvm \
     --require-device \
+    --minimum-free-gb "$preflight_minimum_free_gb" \
     --json-out "$preflight_output_root/runtime_preflight_appagent_source_${source_serial#emulator-}.json" \
     --appagent-root "$appagent_root"
   "$python_bin" -m src.experiment.appagent_source prepare \
@@ -2450,6 +2777,7 @@ for serial in $preflight_serials; do
     --serial "$serial"
     --require-kvm
     --require-device
+    --minimum-free-gb "$preflight_minimum_free_gb"
     --json-out "$preflight_output_root/runtime_preflight_${profile}_${serial#emulator-}.json"
   )
   if [[ "$profile" == "mobilegpt" ]]; then
@@ -2466,8 +2794,10 @@ for serial in $preflight_serials; do
       --expected-tasks "$source_index_expected_tasks"
       --source-index "$source_index"
       --source-task "$task"
-      --require-contacts-ready
     )
+    if [[ "$task" == Contacts* ]]; then
+      preflight_args+=(--require-contacts-ready)
+    fi
   fi
   if [[ "$profile" == "appagent" ]]; then
     preflight_args+=(--appagent-root "$appagent_root")
@@ -2475,7 +2805,7 @@ for serial in $preflight_serials; do
       preflight_args+=(--appagent-demo-memory-root "$appagent_demo_memory_root")
     fi
   fi
-  if [[ "$profile" == "mobilegpt" ]]; then
+  if [[ "$profile" == "mobilegpt" && "$task" == Contacts* ]]; then
     preflight_args+=(--require-contacts-ready)
   fi
   "$python_bin" "$preflight" "${preflight_args[@]}"
@@ -2490,7 +2820,9 @@ command=(
   --experiment-config "$config"
   --index "$source_index"
   --android-world-root "$android_world_root"
+  --adb-path "$adb_bin"
   --tasks "$task"
+  --source-seed "$expected_source_seed"
   --task-iteration "$task_iteration"
   --output-root "$output_root"
   --master-source-index "$master_source_index"

@@ -9,7 +9,12 @@ import re
 from typing import Any, Callable, Sequence
 import xml.etree.ElementTree as ET
 
-from omniflow.core.trajectory import state_id as observation_state_id
+from omniflow.core.trajectory import (
+    observation_xml,
+)
+from omniflow.core.trajectory import (
+    state_id as observation_state_id,
+)
 from omniflow.transfer.runtime import load_transfer_state_catalog
 from src.integrations.runlog import (
     convert_legacy_run_log,
@@ -597,7 +602,7 @@ def _target_audit_from_embedded_evidence(
             continue
         evidence_count += 1
         identity = _verified_target_from_evidence(
-            str(step["observation"].get("forest") or ""),
+            observation_xml(step["observation"]),
             evidence,
         )
         if identity:
@@ -648,20 +653,30 @@ def _target_audit_from_legacy_provenance(
         source_states=source_states,
         require_screenshots=False,
     )
+    verified_reconverted = reconverted
     if len(reconverted["steps"]) != len(canonical["steps"]):
-        raise ValueError("source_legacy_provenance_step_count_mismatch")
+        projected_steps = [
+            step
+            for step in reconverted["steps"]
+            if str(step["action"].get("action_type") or "") != "wait"
+        ]
+        if len(projected_steps) != len(canonical["steps"]):
+            raise ValueError("source_legacy_provenance_step_count_mismatch")
+        verified_reconverted = {**reconverted, "steps": projected_steps}
     for step_index, (source_step, canonical_step) in enumerate(
-        zip(reconverted["steps"], canonical["steps"], strict=True)
+        zip(verified_reconverted["steps"], canonical["steps"], strict=True)
     ):
         if source_step["action"] != canonical_step["action"]:
             raise ValueError(f"source_legacy_provenance_action_mismatch:{step_index}")
-        if str(source_step["observation"].get("forest") or "") != str(
-            canonical_step["observation"].get("forest") or ""
+        if observation_xml(source_step["observation"]) != observation_xml(
+            canonical_step["observation"]
         ):
             raise ValueError(
                 f"source_legacy_provenance_observation_mismatch:{step_index}"
             )
-    source_targets, audit = _target_audit_from_embedded_evidence(reconverted)
+    source_targets, audit = _target_audit_from_embedded_evidence(
+        verified_reconverted
+    )
     audit["source_target_evidence_source"] = "verified_legacy_provenance"
     audit["source_target_evidence_sha256"] = actual_sha256
     return source_targets, audit
@@ -724,7 +739,7 @@ def _ground_source_actions(
         if not isinstance(state, dict):
             raise ValueError(f"source_state_missing:{state_identifier}")
         action_type = str(step["action"].get("action_type") or "").strip()
-        xml_text = str(state.get("xml") or observation.get("forest") or "").strip()
+        xml_text = str(state.get("xml") or observation_xml(observation)).strip()
         auxiliaries = observation.get("auxiliaries")
         observation_display = _source_display(
             auxiliaries.get("display") if isinstance(auxiliaries, dict) else None

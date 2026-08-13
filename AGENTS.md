@@ -40,6 +40,15 @@ environment, installation, preflight, accounting, and registration repairs may
 not change a method's prompt, memory, demonstration, action policy, parser,
 retry policy, step budget, model, or output.
 
+OmniFlow is a general VLM-task runtime, not an AndroidWorld task terminator.
+A successful Function execution returns a normal tool result to the task
+planner; it does not imply that the task is done. The planner may call the same
+or another recalled Function multiple times before it explicitly finishes the
+task. Function resume is permitted only after a real Function execution
+failure, never merely because a successful Function returned control to the
+planner. Evaluation adapters must not convert Function success into task
+completion or add evaluator-specific completion logic to the OmniFlow core.
+
 ## Code layout
 
 - Put contracts and shared data types in `omniflow/core/`.

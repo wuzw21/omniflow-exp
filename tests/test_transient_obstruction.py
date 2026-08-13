@@ -30,5 +30,13 @@ def test_explicit_transient_dismiss_is_recovered_without_model() -> None:
     assert 0.0 <= action.args["y"] <= 1000.0
 
 
+def test_exact_ok_is_not_treated_as_transient_obstruction() -> None:
+    assert transient_obstruction_recovery(_page("OK")) is None
+
+
+def test_ok_prefix_is_not_treated_as_confirmation() -> None:
+    assert transient_obstruction_recovery(_page("OKAY")) is None
+
+
 def test_ambiguous_cancel_is_not_dismissed_automatically() -> None:
     assert transient_obstruction_recovery(_page("取消")) is None

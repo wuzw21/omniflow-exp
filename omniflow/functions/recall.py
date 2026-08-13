@@ -1,53 +1,127 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
+from typing import Any, Mapping
 
-from omniflow.core.model import Function
+import numpy as np
+
+from omniflow.core.model import Function, Observation
+from omniflow.transfer.embedding import PageEncoder, TreeEmbedding
+
+RECALL_AUDIT_VERSION = "omniflow.function-recall.v1"
+PAGE_SIMILARITY_WEIGHT = 0.30
+GOAL_LEXICAL_WEIGHT = 0.70
+
+
+@dataclass(frozen=True)
+class RecallResult:
+    functions: tuple[Function, ...]
+    audit: dict[str, Any]
 
 
 def recall_functions(
     goal: str,
     *,
+    observation: Observation,
     functions: dict[str, Function] | list[Function] | tuple[Function, ...],
+    source_states: Mapping[str, Observation | None],
     limit: int = 8,
-) -> list[Function]:
-    """Return the visible Functions whose semantics best match the current goal."""
+    page_encoder: PageEncoder | None = None,
+) -> RecallResult:
+    """Recall Planner tools using page and lexical evidence without page gating."""
 
-    return [
-        function
-        for _score, function in _rank_functions(
-            goal,
-            functions=functions,
-            limit=limit,
-        )
-    ]
-
-
-def _rank_functions(
-    goal: str,
-    *,
-    functions: dict[str, Function] | list[Function] | tuple[Function, ...],
-    limit: int = 8,
-) -> list[tuple[float, Function]]:
-    """Rank Function tools for injection; this function never selects execution."""
-
+    encoder = page_encoder or PageEncoder()
+    current_page = encoder.embed(observation)
     values = functions.values() if isinstance(functions, dict) else functions
-    goal_tokens = _tokens(goal)
-    scored: list[tuple[float, Function]] = []
+    candidates: list[tuple[float, Function, dict[str, Any]]] = []
+    decisions: list[dict[str, Any]] = []
+
     for function in values:
-        if not function.agent_visible:
-            continue
-        score = max(
-            _jaccard(goal_tokens, _tokens(function.name)),
-            _jaccard(goal_tokens, _tokens(function.description)),
+        decision = _score_function(
+            str(goal),
+            function,
+            current_page=current_page,
+            source_states=source_states,
+            encoder=encoder,
         )
-        if score > 0:
-            scored.append((score, function))
-    ranked = sorted(scored, key=lambda item: (-item[0], item[1].id))
-    if not ranked:
-        return []
-    relevance_floor = ranked[0][0] * 0.5
-    return [item for item in ranked if item[0] >= relevance_floor][: max(0, int(limit))]
+        decisions.append(decision)
+        candidates.append((float(decision["score"]), function, decision))
+
+    ranked = sorted(candidates, key=lambda item: (-item[0], item[1].id))
+    selected = ranked[: max(0, int(limit))]
+    selected_ids = {function.id for _score, function, _audit in selected}
+    for decision in decisions:
+        decision["selected"] = decision["function_id"] in selected_ids
+        if not decision["selected"]:
+            decision["rejection_reason"] = "candidate_limit"
+
+    return RecallResult(
+        tuple(function for _score, function, _audit in selected),
+        {
+            "schema_version": RECALL_AUDIT_VERSION,
+            "encoder": {
+                "name": encoder.name,
+                "version": encoder.version,
+                "dimension": encoder.dimension,
+                "weights_hash": encoder.weights.hash,
+            },
+            "current_page": {
+                "element_count": len(current_page.elements),
+            },
+            "ranking_weights": {
+                "page_similarity": PAGE_SIMILARITY_WEIGHT,
+                "goal_lexical": GOAL_LEXICAL_WEIGHT,
+            },
+            "candidate_function_ids": [
+                function.id for _score, function, _audit in selected
+            ],
+            "decisions": decisions,
+        },
+    )
+
+
+def _score_function(
+    goal: str,
+    function: Function,
+    *,
+    current_page: TreeEmbedding,
+    source_states: Mapping[str, Observation | None],
+    encoder: PageEncoder,
+) -> dict[str, Any]:
+    source_state_id = function.steps[0].source_state_id if function.steps else ""
+    source_observation = source_states.get(source_state_id)
+    source_page = encoder.embed(source_observation) if source_observation is not None else None
+    page_similarity = (
+        _cosine(current_page.vector, source_page.vector)
+        if source_page is not None
+        else 0.0
+    )
+    goal_score = _jaccard(
+        _tokens(goal),
+        _tokens(f"{function.name} {function.description}"),
+    )
+    score = (
+        PAGE_SIMILARITY_WEIGHT * page_similarity
+        + GOAL_LEXICAL_WEIGHT * goal_score
+    )
+
+    return {
+        "function_id": function.id,
+        "source_state_id": source_state_id,
+        "page_similarity": page_similarity,
+        "goal_lexical_score": goal_score,
+        "score": score,
+        "selected": False,
+        "rejection_reason": None,
+    }
+
+
+def _cosine(left: np.ndarray, right: np.ndarray) -> float:
+    denominator = float(np.linalg.norm(left) * np.linalg.norm(right))
+    if denominator <= 0.0:
+        return 0.0
+    return max(0.0, min(1.0, float(np.dot(left, right) / denominator)))
 
 
 def _tokens(value: str) -> set[str]:
@@ -68,4 +142,10 @@ def _jaccard(left: set[str], right: set[str]) -> float:
     return len(left & right) / len(left | right)
 
 
-__all__ = ["recall_functions"]
+__all__ = [
+    "GOAL_LEXICAL_WEIGHT",
+    "PAGE_SIMILARITY_WEIGHT",
+    "RECALL_AUDIT_VERSION",
+    "RecallResult",
+    "recall_functions",
+]

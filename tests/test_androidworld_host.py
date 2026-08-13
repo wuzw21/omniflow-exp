@@ -14,6 +14,7 @@ from src.integrations.android_world.launch import (
     _androidworld_a11y_method_for_agent,
     _native_androidworld_a11y_method,
     _result_has_official_validator_conclusion,
+    _runtime_execution_trace,
 )
 
 
@@ -42,6 +43,72 @@ def _ui_element(
             y_max=bounds[3],
         ),
     )
+
+
+def test_input_text_coordinates_reach_androidworld_json_action(monkeypatch) -> None:
+    class JSONAction:
+        def __init__(
+            self,
+            action_type=None,
+            index=None,
+            x=None,
+            y=None,
+            text=None,
+            direction=None,
+            goal_status=None,
+            app_name=None,
+            keycode=None,
+            clear_text=None,
+        ):
+            self.action_type = action_type
+            self.x = x
+            self.y = y
+            self.text = text
+            self.clear_text = clear_text
+
+    module = SimpleNamespace(JSONAction=JSONAction)
+    monkeypatch.setattr(
+        "src.integrations.android_world.host.importlib.import_module",
+        lambda name: module if name == "android_world.env.json_action" else None,
+    )
+    env = SimpleNamespace(device_screen_size=(720, 1280))
+
+    action = AndroidWorldHost(env)._json_action(
+        Action(
+            "input_text",
+            {"text": "I may repeat this", "x": 500.0, "y": 594.921875},
+        )
+    )
+
+    assert action.action_type == "input_text"
+    assert action.x == 360.0
+    assert action.y == 761.5
+    assert action.text == "I may repeat this"
+    assert action.clear_text is True
+
+
+def test_runtime_execution_trace_preserves_prepared_function_action() -> None:
+    trace = [
+        {
+            "before_state_id": "before",
+            "action": {
+                "tool": "input_text",
+                "args": {
+                    "text": "I may repeat this",
+                    "x": 500.0,
+                    "y": 594.921875,
+                },
+            },
+            "result": {"success": True},
+            "after_state_id": "after",
+            "metadata": {
+                "function_id": "expense_add_multiple_replay",
+                "function_step_index": 6,
+            },
+        }
+    ]
+
+    assert _runtime_execution_trace(SimpleNamespace(detail={"trace": trace})) == trace
 
 
 def test_androidworld_skipped_episode_is_not_validator_conclusion() -> None:

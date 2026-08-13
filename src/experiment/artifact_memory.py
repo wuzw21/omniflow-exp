@@ -34,6 +34,9 @@ from src.integrations.runlog import adapt_source_run_log
 MEMORY_SCHEMA = "omniflow.androidworld-artifact-memory.v2"
 CURRENT_SCHEMA = "omniflow.androidworld-artifact-memory-pointer.v2"
 SOURCE_SELECTION_SCHEMA = "omniflow.androidworld-source-selection.v1"
+FUNCTION_STORE_SELECTION_SCHEMA = (
+    "omniflow.androidworld-function-store-selection.v1"
+)
 FUNCTION_SOURCE_LINEAGE_SCHEMA = "omniflow.function-store-source-lineage.v1"
 RESULT_FILE_NAMES = (
     "one_task_commands.jsonl",
@@ -512,31 +515,49 @@ def _load_source_selections(
                     f"source_selection_evidence_unregistered:{task}:"
                     f"{selected_evidence_sha256}"
                 )
-            evidence_path = Path(evidence["object_path"])
-            selected_run_log = require_complete_source_run_log(
-                adapt_source_run_log(
-                    _load_object(evidence_path),
-                    task_name=task,
-                    task_parameters=task_parameters,
-                    seed=source_seed,
-                    source_path=evidence_path,
-                    screenshot_roots=screenshot_roots,
-                    require_screenshots=False,
-                )
+            registered_conversion = records.get(expected_converted_sha256)
+            converted_path = (
+                Path(registered_conversion["object_path"])
+                if registered_conversion
+                else memory_root
+                / "objects"
+                / "sha256"
+                / expected_converted_sha256[:2]
+                / f"{expected_converted_sha256}.json"
             )
-            converted_content = _json_bytes(selected_run_log)
-            actual_converted_sha256 = hashlib.sha256(converted_content).hexdigest()
-            if actual_converted_sha256 != expected_converted_sha256:
-                raise ValueError(
-                    "source_selection_converted_hash_mismatch:"
-                    f"{task}:expected={expected_converted_sha256}:"
-                    f"actual={actual_converted_sha256}"
+            if (
+                converted_path.is_file()
+                and _sha256(converted_path) == expected_converted_sha256
+            ):
+                selected_run_log = require_complete_source_run_log(
+                    _load_object(converted_path)
                 )
-            converted_path = _materialize_content(
-                memory_root,
-                converted_content,
-                expected_converted_sha256,
-            )
+            else:
+                evidence_path = Path(evidence["object_path"])
+                selected_run_log = require_complete_source_run_log(
+                    adapt_source_run_log(
+                        _load_object(evidence_path),
+                        task_name=task,
+                        task_parameters=task_parameters,
+                        seed=source_seed,
+                        source_path=evidence_path,
+                        screenshot_roots=screenshot_roots,
+                        require_screenshots=False,
+                    )
+                )
+                converted_content = _json_bytes(selected_run_log)
+                actual_converted_sha256 = hashlib.sha256(converted_content).hexdigest()
+                if actual_converted_sha256 != expected_converted_sha256:
+                    raise ValueError(
+                        "source_selection_converted_hash_mismatch:"
+                        f"{task}:expected={expected_converted_sha256}:"
+                        f"actual={actual_converted_sha256}"
+                    )
+                converted_path = _materialize_content(
+                    memory_root,
+                    converted_content,
+                    expected_converted_sha256,
+                )
             record = records.setdefault(
                 expected_converted_sha256,
                 {
@@ -1102,11 +1123,16 @@ def _load_function_stores(
     memory_root: Path,
     catalogs: Sequence[Path],
     *,
+    selection_manifest: str | Path | None,
     source_metadata: dict[str, Any],
     canonical_sources: dict[str, dict[str, Any]],
     screenshot_roots: Sequence[Path],
     run_log_records: dict[str, dict[str, Any]],
-) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+) -> tuple[
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+    dict[str, str],
+]:
     records: dict[str, dict[str, Any]] = {}
     candidates: dict[str, list[tuple[tuple[int, int], str]]] = {}
     for catalog_path in catalogs:
@@ -1271,6 +1297,89 @@ def _load_function_stores(
         record["tasks"] = sorted(set(record["tasks"]))
         record["catalog_aliases"] = sorted(set(record["catalog_aliases"]))
 
+    selections: dict[str, dict[str, Any]] = {}
+    selection_manifest_record: dict[str, str] = {}
+    if selection_manifest is not None and str(selection_manifest).strip():
+        selection_path = Path(selection_manifest).expanduser().resolve()
+        if not selection_path.is_file():
+            raise FileNotFoundError(
+                f"function_store_selection_manifest_missing:{selection_path}"
+            )
+        selection_payload = _load_object(selection_path)
+        raw_selections = (
+            selection_payload.get("selections")
+            if isinstance(selection_payload, dict)
+            else None
+        )
+        if (
+            not isinstance(selection_payload, dict)
+            or selection_payload.get("schema_version")
+            != FUNCTION_STORE_SELECTION_SCHEMA
+            or not isinstance(raw_selections, dict)
+            or not raw_selections
+        ):
+            raise ValueError(
+                f"function_store_selection_manifest_invalid:{selection_path}"
+            )
+        unknown_tasks = sorted(set(raw_selections) - set(candidates))
+        if unknown_tasks:
+            raise ValueError(
+                "function_store_selection_tasks_unknown:"
+                + ",".join(unknown_tasks)
+            )
+        for task, raw_selection in sorted(raw_selections.items()):
+            if not isinstance(raw_selection, dict):
+                raise ValueError(f"function_store_selection_invalid:{task}")
+            selected_identity = str(
+                raw_selection.get("selected_identity_sha256") or ""
+            ).strip().lower()
+            expected_identities = raw_selection.get(
+                "expected_candidate_identity_sha256s"
+            )
+            reason = str(raw_selection.get("reason") or "").strip()
+            if not re.fullmatch(r"[0-9a-f]{64}", selected_identity):
+                raise ValueError(
+                    f"function_store_selection_sha256_invalid:{task}"
+                )
+            if (
+                not isinstance(expected_identities, list)
+                or len(expected_identities) < 2
+                or any(
+                    not isinstance(identity, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", identity)
+                    for identity in expected_identities
+                )
+                or expected_identities != sorted(set(expected_identities))
+            ):
+                raise ValueError(
+                    f"function_store_selection_candidates_invalid:{task}"
+                )
+            if selected_identity not in expected_identities:
+                raise ValueError(
+                    f"function_store_selection_selected_not_expected:{task}"
+                )
+            if not reason:
+                raise ValueError(
+                    f"function_store_selection_reason_required:{task}"
+                )
+            selections[task] = {
+                "selected_identity_sha256": selected_identity,
+                "expected_candidate_identity_sha256s": expected_identities,
+                "reason": reason,
+            }
+        selection_digest = _sha256(selection_path)
+        selection_manifest_record = {
+            "path": str(selection_path),
+            "sha256": selection_digest,
+            "object_path": str(
+                _materialize_object(
+                    memory_root,
+                    selection_path,
+                    selection_digest,
+                )
+            ),
+        }
+
     canonical: dict[str, dict[str, Any]] = {}
     for task, task_candidates in sorted(candidates.items()):
         best_quality = max(quality for quality, _ in task_candidates)
@@ -1281,12 +1390,33 @@ def _load_function_stores(
                 if quality == best_quality
             }
         )
+        selection = selections.get(task)
+        if selection is not None:
+            expected_ids = selection["expected_candidate_identity_sha256s"]
+            if best_ids != expected_ids:
+                raise ValueError(
+                    f"function_store_selection_stale:{task}:"
+                    f"expected={','.join(expected_ids)}:"
+                    f"actual={','.join(best_ids)}"
+                )
+            selected_id = selection["selected_identity_sha256"]
+            canonical[task] = {
+                **records[selected_id],
+                "selection": {
+                    **selection,
+                    "manifest_sha256": selection_manifest_record["sha256"],
+                    "manifest_object_path": selection_manifest_record[
+                        "object_path"
+                    ],
+                },
+            }
+            continue
         if len(best_ids) != 1:
             raise ValueError(
                 f"ambiguous_best_function_store:{task}:{','.join(best_ids)}"
             )
         canonical[task] = dict(records[best_ids[0]])
-    return records, canonical
+    return records, canonical, selection_manifest_record
 
 
 @contextmanager
@@ -1615,6 +1745,7 @@ def _refresh_artifact_memory_unlocked(
     mobilegpt_memory_roots: Sequence[str | Path] = (),
     baseline_batch_reports: Sequence[str | Path] = (),
     source_selection_manifest: str | Path | None = None,
+    function_store_selection_manifest: str | Path | None = None,
     source_screenshot_roots: Sequence[str | Path] = (),
 ) -> dict[str, Any]:
     """Import immutable evidence and publish one deterministic canonical index."""
@@ -1756,9 +1887,14 @@ def _refresh_artifact_memory_unlocked(
             raise FileNotFoundError(
                 f"mobilegpt_memory_root_missing:{mobilegpt_memory_root}"
             )
-    function_records, canonical_function_stores = _load_function_stores(
+    (
+        function_records,
+        canonical_function_stores,
+        function_store_selection_manifest_record,
+    ) = _load_function_stores(
         root,
         catalog_paths,
+        selection_manifest=function_store_selection_manifest,
         source_metadata=source_payload,
         canonical_sources=canonical_sources,
         screenshot_roots=screenshot_roots,
@@ -1932,6 +2068,9 @@ def _refresh_artifact_memory_unlocked(
             "source_index": str(index_path),
             "source_index_sha256": _sha256(index_path),
             "source_selection_manifest": source_selection_manifest_record,
+            "function_store_selection_manifest": (
+                function_store_selection_manifest_record
+            ),
             "source_screenshot_roots": [str(path) for path in screenshot_roots],
             "function_catalogs": [str(path) for path in catalog_paths],
             "runlog_roots": sorted(
@@ -1948,6 +2087,10 @@ def _refresh_artifact_memory_unlocked(
         "counts": {
             "task_count": len(task_names),
             "source_selection_tasks": len(source_selections),
+            "function_store_selection_tasks": sum(
+                "selection" in record
+                for record in canonical_function_stores.values()
+            ),
             "run_log_paths": len(paths),
             "unique_run_logs": len(records),
             "function_catalog_paths": len(catalog_paths),
@@ -2063,6 +2206,7 @@ def refresh_artifact_memory(
     mobilegpt_memory_roots: Sequence[str | Path] = (),
     baseline_batch_reports: Sequence[str | Path] = (),
     source_selection_manifest: str | Path | None = None,
+    function_store_selection_manifest: str | Path | None = None,
     source_screenshot_roots: Sequence[str | Path] = (),
 ) -> dict[str, Any]:
     """Import immutable evidence and publish one deterministic canonical index."""
@@ -2078,6 +2222,9 @@ def refresh_artifact_memory(
             mobilegpt_memory_roots=mobilegpt_memory_roots,
             baseline_batch_reports=baseline_batch_reports,
             source_selection_manifest=source_selection_manifest,
+            function_store_selection_manifest=(
+                function_store_selection_manifest
+            ),
             source_screenshot_roots=source_screenshot_roots,
         )
 
@@ -2236,6 +2383,7 @@ def refresh_artifact_memory_from_pointer(
     *,
     memory_index: str | Path,
     source_selection_manifest: str | Path | None = None,
+    function_store_selection_manifest: str | Path | None = None,
     source_screenshot_roots: Sequence[str | Path] = (),
     additional_function_catalogs: Sequence[str | Path] = (),
     additional_runlog_roots: Sequence[str | Path] = (),
@@ -2310,6 +2458,15 @@ def refresh_artifact_memory_from_pointer(
                 or (inputs.get("source_selection_manifest") or {}).get("object_path")
                 or (inputs.get("source_selection_manifest") or {}).get("path")
             ),
+            function_store_selection_manifest=(
+                function_store_selection_manifest
+                or (
+                    inputs.get("function_store_selection_manifest") or {}
+                ).get("object_path")
+                or (
+                    inputs.get("function_store_selection_manifest") or {}
+                ).get("path")
+            ),
             source_screenshot_roots=(
                 source_screenshot_roots
                 or tuple(inputs.get("source_screenshot_roots") or ())
@@ -2333,6 +2490,7 @@ def main(argv: list[str] | None = None) -> int:
     refresh_parser.add_argument("--memory-root", required=True)
     refresh_parser.add_argument("--source-index")
     refresh_parser.add_argument("--source-selection-manifest")
+    refresh_parser.add_argument("--function-store-selection-manifest")
     refresh_parser.add_argument("--source-screenshot-root", action="append", default=[])
     refresh_parser.add_argument("--function-catalog", action="append", default=[])
     refresh_parser.add_argument("--runlog-root", action="append", required=True)
@@ -2363,6 +2521,9 @@ def main(argv: list[str] | None = None) -> int:
             report = refresh_artifact_memory_from_pointer(
                 memory_index=pointer_path,
                 source_selection_manifest=args.source_selection_manifest,
+                function_store_selection_manifest=(
+                    args.function_store_selection_manifest
+                ),
                 source_screenshot_roots=args.source_screenshot_root,
                 additional_function_catalogs=_split_values(args.function_catalog),
                 additional_runlog_roots=_split_values(args.runlog_root),
@@ -2383,6 +2544,9 @@ def main(argv: list[str] | None = None) -> int:
                 memory_root=memory_root,
                 source_index=args.source_index,
                 source_selection_manifest=args.source_selection_manifest,
+                function_store_selection_manifest=(
+                    args.function_store_selection_manifest
+                ),
                 source_screenshot_roots=args.source_screenshot_root,
                 function_catalogs=_split_values(args.function_catalog),
                 runlog_roots=_split_values(args.runlog_root),

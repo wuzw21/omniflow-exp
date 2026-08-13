@@ -18,7 +18,7 @@ MOBILEGPT_NATIVE_DERIVE_MEMORY_SCHEMA = (
 )
 MOBILEGPT_NATIVE_DERIVE_SOURCE_METHOD = "mobilegpt_runlog_native_derive"
 MOBILEGPT_NATIVE_DERIVE_PREP_TYPE = "mobilegpt_runlog_native_derive_memory"
-MOBILEGPT_NATIVE_DERIVE_LEARNING_MODE = "mobilegpt_runlog_conversion"
+MOBILEGPT_NATIVE_DERIVE_LEARNING_MODE = "mobilegpt_runlog_virtual_source"
 MOBILEGPT_NATIVE_DERIVE_AUDIT_SCHEMA = (
     "omniflow.mobilegpt-runlog-native-derive-audit.v1"
 )

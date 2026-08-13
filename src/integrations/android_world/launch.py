@@ -27,10 +27,12 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
+from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import token_usage_status
 from src.experiment.observation_evidence import (
-    ObservationArchive,
+    AndroidWorldEpisodeRecorder,
     persist_target_run_evidence,
+    transfer_state_coverage_audit,
 )
 from src.integrations.android_world.agent import (
     MODE_OMNIFLOW,
@@ -932,8 +934,6 @@ def _write_task_results_summary(
         for row in rows
         if str(row.get("runtime_integrity_error") or "").strip()
     ]
-    prompt_tokens = sum(_coerce_int(row.get("prompt_tokens")) for row in rows)
-    completion_tokens = sum(_coerce_int(row.get("completion_tokens")) for row in rows)
     total_tokens = sum(_coerce_int(row.get("total_tokens")) for row in rows)
     successful_action_steps = 0
     total_action_steps = 0
@@ -958,6 +958,7 @@ def _write_task_results_summary(
                 "duration_ms": round(duration_ms, 3),
                 "actions_executed": actions_executed,
                 "action_completed_rate": _rate(action_completed, action_total),
+                "tool_calls": _coerce_int(row.get("model_calls")),
                 "model_calls": _coerce_int(row.get("model_calls")),
                 "prompt_tokens": _coerce_int(row.get("prompt_tokens")),
                 "completion_tokens": _coerce_int(row.get("completion_tokens")),
@@ -967,7 +968,7 @@ def _write_task_results_summary(
         )
 
     summary = {
-        "schema_version": "omniflow.androidworld_run_summary.v2",
+        "schema_version": "omniflow.androidworld_run_summary.v3",
         "agent": agent,
         "tasks_requested": list(tasks),
         "task_results_path": str(task_results_path),
@@ -1002,15 +1003,8 @@ def _write_task_results_summary(
         "validator_weighted_action_accuracy": _rate(
             official_validator_success_actions, total_actions
         ),
-        "model_calls": total_model_calls,
-        "avg_model_calls_per_task": round(
-            total_model_calls / max(1, total_tasks), 3
-        ),
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": total_tokens,
-        "avg_tokens_per_task": round(total_tokens / max(1, total_tasks), 3),
-        "avg_tokens_per_action": round(total_tokens / max(1, total_actions), 3),
+        "tool_calls": total_model_calls,
+        "tokens": total_tokens,
         "per_task": per_task,
     }
 
@@ -1033,9 +1027,9 @@ def _write_task_results_summary(
         f"- actions executed: `{total_actions}`",
         f"- single-step execution accuracy: `{summary['single_step_execution_accuracy']}`",
         f"- validator-weighted action accuracy: `{summary['validator_weighted_action_accuracy']}`",
-        f"- model calls / tokens: `{total_model_calls}` / `{total_tokens}`",
+        f"- tool_calls / tokens: `{total_model_calls}` / `{total_tokens}`",
         "",
-        "| task | official_validator | sec | actions | step_acc | calls | tokens |",
+        "| task | official_validator | sec | actions | step_acc | tool_calls | tokens |",
         "|---|---:|---:|---:|---:|---:|---:|",
     ]
     for item in per_task:
@@ -1062,7 +1056,7 @@ def _write_task_results_summary(
         f"duration={total_duration_ms / 1000.0:.1f}s "
         f"actions={total_actions} "
         f"step_acc={summary['single_step_execution_accuracy']} "
-        f"calls={total_model_calls} tokens={total_tokens} "
+        f"tool_calls={total_model_calls} tokens={total_tokens} "
         f"summary={summary_path}"
     )
     return summary
@@ -2255,6 +2249,29 @@ def _quiesce_androidworld_accessibility_forwarder(
     }
 
 
+def _androidworld_accessibility_forwarder_installed(
+    *,
+    adb_serial: str,
+    adb_path: str = "",
+) -> bool:
+    result = _run_adb_command(
+        adb_serial=adb_serial,
+        adb_path=adb_path,
+        adb_args=[
+            "shell",
+            "pm",
+            "path",
+            "com.google.androidenv.accessibilityforwarder",
+        ],
+        timeout_sec=15,
+        capture_stdout=True,
+    )
+    return result["returncode"] == 0 and any(
+        line.strip().startswith("package:")
+        for line in str(result.get("stdout") or "").splitlines()
+    )
+
+
 def _prepare_native_androidworld_a11y_runtime(
     env: Any,
     *,
@@ -2566,7 +2583,12 @@ def _patch_androidworld_sqlite_writeback(sqlite_utils_module: Any) -> dict[str, 
         return None
     original_delete = getattr(sqlite_utils_module, "delete_all_rows_from_table", None)
     original_insert = getattr(sqlite_utils_module, "insert_rows_to_remote_db", None)
-    if not callable(original_delete) or not callable(original_insert):
+    original_get_rows = getattr(sqlite_utils_module, "get_rows_from_remote_device", None)
+    if (
+        not callable(original_delete)
+        or not callable(original_insert)
+        or not callable(original_get_rows)
+    ):
         return None
 
     sqlite3_module = sqlite_utils_module.sqlite3
@@ -2672,12 +2694,26 @@ def _patch_androidworld_sqlite_writeback(sqlite_utils_module: Any) -> dict[str, 
             _remove_remote_sidecars(remote_db_file_path, env, timeout_sec)
             adb_utils_module.close_app(app_name, env.controller)
 
+    def _patched_get_rows_from_remote_device(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return original_get_rows(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            message = str(exc)
+            if not any(
+                suffix in message and "No such file or directory" in message
+                for suffix in ("-journal", "-wal", "-shm")
+            ):
+                raise
+            return original_get_rows(*args, **kwargs)
+
     sqlite_utils_module.delete_all_rows_from_table = _patched_delete_all_rows_from_table
     sqlite_utils_module.insert_rows_to_remote_db = _patched_insert_rows_to_remote_db
+    sqlite_utils_module.get_rows_from_remote_device = _patched_get_rows_from_remote_device
     sqlite_utils_module._omniflow_sqlite_writeback_patch = True
     return {
         "delete_all_rows_from_table": original_delete,
         "insert_rows_to_remote_db": original_insert,
+        "get_rows_from_remote_device": original_get_rows,
     }
 
 
@@ -2832,7 +2868,7 @@ def _read_raw_replay_run_log(path_text: str) -> dict[str, Any]:
 def _raw_replay_step_actions(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Project the only accepted RunLog schema to fixed-replay actions."""
 
-    from omniflow.core.trajectory import observation_display
+    from omniflow.core.trajectory import observation_display, observation_xml
     from src.experiment.source_assets import _identity_at_action_point
 
     def replay_action(
@@ -2850,7 +2886,7 @@ def _raw_replay_step_actions(data: dict[str, Any]) -> list[dict[str, Any]]:
                 else {}
             )
             selector = _identity_at_action_point(
-                str(observation.get("forest") or ""),
+                observation_xml(observation),
                 action_args=params,
                 display=display,
             )
@@ -3138,6 +3174,18 @@ def _canonical_execution_summary(canonical_run: dict[str, Any]) -> dict[str, Any
     summary = summary if isinstance(summary, dict) else {}
     execution_summary = summary.get("execution_summary")
     return dict(execution_summary) if isinstance(execution_summary, dict) else {}
+
+
+def _runtime_execution_trace(runtime_result: Any) -> list[dict[str, Any]]:
+    detail = getattr(runtime_result, "detail", None)
+    trace = detail.get("trace") if isinstance(detail, dict) else None
+    if not isinstance(trace, list):
+        return []
+    return [
+        to_serializable(step)
+        for step in trace
+        if isinstance(step, dict)
+    ]
 
 
 def _coerce_positive_int(value: Any) -> int:
@@ -3860,7 +3908,7 @@ def _apply_fixed_replay(
         *,
         target_size: tuple[int, int],
     ) -> None:
-        from android_world.env import actuation, adb_utils, json_action
+        from android_world.env import actuation, json_action
 
         if payload.get("action_type") == "raw_open_app":
             _launch_raw_replay_app(
@@ -3870,7 +3918,20 @@ def _apply_fixed_replay(
             )
             return
         if payload.get("action_type") == "raw_wait":
-            time.sleep(float(payload.get("seconds") or 0.0))
+            result = agent.host.act(
+                {
+                    "tool": "wait",
+                    "args": {
+                        "duration_ms": int(
+                            round(float(payload.get("seconds") or 0.0) * 1000.0)
+                        )
+                    },
+                }
+            )
+            if getattr(result, "success", False) is not True:
+                raise RuntimeError(
+                    str(getattr(result, "error", "") or "raw replay wait failed")
+                )
             return
         if payload.get("action_type") == "raw_swipe":
             _execute_raw_replay_host_swipe(
@@ -3880,10 +3941,9 @@ def _apply_fixed_replay(
             )
             return
         if payload.get("action_type") == "raw_set_clipboard":
-            adb_utils.set_clipboard_contents(
-                str(payload.get("text") or ""), agent.env.controller
+            raise RuntimeError(
+                "fixed_replay_private_action_not_androidworld_json_action:set_clipboard"
             )
-            return
         if payload.get("action_type") == "status":
             return
         if payload.get("action_type") in {"click", "long_press"}:
@@ -4148,7 +4208,7 @@ def _apply_fixed_replay(
         }
         if error_text:
             execution_summary["failure_reason"] = error_text
-        run_log = {
+        execution_trace = {
             "run_id": run_id,
             "goal": goal_text,
             "device_label": str(
@@ -4228,7 +4288,7 @@ def _apply_fixed_replay(
                 "done_reason": done_reason,
                 "duration_ms": elapsed_ms,
             },
-            "run_log": run_log,
+            "execution_trace": execution_trace,
         }
         sidecar_path = str(os.environ.get("OMNIFLOW_RAW_REPLAY_RESULT_JSON") or "").strip()
         if sidecar_path:
@@ -4260,7 +4320,7 @@ def _apply_fixed_replay(
                                     parameter_bindings_applied
                                 ),
                                 "duration_ms": elapsed_ms,
-                                "run_log": run_log,
+                                "execution_trace": execution_trace,
                             }
                         ),
                         indent=2,
@@ -4285,18 +4345,9 @@ def _apply_fixed_replay(
             },
         )
 
-    def _forced_save_run_log(
-        success: bool = False,
-        done_reason: str = "",
-    ) -> dict | None:
-        del success, done_reason
-        payload = state.get("payload")
-        return dict(payload) if isinstance(payload, dict) else None
-
     agent.reset = _forced_reset
     agent.set_max_steps = _forced_set_max_steps
     agent.step = _forced_step
-    agent.save_run_log = _forced_save_run_log
     agent.name = MODE_OMNIFLOW
     return agent
 
@@ -4341,7 +4392,6 @@ def _build_launch_agent(
     resolved_agent = str(agent or MODE_OMNIFLOW).strip() or MODE_OMNIFLOW
     if resolved_agent in {MODE_OMNIFLOW, "fixed_replay"}:
         planner = None
-        function_router = None
         resolved_planner_model = str(
             planner_model or os.environ.get("OMNIFLOW_PLANNER_MODEL") or ""
         ).strip()
@@ -4353,6 +4403,7 @@ def _build_launch_agent(
             or os.environ.get("OMNIFLOW_PLANNER_TIMEOUT_SEC")
             or 60.0
         )
+        planner_api_key, planner_base_url = resolve_openai_compatible_config()
         if resolved_planner_model or resolved_planner_provider or read_env_bool(
             "OMNIFLOW_ENABLE_ONLINE_PLANNER",
             False,
@@ -4362,16 +4413,10 @@ def _build_launch_agent(
             planner = VLMPlanner(
                 provider=resolved_planner_provider or None,
                 model=resolved_planner_model or None,
+                api_key=planner_api_key,
+                base_url=planner_base_url,
                 timeout=resolved_planner_timeout,
             )
-            if resolved_agent == MODE_OMNIFLOW:
-                from omniflow.vlm.function_router import VLMFunctionRouter
-
-                function_router = VLMFunctionRouter(
-                    provider=resolved_planner_provider or "openai",
-                    model=resolved_planner_model,
-                    timeout=resolved_planner_timeout,
-                )
         build_kwargs: dict[str, Any] = {
             "env": env,
             "store_path": store_path,
@@ -4382,8 +4427,6 @@ def _build_launch_agent(
         }
         if planner is not None:
             build_kwargs["planner"] = planner
-        if function_router is not None:
-            build_kwargs["function_router"] = function_router
         built_agent = build_agent(**build_kwargs)
         if resolved_agent == "fixed_replay":
             run_log_json_path = str(raw_replay_run_log or "").strip()
@@ -4774,9 +4817,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 """
 
                 effective_adb_path = adb_path
-                target_serial = str(os.environ.get("ANDROID_SERIAL") or "").strip()
-                if target_serial and not target_serial.startswith("emulator-"):
-                    real_adb_path = str(adb_path or _default_adb_path() or "adb")
+                target_serial = str(
+                    os.environ.get("ANDROID_SERIAL")
+                    or f"emulator-{int(console_port)}"
+                ).strip()
+                real_adb_path = str(adb_path or _default_adb_path() or "adb")
+                if not target_serial.startswith("emulator-"):
                     wrapper_path = (
                         Path(os.environ.get("TMPDIR") or "/tmp")
                         / f"omniflow_adb_{os.getpid()}_{target_serial}.sh"
@@ -4811,6 +4857,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                         effective_adb_path,
                     )
 
+                forwarder_installed = _androidworld_accessibility_forwarder_installed(
+                    adb_serial=target_serial,
+                    adb_path=real_adb_path,
+                )
+
                 config = android_world_controller.config_classes.AndroidEnvConfig(
                     task=android_world_controller.config_classes.FilesystemTaskConfig(
                         path=android_world_controller._write_default_task_proto()
@@ -4831,12 +4882,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 controller_kwargs: dict[str, object] = {
                     "install_a11y_forwarding_app": bool(
                         install_a11y_forwarding_app and not native_appagent
+                        and not forwarder_installed
                     ),
                     "a11y_method": _androidworld_a11y_method_for_agent(
                         android_world_controller,
                         native_appagent=native_appagent,
                     ),
                 }
+                if forwarder_installed:
+                    logging.info(
+                        "Reusing installed AndroidWorld accessibility forwarder on %s.",
+                        target_serial,
+                    )
                 return android_world_controller.AndroidWorldController(
                     android_env_instance,
                     **controller_kwargs,
@@ -5077,24 +5134,46 @@ def main(argv: Sequence[str] | None = None) -> int:
                 started_at = utc_now_iso()
                 started_perf = perf_counter()
                 original_get_state = getattr(env, "get_state", None)
-                observation_archive = (
-                    ObservationArchive(original_get_state)
-                    if callable(original_get_state)
-                    else None
-                )
-                observation_archive_error = (
-                    None
-                    if observation_archive is not None
-                    else "environment_get_state_unavailable"
-                )
-                if observation_archive is not None:
+                original_execute_action = getattr(env, "execute_action", None)
+                host_action_owner = getattr(agent, "host", None)
+                original_host_act = getattr(host_action_owner, "act", None)
+                episode_recorder = None
+                episode_recorder_error = None
+                if callable(original_get_state) and callable(original_execute_action):
                     try:
-                        env.get_state = observation_archive.get_state
-                    except Exception as exc:  # noqa: BLE001
-                        observation_archive = None
-                        observation_archive_error = (
-                            f"observation_archive_install_failed:{exc}"
+                        episode_recorder = AndroidWorldEpisodeRecorder(
+                            original_get_state,
+                            original_execute_action,
+                            evidence_root=run_output_dir,
                         )
+                        env.get_state = episode_recorder.get_state
+                        env.execute_action = episode_recorder.execute_action
+                        raw_androidworld_host = getattr(
+                            host_action_owner,
+                            "host",
+                            host_action_owner,
+                        )
+                        project_host_action = getattr(
+                            raw_androidworld_host,
+                            "_json_action",
+                            None,
+                        )
+                        if callable(original_host_act) and callable(project_host_action):
+                            def _recorded_host_act(value, **kwargs):
+                                return episode_recorder.execute_host_action(
+                                    value,
+                                    execute=lambda: original_host_act(value, **kwargs),
+                                    project=project_host_action,
+                                )
+
+                            host_action_owner.act = _recorded_host_act
+                    except Exception as exc:  # noqa: BLE001
+                        episode_recorder = None
+                        episode_recorder_error = (
+                            f"episode_recorder_install_failed:{exc}"
+                        )
+                else:
+                    episode_recorder_error = "environment_episode_methods_unavailable"
                 official_llm_usage_before = (
                     _get_agent_llm_usage(agent)
                     if selected_agent.startswith("official:")
@@ -5168,6 +5247,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         hinted_goal = f"{goal_text}\n\n{reference_text}"
 
                         def _run_episode_with_goal_hint(episode_task):
+                            if episode_recorder is not None:
+                                episode_recorder.start_episode()
                             return run_episode(_TaskGoalProxy(episode_task, hinted_goal))
 
                         result = original_run_task(
@@ -5177,43 +5258,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                             demo_mode,
                         )
                     else:
-                        result = original_run_task(task, run_episode, env, demo_mode)
+                        def _recorded_run_episode(episode_task):
+                            if episode_recorder is not None:
+                                episode_recorder.start_episode()
+                            return run_episode(episode_task)
+
+                        result = original_run_task(
+                            task,
+                            _recorded_run_episode,
+                            env,
+                            demo_mode,
+                        )
                     return result
                 finally:
                     try:
                         canonical_run = None
                         canonical_run_id = None
-                        run_log_payload: dict[str, Any] | None = None
                         observation_evidence: list[dict[str, Any]] | None = None
-                        if observation_archive is not None:
-                            try:
-                                observation_evidence = observation_archive.persist(
-                                    run_output_dir
-                                )
-                            except (OSError, TypeError, ValueError) as exc:
-                                observation_archive_error = str(exc)
-                        save_run_log = getattr(agent, "save_run_log", None)
-                        if selected_agent == MODE_OMNIFLOW and callable(save_run_log):
-                            official_success = bool(
-                                isinstance(result, dict)
-                                and float(result.get("is_successful") or 0.0) > 0.5
-                            )
-                            try:
-                                payload = save_run_log(
-                                    success=official_success,
-                                )
-                            except TypeError as exc:
-                                if "unexpected keyword argument" not in str(exc):
-                                    raise
-                                payload = save_run_log()
-                            if isinstance(payload, dict):
-                                run_log_payload = payload
-                                canonical_run_id = (
-                                    str(payload.get("run_id") or "").strip() or None
-                                )
-                                run_log = payload.get("run_log")
-                                if isinstance(run_log, dict):
-                                    canonical_run = dict(run_log)
                         task_success = False
                         validator_reward = 0.0
                         step_count = 0
@@ -5242,6 +5303,81 @@ def main(argv: Sequence[str] | None = None) -> int:
                         official_validator_used = (
                             _result_has_official_validator_conclusion(result)
                         )
+                        if (
+                            episode_recorder is not None
+                            and episode_recorder.episode_started
+                        ):
+                            runtime_result = getattr(
+                                getattr(agent, "host", None),
+                                "state",
+                                {},
+                            )
+                            runtime_result = (
+                                runtime_result.get("last_result")
+                                if isinstance(runtime_result, dict)
+                                else None
+                            )
+                            execution_summary = getattr(
+                                runtime_result,
+                                "execution_summary",
+                                None,
+                            )
+                            diagnostics = {
+                                "method": selected_agent,
+                                "official_validator_conclusion": bool(
+                                    official_validator_used
+                                ),
+                                "done_reason": error_text or (
+                                    "validator_success"
+                                    if task_success
+                                    else "validator_failure"
+                                ),
+                            }
+                            runtime_function_id = str(
+                                getattr(runtime_result, "function_id", "") or ""
+                            ).strip()
+                            if runtime_function_id:
+                                diagnostics["function_id"] = runtime_function_id
+                            if isinstance(execution_summary, dict):
+                                diagnostics["execution_summary"] = dict(
+                                    execution_summary
+                                )
+                            execution_trace = _runtime_execution_trace(runtime_result)
+                            if execution_trace:
+                                diagnostics["execution_trace"] = execution_trace
+                            runtime_detail = getattr(runtime_result, "detail", None)
+                            function_resume = (
+                                runtime_detail.get("function_resume")
+                                if isinstance(runtime_detail, dict)
+                                else None
+                            )
+                            if isinstance(function_resume, dict):
+                                diagnostics["function_resume"] = dict(
+                                    function_resume
+                                )
+                            canonical_run = episode_recorder.seal_run_log(
+                                task_name=task_name,
+                                goal=goal_text,
+                                task_parameters=(
+                                    dict(task_context.get("task_parameters") or {})
+                                    if isinstance(task_context, dict)
+                                    else {}
+                                ),
+                                seed=int(args.task_random_seed),
+                                validator_official=official_validator_used,
+                                validator_success=task_success,
+                                validator_reward=validator_reward,
+                                diagnostics=diagnostics,
+                            )
+                            if canonical_run is not None:
+                                canonical_run_id = canonical_run["run_id"]
+                        if episode_recorder is not None:
+                            try:
+                                observation_evidence = (
+                                    episode_recorder.persist_observations()
+                                )
+                            except (OSError, TypeError, ValueError) as exc:
+                                episode_recorder_error = str(exc)
                         mobilegpt_agent_result: dict[str, Any] = {}
                         mobilegpt_agent_error = ""
                         runtime_integrity_error = None
@@ -5494,6 +5630,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                             ).strip()
                             if function_id:
                                 task_result_record["function_id"] = function_id
+                            function_resume = canonical_diagnostics.get(
+                                "function_resume"
+                            )
+                            if isinstance(function_resume, dict):
+                                task_result_record["function_resume"] = to_serializable(
+                                    function_resume
+                                )
                         if llm_usage:
                             task_result_record["llm_usage"] = to_serializable(llm_usage)
                         if official_goal_hint_meta is not None:
@@ -5508,35 +5651,28 @@ def main(argv: Sequence[str] | None = None) -> int:
                             task_result_record["canonical_run"] = to_serializable(
                                 canonical_run
                             )
+                            captured_transfer_states = None
+                            transfer_state_audit = None
                             if selected_agent == MODE_OMNIFLOW:
-                                if not isinstance(run_log_payload, dict):
-                                    raise RuntimeError(
-                                        "target_run_evidence_payload_missing"
-                                    )
-                                captured_transfer_states = run_log_payload.get(
-                                    "captured_transfer_states"
+                                get_transfer_states = getattr(
+                                    agent,
+                                    "get_captured_transfer_states",
+                                    None,
                                 )
-                                transfer_state_audit = run_log_payload.get(
-                                    "transfer_state_audit"
+                                if callable(get_transfer_states):
+                                    captured_transfer_states = get_transfer_states()
+                                    transfer_state_audit = transfer_state_coverage_audit(
+                                        canonical_run,
+                                        captured_transfer_states,
+                                    )
+                            task_result_record.update(
+                                persist_target_run_evidence(
+                                    run_output_dir,
+                                    run_log=canonical_run,
+                                    captured_transfer_states=captured_transfer_states,
+                                    transfer_state_audit=transfer_state_audit,
                                 )
-                                if not isinstance(captured_transfer_states, dict):
-                                    raise RuntimeError(
-                                        "target_transfer_states_missing"
-                                    )
-                                if not isinstance(transfer_state_audit, dict):
-                                    raise RuntimeError(
-                                        "target_transfer_state_audit_missing"
-                                    )
-                                task_result_record.update(
-                                    persist_target_run_evidence(
-                                        run_output_dir,
-                                        run_log=canonical_run,
-                                        captured_transfer_states=(
-                                            captured_transfer_states
-                                        ),
-                                        transfer_state_audit=transfer_state_audit,
-                                    )
-                                )
+                            )
                             relocation_diagnostics = _extract_relocation_diagnostics(
                                 canonical_run
                             )
@@ -5558,9 +5694,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 task_result_record["observation_evidence_error"] = (
                                     "no_observations_recorded"
                                 )
-                        elif observation_archive_error:
+                        elif episode_recorder_error:
                             task_result_record["observation_evidence_error"] = (
-                                observation_archive_error
+                                episode_recorder_error
                             )
                         if (
                             task_success
@@ -5606,6 +5742,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                             except Exception as exc:  # noqa: BLE001
                                 print(
                                     "[warn] failed to restore AndroidWorld get_state "
+                                    f"for {task_name}: {exc}"
+                                )
+                        if callable(original_execute_action):
+                            try:
+                                env.execute_action = original_execute_action
+                            except Exception as exc:  # noqa: BLE001
+                                print(
+                                    "[warn] failed to restore AndroidWorld execute_action "
+                                    f"for {task_name}: {exc}"
+                                )
+                        if callable(original_host_act):
+                            try:
+                                host_action_owner.act = original_host_act
+                            except Exception as exc:  # noqa: BLE001
+                                print(
+                                    "[warn] failed to restore AndroidWorld host action "
                                     f"for {task_name}: {exc}"
                                 )
 
@@ -5700,10 +5852,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             original_insert = original_sqlite_writeback.get(
                 "insert_rows_to_remote_db"
             )
+            original_get_rows = original_sqlite_writeback.get(
+                "get_rows_from_remote_device"
+            )
             if callable(original_delete):
                 sqlite_utils.delete_all_rows_from_table = original_delete
             if callable(original_insert):
                 sqlite_utils.insert_rows_to_remote_db = original_insert
+            if callable(original_get_rows):
+                sqlite_utils.get_rows_from_remote_device = original_get_rows
             if hasattr(sqlite_utils, "_omniflow_sqlite_writeback_patch"):
                 delattr(sqlite_utils, "_omniflow_sqlite_writeback_patch")
         if env is not None:

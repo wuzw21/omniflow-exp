@@ -19,6 +19,7 @@ _ACTION_TYPES = {
     "navigate_back",
     "navigate_home",
     "open_app",
+    "press_keyboard",
     "scroll",
     "status",
     "swipe",
@@ -113,6 +114,8 @@ def canonicalize_androidworld_action(value: Any) -> dict[str, Any]:
 def require_complete_source_run_log(value: dict[str, Any]) -> dict[str, Any]:
     """Require a successful official-validator source with executable steps."""
     run_log = canonicalize_run_log(value)
+    if run_log["validator"]["official"] is not True:
+        raise ValueError("androidworld_source_run_log_official_validator_required")
     if run_log["status"] != "succeeded" or run_log["success"] is not True:
         raise ValueError("androidworld_source_run_log_success_required")
     if not run_log["steps"]:
@@ -156,6 +159,13 @@ def observation_display(observation: dict[str, Any]) -> tuple[int, int] | None:
         ):
             return width, height
     return None
+
+
+def observation_xml(observation: dict[str, Any]) -> str:
+    value = observation.get("xml")
+    if value is None:
+        value = observation.get("forest")
+    return value if isinstance(value, str) else ""
 
 
 def _validate_screenshot_reference(value: Any) -> None:

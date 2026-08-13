@@ -374,7 +374,8 @@ class AndroidWorldHost:
         )
         return result.returncode == 0
 
-    def _json_action(self, action: Action) -> Any:
+    def _json_action(self, action: Action | dict[str, Any]) -> Any:
+        action = Action.from_value(action)
         if action.tool == "android_world_raw":
             return dict(action.args.get("payload") or {})
         module = importlib.import_module("android_world.env.json_action")
@@ -512,10 +513,7 @@ class AndroidWorldHost:
                         str(int(float(action.args.get("duration_ms") or 500))),
                     ]
                 )
-                result = self._adb(
-                    *command,
-                    timeout=15,
-                )
+                result = self._adb(*command, timeout=15)
                 if result.returncode != 0:
                     return ActionResult(
                         False,

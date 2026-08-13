@@ -19,8 +19,8 @@ import xml.etree.ElementTree as ET
 
 from PIL import Image
 
+from omniflow.core.trajectory import observation_display, observation_xml
 from src.integrations.android_world.accessibility import androidworld_forest_xml
-from src.integrations.android_world.apps import resolve_androidworld_app_name
 from src.integrations.android_world.host import (
     androidworld_elements_xml,
     make_agent_result,
@@ -38,7 +38,10 @@ APPAGENT_DEMO_ACTION_TYPES = {
     "long_press",
     "swipe",
 }
-APPAGENT_SUPPORTED_SOURCE_TYPES = APPAGENT_DEMO_ACTION_TYPES | {"open_app"}
+APPAGENT_SUPPORTED_SOURCE_TYPES = APPAGENT_DEMO_ACTION_TYPES | {
+    "open_app",
+    "press_key",
+}
 
 _NON_PRIMITIVE_SOURCE_TYPES = {
     "done",
@@ -399,15 +402,11 @@ class AppAgentAndroidWorldAgent:
             package_name = str(
                 (action.get("params") or {}).get("package_name") or ""
             ).strip()
-            app_name = resolve_androidworld_app_name(
-                package_name,
-                getattr(self.env, "controller", None),
-            )
-            if not app_name:
+            if not package_name:
                 raise ValueError("appagent_runtime_open_app_name_missing")
             native_action = self._new_action(
                 action_type="open_app",
-                app_name=app_name,
+                app_name=package_name,
             )
             self.env.execute_action(native_action)
             self.actions_executed += 1
@@ -416,7 +415,7 @@ class AppAgentAndroidWorldAgent:
                     "event": "startup_action",
                     "action_type": "open_app",
                     "package_name": package_name,
-                    "androidworld_app_name": app_name,
+                    "androidworld_app_name": package_name,
                     "execution_backend": "androidworld_native",
                 }
             )
@@ -661,14 +660,13 @@ class AppAgentTeacherAgent:
                 package_name = str(
                     (action.get("params") or {}).get("package_name") or ""
                 ).strip()
-                app_name = resolve_androidworld_app_name(
-                    package_name,
-                    getattr(self.env, "controller", None),
-                )
-                if not app_name:
+                if not package_name:
                     raise ValueError("appagent_teacher_open_app_name_missing")
                 self.env.execute_action(
-                    self._new_action(action_type="open_app", app_name=app_name)
+                    self._new_action(
+                        action_type="open_app",
+                        app_name=package_name,
+                    )
                 )
                 self.teacher_actions_consumed += 1
                 self._append_trace(
@@ -678,7 +676,27 @@ class AppAgentTeacherAgent:
                         "source_action_index": record.get("source_action_index"),
                         "action_type": "open_app",
                         "package_name": package_name,
-                        "androidworld_app_name": app_name,
+                        "androidworld_app_name": package_name,
+                        "execution_backend": "androidworld_native",
+                        "source_coordinates_used": False,
+                    }
+                )
+                return make_agent_result(done=False, data=self._result_data())
+            if str(action.get("type") or "").strip() == "press_key":
+                key = str((action.get("params") or {}).get("key") or "").casefold()
+                if key != "back":
+                    raise ValueError("appagent_teacher_press_key_unsupported")
+                self.env.execute_action(
+                    self._new_action(action_type="navigate_back")
+                )
+                self.teacher_actions_consumed += 1
+                self._append_trace(
+                    {
+                        "teacher_cursor": self.teacher_actions_consumed,
+                        "source_step_index": record.get("source_step_index"),
+                        "source_action_index": record.get("source_action_index"),
+                        "action_type": "press_key",
+                        "key": "back",
                         "execution_backend": "androidworld_native",
                         "source_coordinates_used": False,
                     }
@@ -899,6 +917,14 @@ def build_appagent_teacher_source(
                         f"{step_index}:{action_index}:{direction or 'missing'}"
                     )
                 params["direction"] = direction
+            if action_type == "press_key":
+                key = str(params.get("key") or "").strip().casefold()
+                if key != "back":
+                    raise ValueError(
+                        "appagent_official_press_key_unsupported:"
+                        f"{step_index}:{action_index}:{key or 'missing'}"
+                    )
+                params["key"] = "back"
             params = _source_semantic_params(step, params)
             actions.append(
                 {
@@ -1345,6 +1371,17 @@ def ground_appagent_teacher_action(
     elements = appagent_elements_from_xml(xml_text, min_dist=min_dist)
     if not elements:
         raise ValueError("appagent_current_screen_has_no_interactive_elements")
+    source_tag = params.get("source_appagent_tag")
+    if isinstance(source_tag, int) and not isinstance(source_tag, bool):
+        if source_tag < 1 or source_tag > len(elements):
+            raise ValueError("appagent_teacher_source_tag_invalid")
+        element = elements[source_tag - 1]
+        return GroundedAppAgentAction(
+            tag=source_tag,
+            uid=element.uid,
+            bbox=element.bbox,
+            match_reason="source_appagent_tag",
+        )
     root = ET.fromstring(xml_text)
     matching_nodes = _identity_nodes(root, params)
     match_reason = "exact_visible_identity"
@@ -1612,6 +1649,13 @@ def _adapter_params(action_type: str, params: dict[str, Any]) -> dict[str, Any]:
         }
         if identity:
             adapted["source_context"] = {"element": identity}
+    source_appagent_tag = params.get("source_appagent_tag")
+    if (
+        isinstance(source_appagent_tag, int)
+        and not isinstance(source_appagent_tag, bool)
+        and source_appagent_tag > 0
+    ):
+        adapted["source_appagent_tag"] = source_appagent_tag
     if action_type == "input_text":
         adapted["text"] = str(params.get("text") or "")
     elif action_type == "open_app":
@@ -1622,6 +1666,8 @@ def _adapter_params(action_type: str, params: dict[str, Any]) -> dict[str, Any]:
             adapted["package_name"] = package_name
     elif action_type == "swipe":
         adapted["direction"] = str(params.get("direction") or "")
+    elif action_type == "press_key":
+        adapted["key"] = str(params.get("key") or "").casefold()
     return _without_source_coordinates(adapted)
 
 
@@ -1646,26 +1692,57 @@ def _source_semantic_params(
     observation = step.get("observation_before_act")
     if not isinstance(observation, dict):
         observation = step.get("observation")
-    xml_text = str(
-        (
-            observation.get("forest") or observation.get("xml")
-            if isinstance(observation, dict)
-            else ""
-        )
-        or ""
-    ).strip()
+    xml_text = (
+        observation_xml(observation).strip()
+        if isinstance(observation, dict)
+        else ""
+    )
     if not xml_text:
         return enriched
-    identity = _source_identity_at_point(xml_text, x=x, y=y)
-    if not identity:
+    display = observation_display(observation)
+    if display is None:
         return enriched
-    target_description = str(
-        identity.get("text") or identity.get("content_desc") or ""
-    ).strip()
-    if target_description:
-        enriched["target_description"] = target_description
-    enriched["source_context"] = {"element": identity}
+    x = x / 1000.0 * display[0]
+    y = y / 1000.0 * display[1]
+    identity = _source_identity_at_point(xml_text, x=x, y=y)
+    if identity:
+        target_description = str(
+            identity.get("text") or identity.get("content_desc") or ""
+        ).strip()
+        if target_description:
+            enriched["target_description"] = target_description
+        enriched["source_context"] = {"element": identity}
+        return enriched
+    source_appagent_tag = _source_appagent_tag_at_point(
+        xml_text,
+        x=x,
+        y=y,
+    )
+    if source_appagent_tag is not None:
+        enriched["source_appagent_tag"] = source_appagent_tag
     return enriched
+
+
+def _source_appagent_tag_at_point(
+    xml_text: str,
+    *,
+    x: float,
+    y: float,
+) -> int | None:
+    elements = appagent_elements_from_xml(xml_text, min_dist=30.0)
+    point = (int(round(x)), int(round(y)))
+    containing = [
+        (index, _bbox_area(element.bbox))
+        for index, element in enumerate(elements)
+        if _bbox_contains(element.bbox, point)
+    ]
+    if not containing:
+        return None
+    minimum_area = min(area for _, area in containing)
+    minimum_indexes = [index for index, area in containing if area == minimum_area]
+    if len(minimum_indexes) != 1:
+        return None
+    return minimum_indexes[0] + 1
 
 
 def _source_identity_at_point(

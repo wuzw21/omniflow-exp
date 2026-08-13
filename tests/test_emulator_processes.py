@@ -79,3 +79,24 @@ def test_managed_emulator_process_rejects_invalid_serial() -> None:
             serial="phone-5554",
             avd="SmallPhone",
         )
+
+
+def test_managed_emulator_process_can_match_unique_console_port() -> None:
+    arguments = (
+        "/sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64-headless",
+        "-avd",
+        "OldAvdName",
+        "-port",
+        "5560",
+    )
+
+    assert is_managed_emulator_process(
+        arguments,
+        serial="emulator-5560",
+        avd=None,
+    )
+    assert not is_managed_emulator_process(
+        arguments,
+        serial="emulator-5564",
+        avd=None,
+    )

@@ -486,6 +486,64 @@ def _failure_report_row(
     }
 
 
+def _markdown_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _write_markdown_report(
+    path: Path,
+    *,
+    rows: list[dict[str, Any]],
+    counts: dict[str, int],
+    tool_calls: int,
+    tokens: int,
+) -> None:
+    lines = [
+        "# AndroidWorld Cell Comparison",
+        "",
+        f"- Planned cells: {counts['planned']}",
+        f"- Validator success: {counts['validator_success']}",
+        f"- Validator failure: {counts['validator_failure']}",
+        f"- Non-validator failure: {counts['non_validator_failure']}",
+        f"- Pending: {counts['pending']}",
+        f"- Tool calls: {tool_calls}",
+        f"- Tokens: {tokens}",
+        "",
+        "| method | device | source_seed | evaluation_seed | status | validator | tool_calls | tokens | actions | episode_sec | wall_sec | error | evidence |",
+        "|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---|---|",
+    ]
+    for row in rows:
+        official_success = row.get("official_validator_success")
+        success = (
+            "1" if official_success is True else "0" if official_success is False else ""
+        )
+        lines.append(
+            "| "
+            + " | ".join(
+                _markdown_cell(value)
+                for value in (
+                    row.get("method"),
+                    row.get("device"),
+                    row.get("source_seed"),
+                    row.get("evaluation_seed"),
+                    row.get("status"),
+                    success,
+                    row.get("model_calls", 0),
+                    row.get("total_tokens", 0),
+                    row.get("actions_executed", 0),
+                    row.get("episode_duration_sec", 0),
+                    row.get("outer_wall_sec", 0),
+                    row.get("failure_summary", ""),
+                    row.get("evidence_path", ""),
+                )
+            )
+            + " |"
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def write_batch_report(
     *,
     report_root: str | Path,
@@ -583,14 +641,25 @@ def write_batch_report(
         if rows:
             writer.writeheader()
             writer.writerows(rows)
+    tool_calls = sum(int(row["model_calls"]) for row in rows)
+    tokens = sum(int(row["total_tokens"]) for row in rows)
+    cells_markdown = destination / "cells.md"
+    _write_markdown_report(
+        cells_markdown,
+        rows=rows,
+        counts=counts,
+        tool_calls=tool_calls,
+        tokens=tokens,
+    )
     summary = {
-        "schema_version": "omniflow.androidworld.batch_report.v1",
+        "schema_version": "omniflow.androidworld.batch_report.v2",
         "immutable": True,
         "attempt_id": str(attempt_id),
         "source_seed": int(source_seed),
         "evaluation_seed": int(evaluation_seed),
         "counts": counts,
-        "total_tokens": sum(int(row["total_tokens"]) for row in rows),
+        "tool_calls": tool_calls,
+        "tokens": tokens,
         "episode_duration_sec": round(
             sum(_number(row["episode_duration_sec"]) for row in rows), 6
         ),
@@ -599,6 +668,7 @@ def write_batch_report(
         ),
         "cells_jsonl": str(cells_jsonl),
         "cells_csv": str(cells_csv),
+        "cells_markdown": str(cells_markdown),
     }
     summary_path = destination / "summary.json"
     summary_path.write_text(

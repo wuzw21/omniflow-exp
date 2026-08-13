@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from typing import Any
 
@@ -15,6 +14,7 @@ from omniflow.vlm.gui import (
     has_successful_function_action,
 )
 from omniflow.vlm.model_adapter import adapt_tool_arguments
+from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.tool_arguments import load_tool_arguments
 from omniflow.vlm.ui_projection import project_ui
 from omniflow.vlm.usage import LLMUsageTracker
@@ -72,8 +72,10 @@ class VLMPlanner:
         self.model = model
         self.timeout = timeout
         self._client = client
-        self._api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self._base_url = base_url or os.getenv("OPENAI_BASE_URL")
+        self._api_key, self._base_url = resolve_openai_compatible_config(
+            api_key=api_key,
+            base_url=base_url,
+        )
         self.prompts = prompts or PromptSet()
         self._usage = LLMUsageTracker(component="planner", model=self.model)
 
@@ -100,7 +102,12 @@ class VLMPlanner:
             },
             display,
         )
-        completion_review = has_successful_function_action(observation.extra)
+        completion_review_marker = observation.extra.get("completion_review_pending")
+        completion_review = (
+            bool(completion_review_marker)
+            if isinstance(completion_review_marker, bool)
+            else has_successful_function_action(observation.extra)
+        )
         turn_payload: dict[str, Any] = {
             "goal": goal,
             "relevant_ui_elements": projection.text,
@@ -123,12 +130,13 @@ class VLMPlanner:
             )
         if completion_review:
             turn_payload["completion_review"] = (
-                "A recalled Function selected for the complete goal finished all "
-                "of its actions successfully, and those actions are already "
-                "applied. Judge completion from the current screenshot and UI "
-                "state. If they match the goal, call finished now. Never repeat "
-                "or toggle the last successful action merely to verify it, because "
-                "that can undo the completed operation."
+                "The previous recalled Function tool call finished all of its "
+                "actions successfully, and those actions are already applied. "
+                "Judge the complete user goal from the current screenshot and UI "
+                "state. Call finished only if the whole goal is satisfied; "
+                "otherwise choose exactly one next tool. Never repeat or toggle "
+                "the last successful action merely to verify it, because that can "
+                "undo the completed operation."
             )
         content: list[dict[str, Any]] = [
             {
@@ -160,9 +168,7 @@ class VLMPlanner:
             },
             {"role": "user", "content": content},
         ]
-        function_catalog = {
-            function.id: function for function in functions if function.agent_visible
-        }
+        function_catalog = {function.id: function for function in functions}
         tools = screen_pixel_tools(vlm_action_tools(), display)
         tools = constrain_open_app_tool(tools, installed_apps or {})
         tools.extend(

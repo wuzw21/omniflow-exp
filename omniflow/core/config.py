@@ -24,7 +24,11 @@ DEFAULT_PLANNER_SYSTEM_PROMPT = (
     "abort only because replay mapping failed, and do not reuse source-device "
     "coordinates as target coordinates. Use recent_actions to advance the goal "
     "and never repeat an already successful action on an unchanged screen. Treat "
-    "checked=false as an off switch or checkbox and checked=true as on."
+    "checked=false as an off switch or checkbox and checked=true as on. When "
+    "calling finished, keep content to one short factual sentence describing only "
+    "the outcome directly supported by the current screen or previous tool result. "
+    "Do not claim that a RunLog or reusable Function was registered; the host reports "
+    "registration state after execution."
 )
 
 

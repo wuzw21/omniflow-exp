@@ -1,8 +1,22 @@
 # AndroidWorld experiment entry point
 
-`run_androidworld.sh` is the only experiment script in this repository. It
+`run_androidworld.sh` is the only experiment launcher in this repository. It
 owns source-asset conversion, long-term-memory refresh, static validation, and
-real-time AndroidWorld execution.
+real-time AndroidWorld execution. The Python modules below are implementation
+seams, not alternate launchers:
+
+| Component | Role | Used by the normal E2E command? |
+| --- | --- | --- |
+| `src/experiment/e2e_task_pipeline.py` | Source qualification and 10-cell orchestration | Yes |
+| `omniflow/functions/compiler.py` | Model semantic RunLog-to-Function compilation | Yes, for `ours` when the canonical Store is mechanical or missing |
+| `src/experiment/function_assets.py` | Explicit offline authoring-manifest conversion | Only `--convert-ours-assets`; never silently used by E2E |
+| `src/experiment/direct_function_launch.py` | Seed-111 atomic Function qualification runner | Called by the E2E pipeline |
+| `src/experiment/batch_outcomes.py` | Immutable cell and table accounting | Called by the E2E pipeline |
+
+The E2E pipeline does not reuse a Store merely because its RunLog hash matches.
+The Store provenance must identify `compile_runlog_to_store` and a semantic
+model. A Store produced by `offline_codex_authoring_manifest` is a legacy
+mechanical asset and automatically starts a new semantic conversion version.
 
 ## Pipeline
 
@@ -12,8 +26,8 @@ One normal single-task invocation performs the complete workflow:
    source index.
 2. Resolve or create the native source asset for every selected method:
    - `fixed_replay`: use the canonical recorded actions;
-   - `ours`: compile the RunLog, call the existing `enhance_function(...)`
-     exactly once, validate, freeze, and register the Store;
+   - `ours`: compile the RunLog with the configured semantic model, validate,
+     freeze, and register the Store;
    - `mobilegpt_offline_retrieval`: teach MobileGPT from the canonical RunLog,
      then save its native task/page/subtask/action memory;
    - `appagent_demo`: resolve or create the native demonstration;
@@ -27,6 +41,14 @@ One normal single-task invocation performs the complete workflow:
 Function schema and transfer-state checks are internal validation for `ours`;
 they are not the experiment conclusion. Conversion never observes a target
 device or executes source coordinates directly on a target.
+
+Source qualification is scoped to one atomic Function replay. Its
+`function_replay_success` is separate from the AndroidWorld task validator.
+In each normal target E2E step, the planner selects exactly one peer tool from
+native GUI actions, recalled Functions, and terminal tools. A Function may
+expand into multiple recorded actions, then returns control to the next planner
+step. A whole-task validator failure must not block a successful atomic
+Function from entering that planner-based E2E test.
 
 ## Common environment
 

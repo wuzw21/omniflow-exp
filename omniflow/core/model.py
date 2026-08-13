@@ -231,6 +231,10 @@ class RunResult:
             "steps": self.actions_executed,
             "model_calls": self.model_calls,
             "fallback_steps": self.fallback_steps,
+            "completion_review_calls": max(
+                0,
+                _coerce_int(self.detail.get("completion_review_calls")),
+            ),
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,

@@ -78,6 +78,21 @@ COMPACT_ANDROIDWORLD_XML = """\
 </hierarchy>
 """
 
+BROWSER_OVERFLOW_XML = """\
+<hierarchy>
+  <node id="0" bounds="[0,0][720,1280]">
+    <node id="10" text="Memory Task" focusable="true" scrollable="true"
+          bounds="[-266,202][1226,770]">
+      <node id="12" text="1400, Enter the product" clickable="true"
+            focusable="true" focused="true" editable="true"
+            bounds="[216,278][615,331]" />
+      <node id="13" text="Submit" clickable="true" focusable="true"
+            bounds="[620,278][743,331]" />
+    </node>
+  </node>
+</hierarchy>
+"""
+
 PRIVATE_GLYPH_TOOLBAR_XML = """\
 <hierarchy width="1080" height="2376">
   <node package="com.sankuai.meituan" bounds="[0,0][1080,2376]">
@@ -180,6 +195,81 @@ def test_source_audit_accepts_native_compact_androidworld_semantics(
 
     assert audit["source_target_audit_complete"] is True
     assert audit["source_target_count"] == 1
+
+
+def test_explicit_display_controls_grounding_when_xml_bounds_overflow(
+    monkeypatch,
+) -> None:
+    requests = []
+
+    def transfer_action(**kwargs):
+        requests.append(kwargs)
+        return {
+            "mapped": True,
+            "mapping_mode": "omnitransfer_direct_text_alignment_v9",
+            "new_x": 681.0,
+            "new_y": 304.0,
+            "target_bbox": [620.0, 278.0, 743.0, 331.0],
+            "src_element": {
+                "bounds": [620.0, 278.0, 743.0, 331.0],
+                "text": "Submit",
+            },
+            "score": 1.0,
+            "margin": 1.0,
+        }
+
+    monkeypatch.setattr(transfer_runtime, "transfer_action", transfer_action)
+    function = SimpleNamespace(
+        id="complete_browser_multiply",
+        steps=(
+            SimpleNamespace(
+                step_index=10,
+                source_state_id="source-state",
+                action=Action(
+                    "click",
+                    {
+                        "x": 681.0 / 720.0 * 1000.0,
+                        "y": 304.0 / 1280.0 * 1000.0,
+                    },
+                ),
+            ),
+        ),
+    )
+    source_state = {
+        "state_id": "source-state",
+        "xml": BROWSER_OVERFLOW_XML,
+        "display": {"width": 720, "height": 1280},
+    }
+
+    audit = audit_transfer_action_sources((function,), {"source-state": source_state})
+
+    assert audit["source_targets"][0]["target"]["text"] == "Submit"
+    assert requests[0]["source_point"] == (681.0, 304.0)
+
+    monkeypatch.setattr(execution, "transfer_action", transfer_action)
+    result = execution.default_transfer(
+        function.steps[0].action,
+        Observation(
+            xml=BROWSER_OVERFLOW_XML,
+            package_name="com.android.chrome",
+            extra={"display": {"width": 720, "height": 1280}},
+        ),
+        Observation(
+            xml=BROWSER_OVERFLOW_XML,
+            package_name="com.android.chrome",
+            extra={"display": {"width": 720, "height": 1280}},
+        ),
+    )
+
+    assert requests[1]["source_point"] == (681.0, 304.0)
+    assert requests[1]["source_element"] == {"text": "submit"}
+    assert result.action == Action(
+        "click",
+        {
+            "x": 681.0 / 720.0 * 1000.0,
+            "y": 304.0 / 1280.0 * 1000.0,
+        },
+    )
 
 
 def test_transfer_accepts_omnitransfer_mapped_row_without_second_semantic_gate(

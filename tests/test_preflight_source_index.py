@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 import pytest
+from runlog_fixtures import androidworld_run_log
 
 from src.experiment.preflight import (
     _contacts_setup_ready,
@@ -14,7 +15,6 @@ from src.experiment.preflight import (
     _reset_contacts_setup_screen,
     _validate_source_index,
 )
-from runlog_fixtures import androidworld_run_log
 
 
 def test_mobilegpt_converter_imports_in_clean_process() -> None:

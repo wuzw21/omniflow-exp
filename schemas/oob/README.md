@@ -4,8 +4,10 @@ These files are the wire contracts shared by OpenOmniBot and OmniFlow. Copies
 in both repositories must remain byte-for-byte identical.
 
 - `oob_canonical_actions.v1.json`: executable actions as `{tool, args}`.
-- `omniflow_run_log.v1.json`: AndroidWorld-native observations and
-  `JSONAction` values. `State.pixels` is an immutable screenshot reference.
+- `omniflow_run_log.v1.json`: AndroidWorld `JSONAction` values plus either the
+  native AndroidWorld State fields or the compact OOB-compatible
+  `pixels/xml/auxiliaries` observation. `pixels` is always an immutable
+  screenshot reference when present.
 - `omniflow_function.v2.json`: reusable Functions with `function_id`,
   `input_schema`, `bindings`, and `steps`; each step references
   `source_state_id`.
@@ -13,13 +15,12 @@ in both repositories must remain byte-for-byte identical.
   exactly `schema_version/trigger/source_state_id/action`.
 - `omniflow_android_bridge.v2.json`: the Android/Python Bridge API.
 
-`state_id` is the only persisted UI-state reference. RunLogs and Functions do
-not embed captured UI evidence. XML, screenshots, hashes, byte counts, and file
-paths are Evidence Store implementation details and are resolved by `state_id`
-only when transfer or diagnostics need them.
-Function files never embed XML or screenshots. The Bridge resolves
-`state_id` on demand and must block coordinate actions when state lookup or
-OmniTransfer mapping fails; source coordinates must never pass through.
+AndroidWorld RunLogs persist the native State fields. OOB RunLogs may instead
+persist the explicit XML Observation variant for semantic conversion. Both use
+immutable references for screenshots. Functions never embed XML or screenshots;
+their `source_state_id` resolves the evidence captured by the RunLog. The Bridge
+must block coordinate actions when state lookup or OmniTransfer mapping fails;
+source coordinates must never pass through.
 
 Production writers, compilers, stores, and replay code accept only the
 `omniflow.run_log.v1` RunLog. Historical AndroidWorld data is

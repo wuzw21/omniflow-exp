@@ -7,6 +7,7 @@ from pathlib import Path
 import stat
 
 import pytest
+from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from omniflow.functions.artifact import bind_function
 from omniflow.functions.store import FunctionStore
@@ -15,7 +16,6 @@ from src.experiment.artifact_memory import (
     refresh_artifact_memory,
 )
 from src.experiment.function_assets import convert_function_assets, main
-from runlog_fixtures import androidworld_run_log, androidworld_state
 
 
 def _write_json(path: Path, value: object) -> Path:

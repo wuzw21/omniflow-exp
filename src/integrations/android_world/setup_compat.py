@@ -12,6 +12,11 @@ _EQUIVALENT_SETUP_LABELS: dict[str, tuple[str, ...]] = {
     "Skip": ("SKIP",),
 }
 _POST_INITIALIZE_SNAPSHOT_APPS = frozenset({"chrome"})
+_SETUP_CONFIRMATION_LABEL = "OK"
+_SETUP_ONBOARDING_START_LABEL = "Get started"
+_SETUP_ONBOARDING_APPLY_LABEL = "Apply"
+_SETUP_ONBOARDING_PAGE_LABEL = "Setup"
+_SETUP_NORMALIZATION_LIMIT = 8
 _CONTACTS_APP_NAME = "contacts"
 _CONTACTS_PACKAGE = "com.google.android.contacts"
 _POST_NOTIFICATIONS_PERMISSION = "android.permission.POST_NOTIFICATIONS"
@@ -88,7 +93,29 @@ def _deny_contacts_notification_permission(setup_module: Any, env: Any) -> None:
         )
 
 
-def _visible_setup_elements(controller: Any) -> list[dict[str, str]]:
+def _setup_element_bounds(element: Any) -> tuple[int, int, int, int] | None:
+    value = getattr(element, "bbox_pixels", None) or getattr(element, "bbox", None)
+    if value is None:
+        return None
+
+    def read(name: str) -> Any:
+        if isinstance(value, dict):
+            return value.get(name)
+        return getattr(value, name, None)
+
+    try:
+        bounds = tuple(
+            int(read(name))
+            for name in ("x_min", "y_min", "x_max", "y_max")
+        )
+    except (TypeError, ValueError):
+        return None
+    if bounds[2] <= bounds[0] or bounds[3] <= bounds[1]:
+        return None
+    return bounds
+
+
+def _visible_setup_elements(controller: Any) -> list[dict[str, Any]]:
     try:
         elements = tuple(controller._env.get_ui_elements() or ())
     except Exception:  # noqa: BLE001 - diagnostics must not mask setup retries
@@ -100,6 +127,7 @@ def _visible_setup_elements(controller: Any) -> list[dict[str, str]]:
             "content_description": str(
                 getattr(element, "content_description", "") or ""
             ),
+            "bounds": _setup_element_bounds(element),
         }
         for element in elements
     ]
@@ -182,6 +210,103 @@ def patch_androidworld_setup_fail_closed(
     if getattr(setup_module, "_omniflow_setup_fail_closed_patch", False):
         return
 
+    def normalize_snapshot_ui(app: Any, env: Any) -> None:
+        apps_module = getattr(setup_module, "apps", None)
+        tools_module = getattr(apps_module, "tools", None)
+        controller_type = getattr(tools_module, "AndroidToolController", None)
+        if controller_type is None:
+            return
+        native_controller = getattr(env, "controller", None)
+        original_a11y_method = getattr(native_controller, "_a11y_method", None)
+        uiautomator_method = getattr(
+            type(original_a11y_method),
+            "UIAUTOMATOR",
+            None,
+        )
+        if uiautomator_method is not None:
+            native_controller._a11y_method = uiautomator_method
+        controller = controller_type(env=env.controller)
+        adb_utils = getattr(setup_module, "adb_utils", None)
+        launch_app = getattr(adb_utils, "launch_app", None)
+        close_app = getattr(adb_utils, "close_app", None)
+        app_name = str(getattr(app, "app_name", "") or "").strip()
+        try:
+            if app_name and callable(launch_app):
+                launch_app(app_name, env.controller)
+                time.sleep(max(0.0, float(delay_seconds)))
+            for normalization_attempt in range(_SETUP_NORMALIZATION_LIMIT):
+                visible_elements = _visible_setup_elements(controller)
+                visible = {
+                    value.strip()
+                    for element in visible_elements
+                    for value in (element["text"], element["content_description"])
+                    if value.strip()
+                }
+                actionable_labels = {_SETUP_CONFIRMATION_LABEL}
+                if _SETUP_ONBOARDING_START_LABEL in visible:
+                    actionable_labels.add(_SETUP_ONBOARDING_START_LABEL)
+                if (
+                    _SETUP_ONBOARDING_PAGE_LABEL in visible
+                    and _SETUP_ONBOARDING_APPLY_LABEL in visible
+                ):
+                    actionable_labels.add(_SETUP_ONBOARDING_APPLY_LABEL)
+                target = next(
+                    (
+                        element
+                        for element in visible_elements
+                        if {
+                            element["text"].strip(),
+                            element["content_description"].strip(),
+                        }.intersection(actionable_labels)
+                    ),
+                    None,
+                )
+                if target is not None:
+                    target_label = next(
+                        label
+                        for label in (
+                            target["text"].strip(),
+                            target["content_description"].strip(),
+                        )
+                        if label in actionable_labels
+                    )
+                    bounds = target.get("bounds")
+                    if bounds is None:
+                        controller.click_element(target_label)
+                    else:
+                        left, top, right, bottom = bounds
+                        response = setup_module.adb_utils.issue_generic_request(
+                            [
+                                "shell",
+                                "input",
+                                "tap",
+                                str((left + right) // 2),
+                                str((top + bottom) // 2),
+                            ],
+                            env.controller,
+                        )
+                        setup_module.adb_utils.check_ok(
+                            response,
+                            "Failed to normalize AndroidWorld snapshot setup UI.",
+                        )
+                if target is None:
+                    break
+                if normalization_attempt + 1 < _SETUP_NORMALIZATION_LIMIT:
+                    time.sleep(max(0.0, float(delay_seconds)))
+            remaining = _visible_setup_strings(controller)
+            if _SETUP_CONFIRMATION_LABEL in remaining:
+                raise RuntimeError("androidworld_setup_confirmation_not_dismissed")
+            if _SETUP_ONBOARDING_START_LABEL in remaining or (
+                _SETUP_ONBOARDING_PAGE_LABEL in remaining
+                and _SETUP_ONBOARDING_APPLY_LABEL in remaining
+            ):
+                raise RuntimeError("androidworld_setup_onboarding_not_completed")
+        finally:
+            if app_name and callable(close_app):
+                close_app(app_name, env.controller)
+            if uiautomator_method is not None:
+                native_controller._a11y_method = original_a11y_method
+
     def setup_app_with_retry(app: Any, env: Any) -> None:
         attempt_count = max(1, int(attempts))
         native_controller = getattr(env, "controller", None)
@@ -213,6 +338,7 @@ def patch_androidworld_setup_fail_closed(
                     native_controller._a11y_method = original_a11y_method
             if str(getattr(app, "app_name", "") or "") == _CONTACTS_APP_NAME:
                 _deny_contacts_notification_permission(setup_module, env)
+            normalize_snapshot_ui(app, env)
             setup_module.app_snapshot.save_snapshot(app.app_name, env.controller)
             return
 

@@ -15,7 +15,10 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_DIRECT_MEMORY_SCHEMA,
     MOBILEGPT_DIRECT_SOURCE_METHOD,
 )
-from src.experiment.preflight import REQUIRED_DISTRIBUTION_VERSIONS
+from src.experiment.preflight import (
+    APPAGENT_REQUIRED_MODULES,
+    REQUIRED_DISTRIBUTION_VERSIONS,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "exp" / "run_androidworld.sh"
@@ -23,6 +26,14 @@ SCRIPT = REPO / "scripts" / "exp" / "run_androidworld.sh"
 
 def test_android_env_version_is_locked_and_preflight_enforced() -> None:
     assert REQUIRED_DISTRIBUTION_VERSIONS == {"android-env": "1.2.3"}
+    assert APPAGENT_REQUIRED_MODULES == (
+        "colorama",
+        "cv2",
+        "dashscope",
+        "pyshine",
+        "requests",
+        "yaml",
+    )
     assert '"android-env==1.2.3"' in (REPO / "pyproject.toml").read_text(
         encoding="utf-8"
     )
@@ -54,19 +65,24 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "--tasks" in completed.stdout
     assert "--convert-ours-assets" in completed.stdout
     assert "--refresh-memory" in completed.stdout
+    assert "--e2e-task" in completed.stdout
+    assert "--source-backend" in completed.stdout
+    assert "--source-runlog" in completed.stdout
+    assert "--task-deadline-sec" in completed.stdout
     assert "OMNIFLOW_EXP_ASSET_ROOT" in completed.stdout
     assert "OMNIFLOW_EXP_MEMORY_ROOT" in completed.stdout
     assert "OMNIFLOW_OURS_AUTHORING_MANIFEST" in completed.stdout
     assert "cold-restarted before every pending cell" in completed.stdout
     assert completed.stderr == ""
     script_text = SCRIPT.read_text(encoding="utf-8")
+    assert "ours_store_index_mechanical_asset" in script_text
+    assert "compile_runlog_to_store" in script_text
     assert f'mobilegpt_source_schema="{MOBILEGPT_DIRECT_MEMORY_SCHEMA}"' in script_text
     assert f'mobilegpt_source_method="{MOBILEGPT_DIRECT_SOURCE_METHOD}"' in script_text
     assert script_text.count(MOBILEGPT_DIRECT_MEMORY_SCHEMA) >= 2
-    assert (
-        f'sys.argv[8] == "{MOBILEGPT_DIRECT_MEMORY_SCHEMA}"\n'
-        "                or not sys.argv[7]"
-    ) in script_text
+    assert "MOBILEGPT_SOURCE_METHOD_BY_SCHEMA" in script_text
+    assert "indexed_source_method = MOBILEGPT_SOURCE_METHOD_BY_SCHEMA.get(" in script_text
+    assert "validate_mobilegpt_adapted_memory(" in script_text
     assert "omniflow.mobilegpt-runlog-offline-memory.v3" not in script_text
     assert "unset MOBILEGPT_MEMORY_ONLY" in script_text
     assert script_text.count('bash "$0"') == 2
@@ -75,11 +91,18 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "-no-snapshot-save" in script_text
     assert "from src.experiment.result_registry import registered_cell_plan" not in script_text
     assert script_text.count("registered_cell_plan_from_memory(") == 1
+    assert "-m src.experiment.e2e_task_pipeline" in script_text
+    assert '(( e2e_task_deadline_sec > 1800 ))' in script_text
     native_preflight = script_text.split(
         'if [[ "$profile" == "androidworld_native" ]]; then',
         maxsplit=1,
     )[1].split("\n  fi", maxsplit=1)[0]
     assert "--require-contacts-ready" in native_preflight
+    assert 'if [[ "$task" == Contacts* ]]' in native_preflight
+    assert (
+        'if [[ "$profile" == "mobilegpt" && "$task" == Contacts* ]]'
+        in script_text
+    )
 
 
 def test_experiment_script_prefers_existing_miniconda_base_python(
@@ -116,6 +139,86 @@ def test_experiment_script_prefers_existing_miniconda_base_python(
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == str(base_python)
+
+
+def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> None:
+    account_root = tmp_path / "account"
+    assets = tmp_path / "assets"
+    results = tmp_path / "results"
+    memory = tmp_path / "memory"
+    android_world = tmp_path / "AndroidWorld"
+    mobilegpt = tmp_path / "MobileGPT"
+    appagent = tmp_path / "AppAgent"
+    sdk = tmp_path / "sdk"
+    omnitransfer = account_root / "Projects" / "Omni" / "OmniTransfer"
+    for directory in (
+        assets,
+        results,
+        memory,
+        android_world / "android_world",
+        mobilegpt,
+        appagent,
+        sdk / "platform-tools",
+        sdk / "emulator",
+        omnitransfer,
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+    memory_index = memory / "current.json"
+    memory_index.write_text("{}", encoding="utf-8")
+    env_file = assets / ".env"
+    env_file.write_text("LLMTHU_KEY=test-only\n", encoding="utf-8")
+    capture = tmp_path / "invocation.txt"
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    for executable in (sdk / "platform-tools" / "adb", sdk / "emulator" / "emulator"):
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o755)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT),
+            "--e2e-task",
+            "BrowserDraw",
+            "--source-backend",
+            "reuse-only",
+            "--task-deadline-sec",
+            "1800",
+            "--dry-run",
+        ],
+        cwd=REPO,
+        env={
+            **os.environ,
+            "HOME": str(account_root),
+            "CAPTURE": str(capture),
+            "PYTHON_BIN": str(fake_python),
+            "OMNIFLOW_EXP_ASSET_ROOT": str(assets),
+            "OMNIFLOW_EXP_RESULTS_ROOT": str(results),
+            "OMNIFLOW_EXP_MEMORY_ROOT": str(memory),
+            "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_index),
+            "OMNIFLOW_ENV_FILE": str(env_file),
+            "OMNIFLOW_ANDROID_WORLD_ROOT": str(android_world),
+            "OMNIFLOW_ANDROID_SDK_ROOT": str(sdk),
+            "OMNIFLOW_MOBILEGPT_ROOT": str(mobilegpt),
+            "OMNIFLOW_APPAGENT_ROOT": str(appagent),
+            "OMNITRANSFER_ROOT": str(omnitransfer),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    invocation = capture.read_text(encoding="utf-8").splitlines()
+    assert invocation[:2] == ["-m", "src.experiment.e2e_task_pipeline"]
+    assert invocation[invocation.index("--task") + 1] == "BrowserDraw"
+    assert invocation[invocation.index("--source-backend") + 1] == "reuse-only"
+    assert invocation[invocation.index("--task-deadline-sec") + 1] == "1800"
+    assert invocation[-1] == "--dry-run"
 
 
 @pytest.mark.parametrize(
@@ -173,7 +276,129 @@ def test_default_avd_system_image_matches_host_architecture(
     assert completed.stdout.count(
         f"system-images;android-34;google_apis;{expected_abi}"
     ) == 1
-    assert "emulator-5564=OmniFlowTargetPixelFoldApi34" in completed.stdout
+    assert "emulator-5554=OmniFlowTargetSmall" in completed.stdout
+    assert "emulator-5560=SmallPhone" in completed.stdout
+    assert "emulator-5564=OmniFlowTargetFold" in completed.stdout
+
+
+def test_default_android_sdk_root_prefers_macos_standard_path(tmp_path: Path) -> None:
+    macos_sdk = tmp_path / "Library" / "Android" / "sdk"
+    macos_sdk.mkdir(parents=True)
+    script_prefix = tmp_path / "script-prefix.sh"
+    script_prefix.write_text(
+        SCRIPT.read_text(encoding="utf-8").split("\ndry_run=0\n", maxsplit=1)[0]
+        + "\ndry_run=0\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "source \"$SCRIPT_PREFIX\"; resolve_default_android_sdk_root \"$TEST_ROOT\"",
+        ],
+        cwd=REPO,
+        env={
+            **os.environ,
+            "SCRIPT_PREFIX": str(script_prefix),
+            "TEST_ROOT": str(tmp_path),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == str(macos_sdk)
+
+
+def test_default_topology_uses_three_distinct_device_instances(
+    tmp_path: Path,
+) -> None:
+    script_prefix = tmp_path / "script-prefix.sh"
+    script_prefix.write_text(
+        SCRIPT.read_text(encoding="utf-8").split("\ndry_run=0\n", maxsplit=1)[0]
+        + "\ndry_run=0\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "source \"$SCRIPT_PREFIX\"; "
+            "printf '%s\\n%s\\n%s\\n' "
+            "\"$source_device\" \"$device_targets\" \"$emulator_avds\"",
+        ],
+        cwd=REPO,
+        env={**os.environ, "SCRIPT_PREFIX": str(script_prefix)},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == [
+        "source5560:emulator-5560:5560",
+        "small5554:emulator-5554:5554,fold5564:emulator-5564:5564",
+        (
+                "emulator-5554=OmniFlowTargetSmall,emulator-5560=SmallPhone,"
+            "emulator-5564=OmniFlowTargetFold"
+        ),
+    ]
+    avd_names = [
+        mapping.split("=", maxsplit=1)[1]
+        for mapping in completed.stdout.splitlines()[2].split(",")
+    ]
+    assert len(avd_names) == len(set(avd_names)) == 3
+    config = json.loads(
+        (REPO / "config" / "paper_androidworld.json").read_text(encoding="utf-8")
+    )
+    assert config["one_task"]["source_device"] == completed.stdout.splitlines()[0]
+
+
+@pytest.mark.parametrize(
+    ("environment_override", "message"),
+    [
+        (
+            {"OMNIFLOW_SOURCE_DEVICE": "source5560:emulator-5554:5554"},
+            "Source serial must be separate from target serials",
+        ),
+        (
+            {
+                "OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS": (
+                    "small5554:emulator-5554:5554,"
+                    "fold5564:emulator-5554:5554"
+                )
+            },
+            "Duplicate target serial",
+        ),
+        (
+            {
+                "OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS": (
+                    "small5554:emulator-5554:5554,"
+                    "fold5564:emulator-5564:5554"
+                )
+            },
+            "Device target serial/console mismatch",
+        ),
+    ],
+)
+def test_experiment_topology_rejects_shared_device_identity(
+    environment_override: dict[str, str],
+    message: str,
+) -> None:
+    completed = subprocess.run(
+        ["bash", str(SCRIPT)],
+        cwd=REPO,
+        env={**os.environ, **environment_override},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert message in completed.stderr
 
 
 @pytest.mark.parametrize(
@@ -205,6 +430,19 @@ def test_experiment_axes_reject_invalid_selections(
 
     assert completed.returncode == 2
     assert message in completed.stderr
+
+
+def test_eight_cells_alias_requires_both_distinct_formal_devices() -> None:
+    completed = subprocess.run(
+        ["bash", str(SCRIPT), "--eight-cells", "--devices", "small5554"],
+        cwd=REPO,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert "--eight-cells requires exactly both formal target devices" in completed.stderr
 
 
 def test_task_method_and_device_axes_are_independent(tmp_path: Path) -> None:
@@ -674,6 +912,13 @@ exit 0
         "src.experiment.androidworld"
     )
     assert f"--store-index {store_index}" in calls
+    one_task_calls = [
+        line
+        for line in calls.splitlines()
+        if "src.experiment.androidworld one-task" in line
+    ]
+    assert one_task_calls
+    assert all(f"--adb-path {fake_adb}" in line for line in one_task_calls)
     mobilegpt_source_calls = [
         line
         for line in calls.splitlines()
@@ -847,11 +1092,99 @@ exit 1
         text=True,
     )
 
-    assert missing_store.returncode == 3
+    assert missing_store.returncode == 1
     assert (
         "Canonical Function asset missing for "
         "task=AudioRecorderRecordAudio"
     ) in missing_store.stderr
+    assert "[batch:static] incomplete terminal=1 pending=1 total=10" in (
+        missing_store.stderr
+    )
+
+
+def test_task_major_missing_function_asset_does_not_block_later_tasks(
+    tmp_path: Path,
+) -> None:
+    assets = tmp_path / "assets"
+    results = tmp_path / "results"
+    memory_index = tmp_path / "memory" / "current.json"
+    source_index = tmp_path / "memory" / "source_index.json"
+    store_index = tmp_path / "memory" / "store_index.json"
+    for path in (memory_index, source_index, store_index):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+    planned_tasks = tmp_path / "planned-tasks.txt"
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        """#!/bin/sh
+if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ] && [ "$3" = "$MEMORY_INDEX" ]; then
+  printf '%s\t%s\n' "$SOURCE_INDEX" "$STORE_INDEX"
+  exit 0
+fi
+if [ "$1" = "-" ] && [ "$2" = "$SOURCE_INDEX" ]; then
+  printf '%s\n' 'TaskMissing' 'TaskComplete'
+  exit 0
+fi
+if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ]; then
+  task="$5"
+  printf '%s\n' "$task" >> "$PLANNED_TASKS"
+  if [ "$task" = "TaskMissing" ]; then
+    printf 'summary\t0\t2\npending\tours\tsmall5554\temulator-5554\t5554\npending\tours\tfold5564\temulator-5564\t5564\n'
+  else
+    printf 'summary\t2\t0\n'
+  fi
+  exit 0
+fi
+if [ "$1" = "-" ] && [ "$2" = "$STORE_INDEX" ]; then
+  exit 3
+fi
+exit 1
+""",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    environment = {
+        **os.environ,
+        "PYTHON_BIN": str(fake_python),
+        "REPO_PATH": str(REPO),
+        "MEMORY_INDEX": str(memory_index),
+        "SOURCE_INDEX": str(source_index),
+        "STORE_INDEX": str(store_index),
+        "PLANNED_TASKS": str(planned_tasks),
+        "OMNIFLOW_EXP_ASSET_ROOT": str(assets),
+        "OMNIFLOW_EXP_RESULTS_ROOT": str(results),
+        "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_index),
+        "OMNIFLOW_BATCH_ATTEMPT_ID": "batch-expansion-test",
+        "OMNIFLOW_ENV_FILE": str(assets / ".env"),
+        "OMNIFLOW_ANDROID_WORLD_ROOT": str(assets / "android_world"),
+        "OMNITRANSFER_ROOT": str(assets / "OmniTransfer"),
+    }
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT),
+            "--check-only",
+            "--methods",
+            "ours",
+            "--tasks",
+            "TaskMissing,TaskComplete",
+        ],
+        cwd=REPO,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 1
+    assert planned_tasks.read_text(encoding="utf-8").splitlines() == [
+        "TaskMissing",
+        "TaskComplete",
+    ]
+    assert "terminal task=TaskMissing method=ours pending=2" in completed.stdout
+    assert "already-complete task=TaskComplete cells=2/2" in completed.stdout
+    assert "incomplete terminal=2 pending=2 total=4" in completed.stderr
 
 
 @pytest.mark.parametrize("terminal_phase", ["static", "runtime"])

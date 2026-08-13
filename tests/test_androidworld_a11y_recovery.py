@@ -5,6 +5,36 @@ import pytest
 from src.integrations.android_world import launch
 
 
+@pytest.mark.parametrize(
+    ("stdout", "returncode", "expected"),
+    [
+        (
+            "package:/data/app/com.google.androidenv.accessibilityforwarder/base.apk\n",
+            0,
+            True,
+        ),
+        ("", 0, False),
+        ("package:/data/app/forwarder/base.apk\n", 1, False),
+    ],
+)
+def test_accessibility_forwarder_installation_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    stdout: str,
+    returncode: int,
+    expected: bool,
+) -> None:
+    monkeypatch.setattr(
+        launch,
+        "_run_adb_command",
+        lambda **kwargs: {"returncode": returncode, "stdout": stdout},
+    )
+
+    assert launch._androidworld_accessibility_forwarder_installed(
+        adb_serial="emulator-5560",
+        adb_path="/sdk/adb",
+    ) is expected
+
+
 def test_native_a11y_runtime_retries_transient_state_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

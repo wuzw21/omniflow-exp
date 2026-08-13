@@ -11,7 +11,6 @@ from typing import Any
 
 from PIL import Image
 
-
 ANDROIDWORLD_STATE_FIELDS = ("pixels", "forest", "ui_elements", "auxiliaries")
 
 
@@ -130,4 +129,7 @@ def _write_immutable(path: Path, content: bytes) -> None:
             raise ValueError(f"androidworld_state_screenshot_hash_collision:{path}")
 
 
-__all__ = ["ANDROIDWORLD_STATE_FIELDS", "snapshot_androidworld_state"]
+__all__ = [
+    "ANDROIDWORLD_STATE_FIELDS",
+    "snapshot_androidworld_state",
+]
