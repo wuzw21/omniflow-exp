@@ -1017,9 +1017,7 @@ def test_androidworld_post_initialize_snapshot_restore_fails_closed() -> None:
         )
 
 
-def test_androidworld_restores_chrome_before_agent_reads_task_context(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_androidworld_restores_chrome_before_agent_reads_task_context() -> None:
     events: list[str] = []
     env = SimpleNamespace(controller=object())
     task = SimpleNamespace(
@@ -1029,12 +1027,6 @@ def test_androidworld_restores_chrome_before_agent_reads_task_context(
 
     def restore_snapshot(app_name: str, controller: object) -> None:
         events.append(f"snapshot_restored:{app_name}")
-
-    monkeypatch.setattr(
-        launch,
-        "_prepare_native_androidworld_a11y_runtime",
-        lambda *args, **kwargs: events.append("a11y_ready"),
-    )
 
     launch._wrap_task_initialize_for_observation_runtime(
         task,
@@ -1052,7 +1044,6 @@ def test_androidworld_restores_chrome_before_agent_reads_task_context(
         "task_initialized",
         "snapshot_restored:chrome",
         "context_updated",
-        "a11y_ready",
     ]
 
 

@@ -2171,231 +2171,6 @@ def _patch_androidworld_ui_debug_settings(
     return original_update
 
 
-def _quiesce_androidworld_accessibility_forwarder(
-    *,
-    adb_serial: str,
-    adb_path: str = "",
-) -> dict[str, Any]:
-    blocked_components = {
-        (
-            "com.example.MobileGPT/"
-            "com.example.MobileGPT.MobileGPTAccessibilityService"
-        ),
-        (
-            "com.google.androidenv.accessibilityforwarder/"
-            "com.google.androidenv.accessibilityforwarder.AccessibilityForwarder"
-        ),
-        (
-            "cn.com.omnimind.bot.debug/"
-            "com.google.android.accessibility.selecttospeak.SelectToSpeakService"
-        ),
-    }
-    current = _run_adb_command(
-        adb_serial=adb_serial,
-        adb_path=adb_path,
-        adb_args=[
-            "shell",
-            "settings",
-            "get",
-            "secure",
-            "enabled_accessibility_services",
-        ],
-        timeout_sec=15,
-        capture_stdout=True,
-    )
-    if current["returncode"] != 0:
-        raise RuntimeError("androidworld_accessibility_services_read_failed")
-    services = [
-        service
-        for service in str(current.get("stdout") or "").strip().split(":")
-        if service and service != "null" and service not in blocked_components
-    ]
-    write_args = [
-        "shell",
-        "settings",
-        "put" if services else "delete",
-        "secure",
-        "enabled_accessibility_services",
-    ]
-    if services:
-        write_args.append(":".join(services))
-    updated = _run_adb_command(
-        adb_serial=adb_serial,
-        adb_path=adb_path,
-        adb_args=write_args,
-        timeout_sec=15,
-        capture_stdout=True,
-    )
-    if updated["returncode"] != 0:
-        raise RuntimeError("androidworld_accessibility_services_write_failed")
-    stopped = _run_adb_command(
-        adb_serial=adb_serial,
-        adb_path=adb_path,
-        adb_args=[
-            "shell",
-            "am",
-            "force-stop",
-            "com.google.androidenv.accessibilityforwarder",
-        ],
-        timeout_sec=15,
-        capture_stdout=True,
-    )
-    if stopped["returncode"] != 0:
-        raise RuntimeError("androidworld_a11y_forwarder_stop_failed")
-    return {
-        "removed": not blocked_components.intersection(services),
-        "remaining_services": services,
-    }
-
-
-def _androidworld_accessibility_forwarder_installed(
-    *,
-    adb_serial: str,
-    adb_path: str = "",
-) -> bool:
-    result = _run_adb_command(
-        adb_serial=adb_serial,
-        adb_path=adb_path,
-        adb_args=[
-            "shell",
-            "pm",
-            "path",
-            "com.google.androidenv.accessibilityforwarder",
-        ],
-        timeout_sec=15,
-        capture_stdout=True,
-    )
-    return result["returncode"] == 0 and any(
-        line.strip().startswith("package:")
-        for line in str(result.get("stdout") or "").splitlines()
-    )
-
-
-def _refresh_androidworld_controller(controller: Any) -> bool:
-    refresh_env = getattr(controller, "refresh_env", None)
-    if not callable(refresh_env):
-        return False
-    previous_env = getattr(controller, "_env", None)
-    refresh_env()
-    refreshed_env = getattr(controller, "_env", None)
-    if previous_env is not None and previous_env is not refreshed_env:
-        retained_envs = getattr(controller, "_omniflow_retired_envs", None)
-        if not isinstance(retained_envs, list):
-            retained_envs = []
-            setattr(controller, "_omniflow_retired_envs", retained_envs)
-        retained_envs.append(previous_env)
-    return True
-
-
-def _prepare_native_androidworld_a11y_runtime(
-    env: Any,
-    *,
-    adb_serial: str,
-    adb_path: str = "",
-) -> dict[str, Any]:
-    controller = getattr(env, "controller", None)
-    a11y_method = getattr(controller, "_a11y_method", None)
-    uses_forwarder = str(getattr(a11y_method, "value", "")) == (
-        "a11y_forwarder_app"
-    )
-    for setting_name in ("pointer_location", "show_touches"):
-        disabled = _run_adb_command(
-            adb_serial=adb_serial,
-            adb_path=adb_path,
-            adb_args=[
-                "shell",
-                "settings",
-                "put",
-                "system",
-                setting_name,
-                "0",
-            ],
-            timeout_sec=15,
-            capture_stdout=True,
-        )
-        if disabled["returncode"] != 0:
-            raise RuntimeError(f"androidworld_{setting_name}_disable_failed")
-        checked = _run_adb_command(
-            adb_serial=adb_serial,
-            adb_path=adb_path,
-            adb_args=[
-                "shell",
-                "settings",
-                "get",
-                "system",
-                setting_name,
-            ],
-            timeout_sec=15,
-            capture_stdout=True,
-        )
-        if (
-            checked["returncode"] != 0
-            or str(checked.get("stdout") or "").strip() != "0"
-        ):
-            raise RuntimeError(f"androidworld_{setting_name}_still_enabled")
-    controller_refreshed = uses_forwarder and _refresh_androidworld_controller(
-        controller
-    )
-    _close_android_system_dialogs(
-        adb_serial=adb_serial,
-        adb_path=adb_path,
-        failure="androidworld_close_system_dialogs_failed",
-    )
-    dialog_deadline = time.monotonic() + 3.0
-    while True:
-        focused_window = _run_adb_command(
-            adb_serial=adb_serial,
-            adb_path=adb_path,
-            adb_args=["shell", "dumpsys", "window", "windows"],
-            timeout_sec=15,
-            capture_stdout=True,
-        )
-        focused_text = str(focused_window.get("stdout") or "")
-        crash_dialog_present = (
-            "Application Error: com.google.androidenv.accessibilityforwarder"
-            in focused_text
-        )
-        if focused_window["returncode"] == 0 and not crash_dialog_present:
-            break
-        if time.monotonic() >= dialog_deadline:
-            raise RuntimeError("androidworld_a11y_forwarder_crash_dialog_present")
-        time.sleep(0.1)
-    last_state_error: RuntimeError | None = None
-    for readiness_attempt in range(3):
-        if readiness_attempt:
-            time.sleep(0.5)
-            if uses_forwarder:
-                controller_refreshed = (
-                    _refresh_androidworld_controller(controller)
-                    or controller_refreshed
-                )
-            _close_android_system_dialogs(
-                adb_serial=adb_serial,
-                adb_path=adb_path,
-                failure="androidworld_close_system_dialogs_failed",
-            )
-        try:
-            state = env.get_state()
-        except RuntimeError as exc:
-            last_state_error = exc
-            continue
-        ui_elements = list(getattr(state, "ui_elements", ()) or ())
-        if ui_elements:
-            return {
-                "ready": True,
-                "ui_element_count": len(ui_elements),
-                "controller_refreshed": controller_refreshed,
-                "a11y_method": str(
-                    getattr(a11y_method, "value", a11y_method) or ""
-                ),
-                "readiness_attempts": readiness_attempt + 1,
-            }
-        last_state_error = RuntimeError(
-            "androidworld_a11y_forwarder_not_ready"
-        )
-    raise RuntimeError("androidworld_a11y_forwarder_not_ready") from last_state_error
-
-
 def _wrap_task_initialize_for_observation_runtime(
     task: Any,
     *,
@@ -2459,12 +2234,6 @@ def _wrap_task_initialize_for_observation_runtime(
                     "OOB /get_state not ready after task init: "
                     + str(oob_prepare.get("error") or oob_prepare)
                 )
-        else:
-            _prepare_native_androidworld_a11y_runtime(
-                init_env,
-                adb_serial=adb_serial,
-                adb_path=adb_path,
-            )
         return initialized
 
     task.initialize_task = _initialize_task_with_ready_runtime
@@ -4720,31 +4489,29 @@ def main(argv: Sequence[str] | None = None) -> int:
 
                 app_snapshot.restore_snapshot = _restore_snapshot_or_clear_app_data
 
-        original_get_controller = getattr(
-            android_world_controller, "get_controller", None
-        )
-        if callable(original_get_controller):
+        original_get_controller = None
+        if native_appagent:
+            original_get_controller = getattr(
+                android_world_controller, "get_controller", None
+            )
 
-            def _get_controller_without_reinstall(
+            def _get_appagent_controller(
                 console_port: int = 5554,
                 adb_path: str = android_world_controller.DEFAULT_ADB_PATH,
                 grpc_port: int = 8554,
                 install_a11y_forwarding_app: bool = True,
             ):
-                """Construct one AndroidWorld controller with explicit A11Y setup.
+                """Construct AppAgent's UIAutomator AndroidWorld controller.
 
                 Args:
                     console_port: Emulator console port used by AndroidEnv.
                     adb_path: Absolute or shell-resolved adb binary path.
                     grpc_port: Emulator gRPC port paired with the console port.
-                    install_a11y_forwarding_app: Upstream compatibility flag.
-                        Formal episodes honor the upstream installation request
-                        so the live accessibility tree is available to validators.
+                    install_a11y_forwarding_app: Unused upstream compatibility flag.
 
                 Returns:
-                    An `AndroidWorldController` that keeps the upstream a11y
-                    forwarder method but skips the re-install step, which can
-                    stall emulator initialization on already-provisioned devices.
+                    An `AndroidWorldController` using AppAgent's UIAutomator
+                    observation mode.
                 """
 
                 effective_adb_path = adb_path
@@ -4788,11 +4555,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                         effective_adb_path,
                     )
 
-                forwarder_installed = _androidworld_accessibility_forwarder_installed(
-                    adb_serial=target_serial,
-                    adb_path=real_adb_path,
-                )
-
                 config = android_world_controller.config_classes.AndroidEnvConfig(
                     task=android_world_controller.config_classes.FilesystemTaskConfig(
                         path=android_world_controller._write_default_task_proto()
@@ -4811,26 +4573,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 android_env_instance = android_world_controller.loader.load(config)
                 logging.info("Setting up AndroidWorldController.")
                 controller_kwargs: dict[str, object] = {
-                    "install_a11y_forwarding_app": bool(
-                        install_a11y_forwarding_app and not native_appagent
-                        and not forwarder_installed
-                    ),
+                    "install_a11y_forwarding_app": False,
                     "a11y_method": _androidworld_a11y_method_for_agent(
                         android_world_controller,
-                        native_appagent=native_appagent,
+                        native_appagent=True,
                     ),
                 }
-                if forwarder_installed:
-                    logging.info(
-                        "Reusing installed AndroidWorld accessibility forwarder on %s.",
-                        target_serial,
-                    )
                 return android_world_controller.AndroidWorldController(
                     android_env_instance,
                     **controller_kwargs,
                 )
 
-            android_world_controller.get_controller = _get_controller_without_reinstall
+            android_world_controller.get_controller = _get_appagent_controller
 
         original_allocate_step_budget = getattr(
             suite_utils, "_allocate_step_budget", None
@@ -4950,37 +4704,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "OOB get_state not ready before AndroidWorld setup: "
                     + str(oob_prepare.get("error") or oob_prepare)
                 )
-        if (
-            bool(args.perform_emulator_setup)
-            and not _use_oob_observe_backend()
-        ):
-            setup_forwarder = _quiesce_androidworld_accessibility_forwarder(
-                adb_serial=target_adb_serial,
-                adb_path=str(args.adb_path or ""),
-            )
-            _close_android_system_dialogs(
-                adb_serial=target_adb_serial,
-                adb_path=str(args.adb_path or ""),
-                failure="androidworld_setup_close_system_dialogs_failed",
-            )
-            logger.info(
-                "AndroidWorld app setup A11Y runtime ready: %s",
-                setup_forwarder,
-            )
         if bool(args.perform_emulator_setup):
             logger.info(
                 "Setting up AndroidWorld snapshots for selected tasks: %s",
                 ", ".join(selected_task_names) or "<all>",
             )
             aw_setup.setup_apps(env, app_list=setup_app_list)
-        if not _use_oob_observe_backend():
-            a11y_runtime = _prepare_native_androidworld_a11y_runtime(
-                env,
-                adb_serial=target_adb_serial,
-                adb_path=str(args.adb_path or ""),
-            )
-            logger.info("Native AndroidWorld A11Y runtime ready: %s", a11y_runtime)
-
         if task_params:
             if len(selected_task_names) != 1:
                 raise ValueError("--task-params-json requires exactly one selected task")
