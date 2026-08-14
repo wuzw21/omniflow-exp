@@ -195,3 +195,99 @@ def test_androidworld_accumulates_planner_steps_separately_from_actions() -> Non
     assert accumulated.execution_summary["planner_steps"] == 2
     assert accumulated.execution_summary["actions_executed"] == 4
     assert accumulated.detail["runtime_limits"]["max_steps"] == 20
+
+
+def test_androidworld_stops_at_the_planner_step_budget(monkeypatch) -> None:
+    result = RunResult(
+        False,
+        actions_executed=1,
+        model_calls=1,
+        detail={
+            "done_reason": "step_completed",
+            "planner_steps": 1,
+            "llm_usage": {"model_calls": 1},
+        },
+    )
+    flow = SimpleNamespace(
+        config=SimpleNamespace(runtime=SimpleNamespace(max_steps=1)),
+        run=lambda *_args, **_kwargs: result,
+        store=SimpleNamespace(functions={}),
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.agent.OmniFlow",
+        lambda *_args, **_kwargs: flow,
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.agent.AndroidWorldHost",
+        lambda *_args, **_kwargs: SimpleNamespace(installed_packages=lambda: set()),
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.agent.load_transfer_state_catalog",
+        lambda _path: {},
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.agent.transfer_state_coverage",
+        lambda *_args: {
+            "required_state_count": 0,
+            "complete": True,
+            "missing_state_ids": [],
+        },
+    )
+
+    from src.integrations.android_world.agent import build_agent
+
+    agent = build_agent(env=SimpleNamespace(), store_path="store.json", max_steps=2)
+
+    assert agent.step("Continue").done is False
+    exhausted = agent.step("Continue")
+    assert exhausted.done is True
+    assert exhausted.data["planner_steps"] == 2
+    assert exhausted.data["done_reason"] == "max_steps_exceeded"
+
+
+def test_androidworld_stops_after_a_fatal_planner_failure(monkeypatch) -> None:
+    error = "vlm_planner_failed:Error code: 429"
+    result = RunResult(
+        False,
+        model_calls=1,
+        error=error,
+        detail={
+            "planner_steps": 1,
+            "llm_usage": {"model_calls": 1},
+        },
+    )
+    flow = SimpleNamespace(
+        config=SimpleNamespace(runtime=SimpleNamespace(max_steps=1)),
+        run=lambda *_args, **_kwargs: result,
+        store=SimpleNamespace(functions={}),
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.agent.OmniFlow",
+        lambda *_args, **_kwargs: flow,
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.agent.AndroidWorldHost",
+        lambda *_args, **_kwargs: SimpleNamespace(installed_packages=lambda: set()),
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.agent.load_transfer_state_catalog",
+        lambda _path: {},
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.agent.transfer_state_coverage",
+        lambda *_args: {
+            "required_state_count": 0,
+            "complete": True,
+            "missing_state_ids": [],
+        },
+    )
+
+    from src.integrations.android_world.agent import build_agent
+
+    agent = build_agent(env=SimpleNamespace(), store_path="store.json", max_steps=20)
+    failed = agent.step("Continue")
+
+    assert failed.done is True
+    assert failed.data["planner_steps"] == 1
+    assert failed.data["done_reason"] == "planner_failed"
+    assert failed.data["error"] == error

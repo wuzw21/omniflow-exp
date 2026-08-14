@@ -191,7 +191,31 @@ def build_agent(
         planner_steps = int(accumulated.detail.get("planner_steps") or 0)
         finished_content = str(result.detail.get("finished_content") or "").strip()
         done_reason = str(result.detail.get("done_reason") or "").strip()
-        done = done_reason in {"finished", "abort", "waiting_input"}
+        planner_failed = str(result.error or "").startswith("vlm_planner_failed:")
+        budget_exhausted = planner_steps >= int(state["max_steps"])
+        if planner_failed:
+            done_reason = "planner_failed"
+        elif budget_exhausted and done_reason not in {
+            "finished",
+            "abort",
+            "waiting_input",
+        }:
+            done_reason = "max_steps_exceeded"
+            accumulated = RunResult(
+                False,
+                accumulated.function_id,
+                accumulated.actions_executed,
+                accumulated.model_calls,
+                accumulated.fallback_steps,
+                "max_steps_exceeded",
+                accumulated.final_state,
+                {**accumulated.detail, "done_reason": done_reason},
+            )
+        done = planner_failed or budget_exhausted or done_reason in {
+            "finished",
+            "abort",
+            "waiting_input",
+        }
         if done_reason == "finished" and finished_content:
             json_action = importlib.import_module("android_world.env.json_action")
             env.execute_action(
@@ -211,7 +235,7 @@ def build_agent(
                 "function_id": result.function_id,
                 "actions_executed": result.actions_executed,
                 "fallback": result.fallback_steps > 0,
-                "error": result.error,
+                "error": accumulated.error,
                 "done_reason": done_reason or (
                     "step_completed" if result.actions_executed else "planner_failed"
                 ),
