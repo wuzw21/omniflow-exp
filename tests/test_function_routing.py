@@ -1138,14 +1138,14 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert request["max_completion_tokens"] == 512
     assert request["reasoning_effort"] == "none"
     assert request["enable_thinking"] is False
-    assert "You are an Android GUI agent" in SYSTEM_PROMPT
-    assert "task, your action history, and the current screenshot" in SYSTEM_PROMPT
-    assert "A recalled Function is an action API" in SYSTEM_PROMPT
+    assert "You are a GUI agent" in SYSTEM_PROMPT
+    assert "Given the task, history, results" in SYSTEM_PROMPT
+    assert "previous action produced the expected state" in SYSTEM_PROMPT
+    assert "Do not repeat a failed strategy" in SYSTEM_PROMPT
+    assert "loop without progress" in SYSTEM_PROMPT
+    assert "Functions are peer action APIs" in SYSTEM_PROMPT
+    assert "does not finish the task" in SYSTEM_PROMPT
     assert "normalized 0..1000 coordinates" in SYSTEM_PROMPT
-    assert "raw-pixel" not in SYSTEM_PROMPT
-    assert "Never infer image content from a cropped thumbnail" in SYSTEM_PROMPT
-    assert "provides search" not in SYSTEM_PROMPT
-    assert "RunLog" not in SYSTEM_PROMPT
     assert len(SYSTEM_PROMPT.split()) < 100
 
 
@@ -1174,8 +1174,8 @@ def test_planner_adds_recalled_function_as_a_peer_action_api() -> None:
 
     tool_names = [tool["function"]["name"] for tool in request["tools"]]
     assert tool_names[0] == "add_expense"
-    assert "A recalled Function is an action API" in SYSTEM_PROMPT
-    assert "Prefer it when it directly performs the next part of the task" in SYSTEM_PROMPT
+    assert "Functions are peer action APIs" in SYSTEM_PROMPT
+    assert "prefer one when it directly covers" in SYSTEM_PROMPT
     summaries = [
         tool["function"]["parameters"]["properties"]["summary"]["description"]
         for tool in request["tools"]
