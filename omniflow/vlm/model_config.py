@@ -10,16 +10,36 @@ def resolve_openai_compatible_config(
     *,
     api_key: str | None = None,
     base_url: str | None = None,
+    profile: str | None = None,
     environment: Mapping[str, str] | None = None,
 ) -> tuple[str | None, str | None]:
     env = os.environ if environment is None else environment
+    resolved_profile = str(
+        profile or env.get("OMNIFLOW_MODEL_ENDPOINT_PROFILE") or "auto"
+    ).strip().lower()
+    if resolved_profile not in {"auto", "openai", "llmthu"}:
+        raise ValueError(f"model_endpoint_profile_invalid:{resolved_profile}")
 
-    key_candidates = (
-        api_key,
-        env.get("OPENAI_API_KEY"),
-        env.get("LLMTHU_KEY"),
-        env.get("DASHSCOPE_API_KEY"),
-    )
+    if resolved_profile == "llmthu":
+        key_candidates = (api_key, env.get("LLMTHU_KEY"))
+        base_url_candidates = (base_url, env.get("LLMTHU_BASE_URL"))
+    elif resolved_profile == "openai":
+        key_candidates = (api_key, env.get("OPENAI_API_KEY"))
+        base_url_candidates = (base_url, env.get("OPENAI_BASE_URL"))
+    else:
+        key_candidates = (
+            api_key,
+            env.get("OPENAI_API_KEY"),
+            env.get("LLMTHU_KEY"),
+            env.get("DASHSCOPE_API_KEY"),
+        )
+        base_url_candidates = (
+            base_url,
+            env.get("OPENAI_BASE_URL"),
+            env.get("LLMTHU_BASE_URL"),
+            env.get("OMNIFLOW_OPENAI_BASE_URL"),
+        )
+
     resolved_api_key = next(
         (
             value
@@ -29,12 +49,6 @@ def resolve_openai_compatible_config(
         ),
         None,
     )
-    base_url_candidates = (
-        base_url,
-        env.get("OPENAI_BASE_URL"),
-        env.get("LLMTHU_BASE_URL"),
-        env.get("OMNIFLOW_OPENAI_BASE_URL"),
-    )
     resolved_base_url = next(
         (
             value
@@ -43,6 +57,8 @@ def resolve_openai_compatible_config(
         ),
         None,
     )
+    if resolved_profile != "auto" and (not resolved_api_key or not resolved_base_url):
+        raise ValueError(f"model_endpoint_profile_incomplete:{resolved_profile}")
     return resolved_api_key, resolved_base_url
 
 

@@ -130,6 +130,28 @@ mobilegpt_memory_output_root="${OMNIFLOW_MOBILEGPT_MEMORY_OUTPUT_ROOT:-}"
 source_runlog_output_root="${OMNIFLOW_SOURCE_RUNLOG_OUTPUT_ROOT:-${memory_root:+$memory_root/source_runlogs}}"
 source_screenshot_roots="${OMNIFLOW_SOURCE_SCREENSHOT_ROOTS:-}"
 
+select_model_endpoint() {
+  local profile="$1"
+  if ! selected_model_base_url="$($python_bin - "$profile" <<'PY'
+import sys
+
+from omniflow.vlm.model_config import resolve_openai_compatible_config
+
+profile = sys.argv[1]
+try:
+    api_key, base_url = resolve_openai_compatible_config(profile=profile)
+except ValueError as error:
+    raise SystemExit(str(error)) from error
+if not api_key or not base_url:
+    raise SystemExit(f"model_endpoint_profile_incomplete:{profile}")
+print(base_url)
+PY
+  )"; then
+    exit 2
+  fi
+  export OMNIFLOW_MODEL_ENDPOINT_PROFILE="$profile"
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -182,6 +204,7 @@ Optional runtime overrides:
   OMNIFLOW_MOBILEGPT_SOURCE_ENVIRONMENT_REPAIR_REASON,
   OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON,
   OMNIFLOW_DEVELOPMENT_OUTPUT_PATH, OMNIFLOW_DEVELOPMENT_MODEL,
+  OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE (default: llmthu),
   OMNIFLOW_DEVELOPMENT_CONSOLE_PORT,
   OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP (0 reuses prior app snapshots),
   OMNIFLOW_BATCH_ATTEMPT_ID (resume one interrupted immutable batch).
@@ -348,6 +371,7 @@ if [[ "$development_run" -eq 1 ]]; then
   fi
   development_output_path="${OMNIFLOW_DEVELOPMENT_OUTPUT_PATH:-}"
   development_model="${OMNIFLOW_DEVELOPMENT_MODEL:-}"
+  development_model_endpoint_profile="${OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE:-llmthu}"
   development_console_port="${OMNIFLOW_DEVELOPMENT_CONSOLE_PORT:-5554}"
   development_perform_setup="${OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP:-1}"
   development_planner_timeout="${OMNIFLOW_PLANNER_TIMEOUT_SEC:-60}"
@@ -396,12 +420,8 @@ if [[ "$development_run" -eq 1 ]]; then
   set -a
   source "$env_file"
   set +a
-  export OPENAI_API_KEY="${OPENAI_API_KEY:-${LLMTHU_KEY:-}}"
-  export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${LLMTHU_BASE_URL:-}}"
-  if [[ -z "$OPENAI_API_KEY" || -z "$OPENAI_BASE_URL" ]]; then
-    echo "--development-run requires OpenAI-compatible key and base URL in OMNIFLOW_ENV_FILE." >&2
-    exit 2
-  fi
+  select_model_endpoint "$development_model_endpoint_profile"
+  echo "[model] model=$development_model model_endpoint_profile=$development_model_endpoint_profile model_endpoint=$selected_model_base_url"
   development_command=(
     "$python_bin" -m src.integrations.android_world.launch
     --android-world-root "$android_world_root"
@@ -416,6 +436,7 @@ if [[ "$development_run" -eq 1 ]]; then
     --store-path "$store_path"
     --planner-provider openai
     --model "$development_model"
+    --model-endpoint-profile "$development_model_endpoint_profile"
     --planner-timeout-sec "$development_planner_timeout"
     --adb-path "$development_adb_path"
   )
@@ -2413,6 +2434,7 @@ fi
 set -a
 source "$env_file"
 set +a
+formal_model_endpoint_profile="${OMNIFLOW_FORMAL_MODEL_ENDPOINT_PROFILE:-openai}"
 paper_model="$("$python_bin" - "$config" <<'PY'
 import json
 import sys
@@ -2547,6 +2569,8 @@ if [[ "$check_only" -eq 1 ]]; then
   echo "[static] ready task=$task methods=$methods; no persistent output created"
   exit 0
 fi
+select_model_endpoint "$formal_model_endpoint_profile"
+echo "[model] model=$paper_model model_endpoint_profile=$formal_model_endpoint_profile model_endpoint=$selected_model_base_url"
 
 avd_for_serial() {
   local wanted_serial="$1"

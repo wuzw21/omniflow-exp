@@ -26,6 +26,7 @@ class MethodAdapterContext:
     adb_path: str = ""
     planner_provider: str = ""
     planner_model: str = ""
+    model_endpoint_profile: str = ""
     planner_timeout_sec: float | None = None
     raw_replay_run_log: str = ""
     appagent_root: str = ""
@@ -119,7 +120,9 @@ def _build_omniflow_replay(context: MethodAdapterContext) -> Any:
         or os.environ.get("OMNIFLOW_PLANNER_TIMEOUT_SEC")
         or 60.0
     )
-    planner_api_key, planner_base_url = resolve_openai_compatible_config()
+    planner_api_key, planner_base_url = resolve_openai_compatible_config(
+        profile=context.model_endpoint_profile or None,
+    )
     planner = None
     if (
         resolved_planner_model

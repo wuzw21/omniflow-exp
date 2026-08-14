@@ -27,6 +27,7 @@ from omniflow.vlm.planner import (
     function_tools,
     parse_model_turn_response,
 )
+from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm_coordinates import canonical_action_to_screen_pixels
 from src.integrations.android_world import launch as androidworld_launch
 from src.integrations.android_world.agent import (
@@ -1346,6 +1347,40 @@ def test_androidworld_launcher_configures_one_unified_planner(
     assert planner_options["api_key"] == "unified-key"
     assert planner_options["base_url"] == "https://llmapi.example/v1"
     assert flow.planner is not None
+
+
+def test_llmthu_endpoint_profile_ignores_conflicting_openai_variables() -> None:
+    api_key, base_url = resolve_openai_compatible_config(
+        environment={
+            "OPENAI_API_KEY": "dashscope-key",
+            "OPENAI_BASE_URL": "https://dashscope.example/v1",
+            "LLMTHU_KEY": "llmthu-key",
+            "LLMTHU_BASE_URL": "https://llmthu.example/v1",
+        },
+        profile="llmthu",
+    )
+
+    assert api_key == "llmthu-key"
+    assert base_url == "https://llmthu.example/v1"
+
+
+def test_llmthu_endpoint_profile_does_not_fall_back_to_openai() -> None:
+    with pytest.raises(
+        ValueError,
+        match="model_endpoint_profile_incomplete:llmthu",
+    ):
+        resolve_openai_compatible_config(
+            environment={
+                "OPENAI_API_KEY": "dashscope-key",
+                "OPENAI_BASE_URL": "https://dashscope.example/v1",
+            },
+            profile="llmthu",
+        )
+
+
+def test_model_endpoint_profile_rejects_unknown_accounts() -> None:
+    with pytest.raises(ValueError, match="model_endpoint_profile_invalid:unknown"):
+        resolve_openai_compatible_config(profile="unknown", environment={})
 
 
 def test_androidworld_agent_exposes_target_states_when_source_catalog_exists(

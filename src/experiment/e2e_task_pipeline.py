@@ -547,13 +547,10 @@ def collect_online_source(
             "ANDROID_SERIAL": SOURCE_DEVICE[1],
             "OMNIFLOW_MAX_FALLBACK_STEPS": str(MAX_FALLBACK_STEPS),
             "OMNITRANSFER_ROOT": str(args.omnitransfer_root),
+            "OMNIFLOW_MODEL_ENDPOINT_PROFILE": "llmthu",
             "PYTHONPATH": f"{args.repo}:{args.repo / 'src'}:{args.android_world_root}",
         }
     )
-    if environment.get("LLMTHU_KEY") and not environment.get("OPENAI_API_KEY"):
-        environment["OPENAI_API_KEY"] = environment["LLMTHU_KEY"]
-    if environment.get("LLMTHU_BASE_URL") and not environment.get("OPENAI_BASE_URL"):
-        environment["OPENAI_BASE_URL"] = environment["LLMTHU_BASE_URL"]
     result = run_logged_command(
         command,
         cwd=args.repo,
@@ -982,6 +979,7 @@ def _cell_environment(
             "OMNIFLOW_SINGLE_TASK_PREFLIGHT_OUTPUT_ROOT": str(
                 attempt_root / "preflight" / label / method
             ),
+            "OMNIFLOW_FORMAL_MODEL_ENDPOINT_PROFILE": "openai",
         }
     )
     if mobilegpt_memory is not None:

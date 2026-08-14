@@ -79,6 +79,8 @@ All data paths are absolute and outside the repository.
 | `OMNIFLOW_SINGLE_TASK_EVALUATION_SEED` | Target evaluation seed; formal value is `113` |
 | `OMNIFLOW_OURS_CONVERTED_ASSET_ROOT` | A new, empty conversion version directory |
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
+| `OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE` | Development endpoint profile; defaults to `llmthu` |
+| `OMNIFLOW_FORMAL_MODEL_ENDPOINT_PROFILE` | Formal endpoint profile; defaults to `openai` |
 | `OMNIFLOW_OURS_AUTHORING_MANIFEST` | Immutable bundle manifest produced by `androidworld-runlog-harvester` using `omniflow.function-agent-skill-manifest.v1` |
 | `OMNIFLOW_MEMORY_MOBILEGPT_ROOTS` | Optional colon-separated roots containing sealed MobileGPT semantic memory |
 
@@ -128,6 +130,7 @@ OMNIFLOW_ENV_FILE=/absolute/model.env \
 OMNIFLOW_SINGLE_TASK_STORE_PATH=/absolute/function_store/store.json \
 OMNIFLOW_DEVELOPMENT_OUTPUT_PATH=/absolute/new/attempt \
 OMNIFLOW_DEVELOPMENT_MODEL=GLM-4.6V \
+OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE=llmthu \
 bash scripts/exp/run_androidworld.sh \
   --development-run --tasks ExpenseAddMultipleFromGallery
 ```
@@ -143,6 +146,10 @@ OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP=0
 This override is development-only. Formal cells retain cold restart, setup,
 memory resolution, immutable registration, and the paper model. MobileGPT is
 owned by its adapter and does not participate in an `ours` development run.
+The endpoint profile is explicit and fail-closed: `llmthu` reads only
+`LLMTHU_KEY`/`LLMTHU_BASE_URL`, while `openai` reads only
+`OPENAI_API_KEY`/`OPENAI_BASE_URL`. It never switches accounts because another
+credential happens to be present in the same environment file.
 
 `--check-only` is deliberately read-only. It validates existing assets but
 will fail rather than create a missing method asset:

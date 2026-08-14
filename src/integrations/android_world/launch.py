@@ -27,6 +27,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
+from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import token_usage_status
 from src.experiment.observation_evidence import (
     persist_target_run_evidence,
@@ -2840,6 +2841,7 @@ def _build_launch_agent(
     adb_path: str = "",
     planner_provider: str = "",
     planner_model: str = "",
+    model_endpoint_profile: str = "",
     planner_timeout_sec: float | None = None,
     raw_replay_run_log: str = "",
     appagent_root: str = "",
@@ -2878,6 +2880,7 @@ def _build_launch_agent(
             adb_path=adb_path,
             planner_provider=planner_provider,
             planner_model=planner_model,
+            model_endpoint_profile=model_endpoint_profile,
             planner_timeout_sec=planner_timeout_sec,
             raw_replay_run_log=raw_replay_run_log,
             appagent_root=appagent_root,
@@ -2993,6 +2996,12 @@ def build_parser() -> argparse.ArgumentParser:
             "Optional online planner model for --agent omniflow, for example "
             "`gpt-4o`, `qwen-vl-plus`, or `qwen-vl-max`."
         ),
+    )
+    parser.add_argument(
+        "--model-endpoint-profile",
+        choices=("auto", "openai", "llmthu"),
+        default=os.environ.get("OMNIFLOW_MODEL_ENDPOINT_PROFILE") or "auto",
+        help="Credential and endpoint profile for the selected model.",
     )
     parser.add_argument(
         "--planner-timeout-sec",
@@ -3142,6 +3151,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             raw_replay_run_log=str(args.raw_replay_run_log or ""),
             planner_provider=str(args.planner_provider or ""),
             planner_model=str(args.model or ""),
+            model_endpoint_profile=str(args.model_endpoint_profile or "auto"),
             planner_timeout_sec=float(args.planner_timeout_sec or 60.0),
             appagent_root=str(args.appagent_root or ""),
             appagent_workspace_root=str(args.appagent_workspace_root or ""),
@@ -3467,9 +3477,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                             or os.environ.get("OPENAI_MODEL")
                             or ""
                         ).strip() or None
-                        model_base_url = str(
-                            os.environ.get("OPENAI_BASE_URL") or ""
-                        ).strip() or None
+                        _, model_base_url = resolve_openai_compatible_config(
+                            profile=str(args.model_endpoint_profile or "auto"),
+                        )
                 if selected_agent.startswith("official:") or selected_agent == (
                     "external:appagent"
                 ):

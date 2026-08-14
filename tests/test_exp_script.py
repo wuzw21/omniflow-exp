@@ -120,7 +120,9 @@ def test_development_run_routes_through_the_only_script_without_repeated_setup(
     store.write_text("{}", encoding="utf-8")
     env_file = tmp_path / ".env"
     env_file.write_text(
-        "LLMTHU_KEY=test-only\n"
+        "OPENAI_API_KEY=dashscope-key\n"
+        "OPENAI_BASE_URL=https://dashscope.example/v1\n"
+        "LLMTHU_KEY=llmthu-key\n"
         "LLMTHU_BASE_URL=https://llmapi.example/v1\n",
         encoding="utf-8",
     )
@@ -159,6 +161,9 @@ def test_development_run_routes_through_the_only_script_without_repeated_setup(
     assert "src.integrations.android_world.launch" in completed.stdout
     assert "ExpenseAddMultipleFromGallery" in completed.stdout
     assert "GLM-4.6V" in completed.stdout
+    assert "model_endpoint_profile=llmthu" in completed.stdout
+    assert "model_endpoint=https://llmapi.example/v1" in completed.stdout
+    assert "dashscope.example" not in completed.stdout
     assert "--perform-emulator-setup" not in completed.stdout
     assert not output.exists()
 
@@ -771,7 +776,11 @@ def test_one_task_run_adapts_all_methods_then_replays(
         (source_index, "{}"),
         (store_index, "{}"),
         (store_path, "{}"),
-        (env_file, ""),
+        (
+            env_file,
+            "OPENAI_API_KEY=test-only\n"
+            "OPENAI_BASE_URL=https://openai.example/v1\n",
+        ),
         (authoring_manifest, "{}"),
         (
             android_world
@@ -1263,7 +1272,11 @@ def test_task_major_terminal_source_failure_continues_later_cells(
         (memory_index, "{}"),
         (source_index, "{}"),
         (store_index, "{}"),
-        (env_file, ""),
+        (
+            env_file,
+            "OPENAI_API_KEY=test-only\n"
+            "OPENAI_BASE_URL=https://openai.example/v1\n",
+        ),
         (
             android_world
             / "android_world"
