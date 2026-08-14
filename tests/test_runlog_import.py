@@ -28,51 +28,6 @@ from src.integrations.runlog import (
 )
 
 
-def test_production_import_accepts_oob_xml_observation() -> None:
-    payload = androidworld_run_log([{"action_type": "wait"}])
-    payload["steps"][0]["observation"] = {
-        "pixels": None,
-        "xml": '<hierarchy><node text="Settings" /></hierarchy>',
-        "auxiliaries": {
-            "state_id": "source-state-0",
-            "package_name": "com.android.settings",
-            "activity_name": ".Settings",
-            "display": {"width": 1080, "height": 2400},
-        },
-    }
-
-    assert import_run_log(payload) == payload
-
-
-def test_xml_observation_preserves_screenshot_and_index_action(tmp_path: Path) -> None:
-    screenshot = (tmp_path / "screen.png").resolve()
-    screenshot.write_bytes(b"png")
-    payload = androidworld_run_log([{"action_type": "click", "index": 7}])
-    payload["steps"][0]["observation"] = {
-        "pixels": {
-            "path": str(screenshot),
-            "sha256": hashlib.sha256(b"png").hexdigest(),
-            "width": 100,
-            "height": 200,
-            "mime_type": "image/png",
-        },
-        "xml": '<hierarchy><node id="7" bounds="[10,20][50,80]" /></hierarchy>',
-        "auxiliaries": {
-            "state_id": "source-state-0",
-            "display": {"width": 100, "height": 200},
-        },
-    }
-
-    run_log, source_states = import_run_log_evidence(payload)
-
-    assert source_states["states"]["source-state-0"]["screenshot_path"] == str(
-        screenshot
-    )
-    assert project_androidworld_step_actions(run_log["steps"][0]) == [
-        {"tool": "click", "args": {"x": 300.0, "y": 250.0}}
-    ]
-
-
 def test_runlog_import_recovers_missing_display_from_fullscreen_xml() -> None:
     payload = androidworld_run_log(
         [
@@ -1407,14 +1362,8 @@ def test_fixed_replay_opens_packages_through_androidworld_launcher(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     controller = object()
-    calls: list[tuple[str, object]] = []
+    calls: list[dict[str, object]] = []
     adb_utils = SimpleNamespace(
-        launch_app=lambda app, actual_controller: calls.append(
-            (f"launch:{app}", actual_controller)
-        ),
-        close_app=lambda app, actual_controller: calls.append(
-            (f"close:{app}", actual_controller)
-        ),
         get_all_apps=lambda actual_controller: (
             ["settings"] if actual_controller is controller else []
         ),
@@ -1430,14 +1379,14 @@ def test_fixed_replay_opens_packages_through_androidworld_launcher(
     monkeypatch.setitem(sys.modules, "android_world", android_world)
     monkeypatch.setitem(sys.modules, "android_world.env", android_world_env)
 
-    _launch_raw_replay_app(
-        "com.android.settings",
-        SimpleNamespace(controller=controller),
+    host = SimpleNamespace(
+        env=SimpleNamespace(controller=controller),
+        act=lambda action: calls.append(action) or SimpleNamespace(success=True),
     )
+    _launch_raw_replay_app("com.android.settings", host)
 
     assert calls == [
-        ("close:settings", controller),
-        ("launch:settings", controller),
+        {"tool": "open_app", "args": {"package_name": "com.android.settings"}},
     ]
 
 
@@ -1512,18 +1461,17 @@ def test_fixed_replay_waits_for_open_app_before_resolving_selector(
         return SimpleNamespace(success=True)
 
     controller = object()
+    env = SimpleNamespace(
+        device_screen_size=(2208, 1840),
+        logical_screen_size=(1080, 2092),
+        controller=controller,
+    )
     agent = SimpleNamespace(
-        env=SimpleNamespace(
-            device_screen_size=(2208, 1840),
-            logical_screen_size=(1080, 2092),
-            controller=controller,
-        ),
-        host=SimpleNamespace(observe=observe, act=act),
+        env=env,
+        host=SimpleNamespace(env=env, observe=observe, act=act),
         set_max_steps=lambda _steps: None,
     )
     adb_utils = SimpleNamespace(
-        launch_app=lambda _app, _controller: None,
-        close_app=lambda _app, _controller: None,
         get_all_apps=lambda actual_controller: (
             ["contacts"] if actual_controller is controller else []
         ),

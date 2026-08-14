@@ -45,17 +45,6 @@ from src.integrations.android_world.methods import (
     MethodAdapterContext,
     default_method_adapter_registry,
 )
-from src.integrations.android_world.setup_compat import (
-    patch_androidworld_legacy_apk_install,
-    patch_androidworld_open_tracks_setup,
-    patch_androidworld_osmand_storage_setup,
-    patch_androidworld_setup_click_retry,
-    patch_androidworld_setup_fail_closed,
-    patch_androidworld_special_storage_setup,
-    patch_androidworld_vlc_apk_selection,
-    resolve_androidworld_task_setup_apps,
-    restore_task_app_snapshots_after_initialize,
-)
 from src.integrations.runlog import import_run_log, project_androidworld_step_actions
 
 OMNIFLOW_ROOT = Path(__file__).resolve().parents[3]
@@ -68,18 +57,6 @@ SOURCE_RUNLOG_POOL_DIR = (
 )
 logger = logging.getLogger(__name__)
 DEFAULT_RAW_REPLAY_ACTION_WAIT_SECONDS = 1.0
-
-
-def normalize_oob_get_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Normalize records used only by retired, unreachable OOB helpers."""
-    state = payload.get("state")
-    if not isinstance(state, dict):
-        return payload
-    normalized = dict(payload)
-    for key, value in state.items():
-        if value is not None or key not in normalized:
-            normalized[key] = value
-    return normalized
 
 
 def utc_now_iso() -> str:
@@ -329,13 +306,23 @@ def _load_official_agent_goal_hint(
     return hint_text, meta
 
 
-class _TaskGoalProxy:
-    def __init__(self, task: Any, goal: str) -> None:
-        self._task = task
-        self.goal = goal
+class _ExperimentAgentAdapter:
+    """Add experiment-only recording and optional goal context to an agent."""
+
+    def __init__(self, agent: Any, *, recording_session: Any, goal_hint: str = ""):
+        self._agent = agent
+        self._recording_session = recording_session
+        self._goal_hint = str(goal_hint or "").strip()
 
     def __getattr__(self, name: str) -> Any:
-        return getattr(self._task, name)
+        return getattr(self._agent, name)
+
+    def step(self, goal: str) -> Any:
+        self._recording_session.start_episode()
+        effective_goal = str(goal or "")
+        if self._goal_hint:
+            effective_goal = f"{effective_goal}\n\n{self._goal_hint}"
+        return self._agent.step(effective_goal)
 
 
 def _coerce_int(value: Any) -> int:
@@ -1072,749 +1059,6 @@ def _default_adb_path() -> str:
     return ""
 
 
-def _accessibility_bound_to_oob(
-    *, dumpsys: str, package_name: str, service: str
-) -> tuple[bool, dict[str, Any]]:
-    """Check whether OOB is actually present in the bound accessibility section."""
-
-    text = str(dumpsys or "")
-    lines = text.splitlines()
-    bound_start = next(
-        (index for index, line in enumerate(lines) if "Bound services" in line),
-        -1,
-    )
-    if bound_start < 0:
-        return False, {"reason": "missing_bound_services_section"}
-    bound_end = len(lines)
-    for index in range(bound_start + 1, len(lines)):
-        stripped = lines[index].strip()
-        if (
-            stripped.startswith("Enabled services")
-            or stripped.startswith("Binding services")
-            or stripped.startswith("Crashed services")
-            or stripped.startswith("User state")
-            or stripped.startswith("Client list info")
-        ):
-            bound_end = index
-            break
-    bound_segment = "\n".join(lines[bound_start:bound_end])
-    enabled_line = next(
-        (line.strip() for line in lines if line.strip().startswith("Enabled services")),
-        "",
-    )
-    package_name = str(package_name or "").strip()
-    service = str(service or "").strip()
-    class_name = service.split("/", 1)[1] if "/" in service else service
-    class_tail = class_name.rsplit(".", 1)[-1].strip()
-    matched_markers = [
-        marker
-        for marker in (service, package_name, class_name, class_tail)
-        if marker and marker in bound_segment
-    ]
-    enabled_exact = bool(service and service in enabled_line)
-    bound = (
-        package_name in matched_markers
-        and (
-            service in matched_markers
-            or class_name in matched_markers
-            or class_tail in matched_markers
-        )
-    ) or ("Service[" in bound_segment and enabled_exact)
-    return bound, {
-        "reason": "matched_oob_bound_service" if bound else "oob_not_in_bound_services",
-        "matched_markers": matched_markers,
-        "enabled_exact": enabled_exact,
-        "bound_services_tail": bound_segment[-1000:],
-    }
-
-
-def _oob_state_has_visible_page(state_payload: dict[str, Any]) -> bool:
-    """Return whether OOB get_state captured a non-empty foreground page."""
-
-    state_payload = normalize_oob_get_state_payload(state_payload)
-    if state_payload.get("success") is not True:
-        return False
-    package_name = str(state_payload.get("package_name") or "").strip()
-    activity_name = str(state_payload.get("activity_name") or "").strip()
-    try:
-        xml_chars = int(state_payload.get("xml_chars") or 0)
-    except (TypeError, ValueError):
-        xml_chars = 0
-    xml_text = str(state_payload.get("xml") or "").strip()
-    return bool(package_name and activity_name and (xml_chars > 0 or xml_text))
-
-
-def _read_oob_debug_get_state_payload(
-    *,
-    adb_serial: str,
-    adb_path: str = "",
-    max_xml_chars: int = 200000,
-    include_screenshot: bool = False,
-    timeout_sec: float = 30.0,
-) -> dict[str, Any]:
-    """Read OOB get_state through the debug receiver without requiring HTTP."""
-
-    package_name = str(
-        os.environ.get("OMNIFLOW_OOB_PACKAGE") or "cn.com.omnimind.bot.debug"
-    ).strip()
-    receiver = str(
-        os.environ.get("OMNIFLOW_OOB_GET_STATE_RECEIVER") or ".DebugGetStateReceiver"
-    ).strip()
-    component = (
-        f"{package_name}/{receiver}"
-        if receiver.startswith(".")
-        else receiver
-        if "/" in receiver
-        else f"{package_name}/.{receiver}"
-    )
-    result_path = "files/debug-get-state-result.json"
-    commands: list[dict[str, Any]] = []
-    clear_result = _run_adb_command(
-        adb_serial=adb_serial,
-        adb_path=adb_path,
-        adb_args=["shell", "run-as", package_name, "rm", "-f", result_path],
-        timeout_sec=10,
-    )
-    commands.append(clear_result)
-    broadcast_result = _run_adb_command(
-        adb_serial=adb_serial,
-        adb_path=adb_path,
-        adb_args=[
-            "shell",
-            "am",
-            "broadcast",
-            "-a",
-            f"{package_name}.RUN_GET_STATE",
-            "-n",
-            component,
-            "--ez",
-            "includeXml",
-            "true",
-            "--ez",
-            "includeScreenshot",
-            "true" if include_screenshot else "false",
-            "--ez",
-            "includeIndexedContext",
-            "false",
-            "--ei",
-            "maxXmlChars",
-            str(max(0, int(max_xml_chars))),
-        ],
-        timeout_sec=30,
-    )
-    commands.append(broadcast_result)
-    if broadcast_result["returncode"] != 0:
-        return {
-            "success": False,
-            "error": "OOB debug get_state broadcast failed",
-            "commands": commands,
-        }
-    deadline = time.monotonic() + max(1.0, float(timeout_sec))
-    last_error = ""
-    while time.monotonic() < deadline:
-        read_result = _run_adb_command(
-            adb_serial=adb_serial,
-            adb_path=adb_path,
-            adb_args=["shell", "run-as", package_name, "cat", result_path],
-            timeout_sec=10,
-            capture_stdout=True,
-        )
-        stdout = str(read_result.get("stdout") or "").strip()
-        if read_result["returncode"] == 0 and stdout:
-            try:
-                decoded = json.loads(stdout)
-            except json.JSONDecodeError as exc:
-                return {
-                    "success": False,
-                    "error": f"OOB debug get_state returned invalid JSON: {exc}",
-                    "raw_tail": stdout[-1000:],
-                    "commands": [*commands, read_result],
-                }
-            if isinstance(decoded, dict):
-                decoded.setdefault("commands", [*commands, read_result])
-                return normalize_oob_get_state_payload(decoded)
-            return {
-                "success": False,
-                "error": "OOB debug get_state returned non-object JSON",
-                "commands": [*commands, read_result],
-            }
-        last_error = str(
-            read_result.get("stderr_tail") or read_result.get("stdout_tail") or ""
-        ).strip()
-        time.sleep(0.5)
-    return {
-        "success": False,
-        "error": "OOB debug get_state result was not written: " + last_error[-500:],
-        "commands": commands,
-    }
-
-
-def _oob_payload_int(
-    payload: dict[str, Any],
-    keys: tuple[str, ...],
-    *,
-    default: int,
-) -> int:
-    for key in keys:
-        try:
-            value = int(payload.get(key) or 0)
-        except (TypeError, ValueError):
-            value = 0
-        if value > 0:
-            return value
-    return max(1, int(default or 1))
-
-
-def _oob_payload_blank_pixels(payload: dict[str, Any]) -> Any:
-    try:
-        import numpy as np  # type: ignore
-
-        width = _oob_payload_int(
-            payload,
-            ("display_width", "xml_display_width", "width"),
-            default=1,
-        )
-        height = _oob_payload_int(
-            payload,
-            ("display_height", "xml_display_height", "height"),
-            default=1,
-        )
-        return np.zeros((height, width, 3), dtype=np.uint8)
-    except Exception:
-        return None
-
-
-def _oob_payload_pixels(payload: dict[str, Any]) -> Any:
-    screenshot = payload.get("screenshot")
-    if isinstance(screenshot, dict):
-        encoded = (
-            screenshot.get("data")
-            or screenshot.get("data_uri")
-            or screenshot.get("dataUri")
-            or screenshot.get("image_base64")
-        )
-    else:
-        encoded = screenshot if isinstance(screenshot, str) else ""
-    if isinstance(encoded, str) and encoded.strip():
-        raw = encoded.strip()
-        if raw.startswith("data:image/") and "," in raw:
-            raw = raw.split(",", 1)[1]
-        try:
-            import numpy as np  # type: ignore
-            from PIL import Image
-
-            image = Image.open(io.BytesIO(base64.b64decode(raw, validate=False))).convert(
-                "RGB"
-            )
-            return np.asarray(image)
-        except Exception as exc:  # noqa: BLE001
-            logging.warning("OOB AndroidWorld screenshot decode failed: %s", exc)
-    return _oob_payload_blank_pixels(payload)
-
-
-def _read_oob_androidworld_state(
-    *,
-    oob_url: str,
-    adb_serial: str = "",
-    adb_path: str = "",
-) -> Any | None:
-    """Read one AndroidWorld-like state from OOB /get_state."""
-
-    try:
-        from android_world.env import representation_utils
-
-        if oob_url:
-            query = urllib.parse.urlencode(
-                {
-                    "includeXml": "true",
-                    "includeScreenshot": "true",
-                    "includeIndexedContext": "false",
-                    "maxXmlChars": "200000",
-                    "filterOverlay": "true",
-                }
-            )
-            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-            with opener.open(f"{oob_url}/get_state?{query}", timeout=10) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        else:
-            payload = _read_oob_debug_get_state_payload(
-                adb_serial=(
-                    str(adb_serial or os.environ.get("ANDROID_SERIAL") or "").strip()
-                ),
-                adb_path=adb_path,
-                max_xml_chars=200000,
-                include_screenshot=True,
-            )
-            if not _oob_state_has_visible_page(payload):
-                logging.warning("OOB AndroidWorld state proxy failed: %s", payload)
-                return None
-        payload = normalize_oob_get_state_payload(payload)
-        xml_text = str(payload.get("xml") or "").strip()
-        ui_elements = (
-            list(representation_utils.xml_dump_to_ui_elements(xml_text) or [])
-            if xml_text
-            else []
-        )
-        return types.SimpleNamespace(
-            pixels=_oob_payload_pixels(payload),
-            forest=None,
-            ui_elements=ui_elements,
-            auxiliaries={},
-            xml=xml_text,
-            activity_name=str(payload.get("activity_name") or ""),
-            package_name=str(payload.get("package_name") or ""),
-            raw_state=payload,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logging.warning("OOB AndroidWorld state proxy failed: %s", exc)
-        return None
-
-
-def _use_oob_observe_backend() -> bool:
-    return False
-
-
-def _agent_uses_oob_observation(agent: Any) -> bool:
-    del agent
-    return False
-
-
-def _check_oob_http_state_ready(
-    *,
-    oob_url: str,
-    port: int,
-    run_adb: Any,
-    diagnostics: dict[str, Any],
-    state_attempts: int = 120,
-) -> dict[str, Any]:
-    """Check the OOB local HTTP host using the same observe path as online runs."""
-
-    if port > 0:
-        run_adb("forward", "--remove", f"tcp:{port}")
-        run_adb("forward", f"tcp:{port}", f"tcp:{port}")
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    last_error = ""
-    for _ in range(20):
-        try:
-            with opener.open(f"{oob_url}/health", timeout=3) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            if payload.get("success") is True:
-                diagnostics["health"] = payload
-                break
-            last_error = json.dumps(payload, ensure_ascii=False)
-        except Exception as exc:  # noqa: BLE001
-            last_error = f"{exc.__class__.__name__}: {exc}"
-        time.sleep(0.5)
-    else:
-        diagnostics["error"] = last_error or "OOB health check did not succeed"
-        return diagnostics
-    state_query = urllib.parse.urlencode(
-        {
-            "includeXml": "true",
-            "includeScreenshot": "false",
-            "maxXmlChars": "1000",
-            "filterOverlay": "true",
-        }
-    )
-    for attempt in range(max(1, int(state_attempts))):
-        try:
-            with opener.open(f"{oob_url}/get_state?{state_query}", timeout=5) as response:
-                state_payload = json.loads(response.read().decode("utf-8"))
-            state_payload = normalize_oob_get_state_payload(state_payload)
-            if _oob_state_has_visible_page(state_payload):
-                diagnostics["success"] = True
-                diagnostics["state_ready"] = {
-                    "package_name": state_payload.get("package_name"),
-                    "activity_name": state_payload.get("activity_name"),
-                    "xml_chars": state_payload.get("xml_chars"),
-                }
-                return diagnostics
-            last_error = str(state_payload.get("error") or state_payload)
-        except Exception as exc:  # noqa: BLE001
-            last_error = f"{exc.__class__.__name__}: {exc}"
-        diagnostics["state_ready_attempts"] = attempt + 1
-        diagnostics["state_ready_last_error"] = last_error[-1000:]
-        time.sleep(0.5)
-    diagnostics["error"] = last_error or "OOB get_state readiness check did not succeed"
-    return diagnostics
-
-
-def _ensure_oob_http_state_ready_after_task_init(
-    *,
-    oob_url: str,
-    adb_serial: str,
-    console_port: int,
-    adb_path: str = "",
-    attempts: int = 20,
-) -> dict[str, Any]:
-    """Wait for OOB /get_state after AndroidWorld task init without changing UI.
-
-    This deliberately does not launch or force-stop the OOB app. It only restores
-    adb forward and waits for the current task page to be observable, so the
-    AndroidWorld reset/initialize screen is not disturbed.
-    """
-
-    raw_url = str(oob_url or "").strip().rstrip("/")
-    diagnostics: dict[str, Any] = {
-        "success": False,
-        "url": raw_url or None,
-        "adb_serial": adb_serial or None,
-        "mode": "post_task_init_oob_http_ready_check",
-    }
-    if not raw_url:
-        diagnostics["error"] = "missing_oob_device_url"
-        return diagnostics
-    parsed = urllib.parse.urlparse(raw_url)
-    port = int(parsed.port or 0)
-    if port <= 0:
-        port = 8910
-    adb = str(adb_path or _default_adb_path() or "adb").strip() or "adb"
-
-    def run_adb(*parts: str) -> dict[str, Any]:
-        command = [adb]
-        if adb_serial:
-            command.extend(["-s", adb_serial])
-        command.extend(parts)
-        completed = subprocess.run(
-            command,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-            timeout=15,
-        )
-        return {
-            "command": command,
-            "returncode": completed.returncode,
-            "stdout_tail": completed.stdout[-1000:],
-            "stderr_tail": completed.stderr[-1000:],
-        }
-
-    try:
-        diagnostics["forward_remove"] = run_adb("forward", "--remove", f"tcp:{port}")
-        diagnostics["forward"] = run_adb("forward", f"tcp:{port}", f"tcp:{port}")
-        return _check_oob_http_state_ready(
-            oob_url=raw_url,
-            port=0,
-            run_adb=run_adb,
-            diagnostics=diagnostics,
-            state_attempts=max(1, int(attempts)),
-        )
-    except Exception as exc:  # noqa: BLE001
-        diagnostics["error"] = f"{exc.__class__.__name__}: {exc}"
-        return diagnostics
-
-
-def _prepare_oob_device_host_for_replay(
-    *,
-    adb_serial: str,
-    adb_path: str = "",
-) -> dict[str, Any]:
-    """Restore OOB observe/act host immediately before Function replay."""
-
-    oob_url = str(os.environ.get("OMNIFLOW_OOB_DEVICE_URL") or "").strip().rstrip("/")
-    parsed = urllib.parse.urlparse(oob_url)
-    port = int(parsed.port or 0)
-    package_name = str(os.environ.get("OMNIFLOW_OOB_PACKAGE") or "cn.com.omnimind.bot.debug").strip()
-    activity = str(
-        os.environ.get("OMNIFLOW_OOB_ACTIVITY")
-        or "cn.com.omnimind.bot.activity.LauncherActivity"
-    ).strip()
-    service = str(
-        os.environ.get("OMNIFLOW_OOB_ACCESSIBILITY_SERVICE")
-        or f"{package_name}/com.google.android.accessibility.selecttospeak.SelectToSpeakService"
-    ).strip()
-    adb = str(adb_path or _default_adb_path() or "adb").strip() or "adb"
-    diagnostics: dict[str, Any] = {
-        "enabled": True,
-        "url": oob_url or None,
-        "adb_serial": adb_serial or None,
-        "package_name": package_name,
-        "accessibility_service": service,
-        "success": False,
-        "commands": [],
-    }
-
-    def run_adb(
-        *parts: str,
-        tolerate_timeout: bool = False,
-    ) -> dict[str, Any]:
-        command = [adb]
-        if adb_serial:
-            command.extend(["-s", adb_serial])
-        command.extend(parts)
-        try:
-            completed = subprocess.run(
-                command,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=False,
-                timeout=15,
-            )
-        except subprocess.TimeoutExpired as exc:
-            stdout = (
-                exc.stdout.decode("utf-8", errors="replace")
-                if isinstance(exc.stdout, bytes)
-                else str(exc.stdout or "")
-            )
-            stderr = (
-                exc.stderr.decode("utf-8", errors="replace")
-                if isinstance(exc.stderr, bytes)
-                else str(exc.stderr or "")
-            )
-            record = {
-                "command": command,
-                "returncode": 124,
-                "stdout_tail": stdout[-1000:],
-                "stderr_tail": stderr[-1000:],
-                "timed_out": True,
-                "timeout_sec": 15,
-            }
-            diagnostics["commands"].append(record)
-            if not tolerate_timeout:
-                raise
-            return {**record, "stdout": stdout, "stderr": stderr}
-        record = {
-            "command": command,
-            "returncode": completed.returncode,
-            "stdout_tail": completed.stdout[-1000:],
-            "stderr_tail": completed.stderr[-1000:],
-        }
-        diagnostics["commands"].append(record)
-        return {**record, "stdout": completed.stdout, "stderr": completed.stderr}
-
-    try:
-        current_services_result = run_adb(
-            "shell",
-            "settings",
-            "get",
-            "secure",
-            "enabled_accessibility_services",
-        )
-        enabled_services = [
-            item
-            for item in str(current_services_result.get("stdout") or "").strip().split(":")
-            if item and item != "null"
-        ]
-        if service not in enabled_services:
-            enabled_services.append(service)
-        merged_services = ":".join(enabled_services)
-        diagnostics["enabled_accessibility_services"] = enabled_services
-        run_adb(
-            "shell",
-            "settings",
-            "put",
-            "secure",
-            "enabled_accessibility_services",
-            merged_services,
-        )
-        run_adb("shell", "settings", "put", "secure", "accessibility_enabled", "1")
-        if oob_url:
-            preflight = _check_oob_http_state_ready(
-                oob_url=oob_url,
-                port=port,
-                run_adb=run_adb,
-                diagnostics=diagnostics,
-                state_attempts=6,
-            )
-            diagnostics["preflight_state_ready"] = {
-                key: value for key, value in preflight.items() if key != "commands"
-            }
-            if preflight.get("success") is True:
-                diagnostics["reused_ready_host"] = True
-                diagnostics["success"] = True
-                return diagnostics
-            diagnostics.pop("error", None)
-            if package_name and activity:
-                run_adb("shell", "am", "start", "-n", f"{package_name}/{activity}")
-                time.sleep(2.0)
-                post_start = _check_oob_http_state_ready(
-                    oob_url=oob_url,
-                    port=port,
-                    run_adb=run_adb,
-                    diagnostics=diagnostics,
-                    state_attempts=12,
-                )
-                diagnostics["post_start_state_ready"] = {
-                    key: value for key, value in post_start.items() if key != "commands"
-                }
-                if post_start.get("success") is True:
-                    diagnostics["started_existing_host"] = True
-                    diagnostics["success"] = True
-                    return diagnostics
-                diagnostics.pop("error", None)
-            if package_name:
-                diagnostics["restart_after_state_ready_failure"] = True
-                run_adb("shell", "am", "force-stop", package_name)
-                time.sleep(1.0)
-        else:
-            run_adb("shell", "am", "force-stop", package_name)
-        last_dumpsys = ""
-        last_bound_debug: dict[str, Any] = {}
-        for bind_attempt in range(3):
-            diagnostics["bind_attempt"] = bind_attempt + 1
-            if bind_attempt > 0:
-                run_adb("shell", "settings", "put", "secure", "accessibility_enabled", "0")
-                time.sleep(0.5)
-            run_adb(
-                "shell",
-                "settings",
-                "put",
-                "secure",
-                "enabled_accessibility_services",
-                merged_services,
-            )
-            run_adb("shell", "settings", "put", "secure", "accessibility_enabled", "1")
-            if package_name and activity:
-                run_adb("shell", "am", "start", "-n", f"{package_name}/{activity}")
-                time.sleep(1.0)
-            for _ in range(16):
-                dumpsys = run_adb("shell", "dumpsys", "accessibility")
-                last_dumpsys = str(dumpsys.get("stdout") or "")
-                bound, bound_debug = _accessibility_bound_to_oob(
-                    dumpsys=last_dumpsys,
-                    package_name=package_name,
-                    service=service,
-                )
-                last_bound_debug = bound_debug
-                diagnostics["accessibility_bound_debug"] = bound_debug
-                if bound:
-                    diagnostics["accessibility_bound"] = True
-                    break
-                time.sleep(0.5)
-            if diagnostics.get("accessibility_bound") is True:
-                break
-            if not oob_url:
-                run_adb("shell", "am", "force-stop", package_name)
-            time.sleep(0.5)
-        else:
-            diagnostics["accessibility_bound"] = False
-            bind_error = (
-                "OOB accessibility service did not bind before replay; "
-                f"enabled_service={service}; bound_debug={last_bound_debug}; "
-                f"dumpsys_tail={last_dumpsys[-1000:]}"
-            )
-            diagnostics["accessibility_bound_warning"] = bind_error
-            if not oob_url:
-                diagnostics["error"] = bind_error
-                return diagnostics
-        if package_name and activity:
-            run_adb(
-                "shell",
-                "am",
-                "start",
-                "-a",
-                "android.intent.action.MAIN",
-                "-c",
-                "android.intent.category.HOME",
-            )
-            time.sleep(0.5)
-        if oob_url:
-            ready_attempts = int(
-                float(os.environ.get("OMNIFLOW_OOB_READY_ATTEMPTS") or "240")
-            )
-            return _check_oob_http_state_ready(
-                oob_url=oob_url,
-                port=port,
-                run_adb=run_adb,
-                diagnostics=diagnostics,
-                state_attempts=ready_attempts,
-            )
-        get_state_receiver = str(
-            os.environ.get("OMNIFLOW_OOB_GET_STATE_RECEIVER") or ".DebugGetStateReceiver"
-        ).strip()
-        get_state_component = (
-            f"{package_name}/{get_state_receiver}"
-            if get_state_receiver.startswith(".")
-            else get_state_receiver
-            if "/" in get_state_receiver
-            else f"{package_name}/.{get_state_receiver}"
-        )
-        state_result_path = "files/debug-get-state-result.json"
-        run_adb("shell", "run-as", package_name, "rm", "-f", state_result_path)
-        def request_debug_state() -> None:
-            run_adb(
-                "shell",
-                "am",
-                "broadcast",
-                "-a",
-                f"{package_name}.RUN_GET_STATE",
-                "-n",
-                get_state_component,
-                "--ez",
-                "includeXml",
-                "true",
-                "--ez",
-                "includeScreenshot",
-                "false",
-                "--ei",
-                "maxXmlChars",
-                "1000",
-                tolerate_timeout=True,
-            )
-            diagnostics["debug_get_state_broadcasts"] = int(
-                diagnostics.get("debug_get_state_broadcasts") or 0
-            ) + 1
-
-        request_debug_state()
-        last_state_error = ""
-        for state_attempt in range(120):
-            if state_attempt > 0 and state_attempt % 20 == 0:
-                request_debug_state()
-            state_file = run_adb(
-                "shell",
-                "run-as",
-                package_name,
-                "cat",
-                state_result_path,
-            )
-            stdout = str(state_file.get("stdout") or "").strip()
-            if state_file["returncode"] == 0 and stdout:
-                try:
-                    state_payload = json.loads(stdout)
-                except json.JSONDecodeError as exc:
-                    last_state_error = f"invalid get_state json: {exc}"
-                else:
-                    state_payload = normalize_oob_get_state_payload(state_payload)
-                    diagnostics["app_state_ready"] = {
-                        "success": bool(state_payload.get("success")),
-                        "package_name": state_payload.get("package_name"),
-                        "activity_name": state_payload.get("activity_name"),
-                        "xml_chars": state_payload.get("xml_chars"),
-                        "error": state_payload.get("error_message")
-                        or state_payload.get("error"),
-                    }
-                    if _oob_state_has_visible_page(state_payload):
-                        break
-                    last_state_error = str(
-                        state_payload.get("error_message")
-                        or state_payload.get("error")
-                        or diagnostics["app_state_ready"]
-                        or state_payload
-                    )
-            else:
-                last_state_error = str(
-                    state_file.get("stderr")
-                    or state_file.get("stdout")
-                    or state_file.get("stderr_tail")
-                    or state_file.get("stdout_tail")
-                    or ""
-                ).strip()
-            time.sleep(0.5)
-        else:
-            diagnostics["error"] = (
-                "OOB app get_state did not become ready before replay; "
-                f"receiver={get_state_component}; last_error={last_state_error[-1000:]}"
-            )
-            return diagnostics
-        diagnostics["success"] = True
-        return diagnostics
-    except Exception as exc:  # noqa: BLE001
-        diagnostics["error"] = f"{exc.__class__.__name__}: {exc}"
-        return diagnostics
-
-
 def _add_android_world_path(android_world_root: Path) -> None:
     root = str(android_world_root.resolve())
     if root not in sys.path:
@@ -1947,77 +1191,6 @@ def _rehydrate_task_params(
     return hydrated
 
 
-def _patch_androidworld_create_file_diagnostics(
-    *,
-    file_validators: Any,
-    file_utils: Any,
-    adb_utils: Any,
-) -> Any:
-    """Log CreateFile validator inputs and observed device files.
-
-    This does not change AndroidWorld scoring. It only makes episode failures
-    inspectable when the official validator returns 0 without
-    surfacing whether the file was missing or content mismatched.
-    """
-
-    create_file_cls = getattr(file_validators, "CreateFile", None)
-    original = getattr(create_file_cls, "is_successful", None)
-    if create_file_cls is None or not callable(original):
-        return None
-    if getattr(create_file_cls, "_omniflow_diagnostics_patched", False):
-        return original
-
-    def _diagnostic_is_successful(self: Any, env: Any) -> float:
-        params = getattr(self, "params", {}) or {}
-        data_directory = str(getattr(self, "data_directory", "") or "")
-        file_name = str(params.get("file_name") or "")
-        expected_text = str(params.get("text") or "")
-        diagnostics: dict[str, Any] = {
-            "validator": "CreateFile",
-            "data_directory": data_directory,
-            "file_name": file_name,
-            "expected_text": expected_text,
-        }
-        try:
-            full_path = file_utils.convert_to_posix_path(data_directory, file_name)
-            diagnostics["full_path"] = full_path
-            diagnostics["exists_before_score"] = file_utils.check_file_or_folder_exists(
-                file_name,
-                data_directory,
-                env.controller,
-            )
-            tree = adb_utils.issue_generic_request(
-                ["shell", "find", data_directory, "-maxdepth", "3", "-print"],
-                env.controller,
-            )
-            diagnostics["tree_status"] = bool(getattr(tree, "status", False))
-            diagnostics["tree_tail"] = (
-                tree.generic.output.decode(errors="replace").replace("\r", "")[-4000:]
-            )
-            if diagnostics["exists_before_score"]:
-                content = adb_utils.issue_generic_request(
-                    ["shell", "cat", full_path],
-                    env.controller,
-                )
-                diagnostics["cat_status"] = bool(getattr(content, "status", False))
-                diagnostics["content"] = (
-                    content.generic.output.decode(errors="replace").replace("\r", "")
-                )
-        except Exception as exc:  # noqa: BLE001
-            diagnostics["diagnostic_error"] = f"{exc.__class__.__name__}: {exc}"
-        score = float(original(self, env))
-        diagnostics["score"] = score
-        print(
-            "[omniflow-validator-diagnostic] "
-            + json.dumps(to_serializable(diagnostics), ensure_ascii=False)
-        )
-        return score
-
-    create_file_cls.is_successful = _diagnostic_is_successful
-    create_file_cls._omniflow_diagnostics_patched = True
-    return original
-
-
 def _assert_existing_emulator_ready(
     *,
     console_port: int,
@@ -2120,382 +1293,6 @@ def _assert_existing_emulator_ready(
         ) from exc
 
 
-def _native_androidworld_a11y_method(android_world_controller: Any) -> Any:
-    return android_world_controller.A11yMethod.A11Y_FORWARDER_APP
-
-
-def _androidworld_a11y_method_for_agent(
-    android_world_controller: Any,
-    *,
-    native_appagent: bool,
-) -> Any:
-    if native_appagent:
-        return android_world_controller.A11yMethod.UIAUTOMATOR
-    return _native_androidworld_a11y_method(android_world_controller)
-
-
-def _patch_androidworld_ui_debug_settings(
-    android_world_controller: Any,
-) -> Any | None:
-    loader = getattr(android_world_controller, "loader", None)
-    device_settings_module = getattr(loader, "device_settings_lib", None)
-    device_settings_class = getattr(
-        device_settings_module,
-        "DeviceSettings",
-        None,
-    )
-    original_update = getattr(device_settings_class, "update", None)
-    if not callable(original_update):
-        return None
-    if bool(
-        getattr(
-            device_settings_class,
-            "_omniflow_ui_debug_settings_patch",
-            False,
-        )
-    ):
-        return None
-
-    def _update_without_ui_debug_overlays(self, config):
-        if not hasattr(config, "show_pointer_location") or not hasattr(
-            config,
-            "show_touches",
-        ):
-            raise RuntimeError("androidworld_device_settings_config_missing")
-        config.show_pointer_location = False
-        config.show_touches = False
-        return original_update(self, config)
-
-    device_settings_class.update = _update_without_ui_debug_overlays
-    device_settings_class._omniflow_ui_debug_settings_patch = True
-    return original_update
-
-
-def _wrap_task_initialize_for_observation_runtime(
-    task: Any,
-    *,
-    agent: Any,
-    adb_serial: str,
-    adb_path: str,
-    oob_url: str,
-    console_port: int,
-    restore_app_snapshot: Any | None = None,
-    after_initialized: Any | None = None,
-) -> None:
-    original_initialize_task = getattr(task, "initialize_task", None)
-    if not callable(original_initialize_task) or bool(
-        getattr(task, "_omniflow_observation_runtime_wrapped", False)
-    ):
-        return
-
-    def _initialize_task_with_ready_runtime(init_env, *init_args, **init_kwargs):
-        uses_oob_observe = (
-            _use_oob_observe_backend() or _agent_uses_oob_observation(agent)
-        )
-        if uses_oob_observe:
-            pre_init_prepare = _prepare_oob_device_host_for_replay(
-                adb_serial=adb_serial,
-                adb_path=adb_path,
-            )
-            if not bool(pre_init_prepare.get("success")):
-                raise RuntimeError(
-                    "OOB /get_state not ready before task init: "
-                    + str(pre_init_prepare.get("error") or pre_init_prepare)
-                )
-        initialized = original_initialize_task(
-            init_env,
-            *init_args,
-            **init_kwargs,
-        )
-        if callable(restore_app_snapshot):
-            restore_task_app_snapshots_after_initialize(
-                restore_app_snapshot,
-                task,
-                init_env,
-            )
-        if callable(after_initialized):
-            after_initialized(task)
-        if uses_oob_observe:
-            oob_prepare = (
-                _ensure_oob_http_state_ready_after_task_init(
-                    oob_url=oob_url,
-                    adb_serial=adb_serial,
-                    adb_path=adb_path,
-                    console_port=console_port,
-                )
-                if oob_url
-                else _prepare_oob_device_host_for_replay(
-                    adb_serial=adb_serial,
-                    adb_path=adb_path,
-                )
-            )
-            if not bool(oob_prepare.get("success")):
-                raise RuntimeError(
-                    "OOB /get_state not ready after task init: "
-                    + str(oob_prepare.get("error") or oob_prepare)
-                )
-        return initialized
-
-    task.initialize_task = _initialize_task_with_ready_runtime
-    task._omniflow_observation_runtime_wrapped = True
-
-
-def _patch_androidworld_settings_get_output(adb_utils_module: Any) -> Any | None:
-    """Clean noisy adb output before AndroidWorld validators parse it."""
-
-    original_issue_generic_request = getattr(
-        adb_utils_module, "issue_generic_request", None
-    )
-    if not callable(original_issue_generic_request):
-        return None
-    if getattr(adb_utils_module, "_omniflow_settings_get_output_patch", False):
-        return None
-
-    def _is_android_env_noise_line(line: str) -> bool:
-        stripped = line.strip()
-        return (
-            "FD from fork parent still in poll list" in stripped
-            and re.match(r"^[IWEF]\d{4}\s+\d+", stripped) is not None
-        )
-
-    def _clean_adb_output(raw: bytes) -> bytes:
-        text = raw.decode("utf-8", errors="replace")
-        normalized = text.replace("\r", "")
-        lines = normalized.splitlines()
-        if not lines:
-            return raw
-        cleaned_lines = [
-            line
-            for line in lines
-            if not _is_android_env_noise_line(line)
-        ]
-        if cleaned_lines == lines:
-            return raw
-        cleaned = "\n".join(cleaned_lines)
-        if text.endswith("\n") and cleaned:
-            cleaned += "\n"
-        return cleaned.encode("utf-8")
-
-    def _patched_issue_generic_request(args, env, timeout_sec=None):
-        response = original_issue_generic_request(args, env, timeout_sec=timeout_sec)
-        try:
-            output = response.generic.output
-            cleaned = _clean_adb_output(bytes(output or b""))
-            if cleaned != output:
-                response.generic.output = cleaned
-        except Exception as exc:  # noqa: BLE001
-            logging.warning("Failed to clean AndroidWorld adb output: %s", exc)
-        return response
-
-    adb_utils_module.issue_generic_request = _patched_issue_generic_request
-    adb_utils_module._omniflow_settings_get_output_patch = True
-    return original_issue_generic_request
-
-
-def _patch_androidworld_empty_clear_directory(file_utils_module: Any) -> Any | None:
-    """Ignore AndroidWorld snapshot cleanup failures caused by empty app data dirs.
-
-    Args:
-        file_utils_module: Imported `android_world.utils.file_utils` module. The
-            helper patches `clear_directory(...)` in this launcher process only.
-
-    Returns:
-        The original `clear_directory` callable for later restoration, or
-        `None` when the module is already patched or does not expose it.
-    """
-
-    original_clear_directory = getattr(file_utils_module, "clear_directory", None)
-    if not callable(original_clear_directory):
-        return None
-    if getattr(file_utils_module, "_omniflow_empty_clear_directory_patch", False):
-        return None
-
-    def _safe_clear_directory(directory_path: str, env: object) -> None:
-        try:
-            original_clear_directory(directory_path, env)
-        except Exception as exc:
-            message = str(exc or "")
-            if "rm -r" in message and "No such file or directory" in message:
-                logging.warning(
-                    "AndroidWorld clear_directory ignored empty app data glob for %s: %s",
-                    directory_path,
-                    message,
-                )
-                return
-            raise
-
-    file_utils_module.clear_directory = _safe_clear_directory
-    file_utils_module._omniflow_empty_clear_directory_patch = True
-    return original_clear_directory
-
-
-def _maybe_patch_sqlite_backend() -> None:
-    backend = (
-        str(read_env_text("OMNIFLOW_ANDROIDWORLD_SQLITE_BACKEND") or "auto")
-        .strip()
-        .lower()
-    )
-    if backend not in {"auto", "pysqlite3"}:
-        return
-    try:
-        import pysqlite3.dbapi2 as sqlite3_backend
-    except Exception:
-        if backend == "pysqlite3":
-            raise
-        return
-    sys.modules["sqlite3"] = sqlite3_backend
-    print("[info] sqlite_backend=pysqlite3", file=sys.stderr)
-
-
-def _patch_androidworld_sqlite_writeback(sqlite_utils_module: Any) -> dict[str, Any] | None:
-    """Make AndroidWorld SQLite task setup write back the main DB file.
-
-    AndroidWorld pulls only the main SQLite file, mutates it locally, then
-    pushes only that file back to the device. Apps that use WAL can keep the
-    inserted rows in a local `-wal` file, so the pushed main DB remains empty
-    and task initialization later reports "Found 0 in DB". The patch keeps the
-    same AndroidWorld API but forces rollback-journal writes and removes stale
-    device sidecars before/after pushing the main DB.
-    """
-
-    if getattr(sqlite_utils_module, "_omniflow_sqlite_writeback_patch", False):
-        return None
-    original_delete = getattr(sqlite_utils_module, "delete_all_rows_from_table", None)
-    original_insert = getattr(sqlite_utils_module, "insert_rows_to_remote_db", None)
-    original_get_rows = getattr(sqlite_utils_module, "get_rows_from_remote_device", None)
-    if (
-        not callable(original_delete)
-        or not callable(original_insert)
-        or not callable(original_get_rows)
-    ):
-        return None
-
-    sqlite3_module = sqlite_utils_module.sqlite3
-    os_module = sqlite_utils_module.os
-    time_module = sqlite_utils_module.time
-    file_utils_module = sqlite_utils_module.file_utils
-    adb_utils_module = sqlite_utils_module.adb_utils
-    sqlite_schema_utils_module = sqlite_utils_module.sqlite_schema_utils
-
-    def _prepare_main_db_connection(local_db_path: str):
-        conn = sqlite3_module.connect(local_db_path)
-        try:
-            conn.execute("PRAGMA wal_checkpoint(FULL)")
-        except sqlite3_module.DatabaseError:
-            pass
-        try:
-            conn.execute("PRAGMA journal_mode=DELETE").fetchone()
-        except sqlite3_module.DatabaseError:
-            pass
-        return conn
-
-    def _remove_remote_sidecars(
-        remote_db_file_path: str,
-        env: object,
-        timeout_sec: float | None,
-    ) -> None:
-        try:
-            adb_utils_module.issue_generic_request(
-                [
-                    "shell",
-                    "rm",
-                    "-f",
-                    f"{remote_db_file_path}-wal",
-                    f"{remote_db_file_path}-shm",
-                ],
-                env.controller,
-                timeout_sec=timeout_sec,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logging.warning(
-                "Failed to remove remote SQLite sidecars for %s: %s",
-                remote_db_file_path,
-                exc,
-            )
-
-    def _patched_delete_all_rows_from_table(
-        table_name: str,
-        remote_db_file_path: str,
-        env: object,
-        app_name: str,
-        timeout_sec: float | None = None,
-    ) -> None:
-        try:
-            table_exists = sqlite_utils_module.table_exists(
-                table_name,
-                remote_db_file_path,
-                env,
-            )
-        except FileNotFoundError:
-            table_exists = False
-        if not table_exists:
-            adb_utils_module.launch_app(app_name, env.controller)
-            time_module.sleep(7.0)
-
-        with env.controller.pull_file(remote_db_file_path, timeout_sec) as local_db_directory:
-            local_db_path = file_utils_module.convert_to_posix_path(
-                local_db_directory, os_module.path.split(remote_db_file_path)[1]
-            )
-            conn = _prepare_main_db_connection(local_db_path)
-            cursor = conn.cursor()
-            cursor.execute(f"DELETE FROM {table_name}")
-            conn.commit()
-            conn.close()
-            _remove_remote_sidecars(remote_db_file_path, env, timeout_sec)
-            env.controller.push_file(local_db_path, remote_db_file_path, timeout_sec)
-            _remove_remote_sidecars(remote_db_file_path, env, timeout_sec)
-            adb_utils_module.close_app(app_name, env.controller)
-
-    def _patched_insert_rows_to_remote_db(
-        rows: list[Any],
-        exclude_key: str | None,
-        table_name: str,
-        remote_db_file_path: str,
-        app_name: str,
-        env: object,
-        timeout_sec: float | None = None,
-    ) -> None:
-        with env.controller.pull_file(remote_db_file_path, timeout_sec) as local_db_directory:
-            local_db_path = file_utils_module.convert_to_posix_path(
-                local_db_directory, os_module.path.split(remote_db_file_path)[1]
-            )
-            conn = _prepare_main_db_connection(local_db_path)
-            cursor = conn.cursor()
-            for row in rows:
-                insert_command, values = sqlite_schema_utils_module.insert_into_db(
-                    row, table_name, exclude_key
-                )
-                cursor.execute(insert_command, values)
-            conn.commit()
-            conn.close()
-            _remove_remote_sidecars(remote_db_file_path, env, timeout_sec)
-            env.controller.push_file(local_db_path, remote_db_file_path, timeout_sec)
-            _remove_remote_sidecars(remote_db_file_path, env, timeout_sec)
-            adb_utils_module.close_app(app_name, env.controller)
-
-    def _patched_get_rows_from_remote_device(*args: Any, **kwargs: Any) -> Any:
-        try:
-            return original_get_rows(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001
-            message = str(exc)
-            if not any(
-                suffix in message and "No such file or directory" in message
-                for suffix in ("-journal", "-wal", "-shm")
-            ):
-                raise
-            return original_get_rows(*args, **kwargs)
-
-    sqlite_utils_module.delete_all_rows_from_table = _patched_delete_all_rows_from_table
-    sqlite_utils_module.insert_rows_to_remote_db = _patched_insert_rows_to_remote_db
-    sqlite_utils_module.get_rows_from_remote_device = _patched_get_rows_from_remote_device
-    sqlite_utils_module._omniflow_sqlite_writeback_patch = True
-    return {
-        "delete_all_rows_from_table": original_delete,
-        "insert_rows_to_remote_db": original_insert,
-        "get_rows_from_remote_device": original_get_rows,
-    }
-
-
 def _is_pickleable(value: object) -> bool:
     try:
         pickle.dumps(value)
@@ -2574,64 +1371,6 @@ def _build_official_androidworld_agent(
     agent._omniflow_llm_usage_tracker = llm
     agent.name = resolved_name
     return agent
-
-
-def _run_adb_command(
-    *,
-    adb_serial: str,
-    adb_path: str,
-    adb_args: list[str],
-    timeout_sec: int = 60,
-    capture_stdout: bool = False,
-) -> dict[str, Any]:
-    command = [
-        os.path.expanduser(str(adb_path or "").strip()) or _default_adb_path() or "adb"
-    ]
-    if adb_serial:
-        command.extend(["-s", adb_serial])
-    command.extend(adb_args)
-    completed = subprocess.run(
-        command,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-        timeout=timeout_sec,
-    )
-    record = {
-        "command": command,
-        "returncode": completed.returncode,
-        "stdout_tail": str(completed.stdout or "")[-4000:],
-        "stderr_tail": str(completed.stderr or "")[-4000:],
-    }
-    if capture_stdout:
-        record["stdout"] = completed.stdout
-    return record
-
-
-def _close_android_system_dialogs(
-    *,
-    adb_serial: str,
-    adb_path: str,
-    failure: str,
-) -> dict[str, Any]:
-    result = _run_adb_command(
-        adb_serial=adb_serial,
-        adb_path=adb_path,
-        adb_args=[
-            "shell",
-            "am",
-            "broadcast",
-            "--async",
-            "-a",
-            "android.intent.action.CLOSE_SYSTEM_DIALOGS",
-        ],
-        timeout_sec=15,
-        capture_stdout=True,
-    )
-    if result["returncode"] != 0:
-        raise RuntimeError(failure)
-    return result
 
 
 def _read_raw_replay_run_log(path_text: str) -> dict[str, Any]:
@@ -3591,15 +2330,14 @@ def _raw_replay_observation_record(
 
 def _launch_raw_replay_app(
     app_identifier: str,
-    env: Any,
-    *,
-    host: Any | None = None,
+    host: Any,
 ) -> None:
     from android_world.env import adb_utils
 
     identifier = str(app_identifier or "").strip()
     if not identifier:
         raise ValueError("raw_replay_open_app_identifier_required")
+    env = host.env
     package_name = ""
     if "." in identifier:
         package_name = identifier
@@ -3619,10 +2357,6 @@ def _launch_raw_replay_app(
             package_name = str(
                 adb_utils.extract_package_name(activity) or ""
             ).strip()
-    adb_utils.close_app(identifier, env.controller)
-    if host is None:
-        adb_utils.launch_app(identifier, env.controller)
-        return
     action_args = (
         {"package_name": package_name}
         if package_name
@@ -3650,11 +2384,10 @@ def _apply_fixed_replay(
     state: dict[str, Any] = {"ran": False, "payload": None}
     replay_host = getattr(agent, "host", None)
     replay_observe = getattr(replay_host, "observe", None)
-    use_oob_observe = _use_oob_observe_backend()
     capture_native_observations = str(
         os.environ.get("OMNIFLOW_RAW_REPLAY_CAPTURE_OBSERVATIONS") or ""
     ).strip().lower() in {"1", "true", "yes", "on"}
-    capture_observations = use_oob_observe or capture_native_observations
+    capture_observations = capture_native_observations
     requires_selector_observations = any(
         isinstance(action.get("params"), dict)
         and isinstance(action["params"].get("selector"), dict)
@@ -3670,12 +2403,7 @@ def _apply_fixed_replay(
         state["ran"] = False
         state["payload"] = None
         if go_home:
-            from android_world.env import adb_utils
-
-            adb_utils.issue_generic_request(
-                ["shell", "input", "keyevent", "KEYCODE_HOME"],
-                agent.env.controller,
-            )
+            agent.env.reset(go_home=True)
 
     def _forced_set_max_steps(step_budget: int) -> None:
         del step_budget
@@ -3687,13 +2415,12 @@ def _apply_fixed_replay(
         *,
         target_size: tuple[int, int],
     ) -> None:
-        from android_world.env import actuation, json_action
+        from android_world.env import json_action
 
         if payload.get("action_type") == "raw_open_app":
             _launch_raw_replay_app(
                 str(payload["app_identifier"]),
-                agent.env,
-                host=agent.host,
+                agent.host,
             )
             return
         if payload.get("action_type") == "raw_wait":
@@ -3747,15 +2474,7 @@ def _apply_fixed_replay(
                 )
             return
         action = json_action.JSONAction(**payload)
-        if use_oob_observe:
-            actuation.execute_adb_action(
-                action,
-                [],
-                tuple(agent.env.logical_screen_size),
-                agent.env.controller,
-            )
-        else:
-            agent.env.execute_action(action)
+        agent.env.execute_action(action)
 
     def _forced_step(goal: str):
         goal_text = str(goal or "").strip()
@@ -3789,17 +2508,6 @@ def _apply_fixed_replay(
             )
         if len(target_size) != 2 or not target_size[0] or not target_size[1]:
             target_size = source_size or (1080, 2400)
-        oob_prepare: dict[str, Any] | None = None
-        if use_oob_observe:
-            oob_prepare = _prepare_oob_device_host_for_replay(
-                adb_serial=str(os.environ.get("ANDROID_SERIAL") or "").strip(),
-                adb_path=adb_path,
-            )
-            if not bool(oob_prepare.get("success")):
-                raise RuntimeError(
-                    "raw replay OOB preparation failed: "
-                    + str(oob_prepare.get("error") or oob_prepare)
-                )
         step_results: list[dict[str, Any]] = []
         completed = True
         error_text: str | None = None
@@ -4036,14 +2744,6 @@ def _apply_fixed_replay(
                                 int(target_size[0]),
                                 int(target_size[1]),
                             ],
-                            "oob_prepare": {
-                                "success": bool(oob_prepare.get("success")),
-                                "accessibility_bound": bool(
-                                    oob_prepare.get("accessibility_bound")
-                                ),
-                            }
-                            if oob_prepare is not None
-                            else None,
                             "step_results": step_results,
                             "final_observation": final_observation_record,
                             "final_observation_error": final_observation_error,
@@ -4324,10 +3024,6 @@ def _decode_task_params(
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
     selected_agent = str(args.agent or MODE_OMNIFLOW).strip() or MODE_OMNIFLOW
-    native_appagent = selected_agent in {
-        "external:appagent",
-        "external:appagent_teacher",
-    }
     if str(args.planner_provider or "").strip():
         os.environ["OMNIFLOW_PLANNER_PROVIDER"] = str(args.planner_provider).strip()
     if str(args.model or "").strip():
@@ -4336,9 +3032,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         os.environ["OMNIFLOW_PLANNER_TIMEOUT_SEC"] = str(
             float(args.planner_timeout_sec)
         )
-    os.environ.pop("OMNIFLOW_OOB_DEVICE_URL", None)
-    os.environ["OMNIFLOW_OBSERVE_BACKEND"] = "androidworld"
-    os.environ["OMNIFLOW_ACT_BACKEND"] = "androidworld"
     android_world_root = Path(args.android_world_root).expanduser().resolve()
     run_py = android_world_root / "run.py"
     if not run_py.exists():
@@ -4349,15 +3042,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     env = None
-    original_allocate_step_budget = None
-    original_run_task = None
-    original_get_controller = None
-    original_clear_directory = None
-    original_issue_generic_request = None
-    original_restore_snapshot = None
-    original_sqlite_writeback = None
     try:
-        _maybe_patch_sqlite_backend()
         _add_android_world_path(android_world_root)
 
         from android_world import checkpointer as checkpointer_lib
@@ -4382,282 +3067,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 EpisodeConstants=_EpisodeConstants,
             )
         from android_world import registry, suite_utils
-        from android_world.agents import m3a_utils
-        from android_world.env import android_world_controller, env_launcher
-        from android_world.env import tools as android_world_tools
-        from android_world.utils import datetime_utils
-        try:
-            from android_world.env.setup_device import setup as aw_setup
-        except ImportError as exc:
-            if "android_world.env.setup_device" not in str(exc):
-                raise
-            aw_setup = None
-
-        patch_androidworld_setup_click_retry(android_world_tools)
-        if aw_setup is not None:
-            patch_androidworld_legacy_apk_install(aw_setup)
-            patch_androidworld_vlc_apk_selection(aw_setup)
-            patch_androidworld_open_tracks_setup(aw_setup)
-            patch_androidworld_osmand_storage_setup(aw_setup)
-            patch_androidworld_setup_fail_closed(aw_setup)
-            patch_androidworld_special_storage_setup(aw_setup)
-
-        try:
-            from android_world.env import adb_utils
-        except ImportError:
-            adb_utils = None
-        if adb_utils is not None:
-            original_issue_generic_request = _patch_androidworld_settings_get_output(
-                adb_utils
-            )
-        try:
-            file_utils = importlib.import_module("android_world.utils.file_utils")
-        except ImportError as exc:
-            if "android_world.utils.file_utils" not in str(exc):
-                raise
-            file_utils = None
-        if file_utils is not None:
-            original_clear_directory = _patch_androidworld_empty_clear_directory(
-                file_utils
-            )
-        if file_utils is not None and adb_utils is not None:
-            file_validators = importlib.import_module(
-                "android_world.task_evals.common_validators.file_validators"
-            )
-            _patch_androidworld_create_file_diagnostics(
-                file_validators=file_validators,
-                file_utils=file_utils,
-                adb_utils=adb_utils,
-            )
-            sqlite_utils = importlib.import_module(
-                "android_world.task_evals.utils.sqlite_utils"
-            )
-            original_sqlite_writeback = _patch_androidworld_sqlite_writeback(
-                sqlite_utils
-            )
-        try:
-            app_snapshot = importlib.import_module("android_world.utils.app_snapshot")
-        except ImportError as exc:
-            if "android_world.utils.app_snapshot" not in str(exc):
-                raise
-            app_snapshot = None
-        if app_snapshot is not None and adb_utils is not None and not native_appagent:
-            original_restore_snapshot = getattr(app_snapshot, "restore_snapshot", None)
-            if callable(original_restore_snapshot):
-
-                def _restore_snapshot_or_clear_app_data(app_name: str, env: object) -> None:
-                    """Reset app state even when AndroidWorld has no saved snapshot.
-
-                    AndroidWorld's default behavior logs a missing snapshot and
-                    continues with whatever app DB happens to be on the device.
-                    That makes validator runs depend on prior tasks. Every
-                    normal episode needs the same reset contract, so a missing
-                    snapshot falls back to `pm clear` for the app under test.
-                    """
-
-                    try:
-                        original_restore_snapshot(app_name, env)
-                        return
-                    except RuntimeError as exc:
-                        if "Snapshot not found" not in str(exc):
-                            raise
-                        try:
-                            activity = adb_utils.get_adb_activity(app_name)
-                            package_name = adb_utils.extract_package_name(activity)
-                            result = adb_utils.issue_generic_request(
-                                ["shell", "pm", "clear", package_name],
-                                env,
-                            )
-                            check_ok = getattr(adb_utils, "check_ok", None)
-                            if callable(check_ok):
-                                check_ok(
-                                    result,
-                                    f"Failed to clear app data for {package_name}.",
-                                )
-                            logging.warning(
-                                "AndroidWorld snapshot missing for %s; cleared app data for %s.",
-                                app_name,
-                                package_name,
-                            )
-                        except Exception:
-                            logging.warning(
-                                "AndroidWorld snapshot missing for %s and app-data reset failed.",
-                                app_name,
-                                exc_info=True,
-                            )
-                            raise exc
-
-                app_snapshot.restore_snapshot = _restore_snapshot_or_clear_app_data
-
-        original_get_controller = None
-        if native_appagent:
-            original_get_controller = getattr(
-                android_world_controller, "get_controller", None
-            )
-
-            def _get_appagent_controller(
-                console_port: int = 5554,
-                adb_path: str = android_world_controller.DEFAULT_ADB_PATH,
-                grpc_port: int = 8554,
-                install_a11y_forwarding_app: bool = True,
-            ):
-                """Construct AppAgent's UIAutomator AndroidWorld controller.
-
-                Args:
-                    console_port: Emulator console port used by AndroidEnv.
-                    adb_path: Absolute or shell-resolved adb binary path.
-                    grpc_port: Emulator gRPC port paired with the console port.
-                    install_a11y_forwarding_app: Unused upstream compatibility flag.
-
-                Returns:
-                    An `AndroidWorldController` using AppAgent's UIAutomator
-                    observation mode.
-                """
-
-                effective_adb_path = adb_path
-                target_serial = str(
-                    os.environ.get("ANDROID_SERIAL")
-                    or f"emulator-{int(console_port)}"
-                ).strip()
-                real_adb_path = str(adb_path or _default_adb_path() or "adb")
-                if not target_serial.startswith("emulator-"):
-                    wrapper_path = (
-                        Path(os.environ.get("TMPDIR") or "/tmp")
-                        / f"omniflow_adb_{os.getpid()}_{target_serial}.sh"
-                    )
-                    wrapper_path.write_text(
-                        "#!/usr/bin/env bash\n"
-                        "set -e\n"
-                        f"REAL_ADB={json.dumps(real_adb_path)}\n"
-                        f"TARGET_SERIAL={json.dumps(target_serial)}\n"
-                        "args=()\n"
-                        "while [[ $# -gt 0 ]]; do\n"
-                        "  if [[ \"$1\" == \"-s\" && $# -gt 1 ]]; then\n"
-                        "    shift\n"
-                        "    if [[ \"$1\" == emulator-* ]]; then\n"
-                        "      args+=(\"-s\" \"$TARGET_SERIAL\")\n"
-                        "    else\n"
-                        "      args+=(\"-s\" \"$1\")\n"
-                        "    fi\n"
-                        "  else\n"
-                        "    args+=(\"$1\")\n"
-                        "  fi\n"
-                        "  shift\n"
-                        "done\n"
-                        "exec \"$REAL_ADB\" \"${args[@]}\"\n",
-                        encoding="utf-8",
-                    )
-                    wrapper_path.chmod(0o755)
-                    effective_adb_path = str(wrapper_path)
-                    logging.info(
-                        "Routing AndroidWorld adb commands to real device %s via %s",
-                        target_serial,
-                        effective_adb_path,
-                    )
-
-                config = android_world_controller.config_classes.AndroidEnvConfig(
-                    task=android_world_controller.config_classes.FilesystemTaskConfig(
-                        path=android_world_controller._write_default_task_proto()
-                    ),
-                    simulator=android_world_controller.config_classes.EmulatorConfig(
-                        emulator_launcher=android_world_controller.config_classes.EmulatorLauncherConfig(
-                            emulator_console_port=console_port,
-                            adb_port=console_port + 1,
-                            grpc_port=grpc_port,
-                        ),
-                        adb_controller=android_world_controller.config_classes.AdbControllerConfig(
-                            adb_path=effective_adb_path
-                        ),
-                    ),
-                )
-                android_env_instance = android_world_controller.loader.load(config)
-                logging.info("Setting up AndroidWorldController.")
-                controller_kwargs: dict[str, object] = {
-                    "install_a11y_forwarding_app": False,
-                    "a11y_method": _androidworld_a11y_method_for_agent(
-                        android_world_controller,
-                        native_appagent=True,
-                    ),
-                }
-                return android_world_controller.AndroidWorldController(
-                    android_env_instance,
-                    **controller_kwargs,
-                )
-
-            android_world_controller.get_controller = _get_appagent_controller
-
-        original_allocate_step_budget = getattr(
-            suite_utils, "_allocate_step_budget", None
-        )
-        fixed_max_steps = max(1, int(args.max_steps))
-        if callable(original_allocate_step_budget):
-            suite_utils._allocate_step_budget = lambda task_complexity: fixed_max_steps
-
-        original_set_datetime = datetime_utils.set_datetime
-        original_parse_reason_action_output = m3a_utils.parse_reason_action_output
-        enable_set_datetime = str(
-            read_env_text("OMNIFLOW_ANDROIDWORLD_SET_DATETIME") or "1"
-        ).strip().lower() in {"1", "true", "yes", "on"}
-        set_datetime_skip_logged = False
-
-        def _safe_set_datetime(controller: object, dt: object) -> None:
-            """Best-effort device time freeze for hosts that cannot set system time.
-
-            Args:
-                controller: AndroidWorld device controller.
-                dt: Target datetime requested by the task initializer.
-            """
-
-            nonlocal set_datetime_skip_logged
-            if not enable_set_datetime:
-                if not set_datetime_skip_logged:
-                    logger.info(
-                        "skip AndroidWorld set_datetime in unified test shell because OMNIFLOW_ANDROIDWORLD_SET_DATETIME is disabled."
-                    )
-                    set_datetime_skip_logged = True
-                return
-            try:
-                original_set_datetime(controller, dt)
-            except Exception as exc:  # noqa: BLE001
-                message = str(exc or "")
-                if "Operation not permitted" in message or "cannot set date" in message:
-                    logger.warning(
-                        "skip AndroidWorld set_datetime due to host/device permission: %s",
-                        message,
-                    )
-                    return
-                raise
-
-        datetime_utils.set_datetime = _safe_set_datetime
-
-        def _safe_parse_reason_action_output(
-            raw_reason_action_output: object,
-        ) -> tuple[str | None, str | None]:
-            """Keep official AndroidWorld agents from crashing on empty LLM actions.
-
-            Args:
-                raw_reason_action_output: Raw action-selection output returned by
-                    the upstream multimodal model wrapper. Some upstream paths
-                    occasionally hand back `None` or a non-string object.
-
-            Returns:
-                The usual `(reason, action_json)` tuple. Empty / non-string
-                outputs are converted into one explicit infeasible status so the
-                official baseline exits cleanly instead of throwing.
-            """
-
-            if isinstance(raw_reason_action_output, str):
-                return original_parse_reason_action_output(raw_reason_action_output)
-            logger.warning(
-                "AndroidWorld official agent produced non-string action output; coerce to explicit infeasible status: %r",
-                raw_reason_action_output,
-            )
-            return (
-                "Upstream AndroidWorld agent returned empty or non-string action output.",
-                '{"action_type": "status", "goal_status": "infeasible"}',
-            )
-
-        m3a_utils.parse_reason_action_output = _safe_parse_reason_action_output
+        from android_world.env import env_launcher
+        from android_world.env.setup_device import setup as aw_setup
         task_registry = registry.TaskRegistry()
         selected_task_names = [
             item.strip() for item in str(args.tasks).split(",") if item.strip()
@@ -4677,33 +3088,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "AndroidWorld setup_device module is required when "
                     "--perform-emulator-setup is set."
                 )
-            setup_app_list = resolve_androidworld_task_setup_apps(
-                aw_setup,
-                task_types=task_types,
-                task_suite=suite,
-                selected_task_names=selected_task_names,
-            )
+            setup_app_list = aw_setup.get_app_list_to_setup(selected_task_names)
 
-        target_adb_serial = str(
-            os.environ.get("ANDROID_SERIAL") or f"emulator-{int(args.console_port)}"
-        ).strip()
-        _patch_androidworld_ui_debug_settings(android_world_controller)
         env = env_launcher.load_and_setup_env(
             console_port=int(args.console_port),
             emulator_setup=False,
             adb_path=str(args.adb_path or ""),
             grpc_port=int(args.console_port) + 3000,
         )
-        if _use_oob_observe_backend():
-            oob_prepare = _prepare_oob_device_host_for_replay(
-                adb_serial=target_adb_serial,
-                adb_path=str(args.adb_path or ""),
-            )
-            if not bool(oob_prepare.get("success")):
-                raise RuntimeError(
-                    "OOB get_state not ready before AndroidWorld setup: "
-                    + str(oob_prepare.get("error") or oob_prepare)
-                )
         if bool(args.perform_emulator_setup):
             logger.info(
                 "Setting up AndroidWorld snapshots for selected tasks: %s",
@@ -4734,9 +3126,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             str(run_output_dir / "relocation_failures"),
         )
 
+        experiment_environment = AndroidWorldExperimentEnvironment(
+            env,
+            AndroidWorldEnvironmentConfig(evidence_root=run_output_dir),
+        )
+        recording_session = experiment_environment.install_episode_recorder()
         agent = _build_launch_agent(
             agent=str(args.agent or MODE_OMNIFLOW),
-            env=env,
+            env=recording_session.env,
             store_path=str(args.store_path or ""),
             adb_serial=str(
                 os.environ.get("ANDROID_SERIAL") or f"emulator-{int(args.console_port)}"
@@ -4756,11 +3153,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             task_seed=int(args.task_random_seed),
             evidence_root=str(run_output_dir),
         )
-        experiment_environment = AndroidWorldExperimentEnvironment(
-            env,
-            AndroidWorldEnvironmentConfig(evidence_root=run_output_dir),
-        )
-
         checkpoint_dir = (
             str(Path(args.checkpoint_dir).expanduser().resolve())
             if args.checkpoint_dir
@@ -4781,605 +3173,529 @@ def main(argv: Sequence[str] | None = None) -> int:
                 stale_output_path.unlink()
             except FileNotFoundError:
                 pass
-        original_run_task = getattr(suite_utils, "_run_task", None)
-        if callable(original_run_task):
-            official_goal_hint_text = ""
-            official_goal_hint_meta: dict[str, Any] | None = None
-            if selected_agent.startswith("official:"):
-                official_goal_hint_text, official_goal_hint_meta = (
-                    _load_official_agent_goal_hint(args.source_action_hint_path)
-                )
+        if len(selected_task_names) != 1 or int(args.n_task_combinations) != 1:
+            raise ValueError(
+                "AndroidWorld launcher requires exactly one task instance; "
+                "the unified script owns task-major scheduling."
+            )
+        task = suite[selected_task_names[0]][0]
+        task_name = str(getattr(task, "name", "") or "human_task")
+        goal_text = str(getattr(task, "goal", "") or task_name)
+        task_context: dict[str, Any] = {}
+        update_task_context = getattr(agent, "update_current_task_context", None)
+        if callable(update_task_context):
+            task_context = dict(update_task_context(task) or {})
+        set_current_task = getattr(agent, "set_current_task", None)
+        if callable(set_current_task):
+            set_current_task(task_name, goal_text, task_context)
 
-            def _wrapped_run_task(task, run_episode, env, demo_mode):
-                task_name = str(getattr(task, "name", "") or "human_task")
-                result: dict[str, Any] | None = None
-                goal_text = str(getattr(task, "goal", "") or getattr(task, "name", ""))
-                task_context: dict[str, Any] = {}
-                started_at = utc_now_iso()
-                started_perf = perf_counter()
-                recording_session = experiment_environment.install_episode_recorder(
-                    agent
-                )
-                episode_recorder = recording_session.recorder
-                episode_recorder_error = recording_session.error
-                official_llm_usage_before = (
-                    _get_agent_llm_usage(agent)
-                    if selected_agent.startswith("official:")
-                    or selected_agent == "external:appagent"
-                    else {}
-                )
-                try:
-                    set_current_task = getattr(agent, "set_current_task", None)
-                    if callable(set_current_task):
-                        if native_appagent:
-                            update_task_context = getattr(
-                                agent,
-                                "update_current_task_context",
-                                None,
-                            )
-                            if callable(update_task_context):
-                                task_context = dict(update_task_context(task) or {})
-                            set_current_task(task_name, goal_text, task_context)
-                        else:
-                            set_current_task(task_name, goal_text)
-                    def _update_context_after_initialize(initialized_task):
-                        update_task_context = getattr(
-                            agent,
-                            "update_current_task_context",
-                            None,
-                        )
-                        if not callable(update_task_context):
-                            return
-                        try:
-                            nonlocal task_context
-                            task_context = dict(
-                                update_task_context(initialized_task) or {}
-                            )
-                            reset_current_task = getattr(
-                                agent,
-                                "set_current_task",
-                                None,
-                            )
-                            if callable(reset_current_task):
-                                reset_current_task(
-                                    task_name,
-                                    goal_text,
-                                    task_context,
-                                )
-                        except Exception as exc:  # noqa: BLE001
-                            logging.warning(
-                                "Failed to update AndroidWorld task context: %s",
-                                exc,
-                            )
+        official_goal_hint_text = ""
+        official_goal_hint_meta: dict[str, Any] | None = None
+        if selected_agent.startswith("official:"):
+            official_goal_hint_text, official_goal_hint_meta = (
+                _load_official_agent_goal_hint(args.source_action_hint_path)
+            )
 
-                    task_adb_serial = str(
-                        os.environ.get("ANDROID_SERIAL")
-                        or f"emulator-{int(args.console_port)}"
-                    ).strip()
-                    _wrap_task_initialize_for_observation_runtime(
-                        task,
-                        agent=agent,
-                        adb_serial=task_adb_serial,
-                        adb_path=str(args.adb_path or ""),
-                        oob_url=str(
-                            os.environ.get("OMNIFLOW_OOB_DEVICE_URL") or ""
-                        ).strip().rstrip("/"),
-                        console_port=int(args.console_port),
-                        restore_app_snapshot=(
-                            None if native_appagent else original_restore_snapshot
-                        ),
-                        after_initialized=_update_context_after_initialize,
-                    )
-                    reference_text = official_goal_hint_text
-                    if reference_text:
-                        hinted_goal = f"{goal_text}\n\n{reference_text}"
-
-                        def _run_episode_with_goal_hint(episode_task):
-                            if episode_recorder is not None:
-                                recording_session.start_episode()
-                            return run_episode(_TaskGoalProxy(episode_task, hinted_goal))
-
-                        result = original_run_task(
-                            task,
-                            _run_episode_with_goal_hint,
-                            env,
-                            demo_mode,
-                        )
-                    else:
-                        def _recorded_run_episode(episode_task):
-                            if episode_recorder is not None:
-                                recording_session.start_episode()
-                            return run_episode(episode_task)
-
-                        result = original_run_task(
-                            task,
-                            _recorded_run_episode,
-                            env,
-                            demo_mode,
-                        )
-                    return result
-                finally:
+        episode_recorder = recording_session.recorder
+        episode_recorder_error = recording_session.error
+        official_llm_usage_before = (
+            _get_agent_llm_usage(agent)
+            if selected_agent.startswith("official:")
+            or selected_agent == "external:appagent"
+            else {}
+        )
+        started_at = utc_now_iso()
+        started_perf = perf_counter()
+        result: dict[str, Any] | None = None
+        mainline_name = selected_agent
+        instrumented_agent = _ExperimentAgentAdapter(
+            agent,
+            recording_session=recording_session,
+            goal_hint=official_goal_hint_text,
+        )
+        print(
+            "Starting official AndroidWorld runner with "
+            f"agent={mainline_name} and writing to {checkpoint_dir}"
+        )
+        try:
+            results = suite_utils.run(
+                suite,
+                instrumented_agent,
+                checkpointer=checkpointer,
+                demo_mode=False,
+                return_full_episode_data=True,
+            )
+            result = results[0] if results else None
+        finally:
+            try:
+                canonical_run = None
+                canonical_run_id = None
+                observation_evidence: list[dict[str, Any]] | None = None
+                task_success = False
+                validator_reward = 0.0
+                step_count = 0
+                error_text = None
+                if isinstance(result, dict):
                     try:
-                        canonical_run = None
-                        canonical_run_id = None
-                        observation_evidence: list[dict[str, Any]] | None = None
-                        task_success = False
-                        validator_reward = 0.0
-                        step_count = 0
-                        error_text = None
-                        if isinstance(result, dict):
-                            try:
-                                validator_reward = float(
-                                    result.get("is_successful") or 0.0
-                                )
-                                task_success = validator_reward > 0.5
-                            except Exception:
-                                validator_reward = 0.0
-                                task_success = False
-                            try:
-                                step_count = int(result.get("episode_length") or 0)
-                            except Exception:
-                                step_count = 0
-                            error_text = (
-                                str(
-                                    result.get("exception_info")
-                                    or result.get("error")
-                                    or ""
-                                ).strip()
-                                or None
-                            )
-                        official_validator_used = (
-                            _result_has_official_validator_conclusion(result)
+                        validator_reward = float(
+                            result.get("is_successful") or 0.0
                         )
-                        if (
-                            episode_recorder is not None
-                            and episode_recorder.episode_started
-                        ):
-                            runtime_result = getattr(
-                                getattr(agent, "host", None),
-                                "state",
-                                {},
+                        task_success = validator_reward > 0.5
+                    except Exception:
+                        validator_reward = 0.0
+                        task_success = False
+                    try:
+                        step_count = int(result.get("episode_length") or 0)
+                    except Exception:
+                        step_count = 0
+                    error_text = (
+                        str(
+                            result.get("exception_info")
+                            or result.get("error")
+                            or ""
+                        ).strip()
+                        or None
+                    )
+                official_validator_used = (
+                    _result_has_official_validator_conclusion(result)
+                )
+                if (
+                    episode_recorder is not None
+                    and episode_recorder.episode_started
+                ):
+                    runtime_result = getattr(
+                        getattr(agent, "host", None),
+                        "state",
+                        {},
+                    )
+                    runtime_result = (
+                        runtime_result.get("last_result")
+                        if isinstance(runtime_result, dict)
+                        else None
+                    )
+                    execution_summary = getattr(
+                        runtime_result,
+                        "execution_summary",
+                        None,
+                    )
+                    diagnostics = {
+                        "method": selected_agent,
+                        "official_validator_conclusion": bool(
+                            official_validator_used
+                        ),
+                        "done_reason": error_text or (
+                            "validator_success"
+                            if task_success
+                            else "validator_failure"
+                        ),
+                    }
+                    runtime_function_id = str(
+                        getattr(runtime_result, "function_id", "") or ""
+                    ).strip()
+                    if runtime_function_id:
+                        diagnostics["function_id"] = runtime_function_id
+                    if isinstance(execution_summary, dict):
+                        diagnostics["execution_summary"] = dict(
+                            execution_summary
+                        )
+                    execution_trace = _runtime_execution_trace(runtime_result)
+                    if execution_trace:
+                        diagnostics["execution_trace"] = execution_trace
+                    runtime_detail = getattr(runtime_result, "detail", None)
+                    function_resume = (
+                        runtime_detail.get("function_resume")
+                        if isinstance(runtime_detail, dict)
+                        else None
+                    )
+                    if isinstance(function_resume, dict):
+                        diagnostics["function_resume"] = dict(
+                            function_resume
+                        )
+                    canonical_run = recording_session.seal_run_log(
+                        task_name=task_name,
+                        goal=goal_text,
+                        task_parameters=(
+                            dict(task_context.get("task_parameters") or {})
+                            if isinstance(task_context, dict)
+                            else {}
+                        ),
+                        seed=int(args.task_random_seed),
+                        validator_official=official_validator_used,
+                        validator_success=task_success,
+                        validator_reward=validator_reward,
+                        diagnostics=diagnostics,
+                    )
+                    if canonical_run is not None:
+                        canonical_run_id = canonical_run["run_id"]
+                if episode_recorder is not None:
+                    observation_evidence = (
+                        recording_session.persist_observations()
+                    )
+                    episode_recorder_error = recording_session.error
+                mobilegpt_agent_result: dict[str, Any] = {}
+                mobilegpt_agent_error = ""
+                runtime_integrity_error = None
+                if selected_agent == "external:mobilegpt":
+                    raw_agent_result = getattr(
+                        agent,
+                        "last_result_data",
+                        None,
+                    )
+                    if isinstance(raw_agent_result, dict):
+                        mobilegpt_agent_result = dict(raw_agent_result)
+                        mobilegpt_agent_error = str(
+                            mobilegpt_agent_result.get("error") or ""
+                        ).strip()
+                        runtime_integrity_error = (
+                            _mobilegpt_runtime_integrity_error(
+                                mobilegpt_agent_error
                             )
-                            runtime_result = (
-                                runtime_result.get("last_result")
-                                if isinstance(runtime_result, dict)
-                                else None
+                        )
+                        if runtime_integrity_error:
+                            error_text = runtime_integrity_error
+                if canonical_run is not None:
+                    try:
+                        canonical_function_step_count = int(
+                            canonical_run.get("function_step_count")
+                            or canonical_run.get("actions_executed")
+                            or 0
+                        )
+                    except Exception:
+                        canonical_function_step_count = 0
+                    try:
+                        canonical_step_count = int(
+                            canonical_run.get("step_count")
+                            or canonical_run.get("steps_count")
+                            or len(list(canonical_run.get("steps") or []))
+                        )
+                    except Exception:
+                        canonical_step_count = 0
+                    canonical_step_count = max(
+                        canonical_step_count,
+                        canonical_function_step_count,
+                    )
+                    if canonical_step_count > 0:
+                        step_count = canonical_step_count
+                actions_executed = 0
+                if canonical_run is not None:
+                    actions_executed = _coerce_int(
+                        canonical_run.get("actions_executed")
+                        or canonical_run.get("actions_count")
+                        or canonical_run.get("function_step_count")
+                        or len(list(canonical_run.get("steps") or []))
+                        or 0
+                    )
+                else:
+                    actions_executed = _coerce_int(
+                        _androidworld_episode_value(
+                            result,
+                            "actions_executed",
+                        )
+                    )
+                    if selected_agent.startswith("external:appagent"):
+                        actions_executed = _coerce_int(
+                            getattr(
+                                agent,
+                                "actions_executed",
+                                getattr(agent, "teacher_actions_consumed", 0),
                             )
-                            execution_summary = getattr(
-                                runtime_result,
-                                "execution_summary",
-                                None,
-                            )
-                            diagnostics = {
-                                "method": selected_agent,
-                                "official_validator_conclusion": bool(
-                                    official_validator_used
-                                ),
-                                "done_reason": error_text or (
-                                    "validator_success"
-                                    if task_success
-                                    else "validator_failure"
+                        )
+                    if (
+                        actions_executed <= 0
+                        and selected_agent.startswith("official:")
+                    ):
+                        actions_executed = step_count
+                if mobilegpt_agent_result:
+                    actions_executed = max(
+                        actions_executed,
+                        _coerce_int(
+                            mobilegpt_agent_result.get("actions_executed")
+                        ),
+                    )
+                model_calls = 0
+                fallback_steps = 0
+                total_tokens = 0
+                prompt_tokens = 0
+                completion_tokens = 0
+                token_usage_state = "not_applicable"
+                model_name: str | None = None
+                model_base_url: str | None = None
+                llm_usage: dict[str, Any] = {}
+                if canonical_run is not None:
+                    execution_summary = _canonical_execution_summary(
+                        canonical_run
+                    )
+                    for key, target in (
+                        ("model_calls", "model_calls"),
+                        ("fallback_steps", "fallback_steps"),
+                        ("tokens", "total_tokens"),
+                        ("total_tokens", "total_tokens"),
+                        ("prompt_tokens", "prompt_tokens"),
+                        ("completion_tokens", "completion_tokens"),
+                    ):
+                        try:
+                            value = int(execution_summary.get(key) or 0)
+                        except Exception:
+                            value = 0
+                        if not value:
+                            continue
+                        if target == "model_calls":
+                            model_calls = value
+                        elif target == "fallback_steps":
+                            fallback_steps = value
+                        elif target == "total_tokens":
+                            total_tokens = value
+                        elif target == "prompt_tokens":
+                            prompt_tokens = value
+                        elif target == "completion_tokens":
+                            completion_tokens = value
+                    token_usage_state = str(
+                        execution_summary.get("token_usage_status")
+                        or token_usage_status(
+                            {
+                                "model_calls": model_calls,
+                                "responses_with_usage": (
+                                    model_calls if total_tokens > 0 else 0
                                 ),
                             }
-                            runtime_function_id = str(
-                                getattr(runtime_result, "function_id", "") or ""
-                            ).strip()
-                            if runtime_function_id:
-                                diagnostics["function_id"] = runtime_function_id
-                            if isinstance(execution_summary, dict):
-                                diagnostics["execution_summary"] = dict(
-                                    execution_summary
-                                )
-                            execution_trace = _runtime_execution_trace(runtime_result)
-                            if execution_trace:
-                                diagnostics["execution_trace"] = execution_trace
-                            runtime_detail = getattr(runtime_result, "detail", None)
-                            function_resume = (
-                                runtime_detail.get("function_resume")
-                                if isinstance(runtime_detail, dict)
-                                else None
-                            )
-                            if isinstance(function_resume, dict):
-                                diagnostics["function_resume"] = dict(
-                                    function_resume
-                                )
-                            canonical_run = recording_session.seal_run_log(
-                                task_name=task_name,
-                                goal=goal_text,
-                                task_parameters=(
-                                    dict(task_context.get("task_parameters") or {})
-                                    if isinstance(task_context, dict)
-                                    else {}
-                                ),
-                                seed=int(args.task_random_seed),
-                                validator_official=official_validator_used,
-                                validator_success=task_success,
-                                validator_reward=validator_reward,
-                                diagnostics=diagnostics,
-                            )
-                            if canonical_run is not None:
-                                canonical_run_id = canonical_run["run_id"]
-                        if episode_recorder is not None:
-                            observation_evidence = (
-                                recording_session.persist_observations()
-                            )
-                            episode_recorder_error = recording_session.error
-                        mobilegpt_agent_result: dict[str, Any] = {}
-                        mobilegpt_agent_error = ""
-                        runtime_integrity_error = None
-                        if selected_agent == "external:mobilegpt":
-                            raw_agent_result = getattr(
-                                agent,
-                                "last_result_data",
-                                None,
-                            )
-                            if isinstance(raw_agent_result, dict):
-                                mobilegpt_agent_result = dict(raw_agent_result)
-                                mobilegpt_agent_error = str(
-                                    mobilegpt_agent_result.get("error") or ""
-                                ).strip()
-                                runtime_integrity_error = (
-                                    _mobilegpt_runtime_integrity_error(
-                                        mobilegpt_agent_error
-                                    )
-                                )
-                                if runtime_integrity_error:
-                                    error_text = runtime_integrity_error
-                        if canonical_run is not None:
-                            try:
-                                canonical_function_step_count = int(
-                                    canonical_run.get("function_step_count")
-                                    or canonical_run.get("actions_executed")
-                                    or 0
-                                )
-                            except Exception:
-                                canonical_function_step_count = 0
-                            try:
-                                canonical_step_count = int(
-                                    canonical_run.get("step_count")
-                                    or canonical_run.get("steps_count")
-                                    or len(list(canonical_run.get("steps") or []))
-                                )
-                            except Exception:
-                                canonical_step_count = 0
-                            canonical_step_count = max(
-                                canonical_step_count,
-                                canonical_function_step_count,
-                            )
-                            if canonical_step_count > 0:
-                                step_count = canonical_step_count
-                        actions_executed = 0
-                        if canonical_run is not None:
-                            actions_executed = _coerce_int(
-                                canonical_run.get("actions_executed")
-                                or canonical_run.get("actions_count")
-                                or canonical_run.get("function_step_count")
-                                or len(list(canonical_run.get("steps") or []))
-                                or 0
-                            )
-                        else:
-                            actions_executed = _coerce_int(
-                                _androidworld_episode_value(
-                                    result,
-                                    "actions_executed",
-                                )
-                            )
-                            if selected_agent.startswith("external:appagent"):
-                                actions_executed = _coerce_int(
-                                    getattr(
-                                        agent,
-                                        "actions_executed",
-                                        getattr(agent, "teacher_actions_consumed", 0),
-                                    )
-                                )
-                            if (
-                                actions_executed <= 0
-                                and selected_agent.startswith("official:")
-                            ):
-                                actions_executed = step_count
-                        if mobilegpt_agent_result:
-                            actions_executed = max(
-                                actions_executed,
-                                _coerce_int(
-                                    mobilegpt_agent_result.get("actions_executed")
-                                ),
-                            )
-                        model_calls = 0
-                        fallback_steps = 0
-                        total_tokens = 0
-                        prompt_tokens = 0
-                        completion_tokens = 0
-                        token_usage_state = "not_applicable"
-                        model_name: str | None = None
-                        model_base_url: str | None = None
-                        llm_usage: dict[str, Any] = {}
-                        if canonical_run is not None:
-                            execution_summary = _canonical_execution_summary(
-                                canonical_run
-                            )
-                            for key, target in (
-                                ("model_calls", "model_calls"),
-                                ("fallback_steps", "fallback_steps"),
-                                ("tokens", "total_tokens"),
-                                ("total_tokens", "total_tokens"),
-                                ("prompt_tokens", "prompt_tokens"),
-                                ("completion_tokens", "completion_tokens"),
-                            ):
-                                try:
-                                    value = int(execution_summary.get(key) or 0)
-                                except Exception:
-                                    value = 0
-                                if not value:
-                                    continue
-                                if target == "model_calls":
-                                    model_calls = value
-                                elif target == "fallback_steps":
-                                    fallback_steps = value
-                                elif target == "total_tokens":
-                                    total_tokens = value
-                                elif target == "prompt_tokens":
-                                    prompt_tokens = value
-                                elif target == "completion_tokens":
-                                    completion_tokens = value
-                            token_usage_state = str(
-                                execution_summary.get("token_usage_status")
-                                or token_usage_status(
-                                    {
-                                        "model_calls": model_calls,
-                                        "responses_with_usage": (
-                                            model_calls if total_tokens > 0 else 0
-                                        ),
-                                    }
-                                )
-                            )
-                            if model_calls > 0:
-                                model_name = str(
-                                    args.model
-                                    or os.environ.get("OMNIFLOW_PLANNER_MODEL")
-                                    or os.environ.get("OPENAI_MODEL")
-                                    or ""
-                                ).strip() or None
-                                model_base_url = str(
-                                    os.environ.get("OPENAI_BASE_URL") or ""
-                                ).strip() or None
-                        if selected_agent.startswith("official:") or selected_agent == (
-                            "external:appagent"
-                        ):
-                            official_agent_usage = _diff_llm_usage(
-                                _get_agent_llm_usage(agent),
-                                official_llm_usage_before,
-                            )
-                            llm_usage = official_agent_usage
-                            model_calls = _coerce_int(llm_usage.get("model_calls"))
-                            prompt_tokens = _coerce_int(llm_usage.get("prompt_tokens"))
-                            completion_tokens = _coerce_int(
-                                llm_usage.get("completion_tokens")
-                            )
-                            total_tokens = _coerce_int(llm_usage.get("total_tokens"))
-                            token_usage_state = str(
-                                llm_usage.get("token_usage_status")
-                                or token_usage_status(llm_usage)
-                            )
-                            model_name = str(llm_usage.get("model") or "").strip() or None
-                            model_base_url = (
-                                str(llm_usage.get("base_url") or "").strip() or None
-                            )
-                        artifact_kind = "none"
-                        artifact_ref = None
-                        if canonical_run_id:
-                            artifact_kind = "canonical_run"
-                            artifact_ref = canonical_run_id
-                        elif selected_agent.startswith("official:") or selected_agent.startswith(
-                            "external:appagent"
-                        ):
-                            artifact_kind = "checkpoint"
-                            artifact_ref = checkpoint_dir
-                        evaluation_task_params, evaluation_task_params_sha256 = (
-                            _task_params_provenance(task)
                         )
-                        task_result_record = {
-                            "task_name": task_name,
-                            "goal": goal_text,
-                            "agent": selected_agent,
-                            "task_random_seed": int(args.task_random_seed),
-                            "task_params": evaluation_task_params,
-                            "task_params_sha256": evaluation_task_params_sha256,
-                            "state_backend": "androidworld",
-                            "action_backend": "androidworld",
-                            "native_androidworld_agent_io": True,
+                    )
+                    if model_calls > 0:
+                        model_name = str(
+                            args.model
+                            or os.environ.get("OMNIFLOW_PLANNER_MODEL")
+                            or os.environ.get("OPENAI_MODEL")
+                            or ""
+                        ).strip() or None
+                        model_base_url = str(
+                            os.environ.get("OPENAI_BASE_URL") or ""
+                        ).strip() or None
+                if selected_agent.startswith("official:") or selected_agent == (
+                    "external:appagent"
+                ):
+                    official_agent_usage = _diff_llm_usage(
+                        _get_agent_llm_usage(agent),
+                        official_llm_usage_before,
+                    )
+                    llm_usage = official_agent_usage
+                    model_calls = _coerce_int(llm_usage.get("model_calls"))
+                    prompt_tokens = _coerce_int(llm_usage.get("prompt_tokens"))
+                    completion_tokens = _coerce_int(
+                        llm_usage.get("completion_tokens")
+                    )
+                    total_tokens = _coerce_int(llm_usage.get("total_tokens"))
+                    token_usage_state = str(
+                        llm_usage.get("token_usage_status")
+                        or token_usage_status(llm_usage)
+                    )
+                    model_name = str(llm_usage.get("model") or "").strip() or None
+                    model_base_url = (
+                        str(llm_usage.get("base_url") or "").strip() or None
+                    )
+                artifact_kind = "none"
+                artifact_ref = None
+                if canonical_run_id:
+                    artifact_kind = "canonical_run"
+                    artifact_ref = canonical_run_id
+                elif selected_agent.startswith("official:") or selected_agent.startswith(
+                    "external:appagent"
+                ):
+                    artifact_kind = "checkpoint"
+                    artifact_ref = checkpoint_dir
+                evaluation_task_params, evaluation_task_params_sha256 = (
+                    _task_params_provenance(task)
+                )
+                task_result_record = {
+                    "task_name": task_name,
+                    "goal": goal_text,
+                    "agent": selected_agent,
+                    "task_random_seed": int(args.task_random_seed),
+                    "task_params": evaluation_task_params,
+                    "task_params_sha256": evaluation_task_params_sha256,
+                    "state_backend": "androidworld",
+                    "action_backend": "androidworld",
+                    "native_androidworld_agent_io": True,
+                    "success": task_success,
+                    "official_validator_used": official_validator_used,
+                    "androidworld_validator_result": {
+                        "success": task_success,
+                        "reward": validator_reward,
+                        "error": error_text,
+                        "uses_androidworld_official_validator": (
+                            official_validator_used
+                        ),
+                        "validator": (
+                            "androidworld_official"
+                            if official_validator_used
+                            else None
+                        ),
+                    },
+                    "response_acceptance": {
+                        "generic": task_success,
+                        "androidworld": task_success,
+                    },
+                    "response_acceptance_detail": build_response_acceptance_detail(
+                        success=task_success,
+                        validator={
                             "success": task_success,
-                            "official_validator_used": official_validator_used,
-                            "androidworld_validator_result": {
-                                "success": task_success,
-                                "reward": validator_reward,
-                                "error": error_text,
-                                "uses_androidworld_official_validator": (
-                                    official_validator_used
-                                ),
-                                "validator": (
-                                    "androidworld_official"
-                                    if official_validator_used
-                                    else None
-                                ),
-                            },
-                            "response_acceptance": {
-                                "generic": task_success,
-                                "androidworld": task_success,
-                            },
-                            "response_acceptance_detail": build_response_acceptance_detail(
-                                success=task_success,
-                                validator={
-                                    "success": task_success,
-                                    "reward": validator_reward,
-                                    "error": error_text,
-                                },
-                                error_message=error_text,
-                            ),
-                            "started_at": started_at,
-                            "duration_ms": max(
-                                0.0,
-                                (perf_counter() - started_perf) * 1000.0,
-                            ),
-                            "step_count": step_count,
-                            "actions_executed": actions_executed,
-                            "model_calls": model_calls,
-                            "fallback_steps": fallback_steps,
-                            "prompt_tokens": prompt_tokens,
-                            "completion_tokens": completion_tokens,
-                            "total_tokens": total_tokens,
-                            "token_usage_status": token_usage_state,
-                            "model": model_name,
-                            "model_base_url": model_base_url,
-                            "artifact_kind": artifact_kind,
-                            "artifact_ref": artifact_ref,
+                            "reward": validator_reward,
                             "error": error_text,
-                        }
-                        if mobilegpt_agent_result:
-                            task_result_record["mobilegpt_agent_result"] = (
-                                to_serializable(mobilegpt_agent_result)
-                            )
-                            task_result_record["mobilegpt_agent_error"] = (
-                                mobilegpt_agent_error or None
-                            )
-                            task_result_record["runtime_integrity_error"] = (
-                                runtime_integrity_error
-                            )
-                        if canonical_run is not None:
-                            canonical_diagnostics = canonical_run.get("diagnostics")
-                            canonical_diagnostics = (
-                                canonical_diagnostics
-                                if isinstance(canonical_diagnostics, dict)
-                                else {}
-                            )
-                            function_id = str(
-                                canonical_diagnostics.get("function_id") or ""
-                            ).strip()
-                            if function_id:
-                                task_result_record["function_id"] = function_id
-                            function_resume = canonical_diagnostics.get(
-                                "function_resume"
-                            )
-                            if isinstance(function_resume, dict):
-                                task_result_record["function_resume"] = to_serializable(
-                                    function_resume
-                                )
-                        if llm_usage:
-                            task_result_record["llm_usage"] = to_serializable(llm_usage)
-                        if official_goal_hint_meta is not None:
-                            task_result_record["source_action_hint"] = to_serializable(
-                                official_goal_hint_meta
-                            )
-                        if task_context:
-                            task_result_record["androidworld_task_context"] = (
-                                to_serializable(task_context)
-                            )
-                        if canonical_run is not None:
-                            task_result_record["canonical_run"] = to_serializable(
-                                canonical_run
-                            )
-                            captured_transfer_states = None
-                            transfer_state_audit = None
-                            if selected_agent == MODE_OMNIFLOW:
-                                get_transfer_states = getattr(
-                                    agent,
-                                    "get_captured_transfer_states",
-                                    None,
-                                )
-                                if callable(get_transfer_states):
-                                    captured_transfer_states = get_transfer_states()
-                                    transfer_state_audit = transfer_state_coverage_audit(
-                                        canonical_run,
-                                        captured_transfer_states,
-                                    )
-                            task_result_record.update(
-                                persist_target_run_evidence(
-                                    run_output_dir,
-                                    run_log=canonical_run,
-                                    captured_transfer_states=captured_transfer_states,
-                                    transfer_state_audit=transfer_state_audit,
-                                )
-                            )
-                            relocation_diagnostics = _extract_relocation_diagnostics(
-                                canonical_run
-                            )
-                            if relocation_diagnostics:
-                                task_result_record["relocation_diagnostic_count"] = len(
-                                    relocation_diagnostics
-                                )
-                                task_result_record["relocation_diagnostics"] = (
-                                    to_serializable(relocation_diagnostics)
-                                )
-                        if observation_evidence is not None:
-                            task_result_record["observation_count"] = len(
-                                observation_evidence
-                            )
-                            task_result_record["observation_evidence"] = (
-                                observation_evidence
-                            )
-                            if not observation_evidence:
-                                task_result_record["observation_evidence_error"] = (
-                                    "no_observations_recorded"
-                                )
-                        elif episode_recorder_error:
-                            task_result_record["observation_evidence_error"] = (
-                                episode_recorder_error
-                            )
-                        if (
-                            task_success
-                            and canonical_run is not None
-                            and bool(args.publish_success_source_runlog)
-                        ):
-                            try:
-                                source_pool_record = _append_unique_source_pool_record(
-                                    task_name=task_name,
-                                    goal=goal_text,
-                                    params=evaluation_task_params,
-                                    task_random_seed=int(args.task_random_seed),
-                                    canonical_run=canonical_run,
-                                    task_result_record=task_result_record,
-                                )
-                                task_result_record["source_pool_record"] = {
-                                    "local_canonical_run_log": source_pool_record.get(
-                                        "local_canonical_run_log"
-                                    ),
-                                    "run_id": source_pool_record.get("run_id"),
-                                    "task": source_pool_record.get("task"),
-                                }
-                            except Exception as exc:  # noqa: BLE001
-                                task_result_record["source_pool_record_error"] = str(exc)
-                        task_results_path.parent.mkdir(parents=True, exist_ok=True)
-                        with open(task_results_path, "a", encoding="utf-8") as handle:
-                            handle.write(
-                                json.dumps(
-                                    to_serializable(task_result_record),
-                                    ensure_ascii=False,
-                                    default=str,
-                                )
-                            )
-                            handle.write("\n")
-                    except Exception as exc:  # noqa: BLE001
-                        print(
-                            f"[warn] failed to aggregate canonical run log for {task_name}: {exc}"
+                        },
+                        error_message=error_text,
+                    ),
+                    "started_at": started_at,
+                    "duration_ms": max(
+                        0.0,
+                        (perf_counter() - started_perf) * 1000.0,
+                    ),
+                    "step_count": step_count,
+                    "actions_executed": actions_executed,
+                    "model_calls": model_calls,
+                    "fallback_steps": fallback_steps,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                    "token_usage_status": token_usage_state,
+                    "model": model_name,
+                    "model_base_url": model_base_url,
+                    "artifact_kind": artifact_kind,
+                    "artifact_ref": artifact_ref,
+                    "error": error_text,
+                }
+                if mobilegpt_agent_result:
+                    task_result_record["mobilegpt_agent_result"] = (
+                        to_serializable(mobilegpt_agent_result)
+                    )
+                    task_result_record["mobilegpt_agent_error"] = (
+                        mobilegpt_agent_error or None
+                    )
+                    task_result_record["runtime_integrity_error"] = (
+                        runtime_integrity_error
+                    )
+                if canonical_run is not None:
+                    canonical_diagnostics = canonical_run.get("diagnostics")
+                    canonical_diagnostics = (
+                        canonical_diagnostics
+                        if isinstance(canonical_diagnostics, dict)
+                        else {}
+                    )
+                    function_id = str(
+                        canonical_diagnostics.get("function_id") or ""
+                    ).strip()
+                    if function_id:
+                        task_result_record["function_id"] = function_id
+                    function_resume = canonical_diagnostics.get(
+                        "function_resume"
+                    )
+                    if isinstance(function_resume, dict):
+                        task_result_record["function_resume"] = to_serializable(
+                            function_resume
                         )
-                    finally:
-                        recording_session.close()
+                if llm_usage:
+                    task_result_record["llm_usage"] = to_serializable(llm_usage)
+                if official_goal_hint_meta is not None:
+                    task_result_record["source_action_hint"] = to_serializable(
+                        official_goal_hint_meta
+                    )
+                if task_context:
+                    task_result_record["androidworld_task_context"] = (
+                        to_serializable(task_context)
+                    )
+                if canonical_run is not None:
+                    task_result_record["canonical_run"] = to_serializable(
+                        canonical_run
+                    )
+                    captured_transfer_states = None
+                    transfer_state_audit = None
+                    if selected_agent == MODE_OMNIFLOW:
+                        get_transfer_states = getattr(
+                            agent,
+                            "get_captured_transfer_states",
+                            None,
+                        )
+                        if callable(get_transfer_states):
+                            captured_transfer_states = get_transfer_states()
+                            transfer_state_audit = transfer_state_coverage_audit(
+                                canonical_run,
+                                captured_transfer_states,
+                            )
+                    task_result_record.update(
+                        persist_target_run_evidence(
+                            run_output_dir,
+                            run_log=canonical_run,
+                            captured_transfer_states=captured_transfer_states,
+                            transfer_state_audit=transfer_state_audit,
+                        )
+                    )
+                    relocation_diagnostics = _extract_relocation_diagnostics(
+                        canonical_run
+                    )
+                    if relocation_diagnostics:
+                        task_result_record["relocation_diagnostic_count"] = len(
+                            relocation_diagnostics
+                        )
+                        task_result_record["relocation_diagnostics"] = (
+                            to_serializable(relocation_diagnostics)
+                        )
+                if observation_evidence is not None:
+                    task_result_record["observation_count"] = len(
+                        observation_evidence
+                    )
+                    task_result_record["observation_evidence"] = (
+                        observation_evidence
+                    )
+                    if not observation_evidence:
+                        task_result_record["observation_evidence_error"] = (
+                            "no_observations_recorded"
+                        )
+                elif episode_recorder_error:
+                    task_result_record["observation_evidence_error"] = (
+                        episode_recorder_error
+                    )
+                if (
+                    task_success
+                    and canonical_run is not None
+                    and bool(args.publish_success_source_runlog)
+                ):
+                    try:
+                        source_pool_record = _append_unique_source_pool_record(
+                            task_name=task_name,
+                            goal=goal_text,
+                            params=evaluation_task_params,
+                            task_random_seed=int(args.task_random_seed),
+                            canonical_run=canonical_run,
+                            task_result_record=task_result_record,
+                        )
+                        task_result_record["source_pool_record"] = {
+                            "local_canonical_run_log": source_pool_record.get(
+                                "local_canonical_run_log"
+                            ),
+                            "run_id": source_pool_record.get("run_id"),
+                            "task": source_pool_record.get("task"),
+                        }
+                    except Exception as exc:  # noqa: BLE001
+                        task_result_record["source_pool_record_error"] = str(exc)
+                task_results_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(task_results_path, "a", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps(
+                            to_serializable(task_result_record),
+                            ensure_ascii=False,
+                            default=str,
+                        )
+                    )
+                    handle.write("\n")
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"[warn] failed to aggregate canonical run log for {task_name}: {exc}"
+                )
+            finally:
+                recording_session.close()
 
-            suite_utils._run_task = _wrapped_run_task
-        mainline_name = str(args.agent or MODE_OMNIFLOW).strip() or MODE_OMNIFLOW
         print(
-            "Starting AndroidWorld test shell with "
-            f"agent={mainline_name} max_steps={fixed_max_steps} "
-            f"and writing to {checkpoint_dir}"
-        )
-        suite_utils.run(
-            suite,
-            agent,
-            checkpointer=checkpointer,
-            demo_mode=False,
-        )
-        print(
-            f"Finished AndroidWorld test shell agent={mainline_name} "
-            f"max_steps={fixed_max_steps} on {args.suite_family} family. Wrote to {checkpoint_dir}."
+            "Finished official AndroidWorld runner "
+            f"agent={mainline_name} on {args.suite_family} family. "
+            f"Wrote to {checkpoint_dir}."
         )
         run_summary = _write_task_results_summary(
             task_results_path=task_results_path,
@@ -5409,63 +3725,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             return runtime_integrity_exit_code
         return 0
     finally:
-        if "android_world_controller" in locals() and callable(original_get_controller):
-            android_world_controller.get_controller = original_get_controller
-        if "suite_utils" in locals() and callable(original_allocate_step_budget):
-            suite_utils._allocate_step_budget = original_allocate_step_budget
-        if "suite_utils" in locals() and callable(original_run_task):
-            suite_utils._run_task = original_run_task
-        if (
-            "m3a_utils" in locals()
-            and "original_parse_reason_action_output" in locals()
-        ):
-            m3a_utils.parse_reason_action_output = original_parse_reason_action_output
-        if "datetime_utils" in locals() and "original_set_datetime" in locals():
-            datetime_utils.set_datetime = original_set_datetime
-        if (
-            "file_utils" in locals()
-            and original_clear_directory is not None
-            and callable(original_clear_directory)
-        ):
-            file_utils.clear_directory = original_clear_directory
-            if hasattr(file_utils, "_omniflow_empty_clear_directory_patch"):
-                delattr(file_utils, "_omniflow_empty_clear_directory_patch")
-        if (
-            "adb_utils" in locals()
-            and original_issue_generic_request is not None
-            and callable(original_issue_generic_request)
-        ):
-            adb_utils.issue_generic_request = original_issue_generic_request
-            if hasattr(adb_utils, "_omniflow_settings_get_output_patch"):
-                delattr(adb_utils, "_omniflow_settings_get_output_patch")
-        if (
-            "app_snapshot" in locals()
-            and app_snapshot is not None
-            and original_restore_snapshot is not None
-            and callable(original_restore_snapshot)
-        ):
-            app_snapshot.restore_snapshot = original_restore_snapshot
-        if (
-            "sqlite_utils" in locals()
-            and isinstance(original_sqlite_writeback, dict)
-        ):
-            original_delete = original_sqlite_writeback.get(
-                "delete_all_rows_from_table"
-            )
-            original_insert = original_sqlite_writeback.get(
-                "insert_rows_to_remote_db"
-            )
-            original_get_rows = original_sqlite_writeback.get(
-                "get_rows_from_remote_device"
-            )
-            if callable(original_delete):
-                sqlite_utils.delete_all_rows_from_table = original_delete
-            if callable(original_insert):
-                sqlite_utils.insert_rows_to_remote_db = original_insert
-            if callable(original_get_rows):
-                sqlite_utils.get_rows_from_remote_device = original_get_rows
-            if hasattr(sqlite_utils, "_omniflow_sqlite_writeback_patch"):
-                delattr(sqlite_utils, "_omniflow_sqlite_writeback_patch")
         if env is not None:
             env.close()
 

@@ -11,8 +11,7 @@ import pytest
 from omniflow import Action
 from src.integrations.android_world.host import AndroidWorldHost
 from src.integrations.android_world.launch import (
-    _androidworld_a11y_method_for_agent,
-    _native_androidworld_a11y_method,
+    _ExperimentAgentAdapter,
     _result_has_official_validator_conclusion,
     _runtime_execution_trace,
 )
@@ -214,53 +213,19 @@ def test_observe_ignores_non_official_xml_field() -> None:
     assert observation.extra["ui_graph_complete"] is False
 
 
-def test_androidworld_native_observation_uses_accessibility_forest() -> None:
-    forwarder = object()
-    controller_module = SimpleNamespace(
-        A11yMethod=SimpleNamespace(
-            A11Y_FORWARDER_APP=forwarder,
-            UIAUTOMATOR=object(),
-        )
+def test_experiment_agent_adapter_only_adds_recording_and_goal_context() -> None:
+    calls: list[str] = []
+    recording_session = SimpleNamespace(start_episode=lambda: calls.append("record"))
+    agent = SimpleNamespace(step=lambda goal: calls.append(goal) or "result")
+
+    adapted = _ExperimentAgentAdapter(
+        agent,
+        recording_session=recording_session,
+        goal_hint="Reference action sequence",
     )
 
-    assert _native_androidworld_a11y_method(controller_module) is forwarder
-
-
-def test_appagent_native_observation_uses_androidworld_uiautomator() -> None:
-    forwarder = object()
-    uiautomator = object()
-    controller_module = SimpleNamespace(
-        A11yMethod=SimpleNamespace(
-            A11Y_FORWARDER_APP=forwarder,
-            UIAUTOMATOR=uiautomator,
-        )
-    )
-
-    assert (
-        _androidworld_a11y_method_for_agent(
-            controller_module,
-            native_appagent=True,
-        )
-        is uiautomator
-    )
-    assert (
-        _androidworld_a11y_method_for_agent(
-            controller_module,
-            native_appagent=False,
-        )
-        is forwarder
-    )
-
-
-def test_androidworld_host_cannot_be_switched_to_oob(monkeypatch) -> None:
-    monkeypatch.setenv("OMNIFLOW_OBSERVE_BACKEND", "oob")
-    monkeypatch.setenv("OMNIFLOW_ACT_BACKEND", "oob")
-    monkeypatch.setenv("OMNIFLOW_OOB_DEVICE_URL", "http://127.0.0.1:8910")
-
-    host = AndroidWorldHost(SimpleNamespace())
-
-    assert host.observe_backend == "androidworld"
-    assert host.act_backend == "androidworld"
+    assert adapted.step("Complete task") == "result"
+    assert calls == ["record", "Complete task\n\nReference action sequence"]
 
 
 def test_observe_derives_internal_xml_from_official_forest() -> None:
@@ -540,56 +505,34 @@ def test_observe_keeps_semantically_richer_official_forest() -> None:
     assert "Open settings" in str(observation.xml)
 
 
-def test_open_app_waits_on_the_official_state() -> None:
-    state = _official_state(ui_elements=[_ui_element()])
+def test_actions_dispatch_only_through_official_androidworld_api(monkeypatch) -> None:
+    class JSONAction:
+        def __init__(self, action_type=None, x=None, y=None, app_name=None):
+            self.action_type = action_type
+            self.x = x
+            self.y = y
+            self.app_name = app_name
+
+    module = SimpleNamespace(JSONAction=JSONAction)
+    monkeypatch.setattr(
+        "src.integrations.android_world.host.importlib.import_module",
+        lambda name: module if name == "android_world.env.json_action" else None,
+    )
+    actions: list[JSONAction] = []
     env = SimpleNamespace(
-        get_state=lambda: state,
-        device_screen_size=(4, 3),
-        logical_screen_size=(4, 3),
-        foreground_activity_name="com.android.settings/.Settings",
+        device_screen_size=(720, 1280),
+        execute_action=actions.append,
     )
-    host = AndroidWorldHost(
-        env,
-        adb_serial="emulator-5564",
-        open_app_ready_timeout_seconds=0.01,
+    host = AndroidWorldHost(env, adb_serial="emulator-5564")
+
+    click_result = host.act(Action("click", {"x": 500, "y": 250}))
+    open_result = host.act(
+        Action("open_app", {"package_name": "com.android.settings"})
     )
-    host._adb = lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stderr="")
 
-    result = host.act(Action("open_app", {"package_name": "com.android.settings"}))
-
-    assert result.success is True
-
-
-def test_open_app_dismisses_transient_permission_window_once() -> None:
-    state = _official_state(ui_elements=[_ui_element()])
-
-    class Env:
-        device_screen_size = (4, 3)
-        logical_screen_size = (4, 3)
-        foreground_activity_name = (
-            "com.google.android.permissioncontroller/.permission.ui.GrantPermissionsActivity"
-        )
-
-        def get_state(self):
-            return state
-
-    env = Env()
-    host = AndroidWorldHost(
-        env,
-        adb_serial="emulator-5564",
-        open_app_ready_timeout_seconds=0.001,
-    )
-    commands: list[tuple[str, ...]] = []
-
-    def adb(*args, **_kwargs):
-        commands.append(args)
-        if args == ("shell", "input", "keyevent", "BACK"):
-            env.foreground_activity_name = "com.android.settings/.Settings"
-        return SimpleNamespace(returncode=0, stderr="")
-
-    host._adb = adb
-
-    result = host.act(Action("open_app", {"package_name": "com.android.settings"}))
-
-    assert result.success is True
-    assert ("shell", "input", "keyevent", "BACK") in commands
+    assert click_result.success is True
+    assert open_result.success is True
+    assert [(action.action_type, action.x, action.y, action.app_name) for action in actions] == [
+        ("click", 360.0, 320.0, None),
+        ("open_app", None, None, "com.android.settings"),
+    ]

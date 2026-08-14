@@ -162,9 +162,7 @@ def observation_display(observation: dict[str, Any]) -> tuple[int, int] | None:
 
 
 def observation_xml(observation: dict[str, Any]) -> str:
-    value = observation.get("xml")
-    if value is None:
-        value = observation.get("forest")
+    value = observation.get("forest")
     return value if isinstance(value, str) else ""
 
 

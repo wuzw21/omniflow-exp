@@ -59,6 +59,11 @@ tool calls, and one next action. Recalled Functions are prepended to the same
 tool list as native GUI actions; the planner has no XML projection, full RunLog
 prompt, or task-specific navigation policy.
 
+AndroidWorld owns environment creation, controller setup, task lifecycle,
+native state and action calls, snapshots, and validation. The experiment layer
+only supplies method adapters and a transparent accounting proxy; it does not
+patch AndroidWorld objects or provide an alternate device runtime.
+
 ## Common environment
 
 All data paths are absolute and outside the repository.

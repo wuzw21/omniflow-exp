@@ -130,37 +130,7 @@
         }
       }
     },
-    "xml_state": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["pixels", "xml", "auxiliaries"],
-      "properties": {
-        "pixels": {
-          "anyOf": [
-            {"$ref": "#/$defs/screenshot_reference"},
-            {"type": "null"}
-          ]
-        },
-        "xml": {
-          "anyOf": [
-            {"type": "string"},
-            {"type": "null"}
-          ]
-        },
-        "auxiliaries": {
-          "anyOf": [
-            {"$ref": "#/$defs/object"},
-            {"type": "null"}
-          ]
-        }
-      }
-    },
-    "state": {
-      "anyOf": [
-        {"$ref": "#/$defs/androidworld_state"},
-        {"$ref": "#/$defs/xml_state"}
-      ]
-    },
+    "state": {"$ref": "#/$defs/androidworld_state"},
     "action": {
       "type": "object",
       "additionalProperties": false,

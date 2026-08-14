@@ -4,10 +4,7 @@ import base64
 import importlib
 import inspect
 import io
-import os
 from pathlib import Path
-import subprocess
-import time
 from types import SimpleNamespace
 from typing import Any
 import xml.etree.ElementTree as ET
@@ -20,14 +17,6 @@ from src.integrations.android_world.accessibility import (
     xml_with_screen_size,
 )
 from src.integrations.android_world.state import snapshot_androidworld_state
-
-_TRANSIENT_SYSTEM_PACKAGES = {
-    "com.android.systemui",
-}
-_TRANSIENT_SYSTEM_PACKAGE_PARTS = (
-    "packageinstaller",
-    "permissioncontroller",
-)
 
 
 def _read(value: Any, name: str, default: Any = None) -> Any:
@@ -200,49 +189,17 @@ class AndroidWorldHost:
         evidence_root: str | Path | None = None,
     ):
         self.env = env
-        self.adb_serial = str(adb_serial or "")
-        self.adb_path = str(adb_path or os.environ.get("ADB_PATH") or "adb")
-        self.post_action_wait_seconds = max(0.0, float(post_action_wait_seconds))
         self.evidence_root = (
             Path(evidence_root).expanduser().resolve()
             if evidence_root is not None
             else None
         )
-        ready_timeout = (
-            float(os.environ.get("OMNIFLOW_OPEN_APP_READY_TIMEOUT_SEC") or 5.0)
-            if open_app_ready_timeout_seconds is None
-            else float(open_app_ready_timeout_seconds)
-        )
-        self.open_app_ready_timeout_seconds = max(0.0, ready_timeout)
         self.observe_backend = "androidworld"
         self.act_backend = "androidworld"
 
-    def _adb(self, *args: str, timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
-        command = [self.adb_path]
-        if self.adb_serial:
-            command.extend(["-s", self.adb_serial])
-        command.extend(args)
-        return subprocess.run(
-            command,
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=timeout,
-        )
-
     def installed_packages(self) -> set[str]:
-        if not self.adb_serial:
-            return set()
-        result = self._adb("shell", "pm", "list", "packages", timeout=30)
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"installed_packages_failed:{str(result.stderr or '').strip()}"
-            )
-        return {
-            line.removeprefix("package:").strip()
-            for line in str(result.stdout or "").splitlines()
-            if line.startswith("package:") and line.removeprefix("package:").strip()
-        }
+        setup = importlib.import_module("android_world.env.setup_device.setup")
+        return set(setup.get_installed_packages(self.env))
 
     def observe(
         self,
@@ -340,81 +297,53 @@ class AndroidWorldHost:
                 return float(value[0]), float(value[1])
         return 1000.0, 1000.0
 
-    def _wait_for_package(self, package_name: str) -> tuple[bool, str]:
-        deadline = time.monotonic() + self.open_app_ready_timeout_seconds
-        observed_package = ""
-        while True:
-            try:
-                observation = self.observe(xml=True, screenshot=False, app_info=True)
-                observed_package = str(observation.package_name or "").strip()
-                if observed_package == package_name and str(
-                    observation.xml or ""
-                ).strip():
-                    return True, observed_package
-            except Exception:
-                pass
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return False, observed_package
-            time.sleep(min(0.1, remaining))
-
-    def _dismiss_transient_system_window(self, package_name: str) -> bool:
-        normalized = str(package_name or "").strip().casefold()
-        if not normalized or not (
-            normalized in _TRANSIENT_SYSTEM_PACKAGES
-            or any(part in normalized for part in _TRANSIENT_SYSTEM_PACKAGE_PARTS)
-        ):
-            return False
-        result = self._adb(
-            "shell",
-            "input",
-            "keyevent",
-            "BACK",
-            timeout=15,
-        )
-        return result.returncode == 0
-
     def _json_action(self, action: Action | dict[str, Any]) -> Any:
         action = Action.from_value(action)
-        if action.tool == "android_world_raw":
-            return dict(action.args.get("payload") or {})
         module = importlib.import_module("android_world.env.json_action")
         action_class = getattr(module, "JSONAction")
-        action_types = getattr(module, "ActionType", None)
-        directions = getattr(module, "ScrollDirection", None)
+        if action.tool == "android_world_raw":
+            payload = dict(action.args.get("payload") or {})
+            signature = inspect.signature(action_class)
+            return action_class(
+                **{
+                    key: value
+                    for key, value in payload.items()
+                    if key in signature.parameters
+                }
+            )
         width, height = self._screen_size()
         params = dict(action.args)
         payload: dict[str, Any] = {}
         action_name = action.tool
-        enum_name = {
-            "click": "CLICK",
-            "long_press": "LONG_PRESS",
-            "input_text": "INPUT_TEXT",
-            "swipe": "SCROLL",
-            "press_back": "NAVIGATE_BACK",
-            "press_home": "NAVIGATE_HOME",
-            "press_enter": "KEYBOARD_ENTER",
-            "wait": "WAIT",
-            "open_app": "OPEN_APP",
+        action_type = {
+            "click": "click",
+            "long_press": "long_press",
+            "input_text": "input_text",
+            "swipe": "scroll",
+            "press_back": "navigate_back",
+            "press_home": "navigate_home",
+            "press_enter": "keyboard_enter",
+            "wait": "wait",
+            "open_app": "open_app",
         }.get(action_name)
         if action_name == "press_key":
             key = str(params.get("keycode") or params.get("key") or "").strip().upper()
             if key in {"BACK", "NAVIGATE_BACK", "PRESS_BACK", "KEYCODE_BACK"}:
-                enum_name = "NAVIGATE_BACK"
+                action_type = "navigate_back"
             elif key in {"HOME", "NAVIGATE_HOME", "PRESS_HOME", "KEYCODE_HOME"}:
-                enum_name = "NAVIGATE_HOME"
+                action_type = "navigate_home"
             elif key in {
                 "ENTER",
                 "KEYBOARD_ENTER",
                 "PRESS_ENTER",
                 "KEYCODE_ENTER",
             }:
-                enum_name = "KEYBOARD_ENTER"
+                action_type = "keyboard_enter"
             else:
                 raise ValueError(f"unsupported AndroidWorld key: {key or 'missing'}")
-        if enum_name is None:
+        if action_type is None:
             raise ValueError(f"unsupported AndroidWorld action: {action_name}")
-        payload["action_type"] = getattr(action_types, enum_name, enum_name.lower())
+        payload["action_type"] = action_type
         if action_name in {"click", "long_press", "swipe", "input_text"}:
             if params.get("x") is not None:
                 payload["x"] = float(params["x"]) / 1000.0 * width
@@ -424,13 +353,12 @@ class AndroidWorldHost:
             payload["text"] = str(params.get("text") or "")
             payload["clear_text"] = True
         elif action_name == "swipe":
-            direction = str(params.get("direction") or "down").upper()
-            payload["direction"] = getattr(directions, direction, direction.lower())
-        elif action_name == "wait":
-            payload["seconds"] = float(params.get("duration_ms", 1000)) / 1000.0
+            payload["direction"] = _official_swipe_direction(params)
+            if all(params.get(key) is not None for key in ("x1", "y1", "x2", "y2")):
+                payload["action_type"] = "swipe"
         elif action_name == "open_app":
             package = str(params.get("package_name") or params.get("app_name") or "")
-            payload.update(app_name=package, package_name=package)
+            payload["app_name"] = package
         signature = inspect.signature(action_class)
         return action_class(
             **{key: value for key, value in payload.items() if key in signature.parameters}
@@ -441,131 +369,7 @@ class AndroidWorldHost:
         if action.tool == "finished":
             return ActionResult(True)
         try:
-            open_app_package = (
-                str(action.args.get("package_name") or "").strip()
-                if action.tool == "open_app"
-                else ""
-            )
-            if action.tool == "wait":
-                duration_ms = max(0.0, float(action.args.get("duration_ms", 1000)))
-                time.sleep(duration_ms / 1000.0)
-                return ActionResult(True)
-            if action.tool == "set_clipboard":
-                text = str(action.args.get("text") or "")
-                adb_utils = importlib.import_module("android_world.env.adb_utils")
-                controller = getattr(self.env, "controller", self.env)
-                adb_utils.set_clipboard_contents(text, controller)
-                return ActionResult(True)
-            if action.tool in {"click", "long_press"} and self.adb_serial and all(
-                action.args.get(key) is not None for key in ("x", "y")
-            ):
-                width, height = self._screen_size()
-                x = str(_relative_pixel(action.args["x"], width))
-                y = str(_relative_pixel(action.args["y"], height))
-                command = (
-                    ("shell", "input", "tap", x, y)
-                    if action.tool == "click"
-                    else (
-                        "shell",
-                        "input",
-                        "swipe",
-                        x,
-                        y,
-                        x,
-                        y,
-                        str(int(float(action.args.get("duration_ms") or 1000))),
-                    )
-                )
-                result = self._adb(*command, timeout=15)
-                if result.returncode != 0:
-                    return ActionResult(
-                        False,
-                        result.stderr.strip() or f"coordinate {action.tool} failed",
-                    )
-            elif action.tool == "swipe" and self.adb_serial and all(
-                action.args.get(key) is not None
-                for key in ("x1", "y1", "x2", "y2")
-            ):
-                width, height = self._screen_size()
-                input_source = str(
-                    action.args.get("input_source") or ""
-                ).strip().lower()
-                if input_source and input_source not in {
-                    "touchscreen",
-                    "mouse",
-                    "stylus",
-                    "touchpad",
-                    "trackball",
-                    "touchnavigation",
-                    "joystick",
-                }:
-                    return ActionResult(False, f"unsupported input source: {input_source}")
-                command = ["shell", "input"]
-                if input_source:
-                    command.append(input_source)
-                command.extend(
-                    [
-                        "swipe",
-                        str(_relative_pixel(action.args["x1"], width)),
-                        str(_relative_pixel(action.args["y1"], height)),
-                        str(_relative_pixel(action.args["x2"], width)),
-                        str(_relative_pixel(action.args["y2"], height)),
-                        str(int(float(action.args.get("duration_ms") or 500))),
-                    ]
-                )
-                result = self._adb(*command, timeout=15)
-                if result.returncode != 0:
-                    return ActionResult(
-                        False,
-                        result.stderr.strip() or "coordinate swipe failed",
-                    )
-            elif action.tool == "open_app" and self.adb_serial:
-                package = str(action.args.get("package_name") or "").strip()
-                app_name = str(action.args.get("app_name") or "").strip()
-                if package:
-                    result = self._adb(
-                        "shell",
-                        "monkey",
-                        "-p",
-                        package,
-                        "-c",
-                        "android.intent.category.LAUNCHER",
-                        "1",
-                        timeout=15,
-                    )
-                    if result.returncode != 0:
-                        return ActionResult(
-                            False,
-                            result.stderr.strip() or "open_app failed",
-                        )
-                elif app_name:
-                    adb_utils = importlib.import_module("android_world.env.adb_utils")
-                    adb_utils.launch_app(app_name, self.env.controller)
-                else:
-                    return ActionResult(False, "open_app missing app identifier")
-            else:
-                self.env.execute_action(self._json_action(action))
-            if (
-                open_app_package
-                and self.adb_serial
-                and self.open_app_ready_timeout_seconds > 0
-            ):
-                ready, observed_package = self._wait_for_package(open_app_package)
-                if not ready and self._dismiss_transient_system_window(
-                    observed_package
-                ):
-                    ready, observed_package = self._wait_for_package(open_app_package)
-                if not ready:
-                    return ActionResult(
-                        False,
-                        "open_app_target_not_ready:"
-                        f"expected={open_app_package}:observed={observed_package or 'unknown'}",
-                    )
-            wait_after_s = float(
-                action.args.get("wait_after_s", self.post_action_wait_seconds) or 0.0
-            )
-            if wait_after_s > 0:
-                time.sleep(wait_after_s)
+            self.env.execute_action(self._json_action(action))
             return ActionResult(True)
         except Exception as error:
             return ActionResult(False, str(error))
@@ -576,9 +380,17 @@ class AndroidWorldHost:
             reset(go_home=go_home)
 
 
-def _relative_pixel(value: object, extent: float) -> int:
-    maximum = max(0, int(round(float(extent))) - 1)
-    return max(0, min(maximum, int(round(float(value) / 1000.0 * extent))))
+def _official_swipe_direction(params: dict[str, Any]) -> str:
+    direction = str(params.get("direction") or "").strip().lower()
+    if direction in {"left", "right", "up", "down"}:
+        return direction
+    if not all(params.get(key) is not None for key in ("x1", "y1", "x2", "y2")):
+        return "down"
+    delta_x = float(params["x2"]) - float(params["x1"])
+    delta_y = float(params["y2"]) - float(params["y1"])
+    if abs(delta_x) > abs(delta_y):
+        return "right" if delta_x > 0 else "left"
+    return "down" if delta_y > 0 else "up"
 
 
 __all__ = [

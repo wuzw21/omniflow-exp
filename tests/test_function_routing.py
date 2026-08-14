@@ -1350,6 +1350,7 @@ def test_androidworld_launcher_configures_one_unified_planner(
 
 def test_androidworld_agent_exposes_target_states_when_source_catalog_exists(
     tmp_path,
+    monkeypatch,
 ) -> None:
     store_path = tmp_path / "store.json"
     source_catalog = tmp_path / "transfer_states.json"
@@ -1364,6 +1365,10 @@ def test_androidworld_agent_exposes_target_states_when_source_catalog_exists(
         encoding="utf-8",
     )
     original_source_catalog = source_catalog.read_bytes()
+    monkeypatch.setattr(
+        "src.integrations.android_world.host.AndroidWorldHost.installed_packages",
+        lambda _host: set(),
+    )
     flow = build_agent(env=SimpleNamespace(), store_path=str(store_path))
     flow.host.state.update(
         last_result=SimpleNamespace(success=True),
