@@ -1611,6 +1611,7 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert "use open_app before in-app actions" in SYSTEM_PROMPT
     assert "full task result is already visible" in SYSTEM_PROMPT
     assert "changed=false means no progress" in SYSTEM_PROMPT
+    assert "same tool and identical arguments are no progress" in SYSTEM_PROMPT
 
 
 def test_planner_adds_recalled_function_as_a_peer_action_api() -> None:
