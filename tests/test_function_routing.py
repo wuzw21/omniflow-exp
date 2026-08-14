@@ -25,7 +25,9 @@ from omniflow.vlm.planner import (
     adapt_tool_arguments,
     build_model_turn_request,
     function_tools,
+    parse_model_turn_response,
 )
+from omniflow.vlm_coordinates import canonical_action_to_screen_pixels
 from src.integrations.android_world import launch as androidworld_launch
 from src.integrations.android_world.agent import (
     _TaskHost,
@@ -763,7 +765,7 @@ class CapturingCompletions:
         return self.response
 
 
-def test_qwen_adapter_converts_unambiguous_normalized_scalar_coordinates() -> None:
+def test_qwen_adapter_preserves_normalized_scalar_coordinates() -> None:
     adapted, metadata = adapt_tool_arguments(
         tool="click",
         arguments={"x": 876, "y": 869},
@@ -772,25 +774,63 @@ def test_qwen_adapter_converts_unambiguous_normalized_scalar_coordinates() -> No
         display={"width": 720, "height": 1280},
     )
 
-    assert adapted == {"x": pytest.approx(630.72), "y": pytest.approx(1112.32)}
-    assert metadata is not None
-    assert metadata["changes"] == [
-        {
-            "source_fields": ["x", "y"],
-            "source_shape": "normalized_0_1000_scalar_pair",
-            "target_fields": ["x", "y"],
-        }
-    ]
+    assert adapted == {"x": 876, "y": 869}
+    assert metadata is None
 
-    raw_pixels, raw_metadata = adapt_tool_arguments(
-        tool="click",
-        arguments={"x": 632, "y": 1112},
-        requested_model="qwen3-vl-plus",
-        resolved_model="qwen3-vl-plus",
+
+def test_planner_exposes_normalized_coordinates_independent_of_display() -> None:
+    request = build_model_turn_request(
+        goal="Tap add",
+        model="test-model",
+        state={"display": {"width": 720, "height": 1280}},
+        max_steps=8,
+        turn_index=1,
+    )
+
+    click_tool = next(
+        tool for tool in request["tools"] if tool["function"]["name"] == "click"
+    )
+    properties = click_tool["function"]["parameters"]["properties"]
+    for field in ("x", "y"):
+        assert properties[field]["minimum"] == 0
+        assert properties[field]["maximum"] == 1000
+        assert "0..1000 relative" in properties[field]["description"]
+        assert "Raw" not in properties[field]["description"]
+
+
+def test_planner_parses_normalized_coordinates_without_conversion() -> None:
+    tool_call, metadata = parse_model_turn_response(
+        {
+            "requested_model": "test-model",
+            "resolved_model": "test-model",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "click",
+                        "arguments": json.dumps(
+                            {"summary": "Tap add", "x": 876, "y": 869}
+                        ),
+                    }
+                }
+            ],
+        },
+        requested_model="test-model",
+        turn_index=1,
         display={"width": 720, "height": 1280},
     )
-    assert raw_pixels == {"x": 632, "y": 1112}
-    assert raw_metadata is None
+
+    assert tool_call == ToolCall("click", {"x": 876, "y": 869})
+    assert metadata == {"summary": "Tap add"}
+
+
+def test_runtime_maps_normalized_coordinates_to_screen_pixels() -> None:
+    assert canonical_action_to_screen_pixels(
+        {"tool": "click", "args": {"x": 876, "y": 869}},
+        {"width": 720, "height": 1280},
+    ) == {
+        "tool": "click",
+        "args": {"x": pytest.approx(630.72), "y": pytest.approx(1112.32)},
+    }
 
 
 def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:
@@ -1076,6 +1116,9 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert "You are an Android GUI agent" in SYSTEM_PROMPT
     assert "task, your action history, and the current screenshot" in SYSTEM_PROMPT
     assert "A recalled Function is an action API" in SYSTEM_PROMPT
+    assert "normalized 0..1000 coordinates" in SYSTEM_PROMPT
+    assert "raw-pixel" not in SYSTEM_PROMPT
+    assert "Never infer image content from a cropped thumbnail" in SYSTEM_PROMPT
     assert "provides search" not in SYSTEM_PROMPT
     assert "RunLog" not in SYSTEM_PROMPT
     assert len(SYSTEM_PROMPT.split()) < 100

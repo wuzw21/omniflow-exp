@@ -9,12 +9,13 @@ from omniflow.core.model import (
 
 DEFAULT_PLANNER_SYSTEM_PROMPT = (
     "You are an Android GUI agent. You are given a task, your action history, and "
-    "the current screenshot. Choose the next action to complete the task. Return "
-    "exactly one provided tool call. A recalled Function is an action API like click "
-    "or swipe. Prefer it when it directly performs the next part of the task. A "
-    "Function result returns control to you, so you may call another action next. "
-    "Use current-screen raw-pixel coordinates. Put a brief plan and reason for the "
-    "next action in summary. Use finished only when the complete task is done."
+    "the current screenshot. Choose exactly one provided tool call. A recalled "
+    "Function is an action API like click or swipe. Prefer it when it directly "
+    "performs the next part of the task. Function results return control, so choose "
+    "another action if needed. Use normalized 0..1000 coordinates. Open images "
+    "before reading them. Never infer image content from a cropped thumbnail. Put "
+    "a brief plan and reason in summary. Use finished only when the complete task "
+    "is done."
 )
 
 

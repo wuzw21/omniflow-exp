@@ -17,10 +17,6 @@ from omniflow.core.schemas import canonicalize_action, vlm_action_tools
 from omniflow.functions.assets import validate_arguments
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import LLMUsageTracker
-from omniflow.vlm_coordinates import (
-    screen_pixel_args_to_canonical,
-    screen_pixel_tools,
-)
 
 SYSTEM_PROMPT = DEFAULT_PLANNER_SYSTEM_PROMPT
 
@@ -72,12 +68,8 @@ def build_model_turn_request(
     current_image = _state_image_data_uri(state) if include_images else ""
     if current_image:
         content.append({"type": "image_url", "image_url": {"url": current_image}})
-    display = state.get("display") if isinstance(state.get("display"), dict) else None
     tools = function_tools(functions, include_summary=True)
-    tools.extend(screen_pixel_tools(
-        vlm_action_tools(include_summary=True),
-        display,
-    ))
+    tools.extend(vlm_action_tools(include_summary=True))
     tools = constrain_open_app_tool(tools, installed_apps or {})
     if retry_tool_name:
         tools = [
@@ -172,7 +164,6 @@ def parse_model_turn_response(
         )
     resolved_model = str(value.get("resolved_model") or requested_model).strip()
     adapter_metadata = None
-    coordinate_metadata = None
     try:
         if tool in function_catalog:
             validate_arguments(function_catalog[tool].input_schema, arguments)
@@ -182,11 +173,6 @@ def parse_model_turn_response(
                 arguments=arguments,
                 requested_model=requested_model,
                 resolved_model=resolved_model,
-                display=display,
-            )
-            arguments, coordinate_metadata = screen_pixel_args_to_canonical(
-                tool=tool,
-                args=arguments,
                 display=display,
             )
             canonical = canonicalize_action(
@@ -209,8 +195,6 @@ def parse_model_turn_response(
         }
     if adapter_metadata is not None:
         metadata["model_adapter"] = adapter_metadata
-    if coordinate_metadata is not None:
-        metadata["coordinate_conversion"] = coordinate_metadata
     thinking = str(value.get("reasoning") or "").strip()
     if thinking:
         metadata["thinking"] = thinking
@@ -666,16 +650,12 @@ def adapt_tool_arguments(
 
     adapted = dict(arguments)
     changes: list[dict[str, Any]] = []
-    display_width = _positive_number((display or {}).get("width"))
-    display_height = _positive_number((display or {}).get("height"))
     for x_field, y_field in coordinate_pairs:
         _adapt_coordinate_pair(
             adapted,
             x_field,
             y_field,
             changes,
-            display_width=display_width,
-            display_height=display_height,
         )
     if not changes:
         return adapted, None
@@ -700,58 +680,9 @@ def _adapt_coordinate_pair(
     x_field: str,
     y_field: str,
     changes: list[dict[str, Any]],
-    *,
-    display_width: float | None,
-    display_height: float | None,
 ) -> None:
     x_value = arguments.get(x_field, _MISSING)
     y_value = arguments.get(y_field, _MISSING)
-    if (
-        display_width is not None
-        and display_height is not None
-        and _is_number(x_value)
-        and _is_number(y_value)
-        and 0 <= float(x_value) <= 1000
-        and 0 <= float(y_value) <= 1000
-        and (
-            float(x_value) > display_width
-            or float(y_value) > display_height
-        )
-    ):
-        arguments[x_field] = float(x_value) / 1000.0 * display_width
-        arguments[y_field] = float(y_value) / 1000.0 * display_height
-        changes.append(
-            {
-                "source_fields": [x_field, y_field],
-                "source_shape": "normalized_0_1000_scalar_pair",
-                "target_fields": [x_field, y_field],
-            }
-        )
-        return
-    if (
-        display_width is not None
-        and display_height is not None
-        and isinstance(x_value, list)
-        and len(x_value) == 2
-        and all(_is_number(value) for value in x_value)
-        and isinstance(y_value, list)
-        and len(y_value) == 1
-        and _is_number(y_value[0])
-        and 0 <= float(x_value[0]) <= display_width
-        and 0 <= float(x_value[1]) <= display_height
-        and 0 <= float(y_value[0]) <= display_height
-        and (float(x_value[1]) > 1000 or float(y_value[0]) > 1000)
-    ):
-        arguments[x_field] = x_value[0]
-        arguments[y_field] = x_value[1]
-        changes.append(
-            {
-                "source_field": x_field,
-                "source_shape": "pixel_point_with_trailing_y",
-                "target_fields": [x_field, y_field],
-            }
-        )
-        return
     if (
         isinstance(x_value, list)
         and len(x_value) == 2
@@ -801,10 +732,6 @@ def _is_number(value: Any) -> bool:
         and isinstance(value, (int, float))
         and math.isfinite(float(value))
     )
-
-
-def _positive_number(value: Any) -> float | None:
-    return float(value) if _is_number(value) and float(value) > 0 else None
 
 
 def load_tool_arguments(raw_arguments: str) -> tuple[Any, bool]:
