@@ -2298,12 +2298,6 @@ def _prepare_native_androidworld_a11y_runtime(
     uses_forwarder = str(getattr(a11y_method, "value", "")) == (
         "a11y_forwarder_app"
     )
-    forwarder: dict[str, Any] = {}
-    if uses_forwarder:
-        forwarder = _quiesce_androidworld_accessibility_forwarder(
-            adb_serial=adb_serial,
-            adb_path=adb_path,
-        )
     for setting_name in ("pointer_location", "show_touches"):
         disabled = _run_adb_command(
             adb_serial=adb_serial,
@@ -2391,7 +2385,6 @@ def _prepare_native_androidworld_a11y_runtime(
                 "ready": True,
                 "ui_element_count": len(ui_elements),
                 "controller_refreshed": controller_refreshed,
-                "forwarder_quiesced": bool(forwarder.get("removed")),
                 "a11y_method": str(
                     getattr(a11y_method, "value", a11y_method) or ""
                 ),

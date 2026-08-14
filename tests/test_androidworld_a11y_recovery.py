@@ -35,7 +35,7 @@ def test_accessibility_forwarder_installation_probe(
     ) is expected
 
 
-def test_native_a11y_runtime_retries_transient_state_failure(
+def test_native_a11y_runtime_preserves_forwarder_and_retries_transient_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     refresh_count = 0
@@ -65,10 +65,13 @@ def test_native_a11y_runtime_retries_transient_state_failure(
                 raise RuntimeError("Could not get a11y tree.")
             return SimpleNamespace(ui_elements=[object()])
 
+    def reject_quiesce(**kwargs: object) -> dict[str, object]:
+        raise AssertionError("runtime readiness must not stop the a11y forwarder")
+
     monkeypatch.setattr(
         launch,
         "_quiesce_androidworld_accessibility_forwarder",
-        lambda **kwargs: {"removed": True, "remaining_services": []},
+        reject_quiesce,
     )
     monkeypatch.setattr(
         launch,
