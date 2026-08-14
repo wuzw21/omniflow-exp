@@ -1328,7 +1328,7 @@ def test_bridge_planner_exposes_installed_apps_only_through_open_app() -> None:
             assert "com.android.settings" not in serialized
 
 
-def test_planner_keeps_screenshot_without_internal_xml() -> None:
+def test_planner_uses_compact_xml_as_primary_grounding_with_screenshot() -> None:
     request = build_model_turn_request(
         goal="Enter a name",
         model="test-model",
@@ -1349,8 +1349,11 @@ def test_planner_keeps_screenshot_without_internal_xml() -> None:
     content = request["messages"][-1]["content"]
     assert [item["type"] for item in content] == ["image_url", "text"]
     assert content[0]["image_url"]["url"].endswith("screen-image")
-    assert 'text="Name"' not in content[1]["text"]
-    assert "contacts:id/name" not in content[1]["text"]
+    assert "Primary UI grounding evidence" in content[1]["text"]
+    assert 'text="Name"' in content[1]["text"]
+    assert 'id="contacts:id/name"' in content[1]["text"]
+    assert "bounds=[100,188][900,281]" in content[1]["text"]
+    assert "flags=editable,focused" in content[1]["text"]
     assert "<hierarchy" not in content[1]["text"]
     assert [tool["function"]["name"] for tool in request["tools"]] == [
         "click",
@@ -1380,6 +1383,9 @@ def test_xml_only_state_does_not_expose_a_second_observation_tool() -> None:
 
     content = request["messages"][-1]["content"]
     assert [item["type"] for item in content] == ["text"]
+    assert "Primary UI grounding evidence" in content[0]["text"]
+    assert "bounds=[889,62][1000,125]" in content[0]["text"]
+    assert "flags=clickable" in content[0]["text"]
     assert "get_state" not in {
         tool["function"]["name"] for tool in request["tools"]
     }
@@ -1478,6 +1484,9 @@ def test_labeled_controls_keep_image_and_full_tool_set() -> None:
         "image_url",
         "text",
     ]
+    turn_text = request["messages"][-1]["content"][1]["text"]
+    assert 'text="Bluetooth"' in turn_text
+    assert "bounds=[0,78][1000,172]" in turn_text
     assert [tool["function"]["name"] for tool in request["tools"]] == [
         "click",
         "input_text",
@@ -1486,6 +1495,38 @@ def test_labeled_controls_keep_image_and_full_tool_set() -> None:
         "press_key",
         "finished",
     ]
+
+
+def test_compact_xml_prioritizes_actionable_navigation_after_long_content() -> None:
+    call_rows = "".join(
+        f'<node id="{index}" text="Recent call {index}" '
+        f'bounds="[0,{index * 40}][1080,{index * 40 + 40}]" />'
+        for index in range(40)
+    )
+    request = build_model_turn_request(
+        goal="Add a contact",
+        model="test-model",
+        state={
+            "xml": (
+                f'<hierarchy width="1080" height="2376">{call_rows}'
+                '<node id="116" content-desc="联系人" clickable="true" '
+                'bounds="[372,2160][708,2328]" />'
+                '<node id="122" content-desc="营业厅" clickable="true" '
+                'bounds="[708,2160][1044,2328]" /></hierarchy>'
+            ),
+            "image_base64": "screen-image",
+            "package_name": "com.android.contacts",
+            "display": {"width": 1080, "height": 2376},
+        },
+        max_steps=8,
+        turn_index=1,
+    )
+
+    turn_text = request["messages"][-1]["content"][1]["text"]
+    assert 'node_id=116 desc="联系人"' in turn_text
+    assert "bounds=[344,909][656,980]" in turn_text
+    assert 'node_id=122 desc="营业厅"' in turn_text
+    assert "Recent call 23" not in turn_text
 
 
 def test_open_app_remains_available_in_current_app() -> None:
@@ -1564,7 +1605,9 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert "Choose exactly one provided tool call" in SYSTEM_PROMPT
     assert "Functions are actions in the same action space" in SYSTEM_PROMPT
     assert "normalized 0..1000 coordinates" in SYSTEM_PROMPT
-    assert len(SYSTEM_PROMPT.split()) < 100
+    assert "Accessibility XML is primary evidence" in SYSTEM_PROMPT
+    assert "vision only supplements" in SYSTEM_PROMPT
+    assert "never guess future layout" in SYSTEM_PROMPT
 
 
 def test_planner_adds_recalled_function_as_a_peer_action_api() -> None:

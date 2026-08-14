@@ -13,6 +13,7 @@ from omniflow.core.config import DEFAULT_PLANNER_SYSTEM_PROMPT, PromptSet
 from omniflow.core.model import Function, Observation, ToolCall
 from omniflow.core.schemas import canonicalize_action, vlm_action_tools
 from omniflow.functions.assets import validate_arguments
+from omniflow.vlm.context import analyze_page_context
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import LLMUsageTracker
 
@@ -225,6 +226,9 @@ def _turn_text(
     ]
     if step_skill_guidance.strip():
         lines.append(f"Task guidance: {step_skill_guidance.strip()}")
+    page_context = analyze_page_context(state)
+    if page_context.useful:
+        lines.append(page_context.evidence)
     raw_extra = state.get("extra")
     if isinstance(raw_extra, dict):
         previous_error = str(raw_extra.get("previous_action_error") or "").strip()
