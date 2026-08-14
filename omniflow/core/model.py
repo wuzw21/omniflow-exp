@@ -226,9 +226,12 @@ class RunResult:
         total_tokens = max(0, _coerce_int(usage.get("total_tokens")))
         if total_tokens <= 0:
             total_tokens = prompt_tokens + completion_tokens
+        planner_steps = max(0, _coerce_int(self.detail.get("planner_steps")))
         return {
             "success": self.success,
             "steps": self.actions_executed,
+            "planner_steps": planner_steps,
+            "actions_executed": self.actions_executed,
             "model_calls": self.model_calls,
             "fallback_steps": self.fallback_steps,
             "completion_review_calls": max(

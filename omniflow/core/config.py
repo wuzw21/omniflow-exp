@@ -8,13 +8,12 @@ from omniflow.core.model import (
 )
 
 DEFAULT_PLANNER_SYSTEM_PROMPT = (
-    "You are a GUI agent. Given the task, history, results, and latest screenshot, choose exactly "
-    "one provided tool call. Tool schemas define tools and arguments. Functions are peer action "
-    "APIs like click and swipe; prefer one when it "
-    "directly covers the next subgoal. Function success returns control and does not finish the "
-    "task. Check whether the previous action produced the expected state. Do not repeat a failed "
-    "strategy or loop without progress. Use normalized 0..1000 coordinates. Keep needed facts and "
-    "unfinished work in summary. Use finished only when the full task is complete."
+    "You are a GUI agent. You are given a task and your action history, with screenshots. "
+    "You need to perform the next action to complete the task. Choose exactly one provided tool "
+    "call. Functions are actions in the same action space as click, swipe, and open_app. After "
+    "every action, inspect its result and latest screenshot. If it failed or the page stayed "
+    "unchanged, never repeat that action or no-progress sequence; use a different control or path. "
+    "Use normalized 0..1000 coordinates. Use finished only when the full task is complete."
 )
 
 

@@ -9,8 +9,6 @@ from pathlib import Path
 import re
 from typing import Any
 
-from json_repair import loads as repair_json_loads
-
 from omniflow.core.config import DEFAULT_PLANNER_SYSTEM_PROMPT, PromptSet
 from omniflow.core.model import Function, Observation, ToolCall
 from omniflow.core.schemas import canonicalize_action, vlm_action_tools
@@ -42,43 +40,33 @@ def build_model_turn_request(
     state: dict[str, Any],
     max_steps: int,
     turn_index: int,
-    target_package_name: str = "",
     step_skill_guidance: str = "",
     installed_apps: dict[str, str] | None = None,
     functions: list[Function] | tuple[Function, ...] = (),
-    previous_screenshot_path: str = "",
-    validation_error: str = "",
-    retry_tool_name: str = "",
-    rejected_tool_call: dict[str, Any] | None = None,
-    lightweight_retry: bool = False,
     system_prompt: str = SYSTEM_PROMPT,
     history: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
 ) -> dict[str, Any]:
     text = _turn_text(
         goal=goal,
         state=state,
-        target_package_name=target_package_name,
         step_skill_guidance=step_skill_guidance,
-        validation_error=validation_error,
-        rejected_tool_call=rejected_tool_call,
-        lightweight_retry=lightweight_retry,
     )
-    content: list[dict[str, Any]] = [{"type": "text", "text": text}]
-    include_images = not validation_error.strip()
-    current_image = _state_image_data_uri(state) if include_images else ""
+    content: list[dict[str, Any]] = []
+    current_image = _state_image_data_uri(state)
     if current_image:
-        content.append({"type": "image_url", "image_url": {"url": current_image}})
-    tools = function_tools(functions, include_summary=True)
-    tools.extend(vlm_action_tools(include_summary=True))
-    tools = constrain_open_app_tool(tools, installed_apps or {})
-    if retry_tool_name:
-        tools = [
-            tool
-            for tool in tools
-            if tool.get("function", {}).get("name") == retry_tool_name
-        ]
-        if len(tools) != 1:
-            raise ValueError(f"model_turn_retry_tool_not_visible:{retry_tool_name}")
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": current_image, "detail": "high"},
+            }
+        )
+    content.append({"type": "text", "text": text})
+    tools = function_tools(functions)
+    tools.extend(vlm_action_tools())
+    tools = constrain_open_app_tool(
+        tools,
+        installed_apps or {},
+    )
     return {
         "model": str(model),
         "messages": [
@@ -96,7 +84,6 @@ def build_model_turn_request(
         "reasoning_effort": "none",
         "enable_thinking": False,
     }
-
 
 def parse_model_turn_response(
     value: Any,
@@ -141,7 +128,7 @@ def parse_model_turn_response(
             arguments=raw_arguments,
         )
     try:
-        arguments, arguments_repaired = load_tool_arguments(raw_arguments)
+        arguments = json.loads(raw_arguments)
     except json.JSONDecodeError as error:
         raise ModelToolCallError(
             "model_turn_tool_arguments_must_be_json",
@@ -155,13 +142,6 @@ def parse_model_turn_response(
             arguments=arguments,
         )
     rejected_arguments = dict(arguments)
-    summary = str(arguments.pop("summary", "") or "").strip()
-    if not summary:
-        raise ModelToolCallError(
-            "model_turn_summary_required",
-            tool_name=tool,
-            arguments=rejected_arguments,
-        )
     resolved_model = str(value.get("resolved_model") or requested_model).strip()
     adapter_metadata = None
     try:
@@ -187,12 +167,7 @@ def parse_model_turn_response(
             tool_name=tool,
             arguments=rejected_arguments,
         ) from error
-    metadata: dict[str, Any] = {"summary": summary}
-    if arguments_repaired:
-        metadata["json_repair"] = {
-            "name": "json_repair",
-            "applied": True,
-        }
+    metadata: dict[str, Any] = {}
     if adapter_metadata is not None:
         metadata["model_adapter"] = adapter_metadata
     thinking = str(value.get("reasoning") or "").strip()
@@ -211,25 +186,13 @@ def parse_model_turn_response(
 
 def function_tools(
     functions: list[Function] | tuple[Function, ...],
-    *,
-    include_summary: bool,
 ) -> list[dict[str, Any]]:
     tools: list[dict[str, Any]] = []
     for function in functions:
         parameters = deepcopy(function.input_schema)
         properties = parameters.setdefault("properties", {})
-        required = list(parameters.get("required") or ())
-        if include_summary:
-            properties = {
-                "summary": {
-                    "type": "string",
-                    "description": "Brief plan and reason for the next action.",
-                },
-                **properties,
-            }
-            parameters["properties"] = properties
-            required = ["summary", *required]
-        parameters["required"] = required
+        parameters["properties"] = properties
+        parameters["required"] = list(parameters.get("required") or ())
         tools.append(
             {
                 "type": "function",
@@ -248,11 +211,7 @@ def _turn_text(
     *,
     goal: str,
     state: dict[str, Any],
-    target_package_name: str,
     step_skill_guidance: str,
-    validation_error: str,
-    rejected_tool_call: dict[str, Any] | None,
-    lightweight_retry: bool,
 ) -> str:
     display = state.get("display") if isinstance(state.get("display"), dict) else {}
     lines = [
@@ -264,23 +223,10 @@ def _turn_text(
             f"display={display.get('width') or '?'}x{display.get('height') or '?'}"
         ),
     ]
-    if target_package_name:
-        lines.append(f"Target package: {target_package_name}")
-    if step_skill_guidance.strip() and not lightweight_retry:
+    if step_skill_guidance.strip():
         lines.append(f"Task guidance: {step_skill_guidance.strip()}")
-    if validation_error.strip():
-        lines.append(f"Previous tool call was invalid: {validation_error.strip()}")
-        if rejected_tool_call:
-            lines.append(
-                "Rejected call: "
-                + json.dumps(
-                    rejected_tool_call,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
-            )
     raw_extra = state.get("extra")
-    if not lightweight_retry and isinstance(raw_extra, dict):
+    if isinstance(raw_extra, dict):
         previous_error = str(raw_extra.get("previous_action_error") or "").strip()
         if previous_error:
             lines.append(f"Previous action error: {previous_error}")
@@ -301,18 +247,13 @@ def constrain_open_app_tool(
     tools: list[dict[str, Any]],
     installed_apps: dict[str, str],
 ) -> list[dict[str, Any]]:
-    packages = list(
-        dict.fromkeys(
-            package for _label, package in _installed_app_candidates(installed_apps)
-        )
-    )
+    candidates = _installed_app_candidates(installed_apps)
+    packages = list(dict.fromkeys(package for _label, package in candidates))
     constrained: list[dict[str, Any]] = []
     for tool in tools:
         function = tool.get("function") if isinstance(tool, dict) else None
         if not isinstance(function, dict) or function.get("name") != "open_app":
             constrained.append(tool)
-            continue
-        if not packages:
             continue
         parameters = function.get("parameters")
         properties = (
@@ -323,7 +264,14 @@ def constrain_open_app_tool(
         )
         if not isinstance(package_schema, dict):
             raise ValueError("open_app_package_schema_missing")
-        package_schema["enum"] = packages
+        if packages:
+            package_schema["enum"] = packages
+            package_schema["description"] = (
+                "Choose one installed app (app label -> package): "
+                + "; ".join(f"{label} -> {package}" for label, package in candidates)
+            )
+        else:
+            package_schema.pop("enum", None)
         constrained.append(tool)
     return constrained
 
@@ -394,7 +342,6 @@ class VLMPlanner:
         transport: ModelTransport | None = None,
         metadata_sink: Callable[[dict[str, Any]], None] | None = None,
         prompts: PromptSet | None = None,
-        target_package_name: str = "",
         step_skill_guidance: str = "",
         max_steps: int = 20,
     ):
@@ -412,7 +359,6 @@ class VLMPlanner:
             base_url=base_url,
         )
         self.system_prompt = prompts.planner_system if prompts is not None else SYSTEM_PROMPT
-        self.target_package_name = str(target_package_name).strip()
         self.step_skill_guidance = str(step_skill_guidance).strip()
         self.max_steps = max(1, int(max_steps))
         self._turn_index = 0
@@ -428,90 +374,52 @@ class VLMPlanner:
         installed_apps: dict[str, str] | None = None,
     ) -> ToolCall:
         state = _planner_state(observation)
-        validation_error = ""
-        retry_tool_name = ""
-        rejected_tool_call: dict[str, Any] | None = None
-        rejected_calls: list[dict[str, Any]] = []
-        for attempt in range(2):
-            self._turn_index += 1
-            request = build_model_turn_request(
-                goal=str(goal),
-                model=self.model,
-                state=state,
-                target_package_name=self.target_package_name,
-                step_skill_guidance=self.step_skill_guidance,
-                installed_apps=installed_apps or {},
-                functions=functions,
-                max_steps=self.max_steps,
-                turn_index=self._turn_index,
-                validation_error=validation_error,
-                retry_tool_name=retry_tool_name,
-                rejected_tool_call=rejected_tool_call,
-                lightweight_retry=attempt > 0 and not retry_tool_name,
-                system_prompt=self.system_prompt,
-                history=self._history,
+        self._turn_index += 1
+        request = build_model_turn_request(
+            goal=str(goal),
+            model=self.model,
+            state=state,
+            step_skill_guidance=self.step_skill_guidance,
+            installed_apps=installed_apps or {},
+            functions=functions,
+            max_steps=self.max_steps,
+            turn_index=self._turn_index,
+            system_prompt=self.system_prompt,
+            history=self._history,
+        )
+        self._usage.start_call()
+        try:
+            response = self._call_model(
+                {
+                    "goal": str(goal),
+                    "model": self.model,
+                    "step_skill_guidance": self.step_skill_guidance,
+                    "max_steps": self.max_steps,
+                    "request": request,
+                }
             )
-            self._usage.start_call()
-            try:
-                response = self._call_model(
-                    {
-                        "goal": str(goal),
-                        "model": self.model,
-                        "target_package_name": self.target_package_name,
-                        "step_skill_guidance": self.step_skill_guidance,
-                        "max_steps": self.max_steps,
-                        "request": request,
-                    }
-                )
-                self._usage.record_response(response)
-                tool_call, metadata = parse_model_turn_response(
-                    _normalize_response(response, requested_model=self.model),
-                    requested_model=self.model,
-                    turn_index=self._turn_index,
-                    functions=functions,
-                    display=state.get("display"),
-                )
-            except ModelToolCallError as error:
-                rejected = {
-                    "turn_index": self._turn_index,
-                    "tool": error.tool_name or None,
-                    "error": str(error),
-                }
-                if error.arguments is not None:
-                    rejected["arguments"] = error.arguments
-                rejected_calls.append(rejected)
-                if attempt == 1:
-                    self._metadata = {"rejected_tool_calls": rejected_calls}
-                    raise
-                validation_error = str(error)
-                retry_tool_name = error.tool_name
-                rejected_tool_call = {
-                    "tool": error.tool_name or None,
-                    "arguments": error.arguments,
-                }
-                continue
-            except Exception:
-                self._usage.record_failure()
-                raise
-            if rejected_calls:
-                metadata["rejected_tool_calls"] = rejected_calls
-            self._metadata = metadata
-            self._remember_turn(tool_call, metadata)
-            if self._metadata_sink is not None:
-                self._metadata_sink(dict(metadata))
-            return tool_call
-        raise AssertionError("unreachable")
+            self._usage.record_response(response)
+            tool_call, metadata = parse_model_turn_response(
+                _normalize_response(response, requested_model=self.model),
+                requested_model=self.model,
+                turn_index=self._turn_index,
+                functions=functions,
+                display=state.get("display"),
+            )
+        except Exception:
+            self._usage.record_failure()
+            raise
+        self._metadata = metadata
+        self._remember_turn(tool_call)
+        if self._metadata_sink is not None:
+            self._metadata_sink(dict(metadata))
+        return tool_call
 
     def _remember_turn(
         self,
         tool_call: ToolCall,
-        metadata: dict[str, Any],
     ) -> None:
         call_id = f"omniflow_planner_{self._turn_index}"
-        arguments = {
-            "summary": str(metadata.get("summary") or "").strip(),
-            **dict(tool_call.arguments),
-        }
         self._history.extend(
             (
                 {
@@ -523,7 +431,7 @@ class VLMPlanner:
                             "function": {
                                 "name": tool_call.name,
                                 "arguments": json.dumps(
-                                    arguments,
+                                    dict(tool_call.arguments),
                                     ensure_ascii=False,
                                     separators=(",", ":"),
                                 ),
@@ -534,10 +442,24 @@ class VLMPlanner:
                 {
                     "role": "tool",
                     "tool_call_id": call_id,
-                    "content": "Action dispatched; inspect the current screenshot.",
+                    "content": "Execution result pending.",
                 },
             )
         )
+
+    def record_action_result(self, payload: dict[str, Any]) -> None:
+        content = "Action result: " + json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        for message in reversed(self._history):
+            if message.get("role") != "tool":
+                continue
+            if message.get("content") != "Execution result pending.":
+                continue
+            message["content"] = content
+            return
 
     def take_metadata(self) -> dict[str, Any]:
         metadata = dict(self._metadata)
@@ -732,39 +654,6 @@ def _is_number(value: Any) -> bool:
         and isinstance(value, (int, float))
         and math.isfinite(float(value))
     )
-
-
-def load_tool_arguments(raw_arguments: str) -> tuple[Any, bool]:
-    """Parse tool arguments, repairing only structurally truncated JSON."""
-    try:
-        return json.loads(raw_arguments), False
-    except json.JSONDecodeError as original_error:
-        if _ends_inside_json_string(raw_arguments):
-            raise original_error
-        try:
-            return (
-                repair_json_loads(raw_arguments, skip_json_loads=True),
-                True,
-            )
-        except (TypeError, ValueError, RecursionError):
-            raise original_error
-
-
-def _ends_inside_json_string(value: str) -> bool:
-    in_string = False
-    escaped = False
-    for character in value:
-        if not in_string:
-            if character == '"':
-                in_string = True
-            continue
-        if escaped:
-            escaped = False
-        elif character == "\\":
-            escaped = True
-        elif character == '"':
-            in_string = False
-    return in_string
 
 
 __all__ = [

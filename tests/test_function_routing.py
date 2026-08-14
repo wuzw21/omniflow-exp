@@ -20,6 +20,7 @@ from omniflow.core.model import FunctionStep, TransferResult
 from omniflow.core.trajectory import state_id
 from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION, FunctionStore
 from omniflow.vlm.planner import (
+    ModelToolCallError,
     SYSTEM_PROMPT,
     VLMPlanner,
     adapt_tool_arguments,
@@ -137,6 +138,7 @@ class FinishingPlanner:
     def __init__(self) -> None:
         self.visible_function_ids: list[tuple[str, ...]] = []
         self.observations: list[Observation] = []
+        self.action_results: list[dict[str, object]] = []
 
     def one_step_tool_call(
         self,
@@ -148,6 +150,9 @@ class FinishingPlanner:
         self.visible_function_ids.append(tuple(function.id for function in functions))
         self.observations.append(_observation)
         return ToolCall("finished", {"content": ""})
+
+    def record_action_result(self, payload: dict[str, object]) -> None:
+        self.action_results.append(dict(payload))
 
 
 class SequencePlanner(FinishingPlanner):
@@ -171,6 +176,56 @@ class SequencePlanner(FinishingPlanner):
             observation.extra.get("previous_action_error")
         )
         return self.responses.pop(0)
+
+
+def test_ui_tars_mobile_prompt_keeps_structured_peer_tools() -> None:
+    function = Function(
+        function_id="create_contact",
+        name="Create contact",
+        description="Create one contact with the provided name and phone number.",
+        steps=(),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "phone": {"type": "string"},
+            },
+            "required": ["name", "phone"],
+            "additionalProperties": False,
+        },
+    )
+
+    request = build_model_turn_request(
+        goal="Add Daniel Mohammed as 5550100",
+        model="test-model",
+        state={
+            "image_base64": "full-image",
+            "display": {"width": 720, "height": 1280},
+        },
+        max_steps=20,
+        turn_index=1,
+        functions=(function,),
+    )
+
+    assert "tools" in request
+    assert request["messages"][0]["content"].startswith("You are a GUI agent.")
+    prompt = request["messages"][0]["content"]
+    assert "task and your action history, with screenshots" in prompt
+    assert "summary" not in prompt.casefold()
+    assert request["tool_choice"] == "required"
+    assert request["parallel_tool_calls"] is False
+    function_tool = next(
+        tool
+        for tool in request["tools"]
+        if tool["function"]["name"] == "create_contact"
+    )
+    assert function_tool["function"]["parameters"]["required"] == [
+        "name",
+        "phone",
+    ]
+    assert request["messages"][-1]["content"][0]["image_url"]["url"].endswith(
+        "full-image"
+    )
 
 
 def _store_with_open_settings_function(path: object) -> str:
@@ -230,7 +285,7 @@ def test_function_tools_preserve_router_order_without_visibility_filter() -> Non
         function("a_second_ranked", agent_visible=True),
     )
 
-    tools = function_tools(ranked, include_summary=False)
+    tools = function_tools(ranked)
 
     assert [tool["function"]["name"] for tool in tools] == [
         "z_top_ranked",
@@ -396,7 +451,6 @@ def test_planner_selects_recalled_function_as_one_peer_tool(tmp_path) -> None:
     assert planner.visible_function_ids == [(function_id,), (function_id,)]
     assert planner.observations[0].image_base64 == "final-screenshot"
     assert [request.get("screenshot") for request in host.observe_requests] == [
-        False,
         True,
         True,
     ]
@@ -493,7 +547,75 @@ def test_max_steps_limits_planner_calls_not_function_actions(tmp_path) -> None:
     ]
     assert planner.visible_function_ids == []
     assert result.actions_executed == 3
+    assert result.detail["planner_steps"] == 0
     assert result.detail["runtime_limits"]["max_steps"] == 1
+
+
+def test_one_function_call_is_one_planner_step_with_multiple_actions(tmp_path) -> None:
+    store_path = tmp_path / "store.json"
+    function_id = _store_with_long_function(store_path)
+    host = RecordingHost()
+    planner = SequencePlanner([ToolCall(function_id, {})])
+    flow = OmniFlow(
+        store_path,
+        host=host,
+        planner=planner,
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=1)),
+    )
+
+    result = flow.run("Complete the replay")
+
+    assert result.success is False
+    assert result.error is None
+    assert result.detail["done_reason"] == "step_completed"
+    assert result.detail["planner_steps"] == 1
+    assert result.actions_executed == 3
+    assert planner.action_results == [
+        {
+            "status": "succeeded",
+            "function_id": function_id,
+            "actions_executed": 3,
+            "error": None,
+        }
+    ]
+
+
+def test_one_native_action_is_one_nonterminal_planner_step(tmp_path) -> None:
+    planner = SequencePlanner(
+        [ToolCall("open_app", {"package_name": "com.android.settings"})]
+    )
+    flow = OmniFlow(
+        tmp_path / "store.json",
+        host=RecordingHost(),
+        planner=planner,
+        installed_apps={"Settings": "com.android.settings"},
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=1)),
+    )
+
+    result = flow.run("Open Settings")
+
+    assert result.success is False
+    assert result.error is None
+    assert result.detail["done_reason"] == "step_completed"
+    assert result.detail["planner_steps"] == 1
+    assert result.actions_executed == 1
+
+
+def test_finished_is_one_terminal_planner_step(tmp_path) -> None:
+    flow = OmniFlow(
+        tmp_path / "store.json",
+        host=RecordingHost(),
+        planner=FinishingPlanner(),
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=1)),
+    )
+
+    result = flow.run("Nothing remains")
+
+    assert result.success is True
+    assert result.error is None
+    assert result.detail["done_reason"] == "finished"
+    assert result.detail["planner_steps"] == 1
+    assert result.actions_executed == 0
 
 
 def test_task_planner_receives_recalled_functions(tmp_path) -> None:
@@ -595,6 +717,28 @@ def test_direct_function_transfer_failure_continues_with_gui_planner(tmp_path) -
     assert planner.previous_action_errors[0] == "omnitransfer_missing_target_page"
     assert "Continue Function" in planner.goals[0]
     assert "Do not repeat actions that already succeeded" in planner.goals[0]
+    assert planner.action_results == [
+        {
+            "status": "succeeded",
+            "action": {
+                "tool": "open_app",
+                "args": {"package_name": "com.android.settings"},
+            },
+            "execution": {
+                "origin": "action",
+                "error": None,
+                "result": {"success": True, "error": None, "extra": {}},
+                "detail": {},
+            },
+            "state_transition": {
+                "before_state_id": "state_0",
+                "after_state_id": "state_1",
+                "changed": True,
+                "before_package": "com.android.launcher",
+                "after_package": "com.android.settings",
+            },
+        }
+    ]
     assert result.detail["function_resolution"]["status"] == "direct"
     assert result.detail["function_resolution"]["replay_status"] == "failed"
 
@@ -778,6 +922,12 @@ def test_planner_can_repeat_action_on_same_logical_ui_state(
     assert planner.previous_action_errors[0] is None
     assert "action_already_succeeded_on_current_state" not in planner.previous_action_errors
     assert len(planner.previous_action_errors) <= 3
+    assert all(observation.image_base64 for observation in planner.observations)
+    assert [request.get("screenshot") for request in host.observe_requests] == [
+        True,
+        True,
+        True,
+    ]
 
 
 class CapturingCompletions:
@@ -832,9 +982,7 @@ def test_planner_parses_normalized_coordinates_without_conversion() -> None:
                 {
                     "function": {
                         "name": "click",
-                        "arguments": json.dumps(
-                            {"summary": "Tap add", "x": 876, "y": 869}
-                        ),
+                        "arguments": json.dumps({"x": 876, "y": 869}),
                     }
                 }
             ],
@@ -845,7 +993,31 @@ def test_planner_parses_normalized_coordinates_without_conversion() -> None:
     )
 
     assert tool_call == ToolCall("click", {"x": 876, "y": 869})
-    assert metadata == {"summary": "Tap add"}
+    assert metadata == {}
+
+
+def test_model_turn_uses_only_generic_planning_context() -> None:
+    request = build_model_turn_request(
+        goal="Copy every record into another app",
+        model="test-model",
+        state={
+            "image_base64": "full-image",
+            "package_name": "com.example.source",
+            "display": {"width": 720, "height": 1280},
+        },
+        max_steps=20,
+        turn_index=1,
+    )
+
+    turn_text = next(
+        item["text"]
+        for item in request["messages"][-1]["content"]
+        if item["type"] == "text"
+    )
+    assert "Task: Copy every record into another app" in turn_text
+    assert "Current screen: package=com.example.source" in turn_text
+    assert "file" not in turn_text.casefold()
+    assert "search" not in turn_text.casefold()
 
 
 def test_runtime_maps_normalized_coordinates_to_screen_pixels() -> None:
@@ -858,16 +1030,16 @@ def test_runtime_maps_normalized_coordinates_to_screen_pixels() -> None:
     }
 
 
-def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:
+def test_vlm_planner_exposes_installed_apps_only_through_open_app() -> None:
     response = SimpleNamespace(
         choices=[
             SimpleNamespace(
                 message=SimpleNamespace(
                     tool_calls=[
                         SimpleNamespace(
-                            function=SimpleNamespace(
-                                name="finished",
-                                arguments='{"summary":"Goal complete"}',
+                                function=SimpleNamespace(
+                                    name="finished",
+                                    arguments='{}',
                             )
                         )
                     ]
@@ -908,10 +1080,13 @@ def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:
         function = tool["function"]
         serialized = str(function)
         if function["name"] == "open_app":
-            assert function["parameters"]["properties"]["package_name"]["enum"] == [
+            package_schema = function["parameters"]["properties"]["package_name"]
+            assert package_schema["enum"] == [
                 "com.android.chrome",
                 "com.android.settings",
             ]
+            assert "Chrome -> com.android.chrome" in package_schema["description"]
+            assert "Settings -> com.android.settings" in package_schema["description"]
         else:
             assert "com.android.chrome" not in serialized
             assert "com.android.settings" not in serialized
@@ -924,9 +1099,9 @@ def test_vlm_planner_uses_only_compact_current_runtime_context() -> None:
                 message=SimpleNamespace(
                     tool_calls=[
                         SimpleNamespace(
-                            function=SimpleNamespace(
-                                name="finished",
-                                arguments='{"summary":"Goal complete"}',
+                                function=SimpleNamespace(
+                                    name="finished",
+                                    arguments='{}',
                             )
                         )
                     ]
@@ -1026,13 +1201,7 @@ def test_vlm_planner_keeps_ui_tars_style_action_history() -> None:
                         "function": {
                             "name": "open_app",
                             "arguments": json.dumps(
-                                {
-                                    "summary": (
-                                        "Read Theater Show, Museum Tickets, and "
-                                        "Household Items; open target app."
-                                    ),
-                                    "package_name": "com.arduia.expense",
-                                }
+                                {"package_name": "com.arduia.expense"}
                             ),
                         }
                     }
@@ -1045,9 +1214,7 @@ def test_vlm_planner_keeps_ui_tars_style_action_history() -> None:
                     {
                         "function": {
                             "name": "finished",
-                            "arguments": json.dumps(
-                                {"summary": "All three expenses added"}
-                            ),
+                            "arguments": "{}",
                         }
                     }
                 ],
@@ -1072,9 +1239,31 @@ def test_vlm_planner_keeps_ui_tars_style_action_history() -> None:
         package_name="com.arduia.expense",
         extra={"display": {"width": 720, "height": 1280}},
     )
+    installed_apps = {
+        "Gallery": "com.simplemobiletools.gallery.pro",
+        "Expense Manager": "com.arduia.expense",
+    }
 
-    asyncio.run(planner.one_step_tool_call("Add three expenses", first))
-    asyncio.run(planner.one_step_tool_call("Add three expenses", second))
+    asyncio.run(
+        planner.one_step_tool_call("Add three expenses", first, installed_apps=installed_apps)
+    )
+    planner.record_action_result(
+        {
+            "status": "succeeded",
+            "action": {
+                "tool": "open_app",
+                "args": {"package_name": "com.arduia.expense"},
+            },
+            "state_transition": {
+                "before_package": "com.simplemobiletools.gallery.pro",
+                "after_package": "com.arduia.expense",
+                "changed": True,
+            },
+        }
+    )
+    asyncio.run(
+        planner.one_step_tool_call("Add three expenses", second, installed_apps=installed_apps)
+    )
 
     messages = requests[1]["messages"]
     assert isinstance(messages, list)
@@ -1085,12 +1274,22 @@ def test_vlm_planner_keeps_ui_tars_style_action_history() -> None:
         "user",
     ]
     assistant_call = messages[1]["tool_calls"][0]["function"]
-    assert "Theater Show" in assistant_call["arguments"]
-    assert "Museum Tickets" in assistant_call["arguments"]
-    assert "Household Items" in assistant_call["arguments"]
-    assert messages[2]["content"] == "Action dispatched; inspect the current screenshot."
+    assert json.loads(assistant_call["arguments"]) == {
+        "package_name": "com.arduia.expense"
+    }
+    assert '"status":"succeeded"' in messages[2]["content"]
+    assert '"before_package":"com.simplemobiletools.gallery.pro"' in messages[2]["content"]
+    assert '"after_package":"com.arduia.expense"' in messages[2]["content"]
+    assert [tool["function"]["name"] for tool in requests[1]["tools"]] == [
+        "click",
+        "input_text",
+        "swipe",
+        "open_app",
+        "press_key",
+        "finished",
+    ]
 
-def test_bridge_planner_exposes_packages_only_through_open_app_tool() -> None:
+def test_bridge_planner_exposes_installed_apps_only_through_open_app() -> None:
     installed_apps = {
         "Chrome": "com.android.chrome",
         "Settings": "com.android.settings",
@@ -1117,13 +1316,235 @@ def test_bridge_planner_exposes_packages_only_through_open_app_tool() -> None:
         function = tool["function"]
         serialized = str(function)
         if function["name"] == "open_app":
-            assert function["parameters"]["properties"]["package_name"]["enum"] == [
+            package_schema = function["parameters"]["properties"]["package_name"]
+            assert package_schema["enum"] == [
                 "com.android.chrome",
                 "com.android.settings",
             ]
+            assert "Chrome -> com.android.chrome" in package_schema["description"]
+            assert "Settings -> com.android.settings" in package_schema["description"]
         else:
             assert "com.android.chrome" not in serialized
             assert "com.android.settings" not in serialized
+
+
+def test_planner_keeps_screenshot_without_internal_xml() -> None:
+    request = build_model_turn_request(
+        goal="Enter a name",
+        model="test-model",
+        state={
+            "xml": (
+                '<hierarchy><node class="android.widget.EditText" text="Name" '
+                'resource-id="contacts:id/name" editable="true" focused="true" '
+                'bounds="[72,240][648,360]" /></hierarchy>'
+            ),
+            "image_base64": "screen-image",
+            "package_name": "com.android.contacts",
+            "display": {"width": 720, "height": 1280},
+        },
+        max_steps=8,
+        turn_index=1,
+    )
+
+    content = request["messages"][-1]["content"]
+    assert [item["type"] for item in content] == ["image_url", "text"]
+    assert content[0]["image_url"]["url"].endswith("screen-image")
+    assert 'text="Name"' not in content[1]["text"]
+    assert "contacts:id/name" not in content[1]["text"]
+    assert "<hierarchy" not in content[1]["text"]
+    assert [tool["function"]["name"] for tool in request["tools"]] == [
+        "click",
+        "input_text",
+        "swipe",
+        "open_app",
+        "press_key",
+        "finished",
+    ]
+
+
+def test_xml_only_state_does_not_expose_a_second_observation_tool() -> None:
+    request = build_model_turn_request(
+        goal="Tap the unlabeled icon",
+        model="test-model",
+        state={
+            "xml": (
+                '<hierarchy><node clickable="true" '
+                'bounds="[640,80][720,160]" /></hierarchy>'
+            ),
+            "package_name": "com.example.app",
+            "display": {"width": 720, "height": 1280},
+        },
+        max_steps=8,
+        turn_index=1,
+    )
+
+    content = request["messages"][-1]["content"]
+    assert [item["type"] for item in content] == ["text"]
+    assert "get_state" not in {
+        tool["function"]["name"] for tool in request["tools"]
+    }
+    assert [tool["function"]["name"] for tool in request["tools"]] == [
+        "click",
+        "input_text",
+        "swipe",
+        "open_app",
+        "press_key",
+        "finished",
+    ]
+
+
+def test_screenshot_state_hides_get_state_fallback() -> None:
+    request = build_model_turn_request(
+        goal="Tap the icon",
+        model="test-model",
+        state={
+            "xml": "",
+            "image_base64": "screen-image",
+            "package_name": "com.example.app",
+            "display": {"width": 720, "height": 1280},
+        },
+        max_steps=8,
+        turn_index=2,
+    )
+
+    assert [item["type"] for item in request["messages"][-1]["content"]] == [
+        "image_url",
+        "text",
+    ]
+    assert "get_state" not in {
+        tool["function"]["name"] for tool in request["tools"]
+    }
+    assert [tool["function"]["name"] for tool in request["tools"]] == [
+        "click",
+        "input_text",
+        "swipe",
+        "open_app",
+        "press_key",
+        "finished",
+    ]
+
+
+def test_visual_surface_keeps_screenshot_and_full_gui_fallback_tools() -> None:
+    request = build_model_turn_request(
+        goal="Tap the game icon",
+        model="test-model",
+        state={
+            "xml": (
+                '<hierarchy><node class="android.view.SurfaceView" '
+                'bounds="[0,0][720,1280]" /></hierarchy>'
+            ),
+            "image_base64": "screen-image",
+            "package_name": "com.example.game",
+            "display": {"width": 720, "height": 1280},
+        },
+        max_steps=8,
+        turn_index=1,
+    )
+
+    content = request["messages"][-1]["content"]
+    assert [item["type"] for item in content] == ["image_url", "text"]
+    assert [tool["function"]["name"] for tool in request["tools"]] == [
+        "click",
+        "input_text",
+        "swipe",
+        "open_app",
+        "press_key",
+        "finished",
+    ]
+
+
+def test_labeled_controls_keep_image_and_full_tool_set() -> None:
+    request = build_model_turn_request(
+        goal="Open Bluetooth",
+        model="test-model",
+        state={
+            "xml": (
+                '<hierarchy><node text="Settings" bounds="[0,0][720,100]" />'
+                '<node text="Bluetooth" clickable="true" bounds="[0,100][720,220]" />'
+                '<node text="Wi-Fi" clickable="true" bounds="[0,220][720,340]" />'
+                '<node clickable="true" bounds="[640,0][720,100]" />'
+                '<node clickable="true" bounds="[560,0][640,100]" />'
+                '<node clickable="true" bounds="[480,0][560,100]" /></hierarchy>'
+            ),
+            "image_base64": "screen-image",
+            "package_name": "com.android.settings",
+            "display": {"width": 720, "height": 1280},
+        },
+        max_steps=8,
+        turn_index=1,
+    )
+
+    assert [item["type"] for item in request["messages"][-1]["content"]] == [
+        "image_url",
+        "text",
+    ]
+    assert [tool["function"]["name"] for tool in request["tools"]] == [
+        "click",
+        "input_text",
+        "swipe",
+        "open_app",
+        "press_key",
+        "finished",
+    ]
+
+
+def test_open_app_remains_available_in_current_app() -> None:
+    request = build_model_turn_request(
+        goal="Open network settings",
+        model="test-model",
+        state={
+            "xml": (
+                '<hierarchy><node text="Network &amp; internet" clickable="true" '
+                'bounds="[40,200][680,320]" /></hierarchy>'
+            ),
+            "package_name": "com.android.settings",
+            "display": {"width": 720, "height": 1280},
+        },
+        installed_apps={"Settings": "com.android.settings"},
+        max_steps=8,
+        turn_index=1,
+    )
+
+    names = [tool["function"]["name"] for tool in request["tools"]]
+    assert names == [
+        "click",
+        "input_text",
+        "swipe",
+        "open_app",
+        "press_key",
+        "finished",
+    ]
+
+
+def test_open_app_exposes_complete_installed_app_vocabulary() -> None:
+    request = build_model_turn_request(
+        goal="Open contacts",
+        model="test-model",
+        state={
+            "package_name": "com.android.launcher",
+            "display": {"width": 720, "height": 1280},
+        },
+        installed_apps={
+            "Contacts": "com.android.contacts",
+            "Settings": "com.android.settings",
+            "Chrome": "com.android.chrome",
+        },
+        max_steps=8,
+        turn_index=1,
+    )
+
+    open_app = next(
+        tool for tool in request["tools"] if tool["function"]["name"] == "open_app"
+    )
+    package_schema = open_app["function"]["parameters"]["properties"]["package_name"]
+    assert package_schema["enum"] == [
+        "com.android.chrome",
+        "com.android.contacts",
+        "com.android.settings",
+    ]
+    assert "Contacts -> com.android.contacts" in package_schema["description"]
+    assert "Settings -> com.android.settings" in package_schema["description"]
+    assert "Chrome -> com.android.chrome" in package_schema["description"]
 
 
 def test_bridge_planner_uses_unified_short_decision_policy() -> None:
@@ -1139,12 +1560,9 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert request["reasoning_effort"] == "none"
     assert request["enable_thinking"] is False
     assert "You are a GUI agent" in SYSTEM_PROMPT
-    assert "Given the task, history, results" in SYSTEM_PROMPT
-    assert "previous action produced the expected state" in SYSTEM_PROMPT
-    assert "Do not repeat a failed strategy" in SYSTEM_PROMPT
-    assert "loop without progress" in SYSTEM_PROMPT
-    assert "Functions are peer action APIs" in SYSTEM_PROMPT
-    assert "does not finish the task" in SYSTEM_PROMPT
+    assert "task and your action history, with screenshots" in SYSTEM_PROMPT
+    assert "Choose exactly one provided tool call" in SYSTEM_PROMPT
+    assert "Functions are actions in the same action space" in SYSTEM_PROMPT
     assert "normalized 0..1000 coordinates" in SYSTEM_PROMPT
     assert len(SYSTEM_PROMPT.split()) < 100
 
@@ -1174,58 +1592,32 @@ def test_planner_adds_recalled_function_as_a_peer_action_api() -> None:
 
     tool_names = [tool["function"]["name"] for tool in request["tools"]]
     assert tool_names[0] == "add_expense"
-    assert "Functions are peer action APIs" in SYSTEM_PROMPT
-    assert "prefer one when it directly covers" in SYSTEM_PROMPT
-    summaries = [
-        tool["function"]["parameters"]["properties"]["summary"]["description"]
+    assert all(
+        "summary" not in tool["function"]["parameters"]["properties"]
         for tool in request["tools"]
-    ]
-    assert all(text == "Brief plan and reason for the next action." for text in summaries)
-
-
-def test_vlm_planner_retries_empty_required_function_string() -> None:
-    requests: list[dict[str, object]] = []
-    responses = iter(
-        [
-            {
-                "requested_model": "test-model",
-                "resolved_model": "test-model",
-                "tool_calls": [
-                    {
-                        "function": {
-                            "name": "finish_expense",
-                            "arguments": json.dumps(
-                                {"summary": "Save the expense.", "note": "   "}
-                            ),
-                        }
-                    }
-                ],
-            },
-            {
-                "requested_model": "test-model",
-                "resolved_model": "test-model",
-                "tool_calls": [
-                    {
-                        "function": {
-                            "name": "finish_expense",
-                            "arguments": json.dumps(
-                                {
-                                    "summary": "Save the expense with its note.",
-                                    "note": "Paid by card",
-                                }
-                            ),
-                        }
-                    }
-                ],
-            },
-        ]
     )
+
+
+def test_vlm_planner_rejects_invalid_function_once_without_retry() -> None:
+    requests: list[dict[str, object]] = []
+    response = {
+        "requested_model": "test-model",
+        "resolved_model": "test-model",
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "finish_expense",
+                    "arguments": json.dumps({"note": "   "}),
+                }
+            }
+        ],
+    }
 
     def transport(envelope: dict[str, object]) -> dict[str, object]:
         request = envelope["request"]
         assert isinstance(request, dict)
         requests.append(request)
-        return next(responses)
+        return response
 
     function = Function(
         function_id="finish_expense",
@@ -1241,21 +1633,16 @@ def test_vlm_planner_retries_empty_required_function_string() -> None:
     )
     planner = VLMPlanner(model="test-model", transport=transport)
 
-    call = asyncio.run(
-        planner.one_step_tool_call(
-            "Add the expense",
-            Observation(extra={"display": {"width": 720, "height": 1280}}),
-            (function,),
+    with pytest.raises(ModelToolCallError, match="minLength:note"):
+        asyncio.run(
+            planner.one_step_tool_call(
+                "Add the expense",
+                Observation(extra={"display": {"width": 720, "height": 1280}}),
+                (function,),
+            )
         )
-    )
 
-    assert call == ToolCall("finish_expense", {"note": "Paid by card"})
-    assert len(requests) == 2
-    assert [tool["function"]["name"] for tool in requests[1]["tools"]] == [
-        "finish_expense"
-    ]
-    retry_text = requests[1]["messages"][-1]["content"][0]["text"]
-    assert "function_arguments_invalid:minLength:note" in retry_text
+    assert len(requests) == 1
 
 
 def test_function_completion_review_keeps_current_screenshot_and_result() -> None:
@@ -1281,9 +1668,9 @@ def test_function_completion_review_keeps_current_screenshot_and_result() -> Non
     )
 
     content = request["messages"][1]["content"]
-    assert [item["type"] for item in content] == ["text", "image_url"]
-    assert "Previous Function result: complete_run_turn_bluetooth_off succeeded" in content[0]["text"]
-    assert '"checked":false' not in content[0]["text"]
+    assert [item["type"] for item in content] == ["image_url", "text"]
+    assert "Previous Function result: complete_run_turn_bluetooth_off succeeded" in content[1]["text"]
+    assert '"checked":false' not in content[1]["text"]
 
 
 def test_vlm_planner_function_completion_review_uses_current_screenshot() -> None:
@@ -1295,7 +1682,7 @@ def test_vlm_planner_function_completion_review_uses_current_screenshot() -> Non
                         SimpleNamespace(
                             function=SimpleNamespace(
                                 name="finished",
-                                arguments='{"summary":"Goal complete"}',
+                                arguments="{}",
                             )
                         )
                     ]
@@ -1333,8 +1720,8 @@ def test_vlm_planner_function_completion_review_uses_current_screenshot() -> Non
     assert planned == ToolCall("finished", {})
     request = completions.requests[0]
     content = request["messages"][1]["content"]
-    assert [item["type"] for item in content] == ["text", "image_url"]
-    turn_payload = content[0]["text"]
+    assert [item["type"] for item in content] == ["image_url", "text"]
+    turn_payload = content[1]["text"]
     assert "Previous Function result: complete_run_turn_bluetooth_off succeeded" in turn_payload
     assert '"checked":false' not in turn_payload
 
