@@ -599,7 +599,7 @@ def test_direct_function_transfer_failure_continues_with_gui_planner(tmp_path) -
     assert result.detail["function_resolution"]["replay_status"] == "failed"
 
 
-def test_function_failure_returns_to_offline_resume_after_planner_recovery(
+def test_function_failure_retries_failed_step_only_after_explicit_function_call(
     tmp_path,
 ) -> None:
     store_path = tmp_path / "store.json"
@@ -610,6 +610,7 @@ def test_function_failure_returns_to_offline_resume_after_planner_recovery(
         [
             ToolCall(function_id, {}),
             ToolCall("click", {"x": 100.0, "y": 100.0}),
+            ToolCall(function_id, {}),
             ToolCall("finished", {"content": ""}),
         ]
     )
@@ -628,7 +629,7 @@ def test_function_failure_returns_to_offline_resume_after_planner_recovery(
 
     assert result.success is True
     assert result.function_id == function_id
-    assert result.fallback_steps == 1
+    assert result.fallback_steps == 2
     assert [action.to_dict() for action in host.actions] == [
         {
             "tool": "open_app",
@@ -641,45 +642,68 @@ def test_function_failure_returns_to_offline_resume_after_planner_recovery(
     assert planner.observations[1].extra["function_execution"]["replay_status"] == (
         "actions_failed"
     )
-    resumed_steps = [
+    retried_steps = [
         step
         for step in result.detail["trace"]
         if step.get("metadata", {}).get("function_alignment")
     ]
-    assert len(resumed_steps) == 1
-    assert resumed_steps[0]["metadata"]["function_alignment"] == {
-        "protocol": "weighted_lcs_v1",
+    assert len(retried_steps) == 1
+    assert retried_steps[0]["metadata"]["function_alignment"] == {
+        "protocol": "explicit_function_retry_v1",
         "start_step_index": 1,
         "resume_step_index": 1,
-        "probability": 0.9,
-        "score": pytest.approx(2.1972245773362196),
-        "minimum_probability": 0.0,
-        "source_skip_penalty": pytest.approx(1.0986122886681098),
-        "target_observation_count": 2,
-        "path": [
-            {
-                "function_step_index": 1,
-                "target_observation_index": 1,
-                "probability": 0.9,
-            }
-        ],
+        "source_state_id": "source_target_page",
     }
     assert result.detail["function_resume"] == {
         "schema_version": "omniflow.function-resume-audit.v1",
         "events": [
-                {
-                    "start_step_index": 1,
-                    "status": "succeeded",
-                    "trigger": "function_replay_failure",
-                    "resume_step_index": 1,
-                "probability": 0.9,
-                "score": pytest.approx(2.1972245773362196),
+            {
+                "start_step_index": 1,
+                "status": "succeeded",
+                "trigger": "explicit_function_call",
+                "resume_step_index": 1,
+                "source_state_id": "source_target_page",
             }
         ],
         "attempt_count": 1,
         "success_count": 1,
     }
-    assert result.execution_summary["fallback_steps"] == 1
+    assert result.execution_summary["fallback_steps"] == 2
+
+
+def test_planner_recovery_does_not_automatically_resume_function(tmp_path) -> None:
+    store_path = tmp_path / "store.json"
+    function_id = _store_with_resumable_click_function(store_path)
+    host = ResumableHost()
+    planner = SequencePlanner(
+        [
+            ToolCall(function_id, {}),
+            ToolCall("click", {"x": 100.0, "y": 100.0}),
+            ToolCall("finished", {"content": ""}),
+        ]
+    )
+    flow = OmniFlow(
+        store_path,
+        host=host,
+        planner=planner,
+        installed_apps={"Settings": "com.android.settings"},
+        config=OmniFlowConfig(
+            runtime=RuntimeSettings(max_steps=10, max_fallback_steps=5),
+            plugins=PluginSet(transfer=ResumableTransfer()),
+        ),
+    )
+
+    result = flow.run("Open settings and choose the target")
+
+    assert result.success is True
+    assert [action.to_dict() for action in host.actions] == [
+        {
+            "tool": "open_app",
+            "args": {"package_name": "com.android.settings"},
+        },
+        {"tool": "click", "args": {"x": 100.0, "y": 100.0}},
+    ]
+    assert "function_resume" not in result.detail
 
 
 def test_successful_function_can_be_called_again_without_resume(tmp_path) -> None:

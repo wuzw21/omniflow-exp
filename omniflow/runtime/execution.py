@@ -43,7 +43,6 @@ _CHECKER_RECOVERY_MAX_ATTEMPTS = 8
 # second time merely because its confidence is below a conservative benchmark
 # threshold.
 _ALIGNMENT_MIN_PROBABILITY = 0.0
-_ALIGNMENT_SOURCE_SKIP_PENALTY = math.log(3.0)
 StateLoader = Callable[[str], Any]
 
 
@@ -127,154 +126,6 @@ async def execute_function(
             ),
         },
     )
-
-
-async def align_function_resume(
-    function: Function,
-    *,
-    host: Host,
-    plugins: PluginSet,
-    observations: list[Observation],
-    start_step_index: int,
-    state_loader: StateLoader | None = None,
-) -> dict[str, Any] | None:
-    transfer_fn = plugins.transfer
-    if transfer_fn is None or len(observations) < 2:
-        return None
-    remaining = [
-        step for step in function.steps if step.step_index >= int(start_step_index)
-    ]
-    candidate_steps = remaining[: len(observations)]
-    if not candidate_steps:
-        return None
-
-    probabilities: list[list[float | None]] = []
-    for function_step in candidate_steps:
-        source_state = await _load_state(
-            host,
-            function_step.source_state_id,
-            state_loader=state_loader,
-        )
-        row: list[float | None] = []
-        for observation in observations:
-            if source_state is None:
-                row.append(None)
-                continue
-            try:
-                transfer = await _await(
-                    transfer_fn(function_step.action, observation, source_state)
-                )
-            except Exception:  # noqa: BLE001
-                row.append(None)
-                continue
-            probability = _alignment_probability(transfer.detail)
-            row.append(
-                probability
-                if transfer.action is not None
-                and probability is not None
-                and probability >= _ALIGNMENT_MIN_PROBABILITY
-                else None
-            )
-        probabilities.append(row)
-
-    source_count = len(candidate_steps)
-    target_count = len(observations)
-    negative_infinity = float("-inf")
-    scores = [
-        [negative_infinity for _ in range(target_count + 1)]
-        for _ in range(source_count + 1)
-    ]
-    back: list[list[str | None]] = [
-        [None for _ in range(target_count + 1)] for _ in range(source_count + 1)
-    ]
-    scores[0][0] = 0.0
-    for target_index in range(1, target_count + 1):
-        scores[0][target_index] = scores[0][target_index - 1]
-        back[0][target_index] = "target_gap"
-    for source_index in range(1, source_count + 1):
-        scores[source_index][0] = (
-            scores[source_index - 1][0] - _ALIGNMENT_SOURCE_SKIP_PENALTY
-        )
-        back[source_index][0] = "source_gap"
-
-    operation_priority = {"target_gap": 0, "source_gap": 1, "match": 2}
-    for source_index in range(1, source_count + 1):
-        for target_index in range(1, target_count + 1):
-            options = [
-                (scores[source_index][target_index - 1], "target_gap"),
-                (
-                    scores[source_index - 1][target_index]
-                    - _ALIGNMENT_SOURCE_SKIP_PENALTY,
-                    "source_gap",
-                ),
-            ]
-            probability = probabilities[source_index - 1][target_index - 1]
-            if probability is not None:
-                options.append(
-                    (
-                        scores[source_index - 1][target_index - 1]
-                        + _log_odds(probability),
-                        "match",
-                    )
-                )
-            score, operation = max(
-                options,
-                key=lambda item: (item[0], operation_priority[item[1]]),
-            )
-            scores[source_index][target_index] = score
-            back[source_index][target_index] = operation
-
-    candidates = [
-        source_index
-        for source_index in range(1, source_count + 1)
-        if back[source_index][target_count] == "match"
-        and scores[source_index][target_count] > 0.0
-    ]
-    if not candidates:
-        return None
-    best_source_index = max(
-        candidates,
-        key=lambda source_index: (scores[source_index][target_count], source_index),
-    )
-    matched_probability = probabilities[best_source_index - 1][target_count - 1]
-    if matched_probability is None:
-        return None
-
-    path: list[dict[str, Any]] = []
-    source_index = best_source_index
-    target_index = target_count
-    while source_index > 0 or target_index > 0:
-        operation = back[source_index][target_index]
-        if operation == "match":
-            probability = probabilities[source_index - 1][target_index - 1]
-            path.append(
-                {
-                    "function_step_index": candidate_steps[source_index - 1].step_index,
-                    "target_observation_index": target_index - 1,
-                    "probability": probability,
-                }
-            )
-            source_index -= 1
-            target_index -= 1
-        elif operation == "source_gap":
-            source_index -= 1
-        elif operation == "target_gap":
-            target_index -= 1
-        else:
-            break
-    path.reverse()
-    resume_step_index = candidate_steps[best_source_index - 1].step_index
-    return {
-        "protocol": "weighted_lcs_v1",
-        "start_step_index": int(start_step_index),
-        "resume_step_index": resume_step_index,
-        "probability": matched_probability,
-        "score": scores[best_source_index][target_count],
-        "minimum_probability": _ALIGNMENT_MIN_PROBABILITY,
-        "source_skip_penalty": _ALIGNMENT_SOURCE_SKIP_PENALTY,
-        "target_observation_count": target_count,
-        "path": path,
-    }
 
 
 async def execute_robust_action(
@@ -1021,11 +872,6 @@ def _alignment_probability(detail: dict[str, Any]) -> float | None:
     if not math.isfinite(probability):
         return None
     return min(1.0, max(0.0, probability))
-
-
-def _log_odds(probability: float) -> float:
-    bounded = min(1.0 - 1e-9, max(1e-9, probability))
-    return math.log(bounded / (1.0 - bounded))
 
 
 def _element_detail(value: Any) -> dict[str, Any]:

@@ -23,7 +23,6 @@ from omniflow.core.schemas import canonicalize_action
 from omniflow.functions.assets import FunctionStore, bind_function
 from omniflow.functions.recall import RecallResult, recall_functions
 from omniflow.runtime.execution import (
-    align_function_resume,
     execute_function,
     execute_robust_action,
     record_execution,
@@ -43,10 +42,8 @@ class _FunctionSession:
     bound: Function | None = None
     failed: bool = False
     failed_step_index: int | None = None
-    fallback_observations: list[Observation] = field(default_factory=list)
     completed: Function | None = None
     resume_events: list[dict[str, Any]] = field(default_factory=list)
-    resume_trigger: str | None = None
 
     @property
     def failed_id(self) -> str | None:
@@ -56,18 +53,13 @@ class _FunctionSession:
         self.completed = self.bound
         self.failed = False
         self.failed_step_index = None
-        self.fallback_observations.clear()
-        self.resume_trigger = None
 
-    def mark_failed(self, replay: RunResult, observation: Observation) -> None:
+    def mark_failed(self, replay: RunResult) -> None:
         self.failed = True
+        self.completed = None
         self.failed_step_index = _optional_step_index(
             replay.detail.get("failed_step_index")
         )
-        self.fallback_observations = (
-            [observation] if self.failed_step_index is not None else []
-        )
-        self.resume_trigger = "function_replay_failure"
 
 
 class OmniFlow:
@@ -227,7 +219,7 @@ class OmniFlow:
             observation = replay.final_state or observation
             if not replay.success:
                 last_error = replay.error or "function_replay_failed"
-                function_session.mark_failed(replay, observation)
+                function_session.mark_failed(replay)
                 function_resolution["failed_step_index"] = (
                     function_session.failed_step_index
                 )
@@ -462,21 +454,59 @@ class OmniFlow:
             _merge_planner_diagnostics(planner_diagnostics, planner_metadata)
             selected_function = planner_function_catalog.get(planned_call.name)
             if selected_function is not None:
-                function_session.selected_id = selected_function.id
+                retry_step_index = (
+                    function_session.failed_step_index
+                    if function_session.failed
+                    and function_session.selected_id == selected_function.id
+                    else None
+                )
+                previous_bound = function_session.bound
                 try:
-                    function_session.bound = bind_function(
+                    bound_function = bind_function(
                         selected_function,
                         planned_call.arguments,
                     )
                 except ValueError as error:
                     previous_action_error = str(error)
                     continue
+                if previous_bound != bound_function:
+                    retry_step_index = None
+                function_session.selected_id = selected_function.id
+                function_session.bound = bound_function
+                retry_metadata = None
+                resume_event = None
+                if retry_step_index is not None:
+                    retry_step = next(
+                        (
+                            step
+                            for step in bound_function.steps
+                            if step.step_index == retry_step_index
+                        ),
+                        None,
+                    )
+                    if retry_step is not None:
+                        retry_metadata = {
+                            "protocol": "explicit_function_retry_v1",
+                            "start_step_index": int(retry_step_index),
+                            "resume_step_index": int(retry_step_index),
+                            "source_state_id": retry_step.source_state_id,
+                        }
+                        resume_event = {
+                            "start_step_index": int(retry_step_index),
+                            "status": "retrying",
+                            "trigger": "explicit_function_call",
+                            "resume_step_index": int(retry_step_index),
+                            "source_state_id": retry_step.source_state_id,
+                        }
+                        function_session.resume_events.append(resume_event)
                 replay = await execute_function(
-                    function_session.bound,
+                    bound_function,
                     host=self.host,
                     plugins=self.plugins,
                     observation=observation,
+                    start_step_index=int(retry_step_index or 0),
                     trace_start_index=len(trace),
+                    resume_metadata=retry_metadata,
                     installed_packages=self.installed_packages,
                     state_loader=(
                         self.catalog.get_state if self.catalog is not None else None
@@ -487,10 +517,15 @@ class OmniFlow:
                 trace.extend(replay_trace)
                 observation = replay.final_state or observation
                 if replay.success:
+                    if resume_event is not None:
+                        resume_event["status"] = "succeeded"
                     function_session.mark_completed()
                     previous_action_error = None
                 else:
-                    function_session.mark_failed(replay, observation)
+                    if resume_event is not None:
+                        resume_event["status"] = "failed"
+                        resume_event["error"] = replay.error or "function_replay_failed"
+                    function_session.mark_failed(replay)
                     previous_action_error = replay.error or "function_replay_failed"
                 continue
             try:
@@ -602,70 +637,6 @@ class OmniFlow:
                 previous_action = planned
                 continue
             observation = step.after or observation
-            if (
-                function_session.bound is not None
-                and function_session.failed_step_index is not None
-            ):
-                function_session.fallback_observations.append(observation)
-                alignment = await align_function_resume(
-                    function_session.bound,
-                    host=self.host,
-                    plugins=self.plugins,
-                    observations=function_session.fallback_observations,
-                    start_step_index=function_session.failed_step_index,
-                    state_loader=(
-                        self.catalog.get_state if self.catalog is not None else None
-                    ),
-                )
-                resume_event = {
-                    "start_step_index": int(function_session.failed_step_index),
-                    "status": "aligned" if alignment is not None else "not_aligned",
-                }
-                if function_session.resume_trigger:
-                    resume_event["trigger"] = function_session.resume_trigger
-                if alignment is not None:
-                    resume_event.update(
-                        {
-                            "resume_step_index": int(alignment["resume_step_index"]),
-                            "probability": alignment.get("probability"),
-                            "score": alignment.get("score"),
-                        }
-                    )
-                function_session.resume_events.append(resume_event)
-                if alignment is not None:
-                    replay = await execute_function(
-                        function_session.bound,
-                        host=self.host,
-                        plugins=self.plugins,
-                        observation=observation,
-                        start_step_index=int(alignment["resume_step_index"]),
-                        trace_start_index=len(trace),
-                        resume_metadata=alignment,
-                        installed_packages=self.installed_packages,
-                        state_loader=(
-                            self.catalog.get_state if self.catalog is not None else None
-                        ),
-                    )
-                    actions_executed += replay.actions_executed
-                    replay_trace = list(replay.detail.get("trace") or ())
-                    trace.extend(replay_trace)
-                    observation = replay.final_state or observation
-                    if replay.success:
-                        resume_event["status"] = "succeeded"
-                        function_session.mark_completed()
-                        last_error = "function_replay_completed_e2e_unverified"
-                        previous_action_error = None
-                        previous_action = None
-                    else:
-                        resume_event["status"] = "failed"
-                        resume_event["error"] = (
-                            replay.error or "function_replay_failed"
-                        )
-                        last_error = replay.error or "function_replay_failed"
-                        function_session.mark_failed(replay, observation)
-                        previous_action_error = last_error
-                        previous_action = None
-                    continue
             if _same_observation(step.before, step.after):
                 previous_action_error = "action_completed_without_state_change"
                 previous_action = planned
