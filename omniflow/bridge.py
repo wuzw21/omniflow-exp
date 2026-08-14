@@ -253,7 +253,6 @@ class JsonLineBridge:
             defer_user_input=body.get("defer_user_input") is True,
         )
         installed_apps = host.installed_apps()
-        target_package_name = str(body.get("target_package_name") or "")
         step_skill_guidance = resolve_step_guidance(
             goal,
             str(body.get("step_skill_guidance") or ""),
@@ -268,7 +267,6 @@ class JsonLineBridge:
                 "model_turn",
                 envelope,
             ),
-            target_package_name=target_package_name,
             step_skill_guidance=step_skill_guidance,
             max_steps=max_steps,
         )
@@ -306,9 +304,6 @@ class JsonLineBridge:
                     request_id,
                     "model_turn",
                     envelope,
-                ),
-                target_package_name=str(
-                    run_metadata.get("target_package_name") or ""
                 ),
                 step_skill_guidance=str(
                     run_metadata.get("step_skill_guidance") or ""

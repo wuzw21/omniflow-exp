@@ -72,6 +72,47 @@ def test_core_executes_one_transferred_action_and_observes_once(monkeypatch) -> 
     ]
 
 
+def test_core_observes_after_dispatched_action_failure(monkeypatch) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    before = Observation(
+        xml='<hierarchy><node text="Old screen" /></hierarchy>',
+        package_name="com.example",
+        extra={"state_id": "before"},
+    )
+    after = Observation(
+        xml='<hierarchy><node text="Current screen" /></hierarchy>',
+        package_name="com.example",
+        extra={"state_id": "after"},
+    )
+
+    class FailingHost(RecordingHost):
+        def act(self, action: Action) -> ActionResult:
+            self.actions.append(action)
+            return ActionResult(False, "input_target_not_found")
+
+    host = FailingHost(after)
+    action = Action("input_text", {"text": "Alice", "x": 500, "y": 300})
+
+    result = asyncio.run(
+        core.execute_action(
+            action,
+            observation=before,
+            host=host,
+            plugins=PluginSet(),
+        )
+    )
+
+    assert result.success is False
+    assert result.error == "input_target_not_found"
+    assert result.before == before
+    assert result.after == after
+    assert result.actions_executed == 1
+    assert host.actions == [action]
+    assert host.observe_requests == [
+        {"xml": True, "screenshot": True, "app_info": True}
+    ]
+
+
 def test_core_reports_transfer_failure_without_dispatch(monkeypatch) -> None:
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     before = Observation(xml="<before/>", package_name="com.example")

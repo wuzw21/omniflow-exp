@@ -334,7 +334,7 @@ def _recovery_action_available(
     if action.tool != "open_app":
         return True
     package_name = str(action.args.get("package_name") or "").strip()
-    return installed_packages is not None and package_name in installed_packages
+    return bool(package_name)
 
 
 async def _dispatch_prepared(
@@ -344,22 +344,6 @@ async def _dispatch_prepared(
     host: Host,
     installed_packages: frozenset[str] | None,
 ) -> StepResult:
-    if action.tool == "open_app":
-        package_name = str(action.args.get("package_name") or "").strip()
-        if installed_packages is None:
-            return StepResult(
-                False,
-                action=action,
-                before=observation,
-                error="open_app_installed_packages_unavailable",
-            )
-        if package_name not in installed_packages:
-            return StepResult(
-                False,
-                action=action,
-                before=observation,
-                error=f"open_app_package_not_installed:{package_name}",
-            )
     core_step = await execute_core_action(
         action,
         observation=observation,

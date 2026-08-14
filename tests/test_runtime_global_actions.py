@@ -323,6 +323,43 @@ def test_open_app_reports_not_ready_after_retry_budget(monkeypatch) -> None:
     assert host.observe_calls == 3
 
 
+def test_open_app_dispatches_when_installed_package_inventory_is_incomplete(
+    monkeypatch,
+) -> None:
+    import omniflow.runtime.core as core
+    import omniflow.runtime.execution as execution
+
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(execution, "_OPEN_APP_READY_POLL_SECONDS", 0.0)
+
+    action = Action("open_app", {"package_name": "com.android.settings"})
+
+    class Host:
+        def __init__(self) -> None:
+            self.actions: list[Action] = []
+
+        def act(self, dispatched_action):
+            self.actions.append(dispatched_action)
+            return {"success": True}
+
+        def observe(self, **_kwargs):
+            return Observation(package_name="com.android.settings")
+
+    host = Host()
+    result = asyncio.run(
+        execute_robust_action(
+            action,
+            observation=Observation(package_name="cn.com.omnimind.bot.debug"),
+            host=host,
+            plugins=PluginSet(),
+            installed_packages=frozenset({"cn.com.omnimind.bot.debug"}),
+        )
+    )
+
+    assert result.success is True
+    assert host.actions == [action]
+
+
 def test_action_waits_for_transition_window_to_enter_display(monkeypatch) -> None:
     import omniflow.runtime.core as core
     import omniflow.runtime.execution as execution
@@ -379,20 +416,34 @@ def test_action_waits_for_transition_window_to_enter_display(monkeypatch) -> Non
     assert host.observe_calls == 2
 
 
-def test_unlaunchable_checker_recovery_falls_back_to_transfer_failure() -> None:
+def test_checker_recovery_dispatches_despite_incomplete_package_inventory(
+    monkeypatch,
+) -> None:
+    import omniflow.runtime.core as core
+
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+
     async def transfer(action, observation, source_state):
         return TransferResult(None, reason="transfer_failed")
 
     class Host:
-        def act(self, action):
-            raise AssertionError(f"unexpected action dispatch: {action}")
+        def __init__(self) -> None:
+            self.actions: list[Action] = []
 
+        def act(self, action):
+            self.actions.append(action)
+            return {"success": True}
+
+        def observe(self, **_kwargs):
+            return Observation(package_name="com.oplus.battery")
+
+    host = Host()
     result = asyncio.run(
         execute_robust_action(
             Action("click", {"x": 77, "y": 83}),
             observation=Observation(package_name="cn.com.omnimind.bot.debug"),
             source_state=Observation(package_name="com.oplus.battery"),
-            host=Host(),
+            host=host,
             plugins=PluginSet(checker=default_checker, transfer=transfer),
             installed_packages=frozenset({"cn.com.omnimind.bot.debug"}),
         )
@@ -400,4 +451,7 @@ def test_unlaunchable_checker_recovery_falls_back_to_transfer_failure() -> None:
 
     assert result.success is False
     assert result.error == "transfer_failed"
-    assert result.actions_executed == 0
+    assert result.actions_executed == 1
+    assert host.actions == [
+        Action("open_app", {"package_name": "com.oplus.battery"}),
+    ]
