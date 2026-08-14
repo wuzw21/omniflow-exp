@@ -5,6 +5,9 @@ owns source-asset conversion, long-term-memory refresh, static validation, and
 real-time AndroidWorld execution. The Python modules below are implementation
 seams, not alternate launchers:
 
+This rule also applies to development debugging. Agents must not manually call
+the Python launcher or maintain a second runtime script.
+
 | Component | Role | Used by the normal E2E command? |
 | --- | --- | --- |
 | `src/experiment/e2e_task_pipeline.py` | Source qualification and 10-cell orchestration | Yes |
@@ -104,6 +107,32 @@ execution never rebuilds or replaces frozen source assets.
 Completed cells are skipped before device startup. Pending cells use the same
 script-owned cold-restart lifecycle on SmallPhone, Pixel Fold, and the
 source-only emulator; no device is prepared manually.
+
+## Bounded `ours` development run
+
+Use the same script for an unregistered one-task diagnostic episode:
+
+```bash
+OMNIFLOW_ANDROID_WORLD_ROOT=/absolute/AndroidWorld \
+OMNIFLOW_ENV_FILE=/absolute/model.env \
+OMNIFLOW_SINGLE_TASK_STORE_PATH=/absolute/function_store/store.json \
+OMNIFLOW_DEVELOPMENT_OUTPUT_PATH=/absolute/new/attempt \
+OMNIFLOW_DEVELOPMENT_MODEL=GLM-4.6V \
+bash scripts/exp/run_androidworld.sh \
+  --development-run --tasks ExpenseAddMultipleFromGallery
+```
+
+The first run performs AndroidWorld app setup and saves the app snapshots used
+by task initialization. To repeat against the same already initialized live
+emulator without rerunning onboarding and permission setup, add:
+
+```bash
+OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP=0
+```
+
+This override is development-only. Formal cells retain cold restart, setup,
+memory resolution, immutable registration, and the paper model. MobileGPT is
+owned by its adapter and does not participate in an `ours` development run.
 
 `--check-only` is deliberately read-only. It validates existing assets but
 will fail rather than create a missing method asset:

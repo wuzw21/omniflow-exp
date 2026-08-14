@@ -21,6 +21,22 @@ The current phase is code migration and script maintenance only. Do not launch
 formal experiments or revise method implementations unless the user explicitly
 opens a new execution phase.
 
+## Mandatory execution entry
+
+- Every AndroidWorld check, development episode, formal cell, conversion, and
+  memory refresh must enter through `scripts/exp/run_androidworld.sh`. Do not
+  invoke `src.integrations.android_world.launch`, `src.experiment.androidworld`,
+  or a skill-owned runner directly; they are implementation seams.
+- Use `--development-run` for an unregistered bounded `ours` episode. A first
+  run uses AndroidWorld setup. A repeated development run may set
+  `OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP=0` only when the same live
+  emulator already has the required AndroidWorld app snapshots.
+- Formal experiment execution keeps the default cold restart and setup. Never
+  use the development reuse override to create or register a formal result.
+- Treat `mobilegpt_offline_retrieval` as an external baseline behind its adapter.
+  Do not inspect, repair, or duplicate MobileGPT internals unless the user asks
+  specifically for that baseline.
+
 ## Formal protocol
 
 - Run task-major: one task across every method and both devices before the next task.

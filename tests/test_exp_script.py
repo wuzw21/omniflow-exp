@@ -58,6 +58,7 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
 
     assert completed.returncode == 0
     assert "--check-only" in completed.stdout
+    assert "--development-run" in completed.stdout
     assert "--all-tasks" in completed.stdout
     assert "--eight-cells" in completed.stdout
     assert "--methods" in completed.stdout
@@ -72,6 +73,8 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "OMNIFLOW_EXP_ASSET_ROOT" in completed.stdout
     assert "OMNIFLOW_EXP_MEMORY_ROOT" in completed.stdout
     assert "OMNIFLOW_OURS_AUTHORING_MANIFEST" in completed.stdout
+    assert "OMNIFLOW_DEVELOPMENT_OUTPUT_PATH" in completed.stdout
+    assert "OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP" in completed.stdout
     assert "cold-restarted before every pending cell" in completed.stdout
     assert completed.stderr == ""
     script_text = SCRIPT.read_text(encoding="utf-8")
@@ -106,6 +109,58 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert 'while [[ -n "$(device_state "$serial")" ]] || grpc_ready "$grpc_port"; do' in script_text
     assert 'echo "[emulator] already stopped serial=$serial"' in script_text
     assert "No emulator process found while device remained visible" in script_text
+
+
+def test_development_run_routes_through_the_only_script_without_repeated_setup(
+    tmp_path: Path,
+) -> None:
+    android_world = tmp_path / "android-world"
+    (android_world / "android_world").mkdir(parents=True)
+    store = tmp_path / "store.json"
+    store.write_text("{}", encoding="utf-8")
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "LLMTHU_KEY=test-only\n"
+        "LLMTHU_BASE_URL=https://llmapi.example/v1\n",
+        encoding="utf-8",
+    )
+    adb = tmp_path / "adb"
+    adb.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    adb.chmod(0o755)
+    output = tmp_path / "development-run"
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT),
+            "--development-run",
+            "--dry-run",
+            "--tasks",
+            "ExpenseAddMultipleFromGallery",
+        ],
+        cwd=REPO,
+        env={
+            **os.environ,
+            "PYTHON_BIN": sys.executable,
+            "OMNIFLOW_ANDROID_WORLD_ROOT": str(android_world),
+            "OMNIFLOW_ADB_PATH": str(adb),
+            "OMNIFLOW_ENV_FILE": str(env_file),
+            "OMNIFLOW_SINGLE_TASK_STORE_PATH": str(store),
+            "OMNIFLOW_DEVELOPMENT_OUTPUT_PATH": str(output),
+            "OMNIFLOW_DEVELOPMENT_MODEL": "GLM-4.6V",
+            "OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP": "0",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "src.integrations.android_world.launch" in completed.stdout
+    assert "ExpenseAddMultipleFromGallery" in completed.stdout
+    assert "GLM-4.6V" in completed.stdout
+    assert "--perform-emulator-setup" not in completed.stdout
+    assert not output.exists()
 
 
 def test_experiment_script_prefers_existing_miniconda_base_python(

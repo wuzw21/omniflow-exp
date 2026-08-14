@@ -112,6 +112,7 @@ fold_state="${OMNIFLOW_SINGLE_TASK_FOLD_STATE:-$formal_fold_state}"
 fold_size="${OMNIFLOW_SINGLE_TASK_FOLD_SIZE:-$formal_fold_size}"
 dry_run=0
 check_only=0
+development_run=0
 all_tasks=0
 eight_cells=0
 batch_task_filter=""
@@ -137,6 +138,8 @@ Usage:
 Options:
   --check-only              Validate the complete selected run without creating
                             assets, attempts, result directories, or emulators.
+  --development-run         Run one unregistered `ours` episode through this
+                            script for bounded method debugging.
   --dry-run                 Build one task command without executing it.
   --all-tasks               Run the selected task set in task-major order.
   --eight-cells             Deprecated alias for the complete formal matrix:
@@ -178,6 +181,9 @@ Optional runtime overrides:
   OMNIFLOW_ANDROID_SDK_ROOT, OMNIFLOW_JAVA_HOME,
   OMNIFLOW_MOBILEGPT_SOURCE_ENVIRONMENT_REPAIR_REASON,
   OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON,
+  OMNIFLOW_DEVELOPMENT_OUTPUT_PATH, OMNIFLOW_DEVELOPMENT_MODEL,
+  OMNIFLOW_DEVELOPMENT_CONSOLE_PORT,
+  OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP (0 reuses prior app snapshots),
   OMNIFLOW_BATCH_ATTEMPT_ID (resume one interrupted immutable batch).
   OMNIFLOW_E2E_OUTPUT_ROOT, OMNIFLOW_E2E_SOURCE_MODEL,
   OMNIFLOW_E2E_SEMANTIC_MODEL, OMNIFLOW_E2E_ATTEMPT_ID.
@@ -240,6 +246,9 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --check-only)
       check_only=1
+      ;;
+    --development-run)
+      development_run=1
       ;;
     --dry-run)
       dry_run=1
@@ -325,6 +334,102 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
+if [[ "$development_run" -eq 1 ]]; then
+  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$e2e_task" ]]; then
+    echo "--development-run cannot be combined with maintenance, formal matrix, or E2E options." >&2
+    exit 2
+  fi
+  if [[ -n "$batch_task_filter" ]]; then
+    if [[ "$batch_task_filter" == *,* ]]; then
+      echo "--development-run accepts exactly one task." >&2
+      exit 2
+    fi
+    task="$batch_task_filter"
+  fi
+  development_output_path="${OMNIFLOW_DEVELOPMENT_OUTPUT_PATH:-}"
+  development_model="${OMNIFLOW_DEVELOPMENT_MODEL:-}"
+  development_console_port="${OMNIFLOW_DEVELOPMENT_CONSOLE_PORT:-5554}"
+  development_perform_setup="${OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP:-1}"
+  development_planner_timeout="${OMNIFLOW_PLANNER_TIMEOUT_SEC:-60}"
+  if [[ -z "$task" || "$task" == *,* ]]; then
+    echo "--development-run requires exactly one task through --tasks or OMNIFLOW_SINGLE_TASK_TASK." >&2
+    exit 2
+  fi
+  if [[ -z "$store_path" || "$store_path" != /* || ! -f "$store_path" ]]; then
+    echo "--development-run requires an existing absolute OMNIFLOW_SINGLE_TASK_STORE_PATH." >&2
+    exit 2
+  fi
+  if [[ -z "$development_output_path" || "$development_output_path" != /* ]]; then
+    echo "--development-run requires an absolute OMNIFLOW_DEVELOPMENT_OUTPUT_PATH." >&2
+    exit 2
+  fi
+  if [[ -e "$development_output_path" ]]; then
+    echo "Development attempt already exists: $development_output_path" >&2
+    exit 1
+  fi
+  if [[ -z "$development_model" ]]; then
+    echo "--development-run requires OMNIFLOW_DEVELOPMENT_MODEL." >&2
+    exit 2
+  fi
+  if [[ ! "$development_console_port" =~ ^[0-9]+$ ]]; then
+    echo "OMNIFLOW_DEVELOPMENT_CONSOLE_PORT must be a non-negative integer." >&2
+    exit 2
+  fi
+  if [[ ! "$development_perform_setup" =~ ^[01]$ ]]; then
+    echo "OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP must be 0 or 1." >&2
+    exit 2
+  fi
+  if [[ -z "$android_world_root" || "$android_world_root" != /* || ! -d "$android_world_root/android_world" ]]; then
+    echo "--development-run requires an absolute AndroidWorld checkout." >&2
+    exit 2
+  fi
+  development_android_sdk_root="${OMNIFLOW_ANDROID_SDK_ROOT:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$(resolve_default_android_sdk_root)}}}"
+  development_adb_path="${OMNIFLOW_ADB_PATH:-$development_android_sdk_root/platform-tools/adb}"
+  if [[ "$development_adb_path" != /* || ! -x "$development_adb_path" ]]; then
+    echo "--development-run requires an executable absolute ADB path: $development_adb_path" >&2
+    exit 2
+  fi
+  if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
+    echo "--development-run requires an existing absolute OMNIFLOW_ENV_FILE." >&2
+    exit 2
+  fi
+  set -a
+  source "$env_file"
+  set +a
+  export OPENAI_API_KEY="${OPENAI_API_KEY:-${LLMTHU_KEY:-}}"
+  export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${LLMTHU_BASE_URL:-}}"
+  if [[ -z "$OPENAI_API_KEY" || -z "$OPENAI_BASE_URL" ]]; then
+    echo "--development-run requires OpenAI-compatible key and base URL in OMNIFLOW_ENV_FILE." >&2
+    exit 2
+  fi
+  development_command=(
+    "$python_bin" -m src.integrations.android_world.launch
+    --android-world-root "$android_world_root"
+    --tasks "$task"
+    --task-random-seed "$evaluation_seed"
+    --n-task-combinations 1
+    --console-port "$development_console_port"
+    --agent omniflow
+    --max-steps "$max_steps"
+    --output-path "$development_output_path"
+    --fixed-task-seed
+    --store-path "$store_path"
+    --planner-provider openai
+    --model "$development_model"
+    --planner-timeout-sec "$development_planner_timeout"
+    --adb-path "$development_adb_path"
+  )
+  if [[ "$development_perform_setup" -eq 1 ]]; then
+    development_command+=(--perform-emulator-setup)
+  fi
+  if [[ "$dry_run" -eq 1 ]]; then
+    printf '%q ' "${development_command[@]}"
+    printf '\n'
+    exit 0
+  fi
+  cd "$repo"
+  exec "${development_command[@]}"
+fi
 if [[ -n "$e2e_task" ]]; then
   if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$batch_task_filter" || -n "$selected_methods_arg" || -n "$selected_devices_arg" ]]; then
     echo "--e2e-task cannot be combined with maintenance or matrix-selection options." >&2
