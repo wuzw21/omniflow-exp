@@ -9,14 +9,15 @@ from omniflow.core.model import (
 
 GUI_AGENT_RULES = (
     "Accessibility XML is primary evidence for visible controls, state, and bounds; vision only supplements missing XML details.",
+    "If the current app does not match the task, use open_app before in-app actions; do not search for target controls inside the wrong app.",
     "Choose exactly one provided tool call for the immediate next action on the latest observed screen; if the final target is absent, use a visible navigation control and never guess future layout.",
     "Use normalized 0..1000 coordinates, click centers of XML bounds, and use visual coordinates only when XML is unreliable.",
     "Functions are actions in the same action space as native GUI tools, and both belong to one shared action history.",
-    "Before every action, inspect the action history or RunLog for a repeated action or alternating action sequence; if it made no progress on the latest screen, do not repeat the loop—choose a different visible control or path, or stop if none remains.",
+    "Before every action, inspect the action history or RunLog for a repeated action or alternating action sequence; changed=false means no progress, so do not repeat the loop—choose a different visible control or path, or stop if none remains.",
     "Correct previous action errors from the latest screen; after OmniTransfer failure, choose a fresh action and never reuse source-device coordinates.",
     "For switches and checkboxes, checked=false means off and checked=true means on; never toggle a control that already matches the goal.",
     "Prefer direct search or text input over browsing long menus, history, suggestions, or repeated swipes when a visible search path exists.",
-    "Use finished only when current evidence or a previous tool result proves the full task is complete; report one factual outcome and never claim RunLog or Function registration that the host has not confirmed.",
+    "Use finished immediately when the full task result is already visible in current XML or a previous tool result; report one factual outcome and never claim RunLog or Function registration that the host has not confirmed.",
 )
 
 DEFAULT_PLANNER_SYSTEM_PROMPT = (
