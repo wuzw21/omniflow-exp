@@ -328,7 +328,7 @@ official-success RunLog.
   - `functions/`: Function artifacts, compilation, retrieval, storage, and management.
   - `runtime/`: runtime orchestration, action execution, and Checker recovery.
   - `transfer/`: OmniTransfer calls, page encoding, alignment, memory, and review.
-  - `vlm/`: VLM planning, prompt construction, model adaptation, UI projection, and accounting.
+  - `vlm/`: VLM planning, tool-call parsing, model adaptation, and accounting.
   - `bridge.py`: external JSON-line bridge entry point.
   - `vlm_coordinates.py`: shared-contract owner for VLM coordinate conversion.
 - OmniTransfer is loaded only from `OMNITRANSFER_ROOT` or the canonical

@@ -54,6 +54,11 @@ expand into multiple recorded actions, then returns control to the next planner
 step. A whole-task validator failure must not block a successful atomic
 Function from entering that planner-based E2E test.
 
+The planner follows the compact UI-TARS loop: current screenshot, prior action
+tool calls, and one next action. Recalled Functions are prepended to the same
+tool list as native GUI actions; the planner has no XML projection, full RunLog
+prompt, or task-specific navigation policy.
+
 ## Common environment
 
 All data paths are absolute and outside the repository.

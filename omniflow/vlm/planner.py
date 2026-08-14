@@ -3,70 +3,26 @@ from __future__ import annotations
 import base64
 from collections.abc import Callable
 from copy import deepcopy
-from dataclasses import dataclass, replace
 import json
 import math
 from pathlib import Path
 import re
 from typing import Any
-import xml.etree.ElementTree as ET
 
 from json_repair import loads as repair_json_loads
 
-from omniflow.core.config import PromptSet
+from omniflow.core.config import DEFAULT_PLANNER_SYSTEM_PROMPT, PromptSet
 from omniflow.core.model import Function, Observation, ToolCall
 from omniflow.core.schemas import canonicalize_action, vlm_action_tools
 from omniflow.functions.assets import validate_arguments
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import LLMUsageTracker
 from omniflow.vlm_coordinates import (
-    display_size,
-    screen_context_to_pixels,
     screen_pixel_args_to_canonical,
     screen_pixel_tools,
 )
 
-SYSTEM_PROMPT = """
-You are an Android GUI agent. Complete the user goal from the compact relevant UI
-elements and current screenshot. Treat the screenshot as primary evidence for icon
-identity and spatial relationships, and XML as evidence for text and control state.
-UI elements are grouped by priority; global controls come first, and goal_controls
-are actionable visual elements adaptively associated with nearby goal text. The `v`
-field is a stable visual reference for an actionable element at its XML bounds.
-Return exactly one tool_call each turn. Recalled Function APIs and native GUI
-actions are peer tools, but a matching recalled Function API is the preferred economic
-execution path because it reduces model calls, GUI actions, and latency.
-When its required arguments are known and it covers the intended next GUI segment,
-you must call that Function API now instead of issuing any equivalent native GUI
-action manually. You may call the same Function API multiple times with
-different arguments, or call several Function APIs in sequence. A successful
-Function result returns control to you and does not mean the overall task is complete.
-Never put
-action JSON or tool syntax in assistant text. Choose one action, wait for its
-result, then inspect the fresh state before choosing another action. Coordinates
-are raw pixels in the current original Display coordinate frame, never normalized
-0..1000 values. XML bounds use that same raw-pixel frame. A screenshot may be
-resized for transport, but its coordinates must still refer to the original
-Display. Every tool call
-must include a concise summary explaining why that action is the best next step.
-When a later step needs facts visible only on the current screen, copy every needed
-fact exactly into the summary before navigating away; do not infer, abbreviate, or
-drop field values.
-Every coordinate is one scalar raw-pixel number, never an array, object, string,
-boolean, normalized value, or combined coordinate pair.
-Use finished only when current evidence directly proves the goal is complete.
-When calling finished, keep content to one short factual sentence describing only
-the outcome directly supported by the current screen or previous tool result. Do
-not claim that a RunLog or reusable Function was registered; the host reports the
-real registration state after execution.
-For switches and checkboxes, checked=false means off and checked=true means on.
-Never toggle a switch when its checked state already matches the requested goal.
-Prefer stable, reusable navigation. When the current app or page provides search,
-use search and type the requested text directly before browsing long menus or
-swiping. Do not select history, recent, suggestion, or cached-value items when the
-requested value can be entered directly. Swipe only when no usable search or input
-path exists, or when search results still require browsing.
-""".strip()
+SYSTEM_PROMPT = DEFAULT_PLANNER_SYSTEM_PROMPT
 
 
 class ModelToolCallError(ValueError):
@@ -102,22 +58,14 @@ def build_model_turn_request(
     system_prompt: str = SYSTEM_PROMPT,
     history: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
 ) -> dict[str, Any]:
-    projection = (
-        UIProjection("<omitted>", 0, 0, 0)
-        if lightweight_retry
-        else project_ui(str(state.get("xml") or ""), goal)
-    )
     text = _turn_text(
         goal=goal,
         state=state,
-        max_steps=max_steps,
-        turn_index=turn_index,
         target_package_name=target_package_name,
         step_skill_guidance=step_skill_guidance,
         validation_error=validation_error,
         rejected_tool_call=rejected_tool_call,
         lightweight_retry=lightweight_retry,
-        projection=projection,
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
     include_images = not validation_error.strip()
@@ -291,13 +239,7 @@ def function_tools(
             properties = {
                 "summary": {
                     "type": "string",
-                    "description": (
-                        "Running task memory and next-tool reason. Before leaving "
-                        "a screen that contains facts needed later, copy every "
-                        "such field and value exactly here; never shorten away "
-                        "required facts. Also preserve completed work and why "
-                        "this tool is next."
-                    ),
+                    "description": "Brief plan and reason for the next action.",
                 },
                 **properties,
             }
@@ -322,139 +264,53 @@ def _turn_text(
     *,
     goal: str,
     state: dict[str, Any],
-    max_steps: int,
-    turn_index: int,
     target_package_name: str,
     step_skill_guidance: str,
     validation_error: str,
     rejected_tool_call: dict[str, Any] | None,
     lightweight_retry: bool,
-    projection: UIProjection,
 ) -> str:
     display = state.get("display") if isinstance(state.get("display"), dict) else {}
-    width, height = display_size(display)
-    center_x = int(width / 2)
-    center_y = int(height / 2)
-    upper_y = int(height * 0.7)
-    lower_y = int(height * 0.3)
     lines = [
-        f"Goal: {goal}",
-        f"Progress: {turn_index}/{max_steps} model turns used",
-        f"Current package: {state.get('package_name') or ''}",
-        f"Current activity: {state.get('activity_name') or ''}",
-        f"Display: {display.get('width') or ''}x{display.get('height') or ''}",
+        f"Task: {goal}",
         (
-            "Coordinate contract: every tool coordinate is one raw pixel in the "
-            f"current original Display frame (X 0..{int(width)}, Y 0..{int(height)}). "
-            "Do not output normalized 0..1000 coordinates."
-        ),
-        (
-            'Raw-pixel examples: click {"summary":"Tap center","x":'
-            f'{center_x},"y":{center_y}'
-            '}; swipe {"summary":"Scroll up","direction":"up","x1":'
-            f'{center_x},"y1":{upper_y},"x2":{center_x},"y2":{lower_y}'
-            "}."
+            "Current screen: "
+            f"package={state.get('package_name') or '-'}, "
+            f"activity={state.get('activity_name') or '-'}, "
+            f"display={display.get('width') or '?'}x{display.get('height') or '?'}"
         ),
     ]
     if target_package_name:
         lines.append(f"Target package: {target_package_name}")
     if step_skill_guidance.strip() and not lightweight_retry:
-        lines.extend(("Task guidance:", step_skill_guidance.strip()))
+        lines.append(f"Task guidance: {step_skill_guidance.strip()}")
     if validation_error.strip():
-        lines.extend(
-            (
-                "Your previous native tool_call was rejected by the registered schema:",
-                validation_error.strip(),
-                "Return one corrected native tool_call using the schema exactly. Do not rename, wrap, combine, or infer fields.",
-                (
-                    "Coordinate fields such as x and y must each be one raw-pixel "
-                    f"JSON number in the current Display (X 0..{int(width)}, "
-                    f"Y 0..{int(height)}). Never use normalized 0..1000 values, "
-                    "[x, y], an object, string, or boolean."
-                ),
-            )
-        )
+        lines.append(f"Previous tool call was invalid: {validation_error.strip()}")
         if rejected_tool_call:
-            lines.extend(
-                (
-                    "Rejected native tool_call from your immediately previous attempt (verbatim):",
-                    json.dumps(
-                        rejected_tool_call,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    ),
-                    "Do not repeat that argument shape. Return a new tool_call; do not explain or repair it in text.",
-                    (
-                        'Valid raw-pixel scalar shape: {"x":'
-                        f'{center_x},"y":{center_y},"x1":{center_x},'
-                        f'"y1":{upper_y},"x2":{center_x},"y2":{lower_y}'
-                        '}. Invalid array shape: {"x":[500],"y":[464],"x1":[500,800]}.'
-                    ),
-                    "If your rejected call placed one intended point in x as [X,Y], choose the scalars yourself and emit x:X and y:Y in the new call. The runtime will not transform the array for you.",
+            lines.append(
+                "Rejected call: "
+                + json.dumps(
+                    rejected_tool_call,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
                 )
             )
     raw_extra = state.get("extra")
-    extra = (
-        screen_context_to_pixels(raw_extra, display)
-        if isinstance(raw_extra, dict)
-        else raw_extra
-    )
-    if not lightweight_retry and isinstance(extra, dict) and extra:
-        context = dict(extra)
-        context.pop("installed_apps", None)
-        androidworld_state = context.get("androidworld_state")
-        if isinstance(androidworld_state, dict):
-            context["androidworld_state"] = {
-                key: value
-                for key, value in androidworld_state.items()
-                if key not in {"forest", "ui_elements"}
-            }
-        execution_history = str(context.pop("execution_history", "") or "").strip()
-        if has_successful_function_action(context):
-            lines.append(
-                "The previous recalled Function tool call finished all of its "
-                "actions successfully. Those actions are already applied. Judge "
-                "the complete user goal from the current screenshot and UI state. "
-                "Choose finished only if the whole goal is satisfied; otherwise "
-                "choose exactly one next tool. Never repeat or toggle the last "
-                "successful action merely to verify it, because that can undo the "
-                "completed operation."
-            )
-        if context.get("previous_action_error") or context.get("recent_actions"):
-            lines.append(
-                "Use the recent action history and error before selecting again. "
-                "Do not repeat the same action when it already succeeded or made no "
-                "progress; choose a different schema-valid action, finish, or abort."
-            )
-        if execution_history:
-            lines.extend(("Completed tool-call history:", execution_history))
-        if context:
-            lines.extend(
-                (
-                    "Recent execution context:",
-                    json.dumps(context, ensure_ascii=False, separators=(",", ":")),
-                )
-            )
-    if not lightweight_retry:
-        lines.extend(
-            (
-                f"Relevant UI elements (1-{projection.selected_count}); {projection.candidate_count} candidates:",
-                projection.text,
-            )
-        )
+    if not lightweight_retry and isinstance(raw_extra, dict):
+        previous_error = str(raw_extra.get("previous_action_error") or "").strip()
+        if previous_error:
+            lines.append(f"Previous action error: {previous_error}")
+        function_execution = raw_extra.get("function_execution")
+        if isinstance(function_execution, dict):
+            function_id = str(function_execution.get("function_id") or "").strip()
+            status = str(function_execution.get("replay_status") or "").strip()
+            if function_id and status:
+                result = "succeeded" if status == "actions_succeeded" else status
+                lines.append(f"Previous Function result: {function_id} {result}")
+        user_input = str(raw_extra.get("user_input") or "").strip()
+        if user_input:
+            lines.append(f"User response: {user_input}")
     return "\n".join(lines)
-
-
-def has_successful_function_action(value: Any) -> bool:
-    if not isinstance(value, dict):
-        return False
-    recent_actions = value.get("recent_actions")
-    return isinstance(recent_actions, list) and any(
-        isinstance(item, dict)
-        and item.get("success") is True
-        and bool(str(item.get("function_id") or "").strip())
-        for item in recent_actions
-    )
 
 
 def constrain_open_app_tool(
@@ -656,7 +512,7 @@ class VLMPlanner:
             if rejected_calls:
                 metadata["rejected_tool_calls"] = rejected_calls
             self._metadata = metadata
-            self._remember_turn(request, tool_call, metadata)
+            self._remember_turn(tool_call, metadata)
             if self._metadata_sink is not None:
                 self._metadata_sink(dict(metadata))
             return tool_call
@@ -664,7 +520,6 @@ class VLMPlanner:
 
     def _remember_turn(
         self,
-        request: dict[str, Any],
         tool_call: ToolCall,
         metadata: dict[str, Any],
     ) -> None:
@@ -675,14 +530,6 @@ class VLMPlanner:
         }
         self._history.extend(
             (
-                {
-                    "role": "user",
-                    "content": (
-                        "Prior device evidence is summarized by the following "
-                        "tool call. Preserve its summary while using the fresh "
-                        "state in the next user message."
-                    ),
-                },
                 {
                     "role": "assistant",
                     "tool_calls": [
@@ -703,10 +550,7 @@ class VLMPlanner:
                 {
                     "role": "tool",
                     "tool_call_id": call_id,
-                    "content": (
-                        "The tool was dispatched. Its execution result and fresh "
-                        "device state are provided in the next user message."
-                    ),
+                    "content": "Action dispatched; inspect the current screenshot.",
                 },
             )
         )
@@ -785,46 +629,12 @@ def _normalize_response(value: Any, *, requested_model: str) -> dict[str, Any]:
     }
 
 
-DEFAULT_STEP_GUIDANCE = (
-    "Prefer an installed native app over a browser or web search for phone-app "
-    "tasks. Launch it with open_app using a package supplied by the runtime. If "
-    "the current app is off target, use home, back, or open_app instead of "
-    "continuing there. Prefer direct search and exact user-provided text over "
-    "browsing long menus, history suggestions, or repeated swipes. Treat "
-    "previous_action_error, recent_actions, and execution_history as authoritative: "
-    "never repeat an action that already succeeded or made no observable progress. "
-    "If a primary button is disabled, satisfy a visible required choice first. "
-    "Never authorize payment, enter payment credentials, accept payment-app terms, "
-    "enter a password or verification code, or trigger biometric authentication. "
-    "When an order reaches payment confirmation, finish with a pending unpaid order "
-    "without clicking a payment control."
-)
-
-ORDERING_STEP_GUIDANCE = (
-    "For ordering tasks, advance through the visible forward path without reopening "
-    "or resubmitting a correct search. Choose a semantically compatible product "
-    "variant unless the user specified an exact flavor, ingredient, dietary, size, "
-    "temperature, sugar, or other required constraint. Select required options before "
-    "a disabled primary button, add the requested item once, and default quantity to "
-    "one unless specified. Do not add paid extras, memberships, coupons, or unrelated "
-    "recommendations. Stop before payment."
-)
-
-_ORDERING_TERMS = re.compile(
-    r"点外卖|叫外卖|订外卖|点餐|订餐|下单|点一|点杯|点份|咖啡|拿铁|奶茶|"
-    r"order(?: me)?|food delivery|takeaway|takeout|coffee|latte|milk tea|burger|pizza",
-    re.IGNORECASE,
-)
+DEFAULT_STEP_GUIDANCE = ""
+ORDERING_STEP_GUIDANCE = ""
 
 
 def resolve_step_guidance(goal: str, explicit: str = "") -> str:
-    custom = str(explicit or "").strip()
-    if custom:
-        return custom
-    guidance = DEFAULT_STEP_GUIDANCE
-    if _ORDERING_TERMS.search(str(goal or "")):
-        guidance = f"{guidance}\n\n{ORDERING_STEP_GUIDANCE}"
-    return guidance
+    return str(explicit or "").strip()
 
 
 _ADAPTER_NAME = "qwen_vl_coordinate_arrays.v1"
@@ -1030,344 +840,6 @@ def _ends_inside_json_string(value: str) -> bool:
     return in_string
 
 
-_SEMANTIC_ATTRIBUTES = (
-    ("text", "t"),
-    ("content-desc", "d"),
-    ("hint-text", "h"),
-    ("resource-id", "r"),
-)
-_ACTION_ATTRIBUTES = (
-    ("clickable", "click"),
-    ("long-clickable", "long"),
-    ("editable", "edit"),
-    ("scrollable", "scroll"),
-    ("checkable", "check"),
-    ("focused", "focus"),
-)
-_ENGLISH_TOKEN = re.compile(r"[a-z0-9]+")
-_CHINESE_TOKEN = re.compile(r"[\u4e00-\u9fff]+")
-_VISUAL_GOAL_MARKERS = ("广告", "弹窗", "遮挡", "popup", "overlay", "close ad")
-_GLOBAL_CONTROL_MARKERS = (
-    "back",
-    "basket",
-    "cart",
-    "close",
-    "input",
-    "menu",
-    "more options",
-    "navigate up",
-    "navigate_up",
-    "search",
-    "关闭",
-    "输入",
-    "返回",
-    "搜索",
-    "更多",
-    "查找",
-    "菜单",
-    "购物车",
-)
-_GROUP_ORDER = ("global", "goal", "goal_control", "visual", "other")
-_GROUP_HEADERS = {
-    "global": "[global_controls]",
-    "goal": "[goal_matches]",
-    "goal_control": "[goal_controls]",
-    "visual": "[visual_controls]",
-    "other": "[other_context]",
-}
-_GROUP_LIMITS = {
-    "global": 6,
-    "goal": 10,
-    "goal_control": 8,
-    "visual": 4,
-    "other": 2,
-}
-
-
-@dataclass(frozen=True)
-class _Candidate:
-    order: int
-    score: int
-    goal_match: bool
-    group: str
-    compact: dict[str, object]
-    bounds: tuple[int, int, int, int] | None
-
-
-@dataclass(frozen=True)
-class UIProjection:
-    text: str
-    candidate_count: int
-    selected_count: int
-    goal_match_count: int
-    visual_context_required: bool = False
-    visual_candidate_count: int = 0
-
-    @property
-    def requires_screenshot(self) -> bool:
-        return True
-
-
-def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection:
-    try:
-        root = ET.fromstring(str(xml_text or ""))
-    except ET.ParseError:
-        return UIProjection("<none>", 0, 0, 0)
-    goal_terms = _terms(goal)
-    candidates: list[_Candidate] = []
-    for order, element in enumerate(root.iter()):
-        compact: dict[str, object] = {}
-        semantic_values: list[str] = []
-        visible_semantic_values: list[str] = []
-        node_id = str(element.attrib.get("id") or "").strip()
-        if node_id:
-            compact["i"] = node_id
-        for attribute, output_key in _SEMANTIC_ATTRIBUTES:
-            value = str(element.attrib.get(attribute) or "").strip()
-            if value:
-                compact[output_key] = value
-                semantic_values.append(value)
-                if attribute != "resource-id":
-                    visible_semantic_values.append(value)
-        actions = [
-            output_value
-            for attribute, output_value in _ACTION_ATTRIBUTES
-            if str(element.attrib.get(attribute) or "").strip().lower() == "true"
-        ]
-        if not semantic_values and not actions:
-            continue
-        descendant_context = (
-            _descendant_context(element) if actions and not visible_semantic_values else ""
-        )
-        if descendant_context:
-            compact["c"] = descendant_context
-        bounds = str(element.attrib.get("bounds") or "").strip()
-        parsed_bounds = _parse_bounds(bounds)
-        if bounds:
-            compact["b"] = bounds
-        if actions:
-            compact["a"] = actions
-        checked = str(element.attrib.get("checked") or "").strip().lower()
-        if checked in {"true", "false"}:
-            compact["checked"] = checked == "true"
-        candidate_terms = _terms(" ".join((*semantic_values, descendant_context)))
-        overlap = goal_terms.intersection(candidate_terms)
-        goal_match = bool(overlap)
-        score = len(overlap) * 1000
-        global_control = _is_global_control(semantic_values, actions)
-        visual_control = bool(actions and not visible_semantic_values)
-        if global_control:
-            group = "global"
-            score += 5000
-        elif goal_match:
-            group = "goal"
-        elif visual_control:
-            group = "visual"
-            score += 200 + _visual_specificity(parsed_bounds)
-        else:
-            group = "other"
-        score += 400 if "edit" in actions or "focus" in actions else 0
-        score += 50 if actions else 0
-        score += min(10, len(semantic_values))
-        candidates.append(
-            _Candidate(
-                order=order,
-                score=score,
-                goal_match=goal_match,
-                group=group,
-                compact=compact,
-                bounds=parsed_bounds,
-            )
-        )
-    candidates = _promote_goal_controls(candidates)
-    selected = _select_candidates(candidates, max_nodes=max_nodes)
-    text = _render_candidates(selected)
-    return UIProjection(
-        text=text or "<none>",
-        candidate_count=len(candidates),
-        selected_count=len(selected),
-        goal_match_count=sum(1 for item in candidates if item.goal_match),
-        visual_context_required=any(
-            marker in str(goal or "").casefold() for marker in _VISUAL_GOAL_MARKERS
-        ),
-        visual_candidate_count=sum(
-            1 for item in selected if item.group in {"goal_control", "visual"}
-        ),
-    )
-
-
-def _promote_goal_controls(candidates: list[_Candidate]) -> list[_Candidate]:
-    goal_bounds = [
-        item.bounds
-        for item in candidates
-        if item.group == "goal" and item.bounds is not None
-    ]
-    if not goal_bounds:
-        return candidates
-    promoted: list[_Candidate] = []
-    for item in candidates:
-        if item.group != "visual" or item.bounds is None:
-            promoted.append(item)
-            continue
-        proximity = min(_rectangle_gap(item.bounds, target) for target in goal_bounds)
-        if proximity > 180:
-            promoted.append(item)
-            continue
-        promoted.append(
-            replace(
-                item,
-                group="goal_control",
-                score=item.score + 2000 - proximity * 5,
-            )
-        )
-    return promoted
-
-
-def _select_candidates(
-    candidates: list[_Candidate],
-    *,
-    max_nodes: int,
-) -> list[_Candidate]:
-    if max_nodes <= 0:
-        return []
-    selected: list[_Candidate] = []
-    selected_orders: set[int] = set()
-    for group in _GROUP_ORDER:
-        remaining = max_nodes - len(selected)
-        if remaining <= 0:
-            break
-        limit = min(_GROUP_LIMITS[group], remaining)
-        group_candidates = sorted(
-            (item for item in candidates if item.group == group),
-            key=_candidate_rank,
-        )
-        for item in group_candidates[:limit]:
-            selected.append(item)
-            selected_orders.add(item.order)
-    remaining = max_nodes - len(selected)
-    if remaining > 0:
-        overflow = sorted(
-            (item for item in candidates if item.order not in selected_orders),
-            key=lambda item: (_GROUP_ORDER.index(item.group), *_candidate_rank(item)),
-        )
-        selected.extend(overflow[:remaining])
-    return sorted(
-        selected,
-        key=lambda item: (
-            _GROUP_ORDER.index(item.group),
-            _screen_order(item),
-            item.order,
-        ),
-    )
-
-
-def _render_candidates(candidates: list[_Candidate]) -> str:
-    lines: list[str] = []
-    visual_reference = 0
-    for group in _GROUP_ORDER:
-        group_candidates = [item for item in candidates if item.group == group]
-        if not group_candidates:
-            continue
-        lines.append(_GROUP_HEADERS[group])
-        for item in group_candidates:
-            compact = dict(item.compact)
-            if compact.get("a"):
-                visual_reference += 1
-                compact = {"v": f"A{visual_reference:02d}", **compact}
-            lines.append(
-                json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
-            )
-    return "\n".join(lines)
-
-
-def _candidate_rank(item: _Candidate) -> tuple[int, tuple[int, int], int]:
-    return (-item.score, _screen_order(item), item.order)
-
-
-def _screen_order(item: _Candidate) -> tuple[int, int]:
-    if item.bounds is None:
-        return (10**9, 10**9)
-    left, top, _right, _bottom = item.bounds
-    return (top, left)
-
-
-def _is_global_control(semantic_values: list[str], actions: list[str]) -> bool:
-    if "edit" in actions or "focus" in actions:
-        return True
-    if not actions:
-        return False
-    semantic_text = " ".join(semantic_values).casefold()
-    return any(marker in semantic_text for marker in _GLOBAL_CONTROL_MARKERS)
-
-
-def _descendant_context(element: ET.Element) -> str:
-    values: list[str] = []
-    for descendant in element.iter():
-        if descendant is element:
-            continue
-        for attribute in ("text", "content-desc", "hint-text"):
-            value = str(descendant.attrib.get(attribute) or "").strip()
-            if value and value not in values:
-                values.append(value)
-                if len(values) == 2:
-                    break
-        if len(values) == 2:
-            break
-    return " | ".join(values)[:80]
-
-
-def _visual_specificity(bounds: tuple[int, int, int, int] | None) -> int:
-    if bounds is None:
-        return 0
-    left, top, right, bottom = bounds
-    width = right - left
-    height = bottom - top
-    longest = max(width, height)
-    score = 500 if longest <= 160 else 300 if longest <= 320 else 100 if longest <= 640 else 0
-    if min(width, height) / longest >= 0.7:
-        score += 100
-    return score
-
-
-def _rectangle_gap(
-    left_bounds: tuple[int, int, int, int],
-    right_bounds: tuple[int, int, int, int],
-) -> int:
-    left_left, left_top, left_right, left_bottom = left_bounds
-    right_left, right_top, right_right, right_bottom = right_bounds
-    horizontal = max(right_left - left_right, left_left - right_right, 0)
-    vertical = max(right_top - left_bottom, left_top - right_bottom, 0)
-    return horizontal + vertical
-
-
-def _parse_bounds(value: str) -> tuple[int, int, int, int] | None:
-    numbers = re.fullmatch(
-        r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]",
-        str(value or "").strip(),
-    )
-    if numbers is None:
-        return None
-    left, top, right, bottom = (int(item) for item in numbers.groups())
-    if right <= left or bottom <= top:
-        return None
-    return left, top, right, bottom
-
-
-def _terms(value: str) -> set[str]:
-    normalized = str(value or "").casefold()
-    terms = {
-        token
-        for token in _ENGLISH_TOKEN.findall(normalized)
-        if len(token) >= 2
-    }
-    for segment in _CHINESE_TOKEN.findall(normalized):
-        if len(segment) == 1:
-            terms.add(segment)
-        else:
-            terms.update(segment[index : index + 2] for index in range(len(segment) - 1))
-    return terms
-
-
 __all__ = [
     "DEFAULT_STEP_GUIDANCE",
     "ModelTransport",
@@ -1376,6 +848,5 @@ __all__ = [
     "VLMPlanner",
     "build_model_turn_request",
     "function_tools",
-    "project_ui",
     "resolve_step_guidance",
 ]

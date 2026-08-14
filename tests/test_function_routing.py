@@ -397,9 +397,6 @@ def test_planner_selects_recalled_function_as_one_peer_tool(tmp_path) -> None:
         True,
         True,
     ]
-    assert "Function `complete_run_turn_bluetooth_on`" in str(
-        planner.observations[1].extra.get("execution_history")
-    )
     assert planner.observations[1].extra["function_execution"] == {
         "schema_version": "omniflow.function-execution-evidence.v1",
         "function_id": function_id,
@@ -855,7 +852,7 @@ def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:
             assert "com.android.settings" not in serialized
 
 
-def test_vlm_planner_sends_execution_history_to_model() -> None:
+def test_vlm_planner_uses_only_compact_current_runtime_context() -> None:
     response = SimpleNamespace(
         choices=[
             SimpleNamespace(
@@ -914,14 +911,15 @@ def test_vlm_planner_sends_execution_history_to_model() -> None:
         )
     )
     payload = completions.requests[0]["messages"][1]["content"][0]["text"]
-    assert '"tool":"click"' in payload
-    assert "1. [Planner] Clicked the item successfully." in payload
-    assert '"official_validator_status":"pending"' in payload
-    assert '"state_id":"state_after"' in payload
-    assert "Do not repeat the same action" in payload
+    assert "Previous action error: action_completed_without_state_change" in payload
+    assert "Previous Function result: add_item succeeded" in payload
+    assert '"tool":"click"' not in payload
+    assert "1. [Planner] Clicked the item successfully." not in payload
+    assert '"official_validator_status":"pending"' not in payload
+    assert '"state_id":"state_after"' not in payload
 
 
-def test_vlm_planner_omits_bulk_androidworld_graphs_from_prompt() -> None:
+def test_vlm_planner_omits_androidworld_internal_state_from_prompt() -> None:
     official_state = {
         "pixels": {"path": "/evidence/current.png", "sha256": "abc"},
         "forest": {"windows": [{"tree": {"nodes": [{"text": "bulk"}]}}]},
@@ -942,8 +940,8 @@ def test_vlm_planner_omits_bulk_androidworld_graphs_from_prompt() -> None:
     )
 
     payload = request["messages"][1]["content"][0]["text"]
-    assert '"pixels":{"path":"/evidence/current.png","sha256":"abc"}' in payload
-    assert '"auxiliaries":{"package_name":"com.example"}' in payload
+    assert '"pixels"' not in payload
+    assert '"auxiliaries"' not in payload
     assert '"forest"' not in payload
     assert '"ui_elements"' not in payload
     assert "bulk" not in payload
@@ -951,7 +949,7 @@ def test_vlm_planner_omits_bulk_androidworld_graphs_from_prompt() -> None:
     assert official_state["ui_elements"]
 
 
-def test_vlm_planner_keeps_prior_visual_turn_for_multi_function_task() -> None:
+def test_vlm_planner_keeps_ui_tars_style_action_history() -> None:
     requests: list[dict[str, object]] = []
     responses = iter(
         [
@@ -1017,18 +1015,15 @@ def test_vlm_planner_keeps_prior_visual_turn_for_multi_function_task() -> None:
     assert isinstance(messages, list)
     assert [message["role"] for message in messages] == [
         "system",
-        "user",
         "assistant",
         "tool",
         "user",
     ]
-    first_user = messages[1]
-    assert isinstance(first_user["content"], str)
-    assert "gallery-image" not in first_user["content"]
-    assistant_call = messages[2]["tool_calls"][0]["function"]
+    assistant_call = messages[1]["tool_calls"][0]["function"]
     assert "Theater Show" in assistant_call["arguments"]
     assert "Museum Tickets" in assistant_call["arguments"]
     assert "Household Items" in assistant_call["arguments"]
+    assert messages[2]["content"] == "Action dispatched; inspect the current screenshot."
 
 def test_bridge_planner_exposes_packages_only_through_open_app_tool() -> None:
     installed_apps = {
@@ -1078,12 +1073,15 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert request["max_completion_tokens"] == 512
     assert request["reasoning_effort"] == "none"
     assert request["enable_thinking"] is False
-    assert "provides search" in SYSTEM_PROMPT
-    assert "history, recent, suggestion" in SYSTEM_PROMPT
-    assert "not claim that a RunLog or reusable Function was registered" in SYSTEM_PROMPT
+    assert "You are an Android GUI agent" in SYSTEM_PROMPT
+    assert "task, your action history, and the current screenshot" in SYSTEM_PROMPT
+    assert "A recalled Function is an action API" in SYSTEM_PROMPT
+    assert "provides search" not in SYSTEM_PROMPT
+    assert "RunLog" not in SYSTEM_PROMPT
+    assert len(SYSTEM_PROMPT.split()) < 100
 
 
-def test_planner_treats_recalled_functions_as_preferred_peer_apis() -> None:
+def test_planner_adds_recalled_function_as_a_peer_action_api() -> None:
     function = Function(
         function_id="add_expense",
         name="Add one expense",
@@ -1108,19 +1106,13 @@ def test_planner_treats_recalled_functions_as_preferred_peer_apis() -> None:
 
     tool_names = [tool["function"]["name"] for tool in request["tools"]]
     assert tool_names[0] == "add_expense"
-    assert "preferred economic\nexecution path" in SYSTEM_PROMPT
-    assert "reduces model calls, GUI actions, and latency" in SYSTEM_PROMPT
-    assert "you must call that Function API now" in SYSTEM_PROMPT
-    assert "call that Function API now" in SYSTEM_PROMPT
-    assert "same Function API multiple times" in SYSTEM_PROMPT
-    assert "does not mean the overall task is complete" in SYSTEM_PROMPT
-    assert "copy every needed" in SYSTEM_PROMPT
+    assert "A recalled Function is an action API" in SYSTEM_PROMPT
+    assert "Prefer it when it directly performs the next part of the task" in SYSTEM_PROMPT
     summaries = [
         tool["function"]["parameters"]["properties"]["summary"]["description"]
         for tool in request["tools"]
     ]
-    assert all("copy every such field and value exactly" in text for text in summaries)
-    assert all("never shorten away required facts" in text for text in summaries)
+    assert all(text == "Brief plan and reason for the next action." for text in summaries)
 
 
 def test_vlm_planner_retries_empty_required_function_string() -> None:
@@ -1198,7 +1190,7 @@ def test_vlm_planner_retries_empty_required_function_string() -> None:
     assert "function_arguments_invalid:minLength:note" in retry_text
 
 
-def test_function_completion_review_keeps_final_screenshot_and_checked_state() -> None:
+def test_function_completion_review_keeps_current_screenshot_and_result() -> None:
     request = build_model_turn_request(
         goal="Turn bluetooth off",
         model="test-model",
@@ -1210,17 +1202,10 @@ def test_function_completion_review_keeps_final_screenshot_and_checked_state() -
             "image_base64": "final-screenshot",
             "display": {"width": 720, "height": 1280},
             "extra": {
-                "recent_actions": [
-                    {
-                        "tool": "click",
-                        "args": {"x": 500, "y": 400},
-                        "success": True,
-                        "function_id": "complete_run_turn_bluetooth_off",
-                    }
-                ],
-                "execution_history": (
-                    "Function `complete_run_turn_bluetooth_off` completed successfully."
-                ),
+                "function_execution": {
+                    "function_id": "complete_run_turn_bluetooth_off",
+                    "replay_status": "actions_succeeded",
+                },
             },
         },
         max_steps=8,
@@ -1229,12 +1214,11 @@ def test_function_completion_review_keeps_final_screenshot_and_checked_state() -
 
     content = request["messages"][1]["content"]
     assert [item["type"] for item in content] == ["text", "image_url"]
-    assert '"checked":false' in content[0]["text"]
-    assert "Those actions are already applied" in content[0]["text"]
-    assert "Never repeat or toggle" in content[0]["text"]
+    assert "Previous Function result: complete_run_turn_bluetooth_off succeeded" in content[0]["text"]
+    assert '"checked":false' not in content[0]["text"]
 
 
-def test_vlm_planner_function_completion_review_uses_final_screenshot() -> None:
+def test_vlm_planner_function_completion_review_uses_current_screenshot() -> None:
     response = SimpleNamespace(
         choices=[
             SimpleNamespace(
@@ -1269,17 +1253,10 @@ def test_vlm_planner_function_completion_review_uses_final_screenshot() -> None:
                 image_base64="final-screenshot",
                 extra={
                     "display": {"width": 720, "height": 1280},
-                    "recent_actions": [
-                        {
-                            "tool": "click",
-                            "args": {"x": 500, "y": 400},
-                            "success": True,
-                            "function_id": "complete_run_turn_bluetooth_off",
-                        }
-                    ],
-                    "execution_history": (
-                        "Function `complete_run_turn_bluetooth_off` completed successfully."
-                    ),
+                    "function_execution": {
+                        "function_id": "complete_run_turn_bluetooth_off",
+                        "replay_status": "actions_succeeded",
+                    },
                 },
             ),
         )
@@ -1290,8 +1267,8 @@ def test_vlm_planner_function_completion_review_uses_final_screenshot() -> None:
     content = request["messages"][1]["content"]
     assert [item["type"] for item in content] == ["text", "image_url"]
     turn_payload = content[0]["text"]
-    assert '"checked":false' in turn_payload
-    assert "Never repeat or toggle" in turn_payload
+    assert "Previous Function result: complete_run_turn_bluetooth_off succeeded" in turn_payload
+    assert '"checked":false' not in turn_payload
 
 
 def test_androidworld_launcher_configures_one_unified_planner(

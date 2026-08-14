@@ -4,7 +4,6 @@ from omniflow.bridge import _run_result
 from omniflow.core.model import Function, RunResult
 from omniflow.vlm.planner import (
     DEFAULT_STEP_GUIDANCE,
-    ORDERING_STEP_GUIDANCE,
     build_model_turn_request,
     resolve_step_guidance,
 )
@@ -31,11 +30,9 @@ def _function() -> Function:
     )
 
 
-def test_default_guidance_is_owned_by_harness() -> None:
+def test_planner_guidance_is_explicit_only() -> None:
     assert resolve_step_guidance("find a contact") == DEFAULT_STEP_GUIDANCE
-    ordering = resolve_step_guidance("order me a coffee")
-    assert DEFAULT_STEP_GUIDANCE in ordering
-    assert ORDERING_STEP_GUIDANCE in ordering
+    assert DEFAULT_STEP_GUIDANCE == ""
     assert resolve_step_guidance("order coffee", "custom") == "custom"
 
 

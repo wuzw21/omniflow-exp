@@ -81,12 +81,7 @@ def openai_action_tools(*, include_summary: bool = False) -> list[dict[str, Any]
         if include_summary:
             properties["summary"] = {
                 "type": "string",
-                "description": (
-                    "Running task memory and next-action reason. Before leaving "
-                    "a screen that contains facts needed later, copy every such "
-                    "field and value exactly here; never shorten away required "
-                    "facts. Also preserve completed work and why this action is next."
-                ),
+                "description": "Brief plan and reason for the next action.",
             }
             required.append("summary")
         for argument in action.get("args") or ():

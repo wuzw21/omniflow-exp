@@ -362,12 +362,6 @@ class OmniFlow:
                 )
             if not observation.image_base64:
                 observation = await self._observe(screenshot=True)
-            recent_actions = _recent_actions(trace)
-            execution_history = (
-                _execution_history(trace, completed_function=function_session.completed)
-                if trace
-                else None
-            )
             evidence_function = function_session.completed or (
                 function_session.bound if function_session.failed else None
             )
@@ -383,9 +377,7 @@ class OmniFlow:
             )
             if (
                 previous_action_error
-                or recent_actions
                 or pending_user_input
-                or execution_history
                 or function_execution
             ):
                 observation = Observation(
@@ -399,14 +391,6 @@ class OmniFlow:
                         "previous_action": previous_action.to_dict()
                         if previous_action is not None
                         else None,
-                        **(
-                            {"recent_actions": recent_actions} if recent_actions else {}
-                        ),
-                        **(
-                            {"execution_history": execution_history}
-                            if execution_history
-                            else {}
-                        ),
                         **(
                             {"function_execution": function_execution}
                             if function_execution
@@ -896,91 +880,6 @@ def _direct_function_fallback_goal(
     ).strip()
 
 
-def _recent_actions(
-    trace: list[dict[str, Any]],
-    *,
-    limit: int = 8,
-) -> list[dict[str, Any]]:
-    history: list[dict[str, Any]] = []
-    for step in trace[-max(1, int(limit)) :]:
-        if not isinstance(step, dict):
-            continue
-        action = step["action"]
-        result = step["result"]
-        metadata = step.get("metadata") or {}
-        history.append(
-            {
-                "tool": str(action.get("tool") or ""),
-                "args": dict(action.get("args") or {}),
-                "success": result.get("success") is True,
-                "error": result.get("error"),
-                "function_id": metadata.get("function_id") or None,
-            }
-        )
-    return history
-
-
-def _execution_history(
-    trace: list[dict[str, Any]],
-    *,
-    completed_function: Function | None = None,
-) -> str:
-    lines = ["Action execution history on the target device:"]
-    if completed_function is not None:
-        lines.extend(
-            [
-                (
-                    f"Function `{completed_function.id}` "
-                    f"({completed_function.name}) completed successfully."
-                ),
-                f"Function purpose: {completed_function.description}",
-            ]
-        )
-    for index, step in enumerate(trace, start=1):
-        if not isinstance(step, dict):
-            continue
-        try:
-            action = Action.from_value(step.get("action"))
-        except (TypeError, ValueError):
-            continue
-        metadata = step.get("metadata")
-        function_id = (
-            str(metadata.get("function_id") or "").strip()
-            if isinstance(metadata, dict)
-            else ""
-        )
-        source = f"Function `{function_id}`" if function_id else "Planner"
-        result = step.get("result")
-        success = isinstance(result, dict) and result.get("success") is True
-        if success:
-            description = _describe_completed_action(action)
-        else:
-            error = (
-                str(result.get("error") or "unknown execution error")
-                if isinstance(result, dict)
-                else "unknown execution error"
-            )
-            description = f"Action `{action.tool}` failed: {error}."
-        lines.append(f"{index}. [{source}] {description}")
-    lines.extend(
-        [
-            (
-                "This history records tool execution only, not independent task "
-                "validation."
-            ),
-            (
-                "Before making any further Action, verify whether the complete "
-                "user goal is already satisfied."
-            ),
-            (
-                "Do not repeat successful Actions. If the goal is complete, "
-                "call `finished`."
-            ),
-        ]
-    )
-    return "\n".join(lines)
-
-
 def _function_execution_evidence(
     trace: list[dict[str, Any]],
     *,
@@ -1032,39 +931,6 @@ def _function_execution_evidence(
             "activity_name": str(final_observation.activity_name or ""),
         },
     }
-
-
-def _describe_completed_action(action: Action) -> str:
-    args = action.args
-    target = str(args.get("target_description") or "").strip()
-    if action.tool == "open_app":
-        package_name = str(args.get("package_name") or "").strip()
-        return f'Opened app package "{package_name}" successfully.'
-    if action.tool == "click":
-        if target:
-            return f'Clicked target "{target}" successfully.'
-        return "Clicked the recorded target position successfully."
-    if action.tool == "long_press":
-        if target:
-            return f'Long-pressed target "{target}" successfully.'
-        return "Long-pressed the recorded screen position successfully."
-    if action.tool == "input_text":
-        if target:
-            return f'Entered text into target "{target}" successfully.'
-        return "Entered the required text successfully."
-    if action.tool == "swipe":
-        direction = str(args.get("direction") or "").strip()
-        return (
-            f"Swiped {direction} successfully."
-            if direction
-            else "Completed the recorded swipe successfully."
-        )
-    if action.tool == "press_key":
-        key = str(args.get("key") or "").strip()
-        return f'Pressed key "{key}" successfully.'
-    if action.tool == "wait":
-        return f"Waited for {args.get('duration_ms')} ms successfully."
-    return f"Completed action `{action.tool}` successfully."
 
 
 def _same_observation(
