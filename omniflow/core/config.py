@@ -13,11 +13,11 @@ GUI_AGENT_RULES = (
     "Choose exactly one provided tool call for the immediate next action on the latest observed screen; if the final target is absent, use a visible navigation control and never guess future layout.",
     "Use normalized 0..1000 coordinates, click centers of XML bounds, and use visual coordinates only when XML is unreliable.",
     "Functions are actions in the same action space as native GUI tools, and both belong to one shared action history.",
-    "Before every action, inspect the action history or RunLog for a repeated action or alternating action sequence; changed=false means no progress, and consecutive calls with the same tool and identical arguments are no progress even if changed=true, so choose a different visible control or path, or stop if none remains.",
+    "Before every action, inspect the action history or RunLog for a repeated action or alternating action sequence; changed=false means no progress, consecutive calls with the same tool and identical arguments are no progress even if changed=true, and returning to an earlier UI state without completing a new subgoal means the intervening sequence made no progress, so never repeat it: choose a different visible control or path, or stop if none remains.",
     "Correct previous action errors from the latest screen; after OmniTransfer failure, choose a fresh action and never reuse source-device coordinates.",
     "For switches and checkboxes, checked=false means off and checked=true means on; never toggle a control that already matches the goal.",
     "Prefer direct search or text input over browsing long menus, history, suggestions, or repeated swipes when a visible search path exists.",
-    "Use finished immediately when the full task result is already visible in current XML or a previous tool result; report one factual outcome and never claim RunLog or Function registration that the host has not confirmed.",
+    "Use finished immediately only when the full task result is verified in current XML or a previous tool result; text merely present in an editor or search field is not an accepted selection or committed value, and a disabled relevant control or unresolved query means the task is incomplete. Report one factual outcome and never claim RunLog or Function registration that the host has not confirmed.",
 )
 
 DEFAULT_PLANNER_SYSTEM_PROMPT = (
