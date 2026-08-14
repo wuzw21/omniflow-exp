@@ -921,6 +921,36 @@ def test_vlm_planner_sends_execution_history_to_model() -> None:
     assert "Do not repeat the same action" in payload
 
 
+def test_vlm_planner_omits_bulk_androidworld_graphs_from_prompt() -> None:
+    official_state = {
+        "pixels": {"path": "/evidence/current.png", "sha256": "abc"},
+        "forest": {"windows": [{"tree": {"nodes": [{"text": "bulk"}]}}]},
+        "ui_elements": [{"text": "duplicate bulk"}],
+        "auxiliaries": {"package_name": "com.example"},
+    }
+
+    request = build_model_turn_request(
+        goal="Open the target",
+        model="test-model",
+        state={
+            "xml": '<hierarchy><node text="Target" bounds="[0,0][10,10]" /></hierarchy>',
+            "display": {"width": 100, "height": 200},
+            "extra": {"androidworld_state": official_state},
+        },
+        max_steps=8,
+        turn_index=1,
+    )
+
+    payload = request["messages"][1]["content"][0]["text"]
+    assert '"pixels":{"path":"/evidence/current.png","sha256":"abc"}' in payload
+    assert '"auxiliaries":{"package_name":"com.example"}' in payload
+    assert '"forest"' not in payload
+    assert '"ui_elements"' not in payload
+    assert "bulk" not in payload
+    assert official_state["forest"]["windows"]
+    assert official_state["ui_elements"]
+
+
 def test_vlm_planner_keeps_prior_visual_turn_for_multi_function_task() -> None:
     requests: list[dict[str, object]] = []
     responses = iter(

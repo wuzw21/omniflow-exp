@@ -402,6 +402,13 @@ def _turn_text(
     if not lightweight_retry and isinstance(extra, dict) and extra:
         context = dict(extra)
         context.pop("installed_apps", None)
+        androidworld_state = context.get("androidworld_state")
+        if isinstance(androidworld_state, dict):
+            context["androidworld_state"] = {
+                key: value
+                for key, value in androidworld_state.items()
+                if key not in {"forest", "ui_elements"}
+            }
         execution_history = str(context.pop("execution_history", "") or "").strip()
         if has_successful_function_action(context):
             lines.append(
