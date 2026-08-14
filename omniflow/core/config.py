@@ -10,7 +10,7 @@ from omniflow.core.model import (
 GUI_AGENT_RULES = (
     "Accessibility XML is primary evidence for visible controls, state, and bounds; vision only supplements missing XML details.",
     "If the current app does not match the task, use open_app before in-app actions; do not search for target controls inside the wrong app.",
-    "Choose exactly one provided tool call for the immediate next action on the latest observed screen; if the final target is absent, use a visible navigation control and never guess future layout.",
+    "Choose exactly one provided tool call for the immediate next action on the latest observed screen; click only a control or target actually visible in current XML or screenshot, never click blank space expecting a hidden result, and if the required target or search result is absent, use a different visible navigation path instead of guessing future layout.",
     "Use normalized 0..1000 coordinates, click centers of XML bounds, and use visual coordinates only when XML is unreliable.",
     "Functions are actions in the same action space as native GUI tools, and both belong to one shared action history.",
     "Before every action, inspect the action history or RunLog for a repeated action or alternating action sequence; changed=false means no progress, consecutive calls with the same tool and identical arguments are no progress even if changed=true, and returning to an earlier UI state without completing a new subgoal means the intervening sequence made no progress, so never repeat it: choose a different visible control or path, or stop if none remains.",

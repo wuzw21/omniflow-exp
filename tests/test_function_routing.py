@@ -1607,7 +1607,8 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert "normalized 0..1000 coordinates" in SYSTEM_PROMPT
     assert "Accessibility XML is primary evidence" in SYSTEM_PROMPT
     assert "vision only supplements" in SYSTEM_PROMPT
-    assert "never guess future layout" in SYSTEM_PROMPT
+    assert "never click blank space expecting a hidden result" in SYSTEM_PROMPT
+    assert "different visible navigation path" in SYSTEM_PROMPT
     assert "use open_app before in-app actions" in SYSTEM_PROMPT
     assert "full task result is verified" in SYSTEM_PROMPT
     assert "changed=false means no progress" in SYSTEM_PROMPT
