@@ -40,6 +40,9 @@ def test_android_env_version_is_locked_and_preflight_enforced() -> None:
     )
     lock_text = (REPO / "uv.lock").read_text(encoding="utf-8")
     assert 'name = "android-env"\nversion = "1.2.3"' in lock_text
+    assert '"android_world.registry"' in (
+        REPO / "src" / "experiment" / "preflight.py"
+    ).read_text(encoding="utf-8")
 
 
 def test_preflight_accepts_offline_appagent_memory() -> None:

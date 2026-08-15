@@ -833,6 +833,7 @@ def main(argv: list[str] | None = None) -> int:
         "absl",
         "android_env.proto.a11y",
         "android_world.env.android_world_controller",
+        "android_world.registry",
         "dotenv",
         "grpc",
         "json_repair",
