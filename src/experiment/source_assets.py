@@ -18,6 +18,7 @@ from omniflow.core.trajectory import (
 from omniflow.transfer.runtime import load_transfer_state_catalog
 from src.integrations.runlog import (
     convert_legacy_run_log,
+    infer_input_text_target,
     import_run_log,
     import_run_log_evidence,
     project_androidworld_step_actions,
@@ -798,6 +799,19 @@ def _ground_source_actions(
         if action_type == "input_text" and (
             not target or target.get("relation") == "unique_actionable_descendant"
         ):
+            next_xml = ""
+            if step_index + 1 < len(grounded["steps"]):
+                next_observation = grounded["steps"][step_index + 1]["observation"]
+                next_state = states.get(observation_state_id(next_observation))
+                if isinstance(next_state, dict):
+                    next_xml = str(
+                        next_state.get("xml") or observation_xml(next_observation)
+                    ).strip()
+            changed_input = infer_input_text_target(
+                xml_text,
+                next_xml,
+                input_text=str(step["action"].get("text") or ""),
+            )
             current_editable = _unique_editable_identity(xml_text)
             inherited_editable = (
                 previous_editable_target[1]
@@ -806,7 +820,12 @@ def _ground_source_actions(
                 and previous_editable_target[0] == package_name
                 else {}
             )
-            target = current_editable or inherited_editable or target
+            target = (
+                dict(changed_input.get("identity") or {})
+                or current_editable
+                or inherited_editable
+                or target
+            )
         if not xml_text and needs_element_grounding and not target:
             raise ValueError(f"source_state_xml_missing:{state_identifier}")
         source_context: dict[str, Any] = {}

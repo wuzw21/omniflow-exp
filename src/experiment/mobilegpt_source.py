@@ -12,11 +12,10 @@ from typing import Any
 
 from src.experiment import androidworld as pipeline
 from src.experiment.mobilegpt_contract import (
-    MOBILEGPT_DIRECT_LEARNING_MODE,
-    MOBILEGPT_DIRECT_MEMORY_SCHEMA,
-    MOBILEGPT_DIRECT_SOURCE_METHOD,
+    MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
-    MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
+    MOBILEGPT_MEMORY_SCHEMA,
+    MOBILEGPT_SOURCE_METHOD,
 )
 from src.integrations.mobilegpt_converter import (
     MobileGPTConversionError,
@@ -173,10 +172,10 @@ def preflight_mobilegpt_source(
         "schema_version": "omniflow.mobilegpt-source-preflight.v4",
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
-        "source_method": MOBILEGPT_DIRECT_SOURCE_METHOD,
+        "source_method": MOBILEGPT_SOURCE_METHOD,
         "source_run_log": source_audit["source_run_log"],
         "source_run_log_sha256": source_audit["source_run_log_sha256"],
-        "learning_mode": MOBILEGPT_DIRECT_LEARNING_MODE,
+        "learning_mode": MOBILEGPT_LEARNING_MODE,
         "teacher_forcing": False,
         "synthetic_subtasks": True,
         "semantic_subtasks": False,
@@ -208,10 +207,8 @@ def validate_mobilegpt_source_memory(
     manifest_path = Path(memory_root).expanduser().resolve().parent / MOBILEGPT_MEMORY_MANIFEST
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     schema_version = str(manifest.get("schema_version") or "")
-    try:
-        source_method = MOBILEGPT_SOURCE_METHOD_BY_SCHEMA[schema_version]
-    except KeyError as error:
-        raise ValueError("mobilegpt_source_memory_schema_invalid") from error
+    if schema_version != MOBILEGPT_MEMORY_SCHEMA:
+        raise ValueError("mobilegpt_source_memory_schema_invalid")
     validated = pipeline.validate_mobilegpt_adapted_memory(
         memory_root,
         task_name=item.task,
@@ -219,13 +216,13 @@ def validate_mobilegpt_source_memory(
         source_run_log=source_run_log,
         compatible_source_sha256s=compatible_sha256s,
         expected_model=str(model),
-        expected_source_method=source_method,
+        expected_source_method=MOBILEGPT_SOURCE_METHOD,
     )
     result = {
         "schema_version": "omniflow.mobilegpt-source-validation.v4",
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
-        "source_method": source_method,
+        "source_method": MOBILEGPT_SOURCE_METHOD,
         "source_run_log": str(source_run_log),
         "model": str(model),
         "validated": validated,
@@ -328,17 +325,17 @@ def prepare_mobilegpt_source_memory(
         target_app=str(target_info.get("target_app") or ""),
         source_wall_sec=wall_sec,
         source_model=normalized_model,
-        memory_schema=MOBILEGPT_DIRECT_MEMORY_SCHEMA,
+        memory_schema=MOBILEGPT_MEMORY_SCHEMA,
     )
     result = {
         "schema_version": "omniflow.mobilegpt-source-prepare.v7",
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
-        "source_method": MOBILEGPT_DIRECT_SOURCE_METHOD,
+        "source_method": MOBILEGPT_SOURCE_METHOD,
         "source_run_log": str(source_run_log),
         "model": normalized_model,
         "memory_root": str(memory_root),
-        "learning_mode": MOBILEGPT_DIRECT_LEARNING_MODE,
+        "learning_mode": MOBILEGPT_LEARNING_MODE,
         "teacher_forcing": False,
         "synthetic_subtasks": True,
         "semantic_subtasks": False,
@@ -562,8 +559,8 @@ def prepare_mobilegpt_source_batch(
     manifest_path = batch_root / "batch_manifest.json"
     expected_manifest = {
         "schema_version": "omniflow.mobilegpt-source-batch.v3",
-        "source_memory_schema": MOBILEGPT_DIRECT_MEMORY_SCHEMA,
-        "source_method": MOBILEGPT_DIRECT_SOURCE_METHOD,
+        "source_memory_schema": MOBILEGPT_MEMORY_SCHEMA,
+        "source_method": MOBILEGPT_SOURCE_METHOD,
         "model": str(model),
         "index_path": str(Path(index_path).expanduser().resolve()),
         "memory_index": str(Path(memory_index).expanduser().resolve()),
@@ -589,8 +586,8 @@ def prepare_mobilegpt_source_batch(
         task_root = batch_root / task_name
         if (
             canonical is not None
-            and canonical.get("schema_version") == MOBILEGPT_DIRECT_MEMORY_SCHEMA
-            and canonical.get("source_method") == MOBILEGPT_DIRECT_SOURCE_METHOD
+            and canonical.get("schema_version") == MOBILEGPT_MEMORY_SCHEMA
+            and canonical.get("source_method") == MOBILEGPT_SOURCE_METHOD
         ):
             row = {
                 "task_name": task_name,

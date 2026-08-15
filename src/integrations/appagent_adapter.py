@@ -20,7 +20,9 @@ import xml.etree.ElementTree as ET
 from PIL import Image
 
 from omniflow.core.trajectory import observation_display, observation_xml
+from omniflow.vlm.usage import token_usage_status
 from src.integrations.android_world.accessibility import androidworld_forest_xml
+from src.integrations.android_world.apps import resolve_androidworld_app_name
 from src.integrations.android_world.host import (
     androidworld_elements_xml,
     make_agent_result,
@@ -74,7 +76,7 @@ _SOURCE_COORDINATE_FIELDS = {
 
 
 def _native_appagent_observation(env: Any) -> tuple[str, Any]:
-    state = env.get_state()
+    state = env.get_state(wait_to_stabilize=True)
     pixels = getattr(state, "pixels", None)
     if pixels is None:
         raise ValueError("appagent_androidworld_screenshot_missing")
@@ -138,30 +140,97 @@ class OfficialAppAgentRuntime:
         if not scripts_dir.is_dir():
             raise FileNotFoundError(f"appagent_official_scripts_missing:{scripts_dir}")
         sys.path.insert(0, str(scripts_dir))
+        previous_cwd = Path.cwd()
         try:
+            os.chdir(self.root)
             self._prompts = importlib.import_module("prompts")
             self._model = importlib.import_module("model")
             self._utils = importlib.import_module("utils")
+            self._controller = importlib.import_module("and_controller")
         finally:
+            os.chdir(previous_cwd)
             try:
                 sys.path.remove(str(scripts_dir))
             except ValueError:
                 pass
-        for module in (self._prompts, self._model, self._utils):
+        for module in (
+            self._prompts,
+            self._model,
+            self._utils,
+            self._controller,
+        ):
             module_path = Path(str(getattr(module, "__file__", ""))).resolve()
             if self.root not in module_path.parents:
                 raise RuntimeError(f"appagent_official_module_shadowed:{module_path}")
-        config = _read_appagent_config(self.root / "config.yaml")
-        self.min_dist = float(config.get("MIN_DIST") or 30)
+        self.config = _read_appagent_config(self.root / "config.yaml")
+        self.min_dist = float(self.config.get("MIN_DIST") or 30)
         self.request_interval = max(
             0.0,
-            float(
-                os.environ.get("APPAGENT_REQUEST_INTERVAL")
-                or config.get("REQUEST_INTERVAL")
-                or 10
-            ),
+            float(self.config.get("REQUEST_INTERVAL") or 10),
         )
-        self.dark_mode = bool(config.get("DARK_MODE"))
+        self.dark_mode = bool(self.config.get("DARK_MODE"))
+
+    def build_controller(self, device: str) -> Any:
+        return self._controller.AndroidController(str(device))
+
+    def collect_elements(self, xml_path: str | Path) -> list[Any]:
+        clickable: list[Any] = []
+        focusable: list[Any] = []
+        self._controller.traverse_tree(
+            str(xml_path),
+            clickable,
+            "clickable",
+            True,
+        )
+        self._controller.traverse_tree(
+            str(xml_path),
+            focusable,
+            "focusable",
+            True,
+        )
+        elements = list(clickable)
+        for candidate in focusable:
+            center = _bbox_center(candidate.bbox)
+            if any(
+                _point_distance(center, _bbox_center(element.bbox)) <= self.min_dist
+                for element in clickable
+            ):
+                continue
+            elements.append(candidate)
+        return elements
+
+    def build_model(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        model: str,
+    ) -> Any:
+        resolved_api_key = str(api_key or "").strip()
+        if not resolved_api_key:
+            raise RuntimeError("appagent_openai_api_key_required")
+        resolved_base_url = _appagent_chat_completions_url(
+            str(base_url or self.config.get("OPENAI_API_BASE") or "")
+        )
+        resolved_model = str(
+            model or self.config.get("OPENAI_API_MODEL") or ""
+        ).strip()
+        if not resolved_model:
+            raise RuntimeError("appagent_openai_model_required")
+        requests_proxy = _AppAgentRequestsAccountingProxy(
+            self._model.requests,
+            model=resolved_model,
+            endpoint=resolved_base_url,
+        )
+        self._model.requests = requests_proxy
+        official_model = self._model.OpenAIModel(
+            base_url=resolved_base_url,
+            api_key=resolved_api_key,
+            model=resolved_model,
+            temperature=float(self.config.get("TEMPERATURE") or 0.0),
+            max_tokens=int(self.config.get("MAX_TOKENS") or 300),
+        )
+        return _OfficialAppAgentModelProxy(official_model, requests_proxy)
 
     def draw_elements(
         self,
@@ -196,10 +265,15 @@ class OfficialAppAgentRuntime:
         else:
             template = self._prompts.task_template
             if ui_document:
-                documentation = """
-            You also have access to the following documentations that describes the functionalities of UI
-            elements you can interact on the screen. These docs are crucial for you to determine the target of your
-            next action. You should always prioritize these documented elements for interaction:""" + ui_document
+                documentation = (
+                    "\n            You also have access to the following "
+                    "documentations that describes the functionalities of UI \n"
+                    "            elements you can interact on the screen. These docs "
+                    "are crucial for you to determine the target of your\n"
+                    "            next action. You should always prioritize these "
+                    "documented elements for interaction:"
+                    + ui_document
+                )
                 template = re.sub(r"<ui_document>", documentation, template)
             else:
                 template = re.sub(r"<ui_document>", "", template)
@@ -211,22 +285,108 @@ class OfficialAppAgentRuntime:
         return list(parser(response))
 
 
+class _AppAgentRequestsAccountingProxy:
+    def __init__(self, requests_module: Any, *, model: str, endpoint: str) -> None:
+        self._requests = requests_module
+        self.model = str(model)
+        self.base_url = str(endpoint)
+        self.endpoint = str(endpoint)
+        self.model_calls = 0
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.total_tokens = 0
+        self.responses_with_usage = 0
+        self.responses_without_usage = 0
+        self.failed_calls = 0
+        self.last_error: str | None = None
+        self.last_response_metadata: dict[str, Any] = {}
+
+    def post(self, *args: Any, **kwargs: Any) -> Any:
+        self.model_calls += 1
+        try:
+            response = self._requests.post(*args, **kwargs)
+            payload = response.json()
+        except Exception as exc:
+            self.failed_calls += 1
+            self.last_error = str(exc)
+            raise
+        usage = payload.get("usage") if isinstance(payload, dict) else None
+        if isinstance(usage, dict) and usage:
+            self.responses_with_usage += 1
+            prompt_tokens = int(usage.get("prompt_tokens") or 0)
+            completion_tokens = int(usage.get("completion_tokens") or 0)
+            total_tokens = int(usage.get("total_tokens") or 0)
+            self.prompt_tokens += prompt_tokens
+            self.completion_tokens += completion_tokens
+            self.total_tokens += total_tokens or prompt_tokens + completion_tokens
+        else:
+            self.responses_without_usage += 1
+        if isinstance(payload, dict) and payload.get("error"):
+            self.failed_calls += 1
+            self.last_error = str(payload.get("error"))
+        self.last_response_metadata = {
+            "model": payload.get("model") if isinstance(payload, dict) else None,
+            "usage": dict(usage or {}),
+            "id": payload.get("id") if isinstance(payload, dict) else None,
+        }
+        return response
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._requests, name)
+
+    def get_usage_summary(self) -> dict[str, Any]:
+        summary = {
+            "model": self.model,
+            "base_url": self.base_url,
+            "endpoint": self.endpoint,
+            "model_calls": self.model_calls,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "total_tokens": self.total_tokens,
+            "responses_with_usage": self.responses_with_usage,
+            "responses_without_usage": self.responses_without_usage,
+            "failed_calls": self.failed_calls,
+            "last_error": self.last_error,
+        }
+        summary["token_usage_status"] = token_usage_status(summary)
+        return summary
+
+
+class _OfficialAppAgentModelProxy:
+    def __init__(self, model: Any, accounting: _AppAgentRequestsAccountingProxy) -> None:
+        self._model = model
+        self._accounting = accounting
+
+    def get_model_response(
+        self,
+        prompt: str,
+        images: list[str],
+    ) -> tuple[bool, str]:
+        return self._model.get_model_response(prompt, images)
+
+    def get_usage_summary(self) -> dict[str, Any]:
+        return self._accounting.get_usage_summary()
+
+    def get_last_response_metadata(self) -> dict[str, Any]:
+        return dict(self._accounting.last_response_metadata)
+
+
 class AppAgentAndroidWorldAgent:
-    """Run AppAgent's native deployment policy inside one AndroidWorld episode."""
+    """Expose upstream AppAgent through AndroidWorld's episode interface."""
 
     def __init__(
         self,
         *,
         env: Any,
         official_runtime: Any,
+        controller: Any,
         llm: Any,
         output_root: str | Path,
         docs_root: str | Path | None = None,
-        action_source: str | Path | None,
-        action_factory: Any | None = None,
     ) -> None:
         self.env = env
         self.official_runtime = official_runtime
+        self.controller = controller
         self.llm = llm
         self.output_root = Path(output_root).expanduser().resolve()
         if self.output_root.exists() and any(self.output_root.iterdir()):
@@ -239,24 +399,6 @@ class AppAgentAndroidWorldAgent:
         )
         if self.docs_root is not None and not self.docs_root.is_dir():
             raise FileNotFoundError(f"appagent_docs_missing:{self.docs_root}")
-        if action_source is None or not str(action_source).strip():
-            raise ValueError("appagent_action_source_required")
-        self.action_source_path = Path(action_source).expanduser().resolve()
-        self.startup_actions: list[dict[str, Any]] = []
-        action_source_payload = load_appagent_teacher_source(self.action_source_path)
-        demo_action_seen = False
-        for record in action_source_payload["actions"]:
-            action = dict(record.get("action") or {})
-            action_type = str(action.get("type") or "").strip()
-            if action_type == "open_app":
-                if demo_action_seen:
-                    raise ValueError(
-                        "appagent_runtime_open_app_must_precede_demo_actions"
-                    )
-                self.startup_actions.append(action)
-            else:
-                demo_action_seen = True
-        self._action_factory = action_factory
         self.name = "appagent"
         self._omniflow_llm_usage_tracker = llm
         self.task_name = ""
@@ -264,12 +406,14 @@ class AppAgentAndroidWorldAgent:
         self.task_context: dict[str, Any] = {}
         self.app_name = ""
         self.round_count = 0
+        self.documentation_round_count = 0
         self.actions_executed = 0
         self.last_action = "None"
         self.grid_on = False
         self.grid_rows = 0
         self.grid_columns = 0
-        self._startup_actions_executed = False
+        self._app_prepared = False
+        self._startup_action_count = 0
         self._max_steps = 20
         self._log_path = self.output_root / "appagent_task_log.jsonl"
 
@@ -281,12 +425,14 @@ class AppAgentAndroidWorldAgent:
         if callable(reset):
             reset(go_home=go_home)
         self.round_count = 0
+        self.documentation_round_count = 0
         self.actions_executed = 0
         self.last_action = "None"
         self.grid_on = False
         self.grid_rows = 0
         self.grid_columns = 0
-        self._startup_actions_executed = False
+        self._app_prepared = False
+        self._startup_action_count = 0
 
     def update_current_task_context(self, task: Any) -> dict[str, Any]:
         app_names = [
@@ -322,14 +468,12 @@ class AppAgentAndroidWorldAgent:
                 data=self._result_data(error="appagent_max_steps_reached"),
             )
         try:
-            self._execute_startup_actions()
+            self._prepare_task_app()
             self.round_count += 1
-            xml_text, raw_image_path = self._capture_round(self.round_count)
-            elements = appagent_elements_from_xml(
-                xml_text,
-                min_dist=float(self.official_runtime.min_dist),
-            )
+            round_started = time.perf_counter()
+            xml_path, raw_image_path = self._capture_round(self.round_count)
             if self.grid_on:
+                elements: list[Any] = []
                 image_path = self.output_root / f"round_{self.round_count:03d}_grid.png"
                 self.grid_rows, self.grid_columns = self.official_runtime.draw_grid(
                     raw_image_path,
@@ -337,6 +481,7 @@ class AppAgentAndroidWorldAgent:
                 )
                 ui_document = ""
             else:
+                elements = self.official_runtime.collect_elements(xml_path)
                 image_path = (
                     self.output_root / f"round_{self.round_count:03d}_labeled.png"
                 )
@@ -353,35 +498,72 @@ class AppAgentAndroidWorldAgent:
                 ui_document=ui_document,
                 grid=self.grid_on,
             )
-            image = Image.open(image_path).convert("RGB")
-            response, _, response_metadata = self.llm.predict_mm(prompt, [image])
+            status, response = self.llm.get_model_response(prompt, [str(image_path)])
+            response_metadata = {}
+            metadata = getattr(self.llm, "get_last_response_metadata", None)
+            if callable(metadata):
+                response_metadata = dict(metadata() or {})
+            round_log = {
+                "round": self.round_count,
+                "prompt": prompt,
+                "image": str(image_path),
+                "xml": str(xml_path),
+                "response": str(response or ""),
+                "response_metadata": response_metadata,
+                "visible_document_uids": [
+                    element.uid
+                    for element in elements
+                    if self.docs_root is not None
+                    and (self.docs_root / f"{element.uid}.txt").is_file()
+                ],
+            }
+            if any(
+                self.docs_root is not None
+                and (self.docs_root / f"{element.uid}.txt").is_file()
+                for element in elements
+            ):
+                self.documentation_round_count += 1
+            if not status:
+                round_log.update(
+                    error="appagent_model_response_failed",
+                    duration_sec=time.perf_counter() - round_started,
+                )
+                self._append_log(round_log)
+                return make_agent_result(
+                    done=True,
+                    data=self._result_data(error="appagent_model_response_failed"),
+                )
             parsed = self.official_runtime.parse_response(
                 str(response or ""),
                 grid=self.grid_on,
             )
-            self._append_log(
-                {
-                    "round": self.round_count,
-                    "prompt": prompt,
-                    "image": str(image_path),
-                    "response": str(response or ""),
-                    "response_metadata": response_metadata,
-                    "visible_document_uids": [
-                        element.uid
-                        for element in elements
-                        if self.docs_root is not None
-                        and (self.docs_root / f"{element.uid}.txt").is_file()
-                    ],
-                }
-            )
             if not parsed or parsed[0] == "ERROR":
+                round_log.update(
+                    parsed_response=parsed,
+                    error="appagent_response_parse_failed",
+                    duration_sec=time.perf_counter() - round_started,
+                )
+                self._append_log(round_log)
                 return make_agent_result(
                     done=True,
                     data=self._result_data(error="appagent_response_parse_failed"),
                 )
             if parsed[0] == "FINISH":
+                round_log.update(
+                    parsed_response=parsed,
+                    action={"name": "FINISH", "executed": False},
+                    duration_sec=time.perf_counter() - round_started,
+                )
+                self._append_log(round_log)
                 return make_agent_result(done=True, data=self._result_data())
-            self._execute_parsed_action(parsed, elements)
+            self.last_action = str(parsed[-1])
+            action_record = self._execute_parsed_action(parsed, elements)
+            round_log.update(
+                parsed_response=parsed,
+                action=action_record,
+                duration_sec=time.perf_counter() - round_started,
+            )
+            self._append_log(round_log)
             if float(self.official_runtime.request_interval) > 0:
                 time.sleep(float(self.official_runtime.request_interval))
             return make_agent_result(done=False, data=self._result_data())
@@ -395,40 +577,39 @@ class AppAgentAndroidWorldAgent:
             )
             return make_agent_result(done=True, data=self._result_data(error=str(exc)))
 
-    def _execute_startup_actions(self) -> None:
-        if self._startup_actions_executed:
+    def _prepare_task_app(self) -> None:
+        if self._app_prepared:
             return
-        for action in self.startup_actions:
-            package_name = str(
-                (action.get("params") or {}).get("package_name") or ""
-            ).strip()
-            if not package_name:
-                raise ValueError("appagent_runtime_open_app_name_missing")
-            native_action = self._new_action(
-                action_type="open_app",
-                app_name=package_name,
+        if self.app_name:
+            from android_world.env import adb_utils
+
+            launched_app = adb_utils.launch_app(
+                self.app_name,
+                getattr(self.env, "controller", None),
             )
-            self.env.execute_action(native_action)
-            self.actions_executed += 1
+            if not launched_app:
+                raise RuntimeError(f"appagent_task_app_launch_failed:{self.app_name}")
+            self._startup_action_count = 1
             self._append_log(
                 {
-                    "event": "startup_action",
+                    "event": "environment_setup",
                     "action_type": "open_app",
-                    "package_name": package_name,
-                    "androidworld_app_name": package_name,
-                    "execution_backend": "androidworld_native",
+                    "task_app_name": self.app_name,
+                    "androidworld_app_name": launched_app,
+                    "execution_backend": "androidworld_task_setup",
                 }
             )
-        self._startup_actions_executed = True
+        self._app_prepared = True
 
-    def _capture_round(self, round_index: int) -> tuple[str, Path]:
-        xml_text, pixels = _native_appagent_observation(self.env)
-        xml_path = self.output_root / f"round_{round_index:03d}.xml"
-        xml_path.write_text(xml_text, encoding="utf-8")
-        image = pixels if isinstance(pixels, Image.Image) else Image.fromarray(pixels)
-        image_path = self.output_root / f"round_{round_index:03d}.png"
-        image.convert("RGB").save(image_path)
-        return xml_text, image_path
+    def _capture_round(self, round_index: int) -> tuple[Path, Path]:
+        prefix = f"round_{round_index:03d}"
+        image_path = self.controller.get_screenshot(prefix, str(self.output_root))
+        xml_path = self.controller.get_xml(prefix, str(self.output_root))
+        if image_path == "ERROR":
+            raise RuntimeError("appagent_screenshot_capture_failed")
+        if xml_path == "ERROR":
+            raise RuntimeError("appagent_xml_capture_failed")
+        return Path(xml_path), Path(image_path)
 
     def _visible_ui_document(self, elements: list[AppAgentElement]) -> str:
         if self.docs_root is None:
@@ -444,25 +625,25 @@ class AppAgentAndroidWorldAgent:
             output += (
                 f"Documentation of UI element labeled with the numeric tag '{index}':\n"
             )
-            if content.get("tap"):
+            if content["tap"]:
                 output += f"This UI element is clickable. {content['tap']}\n\n"
-            if content.get("text"):
+            if content["text"]:
                 output += (
                     "This UI element can receive text input. The text input is used "
                     f"for the following purposes: {content['text']}\n\n"
                 )
-            if content.get("long_press"):
+            if content["long_press"]:
                 output += (
                     "This UI element is long clickable. "
                     f"{content['long_press']}\n\n"
                 )
-            if content.get("v_swipe"):
+            if content["v_swipe"]:
                 output += (
                     "This element can be swiped directly without tapping. You can "
                     "swipe vertically on this UI element. "
                     f"{content['v_swipe']}\n\n"
                 )
-            if content.get("h_swipe"):
+            if content["h_swipe"]:
                 output += (
                     "This element can be swiped directly without tapping. You can "
                     "swipe horizontally on this UI element. "
@@ -473,38 +654,48 @@ class AppAgentAndroidWorldAgent:
     def _execute_parsed_action(
         self,
         parsed: list[Any],
-        elements: list[AppAgentElement],
-    ) -> None:
+        elements: list[Any],
+    ) -> dict[str, Any]:
         action_name = str(parsed[0])
-        action = None
+        result: Any = None
+        record: dict[str, Any] = {"name": action_name, "executed": False}
         if action_name == "tap":
             _, tag, last_action = parsed
             x, y = _tag_center(elements, int(tag))
-            action = self._new_action(action_type="click", x=x, y=y)
+            result = self.controller.tap(x, y)
+            record.update(tag=int(tag), x=x, y=y)
             self.last_action = str(last_action)
         elif action_name == "text":
             _, text_input, last_action = parsed
-            action = self._new_action(
-                action_type="input_text",
-                text=str(text_input),
-            )
+            result = self.controller.text(str(text_input))
+            record["text"] = str(text_input)
             self.last_action = str(last_action)
         elif action_name == "long_press":
             _, tag, last_action = parsed
             x, y = _tag_center(elements, int(tag))
-            action = self._new_action(action_type="long_press", x=x, y=y)
+            result = self.controller.long_press(x, y)
+            record.update(tag=int(tag), x=x, y=y)
             self.last_action = str(last_action)
         elif action_name == "swipe":
-            _, tag, direction, _distance, last_action = parsed
-            _tag_center(elements, int(tag))
-            action = self._new_action(
-                action_type="swipe",
+            _, tag, direction, distance, last_action = parsed
+            x, y = _tag_center(elements, int(tag))
+            result = self.controller.swipe(
+                x,
+                y,
+                str(direction),
+                str(distance),
+            )
+            record.update(
+                tag=int(tag),
+                x=x,
+                y=y,
                 direction=str(direction),
+                distance=str(distance),
             )
             self.last_action = str(last_action)
         elif action_name == "grid":
             self.grid_on = True
-            return
+            return record
         elif action_name in {"tap_grid", "long_press_grid"}:
             _, area, subarea, last_action = parsed
             x, y = _grid_point(
@@ -512,14 +703,15 @@ class AppAgentAndroidWorldAgent:
                 str(subarea),
                 rows=self.grid_rows,
                 columns=self.grid_columns,
-                width=int(self.env.logical_screen_size[0]),
-                height=int(self.env.logical_screen_size[1]),
+                width=int(self.controller.width),
+                height=int(self.controller.height),
             )
-            action = self._new_action(
-                action_type=("click" if action_name == "tap_grid" else "long_press"),
-                x=x,
-                y=y,
+            result = (
+                self.controller.tap(x, y)
+                if action_name == "tap_grid"
+                else self.controller.long_press(x, y)
             )
+            record.update(area=int(area), subarea=str(subarea), x=x, y=y)
             self.last_action = str(last_action)
         elif action_name == "swipe_grid":
             _, start_area, start_subarea, end_area, end_subarea, last_action = parsed
@@ -528,31 +720,28 @@ class AppAgentAndroidWorldAgent:
                 str(start_subarea),
                 rows=self.grid_rows,
                 columns=self.grid_columns,
-                width=int(self.env.logical_screen_size[0]),
-                height=int(self.env.logical_screen_size[1]),
+                width=int(self.controller.width),
+                height=int(self.controller.height),
             )
             end = _grid_point(
                 int(end_area),
                 str(end_subarea),
                 rows=self.grid_rows,
                 columns=self.grid_columns,
-                width=int(self.env.logical_screen_size[0]),
-                height=int(self.env.logical_screen_size[1]),
+                width=int(self.controller.width),
+                height=int(self.controller.height),
             )
-            direction = _direction_from_points(start, end)
-            action = self._new_action(action_type="swipe", direction=direction)
+            result = self.controller.swipe_precise(start, end)
+            record.update(start=start, end=end)
             self.last_action = str(last_action)
         else:
             raise ValueError(f"appagent_action_unsupported:{action_name}")
-        self.env.execute_action(action)
+        if result == "ERROR":
+            raise RuntimeError(f"appagent_{action_name}_execution_failed")
         self.actions_executed += 1
         self.grid_on = False
-
-    def _new_action(self, **kwargs: Any) -> Any:
-        if self._action_factory is not None:
-            return self._action_factory(**kwargs)
-        json_action = importlib.import_module("android_world.env.json_action")
-        return json_action.JSONAction(**kwargs)
+        record.update(executed=True, result=str(result or ""))
+        return record
 
     def _append_log(self, payload: dict[str, Any]) -> None:
         with self._log_path.open("a", encoding="utf-8") as handle:
@@ -563,13 +752,12 @@ class AppAgentAndroidWorldAgent:
             "summary": "AppAgent native deployment episode",
             "source": "appagent_official",
             "round_count": self.round_count,
+            "decision_round_count": self.round_count,
+            "documentation_round_count": self.documentation_round_count,
             "actions_executed": self.actions_executed,
             "uses_demo_docs": self.docs_root is not None,
             "docs_root": str(self.docs_root or ""),
-            "action_source": str(self.action_source_path or ""),
-            "startup_actions_executed": len(self.startup_actions)
-            if self._startup_actions_executed
-            else 0,
+            "startup_actions_executed": self._startup_action_count,
             "error": str(error or "") or None,
         }
 
@@ -662,10 +850,14 @@ class AppAgentTeacherAgent:
                 ).strip()
                 if not package_name:
                     raise ValueError("appagent_teacher_open_app_name_missing")
+                app_name = resolve_androidworld_app_name(
+                    package_name,
+                    getattr(self.env, "controller", None),
+                )
                 self.env.execute_action(
                     self._new_action(
                         action_type="open_app",
-                        app_name=package_name,
+                        app_name=app_name,
                     )
                 )
                 self.teacher_actions_consumed += 1
@@ -676,7 +868,7 @@ class AppAgentTeacherAgent:
                         "source_action_index": record.get("source_action_index"),
                         "action_type": "open_app",
                         "package_name": package_name,
-                        "androidworld_app_name": package_name,
+                        "androidworld_app_name": app_name,
                         "execution_backend": "androidworld_native",
                         "source_coordinates_used": False,
                     }
@@ -961,7 +1153,7 @@ def build_appagent_teacher_source(
         "adapter_scope": "native_androidworld_action_sequence",
         "uses_omniflow_function": False,
         "writes_appagent_docs": False,
-        "requires_native_source_episode": True,
+        "requires_native_source_episode": False,
         "target_inputs_read": False,
         "coordinate_replay": False,
     }
@@ -1023,7 +1215,7 @@ def seal_appagent_demo_memory(
     app_name: str,
     demo_name: str,
     teacher_source: str | Path,
-    source_result: str | Path,
+    source_result: str | Path | None,
     document_generation_log: str | Path,
     document_generation_usage: str | Path,
     task_name: str,
@@ -1033,8 +1225,10 @@ def seal_appagent_demo_memory(
     source_method: str,
     document_generation_model: str,
     source_environment_repair_reason: str = "",
+    conversion_mode: str = "source_episode",
+    native_memory_evidence: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Seal official AppAgent demo docs after one successful source episode."""
+    """Seal one AppAgent-native demo memory with exact source provenance."""
 
     root = Path(memory_root).expanduser().resolve()
     normalized_app = _safe_appagent_name(app_name)
@@ -1042,6 +1236,9 @@ def seal_appagent_demo_memory(
     normalized_task = str(task_name or "").strip()
     normalized_source_method = str(source_method or "").strip()
     normalized_document_model = str(document_generation_model or "").strip()
+    offline_conversion = conversion_mode == "canonical_runlog_offline"
+    if conversion_mode not in {"source_episode", "canonical_runlog_offline"}:
+        raise ValueError("appagent_memory_conversion_mode_invalid")
     if not normalized_task:
         raise ValueError("appagent_memory_task_name_required")
     if not normalized_source_method:
@@ -1066,11 +1263,18 @@ def seal_appagent_demo_memory(
         expected_demo_action_count=int(teacher.get("demo_action_count") or 0),
     )
     docs_file_count = _validate_demo_docs(docs_root)
-    source_result_path = Path(source_result).expanduser().resolve()
-    source_result_row = _official_source_result(
-        source_result_path,
-        task_name=normalized_task,
+    source_result_path = (
+        Path(source_result).expanduser().resolve()
+        if source_result is not None
+        else None
     )
+    source_result_row = (
+        _official_source_result(source_result_path, task_name=normalized_task)
+        if source_result_path is not None
+        else {}
+    )
+    if not offline_conversion and source_result_path is None:
+        raise ValueError("appagent_source_result_required")
     usage_path = Path(document_generation_usage).expanduser().resolve()
     usage_rows = _jsonl_objects(usage_path)
     usage = {
@@ -1147,9 +1351,11 @@ def seal_appagent_demo_memory(
         "teacher_complete": True,
         "demo_root": str(demo_root),
         "demo_sha256": _tree_sha256(demo_root),
-        "source_result": str(source_result_path),
-        "source_result_sha256": _file_sha256(source_result_path),
-        "official_source_success": True,
+        "source_result": str(source_result_path) if source_result_path else None,
+        "source_result_sha256": (
+            _file_sha256(source_result_path) if source_result_path else None
+        ),
+        "official_source_success": True if source_result_path else None,
         "official_source_reward": (
             source_result_row.get("androidworld_validator_result") or {}
         ).get("reward"),
@@ -1165,6 +1371,13 @@ def seal_appagent_demo_memory(
         "demo_docs_sha256": _tree_sha256(docs_root),
         "demo_docs_file_count": docs_file_count,
         "native_format": "appagent.demo_docs",
+        "conversion_mode": conversion_mode,
+        "source_emulator_used": not offline_conversion,
+        "native_memory_evidence": (
+            str(Path(native_memory_evidence).expanduser().resolve())
+            if native_memory_evidence is not None
+            else None
+        ),
         "uses_omniflow_function": False,
         "target_inputs_read": False,
         "target_observations_read": False,
@@ -1234,14 +1447,28 @@ def validate_appagent_demo_memory(
         raise ValueError("appagent_demo_memory_task_mismatch")
     if payload.get("source_seed") != APPAGENT_SOURCE_SEED:
         raise ValueError("appagent_demo_memory_source_seed_invalid")
-    if payload.get("official_source_success") is not True:
+    offline_conversion = payload.get("conversion_mode") == "canonical_runlog_offline"
+    if payload.get("conversion_mode") not in {
+        "source_episode",
+        "canonical_runlog_offline",
+    }:
+        raise ValueError("appagent_demo_memory_conversion_mode_invalid")
+    if offline_conversion:
+        if payload.get("source_emulator_used") is not False:
+            raise ValueError("appagent_demo_memory_source_emulator_forbidden")
+        evidence = Path(str(payload.get("native_memory_evidence") or ""))
+        if not evidence.is_file():
+            raise FileNotFoundError(
+                f"appagent_native_memory_evidence_missing:{evidence}"
+            )
+    elif payload.get("official_source_success") is not True:
         raise ValueError("appagent_demo_memory_source_success_required")
     source_metrics = payload.get("source_episode_metrics")
     if not isinstance(source_metrics, dict):
         raise ValueError("appagent_demo_memory_source_metrics_missing")
-    if float(source_metrics.get("duration_sec") or 0.0) <= 0:
+    if not offline_conversion and float(source_metrics.get("duration_sec") or 0.0) <= 0:
         raise ValueError("appagent_demo_memory_source_duration_missing")
-    if float(source_metrics.get("wall_sec") or 0.0) <= 0:
+    if not offline_conversion and float(source_metrics.get("wall_sec") or 0.0) <= 0:
         raise ValueError("appagent_demo_memory_source_wall_time_missing")
     if int(source_metrics.get("total_tokens") or 0) != int(
         source_metrics.get("prompt_tokens") or 0
@@ -1256,7 +1483,7 @@ def validate_appagent_demo_memory(
         doc_usage.get("prompt_tokens") or 0
     ) + int(doc_usage.get("completion_tokens") or 0):
         raise ValueError("appagent_demo_memory_doc_tokens_inconsistent")
-    if float(doc_usage.get("wall_sec") or 0.0) <= 0:
+    if not offline_conversion and float(doc_usage.get("wall_sec") or 0.0) <= 0:
         raise ValueError("appagent_demo_memory_doc_wall_time_missing")
     if float(payload.get("prep_wall_sec") or 0.0) <= 0:
         raise ValueError("appagent_demo_memory_prep_wall_time_missing")
@@ -1291,7 +1518,8 @@ def validate_appagent_demo_memory(
         "source_run_log_sha256"
     ):
         raise ValueError("appagent_demo_memory_teacher_source_mismatch")
-    _require_hash(payload, "source_result", "source_result_sha256")
+    if not offline_conversion:
+        _require_hash(payload, "source_result", "source_result_sha256")
     _require_hash(
         payload,
         "document_generation_log",
@@ -1336,11 +1564,13 @@ def appagent_elements_from_xml(
         xml_text,
         attribute="clickable",
         min_dist=min_dist,
+        add_index=True,
     )
     focusable = _traverse_appagent_elements(
         xml_text,
         attribute="focusable",
         min_dist=min_dist,
+        add_index=False,
     )
     elements = list(clickable)
     for element in focusable:
@@ -1390,6 +1620,7 @@ def ground_appagent_teacher_action(
             node
             for node in root.iter()
             if str(node.attrib.get("editable") or "").lower() == "true"
+            or str(node.attrib.get("class") or "") == "android.widget.EditText"
         ]
         match_reason = "unique_current_editable"
     if not matching_nodes and action_type == "swipe":
@@ -1442,6 +1673,7 @@ def _traverse_appagent_elements(
     *,
     attribute: str,
     min_dist: float,
+    add_index: bool,
 ) -> list[AppAgentElement]:
     elements: list[AppAgentElement] = []
     path: list[ET.Element] = []
@@ -1458,8 +1690,14 @@ def _traverse_appagent_elements(
                 continue
             uid = _appagent_element_id(element)
             if len(path) > 1:
-                uid = _appagent_element_id(path[-2]) + "_" + uid
-            uid += f"_{element.attrib.get('index', '')}"
+                parent_bbox = _element_bbox(path[-2])
+                parent_resource_id = str(
+                    path[-2].attrib.get("resource-id") or ""
+                )
+                if parent_bbox is not None or parent_resource_id:
+                    uid = _appagent_element_id(path[-2]) + "_" + uid
+            if add_index:
+                uid += f"_{element.attrib.get('index', '')}"
             center = _bbox_center(bbox)
             if any(
                 _point_distance(center, _bbox_center(existing.bbox)) <= min_dist
@@ -1482,27 +1720,31 @@ def _appagent_element_id(element: ET.Element) -> str:
     resource_id = str(element.attrib.get("resource-id") or "")
     if resource_id:
         element_id = resource_id.replace(":", ".").replace("/", "_")
-        content_desc = str(element.attrib.get("content-desc") or "")
-        if content_desc and len(content_desc) < 20:
-            cleaned = (
-                content_desc.replace("/", "_")
-                .replace(" ", "")
-                .replace(":", "_")
-            )
-            element_id += f"_{cleaned}"
-        return element_id
-    element_id = str(element.attrib.get("class") or "")
-    semantic_label = str(
-        element.attrib.get("content-desc") or element.attrib.get("text") or ""
-    )
-    if semantic_label and len(semantic_label) < 20:
+    else:
+        bbox = _element_bbox(element)
+        if bbox is None:
+            raise ValueError("appagent_element_bounds_missing")
+        width = bbox[1][0] - bbox[0][0]
+        height = bbox[1][1] - bbox[0][1]
+        element_id = f"{element.attrib.get('class', '')}_{width}_{height}"
+    content_desc = str(element.attrib.get("content-desc") or "")
+    if content_desc and len(content_desc) < 20:
         cleaned = (
-            semantic_label.replace("/", "_")
+            content_desc.replace("/", "_")
             .replace(" ", "")
             .replace(":", "_")
         )
         element_id += f"_{cleaned}"
     return element_id
+
+
+def _appagent_chat_completions_url(base_url: str) -> str:
+    normalized = str(base_url or "").strip().rstrip("/")
+    if not normalized:
+        raise RuntimeError("appagent_openai_base_url_required")
+    if normalized.endswith("/chat/completions"):
+        return normalized
+    return f"{normalized}/chat/completions"
 
 
 def _identity_nodes(root: ET.Element, params: dict[str, Any]) -> list[ET.Element]:

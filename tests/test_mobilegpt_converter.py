@@ -4,7 +4,7 @@ import csv
 import json
 import os
 from pathlib import Path
-from types import SimpleNamespace
+import sys
 
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
@@ -12,12 +12,14 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 from src.integrations.mobilegpt_converter import (
     MobileGPTConversionError,
     _load_runlog_trajectory,
-    _temporary_agent_query_provider,
+    _mobilegpt_action_from_runlog,
+    _target_element,
     convert_runlog_to_mobilegpt_memory,
     preflight_runlog_conversion,
     validate_mobilegpt_memory,
     write_conversion_failure_audit,
 )
+from src.integrations.mobilegpt_runtime import mobilegpt_compatible_xml
 
 MOBILEGPT_ROOT = Path(
     os.environ.get(
@@ -25,180 +27,6 @@ MOBILEGPT_ROOT = Path(
         "/Users/wuzewen/Projects/Omni/OmniFlow/runtime/external/mobilegpt-official",
     )
 )
-
-
-def test_runtime_query_provider_keeps_original_signature() -> None:
-    calls: list[tuple[object, object, object]] = []
-
-    def runtime_query(
-        messages: list[dict],
-        model: str | None = None,
-        is_list: bool = False,
-    ) -> object:
-        calls.append((messages, model, is_list))
-        return {"ok": True}
-
-    module = SimpleNamespace(
-        __name__="agents.explore_agent",
-        query=runtime_query,
-    )
-    messages = [{"role": "user", "content": "prompt"}]
-
-    with _temporary_agent_query_provider((module,), None):
-        assert module.query(messages, model="qwen3-vl-plus", is_list=True) == {
-            "ok": True
-        }
-
-    assert calls == [(messages, "qwen3-vl-plus", True)]
-    assert module.query is runtime_query
-
-
-def _semantic_query(
-    messages: list[dict],
-    *,
-    model: str | None = None,
-    is_list: bool = False,
-    agent_name: str = "unknown",
-) -> object:
-    del model
-    prompt = "\n".join(str(message.get("content") or "") for message in messages)
-    if agent_name == "explore":
-        assert is_list is True
-        assert "list out high-level functions" in prompt
-        return [
-            {
-                "name": "open_drawing",
-                "description": "Open the visible drawing",
-                "parameters": {},
-                "trigger_UIs": [0],
-            }
-        ]
-    if agent_name == "select":
-        assert is_list is False
-        assert "List of available actions:" in prompt
-        return {
-            "reasoning": "The requested drawing is visible.",
-            "action": {"name": "open_drawing", "parameters": {}},
-            "completion_rate": 50,
-            "speak": "Opening the drawing.",
-        }
-    raise AssertionError(f"unexpected MobileGPT agent: {agent_name}")
-
-
-def _new_action_semantic_query(
-    messages: list[dict],
-    *,
-    model: str | None = None,
-    is_list: bool = False,
-    agent_name: str = "unknown",
-) -> object:
-    del model
-    prompt = "\n".join(str(message.get("content") or "") for message in messages)
-    if agent_name == "explore":
-        assert is_list is True
-        assert "list out high-level functions" in prompt
-        return [
-            {
-                "name": "open_settings",
-                "description": "Open application settings",
-                "parameters": {},
-                "trigger_UIs": [1],
-            }
-        ]
-    if agent_name == "select":
-        assert is_list is False
-        assert "List of available actions:" in prompt
-        new_action = {
-            "name": "open_drawing",
-            "description": "Open the visible drawing",
-            "parameters": {},
-        }
-        return {
-            "reasoning": "The required drawing action is not listed.",
-            "new_action": new_action,
-            "action": {"name": "open_drawing", "parameters": {}},
-            "completion_rate": 50,
-            "speak": "Opening the drawing.",
-        }
-    raise AssertionError(f"unexpected MobileGPT agent: {agent_name}")
-
-
-def _input_derive_semantic_query(
-    messages: list[dict],
-    *,
-    model: str | None = None,
-    is_list: bool = False,
-    agent_name: str = "unknown",
-) -> object:
-    del model
-    prompt = "\n".join(str(message.get("content") or "") for message in messages)
-    if agent_name == "explore":
-        assert is_list is True
-        return [
-            {
-                "name": "create_new_item",
-                "description": "Create a new file or folder",
-                "parameters": {
-                    "item_name": "Name of the item to create",
-                },
-                "trigger_UIs": [0],
-            }
-        ]
-    if agent_name == "select":
-        assert is_list is False
-        return {
-            "reasoning": "The item name must be entered.",
-            "action": {
-                "name": "create_new_item",
-                "parameters": {"item_name": "folder_20260725_190339"},
-            },
-            "completion_rate": 50,
-            "speak": "Entering the new folder name.",
-        }
-    if agent_name == "derive":
-        assert is_list is False
-        assert "Input text on the screen" in prompt
-        return {
-            "reasoning": "Replace the default item name.",
-            "action": {
-                "name": "input",
-                "parameters": {
-                    "index": 0,
-                    "input_text": "folder_20260725_190339",
-                },
-            },
-            "completion_rate": 75,
-            "plan": "Confirm folder creation.",
-        }
-    raise AssertionError(f"unexpected MobileGPT agent: {agent_name}")
-
-
-def _mismatched_derive_semantic_query(
-    messages: list[dict],
-    *,
-    model: str | None = None,
-    is_list: bool = False,
-    agent_name: str = "unknown",
-) -> object:
-    if agent_name != "derive":
-        return _semantic_query(
-            messages,
-            model=model,
-            is_list=is_list,
-            agent_name=agent_name,
-        )
-    return {
-        "reasoning": "The intended input field is unclear.",
-        "action": {
-            "name": "ask",
-            "parameters": {
-                "info_name": "target_field",
-                "question": "Which field should receive the value?",
-            },
-        },
-        "completion_rate": 25,
-        "plan": "Ask for the missing target field.",
-    }
 
 
 def _write_runlog(
@@ -363,8 +191,6 @@ def test_conversion_writes_runlog_action_and_official_reader_loads_it(
         audit_path=audit,
         model="unused-offline",
         embedding_provider=lambda _screen: [0.25, 0.75],
-        semantic_query_provider=_semantic_query,
-        conversion_mode="mobilegpt_semantic",
     )
 
     with (
@@ -380,11 +206,13 @@ def test_conversion_writes_runlog_action_and_official_reader_loads_it(
     ) as handle:
         task_rows = list(csv.DictReader(handle))
     first_action = json.loads(action_rows[0]["action"])
-    assert available_rows[0]["name"] == "open_drawing"
-    assert action_rows[0]["subtask_name"] == "open_drawing"
-    assert json.loads(task_rows[0]["path"]) == {"0": ["open_drawing", "finish"]}
+    assert available_rows[0]["name"] == "source_step_000_click"
+    assert action_rows[0]["subtask_name"] == "source_step_000_click"
+    assert json.loads(task_rows[0]["path"]) == {
+        "0": ["source_step_000_click", "finish"]
+    }
     assert first_action["name"] == "click"
-    assert first_action["parameters"]["text"] == "Draw"
+    assert first_action["parameters"]["text"] == "<target_text__-1>"
     assert json.loads(action_rows[1]["action"])["name"] == "finish"
     assert result["validated_transition_count"] == 1
     assert result["official_reader_validation"]["loadable"] is True
@@ -503,8 +331,6 @@ def test_conversion_grounds_coordinate_free_input_to_focused_field(
         audit_path=tmp_path / "audit.json",
         model="unused-offline",
         embedding_provider=lambda _screen: [0.25, 0.75],
-        semantic_query_provider=_semantic_query,
-        conversion_mode="mobilegpt_semantic",
     )
 
     with (
@@ -513,11 +339,146 @@ def test_conversion_grounds_coordinate_free_input_to_focused_field(
         action_rows = list(csv.DictReader(handle))
     first_action = json.loads(action_rows[0]["action"])
     assert first_action["name"] == "input"
-    assert first_action["parameters"]["input_text"] == "5558642097"
-    assert first_action["parameters"]["text"] == "Phone"
+    assert first_action["parameters"]["input_text"] == "<input_text__-1>"
+    assert first_action["parameters"]["text"] == "<target_text__-1>"
 
 
-def test_conversion_uses_native_derive_for_ambiguous_coordinate_free_input(
+def test_conversion_grounds_input_from_verified_text_change(
+    tmp_path: Path,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [
+            {"action_type": "input_text", "text": "copy_warm_tree"},
+            {"action_type": "click", "x": 180, "y": 180},
+        ],
+        forests=[
+            '<hierarchy><node id="12" class="android.widget.EditText" '
+            'text="my_note" clickable="true" bounds="[0,0][100,100]"/>'
+            '<node id="13" class="android.widget.EditText" text=".md" '
+            'clickable="true" bounds="[100,0][200,100]"/></hierarchy>',
+            '<hierarchy><node id="12" class="android.widget.EditText" '
+            'text="copy_warm_tree" clickable="true" bounds="[0,0][100,100]"/>'
+            '<node id="13" class="android.widget.EditText" text=".md" '
+            'clickable="true" bounds="[100,0][200,100]"/>'
+            '<node text="OK" clickable="true" bounds="[150,150][200,200]"/>'
+            '</hierarchy>',
+        ],
+    )
+    trajectory = _load_runlog_trajectory(source)
+    transition = trajectory["transitions"][0]
+    server_root = MOBILEGPT_ROOT / "Server"
+    if str(server_root) not in sys.path:
+        sys.path.insert(0, str(server_root))
+    from screenParser.parseXML import reformat_xml
+
+    parsed_xml = reformat_xml(mobilegpt_compatible_xml(transition.forest))
+    target = _target_element(
+        transition.action,
+        parsed_xml,
+        step_index=transition.step_index,
+        source_forest=transition.forest,
+        next_forest=transition.next_forest,
+    )
+
+    assert target.tag == "input"
+    assert target.get("index") == "0"
+    assert target.text == "my_note"
+
+
+def test_conversion_preserves_empty_input_for_verified_text_change(
+    tmp_path: Path,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [
+            {"action_type": "input_text", "text": "Note body"},
+            {"action_type": "click", "x": 50, "y": 50},
+        ],
+        forests=[
+            '<hierarchy><node id="19" class="android.widget.EditText" text="" '
+            'clickable="true" bounds="[0,0][100,100]"/></hierarchy>',
+            '<hierarchy><node id="19" class="android.widget.EditText" '
+            'text="Note body" clickable="true" bounds="[0,0][100,100]"/>'
+            '<node text="Save" clickable="true" bounds="[0,0][100,100]"/>'
+            '</hierarchy>',
+        ],
+    )
+    trajectory = _load_runlog_trajectory(source)
+    transition = trajectory["transitions"][0]
+    server_root = MOBILEGPT_ROOT / "Server"
+    if str(server_root) not in sys.path:
+        sys.path.insert(0, str(server_root))
+    from screenParser.parseXML import reformat_xml
+
+    parsed_xml = reformat_xml(mobilegpt_compatible_xml(transition.forest))
+    target = _target_element(
+        transition.action,
+        parsed_xml,
+        step_index=transition.step_index,
+        source_forest=transition.forest,
+        next_forest=transition.next_forest,
+    )
+
+    assert target.tag == "input"
+    assert target.get("index") == "0"
+    assert target.text is None
+
+
+def test_anonymous_verified_input_avoids_unrelated_children_generalization(
+    tmp_path: Path,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [
+            {"action_type": "input_text", "text": "Note body"},
+            {"action_type": "click", "x": 50, "y": 50},
+        ],
+        forests=[
+            '<hierarchy><node id="19" class="android.widget.EditText" text="" '
+            'clickable="true" bounds="[0,0][100,100]"/></hierarchy>',
+            '<hierarchy><node id="19" class="android.widget.EditText" '
+            'text="Note body" clickable="true" bounds="[0,0][100,100]"/>'
+            '<node text="Save" clickable="true" bounds="[0,0][100,100]"/>'
+            '</hierarchy>',
+        ],
+    )
+    trajectory = _load_runlog_trajectory(source)
+    transition = trajectory["transitions"][0]
+    server_root = MOBILEGPT_ROOT / "Server"
+    if str(server_root) not in sys.path:
+        sys.path.insert(0, str(server_root))
+    from screenParser.parseXML import reformat_xml
+
+    parsed_xml = reformat_xml(mobilegpt_compatible_xml(transition.forest))
+    converted, _, _ = _mobilegpt_action_from_runlog(
+        transition,
+        parsed_xml,
+        task_parameters={"text": "Note body"},
+        selected_subtask={
+            "name": "enter_note",
+            "parameters": {"text": "Note body"},
+        },
+        generalize_action=lambda *_args: pytest.fail(
+            "anonymous verified input must not generalize unrelated children"
+        ),
+    )
+
+    assert converted == {
+        "name": "input",
+        "parameters": {
+            "index": "0",
+            "input_text": "<text__-1>",
+            "attrib": {
+                "self": {"tag": "input"},
+                "parent": {},
+                "children": [],
+            },
+        },
+    }
+
+
+def test_conversion_rejects_ambiguous_coordinate_free_input(
     tmp_path: Path,
 ) -> None:
     source = _write_runlog(
@@ -536,29 +497,22 @@ def test_conversion_uses_native_derive_for_ambiguous_coordinate_free_input(
     )
     memory = tmp_path / "memory"
 
-    convert_runlog_to_mobilegpt_memory(
-        source_run_log=source,
-        mobilegpt_root=MOBILEGPT_ROOT,
-        memory_root=memory,
-        stats_path=tmp_path / "stats.jsonl",
-        audit_path=tmp_path / "audit.json",
-        model="unused-offline",
-        embedding_provider=lambda _screen: [0.25, 0.75],
-        semantic_query_provider=_input_derive_semantic_query,
-        conversion_mode="mobilegpt_semantic",
-    )
-
-    with (
-        memory / "com.example.app" / "pages" / "0" / "actions.csv"
-    ).open(encoding="utf-8") as handle:
-        action_rows = list(csv.DictReader(handle))
-    first_action = json.loads(action_rows[0]["action"])
-    assert first_action["name"] == "input"
-    assert first_action["parameters"]["input_text"] == "<item_name__-1>"
-    assert first_action["parameters"]["text"] == "my_note"
+    with pytest.raises(
+        MobileGPTConversionError,
+        match="source_action_target_unresolved",
+    ):
+        convert_runlog_to_mobilegpt_memory(
+            source_run_log=source,
+            mobilegpt_root=MOBILEGPT_ROOT,
+            memory_root=memory,
+            stats_path=tmp_path / "stats.jsonl",
+            audit_path=tmp_path / "audit.json",
+            model="unused-offline",
+            embedding_provider=lambda _screen: [0.25, 0.75],
+        )
 
 
-def test_conversion_preserves_repeated_selected_subtask_episodes(
+def test_conversion_preserves_repeated_runlog_actions(
     tmp_path: Path,
 ) -> None:
     forest = (
@@ -584,8 +538,6 @@ def test_conversion_preserves_repeated_selected_subtask_episodes(
         audit_path=tmp_path / "audit.json",
         model="unused-offline",
         embedding_provider=lambda _screen: [0.25, 0.75],
-        semantic_query_provider=_semantic_query,
-        conversion_mode="mobilegpt_semantic",
     )
 
     with (memory / "com.example.app" / "tasks.csv").open(
@@ -597,13 +549,13 @@ def test_conversion_preserves_repeated_selected_subtask_episodes(
     ).open(encoding="utf-8") as handle:
         action_rows = list(csv.DictReader(handle))
     assert json.loads(task_rows[0]["path"]) == {
-        "0": ["open_drawing", "open_drawing", "finish"]
+        "0": ["source_step_000_click", "source_step_001_click", "finish"]
     }
     assert [int(row["step"]) for row in action_rows] == [0, 1, 0, 1]
     assert result["official_reader_validation"]["source_direct_hit_count"] == 2
 
 
-def test_conversion_persists_select_new_action_in_semantic_closure(
+def test_conversion_rejects_removed_semantic_mode(
     tmp_path: Path,
 ) -> None:
     source = _write_runlog(
@@ -615,49 +567,7 @@ def test_conversion_persists_select_new_action_in_semantic_closure(
             'bounds="[100,0][200,100]" /></hierarchy>'
         ],
     )
-    memory = tmp_path / "memory"
-
-    convert_runlog_to_mobilegpt_memory(
-        source_run_log=source,
-        mobilegpt_root=MOBILEGPT_ROOT,
-        memory_root=memory,
-        stats_path=tmp_path / "stats.jsonl",
-        audit_path=tmp_path / "audit.json",
-        model="unused-offline",
-        embedding_provider=lambda _screen: [0.25, 0.75],
-        semantic_query_provider=_new_action_semantic_query,
-        conversion_mode="mobilegpt_semantic",
-    )
-
-    with (
-        memory / "com.example.app" / "pages" / "0" / "available_subtasks.csv"
-    ).open(encoding="utf-8") as handle:
-        available_names = [row["name"] for row in csv.DictReader(handle)]
-    with (memory / "com.example.app" / "tasks.csv").open(
-        encoding="utf-8"
-    ) as handle:
-        task_rows = list(csv.DictReader(handle))
-    assert available_names == ["open_settings", "open_drawing"]
-    assert json.loads(task_rows[0]["path"]) == {"0": ["open_drawing", "finish"]}
-
-
-def test_conversion_rejects_input_when_native_derive_cannot_match_source(
-    tmp_path: Path,
-) -> None:
-    source = _write_runlog(
-        tmp_path / "source.json",
-        [{"action_type": "input_text", "text": "5558642097"}],
-        forests=[
-            '<hierarchy><node text="First name" editable="true" '
-            'bounds="[0,0][100,100]"/><node text="Phone" editable="true" '
-            'bounds="[0,100][100,200]"/></hierarchy>'
-        ],
-    )
-
-    with pytest.raises(
-        MobileGPTConversionError,
-        match="mobilegpt_derive_action_mismatch",
-    ):
+    with pytest.raises(ValueError, match="mobilegpt_conversion_mode_invalid"):
         convert_runlog_to_mobilegpt_memory(
             source_run_log=source,
             mobilegpt_root=MOBILEGPT_ROOT,
@@ -666,7 +576,6 @@ def test_conversion_rejects_input_when_native_derive_cannot_match_source(
             audit_path=tmp_path / "audit.json",
             model="unused-offline",
             embedding_provider=lambda _screen: [0.25, 0.75],
-            semantic_query_provider=_mismatched_derive_semantic_query,
             conversion_mode="mobilegpt_semantic",
         )
 
@@ -731,8 +640,6 @@ def test_memory_validation_rejects_malformed_screen_xml(tmp_path: Path) -> None:
         audit_path=tmp_path / "audit.json",
         model="unused-offline",
         embedding_provider=lambda _screen: [0.25, 0.75],
-        semantic_query_provider=_semantic_query,
-        conversion_mode="mobilegpt_semantic",
     )
     screen_xml = memory / "com.example.app" / "pages" / "0" / "screen" / "raw.xml"
     screen_xml.write_text("<hierarchy>", encoding="utf-8")

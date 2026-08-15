@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
+from pathlib import Path
 from typing import Any, Callable
 
 from omniflow.vlm.model_config import resolve_openai_compatible_config
@@ -13,6 +15,193 @@ _UNSUPPORTED_SELECTOR_ERROR = (
     "`external:mobilegpt`, `external:appagent`, "
     "`external:appagent_teacher`, or `official:<name>`."
 )
+
+REUSE_METRICS_SCHEMA = "omniflow.androidworld.reuse-metrics.v1"
+
+
+def reuse_metrics(
+    method: str,
+    *,
+    actions_executed: int = 0,
+    canonical_run: dict[str, Any] | None = None,
+    mobilegpt_stats: dict[str, Any] | None = None,
+    appagent_result: dict[str, Any] | None = None,
+    appagent_log: str | Path | None = None,
+    source_action_hint: dict[str, Any] | None = None,
+    uses_source_action_hints: bool = False,
+) -> dict[str, Any]:
+    """Return one evidence-backed reuse/utilization metric for a method cell."""
+
+    normalized = str(method or "").strip()
+    actions = max(0, int(actions_executed or 0))
+    numerator = 0
+    denominator = 0
+    unit = ""
+    evidence = "unavailable"
+    artifact_used = False
+
+    if normalized == "fixed_replay":
+        numerator = denominator = actions
+        unit = "gui_action"
+        evidence = "exact_source_replay_actions" if actions else "unavailable"
+        artifact_used = actions > 0
+    elif normalized in {"ours", "omniflow"}:
+        trace = _canonical_execution_trace(canonical_run)
+        numerator = sum(
+            1
+            for step in trace
+            if str((step.get("metadata") or {}).get("function_id") or "").strip()
+        )
+        denominator = actions
+        unit = "gui_action"
+        evidence = "exact_function_trace" if trace or actions == 0 else "unavailable"
+        artifact_used = bool(canonical_run) or numerator > 0
+    elif normalized in {"mobilegpt_offline_retrieval", "external:mobilegpt"}:
+        stats = dict(mobilegpt_stats or {})
+        denominator = max(0, int(stats.get("memory_lookup_count") or 0))
+        numerator = min(
+            denominator,
+            max(0, int(stats.get("memory_hit_count") or 0)),
+        )
+        unit = "memory_lookup"
+        evidence = "exact_native_memory_events" if denominator else "unavailable"
+        artifact_used = denominator > 0
+    elif normalized in {"appagent_demo", "external:appagent"}:
+        result = dict(appagent_result or {})
+        if appagent_log and not result:
+            result = _appagent_log_usage(Path(appagent_log).expanduser())
+        denominator = max(0, int(result.get("decision_round_count") or 0))
+        numerator = min(
+            denominator,
+            max(0, int(result.get("documentation_round_count") or 0)),
+        )
+        unit = "decision_round"
+        evidence = "exact_native_document_rounds" if denominator else "unavailable"
+        artifact_used = numerator > 0
+    elif normalized == "t3a_hint":
+        hint = dict(source_action_hint or {})
+        hint_active = bool(
+            uses_source_action_hints
+            or int(hint.get("rendered_steps") or 0) > 0
+        )
+        denominator = actions
+        numerator = actions if hint_active else 0
+        unit = "gui_action"
+        evidence = "exact_goal_hint_injection" if denominator else "unavailable"
+        artifact_used = hint_active and denominator > 0
+
+    rate = (
+        round(float(numerator) / float(denominator), 6)
+        if denominator > 0 and evidence != "unavailable"
+        else None
+    )
+    return {
+        "schema_version": REUSE_METRICS_SCHEMA,
+        "artifact_used": artifact_used,
+        "reuse_numerator": numerator,
+        "reuse_denominator": denominator,
+        "reuse_rate": rate,
+        "reuse_unit": unit,
+        "evidence_status": evidence,
+    }
+
+
+def reuse_metrics_from_result_row(
+    row: dict[str, Any],
+    *,
+    method: str | None = None,
+) -> dict[str, Any]:
+    """Derive reuse metrics from a current or immutable historical result row."""
+
+    existing = row.get("reuse_metrics")
+    if (
+        isinstance(existing, dict)
+        and existing.get("schema_version") == REUSE_METRICS_SCHEMA
+        and existing.get("evidence_status") != "unavailable"
+    ):
+        return dict(existing)
+    normalized = str(method or row.get("method") or row.get("agent") or "").strip()
+    actions = int(
+        row.get("episode_actions_executed")
+        or row.get("actions_executed")
+        or 0
+    )
+    canonical_run = row.get("canonical_run")
+    if not isinstance(canonical_run, dict):
+        canonical_run = _json_object(row.get("target_run_log_path"))
+    mobilegpt_stats = {
+        "memory_lookup_count": row.get("episode_memory_lookup_count"),
+        "memory_hit_count": row.get("episode_memory_hit_count"),
+    }
+    appagent_result = row.get("appagent_result")
+    if not isinstance(appagent_result, dict):
+        appagent_result = {}
+    appagent_log = None
+    output_path = str(row.get("output_path") or row.get("run_dir") or "").strip()
+    if output_path:
+        appagent_log = Path(output_path).expanduser() / "appagent_runtime/appagent_task_log.jsonl"
+    return reuse_metrics(
+        normalized,
+        actions_executed=actions,
+        canonical_run=canonical_run,
+        mobilegpt_stats=mobilegpt_stats,
+        appagent_result=appagent_result,
+        appagent_log=appagent_log,
+        source_action_hint=(
+            row.get("source_action_hint")
+            if isinstance(row.get("source_action_hint"), dict)
+            else None
+        ),
+        uses_source_action_hints=bool(row.get("uses_source_action_hints")),
+    )
+
+
+def _canonical_execution_trace(
+    canonical_run: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    run = canonical_run if isinstance(canonical_run, dict) else {}
+    diagnostics = run.get("diagnostics")
+    trace = diagnostics.get("execution_trace") if isinstance(diagnostics, dict) else None
+    return [step for step in trace or [] if isinstance(step, dict)]
+
+
+def _appagent_log_usage(path: Path) -> dict[str, int]:
+    decision_round_count = 0
+    documentation_round_count = 0
+    startup_action_count = 0
+    if not path.is_file():
+        return {}
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict) or "round" not in row or "response" not in row:
+            if isinstance(row, dict) and row.get("event") == "startup_action":
+                startup_action_count += 1
+            continue
+        decision_round_count += 1
+        if row.get("visible_document_uids"):
+            documentation_round_count += 1
+    return {
+        "decision_round_count": decision_round_count,
+        "documentation_round_count": documentation_round_count,
+        "startup_action_count": startup_action_count,
+    }
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    path_text = str(value or "").strip()
+    if not path_text:
+        return {}
+    path = Path(path_text).expanduser()
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 @dataclass(frozen=True)
@@ -28,11 +217,12 @@ class MethodAdapterContext:
     planner_model: str = ""
     model_endpoint_profile: str = ""
     planner_timeout_sec: float | None = None
+    step_skill_guidance: str = ""
+    max_steps: int = 20
     raw_replay_run_log: str = ""
     appagent_root: str = ""
     appagent_workspace_root: str = ""
     appagent_docs_root: str = ""
-    appagent_action_source: str = ""
     appagent_teacher_source: str = ""
     appagent_demo_name: str = ""
     appagent_output_root: str = ""
@@ -137,12 +327,14 @@ def _build_omniflow_replay(context: MethodAdapterContext) -> Any:
             api_key=planner_api_key,
             base_url=planner_base_url,
             timeout=resolved_planner_timeout,
+            step_skill_guidance=str(context.step_skill_guidance or "").strip(),
         )
     build_kwargs: dict[str, Any] = {
         "env": context.env,
         "store_path": context.store_path,
         "adb_serial": context.adb_serial,
         "adb_path": context.adb_path,
+        "max_steps": context.max_steps,
         "task_seed": context.task_seed,
         "evidence_root": context.evidence_root or None,
     }
@@ -198,16 +390,26 @@ def _build_appagent(context: MethodAdapterContext) -> Any:
             demo_name=context.appagent_demo_name,
         )
     llm_factory = _required_dependency(
-        context.appagent_llm_factory,
-        "appagent_llm_factory",
+        runtime.build_model,
+        "appagent_official_model_factory",
+    )
+    api_key, base_url = resolve_openai_compatible_config(
+        profile=context.model_endpoint_profile or None,
     )
     return AppAgentAndroidWorldAgent(
         env=context.env,
         official_runtime=runtime,
-        llm=llm_factory(),
+        controller=runtime.build_controller(context.adb_serial),
+        llm=llm_factory(
+            api_key=api_key,
+            base_url=base_url,
+            model=(
+                str(context.planner_model or "").strip()
+                or str(os.environ.get("OPENAI_MODEL") or "").strip()
+            ),
+        ),
         output_root=context.appagent_output_root,
         docs_root=(context.appagent_docs_root or None),
-        action_source=(context.appagent_action_source or None),
     )
 
 

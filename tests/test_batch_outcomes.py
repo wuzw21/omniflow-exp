@@ -301,12 +301,12 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
     assert "# AndroidWorld Cell Comparison" in markdown
     assert (
         "| method | device | source_seed | evaluation_seed | status | "
-        "validator | tool_calls | tokens | actions | episode_sec | wall_sec | "
-        "error | evidence |"
+        "validator | tool_calls | tokens | actions | reuse | reuse_unit | "
+        "reuse_evidence | episode_sec | wall_sec | error | evidence |"
     ) in markdown
     assert (
         "| mobilegpt_offline_retrieval | small5554 | 111 | 113 | completed | "
-        "1 | 4 | 100 | 3 | 9.5 | 11.0 |"
+        "1 | 4 | 100 | 3 |  | memory_lookup | unavailable | 9.5 | 11.0 |"
     ) in markdown
 
 

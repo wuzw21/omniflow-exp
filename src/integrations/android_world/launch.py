@@ -45,6 +45,7 @@ from src.integrations.android_world.host import make_agent_result
 from src.integrations.android_world.methods import (
     MethodAdapterContext,
     default_method_adapter_registry,
+    reuse_metrics,
 )
 from src.integrations.runlog import import_run_log, project_androidworld_step_actions
 
@@ -2850,11 +2851,12 @@ def _build_launch_agent(
     planner_model: str = "",
     model_endpoint_profile: str = "",
     planner_timeout_sec: float | None = None,
+    step_skill_guidance: str = "",
+    max_steps: int = 20,
     raw_replay_run_log: str = "",
     appagent_root: str = "",
     appagent_workspace_root: str = "",
     appagent_docs_root: str = "",
-    appagent_action_source: str = "",
     appagent_teacher_source: str = "",
     appagent_demo_name: str = "",
     appagent_output_root: str = "",
@@ -2889,11 +2891,12 @@ def _build_launch_agent(
             planner_model=planner_model,
             model_endpoint_profile=model_endpoint_profile,
             planner_timeout_sec=planner_timeout_sec,
+            step_skill_guidance=step_skill_guidance,
+            max_steps=max_steps,
             raw_replay_run_log=raw_replay_run_log,
             appagent_root=appagent_root,
             appagent_workspace_root=appagent_workspace_root,
             appagent_docs_root=appagent_docs_root,
-            appagent_action_source=appagent_action_source,
             appagent_teacher_source=appagent_teacher_source,
             appagent_demo_name=appagent_demo_name,
             appagent_output_root=appagent_output_root,
@@ -2902,7 +2905,6 @@ def _build_launch_agent(
             build_omniflow_agent=build_agent,
             apply_fixed_replay=_apply_fixed_replay,
             build_official_agent=_build_official_androidworld_agent,
-            appagent_llm_factory=_OpenAICompatibleMultimodalWrapper,
         )
     )
 
@@ -2966,7 +2968,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--appagent-root", default="")
     parser.add_argument("--appagent-workspace-root", default="")
     parser.add_argument("--appagent-docs-root", default="")
-    parser.add_argument("--appagent-action-source", default="")
     parser.add_argument("--appagent-teacher-source", default="")
     parser.add_argument("--appagent-demo-name", default="")
     parser.add_argument(
@@ -3016,7 +3017,28 @@ def build_parser() -> argparse.ArgumentParser:
         default=float(os.environ.get("OMNIFLOW_PLANNER_TIMEOUT_SEC") or 60.0),
         help="Per-call timeout in seconds for the online OmniFlow planner.",
     )
+    parser.add_argument(
+        "--step-skill-guidance-path",
+        default="",
+        help=(
+            "Optional UTF-8 text artifact containing task-independent candidate "
+            "Harness guidance for the online OmniFlow planner."
+        ),
+    )
     return parser
+
+
+def _read_step_skill_guidance(path_value: object) -> str:
+    text = str(path_value or "").strip()
+    if not text:
+        return ""
+    path = Path(text).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"step skill guidance artifact not found: {path}")
+    guidance = path.read_text(encoding="utf-8").strip()
+    if not guidance:
+        raise ValueError(f"step skill guidance artifact is empty: {path}")
+    return guidance
 
 
 def _decode_task_params(
@@ -3055,6 +3077,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     task_params = _decode_task_params(
         args.task_params_json,
         task_random_seed=int(args.task_random_seed),
+    )
+    step_skill_guidance = _read_step_skill_guidance(
+        args.step_skill_guidance_path
     )
 
     env = None
@@ -3160,10 +3185,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             planner_model=str(args.model or ""),
             model_endpoint_profile=str(args.model_endpoint_profile or "auto"),
             planner_timeout_sec=float(args.planner_timeout_sec or 60.0),
+            step_skill_guidance=step_skill_guidance,
+            max_steps=max(1, int(args.max_steps)),
             appagent_root=str(args.appagent_root or ""),
             appagent_workspace_root=str(args.appagent_workspace_root or ""),
             appagent_docs_root=str(args.appagent_docs_root or ""),
-            appagent_action_source=str(args.appagent_action_source or ""),
             appagent_teacher_source=str(args.appagent_teacher_source or ""),
             appagent_demo_name=str(args.appagent_demo_name or ""),
             appagent_output_root=str(run_output_dir / "appagent_runtime"),
@@ -3579,6 +3605,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "artifact_ref": artifact_ref,
                     "error": error_text,
                 }
+                appagent_reuse_result: dict[str, Any] = {}
+                if selected_agent == "external:appagent":
+                    appagent_reuse_result = {
+                        "decision_round_count": _coerce_int(
+                            getattr(agent, "round_count", 0)
+                        ),
+                        "documentation_round_count": _coerce_int(
+                            getattr(agent, "documentation_round_count", 0)
+                        ),
+                        "startup_action_count": _coerce_int(
+                            getattr(agent, "_startup_action_count", 0)
+                        ),
+                    }
+                task_result_record["reuse_metrics"] = reuse_metrics(
+                    selected_agent,
+                    actions_executed=actions_executed,
+                    canonical_run=canonical_run,
+                    appagent_result=appagent_reuse_result,
+                    source_action_hint=official_goal_hint_meta,
+                    uses_source_action_hints=bool(official_goal_hint_text),
+                )
                 if mobilegpt_agent_result:
                     task_result_record["mobilegpt_agent_result"] = (
                         to_serializable(mobilegpt_agent_result)

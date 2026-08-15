@@ -17,21 +17,13 @@ from typing import Any, Callable, Iterator, Sequence
 import xml.etree.ElementTree as ET
 
 from omniflow.core.trajectory import observation_xml
-from src.experiment.mobilegpt_contract import (
-    MOBILEGPT_AUDIT_SCHEMA,
-    MOBILEGPT_DIRECT_AUDIT_SCHEMA,
-)
-from src.integrations.mobilegpt_runtime import (
-    install_mobilegpt_openai_runtime,
-    install_mobilegpt_select_schema_repair,
-    mobilegpt_compatible_xml,
-)
-from src.integrations.runlog import import_run_log
+from src.experiment.mobilegpt_contract import MOBILEGPT_AUDIT_SCHEMA
+from src.integrations.mobilegpt_runtime import mobilegpt_compatible_xml
+from src.integrations.runlog import infer_input_text_target, import_run_log
 
 CONVERSION_SOURCE_SCHEMA = "omniflow.mobilegpt-runlog-conversion-source.v1"
 CONVERSION_MODE_DIRECT = "runlog_direct"
-CONVERSION_MODE_SEMANTIC = "mobilegpt_semantic"
-CONVERSION_AUDIT_SCHEMA = MOBILEGPT_DIRECT_AUDIT_SCHEMA
+CONVERSION_AUDIT_SCHEMA = MOBILEGPT_AUDIT_SCHEMA
 
 __all__ = [
     "MobileGPTConversionError",
@@ -77,49 +69,7 @@ class _RunLogTransition:
     action: dict[str, Any]
     observation: dict[str, Any]
     forest: str
-
-
-class _ExploreMemoryCapture:
-    def __init__(self) -> None:
-        self.available_subtasks: list[dict[str, Any]] | None = None
-        self.trigger_uis: dict[str, Any] | None = None
-        self.extra_uis: list[Any] | None = None
-        self.screen = ""
-        self.hierarchy_xml = ""
-
-    def add_node(
-        self,
-        available_subtasks: list[dict[str, Any]],
-        trigger_uis: dict[str, Any],
-        extra_uis: list[Any],
-        screen: str,
-        screen_num: int | None = None,
-    ) -> int:
-        del screen_num
-        self.available_subtasks = list(available_subtasks)
-        self.trigger_uis = dict(trigger_uis)
-        self.extra_uis = list(extra_uis)
-        self.screen = str(screen)
-        return 0
-
-    def add_hierarchy_xml(self, hierarchy_xml: str, page_index: int) -> None:
-        if page_index != 0:
-            raise ValueError("mobilegpt_explore_capture_page_invalid")
-        self.hierarchy_xml = str(hierarchy_xml)
-
-
-class _SelectMemoryCapture:
-    def __init__(self) -> None:
-        self.examples: dict[str, dict[str, Any]] = {}
-
-    def save_subtask(
-        self,
-        subtask: dict[str, Any],
-        example: dict[str, Any],
-    ) -> None:
-        name = str(subtask.get("name") or "").strip()
-        if name:
-            self.examples[name] = dict(example)
+    next_forest: str = ""
 
 
 def _read_csv_rows(path: Path, *, label: str) -> list[dict[str, str]]:
@@ -416,6 +366,12 @@ def _load_runlog_trajectory(
                 action=action,
                 observation=observation,
                 forest=forest,
+                next_forest=(
+                    observation_xml(_observation_for_step(raw_steps[ordinal + 1])).strip()
+                    if ordinal + 1 < len(raw_steps)
+                    and isinstance(raw_steps[ordinal + 1], dict)
+                    else ""
+                ),
             )
         )
 
@@ -613,6 +569,7 @@ def _target_element(
     *,
     step_index: int,
     source_forest: str = "",
+    next_forest: str = "",
 ) -> ET.Element:
     try:
         root = ET.fromstring(parsed_xml)
@@ -652,6 +609,16 @@ def _target_element(
                 0,
             )
             point = ((left + right) / 2, (top + bottom) / 2)
+    if point is None and action_type == "input_text":
+        changed_input = infer_input_text_target(
+            source_forest,
+            next_forest,
+            input_text=str(action.get("text") or ""),
+        )
+        ordinal = changed_input.get("input_ordinal")
+        inputs = [element for element in indexed if element.tag == "input"]
+        if isinstance(ordinal, int) and 0 <= ordinal < len(inputs):
+            return inputs[ordinal]
     if point is not None:
         point_action = dict(action)
         point_action["x"], point_action["y"] = point
@@ -762,6 +729,7 @@ def _direct_subtask_from_runlog(
             parsed_xml,
             step_index=transition.step_index,
             source_forest=transition.forest,
+            next_forest=transition.next_forest,
         )
     parameter_values = _action_parameter_bindings(
         transition.action,
@@ -819,14 +787,22 @@ def _mobilegpt_action_from_runlog(
     action = transition.action
     action_type = _action_type(action)
     target: ET.Element | None = None
+    changed_input: dict[str, Any] = {}
     if action_type in {"click", "double_tap", "input_text", "long_press"}:
         target = _target_element(
             action,
             parsed_xml,
             step_index=transition.step_index,
             source_forest=transition.forest,
+            next_forest=transition.next_forest,
         )
         index = str(target.get("index"))
+        if action_type == "input_text":
+            changed_input = infer_input_text_target(
+                transition.forest,
+                transition.next_forest,
+                input_text=str(action.get("text") or ""),
+            )
     bindings = _action_parameter_bindings(action, target, task_parameters)
     if action_type == "click":
         converted = {"name": "click", "parameters": {"index": index}}
@@ -869,7 +845,31 @@ def _mobilegpt_action_from_runlog(
             step_index=transition.step_index,
             action_type=action_type,
         )
-    if "index" in converted["parameters"]:
+    anonymous_verified_input = (
+        action_type == "input_text"
+        and changed_input.get("identity") == {"role": "editable"}
+        and len(ET.fromstring(parsed_xml).findall(".//input")) == 1
+    )
+    if anonymous_verified_input:
+        converted["parameters"]["attrib"] = {
+            "self": {"tag": "input"},
+            "parent": {},
+            "children": [],
+        }
+        selected_parameters = selected_subtask.get("parameters")
+        if not isinstance(selected_parameters, dict):
+            selected_parameters = {}
+        source_text = str(action.get("text") or "")
+        matching_parameters = [
+            str(name)
+            for name, value in {**selected_parameters, **bindings}.items()
+            if str(name).strip() and str(value) == source_text
+        ]
+        if len(matching_parameters) == 1:
+            converted["parameters"]["input_text"] = (
+                f"<{matching_parameters[0]}__-1>"
+            )
+    elif "index" in converted["parameters"]:
         generalization_screen = f"<hierarchy>{parsed_xml}</hierarchy>"
         selected_parameters = selected_subtask.get("parameters")
         if not isinstance(selected_parameters, dict):
@@ -894,237 +894,6 @@ def _mobilegpt_action_from_runlog(
     return converted, bindings, label
 
 
-def _mobilegpt_action_from_derive(
-    derive_agent_class: type,
-    transition: _RunLogTransition,
-    parsed_xml: str,
-    encoded_xml: str,
-    *,
-    instruction: str,
-    selected_subtask: dict[str, Any],
-    subtask_history: list[str],
-    task_parameters: dict[str, Any],
-    generalize_action: Callable[[dict[str, Any], dict[str, Any], str], dict[str, Any]],
-) -> tuple[dict[str, Any], dict[str, str], str]:
-    action_type = _action_type(transition.action)
-    if action_type != "input_text":
-        raise MobileGPTConversionError(
-            "mobilegpt_derive_fallback_unsupported",
-            step_index=transition.step_index,
-            action_type=action_type,
-        )
-    derive_agent = derive_agent_class(None, instruction)
-    derive_agent.init_subtask(selected_subtask, subtask_history)
-    derived_action, _ = derive_agent.derive(encoded_xml)
-    converted = _validated_action(derived_action)
-    if converted["name"] != "input":
-        raise MobileGPTConversionError(
-            "mobilegpt_derive_action_mismatch",
-            step_index=transition.step_index,
-            source_action_type=action_type,
-            derived_action_name=converted["name"],
-        )
-    parameters = converted["parameters"]
-    source_text = str(transition.action.get("text") or "")
-    if str(parameters.get("input_text") or "") != source_text:
-        raise MobileGPTConversionError(
-            "mobilegpt_derive_input_text_mismatch",
-            step_index=transition.step_index,
-        )
-    raw_index_value = parameters.get("index")
-    raw_index = "" if raw_index_value is None else str(raw_index_value).strip()
-    try:
-        root = ET.fromstring(parsed_xml)
-    except ET.ParseError as error:
-        raise MobileGPTConversionError(
-            "mobilegpt_parsed_screen_invalid",
-            step_index=transition.step_index,
-            error=str(error),
-        ) from error
-    target = next(
-        (
-            element
-            for element in root.iter()
-            if str(element.get("index") or "").strip() == raw_index
-        ),
-        None,
-    )
-    if target is None or target.tag != "input":
-        raise MobileGPTConversionError(
-            "mobilegpt_derive_target_invalid",
-            step_index=transition.step_index,
-            index=raw_index,
-        )
-    bindings = _action_parameter_bindings(
-        transition.action,
-        target,
-        task_parameters,
-    )
-    selected_parameters = selected_subtask.get("parameters")
-    if not isinstance(selected_parameters, dict):
-        selected_parameters = {}
-    semantic_parameters = {
-        str(name): str(value)
-        for name, value in selected_parameters.items()
-        if str(name).strip()
-        and str(value).strip()
-        and str(value).strip().casefold() != "unknown"
-    }
-    semantic_parameters.update(bindings)
-    generalized = generalize_action(
-        converted,
-        {
-            "name": str(selected_subtask.get("name") or "sourceStep"),
-            "parameters": semantic_parameters,
-        },
-        f"<hierarchy>{parsed_xml}</hierarchy>",
-    )
-    if not isinstance(generalized, dict):
-        raise MobileGPTConversionError(
-            "mobilegpt_derive_generalization_failed",
-            step_index=transition.step_index,
-        )
-    label = str(
-        target.text
-        or target.get("text")
-        or target.get("description")
-        or target.get("id")
-        or ""
-    ).strip()
-    return generalized, bindings, label
-
-
-def _validated_subtask(value: Any, *, error_code: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise MobileGPTConversionError(error_code)
-    name = str(value.get("name") or "").strip()
-    description = str(value.get("description") or "").strip()
-    parameters = value.get("parameters")
-    if not name or not description or not isinstance(parameters, dict):
-        raise MobileGPTConversionError(error_code, name=name)
-    return {
-        "name": name,
-        "description": description,
-        "parameters": dict(parameters),
-    }
-
-
-def _explore_page_with_mobilegpt(
-    explore_agent_class: type,
-    *,
-    parsed_xml: str,
-    hierarchy_xml: str,
-    encoded_xml: str,
-    screen_index: int,
-    source_step_index: int,
-) -> dict[str, Any]:
-    capture = _ExploreMemoryCapture()
-    explore_agent_class(capture).explore(
-        parsed_xml,
-        hierarchy_xml,
-        encoded_xml,
-        screen_index,
-    )
-    if capture.available_subtasks is None:
-        raise MobileGPTConversionError(
-            "mobilegpt_explore_output_missing",
-            step_index=source_step_index,
-        )
-    available_subtasks = [
-        _validated_subtask(
-            subtask,
-            error_code="mobilegpt_explore_subtask_invalid",
-        )
-        for subtask in capture.available_subtasks
-    ]
-    names = [subtask["name"] for subtask in available_subtasks]
-    if not names:
-        raise MobileGPTConversionError(
-            "mobilegpt_explore_subtasks_empty",
-            step_index=source_step_index,
-        )
-    if len(names) != len(set(names)):
-        raise MobileGPTConversionError(
-            "mobilegpt_explore_subtask_names_duplicated",
-            step_index=source_step_index,
-        )
-    if capture.screen != parsed_xml or capture.hierarchy_xml != hierarchy_xml:
-        raise MobileGPTConversionError(
-            "mobilegpt_explore_capture_incomplete",
-            step_index=source_step_index,
-        )
-    return {
-        "available_subtasks": available_subtasks,
-        "trigger_uis": capture.trigger_uis or {},
-        "extra_uis": capture.extra_uis or [],
-    }
-
-
-def _select_subtask_with_mobilegpt(
-    select_agent_class: type,
-    default_subtasks: Sequence[dict[str, Any]],
-    *,
-    instruction: str,
-    available_subtasks: list[dict[str, Any]],
-    subtask_history: list[str],
-    encoded_xml: str,
-    source_action_type: str,
-    source_step_index: int,
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    capture = _SelectMemoryCapture()
-    response, new_action = select_agent_class(capture, instruction).select(
-        available_subtasks,
-        subtask_history,
-        [],
-        encoded_xml,
-    )
-    if not isinstance(response, dict) or not isinstance(response.get("action"), dict):
-        raise MobileGPTConversionError(
-            "mobilegpt_select_response_invalid",
-            step_index=source_step_index,
-        )
-    selected = dict(response["action"])
-    name = str(selected.get("name") or "").strip()
-    parameters = selected.get("parameters")
-    if not name or not isinstance(parameters, dict):
-        raise MobileGPTConversionError(
-            "mobilegpt_select_action_invalid",
-            step_index=source_step_index,
-        )
-    if name == "finish":
-        raise MobileGPTConversionError(
-            "mobilegpt_select_finished_before_source_action",
-            step_index=source_step_index,
-            source_action_type=source_action_type,
-        )
-    primitive_source_types = {"scroll_screen": "swipe", "speak": "answer"}
-    expected_source_type = primitive_source_types.get(name)
-    if expected_source_type and source_action_type != expected_source_type:
-        raise MobileGPTConversionError(
-            "mobilegpt_select_primitive_mismatch",
-            step_index=source_step_index,
-            selected_subtask=name,
-            source_action_type=source_action_type,
-        )
-    candidates = list(available_subtasks) + [dict(item) for item in default_subtasks]
-    raw_subtask = next(
-        (item for item in candidates if str(item.get("name") or "").strip() == name),
-        None,
-    )
-    if raw_subtask is None and isinstance(new_action, dict):
-        raw_subtask = new_action
-    subtask = _validated_subtask(
-        raw_subtask,
-        error_code="mobilegpt_select_subtask_missing",
-    )
-    if not any(item["name"] == subtask["name"] for item in available_subtasks):
-        available_subtasks.append(subtask)
-    selected["name"] = name
-    selected["parameters"] = dict(parameters)
-    example = capture.examples.get(name, {})
-    return subtask, selected, example
-
-
 @contextmanager
 def _temporary_environment(values: dict[str, str | None]) -> Iterator[None]:
     previous = {key: os.environ.get(key) for key in values}
@@ -1141,45 +910,6 @@ def _temporary_environment(values: dict[str, str | None]) -> Iterator[None]:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
-
-
-@contextmanager
-def _temporary_agent_query_provider(
-    agent_modules: Sequence[Any],
-    provider: Callable[..., Any] | None,
-) -> Iterator[None]:
-    previous = [module.query for module in agent_modules]
-    try:
-        for module in agent_modules:
-            active_provider = provider or module.query
-            agent_name = str(module.__name__).rsplit(".", 1)[-1].removesuffix("_agent")
-
-            def tagged_query(
-                messages: list[dict[str, Any]],
-                model: str | None = None,
-                is_list: bool = False,
-                agent_name: str = agent_name,
-                active_provider: Callable[..., Any] = active_provider,
-                tag_provider: bool = provider is not None,
-            ) -> Any:
-                if not tag_provider:
-                    return active_provider(
-                        messages,
-                        model=model,
-                        is_list=is_list,
-                    )
-                return active_provider(
-                    messages,
-                    model=model,
-                    is_list=is_list,
-                    agent_name=agent_name,
-                )
-
-            module.query = tagged_query
-        yield
-    finally:
-        for module, query in zip(agent_modules, previous, strict=True):
-            module.query = query
 
 
 @contextmanager
@@ -1246,13 +976,8 @@ def write_conversion_failure_audit(
         if isinstance(error, MobileGPTConversionError)
         else {"error": str(error)}
     )
-    audit_schema = (
-        MOBILEGPT_AUDIT_SCHEMA
-        if conversion_mode == CONVERSION_MODE_SEMANTIC
-        else MOBILEGPT_DIRECT_AUDIT_SCHEMA
-    )
     payload = {
-        "schema_version": audit_schema,
+        "schema_version": MOBILEGPT_AUDIT_SCHEMA,
         "conversion_mode": conversion_mode,
         "task_name": trajectory["task_name"],
         "source_run_log": trajectory["source_run_log"],
@@ -1299,12 +1024,8 @@ def convert_runlog_to_mobilegpt_memory(
 ) -> dict[str, Any]:
     """Write one RunLog as an exact native-format MobileGPT database."""
 
-    if conversion_mode not in {
-        CONVERSION_MODE_DIRECT,
-        CONVERSION_MODE_SEMANTIC,
-    }:
+    if conversion_mode != CONVERSION_MODE_DIRECT:
         raise ValueError(f"mobilegpt_conversion_mode_invalid:{conversion_mode}")
-    semantic_conversion = conversion_mode == CONVERSION_MODE_SEMANTIC
 
     trajectory = _load_runlog_trajectory(
         source_run_log,
@@ -1313,7 +1034,6 @@ def convert_runlog_to_mobilegpt_memory(
     )
     transitions: list[_RunLogTransition] = trajectory["transitions"]
     launch_only = trajectory["launch_only"] is True
-    semantic_agents_used = semantic_conversion and not launch_only
     encoded_transitions = transitions
     if launch_only:
         encoded_transitions = [
@@ -1352,21 +1072,15 @@ def convert_runlog_to_mobilegpt_memory(
     started = time.monotonic()
     audit_rows: list[dict[str, Any]] = []
     with _temporary_environment(environment), _working_directory(server_root):
-        from agents import derive_agent as derive_agent_module
-        from agents import explore_agent as explore_agent_module
-        from agents import select_agent as select_agent_module
-        from agents.derive_agent import DeriveAgent
-        from agents.explore_agent import ExploreAgent
-        from agents.prompts.select_agent_prompt import default_subtasks
-        from agents.select_agent import SelectAgent
         from memory.memory_manager import Memory
         from screenParser.Encoder import xmlEncoder
         from utils.action_utils import generalize_action
-        from utils.utils import get_openai_embedding
+        if embedding_provider is None:
+            from utils.utils import get_openai_embedding
 
-        if semantic_agents_used and semantic_query_provider is None:
-            install_mobilegpt_openai_runtime(preserve_original_prompts=True)
-            install_mobilegpt_select_schema_repair(SelectAgent)
+            embed = get_openai_embedding
+        else:
+            embed = embedding_provider
 
         task_name = str(trajectory["task_name"] or "").strip()
         app_name = str(trajectory["target_app"] or trajectory["target_package"]).strip()
@@ -1396,9 +1110,6 @@ def convert_runlog_to_mobilegpt_memory(
         encoder.init(str(log_root))
         pages_by_identity: dict[str, dict[str, Any]] = {}
         task_path: dict[str, list[str]] = {}
-        subtask_history: list[str] = []
-        embed = embedding_provider or get_openai_embedding
-
         for screen_index, transition in enumerate(encoded_transitions):
             raw_xml = mobilegpt_compatible_xml(transition.forest)
             raw_path = Path(encoder.xml_directory) / f"{screen_index}.xml"
@@ -1439,34 +1150,15 @@ def convert_runlog_to_mobilegpt_memory(
                         "mobilegpt_page_embedding_empty",
                         step_index=transition.step_index,
                     )
-                if semantic_agents_used:
-                    with _temporary_agent_query_provider(
-                        (explore_agent_module,),
-                        semantic_query_provider,
-                    ):
-                        explored = _explore_page_with_mobilegpt(
-                            ExploreAgent,
-                            parsed_xml=parsed_xml,
-                            hierarchy_xml=hierarchy_xml,
-                            encoded_xml=encoded_xml,
-                            screen_index=screen_index,
-                            source_step_index=transition.step_index,
-                        )
-                else:
-                    explored = {
-                        "available_subtasks": [],
-                        "trigger_uis": {},
-                        "extra_uis": [],
-                    }
                 page = {
                     "index": page_index,
                     "parsed_xml": parsed_xml,
                     "hierarchy_xml": hierarchy_xml,
                     "encoded_xml": encoded_xml,
                     "embedding": embedding,
-                    "available_subtasks": explored["available_subtasks"],
-                    "trigger_uis": explored["trigger_uis"],
-                    "extra_uis": explored["extra_uis"],
+                    "available_subtasks": [],
+                    "trigger_uis": {},
+                    "extra_uis": [],
                     "subtasks": {},
                     "actions": [],
                 }
@@ -1475,63 +1167,21 @@ def convert_runlog_to_mobilegpt_memory(
             if launch_only:
                 task_path[str(page_index)] = ["finish"]
                 continue
-            if semantic_agents_used:
-                with _temporary_agent_query_provider(
-                    (select_agent_module,),
-                    semantic_query_provider,
-                ):
-                    subtask, selected_subtask, example = _select_subtask_with_mobilegpt(
-                        SelectAgent,
-                        default_subtasks,
-                        instruction=trajectory["instruction"],
-                        available_subtasks=page["available_subtasks"],
-                        subtask_history=subtask_history,
-                        encoded_xml=encoded_xml,
-                        source_action_type=_action_type(transition.action),
-                        source_step_index=transition.step_index,
-                    )
-            else:
-                subtask, selected_subtask, example = _direct_subtask_from_runlog(
-                    transition,
-                    parsed_xml,
-                    encoded_xml,
-                    trajectory["instruction"],
-                    trajectory["task_parameters"],
-                )
-                page["available_subtasks"].append(subtask)
-            derive_fallback_used = False
-            try:
-                converted, bindings, label = _mobilegpt_action_from_runlog(
-                    transition,
-                    parsed_xml,
-                    task_parameters=trajectory["task_parameters"],
-                    selected_subtask=selected_subtask,
-                    generalize_action=generalize_action,
-                )
-            except MobileGPTConversionError as error:
-                if (
-                    not semantic_conversion
-                    or
-                    error.code != "source_action_target_unresolved"
-                    or _action_type(transition.action) != "input_text"
-                ):
-                    raise
-                with _temporary_agent_query_provider(
-                    (derive_agent_module,),
-                    semantic_query_provider,
-                ):
-                    converted, bindings, label = _mobilegpt_action_from_derive(
-                        DeriveAgent,
-                        transition,
-                        parsed_xml,
-                        encoded_xml,
-                        instruction=trajectory["instruction"],
-                        selected_subtask=selected_subtask,
-                        subtask_history=subtask_history,
-                        task_parameters=trajectory["task_parameters"],
-                        generalize_action=generalize_action,
-                    )
-                derive_fallback_used = True
+            subtask, selected_subtask, example = _direct_subtask_from_runlog(
+                transition,
+                parsed_xml,
+                encoded_xml,
+                trajectory["instruction"],
+                trajectory["task_parameters"],
+            )
+            page["available_subtasks"].append(subtask)
+            converted, bindings, label = _mobilegpt_action_from_runlog(
+                transition,
+                parsed_xml,
+                task_parameters=trajectory["task_parameters"],
+                selected_subtask=selected_subtask,
+                generalize_action=generalize_action,
+            )
             del label
             existing_subtask = page["subtasks"].get(subtask["name"])
             if existing_subtask is None:
@@ -1560,9 +1210,6 @@ def convert_runlog_to_mobilegpt_memory(
                 ]
             )
             task_path.setdefault(str(page_index), []).append(subtask["name"])
-            subtask_history.append(
-                f"Performed an action: {json.dumps(selected_subtask, ensure_ascii=False)}"
-            )
             row = {
                 "source_step_index": transition.step_index,
                 "source_action_type": _action_type(transition.action),
@@ -1572,16 +1219,8 @@ def convert_runlog_to_mobilegpt_memory(
                 "subtask_parameter_bindings": bindings,
                 "memory_action": converted,
                 "matched": True,
-                "reason": (
-                    "mobilegpt_explore_select_derive_compiled"
-                    if derive_fallback_used
-                    else (
-                        "mobilegpt_explore_select_compiled"
-                        if semantic_conversion
-                        else "runlog_direct_compiled"
-                    )
-                ),
-                "derive_fallback_used": derive_fallback_used,
+                "reason": "runlog_direct_compiled",
+                "derive_fallback_used": False,
                 "consumed_transitions": 1,
             }
             audit_rows.append(row)
@@ -1737,24 +1376,18 @@ def convert_runlog_to_mobilegpt_memory(
         )
 
     audit_payload = {
-        "schema_version": (
-            MOBILEGPT_AUDIT_SCHEMA
-            if semantic_conversion
-            else MOBILEGPT_DIRECT_AUDIT_SCHEMA
-        ),
+        "schema_version": MOBILEGPT_AUDIT_SCHEMA,
         "conversion_mode": conversion_mode,
         "task_name": trajectory["task_name"],
         "source_run_log": trajectory["source_run_log"],
         "target_package": trajectory["target_package"],
-        "original_mobilegpt_prompts": semantic_agents_used,
-        "explore_agent_used": semantic_agents_used,
-        "select_agent_used": semantic_agents_used,
-        "derive_agent_fallback_allowed": semantic_agents_used,
-        "derive_agent_fallback_count": sum(
-            row["derive_fallback_used"] is True for row in audit_rows
-        ),
+        "original_mobilegpt_prompts": False,
+        "explore_agent_used": False,
+        "select_agent_used": False,
+        "derive_agent_fallback_allowed": False,
+        "derive_agent_fallback_count": 0,
         "generalize_action_used": bool(audit_rows),
-        "direct_subtasks_from_runlog": not semantic_agents_used,
+        "direct_subtasks_from_runlog": True,
         "source_direct_hit_validation": True,
         "launch_only": launch_only,
         "transition_count": len(transitions),

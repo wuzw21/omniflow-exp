@@ -13,7 +13,10 @@ from src.experiment.source_assets import (
     build_grounded_teacher_run_log_from_item,
     select_source_asset_revision,
 )
-from src.integrations.appagent_adapter import build_appagent_teacher_source
+from src.integrations.appagent_adapter import (
+    build_appagent_teacher_source,
+    ground_appagent_teacher_action,
+)
 from src.integrations.mobilegpt_converter import preflight_runlog_conversion
 from src.integrations.runlog import convert_legacy_run_log
 
@@ -987,6 +990,67 @@ def test_canonical_grounding_inherits_adjacent_unique_editable_target(
     preflight = preflight_runlog_conversion(grounded_path)
     assert preflight["ready"] is True
     assert preflight["transition_count"] == audit["semantic_action_count"]
+    assert audit["semantic_action_count"] == 2
+
+
+def test_canonical_grounding_uses_verified_input_text_change(
+    tmp_path: Path,
+) -> None:
+    before_xml = (
+        '<hierarchy><node id="12" class="android.widget.EditText" '
+        'text="my_note" clickable="true" bounds="[0,0][100,100]" />'
+        '<node id="13" class="android.widget.EditText" text=".md" '
+        'clickable="true" bounds="[100,0][200,100]" /></hierarchy>'
+    )
+    after_xml = before_xml.replace('text="my_note"', 'text="copy_warm_tree"')
+    source = tmp_path / "changed-input.run_log.json"
+    source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [
+                    {"action_type": "input_text", "text": "copy_warm_tree"},
+                    {"action_type": "click", "x": 150, "y": 50},
+                ],
+                observations=[
+                    androidworld_state("before-input", forest=before_xml),
+                    androidworld_state("after-input", forest=after_xml),
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+    item = SimpleNamespace(
+        task="ChangedInputTask",
+        source_run_log=source,
+        meta={
+            "retained_source_run_log_sha256": hashlib.sha256(
+                source.read_bytes()
+            ).hexdigest()
+        },
+    )
+
+    grounded, audit = build_grounded_teacher_run_log_from_item(
+        index_path=tmp_path / "source_index.json",
+        item=item,
+    )
+
+    assert grounded["steps"][0]["metadata"]["source_context"]["element"] == {
+        "text": "my_note"
+    }
+    grounded_path = tmp_path / "grounded-changed-input.run_log.json"
+    grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
+    teacher = build_appagent_teacher_source(
+        grounded_path,
+        task_name="ChangedInputTask",
+        provenance_source_run_log=source,
+    )
+    appagent_target = ground_appagent_teacher_action(
+        before_xml,
+        teacher["actions"][0]["action"],
+        min_dist=30.0,
+    )
+    assert appagent_target.tag == 1
+    assert appagent_target.match_reason == "exact_visible_identity"
     assert audit["semantic_action_count"] == 2
 
 

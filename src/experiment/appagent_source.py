@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import shutil
 import sys
 import tempfile
 import time
@@ -33,7 +34,6 @@ from src.integrations.appagent_adapter import (
     ground_appagent_teacher_action,
     seal_appagent_demo_memory,
     validate_appagent_demo_memory,
-    validate_appagent_source_demo,
 )
 
 SOURCE_SEED = 111
@@ -248,18 +248,163 @@ def run_official_document_generation(
     }
 
 
-def _captured_app_name(memory_root: Path) -> str:
-    apps_root = memory_root / "apps"
-    app_dirs = (
-        sorted(path for path in apps_root.iterdir() if path.is_dir())
-        if apps_root.is_dir()
-        else []
-    )
-    if len(app_dirs) != 1:
-        raise ValueError(
-            f"appagent_source_app_resolution_failed:count={len(app_dirs)}"
+def _source_lineage(item: pipeline.ArchivedRunLog) -> tuple[str, set[str]]:
+    payload = json.loads(item.source_run_log.read_text(encoding="utf-8"))
+    run_id = str(payload.get("run_id") or "").strip()
+    provenance = payload.get("provenance")
+    provenance_sha256 = str(
+        provenance.get("source_sha256") if isinstance(provenance, dict) else ""
+    ).strip()
+    source_sha256s = {pipeline._file_sha256(item.source_run_log)}
+    if len(provenance_sha256) == 64:
+        source_sha256s.add(provenance_sha256)
+    if not run_id:
+        raise ValueError("appagent_native_memory_lineage_missing")
+    return run_id, source_sha256s
+
+
+def _jsonl(path: Path) -> list[dict[str, Any]]:
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _native_memory_evidence(
+    *,
+    item: pipeline.ArchivedRunLog,
+    teacher_source: dict[str, Any],
+    evidence_roots: Sequence[str | Path],
+    model: str,
+) -> dict[str, Any]:
+    run_id, source_sha256s = _source_lineage(item)
+    candidates: list[dict[str, Any]] = []
+    for raw_root in evidence_roots:
+        root = Path(raw_root).expanduser().resolve()
+        if not root.is_dir():
+            raise FileNotFoundError(f"appagent_native_memory_root_missing:{root}")
+        for manifest_path in root.rglob(APPAGENT_DEMO_MANIFEST):
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if (
+                manifest.get("official_appagent_revision") != APPAGENT_OFFICIAL_REVISION
+                or manifest.get("task_name") != item.task
+                or manifest.get("source_seed") != SOURCE_SEED
+                or str(manifest.get("source_run_id") or "") != run_id
+                or str(manifest.get("source_run_log_sha256") or "")
+                not in source_sha256s
+            ):
+                continue
+            app_name = str(manifest.get("app_name") or "").strip()
+            demo_name = str(manifest.get("demo_name") or "").strip()
+            base = manifest_path.parent
+            demo_root = base / "apps" / app_name / "demos" / demo_name
+            docs_root = base / "apps" / app_name / "demo_docs"
+            log_path = base / "_document_generation" / "document_generation.log"
+            usage_path = (
+                base
+                / "_document_generation"
+                / "document_generation_usage.jsonl"
+            )
+            trace_path = demo_root / "teacher_trace.jsonl"
+            if not all(
+                path.exists()
+                for path in (demo_root, docs_root, log_path, usage_path, trace_path)
+            ):
+                continue
+            usage_rows = _jsonl(usage_path)
+            models = {
+                str(row.get("model") or "").strip()
+                for row in usage_rows
+                if str(row.get("model") or "").strip()
+            }
+            demo_actions = [
+                record
+                for record in teacher_source["actions"]
+                if str((record.get("action") or {}).get("type") or "")
+                in APPAGENT_DEMO_ACTION_TYPES
+            ]
+            trace = _jsonl(trace_path)
+            if len(trace) != len(demo_actions) or any(
+                int(row.get("source_step_index") or 0)
+                != int(record.get("source_step_index") or 0)
+                or str(row.get("action_type") or "")
+                != str((record.get("action") or {}).get("type") or "")
+                for row, record in zip(trace, demo_actions, strict=True)
+            ):
+                continue
+            if models != {model}:
+                continue
+            candidates.append(
+                {
+                    "manifest": manifest_path.resolve(),
+                    "app_name": app_name,
+                    "demo_name": demo_name,
+                    "demo_root": demo_root.resolve(),
+                    "docs_root": docs_root.resolve(),
+                    "document_log": log_path.resolve(),
+                    "document_usage": usage_path.resolve(),
+                    "identity": (
+                        str(manifest.get("demo_sha256") or ""),
+                        str(manifest.get("demo_docs_sha256") or ""),
+                        str(manifest.get("document_generation_usage_sha256") or ""),
+                    ),
+                }
+            )
+    if not candidates:
+        raise FileNotFoundError(
+            "appagent_native_memory_evidence_missing:"
+            f"{item.task}:{','.join(sorted(source_sha256s))}"
         )
-    return app_dirs[0].name
+    identities = {candidate["identity"] for candidate in candidates}
+    if len(identities) != 1:
+        raise ValueError(
+            f"appagent_native_memory_evidence_ambiguous:{item.task}:{len(identities)}"
+        )
+    return min(candidates, key=lambda candidate: str(candidate["manifest"]))
+
+
+def _write_teacher_trace(
+    *,
+    demo_root: Path,
+    teacher_source: dict[str, Any],
+) -> None:
+    source_rows = _jsonl(demo_root / "teacher_trace.jsonl")
+    by_step = {
+        (
+            int(row.get("source_step_index") or 0),
+            str(row.get("action_type") or ""),
+        ): row
+        for row in source_rows
+    }
+    rows: list[dict[str, Any]] = []
+    for cursor, record in enumerate(teacher_source["actions"], 1):
+        action = record["action"]
+        action_type = str(action.get("type") or "")
+        step_index = int(record.get("source_step_index") or 0)
+        source = by_step.get((step_index, action_type), {})
+        rows.append(
+            {
+                **source,
+                "teacher_cursor": cursor,
+                "source_step_index": step_index,
+                "source_action_index": int(
+                    record.get("source_action_index") or 0
+                ),
+                "action_type": action_type,
+                "source_coordinates_used": False,
+                "conversion_mode": "canonical_runlog_offline",
+            }
+        )
+    (demo_root / "teacher_trace.jsonl").write_text(
+        "".join(
+            json.dumps(row, ensure_ascii=False) + "\n" for row in rows
+        ),
+        encoding="utf-8",
+    )
 
 
 def validate_appagent_source_memory(
@@ -365,6 +510,8 @@ def preflight_appagent_source(
     *,
     index_path: str | Path,
     task_name: str,
+    evidence_roots: Sequence[str | Path] = (),
+    model: str = "",
 ) -> dict[str, Any]:
     """Validate one source asset without creating a persistent output."""
 
@@ -372,6 +519,14 @@ def preflight_appagent_source(
     _, grounding_audit, teacher_source = _preflight_appagent_teacher(
         item=item,
     )
+    evidence = None
+    if evidence_roots:
+        evidence = _native_memory_evidence(
+            item=item,
+            teacher_source=teacher_source,
+            evidence_roots=evidence_roots,
+            model=str(model or "").strip(),
+        )
     return {
         "schema_version": "omniflow.appagent-source-preflight.v1",
         "task_name": item.task,
@@ -381,6 +536,9 @@ def preflight_appagent_source(
         "action_count": int(teacher_source["action_count"]),
         "demo_action_count": int(teacher_source["demo_action_count"]),
         "grounding": grounding_audit,
+        "conversion_mode": "canonical_runlog_offline",
+        "source_emulator_used": False,
+        "native_memory_evidence": str(evidence["manifest"]) if evidence else None,
         "ready": True,
     }
 
@@ -390,9 +548,10 @@ def prepare_appagent_demo_memory(
     index_path: str | Path,
     task_name: str,
     appagent_root: str | Path,
-    android_world_root: str | Path,
+    android_world_root: str | Path | None = None,
     memory_root: str | Path,
     model: str,
+    evidence_roots: Sequence[str | Path] = (),
     serial: str = "emulator-5560",
     console_port: int = 5560,
     adb_path: str = "",
@@ -400,7 +559,7 @@ def prepare_appagent_demo_memory(
     request_timeout_sec: float = 60.0,
     perform_emulator_setup: bool = True,
 ) -> dict[str, Any]:
-    """Capture, document, audit, and freeze one AppAgent source memory."""
+    """Convert one canonical RunLog to AppAgent's native demo memory."""
 
     normalized_model = str(model or "").strip()
     if not normalized_model:
@@ -420,6 +579,12 @@ def prepare_appagent_demo_memory(
         )
     )
     source_run_log = Path(grounding_audit["source_run_log"]).resolve()
+    evidence = _native_memory_evidence(
+        item=item,
+        teacher_source=teacher_source,
+        evidence_roots=evidence_roots,
+        model=normalized_model,
+    )
 
     root.mkdir(parents=True)
     prep_started = time.monotonic()
@@ -433,36 +598,27 @@ def prepare_appagent_demo_memory(
         json.dumps(teacher_source, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    demo_name = f"demo_{item.task}_seed{SOURCE_SEED}"
-    target = pipeline.DeviceTarget(
-        label=f"source{int(console_port)}",
-        serial=str(serial),
-        console_port=int(console_port),
+    app_name = str(evidence["app_name"])
+    demo_name = str(evidence["demo_name"])
+    target_demo = root / "apps" / app_name / "demos" / demo_name
+    target_docs = root / "apps" / app_name / "demo_docs"
+    shutil.copytree(evidence["demo_root"], target_demo)
+    shutil.copytree(evidence["docs_root"], target_docs)
+    _write_teacher_trace(
+        demo_root=target_demo,
+        teacher_source=teacher_source,
     )
-    source_spec = pipeline.build_appagent_androidworld_command(
-        item,
-        method_name="appagent_native_source_demo",
-        target=target,
-        android_world_root=android_world_root,
-        output_root=root / "_source_episode",
-        appagent_root=appagent_root,
-        teacher_source=teacher_source_path,
-        workspace_root=root,
-        demo_name=demo_name,
-        max_steps=int(teacher_source["action_count"]) + 1,
-        timeout_sec=int(timeout_sec),
-        task_random_seed=SOURCE_SEED,
-        fixed_task_seed=True,
-        fixed_task_params=True,
-        task_params_override=dict(item.params),
-        perform_emulator_setup=bool(perform_emulator_setup),
-        adb_path=str(adb_path),
-    )
-    (root / "source_episode_command.json").write_text(
+    document_root = root / "_document_generation"
+    document_root.mkdir()
+    document_log = document_root / "document_generation.log"
+    document_usage = document_root / "document_generation_usage.jsonl"
+    shutil.copyfile(evidence["document_log"], document_log)
+    shutil.copyfile(evidence["document_usage"], document_usage)
+    conversion_audit = root / "conversion_audit.json"
+    conversion_audit.write_text(
         json.dumps(
             {
-                "schema_version": "omniflow.appagent-source-command.v2",
-                "command": pipeline._command_line(source_spec),
+                "schema_version": "omniflow.appagent-runlog-conversion.v1",
                 "task_name": item.task,
                 "task_params": item.params,
                 "source_seed": SOURCE_SEED,
@@ -476,10 +632,10 @@ def prepare_appagent_demo_memory(
                     grounded_source_path
                 ),
                 "grounding_audit": grounding_audit,
-                "serial": str(serial),
                 "model": normalized_model,
-                "model_attempts": 1,
-                "episode_retries": 0,
+                "conversion_mode": "canonical_runlog_offline",
+                "native_memory_evidence": str(evidence["manifest"]),
+                "source_emulator_used": False,
                 "source_environment_repair_reason": (
                     source_environment_repair_reason
                 ),
@@ -494,71 +650,37 @@ def prepare_appagent_demo_memory(
         + "\n",
         encoding="utf-8",
     )
-
-    source_started = time.monotonic()
-    returncode = pipeline.run_command(source_spec)
-    source_wall_sec = round(time.monotonic() - source_started, 6)
-    if returncode != 0:
-        raise RuntimeError(f"appagent_source_episode_failed:{returncode}")
-    if source_spec.output_path is None:
-        raise RuntimeError("appagent_source_episode_output_missing")
-    source_result = source_spec.output_path / "task_results.jsonl"
-    app_name = _captured_app_name(root)
-    validate_appagent_source_demo(
-        memory_root=root,
-        app_name=app_name,
-        demo_name=demo_name,
-        source_result=source_result,
-        task_name=item.task,
-        expected_teacher_action_count=int(teacher_source["action_count"]),
-        expected_demo_action_count=int(teacher_source["demo_action_count"]),
-    )
-
-    document_root = root / "_document_generation"
-    doc_result = run_official_document_generation(
-        appagent_root=appagent_root,
-        workspace_root=root,
-        app_name=app_name,
-        demo_name=demo_name,
-        log_path=document_root / "document_generation.log",
-        usage_path=document_root / "document_generation_usage.jsonl",
-        model=normalized_model,
-        timeout_sec=float(request_timeout_sec),
-    )
-    if set(doc_result["models"]) != {normalized_model}:
-        raise ValueError(
-            "appagent_document_model_mismatch:"
-            f"expected={normalized_model}:actual={doc_result['models']}"
-        )
     prep_wall_sec = round(time.monotonic() - prep_started, 6)
     manifest = seal_appagent_demo_memory(
         memory_root=root,
         app_name=app_name,
         demo_name=demo_name,
         teacher_source=teacher_source_path,
-        source_result=source_result,
-        document_generation_log=doc_result["log_path"],
-        document_generation_usage=doc_result["usage_path"],
+        source_result=None,
+        document_generation_log=document_log,
+        document_generation_usage=document_usage,
         task_name=item.task,
-        source_episode_wall_sec=source_wall_sec,
-        document_generation_wall_sec=float(doc_result["wall_sec"]),
+        source_episode_wall_sec=0.0,
+        document_generation_wall_sec=0.0,
         prep_wall_sec=prep_wall_sec,
         source_method=source_method,
         document_generation_model=normalized_model,
         source_environment_repair_reason=source_environment_repair_reason,
+        conversion_mode="canonical_runlog_offline",
+        native_memory_evidence=evidence["manifest"],
     )
     return {
-        "schema_version": "omniflow.appagent-source-prepare.v2",
+        "schema_version": "omniflow.appagent-source-prepare.v3",
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
         "source_method": source_method,
         "source_run_log": str(source_run_log),
         "model": normalized_model,
         "memory_root": str(root),
-        "source_result": str(source_result),
-        "source_episode_wall_sec": source_wall_sec,
+        "conversion_mode": "canonical_runlog_offline",
+        "native_memory_evidence": str(evidence["manifest"]),
+        "source_emulator_used": False,
         "source_environment_repair_reason": source_environment_repair_reason,
-        "document_generation": doc_result,
         "prep_wall_sec": prep_wall_sec,
         "manifest": manifest,
     }
@@ -598,9 +720,10 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--index", required=True)
     prepare.add_argument("--task", required=True)
     prepare.add_argument("--appagent-root", required=True)
-    prepare.add_argument("--android-world-root", required=True)
+    prepare.add_argument("--android-world-root")
     prepare.add_argument("--memory-root", required=True)
     prepare.add_argument("--model", required=True)
+    prepare.add_argument("--evidence-root", action="append", required=True)
     prepare.add_argument("--serial", default="emulator-5560")
     prepare.add_argument("--console-port", type=int, default=5560)
     prepare.add_argument("--adb-path", default="")
@@ -617,6 +740,8 @@ def build_parser() -> argparse.ArgumentParser:
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument("--index", required=True)
     preflight.add_argument("--task", required=True)
+    preflight.add_argument("--model", default="")
+    preflight.add_argument("--evidence-root", action="append", default=[])
     return parser
 
 
@@ -631,6 +756,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 android_world_root=args.android_world_root,
                 memory_root=args.memory_root,
                 model=args.model,
+                evidence_roots=args.evidence_root,
                 serial=args.serial,
                 console_port=args.console_port,
                 adb_path=args.adb_path,
@@ -649,6 +775,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = preflight_appagent_source(
                 index_path=args.index,
                 task_name=args.task,
+                evidence_roots=args.evidence_root,
+                model=args.model,
             )
     except BaseException as error:
         if args.command == "prepare":

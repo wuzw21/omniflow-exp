@@ -55,6 +55,15 @@ def _mobilegpt_memory_only_enabled() -> bool:
     }
 
 
+def _mobilegpt_upstream_enabled() -> bool:
+    return str(os.environ.get("MOBILEGPT_UPSTREAM_MODE") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def install_mobilegpt_memory_only_guard(
     mobilegpt_class: type,
     *,
@@ -648,6 +657,107 @@ def install_mobilegpt_openai_runtime(
             module.query = _query
 
 
+def install_mobilegpt_upstream_accounting() -> None:
+    utils_module = importlib.import_module("utils.utils")
+    if bool(getattr(utils_module, "_omniflow_upstream_accounting_installed", False)):
+        return
+    original_openai = utils_module.OpenAI
+
+    class _Completions:
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        def create(self, *args: Any, **kwargs: Any) -> Any:
+            started = time.monotonic()
+            try:
+                response = self._inner.create(*args, **kwargs)
+            except Exception as error:
+                _write_stats_event(
+                    {
+                        "event": "chat_error",
+                        "agent_name": "upstream",
+                        "model": str(kwargs.get("model") or ""),
+                        "attempt": 1,
+                        "latency_sec": round(time.monotonic() - started, 6),
+                        "error": f"{type(error).__name__}: {error}",
+                    }
+                )
+                raise
+            usage = getattr(response, "usage", None)
+            choices = getattr(response, "choices", None) or []
+            content = ""
+            if choices:
+                content = str(getattr(getattr(choices[0], "message", None), "content", "") or "")
+            _write_stats_event(
+                {
+                    "event": "chat_call",
+                    "agent_name": "upstream",
+                    "model": str(kwargs.get("model") or ""),
+                    "attempt": 1,
+                    "latency_sec": round(time.monotonic() - started, 6),
+                    "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+                    "completion_tokens": int(
+                        getattr(usage, "completion_tokens", 0) or 0
+                    ),
+                    "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+                    "response_content": content,
+                }
+            )
+            return response
+
+    class _Embeddings:
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        def create(self, *args: Any, **kwargs: Any) -> Any:
+            started = time.monotonic()
+            try:
+                response = self._inner.create(*args, **kwargs)
+            except Exception as error:
+                _write_stats_event(
+                    {
+                        "event": "embedding_error",
+                        "model": str(kwargs.get("model") or ""),
+                        "latency_sec": round(time.monotonic() - started, 6),
+                        "error": f"{type(error).__name__}: {error}",
+                    }
+                )
+                raise
+            usage = getattr(response, "usage", None)
+            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+            total_tokens = int(getattr(usage, "total_tokens", 0) or prompt_tokens)
+            _write_stats_event(
+                {
+                    "event": "embedding_call",
+                    "model": str(kwargs.get("model") or ""),
+                    "latency_sec": round(time.monotonic() - started, 6),
+                    "prompt_tokens": prompt_tokens,
+                    "total_tokens": total_tokens,
+                }
+            )
+            return response
+
+    class _Chat:
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+            self.completions = _Completions(inner.completions)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._inner, name)
+
+    class _OpenAI:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self._inner = original_openai(*args, **kwargs)
+            self.chat = _Chat(self._inner.chat)
+            self.embeddings = _Embeddings(self._inner.embeddings)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._inner, name)
+
+    utils_module.OpenAI = _OpenAI
+    utils_module._omniflow_upstream_accounting_installed = True
+
+
 def install_mobilegpt_android_action_prompt(derive_prompt_module: Any) -> None:
     actions = getattr(derive_prompt_module, "default_actions", [])
     actions[:] = [
@@ -796,6 +906,11 @@ def mobilegpt_compatible_xml(xml_text: str) -> str:
                 attributes["content-desc"] = f"{description} [selected]"
         if not str(attributes.get("class") or "").strip():
             attributes["class"] = _mobilegpt_class_name(element)
+        if (
+            str(attributes.get("class") or "") == "android.widget.EditText"
+            and not str(attributes.get("important") or "").strip()
+        ):
+            attributes["important"] = "true"
     return ET.tostring(root, encoding="unicode")
 
 
@@ -851,6 +966,7 @@ def run_mobilegpt_server(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=12345)
     parser.add_argument("--buffer-size", type=int, default=4096)
+    parser.add_argument("--upstream", action="store_true")
     args = parser.parse_args(argv)
 
     root = Path(args.mobilegpt_root).expanduser().resolve()
@@ -859,7 +975,15 @@ def run_mobilegpt_server(argv: list[str] | None = None) -> int:
         raise FileNotFoundError(f"MobileGPT Server directory not found: {server_root}")
     if str(server_root) not in sys.path:
         sys.path.insert(0, str(server_root))
-    os.chdir(server_root)
+    upstream_mode = bool(args.upstream or _mobilegpt_upstream_enabled())
+    memory_root = Path(str(os.environ.get("MOBILEGPT_MEMORY_ROOT") or "")).expanduser()
+    if upstream_mode and str(memory_root) and memory_root.name == "memory":
+        memory_root = memory_root.resolve()
+        if not memory_root.is_dir():
+            raise FileNotFoundError(f"MobileGPT memory directory not found: {memory_root}")
+        os.chdir(memory_root.parent)
+    else:
+        os.chdir(server_root)
 
     from agents.app_agent import AppAgent
     from agents.derive_agent import DeriveAgent
@@ -874,21 +998,24 @@ def run_mobilegpt_server(argv: list[str] | None = None) -> int:
     Server = mobilegpt_server.Server
     MobileGPT = mobilegpt_module.MobileGPT
 
-    install_mobilegpt_openai_runtime()
-    install_mobilegpt_package_app_resolution(AppAgent)
-    install_mobilegpt_android_action_prompt(derive_agent_prompt)
-    install_mobilegpt_androidworld_layout_encoding(xmlEncoder)
-    install_mobilegpt_action_schema_adapter(mobilegpt_server)
-    install_mobilegpt_select_schema_repair(SelectAgent)
-    install_mobilegpt_action_error_recovery(MobileGPT)
-    install_mobilegpt_answer_event(MobileGPT)
-    install_mobilegpt_memory_only_guard(
-        MobileGPT,
-        explore_agent_class=ExploreAgent,
-        select_agent_class=SelectAgent,
-        derive_agent_class=DeriveAgent,
-    )
-    install_mobilegpt_androidworld_observe(Server)
+    if upstream_mode:
+        install_mobilegpt_upstream_accounting()
+    else:
+        install_mobilegpt_openai_runtime()
+        install_mobilegpt_package_app_resolution(AppAgent)
+        install_mobilegpt_android_action_prompt(derive_agent_prompt)
+        install_mobilegpt_androidworld_layout_encoding(xmlEncoder)
+        install_mobilegpt_action_schema_adapter(mobilegpt_server)
+        install_mobilegpt_select_schema_repair(SelectAgent)
+        install_mobilegpt_action_error_recovery(MobileGPT)
+        install_mobilegpt_answer_event(MobileGPT)
+        install_mobilegpt_memory_only_guard(
+            MobileGPT,
+            explore_agent_class=ExploreAgent,
+            select_agent_class=SelectAgent,
+            derive_agent_class=DeriveAgent,
+        )
+        install_mobilegpt_androidworld_observe(Server)
     _write_stats_event(
         {
             "event": "mobilegpt_server_started",
@@ -898,6 +1025,7 @@ def run_mobilegpt_server(argv: list[str] | None = None) -> int:
                 os.environ.get("MOBILEGPT_RUNTIME_OBSERVE_BACKEND") or "androidworld"
             ),
             "memory_only": _mobilegpt_memory_only_enabled(),
+            "runtime_mode": "upstream" if upstream_mode else "adapted",
         }
     )
     Server(

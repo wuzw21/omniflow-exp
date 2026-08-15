@@ -35,13 +35,33 @@ One normal single-task invocation performs the complete workflow:
    - `mobilegpt_offline_retrieval`: deterministically adapt the canonical
      RunLog plan into MobileGPT's native task/page/subtask/action memory, then
      use MobileGPT's native app and page retrieval online;
-   - `appagent_demo`: resolve or create the native demonstration;
+   - `appagent_demo`: convert the canonical RunLog schema to the native demonstration format, reusing only exact lineage-matched screenshot evidence;
    - `t3a_hint`: derive the semantic hint from the same Function and RunLog.
 3. Reuse every already registered or frozen source asset without regeneration.
 4. Cold-restart each pending cell's managed AVD without Quick Boot snapshot
    load/save, run AndroidWorld setup and preflight, and replay the method.
 5. Use the AndroidWorld official validator as the result, recording calls,
-   tokens, actions, episode duration, and outer wall time for every cell.
+   tokens, actions, reuse utilization, episode duration, and outer wall time
+   for every cell.
+
+AppAgent online execution uses the pinned upstream prompt, parser, model request,
+label ordering, document UID algorithm, grid behavior, request interval,
+single-response control flow, screenshot/XML capture, and device actions. The
+experiment adapter mounts exactly one converted native demo-docs directory and
+prepares the task's declared app before the first upstream decision round.
+AndroidWorld owns only the LiveTask lifecycle, step-budget shell, and official
+validator for this baseline. Converted RunLog actions remain offline provenance;
+they are never replayed or injected into AppAgent online.
+
+Every result records `reuse_numerator`, `reuse_denominator`, `reuse_rate`,
+`reuse_unit`, and `reuse_evidence_status`. The rate is the fraction of native
+reuse opportunities actually served by the method's converted source asset:
+replayed GUI actions for `fixed_replay`, Function-origin GUI actions for
+`ours`, direct memory hits for MobileGPT, AppAgent decision rounds with native
+demo documentation, and T3A executed actions planned with the source hint.
+Rates with different `reuse_unit` values are reported separately and are not
+silently pooled. Missing evidence produces an unavailable rate rather than an
+assumed zero or one.
 
 Function schema and transfer-state checks are internal validation for `ours`;
 they are not the experiment conclusion. Conversion never observes a target
@@ -100,7 +120,9 @@ the resulting contract here.
 | `OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE` | Development endpoint profile; defaults to `llmthu` |
 | `OMNIFLOW_FORMAL_MODEL_ENDPOINT_PROFILE` | Formal endpoint profile; defaults to `openai` |
 | `OMNIFLOW_OURS_AUTHORING_MANIFEST` | Immutable bundle manifest produced by `androidworld-runlog-harvester` using `omniflow.function-agent-skill-manifest.v1` |
+| `OMNIFLOW_OURS_REVISION_REASON` | Explicit reason for selecting one newly converted immutable Function revision over the existing canonical Store; requires one `--tasks` value |
 | `OMNIFLOW_MEMORY_MOBILEGPT_ROOTS` | Optional colon-separated roots containing sealed MobileGPT semantic memory |
+| `OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS` | Colon-separated roots containing immutable AppAgent-native demos whose manifest exactly matches the canonical RunLog lineage |
 
 The source RunLog index defaults to
 `$OMNIFLOW_EXP_ASSET_ROOT/runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json`.
@@ -152,6 +174,11 @@ OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE=llmthu \
 bash scripts/exp/run_androidworld.sh \
   --development-run --tasks ExpenseAddMultipleFromGallery
 ```
+
+The development entry ensures the selected AVD is booted with AndroidWorld's
+required gRPC endpoint before launching the episode. Override
+`OMNIFLOW_DEVELOPMENT_AVD` only when the selected console port is intentionally
+mapped to another installed AVD.
 
 The first run performs AndroidWorld app setup and saves the app snapshots used
 by task initialization. To repeat against the same already initialized live

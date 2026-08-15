@@ -32,6 +32,65 @@ _EXECUTION_TIMING_ARGS = {
 }
 
 
+def infer_input_text_target(
+    before_xml: str,
+    after_xml: str,
+    *,
+    input_text: str,
+) -> dict[str, Any]:
+    """Return the unique source input changed by a successful text action."""
+
+    try:
+        before_root = ET.fromstring(str(before_xml or ""))
+        after_root = ET.fromstring(str(after_xml or ""))
+    except ET.ParseError:
+        return {}
+
+    def input_nodes(root: ET.Element) -> list[ET.Element]:
+        return [
+            node
+            for node in root.iter()
+            if str(node.attrib.get("editable") or "").casefold() == "true"
+            or str(node.attrib.get("class") or "") == "android.widget.EditText"
+        ]
+
+    before_inputs = input_nodes(before_root)
+    after_inputs = input_nodes(after_root)
+    if not before_inputs or len(before_inputs) != len(after_inputs):
+        return {}
+
+    expected = " ".join(str(input_text or "").casefold().split())
+    changed: list[int] = []
+    for index, (before, after) in enumerate(
+        zip(before_inputs, after_inputs, strict=True)
+    ):
+        before_text = " ".join(str(before.attrib.get("text") or "").casefold().split())
+        after_text = " ".join(str(after.attrib.get("text") or "").casefold().split())
+        if before_text == after_text:
+            continue
+        if expected and expected not in after_text:
+            continue
+        changed.append(index)
+    if len(changed) != 1:
+        return {}
+
+    ordinal = changed[0]
+    node = before_inputs[ordinal]
+    identity = {
+        output_key: value
+        for output_key, value in (
+            ("text", str(node.attrib.get("text") or "").strip()),
+            ("content_desc", str(node.attrib.get("content-desc") or "").strip()),
+            ("resource_id", str(node.attrib.get("resource-id") or "").strip()),
+        )
+        if value
+    }
+    return {
+        "input_ordinal": ordinal,
+        "identity": identity or {"role": "editable"},
+    }
+
+
 class ScreenshotResolver:
     """Resolve immutable screenshot aliases only inside explicit roots."""
 

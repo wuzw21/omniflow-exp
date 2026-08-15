@@ -58,6 +58,7 @@ ours_store_index="${OMNIFLOW_OURS_STORE_INDEX:-}"
 ours_source_asset_index="${OMNIFLOW_OURS_SOURCE_ASSET_INDEX:-$master_source_index}"
 ours_converted_asset_root="${OMNIFLOW_OURS_CONVERTED_ASSET_ROOT:-}"
 ours_authoring_manifest="${OMNIFLOW_OURS_AUTHORING_MANIFEST:-}"
+ours_revision_reason="${OMNIFLOW_OURS_REVISION_REASON:-}"
 memory_root="${OMNIFLOW_EXP_MEMORY_ROOT:-$default_memory_root}"
 memory_index="${OMNIFLOW_EXP_MEMORY_INDEX:-${memory_root:+$memory_root/current.json}}"
 memory_function_catalogs="${OMNIFLOW_MEMORY_FUNCTION_CATALOGS:-}"
@@ -74,6 +75,7 @@ mobilegpt_root="${OMNIFLOW_MOBILEGPT_ROOT:-${asset_root:+$asset_root/runtime/ext
 mobilegpt_source_memory_root="${OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT:-}"
 appagent_root="${OMNIFLOW_APPAGENT_ROOT:-${asset_root:+$asset_root/runtime/external/appagent}}"
 appagent_demo_memory_root="${OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT:-}"
+appagent_native_memory_roots="${OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS:-}"
 source_device="${OMNIFLOW_SOURCE_DEVICE:-source5560:emulator-5560:5560}"
 preflight_profile="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_PROFILE:-}"
 preflight_serials="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_SERIALS:-}"
@@ -206,6 +208,7 @@ Optional runtime overrides:
   OMNIFLOW_ANDROID_SDK_ROOT, OMNIFLOW_JAVA_HOME,
   OMNIFLOW_MOBILEGPT_SOURCE_ENVIRONMENT_REPAIR_REASON,
   OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON,
+  OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS (colon-separated immutable AppAgent demos),
   OMNIFLOW_DEVELOPMENT_OUTPUT_PATH, OMNIFLOW_DEVELOPMENT_MODEL,
   OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE (default: llmthu),
   OMNIFLOW_DEVELOPMENT_CONSOLE_PORT,
@@ -764,6 +767,9 @@ if [[ "$convert_ours_assets" -eq 1 ]]; then
     --output-root "$ours_converted_asset_root"
     --memory-index "$memory_index"
   )
+  if [[ -n "$ours_revision_reason" ]]; then
+    conversion_args+=(--revision-reason "$ours_revision_reason")
+  fi
   if [[ -n "$batch_task_filter" ]]; then
     IFS=',' read -r -a conversion_tasks <<< "$batch_task_filter"
     for conversion_task in "${conversion_tasks[@]}"; do
@@ -1359,12 +1365,7 @@ if lineage is not None:
         raise SystemExit(f"canonical_source_run_log_lineage_invalid:{sys.argv[5]}")
     compatible_source_sha256s.append(str(lineage.get("source_sha256") or ""))
 candidate_validator = None
-if sys.argv[8] in {
-    "omniflow.mobilegpt-runlog-direct-memory.v1",
-    "omniflow.mobilegpt-runlog-semantic-memory.v1",
-    "omniflow.mobilegpt-runlog-teacher-memory.v1",
-    "omniflow.mobilegpt-runlog-native-derive-memory.v2",
-}:
+if sys.argv[8] == "omniflow.mobilegpt-runlog-direct-memory.v1":
     from src.experiment.androidworld import validate_mobilegpt_adapted_memory
     from src.experiment.artifact_memory import (
         canonical_mobilegpt_memory_from_memory,
@@ -1423,6 +1424,12 @@ if sys.argv[8] in {
         except (OSError, TypeError, ValueError):
             return False
         return True
+elif sys.argv[8] == "omniflow.appagent-demo-memory.v2":
+    def candidate_validator(_candidate, payload):
+        return (
+            payload.get("conversion_mode") == "canonical_runlog_offline"
+            and payload.get("source_emulator_used") is False
+        )
 try:
     selected = select_source_asset_revision(
         sys.argv[2],
@@ -1481,7 +1488,10 @@ if [[ "$all_tasks" -eq 0 && "$requires_appagent_source_memory" -eq 1 && -z "$app
       "$appagent_source_base" \
       "appagent_demo_manifest.json" \
       "$task" \
-      "$appagent_source_environment_repair"
+      "$appagent_source_environment_repair" \
+      "$source_index" \
+      "" \
+      "omniflow.appagent-demo-memory.v2"
   )"
 fi
 for external_path in \
@@ -1830,7 +1840,7 @@ PY
           source_repair_reason="$appagent_source_environment_repair"
           source_hash_index="$source_index"
           source_model=""
-          source_schema=""
+          source_schema="omniflow.appagent-demo-memory.v2"
           source_source_method=""
           ;;
       esac
@@ -2198,7 +2208,7 @@ PY
               source_repair_reason="$appagent_source_environment_repair"
               source_hash_index="$source_index"
               source_model=""
-              source_schema=""
+              source_schema="omniflow.appagent-demo-memory.v2"
               source_source_method=""
               source_artifact_root="$selected_appagent_source_root"
               ;;
@@ -2557,9 +2567,24 @@ if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
 fi
 if [[ "$requires_appagent_source_memory" -eq 1 ]]; then
   if [[ "$appagent_source_generation_required" -eq 1 ]]; then
+    if [[ -z "$appagent_native_memory_roots" ]]; then
+      echo "AppAgent offline conversion requires OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS." >&2
+      exit 2
+    fi
+    appagent_evidence_args=()
+    IFS=':' read -r -a appagent_evidence_roots <<< "$appagent_native_memory_roots"
+    for evidence_root in "${appagent_evidence_roots[@]}"; do
+      if [[ -z "$evidence_root" || "$evidence_root" != /* || ! -d "$evidence_root" ]]; then
+        echo "AppAgent native memory evidence root must be an existing absolute directory: $evidence_root" >&2
+        exit 2
+      fi
+      appagent_evidence_args+=(--evidence-root "$evidence_root")
+    done
     "$python_bin" -m src.experiment.appagent_source preflight \
       --index "$source_index" \
-      --task "$task"
+      --task "$task" \
+      --model "$paper_model" \
+      "${appagent_evidence_args[@]}"
   else
     "$python_bin" -m src.experiment.appagent_source validate \
       --index "$source_index" \
@@ -2874,9 +2899,6 @@ if [[ -z "$preflight_serials" ]]; then
 fi
 
 mkdir -p "$preflight_output_root"
-if [[ "$appagent_source_generation_required" -eq 1 ]]; then
-  ensure_emulator "$source_serial"
-fi
 if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
   "$python_bin" -m src.experiment.mobilegpt_source prepare \
     --index "$source_index" \
@@ -2887,27 +2909,13 @@ if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
     --memory-index "$memory_index"
 fi
 if [[ "$appagent_source_generation_required" -eq 1 ]]; then
-  "$python_bin" "$preflight" \
-    --repo "$asset_root" \
-    --code-root "$repo" \
-    --profile appagent \
-    --serial "$source_serial" \
-    --require-kvm \
-    --require-device \
-    --minimum-free-gb "$preflight_minimum_free_gb" \
-    --json-out "$preflight_output_root/runtime_preflight_appagent_source_${source_serial#emulator-}.json" \
-    --appagent-root "$appagent_root"
   "$python_bin" -m src.experiment.appagent_source prepare \
     --index "$source_index" \
     --task "$task" \
     --appagent-root "$appagent_root" \
-    --android-world-root "$android_world_root" \
     --memory-root "$appagent_demo_memory_root" \
     --model "$paper_model" \
-    --serial "$source_serial" \
-    --console-port "$source_console_port" \
-    --adb-path "$adb_bin" \
-    --timeout-sec "$timeout_sec"
+    "${appagent_evidence_args[@]}"
 fi
 for serial in "${target_serials[@]}"; do
   ensure_emulator "$serial"

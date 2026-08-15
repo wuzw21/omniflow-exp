@@ -150,6 +150,9 @@ def build_mobilegpt_agent(
         if package.strip()
     ]
     host = AndroidWorldHost(env, evidence_root=evidence_root)
+    upstream_mode = str(
+        os.environ.get("MOBILEGPT_UPSTREAM_MODE") or ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
 
     class MobileGPTAndroidWorldAgent:
         name = "external:mobilegpt"
@@ -263,7 +266,7 @@ def build_mobilegpt_agent(
             *,
             xml_text: str,
         ) -> tuple[bool, str]:
-            normalized = normalize_mobilegpt_action(action)
+            normalized = action if upstream_mode else normalize_mobilegpt_action(action)
             if not isinstance(normalized, dict):
                 raise ValueError("mobilegpt_action_not_object")
             name = str(normalized.get("name") or "").strip()
@@ -432,6 +435,11 @@ def build_mobilegpt_agent(
                                         xml_text=xml_text,
                                     )
                                 except Exception as action_error:
+                                    if upstream_mode:
+                                        raise RuntimeError(
+                                            "mobilegpt_upstream_action_error:"
+                                            f"{type(action_error).__name__}: {action_error}"
+                                        ) from action_error
                                     self._send_line(
                                         stream,
                                         "E",

@@ -18,16 +18,13 @@ from typing import Any, Iterable, Sequence
 from omniflow.core.trajectory import require_complete_source_run_log
 from omniflow.transfer.runtime import load_transfer_state_catalog
 from src.experiment.mobilegpt_contract import (
-    MOBILEGPT_DIRECT_SOURCE_METHOD,
-    MOBILEGPT_LEARNING_MODE_BY_SCHEMA,
-    MOBILEGPT_LEGACY_MEMORY_SCHEMA,
     MOBILEGPT_MEMORY_MANIFEST,
+    MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_SCHEMA,
-    MOBILEGPT_NATIVE_DERIVE_MEMORY_SCHEMA,
-    MOBILEGPT_PREP_TYPE_BY_SCHEMA,
+    MOBILEGPT_PREP_TYPE,
+    MOBILEGPT_SOURCE_METHOD,
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
     MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS,
-    MOBILEGPT_SUPPORTED_PREP_TYPES,
 )
 from src.integrations.runlog import adapt_source_run_log
 
@@ -51,6 +48,32 @@ BASELINE_BATCH_REPORT_SCHEMA = "omniflow.androidworld.batch_report.v1"
 BASELINE_BATCH_REPORT_SELECTION = (
     "authoritative_immutable_batch_report_validator_conclusion"
 )
+_ARCHIVED_MOBILEGPT_RESULT_CONTRACTS = {
+    "omniflow.mobilegpt-runlog-semantic-memory.v1": {
+        "mode": "semantic",
+        "source_method": "mobilegpt_runlog_semantic_memory",
+        "prep_type": "mobilegpt_runlog_semantic_memory",
+        "learning_mode": "mobilegpt_runlog_semantic_conversion",
+    },
+    MOBILEGPT_MEMORY_SCHEMA: {
+        "mode": "direct",
+        "source_method": MOBILEGPT_SOURCE_METHOD,
+        "prep_type": MOBILEGPT_PREP_TYPE,
+        "learning_mode": MOBILEGPT_LEARNING_MODE,
+    },
+    "omniflow.mobilegpt-runlog-native-derive-memory.v2": {
+        "mode": "native_derive",
+        "source_method": "mobilegpt_runlog_native_derive",
+        "prep_type": "mobilegpt_runlog_native_derive_memory",
+        "learning_mode": "mobilegpt_runlog_virtual_source",
+    },
+    "omniflow.mobilegpt-runlog-teacher-memory.v1": {
+        "mode": "legacy",
+        "source_method": "mobilegpt_runlog_teacher",
+        "prep_type": "mobilegpt_runlog_teacher_memory",
+        "learning_mode": "mobilegpt_runlog_teacher",
+    },
+}
 
 
 def _sha256(path: Path) -> str:
@@ -93,6 +116,38 @@ def _atomic_write(path: Path, content: bytes) -> None:
 
 def _load_object(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def is_skill_authored_function_provenance(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    collection = value.get("semantic_collection")
+    return bool(
+        isinstance(collection, dict)
+        and collection.get("function") == "androidworld_runlog_harvester_skill"
+        and isinstance(collection.get("producer"), dict)
+        and collection["producer"].get("kind")
+        == "androidworld_runlog_harvester_skill"
+    )
+
+
+def is_skill_authored_function_store_record(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    provenance_path = Path(str(value.get("provenance_path") or "")).expanduser()
+    expected_hash = str(value.get("provenance_sha256") or "").strip()
+    if (
+        not provenance_path.is_absolute()
+        or not provenance_path.is_file()
+        or not expected_hash
+        or _sha256(provenance_path) != expected_hash
+    ):
+        return False
+    try:
+        provenance = _load_object(provenance_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    return is_skill_authored_function_provenance(provenance)
 
 
 def _resolve_index_reference(index_path: Path, value: Any) -> Path:
@@ -227,8 +282,16 @@ def _runlog_paths(roots: Iterable[Path]) -> list[Path]:
         resolved = root.expanduser().resolve()
         if not resolved.is_dir():
             raise FileNotFoundError(f"runlog_root_missing:{resolved}")
-        paths.update(path.resolve() for path in resolved.rglob("*.run_log.json"))
-        paths.update(path.resolve() for path in resolved.rglob("run_log.json"))
+        paths.update(
+            path.resolve()
+            for path in resolved.rglob("*.run_log.json")
+            if not path.name.startswith("._")
+        )
+        paths.update(
+            path.resolve()
+            for path in resolved.rglob("run_log.json")
+            if not path.name.startswith("._")
+        )
     return sorted(paths)
 
 
@@ -748,7 +811,11 @@ def _mobilegpt_result_protocol_error(
     row: dict[str, Any],
 ) -> str | None:
     prefix = f"formal_result_mobilegpt_memory_invalid:{task}"
-    if str(row.get("prep_type") or "") not in MOBILEGPT_SUPPORTED_PREP_TYPES:
+    archived_prep_types = {
+        str(contract["prep_type"])
+        for contract in _ARCHIVED_MOBILEGPT_RESULT_CONTRACTS.values()
+    }
+    if str(row.get("prep_type") or "") not in archived_prep_types:
         return f"{prefix}:prep_type"
     manifest_path = Path(str(row.get("prep_manifest") or "")).expanduser()
     if not manifest_path.is_absolute() or not manifest_path.is_file():
@@ -768,17 +835,19 @@ def _mobilegpt_result_protocol_error(
     if not isinstance(manifest, dict):
         return f"{prefix}:manifest_type"
     schema_version = manifest.get("schema_version")
-    if schema_version not in MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS:
+    contract = _ARCHIVED_MOBILEGPT_RESULT_CONTRACTS.get(str(schema_version or ""))
+    if contract is None:
         return f"{prefix}:schema"
     if str(manifest.get("task_name") or "") != task:
         return f"{prefix}:task"
     if manifest.get("source_seed") != source_seed:
         return f"{prefix}:source_seed"
-    legacy = schema_version == MOBILEGPT_LEGACY_MEMORY_SCHEMA
-    semantic = schema_version == MOBILEGPT_MEMORY_SCHEMA
-    native_derive = schema_version == MOBILEGPT_NATIVE_DERIVE_MEMORY_SCHEMA
-    expected_source_method = MOBILEGPT_SOURCE_METHOD_BY_SCHEMA[schema_version]
-    expected_prep_type = MOBILEGPT_PREP_TYPE_BY_SCHEMA[schema_version]
+    mode = str(contract["mode"])
+    legacy = mode == "legacy"
+    semantic = mode == "semantic"
+    native_derive = mode == "native_derive"
+    expected_source_method = str(contract["source_method"])
+    expected_prep_type = str(contract["prep_type"])
     if str(row.get("prep_type") or "") != expected_prep_type:
         return f"{prefix}:prep_type_schema_mismatch"
     if str(manifest.get("source_method") or "") != expected_source_method:
@@ -789,7 +858,7 @@ def _mobilegpt_result_protocol_error(
     required_provenance = {
         "native_mobilegpt_learning": legacy or native_derive,
         "task_local_memory": True,
-        "learning_mode": MOBILEGPT_LEARNING_MODE_BY_SCHEMA[schema_version],
+        "learning_mode": str(contract["learning_mode"]),
         "teacher_forcing": legacy,
         "synthetic_subtasks": not (legacy or semantic or native_derive),
         "actions_supplied_to_mobilegpt": not native_derive,
@@ -1175,6 +1244,7 @@ def _load_function_stores(
                 raw_item.get("provenance_sha256"),
                 label=f"function_provenance:{task}",
             )
+            provenance_payload = _load_object(provenance)
             store_payload = _load_object(store)
             if (
                 not isinstance(store_payload, dict)
@@ -1290,7 +1360,10 @@ def _load_function_stores(
             )
             record["tasks"].append(task)
             record["catalog_aliases"].append(str(catalog_path))
-            quality = (1, len(store_payload["functions"]))
+            quality = (
+                1 if is_skill_authored_function_provenance(provenance_payload) else 0,
+                len(store_payload["functions"]),
+            )
             candidates.setdefault(task, []).append((quality, identity))
 
     for record in records.values():
@@ -1546,31 +1619,27 @@ def _select_canonical_mobilegpt_memory(
     memory_sha256s: set[str],
     records: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    direct_memory_sha256s = {
+    canonical_memory_sha256s = {
         memory_sha256
         for memory_sha256 in memory_sha256s
         if records[memory_sha256]["source_method"]
-        == MOBILEGPT_DIRECT_SOURCE_METHOD
+        == MOBILEGPT_SOURCE_METHOD
     }
-    if len(direct_memory_sha256s) > 1:
+    unsupported_memory_sha256s = memory_sha256s - canonical_memory_sha256s
+    if unsupported_memory_sha256s:
+        raise ValueError(
+            f"unsupported_mobilegpt_memory:{task}:"
+            + ",".join(sorted(unsupported_memory_sha256s))
+        )
+    if len(canonical_memory_sha256s) != 1:
         raise ValueError(
             f"ambiguous_mobilegpt_memory:{task}:"
-            + ",".join(sorted(direct_memory_sha256s))
+            + ",".join(sorted(canonical_memory_sha256s))
         )
-    if direct_memory_sha256s:
-        memory_sha256 = next(iter(direct_memory_sha256s))
-        selection_reason = "active_mobilegpt_direct_source_method"
-    elif len(memory_sha256s) == 1:
-        memory_sha256 = next(iter(memory_sha256s))
-        selection_reason = "only_valid_mobilegpt_memory"
-    else:
-        raise ValueError(
-            f"ambiguous_mobilegpt_memory:{task}:"
-            + ",".join(sorted(memory_sha256s))
-        )
+    memory_sha256 = next(iter(canonical_memory_sha256s))
     return {
         **records[memory_sha256],
-        "selection_reason": selection_reason,
+        "selection_reason": "only_supported_mobilegpt_memory",
     }
 
 
@@ -2390,6 +2459,7 @@ def refresh_artifact_memory_from_pointer(
     additional_result_roots: Sequence[str | Path] = (),
     additional_mobilegpt_memory_roots: Sequence[str | Path] = (),
     additional_baseline_batch_reports: Sequence[str | Path] = (),
+    replace_recorded_roots: bool = False,
 ) -> dict[str, Any]:
     """Refresh a memory using its recorded inputs plus newly completed evidence."""
 
@@ -2406,24 +2476,30 @@ def refresh_artifact_memory_from_pointer(
                 ),
             }
         )
-        runlog_roots = sorted(
-            {
-                *(str(value) for value in inputs.get("runlog_roots") or []),
-                *(
-                    str(Path(value).expanduser().resolve())
-                    for value in additional_runlog_roots
-                ),
-            }
-        )
-        result_roots = sorted(
-            {
-                *(str(value) for value in inputs.get("result_roots") or []),
-                *(
-                    str(Path(value).expanduser().resolve())
-                    for value in additional_result_roots
-                ),
-            }
-        )
+        resolved_runlog_roots = {
+            str(Path(value).expanduser().resolve())
+            for value in additional_runlog_roots
+        }
+        resolved_result_roots = {
+            str(Path(value).expanduser().resolve())
+            for value in additional_result_roots
+        }
+        if replace_recorded_roots:
+            runlog_roots = sorted(resolved_runlog_roots)
+            result_roots = sorted(resolved_result_roots)
+        else:
+            runlog_roots = sorted(
+                {
+                    *(str(value) for value in inputs.get("runlog_roots") or []),
+                    *resolved_runlog_roots,
+                }
+            )
+            result_roots = sorted(
+                {
+                    *(str(value) for value in inputs.get("result_roots") or []),
+                    *resolved_result_roots,
+                }
+            )
         mobilegpt_memory_roots = sorted(
             {
                 *(
@@ -2534,6 +2610,7 @@ def main(argv: list[str] | None = None) -> int:
                 additional_baseline_batch_reports=_split_values(
                     args.baseline_batch_report
                 ),
+                replace_recorded_roots=True,
             )
         else:
             if not args.source_index:

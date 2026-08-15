@@ -12,12 +12,13 @@ from runlog_fixtures import androidworld_run_log
 
 from src.experiment.artifact_memory import refresh_artifact_memory
 from src.experiment.mobilegpt_contract import (
-    MOBILEGPT_DIRECT_MEMORY_SCHEMA,
-    MOBILEGPT_DIRECT_SOURCE_METHOD,
+    MOBILEGPT_MEMORY_SCHEMA,
+    MOBILEGPT_SOURCE_METHOD,
 )
 from src.experiment.preflight import (
     APPAGENT_REQUIRED_MODULES,
     REQUIRED_DISTRIBUTION_VERSIONS,
+    _valid_appagent_demo_manifest,
 )
 
 REPO = Path(__file__).resolve().parents[1]
@@ -39,6 +40,41 @@ def test_android_env_version_is_locked_and_preflight_enforced() -> None:
     )
     lock_text = (REPO / "uv.lock").read_text(encoding="utf-8")
     assert 'name = "android-env"\nversion = "1.2.3"' in lock_text
+
+
+def test_preflight_accepts_offline_appagent_memory() -> None:
+    assert _valid_appagent_demo_manifest(
+        {
+            "schema_version": "omniflow.appagent-demo-memory.v2",
+            "official_appagent_revision": (
+                "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
+            ),
+            "source_seed": 111,
+            "conversion_mode": "canonical_runlog_offline",
+            "source_emulator_used": False,
+            "native_memory_evidence": "/immutable/manifest.json",
+            "teacher_complete": True,
+            "teacher_action_count": 6,
+            "teacher_actions_consumed": 6,
+            "demo_action_count": 5,
+            "source_episode_metrics": {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+            },
+            "doc_generation_usage": {
+                "model_calls": 5,
+                "prompt_tokens": 10,
+                "completion_tokens": 2,
+                "total_tokens": 12,
+            },
+            "prep_wall_sec": 0.1,
+            "uses_omniflow_function": False,
+            "target_inputs_read": False,
+            "target_observations_read": False,
+            "validator_state_read_for_memory": False,
+        }
+    )
 
 
 def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
@@ -89,9 +125,9 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     )
     assert "ours_store_index_mechanical_asset" in script_text
     assert "androidworld_runlog_harvester_skill" in script_text
-    assert f'mobilegpt_source_schema="{MOBILEGPT_DIRECT_MEMORY_SCHEMA}"' in script_text
-    assert f'mobilegpt_source_method="{MOBILEGPT_DIRECT_SOURCE_METHOD}"' in script_text
-    assert script_text.count(MOBILEGPT_DIRECT_MEMORY_SCHEMA) >= 2
+    assert f'mobilegpt_source_schema="{MOBILEGPT_MEMORY_SCHEMA}"' in script_text
+    assert f'mobilegpt_source_method="{MOBILEGPT_SOURCE_METHOD}"' in script_text
+    assert script_text.count(MOBILEGPT_MEMORY_SCHEMA) >= 2
     assert "MOBILEGPT_SOURCE_METHOD_BY_SCHEMA" in script_text
     assert "indexed_source_method = MOBILEGPT_SOURCE_METHOD_BY_SCHEMA.get(" in script_text
     assert "validate_mobilegpt_adapted_memory(" in script_text
@@ -904,6 +940,8 @@ exit 0
     fake_jq.chmod(0o755)
     mobilegpt_root = assets / "mobilegpt"
     appagent_root = assets / "appagent"
+    appagent_evidence_root = assets / "appagent-evidence"
+    appagent_evidence_root.mkdir()
     for path in (
         mobilegpt_root / "Server" / "main.py",
         mobilegpt_root / "App" / "app" / "build" / "outputs" / "apk" / "debug"
@@ -952,6 +990,9 @@ exit 0
             assets / "mobilegpt-source" / "memory"
         ),
         "OMNIFLOW_APPAGENT_ROOT": str(appagent_root),
+        "OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS": str(
+            appagent_evidence_root
+        ),
         "OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT": str(
             assets / "appagent-source"
         ),
@@ -1526,6 +1567,7 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
         "OMNIFLOW_MASTER_SOURCE_INDEX": str(source_index),
         "OMNIFLOW_MEMORY_RUNLOG_ROOTS": str(runlogs),
         "OMNIFLOW_MEMORY_RESULT_ROOTS": str(results),
+        "OMNIFLOW_EXP_RESULTS_ROOT": str(results),
         "OMNIFLOW_MEMORY_FUNCTION_CATALOGS": str(catalog),
     }
 

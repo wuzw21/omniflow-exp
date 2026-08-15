@@ -853,6 +853,18 @@ def prepare_appagent_memory(
         }
     root = attempt_root / "assets" / "appagent"
     memory_pointer = _read_object(args.memory_index)
+    evidence_roots = [
+        value
+        for value in os.environ.get(
+            "OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS", ""
+        ).split(":")
+        if value
+    ]
+    if not evidence_roots:
+        raise PipelinePhaseError(
+            "appagent_native_memory_evidence_roots_required",
+            {"tool_calls": 0, "tokens": 0},
+        )
     command = [
         str(args.python_bin),
         "-m",
@@ -864,21 +876,13 @@ def prepare_appagent_memory(
         args.task,
         "--appagent-root",
         str(args.appagent_root),
-        "--android-world-root",
-        str(args.android_world_root),
         "--memory-root",
         str(root),
         "--model",
         args.formal_model,
-        "--serial",
-        SOURCE_DEVICE[1],
-        "--console-port",
-        str(SOURCE_DEVICE[2]),
-        "--adb-path",
-        str(args.adb_path),
-        "--timeout-sec",
-        str(min(300, max(1, int(deadline.remaining())))),
     ]
+    for evidence_root in evidence_roots:
+        command.extend(("--evidence-root", evidence_root))
     environment = dict(os.environ)
     result = run_logged_command(
         command,
@@ -1644,12 +1648,12 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
         "omnitransfer_root",
         "mobilegpt_root",
         "appagent_root",
-        "python_bin",
         "adb_path",
         "emulator_bin",
         "runtime_preflight",
     ):
         setattr(args, field, getattr(args, field).expanduser().resolve())
+    args.python_bin = args.python_bin.expanduser().absolute()
     if args.source_run_log is not None:
         args.source_run_log = args.source_run_log.expanduser().resolve()
     if args.appagent_memory_root is not None:

@@ -10,6 +10,7 @@ import pytest
 from runlog_fixtures import androidworld_run_log
 
 from src.experiment.artifact_memory import (
+    _runlog_paths,
     _select_canonical_mobilegpt_memory,
     load_artifact_memory,
     refresh_artifact_memory,
@@ -18,15 +19,9 @@ from src.experiment.artifact_memory import (
 )
 from src.experiment.artifact_memory import main as artifact_memory_main
 from src.experiment.mobilegpt_contract import (
-    MOBILEGPT_DIRECT_SOURCE_METHOD,
     MOBILEGPT_LEARNING_MODE,
-    MOBILEGPT_LEGACY_LEARNING_MODE,
-    MOBILEGPT_LEGACY_MEMORY_SCHEMA,
-    MOBILEGPT_LEGACY_SOURCE_METHOD,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
-    MOBILEGPT_NATIVE_DERIVE_LEARNING_MODE,
-    MOBILEGPT_NATIVE_DERIVE_MEMORY_SCHEMA,
     MOBILEGPT_PREP_TYPE,
     MOBILEGPT_PREP_TYPE_BY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
@@ -51,30 +46,32 @@ def _canonical_json_bytes(value: object) -> bytes:
     ).encode("utf-8")
 
 
-def test_direct_mobilegpt_memory_supersedes_preserved_semantic_memory() -> None:
-    semantic_sha = "a" * 64
-    direct_sha = "b" * 64
+ARCHIVED_MOBILEGPT_MEMORY_SCHEMA = "omniflow.mobilegpt-runlog-teacher-memory.v1"
+ARCHIVED_MOBILEGPT_SOURCE_METHOD = "mobilegpt_runlog_teacher"
+ARCHIVED_MOBILEGPT_LEARNING_MODE = "mobilegpt_runlog_teacher"
+ARCHIVED_MOBILEGPT_PREP_TYPE = "mobilegpt_runlog_teacher_memory"
+
+
+def test_noncanonical_mobilegpt_memory_cannot_be_selected() -> None:
+    archived_sha = "a" * 64
+    canonical_sha = "b" * 64
     records = {
-        semantic_sha: {
-            "memory_sha256": semantic_sha,
-            "source_method": MOBILEGPT_SOURCE_METHOD,
+        archived_sha: {
+            "memory_sha256": archived_sha,
+            "source_method": ARCHIVED_MOBILEGPT_SOURCE_METHOD,
         },
-        direct_sha: {
-            "memory_sha256": direct_sha,
-            "source_method": MOBILEGPT_DIRECT_SOURCE_METHOD,
+        canonical_sha: {
+            "memory_sha256": canonical_sha,
+            "source_method": MOBILEGPT_SOURCE_METHOD,
         },
     }
 
-    selected = _select_canonical_mobilegpt_memory(
-        task="RecordWithName",
-        memory_sha256s={semantic_sha, direct_sha},
-        records=records,
-    )
-
-    assert selected["memory_sha256"] == direct_sha
-    assert selected["selection_reason"] == (
-        "active_mobilegpt_direct_source_method"
-    )
+    with pytest.raises(ValueError, match="unsupported_mobilegpt_memory"):
+        _select_canonical_mobilegpt_memory(
+            task="RecordWithName",
+            memory_sha256s={archived_sha, canonical_sha},
+            records=records,
+        )
 
 
 def test_multiple_direct_mobilegpt_memories_remain_ambiguous() -> None:
@@ -83,7 +80,7 @@ def test_multiple_direct_mobilegpt_memories_remain_ambiguous() -> None:
     records = {
         digest: {
             "memory_sha256": digest,
-            "source_method": MOBILEGPT_DIRECT_SOURCE_METHOD,
+            "source_method": MOBILEGPT_SOURCE_METHOD,
         }
         for digest in (first_sha, second_sha)
     }
@@ -106,6 +103,13 @@ def _write_source_run_log(tmp_path: Path) -> Path:
             with_pixels=True,
         ),
     )
+
+
+def test_runlog_paths_ignore_appledouble_sidecars(tmp_path: Path) -> None:
+    run_log = _write_json(tmp_path / "source.run_log.json", {})
+    (tmp_path / "._source.run_log.json").write_bytes(b"\x00\x05\x16\x07binary")
+
+    assert _runlog_paths([tmp_path]) == [run_log.resolve()]
 
 
 def _write_registered_result(
@@ -204,7 +208,7 @@ def _write_registered_result(
                             json.loads(mobilegpt_manifest.read_text(encoding="utf-8"))[
                                 "schema_version"
                             ],
-                            MOBILEGPT_PREP_TYPE,
+                            ARCHIVED_MOBILEGPT_PREP_TYPE,
                         ),
                         "prep_manifest": str(mobilegpt_manifest),
                         "prep_manifest_sha256": _sha256(mobilegpt_manifest),
@@ -245,22 +249,18 @@ def _write_mobilegpt_manifest(
     teacher_forcing: bool = False,
     official_source_success: bool = True,
 ) -> Path:
-    legacy = schema_version == MOBILEGPT_LEGACY_MEMORY_SCHEMA
-    semantic = schema_version == MOBILEGPT_MEMORY_SCHEMA
-    native_derive = schema_version == MOBILEGPT_NATIVE_DERIVE_MEMORY_SCHEMA
+    archived = schema_version == ARCHIVED_MOBILEGPT_MEMORY_SCHEMA
     provenance = {
-        "native_mobilegpt_learning": legacy or native_derive,
+        "native_mobilegpt_learning": archived,
         "task_local_memory": True,
         "learning_mode": (
-            MOBILEGPT_LEGACY_LEARNING_MODE
-            if legacy
-            else MOBILEGPT_NATIVE_DERIVE_LEARNING_MODE
-            if native_derive
+            ARCHIVED_MOBILEGPT_LEARNING_MODE
+            if archived
             else MOBILEGPT_LEARNING_MODE
         ),
         "teacher_forcing": teacher_forcing,
-        "synthetic_subtasks": not (legacy or semantic or native_derive),
-        "actions_supplied_to_mobilegpt": not native_derive,
+        "synthetic_subtasks": not archived,
+        "actions_supplied_to_mobilegpt": True,
         "function_store_used": False,
         "function_conversion_enabled": False,
         "target_inputs_read": False,
@@ -268,34 +268,13 @@ def _write_mobilegpt_manifest(
         "validator_state_read": False,
         "coordinate_replay": False,
     }
-    if legacy:
+    if archived:
         provenance["complete_teacher_action_consumption"] = True
-    elif semantic:
-        provenance.update(
-            {
-                "semantic_subtasks": True,
-                "original_mobilegpt_prompts": True,
-                "source_transitions_supplied": True,
-                "source_success_boundary_supplied": True,
-                "runlog_transition_compilation": True,
-                "complete_transition_mapping": True,
-                "official_reader_validation": True,
-                "source_emulator_used": False,
-            }
-        )
-    elif native_derive:
-        provenance.update(
-            {
-                "source_transitions_supplied": True,
-                "source_success_boundary_supplied": True,
-                "trajectory_action_validation": True,
-                "complete_trajectory_validation": True,
-                "source_emulator_used": False,
-            }
-        )
     else:
         provenance.update(
             {
+                "semantic_subtasks": False,
+                "original_mobilegpt_prompts": False,
                 "source_transitions_supplied": True,
                 "source_success_boundary_supplied": True,
                 "runlog_transition_compilation": True,
@@ -312,7 +291,7 @@ def _write_mobilegpt_manifest(
         "memory": {"sha256": "a" * 64, "file_count": 12},
         "provenance": provenance,
     }
-    if legacy:
+    if archived:
         payload["official_source_result"] = {
             "official_validator_used": True,
             "official_validator_success": official_source_success,
@@ -1452,6 +1431,46 @@ def test_refresh_keeps_earliest_formal_result_without_success_cherry_picking(
     assert load_artifact_memory(pointer)["canonical"] == report["canonical"]
 
 
+def test_explicit_refresh_replaces_stale_recorded_roots(tmp_path: Path) -> None:
+    source = _write_json(
+        tmp_path / "evidence" / "source.run_log.json",
+        androidworld_run_log(
+            [{"action_type": "wait"}],
+            task_name="RecordWithName",
+            goal="Record audio and save it.",
+        ),
+    )
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    stale_root = tmp_path / "stale"
+    stale_root.mkdir()
+    refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "evidence", stale_root),
+        result_roots=(stale_root,),
+    )
+    stale_root.rmdir()
+
+    report = refresh_artifact_memory_from_pointer(
+        memory_index=tmp_path / "memory" / "current.json",
+        additional_runlog_roots=(tmp_path / "evidence",),
+        additional_result_roots=(),
+        replace_recorded_roots=True,
+    )
+
+    assert report["inputs"]["runlog_roots"] == [str(tmp_path / "evidence")]
+    assert report["inputs"]["result_roots"] == []
+
+
 def test_refresh_keeps_validator_conclusion_with_method_error(
     tmp_path: Path,
 ) -> None:
@@ -1550,7 +1569,9 @@ def test_refresh_freezes_only_validator_cells_from_authoritative_batch_report(
     }
 
 
-def test_refresh_selects_legacy_runlog_teacher_mobilegpt_result(tmp_path: Path) -> None:
+def test_refresh_reads_archived_mobilegpt_result_without_reusing_memory(
+    tmp_path: Path,
+) -> None:
     source = _write_source_run_log(tmp_path)
     source_index = _write_json(
         tmp_path / "source_index.json",
@@ -1563,8 +1584,8 @@ def test_refresh_selects_legacy_runlog_teacher_mobilegpt_result(tmp_path: Path) 
     )
     manifest = _write_mobilegpt_manifest(
         tmp_path,
-        schema_version=MOBILEGPT_LEGACY_MEMORY_SCHEMA,
-        source_method=MOBILEGPT_LEGACY_SOURCE_METHOD,
+        schema_version=ARCHIVED_MOBILEGPT_MEMORY_SCHEMA,
+        source_method=ARCHIVED_MOBILEGPT_SOURCE_METHOD,
         teacher_forcing=True,
     )
     result = _write_registered_result(
@@ -1588,7 +1609,7 @@ def test_refresh_selects_legacy_runlog_teacher_mobilegpt_result(tmp_path: Path) 
         "RecordWithName|mobilegpt_offline_retrieval|small5554|111|113"
     ]
     assert cell["registered_result_aliases"] == [str(result)]
-    assert cell["mobilegpt_memory_schema"] == MOBILEGPT_LEGACY_MEMORY_SCHEMA
+    assert cell["mobilegpt_memory_schema"] == ARCHIVED_MOBILEGPT_MEMORY_SCHEMA
     assert registered_cell_plan_from_memory(
         memory_index=tmp_path / "memory" / "current.json",
         task_name="RecordWithName",

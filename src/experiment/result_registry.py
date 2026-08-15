@@ -18,6 +18,8 @@ import shutil
 import tempfile
 from typing import Any
 
+from src.integrations.android_world.methods import reuse_metrics_from_result_row
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RUNS_ROOT = REPO_ROOT / "runtime/evals/androidworld_validator/runs"
 DEFAULT_MASTER_ROOT = REPO_ROOT / "runtime/evals/androidworld_validator/master_progress"
@@ -78,6 +80,12 @@ METHOD_MATRIX_COLUMNS = [
     "task_elapsed_sec",
     "avg_task_elapsed_sec",
     "actions_executed",
+    "artifact_used",
+    "reuse_numerator",
+    "reuse_denominator",
+    "reuse_rate",
+    "reuse_unit",
+    "reuse_evidence_status",
     "avg_actions_per_task",
     "avg_ms_per_action",
     "chat_model_calls",
@@ -128,6 +136,12 @@ RUN_RECORD_COLUMNS = [
     "official_validator_task_count",
     "duration_ms",
     "actions_executed",
+    "artifact_used",
+    "reuse_numerator",
+    "reuse_denominator",
+    "reuse_rate",
+    "reuse_unit",
+    "reuse_evidence_status",
     "model_calls",
     "chat_model_calls",
     "embedding_model_calls",
@@ -499,6 +513,7 @@ def _row_from_summary(
     if task_params in (None, "", {}, []):
         task_params = source_meta.get("params")
     task_seed = row.get("task_random_seed") or row.get("task_seed")
+    reuse = reuse_metrics_from_result_row(row, method=method)
 
     out = {
         "task_index": _task_index(task_name, source_index),
@@ -563,6 +578,12 @@ def _row_from_summary(
         "task_elapsed_sec": _number(row.get("task_elapsed_sec") or row.get("wall_sec")),
         "avg_task_elapsed_sec": _number(row.get("avg_task_elapsed_sec")),
         "actions_executed": _number(row.get("actions_executed")),
+        "artifact_used": _cell(reuse.get("artifact_used")),
+        "reuse_numerator": _number(reuse.get("reuse_numerator")),
+        "reuse_denominator": _number(reuse.get("reuse_denominator")),
+        "reuse_rate": _number(reuse.get("reuse_rate")),
+        "reuse_unit": _cell(reuse.get("reuse_unit")),
+        "reuse_evidence_status": _cell(reuse.get("evidence_status")),
         "avg_actions_per_task": _number(row.get("avg_actions_per_task")),
         "avg_ms_per_action": _number(row.get("avg_ms_per_action")),
         "chat_model_calls": _number(row.get("chat_model_calls")),

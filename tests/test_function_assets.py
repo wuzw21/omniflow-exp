@@ -487,3 +487,133 @@ def test_conversion_cli_freezes_and_registers_completed_assets(
     for path in paths:
         if not path.is_symlink():
             path.chmod(path.stat().st_mode | stat.S_IWUSR)
+
+
+def test_conversion_cli_replaces_registered_mechanical_asset(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_index = _source_assets(tmp_path / "source")
+    authoring_manifest = _authoring_manifest(tmp_path, source_index)
+    mechanical_root = tmp_path / "mechanical"
+    mechanical_report = convert_function_assets(
+        source_asset_index=source_index,
+        authoring_manifest=authoring_manifest,
+        output_root=mechanical_root,
+    )
+    mechanical_task = mechanical_report["tasks"]["RecordWithName"]
+    provenance_path = Path(mechanical_task["provenance_path"])
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    provenance["semantic_collection"] = {
+        "function": "legacy_mechanical_wrapper",
+        "producer": {"kind": "legacy_converter"},
+    }
+    _write_json(provenance_path, provenance)
+    catalog_path = mechanical_root / "catalog.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    catalog["tasks"]["RecordWithName"]["provenance_sha256"] = _sha256(
+        provenance_path
+    )
+    _write_json(catalog_path, catalog)
+
+    memory_root = tmp_path / "memory"
+    refresh_artifact_memory(
+        memory_root=memory_root,
+        source_index=source_index,
+        function_catalogs=(catalog_path,),
+        runlog_roots=(tmp_path / "source",),
+        result_roots=(),
+    )
+
+    output_root = tmp_path / "semantic"
+    assert (
+        main(
+            [
+                "--source-asset-index",
+                str(source_index),
+                "--authoring-manifest",
+                str(authoring_manifest),
+                "--output-root",
+                str(output_root),
+                "--memory-index",
+                str(memory_root / "current.json"),
+            ]
+        )
+        == 0
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["converted"] == 1
+    assert result["reused"] == 0
+    memory = load_artifact_memory(memory_root / "current.json")
+    canonical = memory["canonical"]["function_stores"]["RecordWithName"]
+    canonical_provenance = json.loads(
+        Path(canonical["provenance_path"]).read_text(encoding="utf-8")
+    )
+    assert canonical_provenance["semantic_collection"]["function"] == (
+        "androidworld_runlog_harvester_skill"
+    )
+
+
+def test_conversion_cli_registers_explicit_immutable_revision(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_index = _source_assets(tmp_path / "source")
+    authoring_manifest = _authoring_manifest(tmp_path, source_index)
+    memory_root = tmp_path / "memory"
+    refresh_artifact_memory(
+        memory_root=memory_root,
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "source",),
+        result_roots=(),
+    )
+    first_output = tmp_path / "v1"
+    assert main(
+        [
+            "--source-asset-index",
+            str(source_index),
+            "--authoring-manifest",
+            str(authoring_manifest),
+            "--output-root",
+            str(first_output),
+            "--memory-index",
+            str(memory_root / "current.json"),
+            "--task",
+            "RecordWithName",
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    second_output = tmp_path / "v2"
+    assert main(
+        [
+            "--source-asset-index",
+            str(source_index),
+            "--authoring-manifest",
+            str(authoring_manifest),
+            "--output-root",
+            str(second_output),
+            "--memory-index",
+            str(memory_root / "current.json"),
+            "--task",
+            "RecordWithName",
+            "--revision-reason",
+            "The revised semantic parameterization passed source evidence checks.",
+        ]
+    ) == 0
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["converted"] == 1
+    selection_path = Path(result["function_store_selection_manifest"])
+    assert selection_path == second_output / "function_store_selection.json"
+    selection = json.loads(selection_path.read_text(encoding="utf-8"))
+    selected_identity = selection["selections"]["RecordWithName"][
+        "selected_identity_sha256"
+    ]
+    memory = load_artifact_memory(memory_root / "current.json")
+    canonical = memory["canonical"]["function_stores"]["RecordWithName"]
+    assert canonical["identity_sha256"] == selected_identity
+    assert canonical["selection"]["reason"] == (
+        "The revised semantic parameterization passed source evidence checks."
+    )

@@ -20,12 +20,9 @@ from typing import Any
 
 from omniflow.core.trajectory import canonicalize_run_log as import_run_log
 from src.experiment.mobilegpt_contract import (
-    MOBILEGPT_LEARNING_MODE_BY_SCHEMA,
-    MOBILEGPT_LEGACY_MEMORY_SCHEMA,
+    MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
-    MOBILEGPT_NATIVE_DERIVE_MEMORY_SCHEMA,
-    MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS,
 )
 
 APPAGENT_OFFICIAL_REVISION = "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
@@ -180,65 +177,32 @@ def _validate_mobilegpt_manifest(memory_root: Path) -> dict[str, Any]:
     root = memory_root.expanduser().resolve()
     manifest_path = root.parent / MOBILEGPT_MEMORY_MANIFEST
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if (
-        not isinstance(payload, dict)
-        or payload.get("schema_version") not in MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS
-    ):
+    if not isinstance(payload, dict) or payload.get(
+        "schema_version"
+    ) != MOBILEGPT_MEMORY_SCHEMA:
         raise ValueError("mobilegpt_cold_memory_manifest_schema_invalid")
     if payload.get("source_seed") != 111:
         raise ValueError("mobilegpt_cold_memory_source_seed_invalid")
     provenance = payload.get("provenance")
     if not isinstance(provenance, dict):
         raise ValueError("mobilegpt_cold_memory_provenance_missing")
-    schema_version = str(payload.get("schema_version") or "")
-    legacy = schema_version == MOBILEGPT_LEGACY_MEMORY_SCHEMA
-    semantic = schema_version == MOBILEGPT_MEMORY_SCHEMA
-    native_derive = schema_version == MOBILEGPT_NATIVE_DERIVE_MEMORY_SCHEMA
     required_provenance = {
-        "native_mobilegpt_learning": legacy or native_derive,
+        "native_mobilegpt_learning": False,
         "task_local_memory": True,
-        "learning_mode": MOBILEGPT_LEARNING_MODE_BY_SCHEMA[schema_version],
-        "teacher_forcing": legacy,
-        "synthetic_subtasks": not (legacy or semantic or native_derive),
-        "actions_supplied_to_mobilegpt": not native_derive,
+        "learning_mode": MOBILEGPT_LEARNING_MODE,
+        "teacher_forcing": False,
+        "synthetic_subtasks": True,
+        "semantic_subtasks": False,
+        "original_mobilegpt_prompts": False,
+        "actions_supplied_to_mobilegpt": True,
+        "source_transitions_supplied": True,
+        "source_success_boundary_supplied": True,
+        "runlog_transition_compilation": True,
+        "complete_transition_mapping": True,
+        "official_reader_validation": True,
+        "source_emulator_used": False,
         "function_store_used": False,
     }
-    if semantic:
-        required_provenance.update(
-            {
-                "semantic_subtasks": True,
-                "original_mobilegpt_prompts": True,
-                "source_transitions_supplied": True,
-                "source_success_boundary_supplied": True,
-                "runlog_transition_compilation": True,
-                "complete_transition_mapping": True,
-                "official_reader_validation": True,
-                "source_emulator_used": False,
-            }
-        )
-    elif native_derive:
-        required_provenance.update(
-            {
-                "source_transitions_supplied": True,
-                "source_success_boundary_supplied": True,
-                "trajectory_action_validation": True,
-                "complete_trajectory_validation": True,
-                "source_emulator_used": False,
-            }
-        )
-    elif legacy:
-        required_provenance["complete_teacher_action_consumption"] = True
-    else:
-        required_provenance.update(
-            {
-                "source_transitions_supplied": True,
-                "source_success_boundary_supplied": True,
-                "runlog_transition_compilation": True,
-                "complete_transition_mapping": True,
-                "official_reader_validation": True,
-                "source_emulator_used": False,
-            }
-        )
     if any(provenance.get(key) != value for key, value in required_provenance.items()):
         raise ValueError("mobilegpt_cold_memory_native_learning_incomplete")
     forbidden = [
@@ -266,17 +230,7 @@ def _validate_mobilegpt_manifest(memory_root: Path) -> dict[str, Any]:
         raise ValueError("mobilegpt_cold_memory_hash_mismatch")
     if len(files) != int(memory.get("file_count") or -1):
         raise ValueError("mobilegpt_cold_memory_file_count_mismatch")
-    evidence_labels = (
-        (
-            "teacher_source",
-            "source_run_log",
-            "source_stats",
-            "official_source_result",
-        )
-        if legacy
-        else ("source_run_log", "source_stats", "trajectory_audit")
-    )
-    for label in evidence_labels:
+    for label in ("source_run_log", "source_stats", "trajectory_audit"):
         record = payload.get(label)
         if not isinstance(record, dict):
             raise ValueError(f"mobilegpt_cold_memory_{label}_missing")
@@ -292,30 +246,8 @@ def _validate_mobilegpt_manifest(memory_root: Path) -> dict[str, Any]:
         actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
         if actual_sha256 != str(record.get("sha256") or ""):
             raise ValueError(f"mobilegpt_cold_memory_{label}_hash_mismatch")
-    if not legacy:
-        if "official_source_result" in payload:
-            raise ValueError("mobilegpt_cold_memory_official_source_forbidden")
-        return {
-            "manifest": str(manifest_path),
-            "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
-            "task_name": str(payload.get("task_name") or ""),
-            "source_seed": int(payload["source_seed"]),
-            "memory_sha256": digest,
-            "memory_file_count": len(files),
-            "task_file_count": len(task_files),
-        }
-    official = payload["official_source_result"]
-    validator_used = official.get("official_validator_used")
-    validator_success = official.get("official_validator_success")
-    validator_error = str(official.get("validator_error") or "").strip()
-    if not isinstance(validator_used, bool):
-        raise ValueError("mobilegpt_cold_memory_official_source_invalid")
-    if validator_used and not isinstance(validator_success, bool):
-        raise ValueError("mobilegpt_cold_memory_official_source_invalid")
-    if not validator_used and (
-        validator_success is not None or not validator_error
-    ):
-        raise ValueError("mobilegpt_cold_memory_official_source_invalid")
+    if "official_source_result" in payload:
+        raise ValueError("mobilegpt_cold_memory_official_source_forbidden")
     return {
         "manifest": str(manifest_path),
         "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
@@ -344,23 +276,40 @@ def _valid_appagent_demo_manifest(payload: Any) -> bool:
         doc_prompt = int(doc_usage.get("prompt_tokens") or 0)
         doc_completion = int(doc_usage.get("completion_tokens") or 0)
         doc_total = int(doc_usage.get("total_tokens") or 0)
+        offline_conversion = (
+            payload.get("conversion_mode") == "canonical_runlog_offline"
+            and payload.get("source_emulator_used") is False
+            and payload.get("native_memory_evidence")
+        )
         return (
             payload.get("schema_version") == "omniflow.appagent-demo-memory.v2"
             and payload.get("official_appagent_revision")
             == APPAGENT_OFFICIAL_REVISION
             and payload.get("source_seed") == 111
-            and payload.get("official_source_success") is True
+            and (
+                offline_conversion
+                or payload.get("official_source_success") is True
+            )
             and payload.get("teacher_complete") is True
             and teacher_action_count > 0
             and teacher_actions_consumed == teacher_action_count
             and 0 < demo_action_count <= teacher_action_count
-            and float(source_metrics.get("duration_sec") or 0.0) > 0
-            and float(source_metrics.get("wall_sec") or 0.0) > 0
+            and (
+                offline_conversion
+                or float(source_metrics.get("duration_sec") or 0.0) > 0
+            )
+            and (
+                offline_conversion
+                or float(source_metrics.get("wall_sec") or 0.0) > 0
+            )
             and source_total == source_prompt + source_completion
             and int(doc_usage.get("model_calls") or 0) > 0
             and doc_total == doc_prompt + doc_completion
             and doc_total > 0
-            and float(doc_usage.get("wall_sec") or 0.0) > 0
+            and (
+                offline_conversion
+                or float(doc_usage.get("wall_sec") or 0.0) > 0
+            )
             and float(payload.get("prep_wall_sec") or 0.0) > 0
             and payload.get("uses_omniflow_function") is False
             and payload.get("target_inputs_read") is False

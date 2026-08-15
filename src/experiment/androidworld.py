@@ -32,18 +32,10 @@ from omniflow.functions.assets import FunctionStore
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
     MOBILEGPT_AUDIT_SCHEMA_BY_SCHEMA,
-    MOBILEGPT_DIRECT_AUDIT_SCHEMA,
-    MOBILEGPT_DIRECT_LEARNING_MODE,
-    MOBILEGPT_DIRECT_MEMORY_SCHEMA,
-    MOBILEGPT_DIRECT_SOURCE_METHOD,
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_LEARNING_MODE_BY_SCHEMA,
-    MOBILEGPT_LEGACY_LEARNING_MODE,
-    MOBILEGPT_LEGACY_MEMORY_SCHEMA,
-    MOBILEGPT_LEGACY_TEACHER_SOURCE_SCHEMA,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
-    MOBILEGPT_NATIVE_DERIVE_MEMORY_SCHEMA,
     MOBILEGPT_PREP_TYPE,
     MOBILEGPT_PREP_TYPE_BY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
@@ -51,6 +43,7 @@ from src.experiment.mobilegpt_contract import (
 )
 from src.experiment.result_registry import register_attempt_summary
 from src.integrations.appagent_adapter import validate_appagent_demo_memory
+from src.integrations.android_world.methods import reuse_metrics_from_result_row
 
 DEFAULT_ARCHIVE_INDEX = (
     REPO_ROOT
@@ -3102,46 +3095,6 @@ def _mobilegpt_manifest_evidence_path(
     return path
 
 
-def _mobilegpt_legacy_fixed_replay_source(
-    source_run_log: str | Path,
-    *,
-    task_name: str,
-    source_seed: int,
-) -> bool:
-    try:
-        payload = json.loads(_repo_path(source_run_log).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-    if not isinstance(payload, dict):
-        return False
-    androidworld = payload.get("androidworld")
-    replay = payload.get("raw_replay_evidence")
-    if not isinstance(androidworld, dict) or not isinstance(replay, dict):
-        return False
-    validator = androidworld.get("validator")
-    if not isinstance(validator, dict):
-        return False
-    source_action_count = replay.get("source_action_count")
-    actions_executed = replay.get("actions_executed")
-    return bool(
-        payload.get("schema_version")
-        == "omniflow.androidworld_function_ready_runlog.v1"
-        and payload.get("completed") is True
-        and payload.get("success") is True
-        and str(androidworld.get("task_name") or "") == str(task_name)
-        and androidworld.get("seed") == int(source_seed)
-        and validator.get("success") is True
-        and validator.get("uses_androidworld_official_validator") is True
-        and replay.get("success") is True
-        and replay.get("official_validator_used") is True
-        and replay.get("execution_backend") == "memory_adapter_exact_sequence"
-        and replay.get("model_calls") == 0
-        and type(source_action_count) is int
-        and source_action_count > 0
-        and actions_executed == source_action_count
-    )
-
-
 def _validate_mobilegpt_converted_memory(
     root: Path,
     manifest: dict[str, Any],
@@ -3155,8 +3108,6 @@ def _validate_mobilegpt_converted_memory(
     expected_source_method: str,
 ) -> dict[str, Any]:
     schema_version = str(manifest.get("schema_version") or "")
-    semantic = schema_version == MOBILEGPT_MEMORY_SCHEMA
-    native_derive = schema_version == MOBILEGPT_NATIVE_DERIVE_MEMORY_SCHEMA
     try:
         schema_source_method = MOBILEGPT_SOURCE_METHOD_BY_SCHEMA[schema_version]
         schema_learning_mode = MOBILEGPT_LEARNING_MODE_BY_SCHEMA[schema_version]
@@ -3186,14 +3137,19 @@ def _validate_mobilegpt_converted_memory(
     if not isinstance(provenance, dict):
         raise ValueError("mobilegpt_virtual_memory_provenance_missing")
     required_provenance = {
-        "native_mobilegpt_learning": native_derive,
+        "native_mobilegpt_learning": False,
         "task_local_memory": True,
         "learning_mode": schema_learning_mode,
         "teacher_forcing": False,
-        "synthetic_subtasks": not (semantic or native_derive),
-        "actions_supplied_to_mobilegpt": not native_derive,
+        "synthetic_subtasks": True,
+        "semantic_subtasks": False,
+        "original_mobilegpt_prompts": False,
+        "actions_supplied_to_mobilegpt": True,
         "source_transitions_supplied": True,
         "source_success_boundary_supplied": True,
+        "runlog_transition_compilation": True,
+        "complete_transition_mapping": True,
+        "official_reader_validation": True,
         "function_store_used": False,
         "function_conversion_enabled": False,
         "target_inputs_read": False,
@@ -3202,31 +3158,6 @@ def _validate_mobilegpt_converted_memory(
         "coordinate_replay": False,
         "source_emulator_used": False,
     }
-    if semantic:
-        required_provenance.update(
-            {
-                "semantic_subtasks": True,
-                "original_mobilegpt_prompts": True,
-                "runlog_transition_compilation": True,
-                "complete_transition_mapping": True,
-                "official_reader_validation": True,
-            }
-        )
-    elif native_derive:
-        required_provenance.update(
-            {
-                "trajectory_action_validation": True,
-                "complete_trajectory_validation": True,
-            }
-        )
-    else:
-        required_provenance.update(
-            {
-                "runlog_transition_compilation": True,
-                "complete_transition_mapping": True,
-                "official_reader_validation": True,
-            }
-        )
     for provenance_field, expected in required_provenance.items():
         if (
             provenance.get(provenance_field) is not expected
@@ -3323,43 +3254,21 @@ def _validate_mobilegpt_converted_memory(
         or any(not isinstance(row, dict) for row in validation_rows)
         or sum(int(row.get("consumed_transitions") or 0) for row in validation_rows)
         != transition_count
-        or audit.get("actions_supplied_to_mobilegpt") != (not native_derive)
+        or audit.get("actions_supplied_to_mobilegpt") is not True
         or audit.get("source_transitions_supplied") is not True
         or audit.get("source_success_boundary_supplied") is not True
-        or (not native_derive and audit.get("complete") is not True)
+        or audit.get("complete") is not True
     ):
         raise ValueError("mobilegpt_virtual_memory_trajectory_incomplete")
-    if not native_derive:
-        official_reader = audit.get("official_reader_validation")
-        if (
-            not isinstance(official_reader, dict)
-            or official_reader.get("loadable") is not True
-            or int(official_reader.get("task_path_pages") or 0) <= 0
-            or int(official_reader.get("page_count") or 0) <= 0
-            or int(official_reader.get("action_row_count") or 0)
-            < transition_count
-        ):
-            raise ValueError("mobilegpt_virtual_memory_official_reader_invalid")
-    if semantic:
-        required_audit = {
-            "original_mobilegpt_prompts": True,
-            "explore_agent_used": True,
-            "select_agent_used": True,
-            "derive_agent_fallback_allowed": True,
-            "generalize_action_used": True,
-            "source_direct_hit_validation": True,
-        }
-        for field, expected in required_audit.items():
-            if audit.get(field) is not expected:
-                raise ValueError(
-                    f"mobilegpt_semantic_memory_audit_invalid:{field}"
-                )
-        derive_fallback_count = audit.get("derive_agent_fallback_count")
-        if type(derive_fallback_count) is not int or derive_fallback_count < 0:
-            raise ValueError(
-                "mobilegpt_semantic_memory_audit_invalid:"
-                "derive_agent_fallback_count"
-            )
+    official_reader = audit.get("official_reader_validation")
+    if (
+        not isinstance(official_reader, dict)
+        or official_reader.get("loadable") is not True
+        or int(official_reader.get("task_path_pages") or 0) <= 0
+        or int(official_reader.get("page_count") or 0) <= 0
+        or int(official_reader.get("action_row_count") or 0) < transition_count
+    ):
+        raise ValueError("mobilegpt_virtual_memory_official_reader_invalid")
     success_boundary = audit.get("source_success_boundary")
     if (
         not isinstance(success_boundary, dict)
@@ -3380,37 +3289,8 @@ def _validate_mobilegpt_converted_memory(
         or int(stats_summary.get("task_finished_count") or 0) != 1
     ):
         raise ValueError("mobilegpt_virtual_memory_task_lifecycle_incomplete")
-    if not semantic and not native_derive and int(
-        stats_summary.get("chat_model_calls") or 0
-    ) != 0:
+    if int(stats_summary.get("chat_model_calls") or 0) != 0:
         raise ValueError("mobilegpt_offline_memory_chat_calls_forbidden")
-    normalized_expected_model = str(expected_model or "").strip()
-    manifest_model = str(manifest.get("source_model") or "").strip()
-    source_models = {
-        str(model or "").strip()
-        for model in stats_summary.get("chat_models") or []
-        if str(model or "").strip()
-    }
-    if semantic:
-        if not manifest_model:
-            raise ValueError("mobilegpt_semantic_memory_source_model_required")
-        if int(stats_summary.get("chat_model_calls") or 0) <= 0:
-            raise ValueError("mobilegpt_semantic_memory_chat_calls_required")
-        if int(stats_summary.get("embedding_model_calls") or 0) <= 0:
-            raise ValueError("mobilegpt_semantic_memory_embedding_calls_required")
-        if source_models != {manifest_model}:
-            raise ValueError("mobilegpt_virtual_memory_model_mismatch")
-        if list(stats_summary.get("chat_attempts") or []) != [1]:
-            raise ValueError("mobilegpt_semantic_memory_chat_attempts_invalid")
-        if stats_summary.get("token_usage_status") != "tracked":
-            raise ValueError("mobilegpt_semantic_memory_token_usage_incomplete")
-        if normalized_expected_model and manifest_model != normalized_expected_model:
-            raise ValueError("mobilegpt_virtual_memory_manifest_model_mismatch")
-    elif native_derive and normalized_expected_model:
-        if manifest_model != normalized_expected_model:
-            raise ValueError("mobilegpt_virtual_memory_manifest_model_mismatch")
-        if source_models != {normalized_expected_model}:
-            raise ValueError("mobilegpt_virtual_memory_model_mismatch")
     return {
         "manifest": manifest,
         "manifest_path": str(manifest_path),
@@ -3456,462 +3336,23 @@ def validate_mobilegpt_adapted_memory(
         raise ValueError("mobilegpt_cold_memory_manifest_invalid_json") from error
     if not isinstance(manifest, dict):
         raise ValueError("mobilegpt_cold_memory_manifest_invalid")
-    schema_version = manifest.get("schema_version")
-    if schema_version in {
-        MOBILEGPT_MEMORY_SCHEMA,
-        MOBILEGPT_DIRECT_MEMORY_SCHEMA,
-        MOBILEGPT_NATIVE_DERIVE_MEMORY_SCHEMA,
-    }:
-        validated = _validate_mobilegpt_converted_memory(
-            root,
-            manifest,
-            manifest_path,
-            task_name=task_name,
-            source_seed=source_seed,
-            source_run_log=source_run_log,
-            compatible_source_sha256s=compatible_source_sha256s,
-            expected_model=expected_model,
-            expected_source_method=expected_source_method,
-        )
-        if schema_version in {
-            MOBILEGPT_MEMORY_SCHEMA,
-            MOBILEGPT_DIRECT_MEMORY_SCHEMA,
-        }:
-            from src.integrations.mobilegpt_converter import (
-                validate_mobilegpt_memory,
-            )
-
-            validated["memory_validation"] = validate_mobilegpt_memory(root)
-        return validated
-    if schema_version != MOBILEGPT_LEGACY_MEMORY_SCHEMA:
+    if manifest.get("schema_version") != MOBILEGPT_MEMORY_SCHEMA:
         raise ValueError("mobilegpt_cold_memory_manifest_schema_invalid")
-    if str(manifest.get("task_name") or "") != str(task_name):
-        raise ValueError("mobilegpt_cold_memory_task_name_mismatch")
-    if int(manifest.get("source_seed") or -1) != int(source_seed):
-        raise ValueError("mobilegpt_cold_memory_source_seed_mismatch")
-    if int(source_seed) != 111:
-        raise ValueError("mobilegpt_cold_memory_requires_source_seed_111")
-    normalized_expected_source_method = str(expected_source_method or "").strip()
-
-    provenance = manifest.get("provenance")
-    if not isinstance(provenance, dict):
-        raise ValueError("mobilegpt_cold_memory_provenance_missing")
-    forbidden_true = [
-        name
-        for name in (
-            "function_conversion_enabled",
-            "target_inputs_read",
-            "target_observations_read",
-            "validator_state_read",
-            "coordinate_replay",
-        )
-        if bool(provenance.get(name))
-    ]
-    if forbidden_true:
-        raise ValueError(
-            "mobilegpt_cold_memory_provenance_invalid:" + ",".join(forbidden_true)
-        )
-    if provenance.get("native_mobilegpt_learning") is not True:
-        raise ValueError("mobilegpt_cold_memory_native_learning_required")
-    if provenance.get("task_local_memory") is not True:
-        raise ValueError("mobilegpt_cold_memory_task_local_required")
-    if provenance.get("learning_mode") != MOBILEGPT_LEGACY_LEARNING_MODE:
-        raise ValueError("mobilegpt_cold_memory_learning_mode_invalid")
-    if provenance.get("teacher_forcing") is not True:
-        raise ValueError("mobilegpt_cold_memory_teacher_forcing_required")
-    if provenance.get("synthetic_subtasks") is not False:
-        raise ValueError("mobilegpt_cold_memory_synthetic_subtasks_forbidden")
-    if provenance.get("actions_supplied_to_mobilegpt") is not True:
-        raise ValueError("mobilegpt_cold_memory_teacher_actions_required")
-    if provenance.get("function_store_used") is not False:
-        raise ValueError("mobilegpt_cold_memory_function_store_forbidden")
-    if provenance.get("complete_teacher_action_consumption") is not True:
-        raise ValueError("mobilegpt_cold_memory_teacher_incomplete")
-
-    memory_record = manifest.get("memory")
-    if not isinstance(memory_record, dict):
-        raise ValueError("mobilegpt_cold_memory_record_missing")
-    expected_memory_path = (
-        root.parent / str(memory_record.get("relative_path") or "")
-    ).resolve()
-    if expected_memory_path != root:
-        raise ValueError("mobilegpt_cold_memory_path_mismatch")
-    actual_digest, actual_file_count = _mobilegpt_memory_digest(root)
-    if actual_digest != str(memory_record.get("sha256") or ""):
-        raise ValueError("mobilegpt_cold_memory_hash_mismatch")
-    if actual_file_count != int(memory_record.get("file_count") or -1):
-        raise ValueError("mobilegpt_cold_memory_file_count_mismatch")
-    inventory = inspect_mobilegpt_memory(root)
-    if inventory.get("task_local_memory") is not True:
-        raise ValueError("mobilegpt_cold_memory_not_task_local")
-    if inventory.get("native_memory_complete") is not True:
-        raise ValueError("mobilegpt_cold_memory_native_graph_incomplete")
-    if not inventory.get("has_recallable_subtasks"):
-        raise ValueError("mobilegpt_cold_memory_missing_recallable_subtasks")
-    if not inventory.get("has_useful_actions"):
-        raise ValueError("mobilegpt_cold_memory_missing_useful_actions")
-
-    bundle_root = root.parent.resolve()
-    teacher_source = manifest.get("teacher_source")
-    teacher_source_path = _mobilegpt_manifest_evidence_path(
-        bundle_root,
-        teacher_source,
-        label="teacher_source",
-    )
-    teacher_payload = json.loads(teacher_source_path.read_text(encoding="utf-8"))
-    if (
-        not isinstance(teacher_payload, dict)
-        or teacher_payload.get("schema_version") != MOBILEGPT_LEGACY_TEACHER_SOURCE_SCHEMA
-    ):
-        raise ValueError("mobilegpt_cold_memory_teacher_source_invalid")
-    if str(teacher_payload.get("task_name") or "") != str(task_name):
-        raise ValueError("mobilegpt_cold_memory_teacher_source_task_mismatch")
-    if int(teacher_payload.get("source_seed") or -1) != int(source_seed):
-        raise ValueError("mobilegpt_cold_memory_teacher_source_seed_mismatch")
-    if teacher_payload.get("contains_source_coordinates") is not False:
-        raise ValueError("mobilegpt_cold_memory_teacher_coordinates_forbidden")
-    source_log_record = manifest.get("source_run_log")
-    source_log_path = _mobilegpt_manifest_evidence_path(
-        bundle_root,
-        source_log_record,
-        label="source_run_log",
-    )
-    expected_source_sha256 = _file_sha256(_repo_path(source_run_log))
-    accepted_source_sha256s = {expected_source_sha256}
-    for value in compatible_source_sha256s:
-        digest = str(value or "").strip().lower()
-        if not re.fullmatch(r"[0-9a-f]{64}", digest):
-            raise ValueError("mobilegpt_compatible_source_sha256_invalid")
-        accepted_source_sha256s.add(digest)
-    manifest_source_sha256 = str(source_log_record.get("sha256") or "")
-    if manifest_source_sha256 not in accepted_source_sha256s:
-        raise ValueError("mobilegpt_cold_memory_source_run_log_mismatch")
-    if str(teacher_payload.get("source_run_log_sha256") or "") != (
-        manifest_source_sha256
-    ):
-        raise ValueError("mobilegpt_cold_memory_teacher_source_run_log_mismatch")
-    manifest_source_method = str(manifest.get("source_method") or "").strip()
-    legacy_fixed_replay = bool(
-        not manifest_source_method
-        and normalized_expected_source_method == DEFAULT_SOURCE_METHOD
-        and _mobilegpt_legacy_fixed_replay_source(
-            source_log_path,
-            task_name=task_name,
-            source_seed=source_seed,
-        )
-    )
-    if (
-        normalized_expected_source_method
-        and manifest_source_method != normalized_expected_source_method
-        and not legacy_fixed_replay
-    ):
-        raise ValueError(
-            "mobilegpt_cold_memory_source_method_mismatch:"
-            f"expected={normalized_expected_source_method}:"
-            f"actual={manifest_source_method or 'missing'}"
-        )
-    source_stats = manifest.get("source_stats")
-    source_stats_path = _mobilegpt_manifest_evidence_path(
-        bundle_root,
-        source_stats,
-        label="source_stats",
-    )
-    stats_summary = summarize_mobilegpt_stats(source_stats_path)
-    normalized_expected_model = str(expected_model or "").strip()
-    if normalized_expected_model:
-        manifest_model = str(manifest.get("source_model") or "").strip()
-        if manifest_model != normalized_expected_model:
-            raise ValueError(
-                "mobilegpt_cold_memory_manifest_model_mismatch:"
-                f"expected={normalized_expected_model}:"
-                f"actual={manifest_model or 'missing'}"
-            )
-        source_models = {
-            str(model or "").strip()
-            for model in stats_summary.get("chat_models") or []
-            if str(model or "").strip()
-        }
-        if source_models != {normalized_expected_model}:
-            raise ValueError(
-                "mobilegpt_cold_memory_model_mismatch:"
-                f"expected={normalized_expected_model}:actual={sorted(source_models)}"
-            )
-    official_result = manifest.get("official_source_result")
-    official_result_path = _mobilegpt_manifest_evidence_path(
-        bundle_root,
-        official_result,
-        label="official_source_result",
-    )
-    result_summary = _mobilegpt_official_source_result(
-        official_result_path,
+    validated = _validate_mobilegpt_converted_memory(
+        root,
+        manifest,
+        manifest_path,
         task_name=task_name,
+        source_seed=source_seed,
+        source_run_log=source_run_log,
+        compatible_source_sha256s=compatible_source_sha256s,
+        expected_model=expected_model,
+        expected_source_method=expected_source_method,
     )
-    if not result_summary["official_validator_success"]:
-        raise ValueError("mobilegpt_cold_memory_official_source_failed")
-    write_status = _mobilegpt_memory_write_status(
-        stats_summary=stats_summary,
-        memory_inventory=inventory,
-        source_validator_success=True,
-    )
-    if not write_status["memory_written"]:
-        raise ValueError(
-            "mobilegpt_cold_memory_incomplete:" + ",".join(write_status["reasons"])
-        )
-    _validate_mobilegpt_teacher_stats(
-        teacher_payload,
-        stats_summary,
-        error_prefix="mobilegpt_cold_memory_teacher_source",
-    )
-    manifest_count_pairs = {
-        "teacher_source_preflight_count": write_status[
-            "teacher_source_preflight_count"
-        ],
-        "teacher_action_count": write_status["teacher_action_count"],
-        "teacher_expected_action_count": write_status["teacher_expected_action_count"],
-        "teacher_groundable_action_count": stats_summary[
-            "teacher_groundable_action_count"
-        ],
-        "teacher_consumed_count": write_status["teacher_consumed_action_count"],
-        "teacher_skipped_noop_count": write_status[
-            "teacher_skipped_noop_count"
-        ],
-        "teacher_vlm_fallback_count": write_status["teacher_vlm_fallback_count"],
-        "teacher_unrecovered_miss_count": write_status[
-            "teacher_unrecovered_miss_count"
-        ],
-        "teacher_forced_select_count": write_status["teacher_forced_select_count"],
-        "teacher_task_local_forced_select_count": write_status[
-            "teacher_task_local_forced_select_count"
-        ],
-        "teacher_unsafe_forced_select_count": write_status[
-            "teacher_unsafe_forced_select_count"
-        ],
-        "task_started_count": write_status["task_started_count"],
-        "task_finished_count": write_status["task_finished_count"],
-        "model_calls": _coerce_int(stats_summary.get("model_calls")),
-    }
-    if not _mobilegpt_stats_manifest_matches(
-        source_stats,
-        manifest_count_pairs,
-    ):
-        raise ValueError("mobilegpt_cold_memory_stats_manifest_mismatch")
-    if (
-        official_result.get("official_validator_used")
-        is not result_summary["official_validator_used"]
-    ) or (
-        official_result.get("official_validator_success")
-        is not result_summary["official_validator_success"]
-    ):
-        raise ValueError("mobilegpt_cold_memory_result_manifest_mismatch")
-    return {
-        "manifest": manifest,
-        "manifest_path": str(manifest_path),
-        "manifest_sha256": _file_sha256(manifest_path),
-        "memory_root": str(root),
-        "memory_sha256": actual_digest,
-        "memory_file_count": actual_file_count,
-        "memory_inventory": inventory,
-        "source_stats_summary": stats_summary,
-        "source_memory_write_status": write_status,
-        "target_package": str(manifest.get("target_package") or ""),
-        "target_app": str(manifest.get("target_app") or ""),
-    }
+    from src.integrations.mobilegpt_converter import validate_mobilegpt_memory
 
-
-def _mobilegpt_stats_manifest_matches(
-    source_stats: dict[str, Any],
-    expected_counts: dict[str, Any],
-) -> bool:
-    return all(
-        key not in source_stats
-        or int(source_stats.get(key) or 0) == int(value)
-        for key, value in expected_counts.items()
-    )
-
-
-def _mobilegpt_official_source_result(
-    result_path: str | Path,
-    *,
-    task_name: str,
-) -> dict[str, Any]:
-    path = _repo_path(result_path)
-    rows = list(_iter_jsonl_rows(path))
-    task_rows = [
-        row
-        for row in rows
-        if str(row.get("task_name") or row.get("task") or "") == str(task_name)
-    ]
-    if not task_rows:
-        raise ValueError("mobilegpt_source_result_task_missing")
-    official_rows = [row for row in task_rows if _official_validator_used(row)]
-    validator_error = ""
-    for row in task_rows:
-        validator_result = row.get("androidworld_validator_result")
-        if isinstance(validator_result, dict):
-            validator_error = str(validator_result.get("error") or "").strip()
-        if not validator_error:
-            validator_error = str(row.get("error") or "").strip()
-        if validator_error:
-            break
-    validator_used = bool(official_rows)
-    if not validator_used and not validator_error:
-        raise ValueError("mobilegpt_source_validator_unavailable_without_error")
-    success = (
-        any(_official_validator_success(row) for row in official_rows)
-        if validator_used
-        else None
-    )
-    return {
-        "row_count": len(task_rows),
-        "official_validator_used": validator_used,
-        "official_validator_success": success,
-        "validator_error": validator_error or None,
-    }
-
-
-def _validate_mobilegpt_teacher_stats(
-    teacher_source: dict[str, Any],
-    stats_summary: dict[str, Any],
-    *,
-    error_prefix: str,
-) -> tuple[int, bool, bool]:
-    action_count = int(teacher_source.get("action_count") or 0)
-    groundable_action_count = int(
-        teacher_source.get("groundable_action_count") or 0
-    )
-    fallback_enabled = bool(
-        teacher_source.get("fallback_to_vlm_on_teacher_miss")
-    )
-    native_fallback_only = bool(teacher_source.get("native_vlm_fallback_only"))
-    comparisons = (
-        (
-            action_count,
-            int(stats_summary.get("teacher_expected_action_count") or 0),
-            "action_count",
-        ),
-        (
-            groundable_action_count,
-            int(stats_summary.get("teacher_groundable_action_count") or 0),
-            "groundable_count",
-        ),
-        (
-            int(teacher_source.get("expected_vlm_fallback_action_count") or 0),
-            action_count - groundable_action_count,
-            "fallback_count",
-        ),
-        (
-            fallback_enabled,
-            bool(stats_summary.get("teacher_vlm_fallback_enabled")),
-            "fallback_policy",
-        ),
-        (
-            native_fallback_only,
-            bool(stats_summary.get("native_vlm_fallback_only")),
-            "fallback_mode",
-        ),
-    )
-    for expected, actual, label in comparisons:
-        if expected != actual:
-            raise ValueError(f"{error_prefix}_{label}_mismatch")
-    return groundable_action_count, fallback_enabled, native_fallback_only
-
-
-def _validate_mobilegpt_teacher_source_payload(
-    teacher: Any,
-    *,
-    task_name: str,
-    source_seed: int,
-    source_run_log_sha256: str,
-) -> dict[str, Any]:
-    if (
-        not isinstance(teacher, dict)
-        or teacher.get("schema_version") != MOBILEGPT_LEGACY_TEACHER_SOURCE_SCHEMA
-    ):
-        raise ValueError("mobilegpt_teacher_source_schema_invalid")
-    if str(teacher.get("task_name") or "") != str(task_name):
-        raise ValueError("mobilegpt_teacher_source_task_mismatch")
-    if int(teacher.get("source_seed") or -1) != int(source_seed):
-        raise ValueError("mobilegpt_teacher_source_seed_mismatch")
-    if str(teacher.get("source_run_log_sha256") or "") != source_run_log_sha256:
-        raise ValueError("mobilegpt_teacher_source_run_log_mismatch")
-    required_false = (
-        "contains_source_coordinates",
-        "contains_task_or_subtask_semantics",
-        "target_inputs_read",
-        "target_observations_read",
-    )
-    if any(teacher.get(field) is not False for field in required_false):
-        raise ValueError("mobilegpt_teacher_source_provenance_invalid")
-    actions = teacher.get("actions")
-    if not isinstance(actions, list):
-        raise ValueError("mobilegpt_teacher_source_actions_invalid")
-    action_count = int(teacher.get("action_count") or 0)
-    groundable_action_count = int(teacher.get("groundable_action_count") or 0)
-    expected_fallback_count = int(
-        teacher.get("expected_vlm_fallback_action_count") or 0
-    )
-    fallback_enabled = teacher.get("fallback_to_vlm_on_teacher_miss") is True
-    native_fallback_only = teacher.get("native_vlm_fallback_only") is True
-    if action_count != len(actions):
-        raise ValueError("mobilegpt_teacher_source_action_count_mismatch")
-    if not 0 <= groundable_action_count <= action_count:
-        raise ValueError("mobilegpt_teacher_source_groundable_count_invalid")
-    if expected_fallback_count != action_count - groundable_action_count:
-        raise ValueError("mobilegpt_teacher_source_fallback_count_invalid")
-    if expected_fallback_count and not fallback_enabled:
-        raise ValueError("mobilegpt_teacher_source_fallback_required")
-    if native_fallback_only != (action_count == 0 and fallback_enabled):
-        raise ValueError("mobilegpt_teacher_source_fallback_mode_invalid")
-    if not actions and not native_fallback_only:
-        raise ValueError("mobilegpt_teacher_source_actions_required")
-
-    forbidden_fields = {
-        "bounds",
-        "end_x",
-        "end_y",
-        "page",
-        "screenshot",
-        "start_x",
-        "start_y",
-        "x",
-        "x1",
-        "x2",
-        "xml",
-        "y",
-        "y1",
-        "y2",
-    }
-
-    def contains_forbidden_field(value: Any) -> bool:
-        if isinstance(value, dict):
-            return any(
-                str(key) in forbidden_fields or contains_forbidden_field(item)
-                for key, item in value.items()
-            )
-        if isinstance(value, list):
-            return any(contains_forbidden_field(item) for item in value)
-        return False
-
-    supported_primitives = {
-        "click",
-        "input_text",
-        "long_press",
-        "press_key",
-        "swipe",
-    }
-    for action in actions:
-        if not isinstance(action, dict):
-            raise ValueError("mobilegpt_teacher_source_action_invalid")
-        if str(action.get("primitive") or "") not in supported_primitives:
-            raise ValueError("mobilegpt_teacher_source_action_unsupported")
-        if type(action.get("source_step_index")) is not int or type(
-            action.get("source_action_index")
-        ) is not int:
-            raise ValueError("mobilegpt_teacher_source_action_index_invalid")
-        params = action.get("params")
-        if not isinstance(params, dict) or contains_forbidden_field(params):
-            raise ValueError("mobilegpt_teacher_source_action_coordinates_forbidden")
-    return teacher
+    validated["memory_validation"] = validate_mobilegpt_memory(root)
+    return validated
 
 
 def seal_mobilegpt_source_memory(
@@ -3930,27 +3371,11 @@ def seal_mobilegpt_source_memory(
 ) -> dict[str, Any]:
     """Seal one offline RunLog-to-MobileGPT memory database."""
 
-    if memory_schema not in {
-        MOBILEGPT_MEMORY_SCHEMA,
-        MOBILEGPT_DIRECT_MEMORY_SCHEMA,
-    }:
+    if memory_schema != MOBILEGPT_MEMORY_SCHEMA:
         raise ValueError(f"mobilegpt_source_memory_schema_invalid:{memory_schema}")
-    semantic_conversion = memory_schema == MOBILEGPT_MEMORY_SCHEMA
-    audit_schema = (
-        MOBILEGPT_AUDIT_SCHEMA
-        if semantic_conversion
-        else MOBILEGPT_DIRECT_AUDIT_SCHEMA
-    )
-    source_method = (
-        MOBILEGPT_SOURCE_METHOD
-        if semantic_conversion
-        else MOBILEGPT_DIRECT_SOURCE_METHOD
-    )
-    learning_mode = (
-        MOBILEGPT_LEARNING_MODE
-        if semantic_conversion
-        else MOBILEGPT_DIRECT_LEARNING_MODE
-    )
+    audit_schema = MOBILEGPT_AUDIT_SCHEMA
+    source_method = MOBILEGPT_SOURCE_METHOD
+    learning_mode = MOBILEGPT_LEARNING_MODE
 
     if int(source_seed) != 111:
         raise ValueError("mobilegpt_virtual_memory_requires_source_seed_111")
@@ -4032,71 +3457,35 @@ def seal_mobilegpt_source_memory(
         or int(stats_summary.get("task_finished_count") or 0) != 1
     ):
         raise ValueError("mobilegpt_virtual_memory_task_lifecycle_incomplete")
-    normalized_model = str(source_model or "").strip()
-    chat_models = {
-        str(value or "").strip()
-        for value in stats_summary.get("chat_models") or []
-        if str(value or "").strip()
-    }
     chat_attempts = [
         _coerce_int(value) for value in stats_summary.get("chat_attempts") or []
     ]
     if int(stats_summary.get("embedding_model_calls") or 0) <= 0:
         raise ValueError("mobilegpt_memory_embedding_calls_required")
-    if semantic_conversion:
-        if not normalized_model:
-            raise ValueError("mobilegpt_semantic_memory_source_model_required")
-        if int(stats_summary.get("chat_model_calls") or 0) <= 0:
-            raise ValueError("mobilegpt_semantic_memory_chat_calls_required")
-        if chat_models != {normalized_model}:
-            raise ValueError(
-                "mobilegpt_semantic_memory_chat_model_mismatch:"
-                f"expected={normalized_model}:actual={','.join(sorted(chat_models))}"
-            )
-        if chat_attempts != [1]:
-            raise ValueError(
-                "mobilegpt_semantic_memory_chat_attempts_invalid:"
-                + ",".join(str(value) for value in chat_attempts)
-            )
-        if stats_summary.get("token_usage_status") != "tracked":
-            raise ValueError("mobilegpt_semantic_memory_token_usage_incomplete")
-        required_audit = {
-            "original_mobilegpt_prompts": True,
-            "explore_agent_used": True,
-            "select_agent_used": True,
-            "derive_agent_fallback_allowed": True,
-            "generalize_action_used": True,
-            "source_direct_hit_validation": True,
-        }
-    else:
-        if int(stats_summary.get("chat_model_calls") or 0) != 0:
-            raise ValueError("mobilegpt_direct_memory_chat_calls_forbidden")
-        required_audit = {
-            "conversion_mode": "runlog_direct",
-            "original_mobilegpt_prompts": False,
-            "explore_agent_used": False,
-            "select_agent_used": False,
-            "derive_agent_fallback_allowed": False,
-            "generalize_action_used": True,
-            "source_direct_hit_validation": True,
-            "direct_subtasks_from_runlog": True,
+    if int(stats_summary.get("chat_model_calls") or 0) != 0:
+        raise ValueError("mobilegpt_direct_memory_chat_calls_forbidden")
+    required_audit = {
+        "conversion_mode": "runlog_direct",
+        "original_mobilegpt_prompts": False,
+        "explore_agent_used": False,
+        "select_agent_used": False,
+        "derive_agent_fallback_allowed": False,
+        "generalize_action_used": True,
+        "source_direct_hit_validation": True,
+        "direct_subtasks_from_runlog": True,
     }
     for audit_field, expected in required_audit.items():
         if audit.get(audit_field) != expected:
             raise ValueError(
-                f"mobilegpt_semantic_memory_audit_invalid:{audit_field}"
+                f"mobilegpt_memory_audit_invalid:{audit_field}"
             )
     derive_fallback_count = audit.get("derive_agent_fallback_count")
     if type(derive_fallback_count) is not int or derive_fallback_count < 0:
         raise ValueError(
-            "mobilegpt_semantic_memory_audit_invalid:derive_agent_fallback_count"
+            "mobilegpt_memory_audit_invalid:derive_agent_fallback_count"
         )
 
-    provenance_root = bundle_root / (
-        "provenance_mobilegpt_runlog_semantic_v1"
-        if semantic_conversion
-        else "provenance_mobilegpt_runlog_direct_v1"
-    )
+    provenance_root = bundle_root / "provenance_mobilegpt_runlog_direct_v1"
     provenance_root.mkdir(exist_ok=False)
 
     def copy_evidence(source: Path, name: str) -> Path:
@@ -4113,7 +3502,7 @@ def seal_mobilegpt_source_memory(
         "task_name": str(task_name),
         "source_seed": int(source_seed),
         "source_method": source_method,
-        "source_model": normalized_model if semantic_conversion else "",
+        "source_model": "",
         "target_package": str(target_package),
         "target_app": str(target_app or target_package),
         "memory": {
@@ -4163,9 +3552,9 @@ def seal_mobilegpt_source_memory(
             "task_local_memory": True,
             "learning_mode": learning_mode,
             "teacher_forcing": False,
-            "synthetic_subtasks": not semantic_conversion,
-            "semantic_subtasks": semantic_conversion,
-            "original_mobilegpt_prompts": semantic_conversion,
+            "synthetic_subtasks": True,
+            "semantic_subtasks": False,
+            "original_mobilegpt_prompts": False,
             "actions_supplied_to_mobilegpt": True,
             "source_transitions_supplied": True,
             "source_success_boundary_supplied": True,
@@ -4192,7 +3581,7 @@ def seal_mobilegpt_source_memory(
         task_name=task_name,
         source_seed=source_seed,
         source_run_log=source_path,
-        expected_model=normalized_model if semantic_conversion else "",
+        expected_model="",
         expected_source_method=source_method,
     )
 
@@ -4503,6 +3892,7 @@ def build_mobilegpt_command(
     resolved_action = str(action or "").strip().lower()
     if resolved_action == "server":
         env["MOBILEGPT_STATS_JSONL"] = str(_repo_path(stats_jsonl, repo_root=repo_root))
+        env["MOBILEGPT_UPSTREAM_MODE"] = "1"
         argv = [
             python_executable,
             "-m",
@@ -4513,6 +3903,7 @@ def build_mobilegpt_command(
             str(server_host or "0.0.0.0"),
             "--port",
             str(int(port)),
+            "--upstream",
         ]
         return CommandSpec(
             label="mobilegpt:server",
@@ -6654,6 +6045,7 @@ def _normalize_one_task_result_row(row: dict[str, Any]) -> dict[str, Any]:
 
     if normalized.get("official_validator_success") is not None:
         normalized["success"] = bool(normalized.get("official_validator_success"))
+    normalized["reuse_metrics"] = reuse_metrics_from_result_row(normalized)
     return normalized
 
 
@@ -7416,7 +6808,6 @@ def build_appagent_androidworld_command(
     output_root: str | Path,
     appagent_root: str | Path,
     docs_root: str | Path | None = None,
-    action_source: str | Path | None = None,
     teacher_source: str | Path | None = None,
     workspace_root: str | Path | None = None,
     demo_name: str = "",
@@ -7436,10 +6827,8 @@ def build_appagent_androidworld_command(
         raise ValueError("appagent_teacher_workspace_required")
     if teacher_mode and docs_root is not None:
         raise ValueError("appagent_teacher_docs_forbidden")
-    if teacher_mode and action_source is not None:
-        raise ValueError("appagent_teacher_action_source_forbidden")
-    if not teacher_mode and action_source is None:
-        raise ValueError("appagent_action_source_required")
+    if not teacher_mode and docs_root is None:
+        raise ValueError("appagent_native_memory_required")
     selector = "external:appagent_teacher" if teacher_mode else "external:appagent"
     spec = build_e2e_command(
         item,
@@ -7464,15 +6853,11 @@ def build_appagent_androidworld_command(
     resolved_appagent_root = _repo_path(appagent_root, repo_root=repo_root)
     argv = [*spec.argv, "--appagent-root", str(resolved_appagent_root)]
     resolved_docs_root: Path | None = None
-    resolved_action_source: Path | None = None
     resolved_teacher_source: Path | None = None
     resolved_workspace_root: Path | None = None
     if docs_root is not None:
         resolved_docs_root = _repo_path(docs_root, repo_root=repo_root)
         argv.extend(["--appagent-docs-root", str(resolved_docs_root)])
-    if action_source is not None:
-        resolved_action_source = _repo_path(action_source, repo_root=repo_root)
-        argv.extend(["--appagent-action-source", str(resolved_action_source)])
     if teacher_mode:
         resolved_teacher_source = _repo_path(teacher_source, repo_root=repo_root)
         resolved_workspace_root = _repo_path(workspace_root, repo_root=repo_root)
@@ -7504,7 +6889,6 @@ def build_appagent_androidworld_command(
             "device_target": target.to_dict(),
             "appagent_root": str(resolved_appagent_root),
             "appagent_docs_root": str(resolved_docs_root or ""),
-            "appagent_action_source": str(resolved_action_source or ""),
             "appagent_teacher_source": str(resolved_teacher_source or ""),
             "appagent_workspace_root": str(resolved_workspace_root or ""),
             "uses_omniflow_function": False,
@@ -7685,15 +7069,6 @@ def _run_one_task_mobilegpt(
             "validator_state_read": False,
         },
     )
-
-    if not args.dry_run:
-        for path in _patch_mobilegpt_stats(mobilegpt_root=args.mobilegpt_root):
-            print(f"[mobilegpt:patch-stats] {path}", flush=True)
-    if not args.dry_run:
-        for path in _patch_mobilegpt_server_runtime_context(
-            mobilegpt_root=args.mobilegpt_root,
-        ):
-            print(f"[mobilegpt:patch-server-runtime] {path}", flush=True)
 
     records: list[dict[str, Any]] = []
     failed = 0
@@ -8018,7 +7393,6 @@ def cmd_one_task(args: argparse.Namespace) -> int:
         _claim_method_memory_root(memory_root)
         source_action_hint_path: Path | None = None
         appagent_docs_root: Path | None = None
-        appagent_action_source: Path | None = None
         appagent_prep: dict[str, Any] = {}
         if _is_mobilegpt_method(method):
             mobilegpt_records, mobilegpt_failed = _run_one_task_mobilegpt(
@@ -8096,7 +7470,6 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                     source_run_log=item.source_run_log,
                 )
                 appagent_docs_root = Path(provenance["demo_docs_root"]).resolve()
-                appagent_action_source = Path(provenance["teacher_source"]).resolve()
                 source_metrics = dict(provenance["source_episode_metrics"])
                 document_usage = dict(provenance["doc_generation_usage"])
                 prep_model_calls = _coerce_int(
@@ -8151,8 +7524,6 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                     ),
                     "demo_docs_root": str(appagent_docs_root),
                     "demo_docs_sha256": provenance["demo_docs_sha256"],
-                    "action_source": str(appagent_action_source),
-                    "action_source_sha256": provenance["teacher_source_sha256"],
                     "official_appagent_revision": provenance[
                         "official_appagent_revision"
                     ],
@@ -8284,7 +7655,6 @@ def cmd_one_task(args: argparse.Namespace) -> int:
                     output_root=output_root,
                     appagent_root=args.appagent_root,
                     docs_root=appagent_docs_root,
-                    action_source=appagent_action_source,
                     max_steps=int(args.max_steps or 20),
                     timeout_sec=int(args.timeout_sec or 0),
                     task_random_seed=task_seed,
@@ -8433,13 +7803,6 @@ def cmd_one_task(args: argparse.Namespace) -> int:
 
 
 def cmd_mobilegpt(args: argparse.Namespace) -> int:
-    if args.mobilegpt_action == "server":
-        patched_server = _patch_mobilegpt_server_runtime_context(
-            mobilegpt_root=args.mobilegpt_root,
-        )
-        for path in patched_server:
-            print(f"[mobilegpt:patch-server-runtime] {path}", flush=True)
-
     if bool(args.patch_stats):
         patched_stats = _patch_mobilegpt_stats(mobilegpt_root=args.mobilegpt_root)
         for path in patched_stats:

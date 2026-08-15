@@ -11,6 +11,7 @@ from src.integrations.android_world.methods import (
     MethodAdapterContext,
     MethodAdapterRegistry,
     default_method_adapter_registry,
+    reuse_metrics,
 )
 from src.integrations.android_world.agent import _accumulate_results
 
@@ -55,6 +56,114 @@ def test_default_registry_preserves_unknown_selector_error() -> None:
         default_method_adapter_registry().build(_context("unknown"))
 
 
+def test_reuse_metrics_counts_function_actions_from_trace() -> None:
+    metrics = reuse_metrics(
+        "ours",
+        actions_executed=3,
+        canonical_run={
+            "diagnostics": {
+                "execution_trace": [
+                    {"metadata": {"origin": "action"}},
+                    {"metadata": {"function_id": "create_note"}},
+                    {"metadata": {"function_id": "create_note"}},
+                ]
+            }
+        },
+    )
+
+    assert metrics["reuse_numerator"] == 2
+    assert metrics["reuse_denominator"] == 3
+    assert metrics["reuse_rate"] == 0.666667
+    assert metrics["reuse_unit"] == "gui_action"
+
+
+def test_reuse_metrics_preserves_zero_mobilegpt_hits() -> None:
+    metrics = reuse_metrics(
+        "mobilegpt_offline_retrieval",
+        mobilegpt_stats={"memory_lookup_count": 4, "memory_hit_count": 0},
+    )
+
+    assert metrics["reuse_numerator"] == 0
+    assert metrics["reuse_denominator"] == 4
+    assert metrics["reuse_rate"] == 0.0
+    assert metrics["artifact_used"] is True
+    assert metrics["evidence_status"] == "exact_native_memory_events"
+
+
+def test_appagent_asset_use_is_distinct_from_document_utilization() -> None:
+    metrics = reuse_metrics(
+        "appagent_demo",
+        appagent_result={
+            "decision_round_count": 16,
+            "documentation_round_count": 0,
+            "startup_action_count": 1,
+        },
+    )
+
+    assert metrics["artifact_used"] is False
+    assert metrics["reuse_rate"] == 0.0
+    assert metrics["reuse_unit"] == "decision_round"
+
+
+def test_appagent_uses_upstream_model_factory_not_generic_wrapper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.integrations import appagent_adapter
+
+    captured: dict[str, object] = {}
+
+    class Runtime:
+        def __init__(self, root: str) -> None:
+            captured["root"] = root
+
+        def build_controller(self, device: str) -> object:
+            captured["controller_device"] = device
+            return object()
+
+        def build_model(self, **kwargs: object) -> object:
+            captured["model"] = kwargs
+            return object()
+
+    def build_agent(**kwargs: object) -> SimpleNamespace:
+        captured["agent"] = kwargs
+        return SimpleNamespace(**kwargs)
+
+    monkeypatch.setattr(appagent_adapter, "OfficialAppAgentRuntime", Runtime)
+    monkeypatch.setattr(appagent_adapter, "AppAgentAndroidWorldAgent", build_agent)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "paper-model")
+
+    generic_factory_calls = 0
+
+    def generic_factory() -> object:
+        nonlocal generic_factory_calls
+        generic_factory_calls += 1
+        return object()
+
+    default_method_adapter_registry().build(
+        MethodAdapterContext(
+            selector="external:appagent",
+            env=SimpleNamespace(),
+            store_path="store.json",
+            adb_serial="emulator-5554",
+            appagent_root="/upstream/AppAgent",
+            appagent_output_root="/attempt/appagent",
+            appagent_docs_root="/memory/demo_docs",
+            appagent_llm_factory=generic_factory,
+        )
+    )
+
+    assert generic_factory_calls == 0
+    assert captured["model"] == {
+        "api_key": "test-key",
+        "base_url": "https://example.test/v1",
+        "model": "paper-model",
+    }
+    assert captured["controller_device"] == "emulator-5554"
+    assert captured["agent"]["docs_root"] == "/memory/demo_docs"
+
+
 def test_omniflow_adapter_preserves_launcher_step_cap() -> None:
     captured: dict[str, object] = {}
 
@@ -74,6 +183,35 @@ def test_omniflow_adapter_preserves_launcher_step_cap() -> None:
     default_method_adapter_registry().build(context)
 
     assert captured["max_steps"] == 20
+
+
+def test_omniflow_adapter_passes_explicit_step_guidance_to_planner(
+    monkeypatch,
+) -> None:
+    planner_options: dict[str, object] = {}
+
+    class CapturingPlanner:
+        def __init__(self, **options: object) -> None:
+            planner_options.update(options)
+
+    monkeypatch.setattr("omniflow.vlm.planner.VLMPlanner", CapturingPlanner)
+    monkeypatch.setenv("OPENAI_API_KEY", "not-required")
+
+    context = MethodAdapterContext(
+        selector="omniflow",
+        env=SimpleNamespace(),
+        store_path="store.json",
+        adb_serial="emulator-5554",
+        planner_model="test-model",
+        step_skill_guidance="Prefer semantic labels over nearby duplicate text.",
+        build_omniflow_agent=lambda **options: SimpleNamespace(**options),
+    )
+
+    default_method_adapter_registry().build(context)
+
+    assert planner_options["step_skill_guidance"] == (
+        "Prefer semantic labels over nearby duplicate text."
+    )
 
 
 def test_androidworld_complexity_budget_cannot_raise_omniflow_step_cap(

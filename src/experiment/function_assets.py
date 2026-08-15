@@ -388,6 +388,21 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _function_store_identity(record: dict[str, Any]) -> str:
+    values = tuple(
+        str(record.get(field) or "").strip()
+        for field in (
+            "source_run_log_sha256",
+            "store_sha256",
+            "transfer_states_sha256",
+            "provenance_sha256",
+        )
+    )
+    if any(len(value) != 64 for value in values):
+        raise ValueError("function_store_revision_identity_incomplete")
+    return hashlib.sha256("\0".join(values).encode("utf-8")).hexdigest()
+
+
 def _write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
@@ -429,27 +444,74 @@ def main(argv: list[str] | None = None) -> int:
             "assets are registered before success is reported."
         ),
     )
+    parser.add_argument(
+        "--revision-reason",
+        help=(
+            "Explicit reason for replacing one existing task's canonical "
+            "Function Store with this immutable revision."
+        ),
+    )
     args = parser.parse_args(argv)
     from src.experiment.artifact_memory import (
+        is_skill_authored_function_store_record,
         load_artifact_memory,
         refresh_artifact_memory_from_pointer,
     )
 
     existing_memory = load_artifact_memory(args.memory_index)
-    existing_function_stores = set(
-        existing_memory["canonical"]["function_stores"]
-    )
+    existing_function_stores = {
+        task
+        for task, record in existing_memory["canonical"]["function_stores"].items()
+        if is_skill_authored_function_store_record(record)
+    }
+    revision_reason = str(args.revision_reason or "").strip()
+    requested_tasks = tuple(args.task or ())
+    revision_tasks = sorted(set(requested_tasks) & existing_function_stores)
+    if revision_reason and len(revision_tasks) != 1:
+        raise ValueError("function_store_revision_requires_one_existing_task")
     report = convert_function_assets(
         source_asset_index=args.source_asset_index,
         authoring_manifest=args.authoring_manifest,
         output_root=args.output_root,
         task_names=args.task,
-        exclude_task_names=existing_function_stores,
+        exclude_task_names=(
+            existing_function_stores - set(revision_tasks)
+            if revision_reason
+            else existing_function_stores
+        ),
     )
     output_root = Path(args.output_root).expanduser().resolve()
+    selection_manifest: Path | None = None
+    if revision_reason:
+        task_name = revision_tasks[0]
+        previous = existing_memory["canonical"]["function_stores"][task_name]
+        current = report["tasks"][task_name]
+        previous_identity = _function_store_identity(previous)
+        current_identity = _function_store_identity(current)
+        if previous_identity == current_identity:
+            raise ValueError("function_store_revision_identity_unchanged")
+        selection_manifest = output_root / "function_store_selection.json"
+        _write_json(
+            selection_manifest,
+            {
+                "schema_version": (
+                    "omniflow.androidworld-function-store-selection.v1"
+                ),
+                "selections": {
+                    task_name: {
+                        "expected_candidate_identity_sha256s": sorted(
+                            (previous_identity, current_identity)
+                        ),
+                        "selected_identity_sha256": current_identity,
+                        "reason": revision_reason,
+                    }
+                },
+            },
+        )
     _freeze_tree(output_root)
     memory = refresh_artifact_memory_from_pointer(
         memory_index=args.memory_index,
+        function_store_selection_manifest=selection_manifest,
         additional_function_catalogs=(output_root / "catalog.json",),
     )
     print(
@@ -467,6 +529,9 @@ def main(argv: list[str] | None = None) -> int:
                 "reused": report["excluded_existing_task_count"],
                 "converted": report["converted_task_count"],
                 "frozen": True,
+                "function_store_selection_manifest": (
+                    str(selection_manifest) if selection_manifest else None
+                ),
             },
             ensure_ascii=False,
             sort_keys=True,

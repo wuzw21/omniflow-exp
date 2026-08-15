@@ -5,8 +5,9 @@ import io
 import json
 from pathlib import Path
 import socket
+import sys
 import threading
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 import xml.etree.ElementTree as ET
 
 from PIL import Image
@@ -25,6 +26,7 @@ from src.integrations.mobilegpt_runtime import (
     install_mobilegpt_androidworld_observe,
     install_mobilegpt_memory_only_guard,
     install_mobilegpt_select_schema_repair,
+    install_mobilegpt_upstream_accounting,
     mobilegpt_compatible_xml,
 )
 
@@ -48,6 +50,32 @@ def test_mobilegpt_negative_timeout_means_unbounded_socket_wait() -> None:
     assert _socket_timeout(-1.0) is None
     assert _socket_timeout(0.0) == 0.1
     assert _socket_timeout(3.5) == 3.5
+
+
+def test_mobilegpt_server_command_selects_strict_upstream_runtime(tmp_path: Path) -> None:
+    spec = pipeline.build_mobilegpt_command(
+        "server",
+        mobilegpt_root=tmp_path / "mobilegpt",
+        stats_jsonl=tmp_path / "stats.jsonl",
+        repo_root=tmp_path,
+    )
+
+    assert spec.env["MOBILEGPT_UPSTREAM_MODE"] == "1"
+    assert spec.argv[-1] == "--upstream"
+
+
+def test_mobilegpt_upstream_accounting_preserves_original_query(monkeypatch) -> None:
+    utils_package = ModuleType("utils")
+    utils_module = ModuleType("utils.utils")
+    utils_module.OpenAI = object
+    utils_module.query = lambda messages: messages
+    monkeypatch.setitem(sys.modules, "utils", utils_package)
+    monkeypatch.setitem(sys.modules, "utils.utils", utils_module)
+
+    original_query = utils_module.query
+    install_mobilegpt_upstream_accounting()
+
+    assert utils_module.query is original_query
 
 
 def test_mobilegpt_runtime_integrity_errors_exclude_method_terminals() -> None:
@@ -388,7 +416,8 @@ def test_mobilegpt_executes_server_click_through_androidworld_state_and_action(
             self.actions: list[SimpleNamespace] = []
             self.current_package = "com.example.target"
 
-        def get_state(self) -> SimpleNamespace:
+        def get_state(self, *, wait_to_stabilize: bool = False) -> SimpleNamespace:
+            assert wait_to_stabilize is True
             element = SimpleNamespace(
                 bbox_pixels=_Bounds(10, 20, 30, 60),
                 package_name=self.current_package,
@@ -500,7 +529,8 @@ def test_mobilegpt_native_speak_reaches_androidworld_answer(
             self.actions: list[SimpleNamespace] = []
             self.interaction_cache = ""
 
-        def get_state(self) -> SimpleNamespace:
+        def get_state(self, *, wait_to_stabilize: bool = False) -> SimpleNamespace:
+            assert wait_to_stabilize is True
             return SimpleNamespace(
                 pixels=Image.new("RGB", (100, 200), color="blue"),
                 forest=None,
@@ -594,7 +624,8 @@ def test_mobilegpt_waits_for_real_app_ui_before_sending_first_observation(
             self.actions: list[SimpleNamespace] = []
             self.state_reads = 0
 
-        def get_state(self) -> SimpleNamespace:
+        def get_state(self, *, wait_to_stabilize: bool = False) -> SimpleNamespace:
+            assert wait_to_stabilize is True
             self.state_reads += 1
             if self.state_reads == 1:
                 elements = [

@@ -22,6 +22,7 @@ from src.experiment.e2e_task_pipeline import (
     PipelinePhaseError,
     _function_replay_success,
     _report,
+    _resolve_args,
     _source_device_ready,
     _source_selection_manifest,
     build_parser,
@@ -97,6 +98,50 @@ def test_source_device_uses_independent_small_phone_avd() -> None:
     parser = build_parser()
 
     assert parser.get_default("source_avd") == "SmallPhone"
+
+
+def test_resolve_args_preserves_symlinked_virtualenv_python(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.emulator_bin = tmp_path / "emulator"
+    args.runtime_preflight = tmp_path / "repo" / "src" / "experiment" / "preflight.py"
+    for path in (
+        args.script,
+        args.memory_index,
+        args.adb_path,
+        args.emulator_bin,
+        args.runtime_preflight,
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    real_python = tmp_path / "runtime" / "python"
+    real_python.parent.mkdir(parents=True)
+    real_python.touch()
+    args.python_bin.parent.mkdir(parents=True, exist_ok=True)
+    args.python_bin.symlink_to(real_python)
+    for path in (
+        args.asset_root,
+        args.results_root,
+        args.output_root,
+        args.android_world_root,
+        args.mobilegpt_root,
+        args.appagent_root,
+    ):
+        path.mkdir(parents=True, exist_ok=True)
+    canonical_transfer = tmp_path / "Projects" / "Omni" / "OmniTransfer"
+    canonical_transfer.mkdir(parents=True)
+    args.omnitransfer_root = canonical_transfer
+    args.source_run_log = None
+    args.appagent_memory_root = None
+    args.source_avd = "SmallPhone"
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    resolved = _resolve_args(args)
+
+    assert resolved.python_bin == args.python_bin.absolute()
+    assert resolved.python_bin.is_symlink()
 
 
 def test_cell_environment_uses_orchestrator_budget_and_child_guard(

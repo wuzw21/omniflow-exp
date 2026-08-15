@@ -15,6 +15,7 @@ import tempfile
 from typing import Any, Iterable
 
 from src.experiment.mobilegpt_contract import MOBILEGPT_SUPPORTED_SOURCE_METHODS
+from src.integrations.android_world.methods import reuse_metrics_from_result_row
 
 SCHEMA_VERSION = "omniflow.androidworld.cell_outcome.v1"
 _MOBILEGPT_SOURCE_STATS_PATTERN = re.compile(
@@ -386,6 +387,7 @@ def _registered_report_row(
     row: dict[str, Any],
 ) -> dict[str, Any]:
     success = bool(row.get("official_validator_success"))
+    reuse = reuse_metrics_from_result_row(row, method=method)
     return {
         "task_name": task,
         "method": method,
@@ -424,6 +426,12 @@ def _registered_report_row(
                 row.get("episode_actions_executed") or row.get("actions_executed")
             )
         ),
+        "artifact_used": reuse["artifact_used"],
+        "reuse_numerator": reuse["reuse_numerator"],
+        "reuse_denominator": reuse["reuse_denominator"],
+        "reuse_rate": reuse["reuse_rate"],
+        "reuse_unit": reuse["reuse_unit"],
+        "reuse_evidence_status": reuse["evidence_status"],
         "episode_duration_sec": _number(
             row.get("episode_duration_sec")
             or row.get("duration_sec")
@@ -475,6 +483,12 @@ def _failure_report_row(
         "completion_tokens": int(_number(outcome.get("completion_tokens"))),
         "total_tokens": int(_number(outcome.get("total_tokens"))),
         "actions_executed": int(_number(outcome.get("actions_executed"))),
+        "artifact_used": False,
+        "reuse_numerator": 0,
+        "reuse_denominator": 0,
+        "reuse_rate": None,
+        "reuse_unit": "",
+        "reuse_evidence_status": "unavailable",
         "episode_duration_sec": _number(outcome.get("episode_duration_sec")),
         "outer_wall_sec": _number(outcome.get("outer_wall_sec")),
         "attempt_id": str(outcome.get("attempt_id") or ""),
@@ -511,8 +525,8 @@ def _write_markdown_report(
         f"- Tool calls: {tool_calls}",
         f"- Tokens: {tokens}",
         "",
-        "| method | device | source_seed | evaluation_seed | status | validator | tool_calls | tokens | actions | episode_sec | wall_sec | error | evidence |",
-        "|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---|---|",
+        "| method | device | source_seed | evaluation_seed | status | validator | tool_calls | tokens | actions | reuse | reuse_unit | reuse_evidence | episode_sec | wall_sec | error | evidence |",
+        "|---|---|---:|---:|---|---:|---:|---:|---:|---:|---|---|---:|---:|---|---|",
     ]
     for row in rows:
         official_success = row.get("official_validator_success")
@@ -533,6 +547,9 @@ def _write_markdown_report(
                     row.get("model_calls", 0),
                     row.get("total_tokens", 0),
                     row.get("actions_executed", 0),
+                    row.get("reuse_rate"),
+                    row.get("reuse_unit", ""),
+                    row.get("reuse_evidence_status", ""),
                     row.get("episode_duration_sec", 0),
                     row.get("outer_wall_sec", 0),
                     row.get("failure_summary", ""),
@@ -620,6 +637,12 @@ def write_batch_report(
                         "completion_tokens": 0,
                         "total_tokens": 0,
                         "actions_executed": 0,
+                        "artifact_used": False,
+                        "reuse_numerator": 0,
+                        "reuse_denominator": 0,
+                        "reuse_rate": None,
+                        "reuse_unit": "",
+                        "reuse_evidence_status": "unavailable",
                         "episode_duration_sec": 0.0,
                         "outer_wall_sec": 0.0,
                         "attempt_id": "",
