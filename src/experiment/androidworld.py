@@ -3469,9 +3469,9 @@ def seal_mobilegpt_source_memory(
         "original_mobilegpt_prompts": False,
         "explore_agent_used": False,
         "select_agent_used": False,
-        "derive_agent_fallback_allowed": False,
+        "derive_agent_fallback_allowed": True,
         "generalize_action_used": True,
-        "source_direct_hit_validation": True,
+        "source_reader_coverage_validation": True,
         "direct_subtasks_from_runlog": True,
     }
     for audit_field, expected in required_audit.items():
@@ -3483,6 +3483,18 @@ def seal_mobilegpt_source_memory(
     if type(derive_fallback_count) is not int or derive_fallback_count < 0:
         raise ValueError(
             "mobilegpt_memory_audit_invalid:derive_agent_fallback_count"
+        )
+    source_example_fallback_count = audit.get("source_example_fallback_count")
+    if (
+        type(source_example_fallback_count) is not int
+        or source_example_fallback_count < 0
+        or int(official_reader.get("source_reader_coverage_count") or 0)
+        != transition_count
+        or int(official_reader.get("source_example_fallback_count") or 0)
+        != source_example_fallback_count
+    ):
+        raise ValueError(
+            "mobilegpt_memory_audit_invalid:source_reader_coverage"
         )
 
     provenance_root = bundle_root / "provenance_mobilegpt_runlog_direct_v1"

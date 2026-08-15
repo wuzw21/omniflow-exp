@@ -270,7 +270,7 @@ def test_direct_conversion_uses_runlog_actions_without_semantic_agents(
     assert payload["conversion_mode"] == "runlog_direct"
     assert payload["explore_agent_used"] is False
     assert payload["select_agent_used"] is False
-    assert payload["derive_agent_fallback_allowed"] is False
+    assert payload["derive_agent_fallback_allowed"] is True
     assert payload["validated_transition_count"] == 2
     assert result["official_reader_validation"]["source_direct_hit_count"] == 2
 
@@ -307,6 +307,53 @@ def test_direct_conversion_grounds_container_click_to_visible_child(
         "target_text": "task.html"
     }
     assert result["official_reader_validation"]["source_direct_hit_count"] == 1
+
+
+def test_conversion_preserves_native_example_when_action_cannot_adapt(
+    tmp_path: Path,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "click", "x": 180, "y": 180}],
+        forests=[
+            '<hierarchy><node bounds="[0,0][200,200]">'
+            '<node clickable="true" bounds="[0,0][50,50]" />'
+            '<node text="Home" bounds="[50,0][100,50]" />'
+            '<node clickable="true" bounds="[150,150][200,200]" />'
+            "</node></hierarchy>"
+        ],
+    )
+    memory = tmp_path / "memory"
+    audit = tmp_path / "audit.json"
+
+    result = convert_runlog_to_mobilegpt_memory(
+        source_run_log=source,
+        mobilegpt_root=MOBILEGPT_ROOT,
+        memory_root=memory,
+        stats_path=tmp_path / "stats.jsonl",
+        audit_path=audit,
+        model="unused-offline",
+        embedding_provider=lambda _screen: [0.25, 0.75],
+    )
+
+    action_path = memory / "com.example.app" / "pages" / "0" / "actions.csv"
+    with action_path.open(encoding="utf-8") as handle:
+        action_rows = list(csv.DictReader(handle))
+    example = json.loads(action_rows[0]["example"])
+    response = json.loads(example["response"])
+    payload = json.loads(audit.read_text(encoding="utf-8"))
+
+    assert response["action"] == {
+        "name": "click",
+        "parameters": {"index": "2"},
+    }
+    assert payload["derive_agent_fallback_allowed"] is True
+    assert payload["source_example_fallback_count"] == 1
+    assert payload["source_reader_coverage_validation"] is True
+    assert payload["validation_rows"][0]["reader_resolution"] == (
+        "native_example_fallback"
+    )
+    assert result["official_reader_validation"]["source_reader_coverage_count"] == 1
 
 
 def test_conversion_grounds_coordinate_free_input_to_focused_field(

@@ -776,6 +776,62 @@ def _direct_subtask_from_runlog(
     return metadata, selected, example
 
 
+def _native_action_example(
+    *,
+    instruction: str,
+    selected_subtask: dict[str, Any],
+    encoded_xml: str,
+    action: dict[str, Any],
+) -> dict[str, Any]:
+    parameters = action.get("parameters")
+    if not isinstance(parameters, dict):
+        parameters = {}
+    concrete_parameters = {
+        key: value
+        for key, value in parameters.items()
+        if key in {"direction", "index", "input_text", "message", "number"}
+    }
+    concrete_action = {
+        "name": str(action.get("name") or ""),
+        "parameters": concrete_parameters,
+    }
+    response = {
+        "reasoning": "Follow the verified successful source experience.",
+        "action": concrete_action,
+        "completion_rate": 1.0,
+        "plan": "Execute this action, then verify the subtask state.",
+    }
+    return {
+        "instruction": instruction,
+        "subtask": _json_text(selected_subtask),
+        "screen": encoded_xml,
+        "response": _json_text(response),
+    }
+
+
+def _valid_native_action_examples(value: Any) -> bool:
+    if not isinstance(value, list) or not value:
+        return False
+    for example in value:
+        if not isinstance(example, dict):
+            return False
+        if not all(
+            isinstance(example.get(key), str) and example.get(key)
+            for key in ("instruction", "subtask", "screen", "response")
+        ):
+            return False
+        try:
+            subtask = json.loads(example["subtask"])
+            response = json.loads(example["response"])
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(subtask, dict) or not isinstance(response, dict):
+            return False
+        if not isinstance(response.get("action"), dict):
+            return False
+    return True
+
+
 def _mobilegpt_action_from_runlog(
     transition: _RunLogTransition,
     parsed_xml: str,
@@ -1183,6 +1239,12 @@ def convert_runlog_to_mobilegpt_memory(
                 generalize_action=generalize_action,
             )
             del label
+            action_example = _native_action_example(
+                instruction=trajectory["instruction"],
+                selected_subtask=selected_subtask,
+                encoded_xml=encoded_xml,
+                action=converted,
+            )
             existing_subtask = page["subtasks"].get(subtask["name"])
             if existing_subtask is None:
                 page["subtasks"][subtask["name"]] = {
@@ -1197,7 +1259,7 @@ def convert_runlog_to_mobilegpt_memory(
                         "subtask_name": subtask["name"],
                         "step": 0,
                         "action": _json_text(converted),
-                        "example": _json_text({}),
+                        "example": _json_text(action_example),
                     },
                     {
                         "subtask_name": subtask["name"],
@@ -1318,6 +1380,7 @@ def convert_runlog_to_mobilegpt_memory(
             official_memory.init_page_manager(page_index)
             official_action_count += len(official_memory.page_manager.action_data)
         source_direct_hit_count = 0
+        source_example_fallback_count = 0
         for row in audit_rows:
             page_index = int(row["memory_page_index"])
             page = pages_by_index[page_index]
@@ -1332,19 +1395,33 @@ def convert_runlog_to_mobilegpt_memory(
                 page["encoded_xml"],
                 1,
             )
-            if (
-                not isinstance(recalled, dict)
-                or "examples" in recalled
-                or not isinstance(finished, dict)
-                or finished.get("name") != "finish"
-            ):
+            if not isinstance(recalled, dict):
                 raise MobileGPTConversionError(
-                    "mobilegpt_source_direct_hit_failed",
+                    "mobilegpt_source_reader_coverage_failed",
                     step_index=row["source_step_index"],
                     page_index=page_index,
                     subtask_name=row["memory_subtask_name"],
                 )
-            source_direct_hit_count += 1
+            if "examples" in recalled:
+                if not _valid_native_action_examples(recalled.get("examples")):
+                    raise MobileGPTConversionError(
+                        "mobilegpt_source_example_invalid",
+                        step_index=row["source_step_index"],
+                        page_index=page_index,
+                        subtask_name=row["memory_subtask_name"],
+                    )
+                source_example_fallback_count += 1
+                row["reader_resolution"] = "native_example_fallback"
+            else:
+                source_direct_hit_count += 1
+                row["reader_resolution"] = "direct_hit"
+            if not isinstance(finished, dict) or finished.get("name") != "finish":
+                raise MobileGPTConversionError(
+                    "mobilegpt_source_finish_recall_failed",
+                    step_index=row["source_step_index"],
+                    page_index=page_index,
+                    subtask_name=row["memory_subtask_name"],
+                )
         launch_finish_validated = False
         if launch_only:
             page = next(iter(pages_by_identity.values()))
@@ -1384,11 +1461,13 @@ def convert_runlog_to_mobilegpt_memory(
         "original_mobilegpt_prompts": False,
         "explore_agent_used": False,
         "select_agent_used": False,
-        "derive_agent_fallback_allowed": False,
+        "derive_agent_fallback_allowed": True,
         "derive_agent_fallback_count": 0,
+        "source_example_fallback_count": source_example_fallback_count,
         "generalize_action_used": bool(audit_rows),
         "direct_subtasks_from_runlog": True,
-        "source_direct_hit_validation": True,
+        "source_direct_hit_validation": source_example_fallback_count == 0,
+        "source_reader_coverage_validation": True,
         "launch_only": launch_only,
         "transition_count": len(transitions),
         "validated_transition_count": sum(row["consumed_transitions"] for row in audit_rows),
@@ -1402,6 +1481,10 @@ def convert_runlog_to_mobilegpt_memory(
             "page_count": len(pages_by_identity),
             "action_row_count": official_action_count,
             "source_direct_hit_count": source_direct_hit_count,
+            "source_example_fallback_count": source_example_fallback_count,
+            "source_reader_coverage_count": (
+                source_direct_hit_count + source_example_fallback_count
+            ),
             "launch_finish_validated": launch_finish_validated,
             "loadable": True,
         },
