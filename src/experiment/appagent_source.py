@@ -303,15 +303,21 @@ def _native_memory_evidence(
             manifest_lineage = {
                 str(manifest.get("source_run_log_sha256") or "").strip()
             }
-            if manifest_runlog.is_file():
+            evidence_runlogs = [manifest_runlog]
+            grounded_runlog = manifest_path.parent / "grounded_teacher_run_log.json"
+            if grounded_runlog.is_file():
+                evidence_runlogs.append(grounded_runlog)
+            for evidence_runlog in evidence_runlogs:
+                if not evidence_runlog.is_file():
+                    continue
                 try:
                     manifest_payload = json.loads(
-                        manifest_runlog.read_text(encoding="utf-8")
+                        evidence_runlog.read_text(encoding="utf-8")
                     )
                     manifest_lineage.update(
                         _runlog_lineage(
                             manifest_payload,
-                            pipeline._file_sha256(manifest_runlog),
+                            pipeline._file_sha256(evidence_runlog),
                         )
                     )
                 except (OSError, json.JSONDecodeError):

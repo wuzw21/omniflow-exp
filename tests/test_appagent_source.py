@@ -876,7 +876,7 @@ def test_native_memory_evidence_accepts_shared_runlog_provenance(
         source_run_log=canonical_runlog,
     )
     evidence = tmp_path / "evidence"
-    legacy_runlog = evidence / "legacy.json"
+    legacy_runlog = evidence / "grounded_teacher_run_log.json"
     legacy_runlog.parent.mkdir()
     legacy_runlog.write_text(
         json.dumps(
@@ -910,7 +910,7 @@ def test_native_memory_evidence_accepts_shared_runlog_provenance(
                 "task_name": "ContactsAddContact",
                 "source_seed": 111,
                 "source_run_id": "shared-run",
-                "source_run_log": str(legacy_runlog),
+                "source_run_log": "/migrated/original/runlog.json",
                 "source_run_log_sha256": hashlib.sha256(
                     legacy_runlog.read_bytes()
                 ).hexdigest(),
