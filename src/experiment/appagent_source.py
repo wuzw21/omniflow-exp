@@ -248,16 +248,24 @@ def run_official_document_generation(
     }
 
 
-def _source_lineage(item: pipeline.ArchivedRunLog) -> tuple[str, set[str]]:
-    payload = json.loads(item.source_run_log.read_text(encoding="utf-8"))
-    run_id = str(payload.get("run_id") or "").strip()
+def _runlog_lineage(payload: dict[str, Any], content_sha256: str) -> set[str]:
+    lineage = {content_sha256}
     provenance = payload.get("provenance")
     provenance_sha256 = str(
         provenance.get("source_sha256") if isinstance(provenance, dict) else ""
     ).strip()
-    source_sha256s = {pipeline._file_sha256(item.source_run_log)}
     if len(provenance_sha256) == 64:
-        source_sha256s.add(provenance_sha256)
+        lineage.add(provenance_sha256)
+    return lineage
+
+
+def _source_lineage(item: pipeline.ArchivedRunLog) -> tuple[str, set[str]]:
+    payload = json.loads(item.source_run_log.read_text(encoding="utf-8"))
+    run_id = str(payload.get("run_id") or "").strip()
+    source_sha256s = _runlog_lineage(
+        payload,
+        pipeline._file_sha256(item.source_run_log),
+    )
     if not run_id:
         raise ValueError("appagent_native_memory_lineage_missing")
     return run_id, source_sha256s
@@ -289,13 +297,31 @@ def _native_memory_evidence(
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
+            manifest_runlog = Path(
+                str(manifest.get("source_run_log") or "")
+            ).expanduser()
+            manifest_lineage = {
+                str(manifest.get("source_run_log_sha256") or "").strip()
+            }
+            if manifest_runlog.is_file():
+                try:
+                    manifest_payload = json.loads(
+                        manifest_runlog.read_text(encoding="utf-8")
+                    )
+                    manifest_lineage.update(
+                        _runlog_lineage(
+                            manifest_payload,
+                            pipeline._file_sha256(manifest_runlog),
+                        )
+                    )
+                except (OSError, json.JSONDecodeError):
+                    continue
             if (
                 manifest.get("official_appagent_revision") != APPAGENT_OFFICIAL_REVISION
                 or manifest.get("task_name") != item.task
                 or manifest.get("source_seed") != SOURCE_SEED
                 or str(manifest.get("source_run_id") or "") != run_id
-                or str(manifest.get("source_run_log_sha256") or "")
-                not in source_sha256s
+                or source_sha256s.isdisjoint(manifest_lineage)
             ):
                 continue
             app_name = str(manifest.get("app_name") or "").strip()

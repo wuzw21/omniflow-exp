@@ -856,6 +856,87 @@ def test_appagent_source_failure_marker_forbids_retry(tmp_path: Path) -> None:
     assert marker["error_type"] == "RuntimeError"
 
 
+def test_native_memory_evidence_accepts_shared_runlog_provenance(
+    tmp_path: Path,
+) -> None:
+    original_sha256 = "a" * 64
+    canonical_runlog = tmp_path / "canonical.json"
+    canonical_runlog.write_text(
+        json.dumps(
+            {
+                "run_id": "shared-run",
+                "provenance": {"source_sha256": original_sha256},
+            }
+        ),
+        encoding="utf-8",
+    )
+    item = SimpleNamespace(
+        task="ContactsAddContact",
+        source_run_log=canonical_runlog,
+    )
+    evidence = tmp_path / "evidence"
+    legacy_runlog = evidence / "legacy.json"
+    legacy_runlog.parent.mkdir()
+    legacy_runlog.write_text(
+        json.dumps(
+            {
+                "run_id": "shared-run",
+                "provenance": {"source_sha256": original_sha256},
+            }
+        ),
+        encoding="utf-8",
+    )
+    demo_root = evidence / "apps" / "contacts" / "demos" / "demo"
+    docs_root = evidence / "apps" / "contacts" / "demo_docs"
+    document_root = evidence / "_document_generation"
+    demo_root.mkdir(parents=True)
+    docs_root.mkdir(parents=True)
+    document_root.mkdir()
+    (demo_root / "teacher_trace.jsonl").write_text(
+        json.dumps({"source_step_index": 1, "action_type": "click"}) + "\n",
+        encoding="utf-8",
+    )
+    (document_root / "document_generation.log").write_text("ok\n")
+    (document_root / "document_generation_usage.jsonl").write_text(
+        json.dumps({"model": "qwen3-vl-plus"}) + "\n",
+        encoding="utf-8",
+    )
+    manifest = evidence / "appagent_demo_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "official_appagent_revision": appagent_adapter.APPAGENT_OFFICIAL_REVISION,
+                "task_name": "ContactsAddContact",
+                "source_seed": 111,
+                "source_run_id": "shared-run",
+                "source_run_log": str(legacy_runlog),
+                "source_run_log_sha256": hashlib.sha256(
+                    legacy_runlog.read_bytes()
+                ).hexdigest(),
+                "app_name": "contacts",
+                "demo_name": "demo",
+                "demo_sha256": "demo",
+                "demo_docs_sha256": "docs",
+                "document_generation_usage_sha256": "usage",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    selected = appagent_source._native_memory_evidence(
+        item=item,
+        teacher_source={
+            "actions": [
+                {"source_step_index": 1, "action": {"type": "click"}}
+            ]
+        },
+        evidence_roots=[evidence],
+        model="qwen3-vl-plus",
+    )
+
+    assert selected["manifest"] == manifest.resolve()
+
+
 def test_appagent_teacher_input_replaces_existing_field_text(
     tmp_path: Path,
 ) -> None:
