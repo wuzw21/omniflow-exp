@@ -62,6 +62,9 @@ DEFAULT_RAW_REPLAY_ACTION_WAIT_SECONDS = 1.0
 ANDROIDWORLD_A11Y_FORWARDER_PACKAGE = (
     "com.google.androidenv.accessibilityforwarder"
 )
+ANDROIDWORLD_A11Y_FORWARDER_SHA256 = (
+    "97a56a544e44d79f9b3181fc7dbdd72cffa908efd3d53c82afad1773061a350a"
+)
 
 
 def utc_now_iso() -> str:
@@ -1333,6 +1336,46 @@ def _androidworld_a11y_forwarder_installed(
     return result.returncode == 0 and any(
         line.strip().startswith("package:")
         for line in str(result.stdout or "").splitlines()
+    )
+
+
+def _ensure_androidworld_a11y_forwarder(
+    *, console_port: int, adb_path: str, apk_path: str
+) -> bool:
+    if _androidworld_a11y_forwarder_installed(
+        console_port=console_port, adb_path=adb_path
+    ):
+        return True
+    path = Path(str(apk_path or "")).expanduser().resolve()
+    if not path.is_file():
+        return False
+    if (
+        hashlib.sha256(path.read_bytes()).hexdigest()
+        != ANDROIDWORLD_A11Y_FORWARDER_SHA256
+    ):
+        raise RuntimeError(f"AndroidWorld accessibility forwarder hash mismatch: {path}")
+    adb_bin = os.path.expanduser(str(adb_path or "").strip()) or "adb"
+    result = subprocess.run(
+        [
+            adb_bin,
+            "-s",
+            f"emulator-{int(console_port)}",
+            "install",
+            "-r",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "AndroidWorld accessibility forwarder local install failed: "
+            + str(result.stdout or result.stderr or "unknown error").strip()
+        )
+    return _androidworld_a11y_forwarder_installed(
+        console_port=console_port, adb_path=adb_path
     )
 
 
@@ -3195,9 +3238,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 get_app_mapping=aw_setup.get_app_mapping,
             )
 
-        reuse_a11y_forwarder = _androidworld_a11y_forwarder_installed(
+        reuse_a11y_forwarder = _ensure_androidworld_a11y_forwarder(
             console_port=int(args.console_port),
             adb_path=str(args.adb_path or ""),
+            apk_path=str(os.environ.get("OMNIFLOW_ANDROIDWORLD_A11Y_APK") or ""),
         )
         logger.info(
             "AndroidWorld accessibility forwarder mode: %s",

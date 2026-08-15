@@ -13,6 +13,7 @@ from src.integrations.android_world.host import AndroidWorldHost
 from src.integrations.android_world.launch import (
     _ExperimentAgentAdapter,
     _androidworld_a11y_forwarder_installed,
+    _ensure_androidworld_a11y_forwarder,
     _androidworld_setup_apps_for_suite,
     _result_has_official_validator_conclusion,
     _runtime_execution_trace,
@@ -84,6 +85,30 @@ def test_androidworld_installs_a11y_forwarder_when_missing(monkeypatch) -> None:
         console_port=5564,
         adb_path="adb",
     )
+
+
+def test_androidworld_installs_cached_a11y_forwarder(monkeypatch, tmp_path) -> None:
+    apk = tmp_path / "forwarder.apk"
+    apk.write_bytes(b"official-apk")
+    installed = iter((False, True))
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch._androidworld_a11y_forwarder_installed",
+        lambda **_kwargs: next(installed),
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.ANDROIDWORLD_A11Y_FORWARDER_SHA256",
+        hashlib.sha256(apk.read_bytes()).hexdigest(),
+    )
+    calls = []
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.subprocess.run",
+        lambda argv, **_kwargs: calls.append(argv) or SimpleNamespace(returncode=0),
+    )
+
+    assert _ensure_androidworld_a11y_forwarder(
+        console_port=5554, adb_path="/sdk/adb", apk_path=str(apk)
+    )
+    assert calls == [["/sdk/adb", "-s", "emulator-5554", "install", "-r", str(apk)]]
 
 
 def _official_state(**overrides):

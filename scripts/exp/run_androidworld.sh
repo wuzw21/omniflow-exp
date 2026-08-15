@@ -1283,6 +1283,7 @@ fi
 export ANDROID_SDK_ROOT="$android_sdk_root"
 export ANDROID_HOME="$android_sdk_root"
 adb_bin="${OMNIFLOW_ADB_PATH:-$android_sdk_root/platform-tools/adb}"
+export OMNIFLOW_ANDROIDWORLD_A11Y_APK="${OMNIFLOW_ANDROIDWORLD_A11Y_APK:-$repo/runtime/cache/androidworld/accessibility_forwarder.apk}"
 emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$android_sdk_root/emulator/emulator}"
 avdmanager_bin="${OMNIFLOW_AVDMANAGER_BIN:-$android_sdk_root/cmdline-tools/latest/bin/avdmanager}"
 export PATH="$account_root/.local/bin:$android_sdk_root/platform-tools:$PATH"
