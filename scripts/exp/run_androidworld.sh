@@ -736,6 +736,28 @@ if [[ "$refresh_memory" -eq 1 ]]; then
   cd "$repo"
   exec "$python_bin" "${memory_args[@]}"
 fi
+load_memory_paths() {
+  "$python_bin" - "$repo" "$memory_index" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
+from src.experiment.artifact_memory import load_artifact_memory
+
+index_path = Path(sys.argv[2]).expanduser().resolve()
+load_artifact_memory(index_path)
+pointer = json.loads(index_path.read_text(encoding="utf-8"))
+print(
+    "\t".join(
+        (
+            str(pointer["source_index"]),
+            str(pointer["ours_store_index"]),
+        )
+    )
+)
+PY
+}
 if [[ "$convert_ours_assets" -eq 1 ]]; then
   if [[ "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" ]]; then
     echo "--convert-ours-assets cannot be combined with experiment run options." >&2
@@ -760,6 +782,10 @@ if [[ "$convert_ours_assets" -eq 1 ]]; then
   if [[ "$memory_index" != /* || ! -f "$memory_index" ]]; then
     echo "Long-term-memory index must be an existing absolute file: $memory_index" >&2
     exit 2
+  fi
+  if [[ -z "${OMNIFLOW_OURS_SOURCE_ASSET_INDEX:-}" ]]; then
+    memory_paths="$(load_memory_paths)"
+    IFS=$'\t' read -r ours_source_asset_index _ <<< "$memory_paths"
   fi
   conversion_args=(
     -m src.experiment.function_assets
@@ -933,28 +959,6 @@ if ! python_bin="$(command -v "$python_bin")"; then
   echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
   exit 1
 fi
-load_memory_paths() {
-  "$python_bin" - "$repo" "$memory_index" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
-from src.experiment.artifact_memory import load_artifact_memory
-
-index_path = Path(sys.argv[2]).expanduser().resolve()
-load_artifact_memory(index_path)
-pointer = json.loads(index_path.read_text(encoding="utf-8"))
-print(
-    "\t".join(
-        (
-            str(pointer["source_index"]),
-            str(pointer["ours_store_index"]),
-        )
-    )
-)
-PY
-}
 indexed_store_path_for_task() {
   if [[ -z "$ours_store_index" ]]; then
     return 1

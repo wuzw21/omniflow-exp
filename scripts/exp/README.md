@@ -69,6 +69,11 @@ device or executes source coordinates directly on a target.
 
 Source qualification is scoped to one atomic Function replay. Its
 `function_replay_success` is separate from the AndroidWorld task validator.
+When one RunLog yields multiple semantic Functions, qualification invokes their
+recorded source calls in order inside one AndroidWorld episode so later
+Functions retain the page state established by earlier Functions. Each call is
+still one `flow.call_tool(...)`; the qualification adapter marks only the final
+successful call as terminal.
 In each normal target E2E step, the planner selects exactly one peer tool from
 native GUI actions, recalled Functions, and terminal tools. A Function may
 expand into multiple recorded actions, then returns control to the next planner
@@ -207,7 +212,9 @@ bash scripts/exp/run_androidworld.sh --check-only
 does not mechanically create Function semantics: it accepts a complete offline
 Agent response, verifies its instruction version and source RunLog hash, audits
 its actions against the RunLog, then freezes and registers it without replaying
-a task.
+a task. By default it resolves the canonical normalized source index from
+`OMNIFLOW_EXP_MEMORY_ROOT/current.json`; `OMNIFLOW_OURS_SOURCE_ASSET_INDEX` is
+only an explicit immutable-index override.
 
 ## Full and bounded matrices
 

@@ -757,6 +757,108 @@ def qualify_source_function(
     return result
 
 
+def qualify_source_functions(
+    *,
+    args: argparse.Namespace,
+    source_path: Path,
+    run_log: dict[str, Any],
+    function_store: dict[str, Any],
+    source_calls: list[dict[str, Any]],
+    attempt_root: Path,
+    deadline: Deadline,
+) -> dict[str, Any]:
+    output_root = attempt_root / "source_qualification" / "ordered_sequence"
+    store_path = Path(str(function_store["store_path"])).resolve()
+    command = [
+        str(args.python_bin),
+        "-m",
+        "src.experiment.direct_function_launch",
+        "--repo",
+        str(args.repo),
+        "--function-calls-json",
+        json.dumps(source_calls, ensure_ascii=False),
+        "--",
+        "--android-world-root",
+        str(args.android_world_root),
+        "--tasks",
+        args.task,
+        "--task-random-seed",
+        str(SOURCE_SEED),
+        "--n-task-combinations",
+        "1",
+        "--console-port",
+        str(SOURCE_DEVICE[2]),
+        "--agent",
+        "omniflow",
+        "--max-steps",
+        str(max(SOURCE_MAX_STEPS, len(source_calls))),
+        "--output-path",
+        str(output_root),
+        "--store-path",
+        str(store_path),
+        "--task-params-json",
+        json.dumps(run_log["task_parameters"], ensure_ascii=False),
+        "--fixed-task-seed",
+        "--perform-emulator-setup",
+        "--adb-path",
+        str(args.adb_path),
+    ]
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "ANDROID_SERIAL": SOURCE_DEVICE[1],
+            "OMNIFLOW_MAX_FALLBACK_STEPS": "0",
+            "OMNITRANSFER_ROOT": str(args.omnitransfer_root),
+            "PYTHONPATH": f"{args.repo}:{args.repo / 'src'}:{args.android_world_root}",
+        }
+    )
+    for key in (
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "LLMTHU_KEY",
+        "LLMTHU_BASE_URL",
+        "ANTHROPIC_API_KEY",
+        "GOOGLE_API_KEY",
+    ):
+        environment.pop(key, None)
+    result = run_logged_command(
+        command,
+        cwd=args.repo,
+        environment=environment,
+        log_path=output_root.parent / "qualification.log",
+        timeout_sec=deadline.remaining(PHASE_TIMEOUTS_SEC["source_qualification"]),
+    )
+    row = _last_jsonl_row(output_root / "task_results.jsonl")
+    canonical = row.get("canonical_run")
+    canonical = canonical if isinstance(canonical, dict) else {}
+    result.update(
+        {
+            "qualification_scope": "ordered_function_sequence_replay",
+            "official_validator_success": _official_success(row),
+            "function_replay_success": _function_replay_success(row),
+            "model_calls": int(row.get("model_calls") or 0),
+            "fallback_steps": int(row.get("fallback_steps") or 0),
+            "task_run_status": str(canonical.get("status") or ""),
+            "source_run_log": str(source_path),
+            "source_run_log_sha256": _sha256(source_path),
+            "store_path": str(store_path),
+            "store_sha256": _sha256(store_path),
+            "transfer_states_sha256": str(
+                function_store.get("transfer_states_sha256") or ""
+            ),
+            "source_calls": source_calls,
+        }
+    )
+    result["qualified"] = bool(
+        result["returncode"] == 0
+        and result["function_replay_success"]
+        and result["model_calls"] == 0
+        and result["fallback_steps"] == 0
+    )
+    _write_json(output_root.parent / "qualification.json", result)
+    return result
+
+
 def prepare_mobilegpt_memory(
     *,
     args: argparse.Namespace,
@@ -1477,6 +1579,74 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             deadline=deadline,
             phases=phases,
         )
+
+    source_calls = phases["function"].get("source_calls")
+    if not isinstance(source_calls, list) or not source_calls:
+        failure = _write_json(
+            attempt_root / "source_qualification" / "failure.json",
+            {"error": "canonical_function_source_calls_missing"},
+        )
+        phases["source_qualification"] = {
+            "status": "failed",
+            "tool_calls": 0,
+            "tokens": 0,
+            "error": "canonical_function_source_calls_missing",
+        }
+        blocked_methods["ours"] = (
+            "prep_failed",
+            "source_qualification",
+            str(failure),
+        )
+        blocked_methods["t3a_hint"] = (
+            "prep_failed",
+            "source_qualification",
+            str(failure),
+        )
+    else:
+        try:
+            qualification = qualify_source_functions(
+                args=args,
+                source_path=source_path,
+                run_log=run_log,
+                function_store=function_store,
+                source_calls=source_calls,
+                attempt_root=attempt_root,
+                deadline=deadline,
+            )
+            phases["source_qualification"] = qualification
+            if not qualification["qualified"]:
+                failure = Path(str(qualification["log_path"])).resolve()
+                blocked_methods["ours"] = (
+                    "prep_failed",
+                    "source_qualification",
+                    str(failure),
+                )
+                blocked_methods["t3a_hint"] = (
+                    "prep_failed",
+                    "source_qualification",
+                    str(failure),
+                )
+        except Exception as error:
+            failure = _write_json(
+                attempt_root / "source_qualification" / "failure.json",
+                {"error": f"{type(error).__name__}: {error}"},
+            )
+            phases["source_qualification"] = {
+                "status": "failed",
+                "tool_calls": 0,
+                "tokens": 0,
+                "error": str(error),
+            }
+            blocked_methods["ours"] = (
+                "prep_failed",
+                "source_qualification",
+                str(failure),
+            )
+            blocked_methods["t3a_hint"] = (
+                "prep_failed",
+                "source_qualification",
+                str(failure),
+            )
 
     mobilegpt_memory: Path | None = None
     try:

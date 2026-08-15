@@ -806,6 +806,70 @@ def test_asset_conversion_routes_through_the_only_script(
     ]
 
 
+def test_asset_conversion_defaults_to_canonical_memory_source_index(
+    tmp_path: Path,
+) -> None:
+    archived_source_index = tmp_path / "archive" / "source-index.json"
+    canonical_source_index = tmp_path / "memory" / "source-index.json"
+    store_index = tmp_path / "memory" / "store-index.json"
+    memory_index = tmp_path / "memory" / "current.json"
+    output_root = tmp_path / "converted"
+    authoring_manifest = tmp_path / "authoring-manifest.json"
+    captured = tmp_path / "python-args.txt"
+    for path in (
+        archived_source_index,
+        canonical_source_index,
+        store_index,
+        memory_index,
+        authoring_manifest,
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        """#!/bin/sh
+if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ] && [ "$3" = "$MEMORY_INDEX" ]; then
+  printf '%s\t%s\n' "$CANONICAL_SOURCE_INDEX" "$STORE_INDEX"
+  exit 0
+fi
+printf '%s\n' "$@" > "$CAPTURE_ARGS"
+""",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT),
+            "--convert-ours-assets",
+            "--tasks",
+            "RecordWithName",
+        ],
+        cwd=REPO,
+        env={
+            **os.environ,
+            "PYTHON_BIN": str(fake_python),
+            "REPO_PATH": str(REPO),
+            "MEMORY_INDEX": str(memory_index),
+            "CANONICAL_SOURCE_INDEX": str(canonical_source_index),
+            "STORE_INDEX": str(store_index),
+            "CAPTURE_ARGS": str(captured),
+            "OMNIFLOW_MASTER_SOURCE_INDEX": str(archived_source_index),
+            "OMNIFLOW_OURS_CONVERTED_ASSET_ROOT": str(output_root),
+            "OMNIFLOW_OURS_AUTHORING_MANIFEST": str(authoring_manifest),
+            "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_index),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    arguments = captured.read_text(encoding="utf-8").splitlines()
+    source_index_argument = arguments.index("--source-asset-index") + 1
+    assert arguments[source_index_argument] == str(canonical_source_index)
+
+
 def test_one_task_run_adapts_all_methods_then_replays(
     tmp_path: Path,
 ) -> None:
