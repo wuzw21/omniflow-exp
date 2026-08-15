@@ -78,6 +78,15 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "cold-restarted before every pending cell" in completed.stdout
     assert completed.stderr == ""
     script_text = SCRIPT.read_text(encoding="utf-8")
+    assert 'workspace_root="$(cd "$repo/.." && pwd)"' in script_text
+    assert 'default_asset_root="$workspace_root/OmniFlow"' in script_text
+    assert (
+        'default_memory_root="$workspace_root/assets/'
+        'androidworld-experiment-memory-v1"' in script_text
+    )
+    assert 'omnitransfer_root="${OMNITRANSFER_ROOT:-$workspace_root/OmniTransfer}"' in (
+        script_text
+    )
     assert "ours_store_index_mechanical_asset" in script_text
     assert "androidworld_runlog_harvester_skill" in script_text
     assert f'mobilegpt_source_schema="{MOBILEGPT_DIRECT_MEMORY_SCHEMA}"' in script_text

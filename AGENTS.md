@@ -21,6 +21,71 @@ The current phase is code migration and script maintenance only. Do not launch
 formal experiments or revise method implementations unless the user explicitly
 opens a new execution phase.
 
+## Mandatory per-task testing memory
+
+Before every AndroidWorld check, conversion, development run, formal cell, or
+failure diagnosis, re-read this file and `scripts/exp/README.md`. This section
+is the persistent testing protocol; do not replace it with task-local notes.
+
+Run one task to a terminal conclusion before advancing to the next task. The
+only task order is the persistent external difficulty-ordered experiment table.
+For each task, resolve `current.json` first and skip every formal cell that
+already has an official-validator conclusion.
+
+Use this order for each unfinished task:
+
+1. Run the unified static gate and validate the canonical seed-111 RunLog,
+   exact SHA-256 lineage, Function Store provenance, and transfer states.
+2. Check Function recall, one-step Planner tool choice, and Function replay
+   offline before starting an emulator.
+3. Qualify the Function directly on the seed-111 source contract. Require full
+   replay, official validator success, `model_calls=0`, and `fallback_steps=0`.
+4. Run bounded unregistered `ours` development episodes on SmallPhone and then
+   Pixel Fold. A task gets at most three development iterations; preserve the
+   failure and advance after the third unsuccessful iteration.
+5. Freeze the development version, then fill only missing formal cells for the
+   task. Formal results remain immutable and are never replaced by a retry.
+
+Harness and script repairs are allowed only for reproducible task-independent
+defects in environment resolution, dependency installation, official emulator
+lifecycle, AndroidWorld setup, a11y/gRPC readiness, native `get_state()`, the
+single `observe -> plan -> act` step boundary, schema-only adapter conversion,
+coordinate-contract normalization, immutable accounting, result registration,
+and completed-cell skipping. Add a deterministic regression test before the
+repair whenever practical.
+
+Every reproducible configuration, environment, setup, or runtime failure must
+be converted into a permanent repair before advancing: put configuration
+resolution in the canonical core configuration or `scripts/exp/run_androidworld.sh`,
+put runtime recovery at the narrow shared harness seam, add a regression test,
+and document the stable behavior here or in `scripts/exp/README.md`. Shell
+history, manually exported variables, one-off remote commands, task-local
+workarounds, and undocumented operator knowledge are not fixes. Preserve the
+original immutable failed attempt and classify its exact failed stage.
+
+During bounded `ours` development, the only method-level revisions allowed are
+short task-independent Planner rules and offline Agent-authored Function
+semantic improvements. Function improvements may clarify descriptions,
+parameters, and reusable stable action segments or split a RunLog into multiple
+semantic Functions. They may not contain target-device or task-instance
+special cases. A Function success returns control to the Planner and never
+terminates the AndroidWorld task by itself.
+
+Never add task-specific prompts, coordinates, state gates, page thresholds,
+evaluator-aware completion, source-coordinate fallback, screenshot cropping,
+OOB observation, a second AndroidWorld runner, or hidden retries. Do not change
+the formal model, parser, retry policy, step budget, action policy, or output
+contract. A failure after `task_started` and an official validator conclusion
+is a method result, not an environment failure.
+
+`appagent_demo` and `mobilegpt_offline_retrieval` are absolutely frozen external
+baselines. Do not inspect, repair, patch, regenerate, reinterpret, or duplicate
+their internals, adapters, converters, runtimes, prompts, parsers, memories, or
+assets. The unified script may only reuse an already-valid registered baseline
+asset and execute or skip its cell. If either baseline cannot consume the
+canonical schema or cannot run in the official environment, record the exact
+failure or unavailable status and continue; do not fix it.
+
 ## Mandatory execution entry
 
 - Every AndroidWorld check, development episode, formal cell, conversion, and
@@ -33,9 +98,8 @@ opens a new execution phase.
   emulator already has the required AndroidWorld app snapshots.
 - Formal experiment execution keeps the default cold restart and setup. Never
   use the development reuse override to create or register a formal result.
-- Treat `mobilegpt_offline_retrieval` as an external baseline behind its adapter.
-  Do not inspect, repair, or duplicate MobileGPT internals unless the user asks
-  specifically for that baseline.
+- Treat `mobilegpt_offline_retrieval` and `appagent_demo` as frozen external
+  baselines under the absolute no-repair rule above.
 
 ## Formal protocol
 

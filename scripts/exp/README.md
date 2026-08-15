@@ -69,6 +69,23 @@ patch AndroidWorld objects or provide an alternate device runtime.
 
 All data paths are absolute and outside the repository.
 
+The unified script has one persistent workspace profile: for a checkout at
+`<workspace>/OmniFlow-exp`, it resolves experiment assets and results from the
+sibling `<workspace>/OmniFlow`, long-term memory from
+`<workspace>/assets/androidworld-experiment-memory-v1`, OmniTransfer from
+`<workspace>/OmniTransfer`, and AndroidWorld/MobileGPT/AppAgent from the
+corresponding `OmniFlow/runtime/external` directories. Environment variables
+remain explicit overrides. Model credentials are never copied into this
+profile and continue to load only from `OMNIFLOW_ENV_FILE` or the sibling
+`OmniFlow/.env`.
+
+Configuration and environment repairs belong to this entry point or the
+narrow shared AndroidWorld harness seam. A manual export, ad-hoc emulator
+command, or task-local workaround is diagnostic evidence only. Before moving
+to the next task, preserve the failed attempt, add a deterministic regression
+test, encode the stable repair in the shared script/core harness, and document
+the resulting contract here.
+
 | Variable | Meaning |
 | --- | --- |
 | `OMNIFLOW_EXP_ASSET_ROOT` | External immutable experiment assets |
