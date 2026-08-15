@@ -164,6 +164,10 @@ execution never rebuilds or replaces frozen source assets.
 Completed cells are skipped before device startup. Pending cells use the same
 script-owned cold-restart lifecycle on SmallPhone, Pixel Fold, and the
 source-only emulator; no device is prepared manually.
+For MobileGPT, a result cell is identified by the frozen native-memory contract
+as well as task, method, device, and seeds. Archived memory protocols remain
+immutable evidence but cannot shadow the earliest result produced by the
+currently supported memory schema.
 
 ## Bounded `ours` development run
 

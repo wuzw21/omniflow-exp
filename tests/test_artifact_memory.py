@@ -1625,6 +1625,59 @@ def test_refresh_reads_archived_mobilegpt_result_without_reusing_memory(
     }
 
 
+def test_refresh_prefers_current_mobilegpt_contract_over_earlier_archived_result(
+    tmp_path: Path,
+) -> None:
+    source = _write_source_run_log(tmp_path)
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    archived_manifest = _write_mobilegpt_manifest(
+        tmp_path / "archived",
+        schema_version=ARCHIVED_MOBILEGPT_MEMORY_SCHEMA,
+        source_method=ARCHIVED_MOBILEGPT_SOURCE_METHOD,
+        teacher_forcing=True,
+    )
+    _write_registered_result(
+        tmp_path / "runs",
+        attempt="attempt_001",
+        registered_at="2026-07-20T00:00:00+00:00",
+        success=True,
+        method="mobilegpt_offline_retrieval",
+        mobilegpt_manifest=archived_manifest,
+    )
+    current_manifest = _write_mobilegpt_manifest(tmp_path / "current")
+    current = _write_registered_result(
+        tmp_path / "runs",
+        attempt="attempt_002",
+        registered_at="2026-07-21T00:00:00+00:00",
+        success=False,
+        method="mobilegpt_offline_retrieval",
+        mobilegpt_manifest=current_manifest,
+    )
+
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "evidence",),
+        result_roots=(tmp_path / "runs",),
+    )
+
+    cell = report["canonical"]["result_cells"][
+        "RecordWithName|mobilegpt_offline_retrieval|small5554|111|113"
+    ]
+    assert cell["registered_result_aliases"] == [str(current)]
+    assert cell["mobilegpt_memory_schema"] == MOBILEGPT_MEMORY_SCHEMA
+    assert cell["official_validator_success"] is False
+
+
 @pytest.mark.parametrize(
     ("schema_version", "source_method", "teacher_forcing", "expected_error"),
     (

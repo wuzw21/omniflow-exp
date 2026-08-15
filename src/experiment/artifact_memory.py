@@ -1181,10 +1181,17 @@ def _load_results(
     for record in records.values():
         for field in ("aliases", "file_names", "tasks", "methods", "devices"):
             record[field] = sorted(set(record[field]))
-    canonical = {
-        cell: sorted(cell_candidates, key=lambda value: value[:3])[0][3]
-        for cell, cell_candidates in sorted(candidates.items())
-    }
+    canonical: dict[str, dict[str, Any]] = {}
+    for cell, cell_candidates in sorted(candidates.items()):
+        ordered = sorted(cell_candidates, key=lambda value: value[:3])
+        current_mobilegpt = [
+            value
+            for value in ordered
+            if value[3]["method"] == "mobilegpt_offline_retrieval"
+            and value[3].get("mobilegpt_memory_schema")
+            in MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS
+        ]
+        canonical[cell] = (current_mobilegpt or ordered)[0][3]
     return paths, records, canonical
 
 
