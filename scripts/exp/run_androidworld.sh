@@ -75,7 +75,8 @@ mobilegpt_root="${OMNIFLOW_MOBILEGPT_ROOT:-${asset_root:+$asset_root/runtime/ext
 mobilegpt_source_memory_root="${OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT:-}"
 appagent_root="${OMNIFLOW_APPAGENT_ROOT:-${asset_root:+$asset_root/runtime/external/appagent}}"
 appagent_demo_memory_root="${OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT:-}"
-appagent_native_memory_roots="${OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS:-}"
+default_appagent_native_memory_root="${asset_root:+$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111}"
+appagent_native_memory_roots="${OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS:-$default_appagent_native_memory_root}"
 source_device="${OMNIFLOW_SOURCE_DEVICE:-source5560:emulator-5560:5560}"
 preflight_profile="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_PROFILE:-}"
 preflight_serials="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_SERIALS:-}"
@@ -123,6 +124,18 @@ eight_cells=0
 batch_task_filter=""
 convert_ours_assets=0
 refresh_memory=0
+page_store=0
+page_store_import=0
+page_store_root="${OMNIFLOW_PAGE_STORE_ROOT:-}"
+page_store_serial="${OMNIFLOW_PAGE_STORE_SERIAL:-}"
+page_store_top_k="${OMNIFLOW_PAGE_STORE_TOP_K:-5}"
+page_store_encoder="${OMNIFLOW_PAGE_STORE_ENCODER:-omnitransfer-v9.2-soft-1024}"
+page_store_checkpoint="${OMNIFLOW_PAGE_STORE_CHECKPOINT:-}"
+page_store_word_checkpoint="${OMNIFLOW_PAGE_WORD_CHECKPOINT:-$account_root/OmniFlowPageStore/models/soft_page_words_v1/soft_page_words_seed41.npz}"
+page_store_device="${OMNIFLOW_PAGE_STORE_DEVICE:-cpu}"
+page_store_state_package="${OMNIFLOW_PAGE_STORE_STATE_PACKAGE:-cn.com.omnimind.bot.debug}"
+page_store_run_limit="${OMNIFLOW_PAGE_STORE_RUN_LIMIT:-0}"
+page_store_merge_threshold="${OMNIFLOW_PAGE_STORE_AUTO_MERGE_THRESHOLD:-0.95}"
 convert_source_runlogs=0
 prepare_mobilegpt_memory=0
 selected_methods_arg=""
@@ -192,6 +205,13 @@ Options:
   --task-deadline-sec SEC   Whole-task wall deadline; maximum/default is 1800.
   --refresh-memory          Deduplicate and index all configured RunLogs,
                             method assets, and existing results.
+  --page-store              Interactively capture the current Android page,
+                            show separate OmniTransfer and native OmniFlow
+                            Top-K results, and save only a human-confirmed
+                            merge or new cluster.
+  --page-store-import       Import every page from recent OOB GUI recordings,
+                            exact-deduplicate it, run both Top-K encoders, and
+                            auto-merge with OmniTransfer at threshold 0.95.
   -h, --help                Show this help and exit.
 
 Required external roots:
@@ -211,11 +231,21 @@ Optional runtime overrides:
   OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS (colon-separated immutable AppAgent demos),
   OMNIFLOW_DEVELOPMENT_OUTPUT_PATH, OMNIFLOW_DEVELOPMENT_MODEL,
   OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE (default: llmthu),
+  OMNIFLOW_DEVELOPMENT_STEP_GUIDANCE_PATH,
   OMNIFLOW_DEVELOPMENT_CONSOLE_PORT,
+  OMNIFLOW_DEVELOPMENT_AVD (default: OmniFlowTargetSmall),
   OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP (0 reuses prior app snapshots),
   OMNIFLOW_BATCH_ATTEMPT_ID (resume one interrupted immutable batch).
   OMNIFLOW_E2E_OUTPUT_ROOT, OMNIFLOW_E2E_SOURCE_MODEL,
   OMNIFLOW_E2E_SEMANTIC_MODEL, OMNIFLOW_E2E_ATTEMPT_ID.
+  OMNIFLOW_PAGE_STORE_ROOT,
+  OMNIFLOW_PAGE_STORE_SERIAL (optional; otherwise select an adb device),
+  OMNIFLOW_PAGE_STORE_TOP_K, OMNIFLOW_PAGE_STORE_ENCODER,
+  OMNIFLOW_PAGE_STORE_CHECKPOINT, OMNIFLOW_PAGE_STORE_DEVICE,
+  OMNIFLOW_PAGE_WORD_CHECKPOINT, OMNIFLOW_PAGE_STORE_STATE_PACKAGE,
+  OMNIFLOW_PAGE_STORE_RUN_LIMIT (0 means all GUI recording groups),
+  OMNIFLOW_PAGE_STORE_AUTO_MERGE_THRESHOLD (default: 0.95),
+  OMNIFLOW_ADB_PATH.
   Managed emulators are cold-restarted before every pending cell.
 
 Asset conversion inputs:
@@ -249,6 +279,11 @@ Examples:
   bash scripts/exp/run_androidworld.sh --convert-ours-assets \
     --tasks AudioRecorderRecordAudio
   bash scripts/exp/run_androidworld.sh --refresh-memory
+  OMNIFLOW_PAGE_STORE_ROOT=/abs/page-store \
+    bash scripts/exp/run_androidworld.sh --page-store
+  OMNIFLOW_PAGE_STORE_ROOT=/abs/page-store \
+    OMNIFLOW_PAGE_STORE_RUN_LIMIT=4 \
+    bash scripts/exp/run_androidworld.sh --page-store-import
   bash scripts/exp/run_androidworld.sh --convert-source-runlogs
   bash scripts/exp/run_androidworld.sh --check-only \
     --prepare-mobilegpt-memory
@@ -310,6 +345,13 @@ while [[ "$#" -gt 0 ]]; do
     --refresh-memory)
       refresh_memory=1
       ;;
+    --page-store)
+      page_store=1
+      ;;
+    --page-store-import)
+      page_store=1
+      page_store_import=1
+      ;;
     --convert-source-runlogs)
       convert_source_runlogs=1
       ;;
@@ -363,6 +405,116 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
+if [[ "$page_store" -eq 1 ]]; then
+  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$e2e_task" || -n "$batch_task_filter" ]]; then
+    echo "--page-store cannot be combined with experiment or maintenance options." >&2
+    exit 2
+  fi
+  if [[ -z "$page_store_root" || "$page_store_root" != /* ]]; then
+    echo "--page-store requires absolute OMNIFLOW_PAGE_STORE_ROOT." >&2
+    exit 2
+  fi
+  if [[ ! "$page_store_top_k" =~ ^[1-9][0-9]*$ ]]; then
+    echo "OMNIFLOW_PAGE_STORE_TOP_K must be a positive integer." >&2
+    exit 2
+  fi
+  if [[ ! "$page_store_run_limit" =~ ^[0-9]+$ ]]; then
+    echo "OMNIFLOW_PAGE_STORE_RUN_LIMIT must be a non-negative integer." >&2
+    exit 2
+  fi
+  if [[ ! "$page_store_merge_threshold" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]]; then
+    echo "OMNIFLOW_PAGE_STORE_AUTO_MERGE_THRESHOLD must be between 0 and 1." >&2
+    exit 2
+  fi
+  if [[ "$page_store_encoder" != "omnitransfer-v9.2-soft-1024" && "$page_store_encoder" != "omnitransfer-v9.2-dynamic-1024" && "$page_store_encoder" != "omniflow-native-512" ]]; then
+    echo "OMNIFLOW_PAGE_STORE_ENCODER must be omnitransfer-v9.2-soft-1024, omnitransfer-v9.2-dynamic-1024, or omniflow-native-512." >&2
+    exit 2
+  fi
+  if [[ -n "$page_store_checkpoint" && "$page_store_checkpoint" != /* ]]; then
+    echo "OMNIFLOW_PAGE_STORE_CHECKPOINT must be absolute when set." >&2
+    exit 2
+  fi
+  page_store_adb="${OMNIFLOW_ADB_PATH:-adb}"
+  if [[ -z "$page_store_serial" ]]; then
+    page_store_device_serials=()
+    page_store_device_names=()
+    while IFS=$'\t' read -r detected_serial detected_name; do
+      [[ -n "$detected_serial" ]] || continue
+      page_store_device_serials+=("$detected_serial")
+      page_store_device_names+=("$detected_name")
+    done < <(
+      "$page_store_adb" devices -l | awk '
+        NR > 1 && $2 == "device" {
+          model = $1
+          for (i = 3; i <= NF; i++) {
+            if ($i ~ /^model:/) {
+              sub(/^model:/, "", $i)
+              model = $i
+            }
+          }
+          printf "%s\t%s\n", $1, model
+        }
+      '
+    )
+    if [[ "${#page_store_device_serials[@]}" -eq 0 ]]; then
+      echo "--page-store found no authorized adb devices." >&2
+      exit 2
+    fi
+    if [[ "${#page_store_device_serials[@]}" -eq 1 ]]; then
+      page_store_serial="${page_store_device_serials[0]}"
+      echo "Using device: ${page_store_device_names[0]} ($page_store_serial)"
+    else
+      echo "Available adb devices:"
+      for ((device_index = 0; device_index < ${#page_store_device_serials[@]}; device_index++)); do
+        echo "  $((device_index + 1)). ${page_store_device_names[$device_index]} (${page_store_device_serials[$device_index]})"
+      done
+      while [[ -z "$page_store_serial" ]]; do
+        read -r -p "Select device by number, model name, or serial: " device_choice
+        for ((device_index = 0; device_index < ${#page_store_device_serials[@]}; device_index++)); do
+          if [[ "$device_choice" == "$((device_index + 1))" || "$device_choice" == "${page_store_device_names[$device_index]}" || "$device_choice" == "${page_store_device_serials[$device_index]}" ]]; then
+            if [[ -n "$page_store_serial" ]]; then
+              echo "Device name is ambiguous; select by number or serial." >&2
+              page_store_serial=""
+              break
+            fi
+            page_store_serial="${page_store_device_serials[$device_index]}"
+          fi
+        done
+        if [[ -z "$page_store_serial" ]]; then
+          echo "Unknown device; enter one of the displayed values." >&2
+        fi
+      done
+    fi
+  fi
+  page_store_args=(
+    --store "$page_store_root"
+    --serial "$page_store_serial"
+    --adb "$page_store_adb"
+    --top-k "$page_store_top_k"
+    --encoder "$page_store_encoder"
+    --omnitransfer-root "${omnitransfer_root:-$account_root/Projects/Omni/OmniTransfer}"
+    --device "$page_store_device"
+    --page-word-checkpoint "$page_store_word_checkpoint"
+    --state-package "$page_store_state_package"
+  )
+  if [[ -n "$page_store_checkpoint" ]]; then
+    page_store_args+=(--checkpoint "$page_store_checkpoint")
+  fi
+  if [[ "$page_store_import" -eq 1 ]]; then
+    page_store_args+=(
+      --import-recordings
+      --recording-run-limit "$page_store_run_limit"
+      --auto-merge-threshold "$page_store_merge_threshold"
+    )
+  fi
+  cd "$repo"
+  page_store_python="$python_bin"
+  canonical_omnitransfer_python="${omnitransfer_root:-$account_root/Projects/Omni/OmniTransfer}/.venv/bin/python"
+  if [[ -z "${PYTHON_BIN:-}" && -x "$canonical_omnitransfer_python" ]]; then
+    page_store_python="$canonical_omnitransfer_python"
+  fi
+  exec "$page_store_python" -m src.experiment.page_store "${page_store_args[@]}"
+fi
 if [[ "$development_run" -eq 1 ]]; then
   if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$e2e_task" ]]; then
     echo "--development-run cannot be combined with maintenance, formal matrix, or E2E options." >&2
@@ -379,8 +531,25 @@ if [[ "$development_run" -eq 1 ]]; then
   development_model="${OMNIFLOW_DEVELOPMENT_MODEL:-}"
   development_model_endpoint_profile="${OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE:-llmthu}"
   development_console_port="${OMNIFLOW_DEVELOPMENT_CONSOLE_PORT:-5554}"
+  development_avd="${OMNIFLOW_DEVELOPMENT_AVD:-OmniFlowTargetSmall}"
   development_perform_setup="${OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP:-1}"
   development_planner_timeout="${OMNIFLOW_PLANNER_TIMEOUT_SEC:-60}"
+  development_step_guidance_path="${OMNIFLOW_DEVELOPMENT_STEP_GUIDANCE_PATH:-}"
+  development_runtime_files=(
+    "src/experiment/development_emulator.py"
+    "src/integrations/android_world/launch.py"
+  )
+  missing_development_runtime_files=()
+  for relative_path in "${development_runtime_files[@]}"; do
+    if [[ ! -f "$repo/$relative_path" ]]; then
+      missing_development_runtime_files+=("$relative_path")
+    fi
+  done
+  if [[ ${#missing_development_runtime_files[@]} -gt 0 ]]; then
+    echo "Development runtime deployment incomplete before device startup:" >&2
+    printf '  - %s\n' "${missing_development_runtime_files[@]}" >&2
+    exit 1
+  fi
   if [[ -z "$task" || "$task" == *,* ]]; then
     echo "--development-run requires exactly one task through --tasks or OMNIFLOW_SINGLE_TASK_TASK." >&2
     exit 2
@@ -415,12 +584,21 @@ if [[ "$development_run" -eq 1 ]]; then
   fi
   development_android_sdk_root="${OMNIFLOW_ANDROID_SDK_ROOT:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$(resolve_default_android_sdk_root)}}}"
   development_adb_path="${OMNIFLOW_ADB_PATH:-$development_android_sdk_root/platform-tools/adb}"
+  development_emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$development_android_sdk_root/emulator/emulator}"
   if [[ "$development_adb_path" != /* || ! -x "$development_adb_path" ]]; then
     echo "--development-run requires an executable absolute ADB path: $development_adb_path" >&2
     exit 2
   fi
+  if [[ "$development_emulator_bin" != /* || ! -x "$development_emulator_bin" ]]; then
+    echo "--development-run requires an executable absolute emulator path: $development_emulator_bin" >&2
+    exit 2
+  fi
   if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
     echo "--development-run requires an existing absolute OMNIFLOW_ENV_FILE." >&2
+    exit 2
+  fi
+  if [[ -n "$development_step_guidance_path" && ( "$development_step_guidance_path" != /* || ! -f "$development_step_guidance_path" ) ]]; then
+    echo "OMNIFLOW_DEVELOPMENT_STEP_GUIDANCE_PATH must be an existing absolute file." >&2
     exit 2
   fi
   set -a
@@ -446,6 +624,9 @@ if [[ "$development_run" -eq 1 ]]; then
     --planner-timeout-sec "$development_planner_timeout"
     --adb-path "$development_adb_path"
   )
+  if [[ -n "$development_step_guidance_path" ]]; then
+    development_command+=(--step-skill-guidance-path "$development_step_guidance_path")
+  fi
   if [[ "$development_perform_setup" -eq 1 ]]; then
     development_command+=(--perform-emulator-setup)
   fi
@@ -455,6 +636,14 @@ if [[ "$development_run" -eq 1 ]]; then
     exit 0
   fi
   cd "$repo"
+  "$python_bin" -m src.experiment.development_emulator \
+    --adb "$development_adb_path" \
+    --emulator "$development_emulator_bin" \
+    --serial "emulator-$development_console_port" \
+    --avd "$development_avd" \
+    --gpu "$emulator_gpu" \
+    --log-path "${development_output_path}.emulator.log" \
+    --boot-timeout "$emulator_boot_timeout_sec"
   exec "${development_command[@]}"
 fi
 if [[ -n "$e2e_task" ]]; then
