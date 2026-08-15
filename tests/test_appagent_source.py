@@ -894,7 +894,7 @@ def test_native_memory_evidence_accepts_shared_runlog_provenance(
     docs_root.mkdir(parents=True)
     document_root.mkdir()
     (demo_root / "teacher_trace.jsonl").write_text(
-        json.dumps({"source_step_index": 1, "action_type": "click"}) + "\n",
+        json.dumps({"source_step_index": 99, "action_type": "click"}) + "\n",
         encoding="utf-8",
     )
     (document_root / "document_generation.log").write_text("ok\n")

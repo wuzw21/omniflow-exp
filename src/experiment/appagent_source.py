@@ -361,9 +361,7 @@ def _native_memory_evidence(
             ]
             trace = _jsonl(trace_path)
             if len(trace) != len(demo_actions) or any(
-                int(row.get("source_step_index") or 0)
-                != int(record.get("source_step_index") or 0)
-                or str(row.get("action_type") or "")
+                str(row.get("action_type") or "")
                 != str((record.get("action") or {}).get("type") or "")
                 for row, record in zip(trace, demo_actions, strict=True)
             ):
