@@ -13,9 +13,35 @@ from src.integrations.android_world.host import AndroidWorldHost
 from src.integrations.android_world.launch import (
     _ExperimentAgentAdapter,
     _androidworld_a11y_forwarder_installed,
+    _androidworld_setup_apps_for_suite,
     _result_has_official_validator_conclusion,
     _runtime_execution_trace,
 )
+
+
+def test_androidworld_setup_uses_task_declared_app_dependencies() -> None:
+    expense_app = object()
+    markor_app = object()
+    mappings = {"pro expense": expense_app, "markor": markor_app}
+    suite = {
+        "ExpenseTask": [
+            SimpleNamespace(app_names=("pro expense", "markor")),
+            SimpleNamespace(app_names=("pro expense",)),
+        ]
+    }
+
+    assert _androidworld_setup_apps_for_suite(
+        suite,
+        get_app_mapping=mappings.get,
+    ) == (expense_app, markor_app)
+
+
+def test_androidworld_setup_rejects_unmapped_task_dependency() -> None:
+    with pytest.raises(RuntimeError, match="setup app mapping missing: unknown"):
+        _androidworld_setup_apps_for_suite(
+            {"Task": [SimpleNamespace(app_names=("unknown",))]},
+            get_app_mapping=lambda _name: None,
+        )
 
 
 def test_androidworld_reuses_installed_a11y_forwarder(monkeypatch) -> None:

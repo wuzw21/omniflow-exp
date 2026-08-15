@@ -21,7 +21,7 @@ import sys
 import time
 from time import perf_counter
 import types
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1334,6 +1334,33 @@ def _androidworld_a11y_forwarder_installed(
         line.strip().startswith("package:")
         for line in str(result.stdout or "").splitlines()
     )
+
+
+def _androidworld_setup_apps_for_suite(
+    suite: Any,
+    *,
+    get_app_mapping: Callable[[str], Any],
+) -> tuple[Any, ...]:
+    app_names: list[str] = []
+    for task_instances in suite.values():
+        for task_instance in task_instances:
+            for app_name in getattr(task_instance, "app_names", ()):
+                normalized = str(app_name or "").strip()
+                if normalized and normalized not in app_names:
+                    app_names.append(normalized)
+    setup_apps = []
+    missing = []
+    for app_name in app_names:
+        app = get_app_mapping(app_name)
+        if app is None:
+            missing.append(app_name)
+        elif app not in setup_apps:
+            setup_apps.append(app)
+    if missing:
+        raise RuntimeError(
+            "AndroidWorld setup app mapping missing: " + ", ".join(missing)
+        )
+    return tuple(setup_apps)
 
 
 def _is_pickleable(value: object) -> bool:
@@ -3163,7 +3190,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "AndroidWorld setup_device module is required when "
                     "--perform-emulator-setup is set."
                 )
-            setup_app_list = aw_setup.get_app_list_to_setup(selected_task_names)
+            setup_app_list = _androidworld_setup_apps_for_suite(
+                suite,
+                get_app_mapping=aw_setup.get_app_mapping,
+            )
 
         reuse_a11y_forwarder = _androidworld_a11y_forwarder_installed(
             console_port=int(args.console_port),
