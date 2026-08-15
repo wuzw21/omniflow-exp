@@ -59,6 +59,9 @@ SOURCE_RUNLOG_POOL_DIR = (
 )
 logger = logging.getLogger(__name__)
 DEFAULT_RAW_REPLAY_ACTION_WAIT_SECONDS = 1.0
+ANDROIDWORLD_A11Y_FORWARDER_PACKAGE = (
+    "com.google.androidenv.accessibilityforwarder"
+)
 
 
 def utc_now_iso() -> str:
@@ -1300,6 +1303,37 @@ def _assert_existing_emulator_ready(
             f"endpoint. Expected {serial} to expose 127.0.0.1:{normalized_grpc_port}. "
             f"Launch the emulator with `-grpc {normalized_grpc_port}` before rerunning."
         ) from exc
+
+
+def _androidworld_a11y_forwarder_installed(
+    *,
+    console_port: int,
+    adb_path: str,
+) -> bool:
+    serial = f"emulator-{int(console_port)}"
+    adb_bin = os.path.expanduser(str(adb_path or "").strip()) or "adb"
+    try:
+        result = subprocess.run(
+            [
+                adb_bin,
+                "-s",
+                serial,
+                "shell",
+                "pm",
+                "path",
+                ANDROIDWORLD_A11Y_FORWARDER_PACKAGE,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and any(
+        line.strip().startswith("package:")
+        for line in str(result.stdout or "").splitlines()
+    )
 
 
 def _is_pickleable(value: object) -> bool:
@@ -3131,11 +3165,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             setup_app_list = aw_setup.get_app_list_to_setup(selected_task_names)
 
+        reuse_a11y_forwarder = _androidworld_a11y_forwarder_installed(
+            console_port=int(args.console_port),
+            adb_path=str(args.adb_path or ""),
+        )
+        logger.info(
+            "AndroidWorld accessibility forwarder mode: %s",
+            "reuse-installed" if reuse_a11y_forwarder else "install-official",
+        )
         env = env_launcher.load_and_setup_env(
             console_port=int(args.console_port),
             emulator_setup=False,
             adb_path=str(args.adb_path or ""),
             grpc_port=int(args.console_port) + 3000,
+            install_a11y_forwarding_app=not reuse_a11y_forwarder,
         )
         if bool(args.perform_emulator_setup):
             logger.info(

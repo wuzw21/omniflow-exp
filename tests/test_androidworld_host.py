@@ -12,9 +12,52 @@ from omniflow import Action
 from src.integrations.android_world.host import AndroidWorldHost
 from src.integrations.android_world.launch import (
     _ExperimentAgentAdapter,
+    _androidworld_a11y_forwarder_installed,
     _result_has_official_validator_conclusion,
     _runtime_execution_trace,
 )
+
+
+def test_androidworld_reuses_installed_a11y_forwarder(monkeypatch) -> None:
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(
+            returncode=0,
+            stdout="package:/data/app/base.apk\n",
+        )
+
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.subprocess.run",
+        run,
+    )
+
+    assert _androidworld_a11y_forwarder_installed(
+        console_port=5554,
+        adb_path="/sdk/adb",
+    )
+    assert calls[0][0] == [
+        "/sdk/adb",
+        "-s",
+        "emulator-5554",
+        "shell",
+        "pm",
+        "path",
+        "com.google.androidenv.accessibilityforwarder",
+    ]
+
+
+def test_androidworld_installs_a11y_forwarder_when_missing(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=""),
+    )
+
+    assert not _androidworld_a11y_forwarder_installed(
+        console_port=5564,
+        adb_path="adb",
+    )
 
 
 def _official_state(**overrides):
