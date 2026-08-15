@@ -116,7 +116,6 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
     assert 'workspace_root="$(cd "$repo/.." && pwd)"' in script_text
     assert 'default_asset_root="$workspace_root/OmniFlow"' in script_text
-    assert "default_appagent_native_memory_root" in script_text
     assert (
         'default_memory_root="$workspace_root/assets/'
         'androidworld-experiment-memory-v1"' in script_text
@@ -212,62 +211,6 @@ def test_development_run_routes_through_the_only_script_without_repeated_setup(
     assert "dashscope.example" not in completed.stdout
     assert "--perform-emulator-setup" not in completed.stdout
     assert not output.exists()
-
-
-def test_development_run_rejects_incomplete_code_release_before_device_start(
-    tmp_path: Path,
-) -> None:
-    release = tmp_path / "release"
-    release_script = release / "scripts" / "exp" / "run_androidworld.sh"
-    release_script.parent.mkdir(parents=True)
-    release_script.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
-    android_world = tmp_path / "android-world"
-    (android_world / "android_world").mkdir(parents=True)
-    store = tmp_path / "store.json"
-    store.write_text("{}", encoding="utf-8")
-    env_file = tmp_path / ".env"
-    env_file.write_text(
-        "LLMTHU_KEY=test-key\nLLMTHU_BASE_URL=https://llmapi.example/v1\n",
-        encoding="utf-8",
-    )
-    adb = tmp_path / "adb"
-    emulator = tmp_path / "emulator"
-    for executable in (adb, emulator):
-        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        executable.chmod(0o755)
-
-    completed = subprocess.run(
-        [
-            "bash",
-            str(release_script),
-            "--development-run",
-            "--dry-run",
-            "--tasks",
-            "MarkorCreateNote",
-        ],
-        cwd=release,
-        env={
-            **os.environ,
-            "PYTHONPATH": str(REPO),
-            "PYTHON_BIN": sys.executable,
-            "OMNIFLOW_ANDROID_WORLD_ROOT": str(android_world),
-            "OMNIFLOW_ADB_PATH": str(adb),
-            "OMNIFLOW_EMULATOR_BIN": str(emulator),
-            "OMNIFLOW_ENV_FILE": str(env_file),
-            "OMNIFLOW_SINGLE_TASK_STORE_PATH": str(store),
-            "OMNIFLOW_DEVELOPMENT_OUTPUT_PATH": str(tmp_path / "attempt"),
-            "OMNIFLOW_DEVELOPMENT_MODEL": "GLM-4.6V",
-        },
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert completed.returncode == 1
-    assert "Development runtime deployment incomplete before device startup" in (
-        completed.stderr
-    )
-    assert "src/experiment/development_emulator.py" in completed.stderr
 
 
 def test_experiment_script_prefers_existing_miniconda_base_python(

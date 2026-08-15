@@ -122,7 +122,7 @@ the resulting contract here.
 | `OMNIFLOW_OURS_AUTHORING_MANIFEST` | Immutable bundle manifest produced by `androidworld-runlog-harvester` using `omniflow.function-agent-skill-manifest.v1` |
 | `OMNIFLOW_OURS_REVISION_REASON` | Explicit reason for selecting one newly converted immutable Function revision over the existing canonical Store; requires one `--tasks` value |
 | `OMNIFLOW_MEMORY_MOBILEGPT_ROOTS` | Optional colon-separated roots containing sealed MobileGPT semantic memory |
-| `OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS` | Optional colon-separated roots containing immutable AppAgent-native demos whose manifest exactly matches the canonical RunLog lineage; defaults to the unified source-seed-111 task asset root |
+| `OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS` | Colon-separated roots containing immutable AppAgent-native demos whose manifest exactly matches the canonical RunLog lineage |
 
 The source RunLog index defaults to
 `$OMNIFLOW_EXP_ASSET_ROOT/runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json`.
