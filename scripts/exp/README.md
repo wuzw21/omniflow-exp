@@ -257,3 +257,10 @@ native accessibility forest. The Host converts a complete forest to
 hierarchical XML locally and does not issue another UI dump. An incomplete
 Fold hierarchy is marked explicitly and cannot enter OmniTransfer; normal VLM
 fallback receives the saved screenshot instead.
+
+Before each agent step, the launcher asks the pinned AndroidWorld controller to
+check for the known AccessibilityForwarder crash window. Healthy steps do not
+refresh the environment or read another page. When that exact crash is visible,
+the controller closes the system dialog, rebuilds the official a11y wrapper,
+and verifies that a native accessibility forest is available before the agent
+continues.

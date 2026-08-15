@@ -209,7 +209,7 @@ class AndroidWorldHost:
         app_info: bool = True,
         **_: Any,
     ) -> Observation:
-        state = self.env.get_state()
+        state = self.env.get_state(wait_to_stabilize=True)
         official_state = snapshot_androidworld_state(
             state,
             evidence_root=self.evidence_root,

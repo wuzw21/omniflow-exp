@@ -319,6 +319,13 @@ class _ExperimentAgentAdapter:
         return getattr(self._agent, name)
 
     def step(self, goal: str) -> Any:
+        ensure_ready = getattr(
+            self._recording_session.env,
+            "ensure_accessibility_forwarder_ready",
+            None,
+        )
+        if callable(ensure_ready):
+            ensure_ready()
         self._recording_session.start_episode()
         effective_goal = str(goal or "")
         if self._goal_hint:

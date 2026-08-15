@@ -138,7 +138,8 @@ def test_observe_preserves_one_official_androidworld_state(tmp_path) -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def get_state(self):
+        def get_state(self, wait_to_stabilize: bool = False):
+            assert wait_to_stabilize is True
             self.calls += 1
             return state
 
@@ -178,6 +179,24 @@ def test_observe_preserves_one_official_androidworld_state(tmp_path) -> None:
     assert "Settings" in str(observation.xml)
 
 
+def test_observe_uses_official_stable_state() -> None:
+    calls: list[bool] = []
+
+    class Env:
+        device_screen_size = (4, 3)
+        logical_screen_size = (4, 3)
+        foreground_activity_name = "com.android.settings/.Settings"
+
+        def get_state(self, wait_to_stabilize: bool = False):
+            calls.append(wait_to_stabilize)
+            return _official_state(ui_elements=[_ui_element()])
+
+    observation = AndroidWorldHost(Env()).observe()
+
+    assert observation.package_name == "com.android.settings"
+    assert calls == [True]
+
+
 def test_observe_does_not_replace_failed_official_state() -> None:
     class Env:
         controller = SimpleNamespace(
@@ -185,7 +204,7 @@ def test_observe_does_not_replace_failed_official_state() -> None:
             get_screenshot=lambda: Image.new("RGB", (1, 1)),
         )
 
-        def get_state(self):
+        def get_state(self, wait_to_stabilize: bool = False):
             raise RuntimeError("official state unavailable")
 
     with pytest.raises(RuntimeError, match="official state unavailable"):
@@ -199,13 +218,15 @@ def test_observe_requires_all_official_state_fields() -> None:
         ValueError,
         match="androidworld_state_fields_missing:auxiliaries",
     ):
-        AndroidWorldHost(SimpleNamespace(get_state=lambda: incomplete)).observe()
+        AndroidWorldHost(
+            SimpleNamespace(get_state=lambda **_: incomplete)
+        ).observe()
 
 
 def test_observe_ignores_non_official_xml_field() -> None:
     state = _official_state(xml="<hierarchy><node text='custom'/></hierarchy>")
     observation = AndroidWorldHost(
-        SimpleNamespace(get_state=lambda: state)
+        SimpleNamespace(get_state=lambda **_: state)
     ).observe()
 
     assert observation.xml is None
@@ -213,9 +234,14 @@ def test_observe_ignores_non_official_xml_field() -> None:
     assert observation.extra["ui_graph_complete"] is False
 
 
-def test_experiment_agent_adapter_only_adds_recording_and_goal_context() -> None:
+def test_experiment_agent_adapter_checks_androidworld_before_each_step() -> None:
     calls: list[str] = []
-    recording_session = SimpleNamespace(start_episode=lambda: calls.append("record"))
+    recording_session = SimpleNamespace(
+        env=SimpleNamespace(
+            ensure_accessibility_forwarder_ready=lambda: calls.append("ready")
+        ),
+        start_episode=lambda: calls.append("record"),
+    )
     agent = SimpleNamespace(step=lambda goal: calls.append(goal) or "result")
 
     adapted = _ExperimentAgentAdapter(
@@ -225,7 +251,11 @@ def test_experiment_agent_adapter_only_adds_recording_and_goal_context() -> None
     )
 
     assert adapted.step("Complete task") == "result"
-    assert calls == ["record", "Complete task\n\nReference action sequence"]
+    assert calls == [
+        "ready",
+        "record",
+        "Complete task\n\nReference action sequence",
+    ]
 
 
 def test_observe_derives_internal_xml_from_official_forest() -> None:
@@ -273,7 +303,7 @@ def test_observe_derives_internal_xml_from_official_forest() -> None:
         ]
     )
     env = SimpleNamespace(
-        get_state=lambda: _official_state(forest=forest),
+        get_state=lambda **_: _official_state(forest=forest),
         device_screen_size=(2208, 1840),
         logical_screen_size=(1080, 2092),
         foreground_activity_name="com.android.settings/.Settings",
@@ -332,7 +362,7 @@ def test_observe_treats_complete_active_modal_window_as_complete_graph() -> None
         bbox_pixels=SimpleNamespace(x_min=64, y_min=806, x_max=224, y_max=918),
     )
     env = SimpleNamespace(
-        get_state=lambda: _official_state(forest=forest, ui_elements=[ui_element]),
+        get_state=lambda **_: _official_state(forest=forest, ui_elements=[ui_element]),
         device_screen_size=(720, 1280),
         logical_screen_size=(720, 1280),
         foreground_activity_name="net.gsantner.markor/.MainActivity",
@@ -396,7 +426,7 @@ def test_observe_accepts_serialized_modal_bounds_with_omitted_zero_edges() -> No
         bbox_pixels=SimpleNamespace(x_min=64, y_min=806, x_max=224, y_max=918),
     )
     env = SimpleNamespace(
-        get_state=lambda: _official_state(forest=forest, ui_elements=[ui_element]),
+        get_state=lambda **_: _official_state(forest=forest, ui_elements=[ui_element]),
         device_screen_size=(720, 1280),
         logical_screen_size=(720, 1280),
         foreground_activity_name="net.gsantner.markor/.MainActivity",
@@ -438,7 +468,7 @@ def test_observe_prefers_semantically_richer_official_ui_elements() -> None:
         bbox_pixels=SimpleNamespace(x_min=100, y_min=200, x_max=900, y_max=300),
     )
     env = SimpleNamespace(
-        get_state=lambda: _official_state(
+        get_state=lambda **_: _official_state(
             forest=forest,
             ui_elements=[rich_element],
         ),
@@ -490,7 +520,7 @@ def test_observe_keeps_semantically_richer_official_forest() -> None:
         bbox_pixels=SimpleNamespace(x_min=0, y_min=0, x_max=1080, y_max=2092),
     )
     env = SimpleNamespace(
-        get_state=lambda: _official_state(
+        get_state=lambda **_: _official_state(
             forest=forest,
             ui_elements=[sparse_element],
         ),
