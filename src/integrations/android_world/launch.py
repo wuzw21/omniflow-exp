@@ -3455,6 +3455,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                             mobilegpt_agent_result.get("actions_executed")
                         ),
                     )
+                if selected_agent == "external:appagent":
+                    actions_executed = max(
+                        actions_executed,
+                        _coerce_int(getattr(agent, "actions_executed", 0)),
+                    )
                 model_calls = 0
                 fallback_steps = 0
                 total_tokens = 0
