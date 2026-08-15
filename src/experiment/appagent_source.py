@@ -353,17 +353,12 @@ def _native_memory_evidence(
                 for row in usage_rows
                 if str(row.get("model") or "").strip()
             }
-            demo_actions = [
-                record
-                for record in teacher_source["actions"]
-                if str((record.get("action") or {}).get("type") or "")
-                in APPAGENT_DEMO_ACTION_TYPES
-            ]
+            teacher_actions = teacher_source["actions"]
             trace = _jsonl(trace_path)
-            if len(trace) != len(demo_actions) or any(
+            if len(trace) != len(teacher_actions) or any(
                 str(row.get("action_type") or "")
                 != str((record.get("action") or {}).get("type") or "")
-                for row, record in zip(trace, demo_actions, strict=True)
+                for row, record in zip(trace, teacher_actions, strict=True)
             ):
                 continue
             if not models:
