@@ -1410,7 +1410,9 @@ def _wait_for_androidworld_a11y(env: Any, *, attempts: int = 3) -> None:
     last_error: RuntimeError | None = None
     for attempt in range(max(1, int(attempts))):
         try:
-            env.get_a11y_forest()
+            state = env.get_state(wait_to_stabilize=False)
+            if getattr(state, "forest", None) is None:
+                raise RuntimeError("AndroidWorld state has no accessibility forest")
             return
         except RuntimeError as error:
             last_error = error
