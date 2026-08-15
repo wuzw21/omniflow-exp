@@ -807,6 +807,7 @@ def test_appagent_source_generation_is_offline_conversion(
             "docs_root": docs,
             "document_log": document_log,
             "document_usage": document_usage,
+            "document_model": "qwen3-vl-plus",
         },
     )
 
@@ -931,10 +932,11 @@ def test_native_memory_evidence_accepts_shared_runlog_provenance(
             ]
         },
         evidence_roots=[evidence],
-        model="qwen3-vl-plus",
+        model="different-online-model",
     )
 
     assert selected["manifest"] == manifest.resolve()
+    assert selected["document_model"] == "qwen3-vl-plus"
 
 
 def test_appagent_teacher_input_replaces_existing_field_text(

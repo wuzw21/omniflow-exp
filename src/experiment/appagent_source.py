@@ -362,7 +362,7 @@ def _native_memory_evidence(
                 for row, record in zip(trace, demo_actions, strict=True)
             ):
                 continue
-            if models != {model}:
+            if not models:
                 continue
             candidates.append(
                 {
@@ -373,6 +373,7 @@ def _native_memory_evidence(
                     "docs_root": docs_root.resolve(),
                     "document_log": log_path.resolve(),
                     "document_usage": usage_path.resolve(),
+                    "document_model": min(models),
                     "identity": (
                         str(manifest.get("demo_sha256") or ""),
                         str(manifest.get("demo_docs_sha256") or ""),
@@ -690,7 +691,7 @@ def prepare_appagent_demo_memory(
         document_generation_wall_sec=0.0,
         prep_wall_sec=prep_wall_sec,
         source_method=source_method,
-        document_generation_model=normalized_model,
+        document_generation_model=str(evidence["document_model"]),
         source_environment_repair_reason=source_environment_repair_reason,
         conversion_mode="canonical_runlog_offline",
         native_memory_evidence=evidence["manifest"],
