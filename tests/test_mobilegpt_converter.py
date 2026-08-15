@@ -244,6 +244,57 @@ def test_conversion_uses_first_open_app_as_task_app(tmp_path: Path) -> None:
     assert len(trajectory["transitions"]) == 1
 
 
+def test_open_app_only_conversion_uses_final_observation_as_finish_page(
+    tmp_path: Path,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "open_app", "app_name": "com.android.contacts"}],
+        forests=["<hierarchy />"],
+        packages=["com.google.android.apps.nexuslauncher"],
+    )
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    payload["final_observation"] = androidworld_state(
+        "contacts-ready",
+        forest=(
+            '<hierarchy><node text="Contacts" '
+            'bounds="[0,0][100,100]" /></hierarchy>'
+        ),
+        package_name="com.android.contacts",
+    )
+    source.write_text(json.dumps(payload), encoding="utf-8")
+    memory = tmp_path / "memory"
+
+    preflight = preflight_runlog_conversion(source)
+    result = convert_runlog_to_mobilegpt_memory(
+        source_run_log=source,
+        mobilegpt_root=MOBILEGPT_ROOT,
+        memory_root=memory,
+        stats_path=tmp_path / "stats.jsonl",
+        audit_path=tmp_path / "audit.json",
+        model="unused-offline",
+        embedding_provider=lambda _screen: [0.25, 0.75],
+    )
+
+    with (memory / "com.android.contacts" / "tasks.csv").open(
+        encoding="utf-8"
+    ) as handle:
+        task_rows = list(csv.DictReader(handle))
+    with (
+        memory / "com.android.contacts" / "pages" / "0" / "actions.csv"
+    ).open(encoding="utf-8") as handle:
+        action_rows = list(csv.DictReader(handle))
+
+    assert preflight["ready"] is True
+    assert preflight["transition_count"] == 0
+    assert json.loads(task_rows[0]["path"]) == {"0": ["finish"]}
+    assert action_rows == []
+    assert result["transition_count"] == 0
+    assert result["validated_transition_count"] == 0
+    assert result["memory_validation"]["launch_only"] is True
+    assert result["official_reader_validation"]["launch_finish_validated"] is True
+
+
 def test_conversion_explicit_target_overrides_runlog_inference(tmp_path: Path) -> None:
     path = _write_runlog(
         tmp_path / "source.json",

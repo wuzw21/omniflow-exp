@@ -239,7 +239,11 @@ def validate_mobilegpt_memory(
             for row in available
             if str(row.get("name") or "").strip()
         }
-        if not subtask_names or not subtask_names.issubset(available_names):
+        page_is_launch_only = len(task_path) == 1 and raw_subtasks == ["finish"]
+        if (
+            (not page_is_launch_only and not subtask_names)
+            or not subtask_names.issubset(available_names)
+        ):
             raise ValueError("mobilegpt_memory_subtask_graph_invalid")
         for raw_subtask in raw_subtasks:
             subtask_name = str(raw_subtask or "").strip()
@@ -299,9 +303,12 @@ def validate_mobilegpt_memory(
                 ) from error
         screen_file_count += len(present)
 
-    if task_subtask_count <= 0:
+    launch_only = len(task_path) == 1 and all(
+        raw_subtasks == ["finish"] for raw_subtasks in task_path.values()
+    )
+    if not launch_only and task_subtask_count <= 0:
         raise ValueError("mobilegpt_memory_recallable_subtask_missing")
-    if non_finish_action_count <= 0:
+    if not launch_only and non_finish_action_count <= 0:
         raise ValueError("mobilegpt_memory_useful_action_missing")
     return {
         "memory_root": str(root),
@@ -312,6 +319,7 @@ def validate_mobilegpt_memory(
         "subtask_count": task_subtask_count,
         "action_count": action_count,
         "non_finish_action_count": non_finish_action_count,
+        "launch_only": launch_only,
         "screen_file_count": screen_file_count,
         "native_memory_complete": True,
     }
@@ -356,7 +364,10 @@ def _load_runlog_trajectory(
     transitions: list[_RunLogTransition] = []
     skipped: list[dict[str, Any]] = []
     packages: list[str] = []
-    for ordinal, raw_step in enumerate(payload.get("steps") or []):
+    launch_action: dict[str, Any] | None = None
+    launch_step_index = -1
+    raw_steps = list(payload.get("steps") or [])
+    for ordinal, raw_step in enumerate(raw_steps):
         if not isinstance(raw_step, dict):
             continue
         step_index = int(raw_step.get("step_index", ordinal))
@@ -373,6 +384,8 @@ def _load_runlog_trajectory(
             app_name = str(action.get("app_name") or action.get("package_name") or "").strip()
             if app_name:
                 packages.append(app_name)
+                launch_action = action
+                launch_step_index = step_index
         if action_type in _SKIPPED_ACTION_TYPES:
             skipped.append({"step_index": step_index, "action_type": action_type})
             continue
@@ -406,8 +419,6 @@ def _load_runlog_trajectory(
             )
         )
 
-    if not transitions:
-        raise MobileGPTConversionError("source_trajectory_empty")
     package_names = sorted(
         {
             value
@@ -441,6 +452,28 @@ def _load_runlog_trajectory(
         )
     if not resolved_target_app:
         resolved_target_app = resolved_target_package
+    launch_only = not transitions and launch_action is not None
+    terminal_observation = payload.get("final_observation")
+    if not isinstance(terminal_observation, dict) and raw_steps:
+        candidate = raw_steps[-1].get("next_observation")
+        terminal_observation = candidate if isinstance(candidate, dict) else None
+    terminal_forest = (
+        observation_xml(terminal_observation).strip()
+        if isinstance(terminal_observation, dict)
+        else ""
+    )
+    if launch_only:
+        if not terminal_forest:
+            raise MobileGPTConversionError("source_launch_final_observation_missing")
+        try:
+            ET.fromstring(terminal_forest)
+        except ET.ParseError as error:
+            raise MobileGPTConversionError(
+                "source_launch_final_observation_invalid_xml",
+                error=str(error),
+            ) from error
+    elif not transitions:
+        raise MobileGPTConversionError("source_trajectory_empty")
     return {
         "schema_version": CONVERSION_SOURCE_SCHEMA,
         "source_run_log": str(path),
@@ -453,6 +486,11 @@ def _load_runlog_trajectory(
         "target_app": resolved_target_app,
         "transitions": transitions,
         "skipped_actions": skipped,
+        "launch_only": launch_only,
+        "launch_action": launch_action,
+        "launch_step_index": launch_step_index,
+        "terminal_observation": terminal_observation,
+        "terminal_forest": terminal_forest,
         "source_success_boundary": {
             "status": payload.get("status"),
             "success": payload.get("success"),
@@ -1274,6 +1312,18 @@ def convert_runlog_to_mobilegpt_memory(
         target_app=target_app,
     )
     transitions: list[_RunLogTransition] = trajectory["transitions"]
+    launch_only = trajectory["launch_only"] is True
+    semantic_agents_used = semantic_conversion and not launch_only
+    encoded_transitions = transitions
+    if launch_only:
+        encoded_transitions = [
+            _RunLogTransition(
+                step_index=int(trajectory["launch_step_index"]),
+                action=dict(trajectory["launch_action"]),
+                observation=dict(trajectory["terminal_observation"]),
+                forest=str(trajectory["terminal_forest"]),
+            )
+        ]
     server_root = Path(mobilegpt_root).expanduser().resolve() / "Server"
     if not server_root.is_dir():
         raise FileNotFoundError(f"mobilegpt_server_root_missing:{server_root}")
@@ -1314,7 +1364,7 @@ def convert_runlog_to_mobilegpt_memory(
         from utils.action_utils import generalize_action
         from utils.utils import get_openai_embedding
 
-        if semantic_conversion and semantic_query_provider is None:
+        if semantic_agents_used and semantic_query_provider is None:
             install_mobilegpt_openai_runtime(preserve_original_prompts=True)
             install_mobilegpt_select_schema_repair(SelectAgent)
 
@@ -1349,7 +1399,7 @@ def convert_runlog_to_mobilegpt_memory(
         subtask_history: list[str] = []
         embed = embedding_provider or get_openai_embedding
 
-        for screen_index, transition in enumerate(transitions):
+        for screen_index, transition in enumerate(encoded_transitions):
             raw_xml = mobilegpt_compatible_xml(transition.forest)
             raw_path = Path(encoder.xml_directory) / f"{screen_index}.xml"
             raw_path.write_text(raw_xml, encoding="utf-8")
@@ -1389,7 +1439,7 @@ def convert_runlog_to_mobilegpt_memory(
                         "mobilegpt_page_embedding_empty",
                         step_index=transition.step_index,
                     )
-                if semantic_conversion:
+                if semantic_agents_used:
                     with _temporary_agent_query_provider(
                         (explore_agent_module,),
                         semantic_query_provider,
@@ -1422,7 +1472,10 @@ def convert_runlog_to_mobilegpt_memory(
                 }
                 pages_by_identity[identity] = page
             page_index = int(page["index"])
-            if semantic_conversion:
+            if launch_only:
+                task_path[str(page_index)] = ["finish"]
+                continue
+            if semantic_agents_used:
                 with _temporary_agent_query_provider(
                     (select_agent_module,),
                     semantic_query_provider,
@@ -1534,8 +1587,9 @@ def convert_runlog_to_mobilegpt_memory(
             audit_rows.append(row)
             _write_event(stats, {"event": "mobilegpt_conversion_action_mapped", **row})
 
-        final_page_index = str(audit_rows[-1]["memory_page_index"])
-        task_path[final_page_index].append("finish")
+        if not launch_only:
+            final_page_index = str(audit_rows[-1]["memory_page_index"])
+            task_path[final_page_index].append("finish")
         app_root = memory / app_name
         _write_csv(
             memory / "tasks.csv",
@@ -1652,6 +1706,25 @@ def convert_runlog_to_mobilegpt_memory(
                     subtask_name=row["memory_subtask_name"],
                 )
             source_direct_hit_count += 1
+        launch_finish_validated = False
+        if launch_only:
+            page = next(iter(pages_by_identity.values()))
+            page_index = int(page["index"])
+            official_memory.init_page_manager(page_index)
+            finish_subtask = official_memory.get_next_subtask(
+                page_index,
+                [],
+                page["encoded_xml"],
+            )
+            if (
+                not isinstance(finish_subtask, dict)
+                or finish_subtask.get("name") != "finish"
+            ):
+                raise MobileGPTConversionError(
+                    "mobilegpt_launch_finish_recall_failed",
+                    page_index=page_index,
+                )
+            launch_finish_validated = True
         _write_event(
             stats,
             {
@@ -1673,16 +1746,17 @@ def convert_runlog_to_mobilegpt_memory(
         "task_name": trajectory["task_name"],
         "source_run_log": trajectory["source_run_log"],
         "target_package": trajectory["target_package"],
-        "original_mobilegpt_prompts": semantic_conversion,
-        "explore_agent_used": semantic_conversion,
-        "select_agent_used": semantic_conversion,
-        "derive_agent_fallback_allowed": semantic_conversion,
+        "original_mobilegpt_prompts": semantic_agents_used,
+        "explore_agent_used": semantic_agents_used,
+        "select_agent_used": semantic_agents_used,
+        "derive_agent_fallback_allowed": semantic_agents_used,
         "derive_agent_fallback_count": sum(
             row["derive_fallback_used"] is True for row in audit_rows
         ),
-        "generalize_action_used": True,
-        "direct_subtasks_from_runlog": not semantic_conversion,
+        "generalize_action_used": bool(audit_rows),
+        "direct_subtasks_from_runlog": not semantic_agents_used,
         "source_direct_hit_validation": True,
+        "launch_only": launch_only,
         "transition_count": len(transitions),
         "validated_transition_count": sum(row["consumed_transitions"] for row in audit_rows),
         "validation_rows": audit_rows,
@@ -1695,6 +1769,7 @@ def convert_runlog_to_mobilegpt_memory(
             "page_count": len(pages_by_identity),
             "action_row_count": official_action_count,
             "source_direct_hit_count": source_direct_hit_count,
+            "launch_finish_validated": launch_finish_validated,
             "loadable": True,
         },
         "complete": True,

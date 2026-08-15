@@ -14,6 +14,13 @@ must live outside the repository and are supplied through environment paths.
 - `appagent_demo` (AppAgent)
 - `t3a_hint` (T3A + retrieved semantic trace)
 
+`mobilegpt_offline_retrieval` is an adapted offline-retrieval baseline. The
+same verified source RunLog is deterministically converted into MobileGPT's
+native page/subtask/action memory; target execution keeps MobileGPT's native
+app selection, page retrieval, subtask retrieval, and action reader. The
+conversion does not claim to reproduce MobileGPT's optional online authoring
+episodes.
+
 The public entry point is:
 
 ```bash

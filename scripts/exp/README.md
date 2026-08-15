@@ -32,8 +32,9 @@ One normal single-task invocation performs the complete workflow:
    - `ours`: have an Agent interpret the RunLog goal, ordered actions, and
      existing action metadata without re-reading page representations, then
      validate, freeze, and register its Function bundle;
-   - `mobilegpt_offline_retrieval`: teach MobileGPT from the canonical RunLog,
-     then save its native task/page/subtask/action memory;
+   - `mobilegpt_offline_retrieval`: deterministically adapt the canonical
+     RunLog plan into MobileGPT's native task/page/subtask/action memory, then
+     use MobileGPT's native app and page retrieval online;
    - `appagent_demo`: resolve or create the native demonstration;
    - `t3a_hint`: derive the semantic hint from the same Function and RunLog.
 3. Reuse every already registered or frozen source asset without regeneration.
