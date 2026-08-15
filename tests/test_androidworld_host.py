@@ -15,6 +15,7 @@ from src.integrations.android_world.launch import (
     _androidworld_a11y_forwarder_installed,
     _ensure_androidworld_a11y_forwarder,
     _androidworld_setup_apps_for_suite,
+    _wait_for_androidworld_a11y,
     _result_has_official_validator_conclusion,
     _runtime_execution_trace,
 )
@@ -43,6 +44,21 @@ def test_androidworld_setup_rejects_unmapped_task_dependency() -> None:
             {"Task": [SimpleNamespace(app_names=("unknown",))]},
             get_app_mapping=lambda _name: None,
         )
+
+
+def test_androidworld_waits_for_native_a11y_before_setup(monkeypatch) -> None:
+    calls = 0
+
+    def get_a11y_forest():
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise RuntimeError("not ready")
+        return object()
+
+    monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
+    _wait_for_androidworld_a11y(SimpleNamespace(get_a11y_forest=get_a11y_forest))
+    assert calls == 3
 
 
 def test_androidworld_reuses_installed_a11y_forwarder(monkeypatch) -> None:

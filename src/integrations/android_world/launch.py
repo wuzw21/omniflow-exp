@@ -1406,6 +1406,19 @@ def _androidworld_setup_apps_for_suite(
     return tuple(setup_apps)
 
 
+def _wait_for_androidworld_a11y(env: Any, *, attempts: int = 3) -> None:
+    last_error: RuntimeError | None = None
+    for attempt in range(max(1, int(attempts))):
+        try:
+            env.get_a11y_forest()
+            return
+        except RuntimeError as error:
+            last_error = error
+            if attempt + 1 < attempts:
+                time.sleep(1.0)
+    raise RuntimeError("AndroidWorld accessibility forest not ready") from last_error
+
+
 def _is_pickleable(value: object) -> bool:
     try:
         pickle.dumps(value)
@@ -3254,6 +3267,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             grpc_port=int(args.console_port) + 3000,
             install_a11y_forwarding_app=not reuse_a11y_forwarder,
         )
+        _wait_for_androidworld_a11y(env)
         if bool(args.perform_emulator_setup):
             logger.info(
                 "Setting up AndroidWorld snapshots for selected tasks: %s",
