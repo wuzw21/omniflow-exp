@@ -1630,7 +1630,7 @@ def _prepare_androidworld_snapshot_restore(
             )
 
 
-def _wait_for_androidworld_a11y(env: Any, *, attempts: int = 3) -> None:
+def _wait_for_androidworld_a11y(env: Any, *, attempts: int = 6) -> None:
     last_error: RuntimeError | None = None
     for attempt in range(max(1, int(attempts))):
         try:

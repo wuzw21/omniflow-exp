@@ -62,6 +62,22 @@ def test_androidworld_waits_for_native_a11y_before_setup(monkeypatch) -> None:
     assert calls == 3
 
 
+def test_androidworld_a11y_readiness_allows_cold_boot_recovery(monkeypatch) -> None:
+    calls = 0
+
+    def get_state(*, wait_to_stabilize: bool = False):
+        nonlocal calls
+        assert wait_to_stabilize is False
+        calls += 1
+        if calls < 4:
+            raise RuntimeError("forwarder still reconnecting")
+        return SimpleNamespace(forest=object())
+
+    monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
+    _wait_for_androidworld_a11y(SimpleNamespace(get_state=get_state))
+    assert calls == 4
+
+
 def test_androidworld_reuses_installed_a11y_forwarder(monkeypatch) -> None:
     calls = []
 
