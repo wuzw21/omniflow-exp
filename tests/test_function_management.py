@@ -36,6 +36,28 @@ def _function() -> dict:
     }
 
 
+def _source_step(
+    source_state_id: str,
+    tool: str,
+    args: dict,
+    *,
+    success: bool = True,
+) -> dict:
+    return {
+        "before_state_id": source_state_id,
+        "action": {"tool": tool, "args": args},
+        "result": {"success": success},
+    }
+
+
+def _function_step(source_step: dict, step_index: int = 0) -> dict:
+    return {
+        "step_index": step_index,
+        "source_state_id": source_step["before_state_id"],
+        "action": source_step["action"],
+    }
+
+
 def test_enhancement_instruction_is_included_in_prompt() -> None:
     prompts: list[str] = []
 
@@ -339,6 +361,78 @@ def test_enhancement_replaces_steps_with_successful_runlog_segment() -> None:
     assert status == "enhanced"
 
 
+def test_enhancement_can_delete_actions_at_segment_edges() -> None:
+    source_steps = [
+        _source_step(
+            "state-1",
+            "open_app",
+            {"package_name": "com.example.expense"},
+        ),
+        _source_step("state-2", "click", {"x": 90, "y": 120}),
+        _source_step("state-3", "input_text", {"text": "Paid by card"}),
+    ]
+    run_log = {"run_id": "source-run", "steps": source_steps}
+    current = {
+        **_function(),
+        "steps": [
+            _function_step(step, index) for index, step in enumerate(source_steps)
+        ],
+    }
+
+    enhanced, _, status = enhance_function(
+        current,
+        run_log,
+        lambda _prompt: json.dumps(
+            {
+                "steps": [
+                    _function_step(source_steps[1]),
+                    _function_step(source_steps[2]),
+                ]
+            }
+        ),
+    )
+
+    assert enhanced["function_id"] == current["function_id"]
+    assert [step["source_state_id"] for step in enhanced["steps"]] == [
+        "state-2",
+        "state-3",
+    ]
+    assert status == "enhanced"
+
+
+def test_enhancement_can_reorder_only_to_recorded_source_order() -> None:
+    first = _source_step("state-a", "click", {"x": 10, "y": 20})
+    second = _source_step("state-b", "click", {"x": 30, "y": 40})
+    current = {
+        **_function(),
+        "steps": [
+            _function_step(first),
+            _function_step(second, 1),
+        ],
+    }
+    run_log = {"run_id": "source-run", "steps": [second, first]}
+
+    enhanced, _, status = enhance_function(
+        current,
+        run_log,
+        lambda _prompt: json.dumps(
+            {
+                "steps": [
+                    _function_step(second),
+                    _function_step(first),
+                ]
+            }
+        ),
+    )
+
+    assert enhanced["function_id"] == current["function_id"]
+    assert [step["source_state_id"] for step in enhanced["steps"]] == [
+        "state-b",
+        "state-a",
+    ]
+    assert status == "enhanced"
+
+
 def test_enhancement_rejects_action_not_grounded_in_runlog() -> None:
     run_log = {
         "run_id": "source-run",
@@ -373,6 +467,41 @@ def test_enhancement_rejects_action_not_grounded_in_runlog() -> None:
         assert str(error).startswith("function_action_not_grounded:")
     else:
         raise AssertionError("invented action must be rejected")
+
+
+def test_enhancement_rejects_successful_actions_separated_by_failure() -> None:
+    first = _source_step(
+        "state-1",
+        "open_app",
+        {"package_name": "com.example.expense"},
+    )
+    last = _source_step("state-3", "input_text", {"text": "Paid by card"})
+    run_log = {
+        "run_id": "source-run",
+        "steps": [
+            first,
+            _source_step("state-2", "click", {"x": 10, "y": 20}, success=False),
+            last,
+        ],
+    }
+
+    try:
+        enhance_function(
+            _function(),
+            run_log,
+            lambda _prompt: json.dumps(
+                {
+                    "steps": [
+                        _function_step(first),
+                        _function_step(last),
+                    ]
+                }
+            ),
+        )
+    except ValueError as error:
+        assert str(error).startswith("function_action_not_grounded:")
+    else:
+        raise AssertionError("failed RunLog steps must split successful evidence")
 
 
 def test_tools_expose_one_function_save_interface(tmp_path) -> None:

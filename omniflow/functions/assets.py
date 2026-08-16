@@ -1016,7 +1016,7 @@ def _enhancement_prompt(
     run_log_facts = {
         "run_id": str(run_log.get("run_id") or ""),
         "goal": str(run_log.get("goal") or ""),
-        "successful_function_steps": _successful_source_steps(run_log),
+        "successful_function_segments": _successful_source_segments(run_log),
         "raw_steps": [
             {
                 key: step.get(key)
@@ -1047,9 +1047,9 @@ Improve the reusable Android automation Function below for future recall.
 Return one JSON object with optional keys: name, description, steps, parameters, and checker_rules.
 Describe when to reuse the Function, visible operations, inputs, success signal, and avoid cases.
 You may add, remove, modify, or reorder actions when needed to recover the complete reusable
-semantic operation. The final steps must be one exact contiguous sequence of successful actions
-from the supplied source RunLog. Copy every source_state_id, tool, and argument exactly; never
-invent an action or state. Keep function_id unchanged. Use the same language as the current
+semantic operation. The final steps must be one exact contiguous sequence within one supplied
+successful_function_segment. Copy every source_state_id, tool, and argument exactly; never invent
+an action or state. Keep function_id unchanged. Use the same language as the current
 name/description.
 Treat user_instruction as optional enhancement guidance. It may refine semantic naming,
 description, action selection, parameter selection, and evidence-backed checker rules, but it
@@ -1115,7 +1115,6 @@ def _grounded_replacement_steps(
         "agent_visible": False,
     }
     function = parse_function_artifact(candidate)
-    evidence = _successful_source_steps(run_log)
     expected = [
         (step.source_state_id, step.action.to_dict())
         for step in function.steps
@@ -1124,10 +1123,11 @@ def _grounded_replacement_steps(
     if not any(
         [
             (str(step.get("source_state_id") or ""), step["action"])
-            for step in evidence[start : start + width]
+            for step in segment[start : start + width]
         ]
         == expected
-        for start in range(len(evidence) - width + 1)
+        for segment in _successful_source_segments(run_log)
+        for start in range(len(segment) - width + 1)
     ):
         raise ValueError(
             "function_action_not_grounded:"
@@ -1137,13 +1137,33 @@ def _grounded_replacement_steps(
 
 
 def _successful_source_steps(run_log: dict[str, Any]) -> list[dict[str, Any]]:
-    evidence: list[dict[str, Any]] = []
+    return [
+        step
+        for segment in _successful_source_segments(run_log)
+        for step in segment
+    ]
+
+
+def _successful_source_segments(
+    run_log: dict[str, Any],
+) -> list[list[dict[str, Any]]]:
+    segments: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+
+    def finish_segment() -> None:
+        nonlocal current
+        if current:
+            segments.append(current)
+            current = []
+
     for raw_step in run_log.get("steps") or ():
         if not isinstance(raw_step, dict):
+            finish_segment()
             continue
         result = raw_step.get("result")
         metadata = raw_step.get("metadata")
         if not isinstance(result, dict) or result.get("success") is not True:
+            finish_segment()
             continue
         if isinstance(metadata, dict) and metadata.get("origin") == "checker":
             continue
@@ -1156,15 +1176,20 @@ def _successful_source_steps(run_log: dict[str, Any]) -> list[dict[str, Any]]:
             source_state_id = str(raw_step.get("before_state_id") or "").strip()
             projected = [canonicalize_action(action, replayable_only=True)]
         else:
+            finish_segment()
             continue
-        evidence.extend(
+        if not projected:
+            finish_segment()
+            continue
+        current.extend(
             {
                 "source_state_id": source_state_id,
                 "action": projected_action,
             }
             for projected_action in projected
         )
-    return evidence
+    finish_segment()
+    return segments
 
 
 def _parameter_candidates(
