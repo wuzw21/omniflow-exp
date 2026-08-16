@@ -481,6 +481,35 @@ def test_metrics_preserve_missing_validator_as_unknown(tmp_path) -> None:
     assert summary["per_task"][0]["success"] is None
 
 
+def test_metrics_preserve_runtime_environment_failure_markers(tmp_path) -> None:
+    result_path = (
+        tmp_path
+        / "ContactsNewContactDraft"
+        / "mobilegpt_offline_retrieval"
+        / "small5554"
+        / "task_results.jsonl"
+    )
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps(
+            {
+                "task_name": "ContactsNewContactDraft",
+                "official_validator_used": True,
+                "official_validator_success": None,
+                "runtime_integrity_error": "mobilegpt_app_ui_not_ready",
+                "environment_failure": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    row = aggregate_task_results([result_path])["per_task"][0]
+
+    assert row["runtime_integrity_error"] == "mobilegpt_app_ui_not_ready"
+    assert row["environment_failure"] is True
+
+
 def test_metrics_report_only_aggregate_tool_calls_and_tokens(tmp_path: Path) -> None:
     result_path = tmp_path / "Task" / "ours" / "small5554" / "task_results.jsonl"
     result_path.parent.mkdir(parents=True)

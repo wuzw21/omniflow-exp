@@ -677,6 +677,25 @@ def _load_verified_registered_result(summary_path: Path) -> dict[str, Any]:
     return summary
 
 
+def mobilegpt_runtime_integrity_error(value: Any) -> str | None:
+    """Classify MobileGPT transport/runtime errors, not method terminals."""
+
+    error = str(value or "").strip()
+    if not error or "mobilegpt_step_budget_exhausted" in error:
+        return None
+    markers = (
+        "ConnectionError:",
+        "ConnectionRefusedError:",
+        "TimeoutError:",
+        "mobilegpt_androidworld_state_",
+        "mobilegpt_app_ui_not_ready:",
+        "mobilegpt_launch_response_invalid:",
+        "mobilegpt_native_xml_invalid:",
+        "mobilegpt_server_closed_connection",
+    )
+    return error if any(marker in error for marker in markers) else None
+
+
 def formal_result_environment_failure_reasons(
     row: dict[str, Any],
 ) -> tuple[str, ...]:
@@ -691,6 +710,11 @@ def formal_result_environment_failure_reasons(
         runtime_integrity_error is not None
         and not isinstance(runtime_integrity_error, str)
         and bool(runtime_integrity_error)
+    ):
+        reasons.append("runtime_integrity_error")
+    if (
+        str(row.get("method") or "") == "mobilegpt_offline_retrieval"
+        and mobilegpt_runtime_integrity_error(row.get("error"))
     ):
         reasons.append("runtime_integrity_error")
 

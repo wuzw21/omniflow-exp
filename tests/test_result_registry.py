@@ -481,37 +481,49 @@ def test_registered_cell_plan_accepts_per_episode_validator_conclusion(
 
 
 @pytest.mark.parametrize(
-    ("runtime_integrity_error", "environment_failure"),
-    (("mobilegpt_app_ui_not_ready", False), ("", True)),
+    ("method", "runtime_integrity_error", "environment_failure", "error"),
+    (
+        ("ours", "mobilegpt_app_ui_not_ready", False, ""),
+        ("ours", "", True, ""),
+        (
+            "mobilegpt_offline_retrieval",
+            "",
+            False,
+            "RuntimeError: mobilegpt_app_ui_not_ready:wrong_app",
+        ),
+    ),
 )
 def test_registered_cell_plan_retries_environment_failures_even_with_validator(
     tmp_path: Path,
+    method: str,
     runtime_integrity_error: str,
     environment_failure: bool,
+    error: str,
 ) -> None:
     runs_root = tmp_path / "runs"
     task = "ContactsNewContactDraft"
     _write_registered_cell(
         runs_root,
         task=task,
-        method="mobilegpt_offline_retrieval",
+        method=method,
         device="small5554",
         success=False,
         runtime_integrity_error=runtime_integrity_error,
         environment_failure=environment_failure,
+        error=error,
     )
 
     plan = registered_cell_plan(
         runs_root=runs_root,
         task_name=task,
-        methods=("mobilegpt_offline_retrieval",),
+        methods=(method,),
         devices=("small5554",),
         source_seed=111,
         evaluation_seed=113,
     )
 
     assert plan["completed"] == []
-    assert plan["pending"] == [("mobilegpt_offline_retrieval", "small5554")]
+    assert plan["pending"] == [(method, "small5554")]
     assert load_summary_rows(runs_root, {}, []) == []
 
 

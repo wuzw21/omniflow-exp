@@ -33,6 +33,9 @@ from src.experiment.observation_evidence import (
     persist_target_run_evidence,
     transfer_state_coverage_audit,
 )
+from src.experiment.result_registry import (
+    mobilegpt_runtime_integrity_error as _mobilegpt_runtime_integrity_error,
+)
 from src.integrations.android_world.agent import (
     MODE_OMNIFLOW,
     build_agent,
@@ -149,23 +152,6 @@ def build_response_acceptance_detail(
             ),
         },
     }
-
-
-def _mobilegpt_runtime_integrity_error(value: Any) -> str | None:
-    error = str(value or "").strip()
-    if not error or "mobilegpt_step_budget_exhausted" in error:
-        return None
-    markers = (
-        "ConnectionError:",
-        "ConnectionRefusedError:",
-        "TimeoutError:",
-        "mobilegpt_androidworld_state_",
-        "mobilegpt_app_ui_not_ready:",
-        "mobilegpt_launch_response_invalid:",
-        "mobilegpt_native_xml_invalid:",
-        "mobilegpt_server_closed_connection",
-    )
-    return error if any(marker in error for marker in markers) else None
 
 
 def _mobilegpt_runtime_integrity_exit_code(run_summary: dict[str, Any]) -> int:

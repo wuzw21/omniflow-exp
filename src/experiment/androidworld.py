@@ -4750,6 +4750,8 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
                 "relocation_diagnostic_count": len(relocation_diagnostics),
                 "relocation_diagnostics": relocation_diagnostics,
                 "error": row.get("error"),
+                "runtime_integrity_error": row.get("runtime_integrity_error"),
+                "environment_failure": row.get("environment_failure"),
             }
         )
 

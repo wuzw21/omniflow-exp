@@ -2107,13 +2107,24 @@ def test_refresh_preserves_but_does_not_select_environment_error_result(
 
 
 @pytest.mark.parametrize(
-    ("runtime_integrity_error", "environment_failure"),
-    (("mobilegpt_app_ui_not_ready", False), ("", True)),
+    ("method", "runtime_integrity_error", "environment_failure", "error"),
+    (
+        ("ours", "mobilegpt_app_ui_not_ready", False, ""),
+        ("ours", "", True, ""),
+        (
+            "mobilegpt_offline_retrieval",
+            "",
+            False,
+            "RuntimeError: mobilegpt_app_ui_not_ready:wrong_app",
+        ),
+    ),
 )
 def test_refresh_preserves_but_excludes_runtime_environment_failures(
     tmp_path: Path,
+    method: str,
     runtime_integrity_error: str,
     environment_failure: bool,
+    error: str,
 ) -> None:
     source = _write_source_run_log(tmp_path)
     source_index = _write_json(
@@ -2133,6 +2144,13 @@ def test_refresh_preserves_but_excludes_runtime_environment_failures(
         task_started_count=1,
         runtime_integrity_error=runtime_integrity_error,
         environment_failure=environment_failure,
+        error=error,
+        method=method,
+        mobilegpt_manifest=(
+            _write_mobilegpt_manifest(tmp_path)
+            if method == "mobilegpt_offline_retrieval"
+            else None
+        ),
     )
 
     report = refresh_artifact_memory(
