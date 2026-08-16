@@ -184,6 +184,7 @@ fold_size="${OMNIFLOW_SINGLE_TASK_FOLD_SIZE:-$formal_fold_size}"
 dry_run=0
 check_only=0
 development_run=0
+mobilegpt_native_cold_warm=0
 source_qualification_only=0
 source_collection=0
 stock_capture=0
@@ -283,6 +284,9 @@ Options:
                             assets, attempts, result directories, or emulators.
   --development-run         Run one unregistered `ours` episode through this
                             script for bounded method debugging.
+  --mobilegpt-native-cold-warm
+                            Run MobileGPT once from empty native memory, then
+                            rerun the same task from the memory it wrote.
   --stock-capture AGENT     Run one unregistered immutable stock `t3a` or `m3a`
                             episode and persist its step requests. The default
                             diagnostic limit is seven; set
@@ -444,6 +448,9 @@ while [[ "$#" -gt 0 ]]; do
     --development-run)
       development_run=1
       ;;
+    --mobilegpt-native-cold-warm)
+      mobilegpt_native_cold_warm=1
+      ;;
     --stock-capture)
       shift
       if [[ "$#" -eq 0 || ( "$1" != "t3a" && "$1" != "m3a" ) ]]; then
@@ -557,6 +564,24 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
+if [[ "$mobilegpt_native_cold_warm" -eq 1 ]]; then
+  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$development_run" -eq 1 || "$source_collection" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || "$page_store" -eq 1 || "$stock_capture" != "0" || -n "$e2e_task" ]]; then
+    echo "--mobilegpt-native-cold-warm cannot be combined with another execution or maintenance mode." >&2
+    exit 2
+  fi
+  if [[ -z "$batch_task_filter" || "$batch_task_filter" == *,* ]]; then
+    echo "--mobilegpt-native-cold-warm requires exactly one task through --tasks." >&2
+    exit 2
+  fi
+  if [[ -n "$selected_methods_arg" && "$selected_methods_arg" != "mobilegpt_offline_retrieval" ]]; then
+    echo "--mobilegpt-native-cold-warm accepts only mobilegpt_offline_retrieval." >&2
+    exit 2
+  fi
+  task="$batch_task_filter"
+  batch_task_filter=""
+  selected_methods_arg="mobilegpt_offline_retrieval"
+  selected_devices_arg="${selected_devices_arg:-small5554}"
+fi
 if [[ "$source_collection" -eq 1 ]]; then
   if [[ -z "$batch_task_filter" || "$batch_task_filter" == *,* ]]; then
     echo "--collect-source requires exactly one task through --tasks." >&2
@@ -1375,7 +1400,7 @@ if [[ "$convert_ours_assets" -eq 1 ]]; then
   cd "$repo"
   exec "$python_bin" "${conversion_args[@]}"
 fi
-if [[ -n "$batch_task_filter" && "$all_tasks" -eq 0 && "$prepare_mobilegpt_memory" -eq 0 ]]; then
+if [[ -n "$batch_task_filter" && "$all_tasks" -eq 0 && "$prepare_mobilegpt_memory" -eq 0 && "$mobilegpt_native_cold_warm" -eq 0 ]]; then
   all_tasks=1
 fi
 if [[ "$prepare_mobilegpt_memory" -eq 1 ]]; then
@@ -1798,6 +1823,9 @@ else
 fi
 attempt_series_root="${results_root:+$results_root/androidworld_single_task_attempts/$task}"
 output_root="${OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT:-$attempt_series_root/$attempt_id}"
+if [[ "$mobilegpt_native_cold_warm" -eq 1 ]]; then
+  output_root="${OMNIFLOW_MOBILEGPT_NATIVE_COLD_WARM_OUTPUT_PATH:-$results_root/mobilegpt_native_cold_warm/$task/$attempt_id}"
+fi
 preflight_output_root="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_OUTPUT_ROOT:-${results_root:+$results_root/preflight/$task/$attempt_id}}"
 requires_mobilegpt_source_memory=0
 requires_appagent_source_memory=0
@@ -1819,7 +1847,9 @@ for method in ${methods//,/ }; do
       ;;
     mobilegpt_offline_retrieval)
       need_mobilegpt_preflight=1
-      requires_mobilegpt_source_memory=1
+      if [[ "$mobilegpt_native_cold_warm" -eq 0 ]]; then
+        requires_mobilegpt_source_memory=1
+      fi
       contains_baseline_method=1
       ;;
     appagent_demo)
@@ -3085,7 +3115,7 @@ if [[ "$requires_omnitransfer" -eq 1 ]]; then
   require_file "omnitransfer_runtime" "$omnitransfer_root/src/omnitransfer/runtime.py"
   require_file "ours_store" "$store_path"
 fi
-if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
+if [[ "$need_mobilegpt_preflight" -eq 1 ]]; then
   require_file "mobilegpt_server" "$mobilegpt_root/Server/main.py"
 fi
 if [[ "$need_appagent_preflight" -eq 1 ]]; then
@@ -3185,21 +3215,26 @@ select_model_endpoint "$formal_model_endpoint_profile"
 validate_experiment_model "$paper_model" "$formal_model_endpoint_profile"
 export MOBILEGPT_CHAT_API_KEY="$selected_model_api_key"
 export MOBILEGPT_CHAT_BASE_URL="$selected_model_base_url"
-if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
+if [[ "$need_mobilegpt_preflight" -eq 1 ]]; then
   if [[ -z "$mobilegpt_embedding_api_key" || -z "$mobilegpt_embedding_base_url" ]]; then
     echo "MobileGPT embedding endpoint is missing from OPENAI_API_KEY/OPENAI_BASE_URL in OMNIFLOW_ENV_FILE." >&2
     exit 2
   fi
   export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"
   export MOBILEGPT_EMBEDDING_BASE_URL="$mobilegpt_embedding_base_url"
-  mobilegpt_embedding_contract="$($python_bin -m src.integrations.mobilegpt_runtime \
-    preflight-endpoints \
-    --manifest "$mobilegpt_source_manifest" \
-    --memory-root "$mobilegpt_source_memory_root" \
-    --chat-model "$paper_model")"
-  IFS=$'\t' read -r mobilegpt_runtime_embedding_model mobilegpt_runtime_embedding_dimension <<< "$mobilegpt_embedding_contract"
-  export MOBILEGPT_EMBEDDING_MODEL="$mobilegpt_runtime_embedding_model"
-  echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=$mobilegpt_runtime_embedding_model embedding_dimension=$mobilegpt_runtime_embedding_dimension"
+  if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
+    mobilegpt_embedding_contract="$($python_bin -m src.integrations.mobilegpt_runtime \
+      preflight-endpoints \
+      --manifest "$mobilegpt_source_manifest" \
+      --memory-root "$mobilegpt_source_memory_root" \
+      --chat-model "$paper_model")"
+    IFS=$'\t' read -r mobilegpt_runtime_embedding_model mobilegpt_runtime_embedding_dimension <<< "$mobilegpt_embedding_contract"
+    export MOBILEGPT_EMBEDDING_MODEL="$mobilegpt_runtime_embedding_model"
+    echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=$mobilegpt_runtime_embedding_model embedding_dimension=$mobilegpt_runtime_embedding_dimension"
+  else
+    export MOBILEGPT_EMBEDDING_MODEL="$mobilegpt_embedding_model"
+    echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=$mobilegpt_embedding_model mode=native-cold-warm"
+  fi
 fi
 echo "[model] model=$paper_model model_endpoint_profile=$formal_model_endpoint_profile model_endpoint=$selected_model_base_url"
 if [[ "$dry_run" -eq 1 ]]; then
@@ -3605,5 +3640,8 @@ if [[ -n "$device_targets" ]]; then
 fi
 if [[ -n "$appagent_demo_memory_root" ]]; then
   command+=(--appagent-demo-memory-root "$appagent_demo_memory_root")
+fi
+if [[ "$mobilegpt_native_cold_warm" -eq 1 ]]; then
+  command+=(--mobilegpt-native-cold-warm)
 fi
 exec "${command[@]}"

@@ -6955,13 +6955,15 @@ def _run_one_task_mobilegpt(
     attempt_id: str,
     source_run_log: Path,
     compatible_source_sha256s: Sequence[str] = (),
+    native_memory: bool = False,
+    initial_memory_condition: str = "",
 ) -> tuple[list[dict[str, Any]], int]:
-    if method not in MOBILEGPT_METHODS:
+    if method not in MOBILEGPT_METHODS and not native_memory:
         raise ValueError(f"unsupported_mobilegpt_method:{method}")
     if not targets:
         raise ValueError("mobilegpt_device_target_required")
 
-    if item.meta.get("latest_official_success_source") is not True:
+    if not native_memory and item.meta.get("latest_official_success_source") is not True:
         raise ValueError(
             "mobilegpt_offline_retrieval_requires_official_success_source:"
             f"task={item.task}"
@@ -6976,23 +6978,26 @@ def _run_one_task_mobilegpt(
     source_memory_root = _repo_path(source_memory_value)
     if not source_memory_root.is_dir():
         raise FileNotFoundError(f"mobilegpt_source_memory_missing:{source_memory_root}")
-    source_manifest_path = source_memory_root.parent / MOBILEGPT_MEMORY_MANIFEST
-    source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
-    source_schema = str(source_manifest.get("schema_version") or "")
-    try:
-        source_method = MOBILEGPT_SOURCE_METHOD_BY_SCHEMA[source_schema]
-        source_prep_type = MOBILEGPT_PREP_TYPE_BY_SCHEMA[source_schema]
-    except KeyError as error:
-        raise ValueError("mobilegpt_source_memory_schema_invalid") from error
-    adapted_memory = validate_mobilegpt_adapted_memory(
-        source_memory_root,
-        task_name=item.task,
-        source_seed=111,
-        source_run_log=source_run_log,
-        compatible_source_sha256s=compatible_source_sha256s,
-        expected_model=str(args.model or ""),
-        expected_source_method=source_method,
-    )
+    adapted_memory: dict[str, Any] = {}
+    source_prep_type = "mobilegpt_native_runtime_learning"
+    if not native_memory:
+        source_manifest_path = source_memory_root.parent / MOBILEGPT_MEMORY_MANIFEST
+        source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+        source_schema = str(source_manifest.get("schema_version") or "")
+        try:
+            source_method = MOBILEGPT_SOURCE_METHOD_BY_SCHEMA[source_schema]
+            source_prep_type = MOBILEGPT_PREP_TYPE_BY_SCHEMA[source_schema]
+        except KeyError as error:
+            raise ValueError("mobilegpt_source_memory_schema_invalid") from error
+        adapted_memory = validate_mobilegpt_adapted_memory(
+            source_memory_root,
+            task_name=item.task,
+            source_seed=111,
+            source_run_log=source_run_log,
+            compatible_source_sha256s=compatible_source_sha256s,
+            expected_model=str(args.model or ""),
+            expected_source_method=source_method,
+        )
 
     memory_root = _method_memory_root(output_root, item.task, method)
     memory_root.mkdir(parents=True, exist_ok=True)
@@ -7021,9 +7026,15 @@ def _run_one_task_mobilegpt(
     target_source = (
         "mobilegpt_open_target_app"
         if explicit_target_package
-        else "sealed_converted_source_memory"
+        else (
+            "native_mobilegpt_memory"
+            if native_memory
+            else "sealed_converted_source_memory"
+        )
     )
-    memory_condition = "converted_runlog_memory"
+    memory_condition = str(initial_memory_condition or "").strip() or (
+        "native_memory" if native_memory else "converted_runlog_memory"
+    )
     source_memory_digest, source_memory_file_count = _mobilegpt_memory_digest(
         source_memory_root
     )
@@ -7044,8 +7055,11 @@ def _run_one_task_mobilegpt(
         ),
         "manifest_path": str(adapted_memory.get("manifest_path") or ""),
         "manifest_sha256": str(adapted_memory.get("manifest_sha256") or ""),
-        "memory_sha256": str(adapted_memory.get("memory_sha256") or ""),
+        "memory_sha256": str(
+            adapted_memory.get("memory_sha256") or source_memory_digest
+        ),
         "shared_across_targets": True,
+        "native_runtime_learning": bool(native_memory),
     }
 
     _write_method_memory_manifest(
@@ -7367,6 +7381,120 @@ def _run_one_task_mobilegpt(
     return records, failed
 
 
+def _mobilegpt_native_phase_summary(
+    *,
+    records: Sequence[dict[str, Any]],
+    memory_root: Path,
+    stats_path: Path,
+) -> dict[str, Any]:
+    result_paths = [
+        path
+        for record in records
+        for path in _one_task_formal_result_paths(record)
+    ]
+    aggregate = aggregate_task_results(result_paths)
+    stats = summarize_mobilegpt_stats(stats_path)
+    return {
+        "official_validator_success": (
+            aggregate.get("official_validator_success_count") == 1
+            and aggregate.get("official_validator_task_count") == 1
+        ),
+        "result": (aggregate.get("per_task") or [None])[0],
+        "stats": stats,
+        "memory": inspect_mobilegpt_memory(memory_root),
+        "memory_root": str(memory_root),
+        "memory_sha256": _mobilegpt_memory_digest(memory_root)[0],
+    }
+
+
+def _run_mobilegpt_native_cold_warm(
+    *,
+    args: argparse.Namespace,
+    item: ArchivedRunLog,
+    targets: Sequence[DeviceTarget],
+    task_params_override: dict[str, Any] | None,
+    task_seed: int | None,
+) -> int:
+    if len(targets) != 1:
+        raise ValueError("mobilegpt_native_cold_warm_requires_one_device")
+    output_root = _repo_path(args.output_root)
+    if output_root.exists():
+        raise FileExistsError(
+            f"immutable_mobilegpt_native_cold_warm_exists:{output_root}"
+        )
+    output_root.mkdir(parents=True)
+    empty_memory_root = output_root / "empty_memory"
+    empty_memory_root.mkdir()
+    target = targets[0]
+    method = "mobilegpt_offline_retrieval"
+    phase_summaries: dict[str, Any] = {}
+    source_memory_root = empty_memory_root
+    failed = 0
+
+    for phase in ("cold", "warm"):
+        phase_args = argparse.Namespace(**vars(args))
+        phase_args.mobilegpt_source_memory_root = str(source_memory_root)
+        phase_output_root = output_root / phase
+        records, phase_failed = _run_one_task_mobilegpt(
+            args=phase_args,
+            item=item,
+            targets=[target],
+            output_root=phase_output_root,
+            task_params_override=task_params_override,
+            task_seed=task_seed,
+            method=method,
+            attempt_id=f"{output_root.name}-{phase}",
+            source_run_log=item.source_run_log,
+            native_memory=True,
+            initial_memory_condition=(
+                "native_empty_memory" if phase == "cold" else "native_cold_memory"
+            ),
+        )
+        failed += phase_failed
+        phase_memory_root = (
+            _method_memory_root(phase_output_root, item.task, method)
+            / "_episodes"
+            / target.label
+            / "mobilegpt_memory"
+        )
+        stats_path = phase_memory_root.parent / "mobilegpt_stats.jsonl"
+        phase_summaries[phase] = _mobilegpt_native_phase_summary(
+            records=records,
+            memory_root=phase_memory_root,
+            stats_path=stats_path,
+        )
+        source_memory_root = phase_memory_root
+
+    warm_stats = dict(phase_summaries["warm"].get("stats") or {})
+    report = {
+        "schema_version": "omniflow.mobilegpt-native-cold-warm-diagnostic.v1",
+        "task": item.task,
+        "device": target.to_dict(),
+        "task_seed": task_seed,
+        "old_runlog_used_as_memory": False,
+        "cold_memory_reused_by_warm": True,
+        "cold": phase_summaries["cold"],
+        "warm": phase_summaries["warm"],
+        "warm_reuse": {
+            "memory_lookup_count": _coerce_int(
+                warm_stats.get("memory_lookup_count")
+            ),
+            "memory_hit_count": _coerce_int(warm_stats.get("memory_hit_count")),
+            "memory_hit_rate": _coerce_float(warm_stats.get("memory_hit_rate")),
+            "fallback_count": _coerce_int(warm_stats.get("fallback_count")),
+        },
+        "command_failure_count": failed,
+    }
+    report_path = output_root / "cold_warm_report.json"
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
+    print(f"[mobilegpt-native-cold-warm] report={report_path}", flush=True)
+    return 1 if failed else 0
+
+
 def cmd_one_task(args: argparse.Namespace) -> int:
     selected = _select_from_args(args)
     if len(selected) != 1:
@@ -7388,6 +7516,18 @@ def cmd_one_task(args: argparse.Namespace) -> int:
         if bool(args.random_task_seed)
         else args.task_random_seed
     )
+    if bool(getattr(args, "mobilegpt_native_cold_warm", False)):
+        if methods != ["mobilegpt_offline_retrieval"]:
+            raise ValueError(
+                "mobilegpt_native_cold_warm_requires_mobilegpt_only"
+            )
+        return _run_mobilegpt_native_cold_warm(
+            args=args,
+            item=item,
+            targets=targets,
+            task_params_override=task_params_override,
+            task_seed=task_seed,
+        )
     attempt_manifest_path = _claim_one_task_attempt(
         attempt_root,
         task=item.task,
@@ -8159,6 +8299,14 @@ def build_parser() -> argparse.ArgumentParser:
             "Optional source-only native MobileGPT memory. If omitted, the "
             "same episode runner starts cold from empty memory; if supplied, "
             "it starts warm from an immutable snapshot."
+        ),
+    )
+    one_task_parser.add_argument(
+        "--mobilegpt-native-cold-warm",
+        action="store_true",
+        help=(
+            "Run one unregistered native MobileGPT episode from empty memory, "
+            "then rerun the same task from the memory written by that episode."
         ),
     )
     one_task_parser.add_argument(

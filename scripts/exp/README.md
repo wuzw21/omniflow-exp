@@ -258,6 +258,25 @@ The endpoint profile is explicit and fail-closed: `llmthu` reads only
 `OPENAI_API_KEY`/`OPENAI_BASE_URL`. It never switches accounts because another
 credential happens to be present in the same environment file.
 
+## Native MobileGPT cold/warm diagnostic
+
+This unregistered diagnostic runs the same AndroidWorld task twice on one
+device. The cold episode starts from an empty MobileGPT memory directory. The
+warm episode starts from the exact native memory directory written by cold; no
+RunLog conversion or converted source memory participates.
+
+```bash
+OMNIFLOW_MOBILEGPT_NATIVE_COLD_WARM_OUTPUT_PATH=/absolute/new/attempt \
+bash scripts/exp/run_androidworld.sh \
+  --mobilegpt-native-cold-warm \
+  --tasks MarkorCreateFolder \
+  --devices small5554
+```
+
+The immutable `cold_warm_report.json` records both official-validator results,
+model usage, actions, duration, native memory inventory, and warm memory hit and
+fallback counts. This diagnostic never registers a formal experiment cell.
+
 ## Unregistered stock T3A/M3A capture for SkyMark
 
 SkyMark may collect immutable stock AndroidWorld step requests without adding a

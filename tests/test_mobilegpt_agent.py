@@ -965,3 +965,78 @@ def test_mobilegpt_episode_command_declares_native_androidworld_io(
     assert spec.metadata["mobilegpt_app_ready_timeout_sec"] == 15.0
     assert spec.metadata["mobilegpt_app_ready_poll_sec"] == 0.25
     assert spec.timeout_sec == 600.0
+
+
+def test_native_cold_warm_reuses_first_episode_memory(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_run_log = tmp_path / "source.run_log.json"
+    source_run_log.write_text("{}", encoding="utf-8")
+    item = pipeline.ArchivedRunLog(
+        task="MarkorCreateFolder",
+        goal="Create a folder",
+        params={},
+        source_run_log=source_run_log,
+        replay_seed=111,
+        step_count=1,
+        meta={},
+    )
+    observed_sources: list[Path] = []
+
+    def fake_run(**kwargs):
+        phase_args = kwargs["args"]
+        phase_output_root = Path(kwargs["output_root"])
+        observed_sources.append(Path(phase_args.mobilegpt_source_memory_root))
+        phase_memory_root = (
+            pipeline._method_memory_root(
+                phase_output_root,
+                item.task,
+                "mobilegpt_offline_retrieval",
+            )
+            / "_episodes"
+            / "small5554"
+            / "mobilegpt_memory"
+        )
+        phase_memory_root.mkdir(parents=True)
+        (phase_memory_root / "tasks.csv").write_text(
+            "name,description,parameters,app\n",
+            encoding="utf-8",
+        )
+        return [], 0
+
+    monkeypatch.setattr(pipeline, "_run_one_task_mobilegpt", fake_run)
+    monkeypatch.setattr(
+        pipeline,
+        "_mobilegpt_native_phase_summary",
+        lambda **kwargs: {
+            "official_validator_success": True,
+            "stats": {"memory_lookup_count": 1, "memory_hit_count": 1},
+            "memory_root": str(kwargs["memory_root"]),
+        },
+    )
+
+    output_root = tmp_path / "native-cold-warm"
+    returncode = pipeline._run_mobilegpt_native_cold_warm(
+        args=SimpleNamespace(output_root=str(output_root)),
+        item=item,
+        targets=[pipeline.DeviceTarget("small5554", "emulator-5554", 5554)],
+        task_params_override=None,
+        task_seed=113,
+    )
+
+    expected_cold_memory = (
+        output_root
+        / "cold"
+        / item.task
+        / "mobilegpt_offline_retrieval"
+        / "_memory"
+        / "_episodes"
+        / "small5554"
+        / "mobilegpt_memory"
+    )
+    assert returncode == 0
+    assert observed_sources == [output_root / "empty_memory", expected_cold_memory]
+    report = json.loads((output_root / "cold_warm_report.json").read_text())
+    assert report["old_runlog_used_as_memory"] is False
+    assert report["cold_memory_reused_by_warm"] is True
