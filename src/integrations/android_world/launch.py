@@ -1769,6 +1769,11 @@ def _wait_for_androidworld_a11y(env: Any, *, attempts: int = 6) -> None:
     refresh_env = getattr(env, "refresh_env", None)
     if callable(refresh_env):
         refresh_env()
+    controller = getattr(env, "controller", None)
+    restart_forwarder = getattr(
+        controller, "restart_accessibility_forwarder", None
+    )
+    forwarder_restarted = False
     last_error: RuntimeError | None = None
     for attempt in range(max(1, int(attempts))):
         try:
@@ -1781,6 +1786,9 @@ def _wait_for_androidworld_a11y(env: Any, *, attempts: int = 6) -> None:
             return
         except RuntimeError as error:
             last_error = error
+            if not forwarder_restarted and callable(restart_forwarder):
+                restart_forwarder()
+                forwarder_restarted = True
             if attempt + 1 < attempts:
                 time.sleep(1.0)
     raise RuntimeError("AndroidWorld accessibility forest not ready") from last_error

@@ -183,7 +183,9 @@ def test_androidworld_setup_clears_late_permission_dialog_before_resnapshot(
         if name == "android_world.env.actuation"
         else real_import_module(name),
     )
-    monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.time.sleep", lambda _: None
+    )
 
     _run_androidworld_setup_apps(
         env,
@@ -467,6 +469,30 @@ def test_androidworld_a11y_readiness_allows_cold_boot_recovery(monkeypatch) -> N
     monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
     _wait_for_androidworld_a11y(SimpleNamespace(get_state=get_state))
     assert calls == 4
+
+
+def test_androidworld_a11y_readiness_restarts_bound_stale_forwarder(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    class Env:
+        controller = SimpleNamespace(
+            restart_accessibility_forwarder=lambda: calls.append("restart")
+        )
+
+        def get_state(self, *, wait_to_stabilize: bool = False):
+            assert wait_to_stabilize is False
+            calls.append("state")
+            if "restart" not in calls:
+                raise RuntimeError("Could not get a11y tree after 5 attempts.")
+            return SimpleNamespace(forest=object())
+
+    monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
+
+    _wait_for_androidworld_a11y(Env())
+
+    assert calls == ["state", "restart", "state"]
 
 
 def test_androidworld_a11y_readiness_rejects_empty_forests(monkeypatch) -> None:
