@@ -246,48 +246,45 @@ def ensure_source_device(
     deadline: Deadline,
 ) -> dict[str, Any]:
     started = time.monotonic()
-    launched = False
-    if not _source_device_ready(args):
-        if SOURCE_DEVICE[1] in _adb_output(args, "devices"):
-            _adb_output(args, "-s", SOURCE_DEVICE[1], "emu", "kill")
-            time.sleep(2)
-        log_path = attempt_root / "preflight" / "source_emulator.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_file = log_path.open("x", encoding="utf-8")
-        subprocess.Popen(
-            [
-                str(args.emulator_bin),
-                "-avd",
-                args.source_avd,
-                "-port",
-                str(SOURCE_DEVICE[2]),
-                "-grpc",
-                str(SOURCE_DEVICE[2] + 3000),
-                "-no-window",
-                "-no-audio",
-                "-no-boot-anim",
-                "-read-only",
-                "-no-snapshot-load",
-                "-no-snapshot-save",
-                "-gpu",
-                args.emulator_gpu,
-            ],
-            cwd=args.repo,
-            stdin=subprocess.DEVNULL,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-        log_file.close()
-        launched = True
-        boot_timeout = deadline.remaining(PHASE_TIMEOUTS_SEC["source_device"] - 60)
-        boot_deadline = time.monotonic() + boot_timeout
-        while time.monotonic() < boot_deadline:
-            if _source_device_ready(args):
-                break
-            time.sleep(1)
-        else:
-            raise RuntimeError(f"source_emulator_not_ready:{SOURCE_DEVICE[1]}")
+    if SOURCE_DEVICE[1] in _adb_output(args, "devices"):
+        _adb_output(args, "-s", SOURCE_DEVICE[1], "emu", "kill")
+        time.sleep(2)
+    log_path = attempt_root / "preflight" / "source_emulator.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_file = log_path.open("x", encoding="utf-8")
+    subprocess.Popen(
+        [
+            str(args.emulator_bin),
+            "-avd",
+            args.source_avd,
+            "-port",
+            str(SOURCE_DEVICE[2]),
+            "-grpc",
+            str(SOURCE_DEVICE[2] + 3000),
+            "-no-window",
+            "-no-audio",
+            "-no-boot-anim",
+            "-read-only",
+            "-no-snapshot-load",
+            "-no-snapshot-save",
+            "-gpu",
+            args.emulator_gpu,
+        ],
+        cwd=args.repo,
+        stdin=subprocess.DEVNULL,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    log_file.close()
+    boot_timeout = deadline.remaining(PHASE_TIMEOUTS_SEC["source_device"] - 60)
+    boot_deadline = time.monotonic() + boot_timeout
+    while time.monotonic() < boot_deadline:
+        if _source_device_ready(args):
+            break
+        time.sleep(1)
+    else:
+        raise RuntimeError(f"source_emulator_not_ready:{SOURCE_DEVICE[1]}")
     pointer = _read_object(args.memory_index)
     preflight_path = attempt_root / "preflight" / "source_native.json"
     command = [
@@ -326,7 +323,7 @@ def ensure_source_device(
     return {
         **result,
         "status": "ready",
-        "launched": launched,
+        "launched": True,
         "serial": SOURCE_DEVICE[1],
         "avd": args.source_avd,
         "wall_sec": round(time.monotonic() - started, 6),

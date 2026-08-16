@@ -29,6 +29,7 @@ from src.experiment.e2e_task_pipeline import (
     _source_selection_manifest,
     build_parser,
     collect_replayed_source,
+    ensure_source_device,
     qualify_source_function,
     qualify_source_functions,
     run_logged_command,
@@ -202,6 +203,58 @@ def test_source_device_ready_requires_exact_avd_identity(
     )
 
     assert _source_device_ready(args) is False
+
+
+def test_source_device_is_cold_restarted_when_already_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.source_avd = "SmallPhone"
+    args.emulator_bin = tmp_path / "emulator"
+    args.emulator_gpu = "swiftshader_indirect"
+    args.runtime_preflight = tmp_path / "preflight.py"
+    adb_calls: list[tuple[str, ...]] = []
+
+    def adb_output(_args: object, *command: str) -> str:
+        adb_calls.append(command)
+        if command == ("devices",):
+            return "List of devices attached\nemulator-5560\tdevice"
+        return ""
+
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._adb_output",
+        adb_output,
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._source_device_ready",
+        lambda _args: True,
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._read_object",
+        lambda _path: {"source_index": "source-index.json"},
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.run_logged_command",
+        lambda *_args, **_kwargs: {"returncode": 0},
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.subprocess.Popen",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.time.sleep",
+        lambda _seconds: None,
+    )
+
+    result = ensure_source_device(
+        args=args,
+        attempt_root=tmp_path / "attempt",
+        deadline=Deadline(120),
+    )
+
+    assert ("-s", "emulator-5560", "emu", "kill") in adb_calls
+    assert result["launched"] is True
 
 
 def test_target_workers_parallelize_devices_and_serialize_methods(
