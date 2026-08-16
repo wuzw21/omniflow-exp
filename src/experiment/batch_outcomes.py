@@ -599,17 +599,7 @@ def write_batch_report(
             for device in devices:
                 counts["planned"] += 1
                 key = f"{task}|{method}|{device}|{source_seed}|{evaluation_seed}"
-                if key in registered:
-                    row = _registered_report_row(
-                        task=task,
-                        method=method,
-                        device=device,
-                        source_seed=source_seed,
-                        evaluation_seed=evaluation_seed,
-                        row=registered[key],
-                    )
-                    counts[str(row["conclusion"])] += 1
-                elif key in outcomes:
+                if key in outcomes:
                     row = _failure_report_row(
                         task=task,
                         method=method,
@@ -619,6 +609,16 @@ def write_batch_report(
                         outcome=outcomes[key],
                     )
                     counts["non_validator_failure"] += 1
+                elif key in registered:
+                    row = _registered_report_row(
+                        task=task,
+                        method=method,
+                        device=device,
+                        source_seed=source_seed,
+                        evaluation_seed=evaluation_seed,
+                        row=registered[key],
+                    )
+                    counts[str(row["conclusion"])] += 1
                 else:
                     row = {
                         "task_name": task,

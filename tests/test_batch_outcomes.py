@@ -401,6 +401,92 @@ def test_batch_report_uses_current_attempt_failure_outcome(tmp_path: Path) -> No
     assert row["outer_wall_sec"] == 34.0
 
 
+def test_batch_report_current_attempt_failure_overrides_registered_result(
+    tmp_path: Path,
+) -> None:
+    source_index = tmp_path / "source_index.json"
+    source_index.write_text(
+        json.dumps({"BrowserDraw": {"task": "BrowserDraw", "source_seed": 111}}),
+        encoding="utf-8",
+    )
+    registered_result = tmp_path / "registered_result.json"
+    registered_result.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.androidworld_registered_result.v1",
+                "attempt_id": "iteration_01-success",
+                "rows": [
+                    {
+                        "task_name": "BrowserDraw",
+                        "method": "mobilegpt_offline_retrieval",
+                        "device": "small5554",
+                        "official_validator_used": True,
+                        "official_validator_success": True,
+                        "official_validator_coverage_rate": 1.0,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    result_cells = tmp_path / "result_cells.json"
+    result_cells.write_text(
+        json.dumps(
+            {
+                "BrowserDraw|mobilegpt_offline_retrieval|small5554|111|113": {
+                    "registered_result_object_path": str(registered_result),
+                    "official_validator_success": True,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    memory_index = tmp_path / "current.json"
+    memory_index.write_text(
+        json.dumps({"result_cells": str(result_cells)}),
+        encoding="utf-8",
+    )
+    record_cell_outcome(
+        outcomes_root=tmp_path / "outcomes",
+        task_name="BrowserDraw",
+        method="mobilegpt_offline_retrieval",
+        device="small5554",
+        device_serial="emulator-5554",
+        attempt_id="iteration_02-source-failure",
+        source_seed=111,
+        evaluation_seed=113,
+        status="prep_failed",
+        stage="source_memory",
+        outer_wall_sec=4.0,
+    )
+
+    report = write_batch_report(
+        report_root=tmp_path / "report",
+        memory_index=memory_index,
+        outcomes_root=tmp_path / "outcomes",
+        source_index=source_index,
+        tasks=("BrowserDraw",),
+        methods=("mobilegpt_offline_retrieval",),
+        devices=("small5554",),
+        source_seed=111,
+        evaluation_seed=113,
+        attempt_id="iteration_02-source-failure",
+    )
+
+    assert report["counts"] == {
+        "planned": 1,
+        "validator_success": 0,
+        "validator_failure": 0,
+        "non_validator_failure": 1,
+        "pending": 0,
+    }
+    row = json.loads(Path(report["cells_jsonl"]).read_text(encoding="utf-8"))
+    assert row["attempt_id"] == "iteration_02-source-failure"
+    assert row["status"] == "prep_failed"
+    assert row["official_validator_success"] is None
+    assert row["outer_wall_sec"] == 4.0
+
+
 def test_batch_report_recovers_runlog_teacher_source_failure_accounting(
     tmp_path: Path,
 ) -> None:
