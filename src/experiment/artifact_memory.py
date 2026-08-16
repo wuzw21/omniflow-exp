@@ -1369,7 +1369,6 @@ def _load_function_stores(
             record["catalog_aliases"].append(str(catalog_path))
             quality = (
                 1 if is_skill_authored_function_provenance(provenance_payload) else 0,
-                len(store_payload["functions"]),
             )
             candidates.setdefault(task, []).append((quality, identity))
 

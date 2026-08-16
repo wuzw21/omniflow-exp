@@ -962,17 +962,21 @@ def test_refresh_requires_exact_sha_selection_for_conflicting_function_stores(
     catalogs: list[Path] = []
     identities: list[str] = []
     stores: list[Path] = []
-    for revision in ("v1", "v2"):
+    for revision, function_ids in (
+        ("v1", ("record_with_name", "open_recorder")),
+        ("v2", ("record_with_name",)),
+    ):
         root = tmp_path / revision
         store = _write_json(
             root / "function_store" / "store.json",
             {
                 "schema_version": "omniflow.store.v2",
                 "functions": {
-                    "record_with_name": {
-                        "function_id": "record_with_name",
+                    function_id: {
+                        "function_id": function_id,
                         "description": revision,
                     }
+                    for function_id in function_ids
                 },
             },
         )
