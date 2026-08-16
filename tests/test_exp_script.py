@@ -806,6 +806,54 @@ def test_asset_conversion_routes_through_the_only_script(
     ]
 
 
+def test_asset_revision_routes_reason_through_the_only_script(
+    tmp_path: Path,
+) -> None:
+    source_index = tmp_path / "source-index.json"
+    source_index.write_text("{}", encoding="utf-8")
+    output_root = tmp_path / "converted"
+    memory_index = tmp_path / "current.json"
+    memory_index.write_text("{}", encoding="utf-8")
+    authoring_manifest = tmp_path / "authoring-manifest.json"
+    authoring_manifest.write_text("{}", encoding="utf-8")
+    captured = tmp_path / "python-args.txt"
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT),
+            "--convert-ours-assets",
+            "--tasks",
+            "RecordWithName",
+        ],
+        cwd=REPO,
+        env={
+            **os.environ,
+            "PYTHON_BIN": str(fake_python),
+            "CAPTURE_ARGS": str(captured),
+            "OMNIFLOW_OURS_SOURCE_ASSET_INDEX": str(source_index),
+            "OMNIFLOW_OURS_CONVERTED_ASSET_ROOT": str(output_root),
+            "OMNIFLOW_OURS_AUTHORING_MANIFEST": str(authoring_manifest),
+            "OMNIFLOW_OURS_REVISION_REASON": "source qualification failed",
+            "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_index),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    arguments = captured.read_text(encoding="utf-8").splitlines()
+    reason_index = arguments.index("--revision-reason") + 1
+    assert arguments[reason_index] == "source qualification failed"
+
+
 def test_asset_conversion_defaults_to_canonical_memory_source_index(
     tmp_path: Path,
 ) -> None:

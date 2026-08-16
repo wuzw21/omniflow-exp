@@ -74,18 +74,21 @@ Function schema and transfer-state checks are internal validation for `ours`;
 they are not the experiment conclusion. Conversion never observes a target
 device or executes source coordinates directly on a target.
 
-Source qualification is scoped to one atomic Function replay. Its
-`function_replay_success` is separate from the AndroidWorld task validator.
-When one RunLog yields multiple semantic Functions, qualification invokes their
-recorded source calls in order inside one AndroidWorld episode so later
-Functions retain the page state established by earlier Functions. Each call is
-still one `flow.call_tool(...)`; the qualification adapter marks only the final
-successful call as terminal.
+An atomic Function replay may be used as an independent diagnostic, so its
+`function_replay_success` remains separate from the whole-task validator. The
+asset freeze gate is the ordered bundle qualification: when one RunLog yields
+multiple semantic Functions, it invokes their recorded source calls in order
+inside one AndroidWorld episode so later Functions retain the page state
+established by earlier Functions. The bundle is source-qualified only when all
+calls replay successfully, the official seed-111 validator passes, and both
+`model_calls` and `fallback_steps` are zero. Each call is still one
+`flow.call_tool(...)`; the qualification adapter marks only the final successful
+call as terminal.
 In each normal target E2E step, the planner selects exactly one peer tool from
 native GUI actions, recalled Functions, and terminal tools. A Function may
 expand into multiple recorded actions, then returns control to the next planner
-step. A whole-task validator failure must not block a successful atomic
-Function from entering that planner-based E2E test.
+step. A whole-task validator failure may guide another offline Function
+revision, but the failed bundle is not frozen for formal target execution.
 
 The planner follows the compact UI-TARS loop: current screenshot, prior action
 tool calls, and one next action. Recalled Functions are prepended to the same

@@ -1102,19 +1102,18 @@ for selected_method in ${methods//,/ }; do
 done
 prepare_function_asset_for_task() {
   local requested_task="$1"
-  local conversion_root resolved_store_path store_status
+  local conversion_root resolved_store_path store_status revision_reason
   if resolved_store_path="$(indexed_store_path_for_task "$requested_task")"; then
-    prepared_store_path="$resolved_store_path"
-    return 0
+    if [[ -z "$ours_revision_reason" ]]; then
+      prepared_store_path="$resolved_store_path"
+      return 0
+    fi
+    store_status=0
   else
     store_status="$?"
   fi
-  if [[ "$store_status" -ne 3 ]]; then
-    echo "Canonical Function asset is invalid for task=$requested_task." >&2
-    return "$store_status"
-  fi
   if [[ "$check_only" -eq 1 || "$dry_run" -eq 1 ]]; then
-    echo "Canonical Function asset missing for task=$requested_task; a read-only check cannot create it." >&2
+    echo "Canonical Function asset requires creation or revision for task=$requested_task; a read-only check cannot create it." >&2
     return 1
   fi
   if [[ -z "$asset_root" || "$asset_root" != /* ]]; then
@@ -1136,12 +1135,19 @@ prepare_function_asset_for_task() {
     return 2
   fi
   echo "[source-adapter] create method=ours task=$requested_task"
-  "$python_bin" -m src.experiment.function_assets \
-    --source-asset-index "$source_index" \
-    --authoring-manifest "$ours_authoring_manifest" \
-    --output-root "$conversion_root" \
-    --memory-index "$memory_index" \
+  conversion_args=(
+    -m src.experiment.function_assets
+    --source-asset-index "$source_index"
+    --authoring-manifest "$ours_authoring_manifest"
+    --output-root "$conversion_root"
+    --memory-index "$memory_index"
     --task "$requested_task"
+  )
+  revision_reason="$ours_revision_reason"
+  if [[ -n "$revision_reason" ]]; then
+    conversion_args+=(--revision-reason "$revision_reason")
+  fi
+  "$python_bin" "${conversion_args[@]}"
   memory_paths="$(load_memory_paths)"
   IFS=$'\t' read -r memory_source_index memory_store_index <<< "$memory_paths"
   master_source_index="$memory_source_index"
