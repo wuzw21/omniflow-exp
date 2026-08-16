@@ -281,7 +281,7 @@ def test_androidworld_prefers_pinned_immutable_release_when_present() -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
 
     assert (
-        'android_world_revision="471dfce82c180ae6e0c76cfc4cb7a68570d80594"'
+        'android_world_revision="22b977d5eff0a163abae538a8f4f35f044b5be18"'
         in script_text
     )
     assert "OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT" in script_text
