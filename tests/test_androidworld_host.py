@@ -15,6 +15,7 @@ from src.integrations.android_world.launch import (
     ANDROID_PERMISSION_DENY_RESOURCE_IDS,
     _androidworld_a11y_forwarder_installed,
     _androidworld_adb_file_transfer_timeout_sec,
+    _androidworld_setup_timeout_sec,
     _androidworld_setup_apps_for_suite,
     _bounded_androidworld_adb_file_transfer_timeout,
     _ensure_androidworld_a11y_forwarder,
@@ -46,6 +47,56 @@ def test_androidworld_file_transfer_timeout_bounds_unset_and_zero(
     monkeypatch.setenv("OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC", "0")
     with pytest.raises(RuntimeError, match="must be positive"):
         _androidworld_adb_file_transfer_timeout_sec()
+
+
+def test_androidworld_setup_timeout_is_positive(monkeypatch) -> None:
+    monkeypatch.setenv("OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC", "0")
+    with pytest.raises(RuntimeError, match="must be positive"):
+        _androidworld_setup_timeout_sec()
+
+
+def test_androidworld_setup_has_hard_deadline(monkeypatch) -> None:
+    installed_handler = None
+    timer_calls: list[tuple[float, float]] = []
+
+    def fake_signal(_signal_number, handler):
+        nonlocal installed_handler
+        previous = installed_handler
+        installed_handler = handler
+        return previous
+
+    def fake_setitimer(_timer, delay, interval=0.0):
+        timer_calls.append((float(delay), float(interval)))
+        return (0.0, 0.0)
+
+    def setup_apps(_setup_env, *, app_list) -> None:
+        assert app_list == ("osmand",)
+        assert callable(installed_handler)
+        installed_handler(0, None)
+
+    monkeypatch.setenv("OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC", "12")
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.signal.getsignal",
+        lambda _signal_number: "previous-handler",
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.signal.signal", fake_signal
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.signal.setitimer", fake_setitimer
+    )
+
+    with pytest.raises(
+        TimeoutError, match="official app setup exceeded 12 seconds"
+    ):
+        _run_androidworld_setup_apps(
+            SimpleNamespace(controller=SimpleNamespace()),
+            setup_module=SimpleNamespace(setup_apps=setup_apps),
+            setup_apps=("osmand",),
+        )
+
+    assert timer_calls == [(0.0, 0.0), (12.0, 0.0), (0.0, 0.0)]
+    assert installed_handler == "previous-handler"
 
 
 def test_androidworld_setup_uses_task_declared_app_dependencies() -> None:

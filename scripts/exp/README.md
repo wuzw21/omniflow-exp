@@ -150,6 +150,7 @@ the resulting contract here.
 | `OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT` | Optional immutable AndroidWorld checkout root containing the `android_world` package; defaults to the pinned `38d1214` release beside the asset root when present |
 | `OMNIFLOW_SQLITE_FTS4_LIBRARY` | Optional absolute compatible `libsqlite3` path; the unified entry automatically selects a system library when the experiment Python lacks AndroidWorld's required FTS4 support |
 | `OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC` | Positive timeout for each official AndroidWorld adb file push/copy; defaults to 300 seconds and never permits the upstream `None`/`0` unbounded wait |
+| `OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC` | Positive hard deadline for the complete official per-cell app setup; defaults to 300 seconds so an AndroidEnv/adb coordinator stall cannot consume the full episode budget |
 | `OMNIFLOW_APPAGENT_DOCUMENT_MODEL` | AppAgent offline documentation VLM; defaults to the paper model `GLM-5.1` |
 | `OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL` | MobileGPT offline embedding model; defaults to its native `text-embedding-v4` |
 | `OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE` | Development endpoint profile; defaults to `llmthu` |
@@ -403,6 +404,10 @@ During official app setup, every AndroidWorld adb file push/copy has the
 script-owned positive timeout above. The adapter preserves any explicit
 positive upstream timeout, but replaces upstream `None` or `0` so a dead adb
 transfer terminates as an environment failure instead of blocking a batch.
+The complete official setup call also has a separate 300-second hard deadline.
+This covers AndroidEnv coordinator stalls where an adb child has already exited
+but the upstream future never resolves; the cell remains an environment failure
+with no fabricated validator conclusion, and the batch can advance.
 
 During official app setup only, the shared AndroidWorld adapter normalizes
 Unicode presentation variants in visible UI labels while preserving native

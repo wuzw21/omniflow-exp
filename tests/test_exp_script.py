@@ -175,6 +175,14 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
         'export OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC="$androidworld_adb_file_transfer_timeout_sec"'
         in script_text
     )
+    assert (
+        'androidworld_setup_timeout_sec="${OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC:-300}"'
+        in script_text
+    )
+    assert (
+        'export OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC="$androidworld_setup_timeout_sec"'
+        in script_text
+    )
 
 
 def test_runlog_memory_mode_does_not_treat_disabled_stock_capture_as_active(

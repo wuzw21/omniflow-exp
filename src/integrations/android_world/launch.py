@@ -17,6 +17,7 @@ from pathlib import Path
 import pickle
 import random
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -75,6 +76,7 @@ ANDROID_PERMISSION_DENY_RESOURCE_IDS = (
     "com.android.permissioncontroller:id/permission_deny_and_dont_ask_again_button",
 )
 DEFAULT_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC = 300.0
+DEFAULT_ANDROIDWORLD_SETUP_TIMEOUT_SEC = 300.0
 
 
 def utc_now_iso() -> str:
@@ -1611,6 +1613,7 @@ def _run_androidworld_setup_apps(
     setup_apps: Sequence[Any],
 ) -> None:
     transfer_timeout_sec = _androidworld_adb_file_transfer_timeout_sec()
+    setup_timeout_sec = _androidworld_setup_timeout_sec()
     file_utils = (
         importlib.import_module("android_world.utils.file_utils")
         if "android_world" in sys.modules
@@ -1685,7 +1688,19 @@ def _run_androidworld_setup_apps(
     setup_env = SetupEnvironment(env)
     if file_utils is not None:
         file_utils.copy_file_to_device = copy_file_to_device
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.setitimer(signal.ITIMER_REAL, 0)
+    setup_started_at = time.monotonic()
+
+    def setup_timeout_handler(_signum: int, _frame: Any) -> None:
+        raise TimeoutError(
+            "AndroidWorld official app setup exceeded "
+            f"{setup_timeout_sec:g} seconds"
+        )
+
     try:
+        signal.signal(signal.SIGALRM, setup_timeout_handler)
+        signal.setitimer(signal.ITIMER_REAL, setup_timeout_sec)
         setup_module.setup_apps(
             setup_env,
             app_list=tuple(setup_apps),
@@ -1697,6 +1712,16 @@ def _run_androidworld_setup_apps(
             save_snapshots=True,
         )
     finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        previous_delay, previous_interval = previous_timer
+        if previous_delay > 0:
+            elapsed = time.monotonic() - setup_started_at
+            signal.setitimer(
+                signal.ITIMER_REAL,
+                max(1e-6, previous_delay - elapsed),
+                previous_interval,
+            )
         if file_utils is not None:
             file_utils.copy_file_to_device = original_copy_file_to_device
 
@@ -1727,6 +1752,26 @@ def _androidworld_adb_file_transfer_timeout_sec() -> float:
     if not math.isfinite(timeout_sec) or timeout_sec <= 0:
         raise RuntimeError(
             "OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC must be positive"
+        )
+    return timeout_sec
+
+
+def _androidworld_setup_timeout_sec() -> float:
+    raw_value = str(
+        os.environ.get(
+            "OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC",
+            DEFAULT_ANDROIDWORLD_SETUP_TIMEOUT_SEC,
+        )
+    ).strip()
+    try:
+        timeout_sec = float(raw_value)
+    except ValueError as exc:
+        raise RuntimeError(
+            "OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC must be positive"
+        ) from exc
+    if not math.isfinite(timeout_sec) or timeout_sec <= 0:
+        raise RuntimeError(
+            "OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC must be positive"
         )
     return timeout_sec
 
