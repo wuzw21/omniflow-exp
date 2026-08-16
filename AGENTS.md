@@ -106,6 +106,22 @@ than fabricating experience or changing the baseline.
 - Treat `mobilegpt_offline_retrieval` and `appagent_demo` as frozen external
   baselines under the absolute no-repair rule above.
 
+## Local and 9207 synchronization
+
+- The only active OmniFlow-exp checkout on both the local machine and host
+  `9207` is `~/Projects/Omni/OmniFlow-exp` on branch `main`.
+- Before every 9207 check, conversion, development episode, or formal cell,
+  compare `git rev-parse HEAD` in both active checkouts. The two full commit
+  SHAs must be identical and both worktrees must contain no uncommitted tracked
+  changes. A mismatch is a preflight failure; do not run an experiment.
+- Synchronize source only through Git: commit and push local `main`, then
+  fast-forward the 9207 `main` checkout to the same commit. Do not copy a source
+  tree, run from an unversioned snapshot, or use a release directory as the
+  active development checkout.
+- Immutable commit-SHA releases may archive a formal checkpoint, but they must
+  be created from the already synchronized `main` commit and never replace the
+  two active checkouts.
+
 ## Formal protocol
 
 - Run task-major: one task across every method and both devices before the next task.
