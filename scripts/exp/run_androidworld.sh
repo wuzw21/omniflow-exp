@@ -1164,6 +1164,10 @@ if [[ -n "$e2e_task" ]]; then
   if [[ "$dry_run" -eq 1 ]]; then
     e2e_args+=(--dry-run)
   fi
+  # Source-only E2E collection exits through this branch before the formal
+  # matrix path reaches the shared AndroidWorld capability gate.  Keep the
+  # same FTS4 contract for every AndroidWorld execution entry.
+  ensure_androidworld_sqlite_fts4
   cd "$repo"
   exec "$python_bin" "${e2e_args[@]}"
 fi

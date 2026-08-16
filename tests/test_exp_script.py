@@ -324,12 +324,19 @@ def test_unified_script_repairs_missing_androidworld_sqlite_fts4_support() -> No
     ) == 2
     assert 'OMNIFLOW_SQLITE_FTS4_LIBRARY' in script_text
     assert 'export LD_PRELOAD="$candidate_preload"' in script_text
-    sqlite_gate = script_text.index("ensure_androidworld_sqlite_fts4\n")
+    sqlite_gate = script_text.rindex("ensure_androidworld_sqlite_fts4\n")
     dry_run_gate = script_text.index(
         'echo "[dry-run] ready task=$task methods=$methods devices=$device_targets; '
     )
     assert dry_run_gate < sqlite_gate
     assert sqlite_gate < script_text.index('mkdir -p "$preflight_output_root"')
+
+
+def test_e2e_source_collection_runs_the_sqlite_fts4_gate_before_dispatch() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+    e2e_dispatch = script_text.index('exec "$python_bin" "${e2e_args[@]}"')
+    e2e_gate = script_text.index("ensure_androidworld_sqlite_fts4\n", e2e_dispatch - 800)
+    assert e2e_gate < e2e_dispatch
 
 
 def test_unified_script_discovers_android_studio_jbr_on_macos() -> None:
