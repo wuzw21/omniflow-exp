@@ -315,6 +315,8 @@ def ensure_source_device(
         str(args.runtime_preflight),
         "--repo",
         str(args.asset_root),
+        "--android-world-root",
+        str(args.android_world_root),
         "--code-root",
         str(args.repo),
         "--profile",

@@ -607,6 +607,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Gate AndroidWorld runtime health.")
     parser.add_argument("--repo", required=True)
     parser.add_argument(
+        "--android-world-root",
+        help="Explicit AndroidWorld checkout root used for runtime imports.",
+    )
+    parser.add_argument(
         "--code-root",
         help="Exact release root for code checks; --repo remains the runtime asset root.",
     )
@@ -666,6 +670,11 @@ def _required_files(profile: str) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    android_world_root = str(
+        args.android_world_root or os.getenv("OMNIFLOW_ANDROID_WORLD_ROOT", "")
+    ).strip()
+    if android_world_root:
+        sys.path.insert(0, str(Path(android_world_root).expanduser().resolve()))
     repo = Path(args.repo).expanduser().resolve()
     code_root = Path(args.code_root or repo).expanduser().resolve()
     checks: list[Check] = []
