@@ -322,6 +322,114 @@ def test_compiler_rejects_semantic_click_target_without_source_evidence(
         )
 
 
+def test_compiler_accepts_semantic_click_target_at_different_source_positions(
+    tmp_path: Path,
+) -> None:
+    run_log = androidworld_run_log(
+        [
+            {"action_type": "input_text", "text": "Fast Food"},
+            {"action_type": "click", "x": 107, "y": 400},
+            {"action_type": "input_text", "text": "Rental Income"},
+            {"action_type": "click", "x": 241.5, "y": 400},
+        ],
+        observations=[
+            androidworld_state("food-name", width=720, height=1280),
+            androidworld_state(
+                "food-category",
+                forest=(
+                    '<hierarchy><node bounds="[56,358][158,442]" clickable="true">'
+                    '<node text="Food" bounds="[70,370][140,430]"/>'
+                    "</node></hierarchy>"
+                ),
+                width=720,
+                height=1280,
+            ),
+            androidworld_state("income-name", width=720, height=1280),
+            androidworld_state(
+                "income-category",
+                forest=(
+                    '<hierarchy><node bounds="[174,358][309,442]" clickable="true">'
+                    '<node text="Income" bounds="[190,370][290,430]"/>'
+                    "</node></hierarchy>"
+                ),
+                width=720,
+                height=1280,
+            ),
+        ],
+        goal="Add two categorized records.",
+    )
+    bundle = {
+        "schema_version": "omniflow.function-bundle.v2",
+        "run_id": "source-run",
+        "arguments": {
+            "add_record": [
+                {"name": "Fast Food", "category": "Food"},
+                {"name": "Rental Income", "category": "Income"},
+            ]
+        },
+        "functions": [
+            {
+                "schema_version": "omniflow.function.v2",
+                "function_id": "add_record",
+                "name": "Add categorized record",
+                "description": "Add one record with the requested category.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "category": {"type": "string"},
+                    },
+                    "required": ["name", "category"],
+                    "additionalProperties": False,
+                },
+                "bindings": [
+                    {
+                        "source": "$.arguments.name",
+                        "target": "$.steps[0].action.args.text",
+                    },
+                    {
+                        "source": "$.arguments.category",
+                        "target": "$.steps[1].action.args.target_description",
+                    },
+                ],
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "source_state_id": "food-name",
+                        "action": {"tool": "input_text", "args": {"text": ""}},
+                    },
+                    {
+                        "step_index": 1,
+                        "source_state_id": "food-category",
+                        "action": {
+                            "tool": "click",
+                            "args": {
+                                "target_description": "",
+                                "x": 148.61111111111111,
+                                "y": 312.5,
+                            },
+                        },
+                    },
+                ],
+                "checker_rules": [],
+                "agent_visible": True,
+            }
+        ],
+    }
+
+    result = compile_runlog_to_store(
+        run_log,
+        tmp_path / "output",
+        function_bundle=bundle,
+        source_states={
+            state: {"state_id": state}
+            for state in ("food-name", "food-category")
+        },
+    )
+
+    assert result["source_arguments"] == bundle["arguments"]
+
+
 def _single_input_bundle(parameter_name: str, *, text: str = "Paid by card") -> dict:
     return {
         "schema_version": "omniflow.function-bundle.v2",

@@ -7,7 +7,6 @@ import sys
 import sysconfig
 from typing import Any
 
-
 PLANNER_SUMMARY_DESCRIPTION = (
     "persistent working memory plus the brief plan for this action. Preserve exact facts "
     "read from the current screen that later steps need, including every pending record "

@@ -590,9 +590,24 @@ def compile_runlog_to_store(
         calls = raw_arguments if isinstance(raw_arguments, list) else [raw_arguments]
         if not calls or any(not isinstance(arguments, dict) for arguments in calls):
             raise ValueError("function_bundle_source_arguments_invalid")
+        exact_fallback_grounding = False
         for arguments in calls:
             bound = bind_function(function, arguments)
-            _validate_action_grounding(bound, steps)
+            _validate_action_grounding(
+                bound,
+                steps,
+                allow_semantic_relocation=True,
+            )
+            exact_fallback_grounding = exact_fallback_grounding or _action_grounded(
+                bound,
+                steps,
+                allow_semantic_relocation=False,
+            )
+        if not exact_fallback_grounding:
+            raise ValueError(
+                "function_action_not_grounded:"
+                f"{function.id}:{function.steps[0].step_index}"
+            )
 
     if source_states is not None and state_loader is not None:
         raise ValueError("function_source_state_provider_ambiguous")
@@ -764,19 +779,13 @@ def _normalize_source_state(value: Any, expected_state_id: str) -> dict[str, Any
 def _validate_action_grounding(
     function: Any,
     source_steps: list[dict[str, Any]],
+    *,
+    allow_semantic_relocation: bool = False,
 ) -> None:
-    expected = [step.action.to_dict() for step in function.steps]
-    width = len(expected)
-    if any(
-        all(
-            _grounded_action_matches(expected_action, source_step)
-            for expected_action, source_step in zip(
-                expected,
-                source_steps[start : start + width],
-                strict=True,
-            )
-        )
-        for start in range(len(source_steps) - width + 1)
+    if _action_grounded(
+        function,
+        source_steps,
+        allow_semantic_relocation=allow_semantic_relocation,
     ):
         return
     raise ValueError(
@@ -785,9 +794,36 @@ def _validate_action_grounding(
     )
 
 
+def _action_grounded(
+    function: Any,
+    source_steps: list[dict[str, Any]],
+    *,
+    allow_semantic_relocation: bool,
+) -> bool:
+    expected = [step.action.to_dict() for step in function.steps]
+    width = len(expected)
+    return any(
+        all(
+            _grounded_action_matches(
+                expected_action,
+                source_step,
+                allow_semantic_relocation=allow_semantic_relocation,
+            )
+            for expected_action, source_step in zip(
+                expected,
+                source_steps[start : start + width],
+                strict=True,
+            )
+        )
+        for start in range(len(source_steps) - width + 1)
+    )
+
+
 def _grounded_action_matches(
     expected_action: dict[str, Any],
     source_step: dict[str, Any],
+    *,
+    allow_semantic_relocation: bool,
 ) -> bool:
     source_action = source_step["action"]
     if source_action == expected_action:
@@ -806,14 +842,15 @@ def _grounded_action_matches(
         or str(metadata.get("semantic_target") or "").strip() != target
     ):
         return False
-    return {
+    fallback_action = {
         "tool": "click",
         "args": {
             key: value
             for key, value in expected_args.items()
             if key != "target_description"
         },
-    } == source_action
+    }
+    return allow_semantic_relocation or fallback_action == source_action
 
 
 def _validate_checker_evidence(
