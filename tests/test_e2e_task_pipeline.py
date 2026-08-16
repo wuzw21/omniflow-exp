@@ -238,6 +238,7 @@ def test_source_device_is_cold_restarted_when_already_ready(
     args.task = "ContactsAddContact"
     adb_calls: list[tuple[str, ...]] = []
     preflight_commands: list[list[str]] = []
+    preflight_environments: list[dict[str, str]] = []
 
     def adb_output(_args: object, *command: str) -> str:
         adb_calls.append(command)
@@ -259,8 +260,10 @@ def test_source_device_is_cold_restarted_when_already_ready(
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.run_logged_command",
-        lambda command, **_kwargs: (
-            preflight_commands.append(command) or {"returncode": 0}
+        lambda command, **kwargs: (
+            preflight_commands.append(command)
+            or preflight_environments.append(kwargs["environment"])
+            or {"returncode": 0}
         ),
     )
     monkeypatch.setattr(
@@ -281,6 +284,7 @@ def test_source_device_is_cold_restarted_when_already_ready(
     assert ("-s", "emulator-5560", "emu", "kill") in adb_calls
     assert result["launched"] is True
     assert "--require-contacts-ready" not in preflight_commands[0]
+    assert str(args.android_world_root) in preflight_environments[0]["PYTHONPATH"]
 
 
 def test_target_workers_parallelize_devices_and_serialize_methods(

@@ -299,6 +299,17 @@ def ensure_source_device(
         raise RuntimeError(f"source_emulator_not_ready:{source_serial}")
     pointer = _read_object(args.memory_index)
     preflight_path = attempt_root / "preflight" / "source_native.json"
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        str(path)
+        for path in (
+            args.repo,
+            args.repo / "src",
+            args.android_world_root,
+            environment.get("PYTHONPATH", ""),
+        )
+        if str(path)
+    )
     command = [
         str(args.python_bin),
         str(args.runtime_preflight),
@@ -324,7 +335,7 @@ def ensure_source_device(
     result = run_logged_command(
         command,
         cwd=args.repo,
-        environment=dict(os.environ),
+        environment=environment,
         log_path=attempt_root / "preflight" / "source_native.log",
         timeout_sec=deadline.remaining(60),
     )
