@@ -1085,6 +1085,96 @@ def test_refresh_requires_exact_sha_selection_for_conflicting_function_stores(
         )
 
 
+def test_pointer_refresh_preserves_existing_store_when_new_peer_is_ambiguous(
+    tmp_path: Path,
+) -> None:
+    source = _write_source_run_log(tmp_path)
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    catalogs: list[Path] = []
+    stores: list[Path] = []
+    for revision in ("v1", "v2"):
+        root = tmp_path / revision
+        store = _write_json(
+            root / "function_store" / "store.json",
+            {
+                "schema_version": "omniflow.store.v2",
+                "functions": {
+                    "record_with_name": {
+                        "function_id": "record_with_name",
+                        "description": revision,
+                    }
+                },
+            },
+        )
+        transfer = _write_json(
+            store.with_name("transfer_states.json"),
+            {
+                "schema_version": "omniflow.transfer-state-catalog.v1",
+                "states": {},
+            },
+        )
+        provenance = _write_json(
+            root / "provenance_manifest.json",
+            {"schema_version": "test.provenance.v1", "revision": revision},
+        )
+        catalogs.append(
+            _write_json(
+                root / "catalog.json",
+                {
+                    "schema_version": "omniflow.function-asset-catalog.v1",
+                    "tasks": {
+                        "RecordWithName": {
+                            "status": "converted",
+                            "source_run_log": str(source),
+                            "source_run_log_sha256": _sha256(source),
+                            "store_path": str(store),
+                            "store_sha256": _sha256(store),
+                            "transfer_states_path": str(transfer),
+                            "transfer_states_sha256": _sha256(transfer),
+                            "provenance_path": str(provenance),
+                            "provenance_sha256": _sha256(provenance),
+                            "target_inputs_read": False,
+                            "target_observations_read": False,
+                        }
+                    },
+                },
+            )
+        )
+        stores.append(store)
+
+    refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(catalogs[0],),
+        runlog_roots=(tmp_path / "evidence",),
+        result_roots=(),
+    )
+    report = refresh_artifact_memory_from_pointer(
+        memory_index=tmp_path / "memory" / "current.json",
+        additional_function_catalogs=(catalogs[1],),
+    )
+
+    canonical = report["canonical"]["function_stores"]["RecordWithName"]
+    assert canonical["store_sha256"] == _sha256(stores[0])
+
+    with pytest.raises(ValueError, match="ambiguous_best_function_store"):
+        refresh_artifact_memory(
+            memory_root=tmp_path / "fresh-memory",
+            source_index=source_index,
+            function_catalogs=catalogs,
+            runlog_roots=(tmp_path / "evidence",),
+            result_roots=(),
+        )
+
+
 def test_refresh_reports_invalid_indexed_runlog_task_and_path(
     tmp_path: Path,
 ) -> None:

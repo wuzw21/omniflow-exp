@@ -1204,6 +1204,7 @@ def _load_function_stores(
     canonical_sources: dict[str, dict[str, Any]],
     screenshot_roots: Sequence[Path],
     run_log_records: dict[str, dict[str, Any]],
+    existing_canonical_identities: dict[str, str] | None = None,
 ) -> tuple[
     dict[str, dict[str, Any]],
     dict[str, dict[str, Any]],
@@ -1460,6 +1461,7 @@ def _load_function_stores(
         }
 
     canonical: dict[str, dict[str, Any]] = {}
+    existing_identities = existing_canonical_identities or {}
     for task, task_candidates in sorted(candidates.items()):
         best_quality = max(quality for quality, _ in task_candidates)
         best_ids = sorted(
@@ -1491,6 +1493,10 @@ def _load_function_stores(
             }
             continue
         if len(best_ids) != 1:
+            existing_identity = str(existing_identities.get(task) or "")
+            if existing_identity in best_ids:
+                canonical[task] = dict(records[existing_identity])
+                continue
             raise ValueError(
                 f"ambiguous_best_function_store:{task}:{','.join(best_ids)}"
             )
@@ -1822,6 +1828,7 @@ def _refresh_artifact_memory_unlocked(
     source_selection_manifest: str | Path | None = None,
     function_store_selection_manifest: str | Path | None = None,
     source_screenshot_roots: Sequence[str | Path] = (),
+    existing_function_store_identities: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Import immutable evidence and publish one deterministic canonical index."""
 
@@ -1974,6 +1981,7 @@ def _refresh_artifact_memory_unlocked(
         canonical_sources=canonical_sources,
         screenshot_roots=screenshot_roots,
         run_log_records=records,
+        existing_canonical_identities=existing_function_store_identities,
     )
     result_paths, result_records, canonical_result_cells = _load_results(
         root,
@@ -2553,6 +2561,13 @@ def refresh_artifact_memory_from_pointer(
                 source_screenshot_roots
                 or tuple(inputs.get("source_screenshot_roots") or ())
             ),
+            existing_function_store_identities={
+                str(task): str(record.get("identity_sha256") or "")
+                for task, record in (
+                    registry.get("canonical", {}).get("function_stores", {}).items()
+                )
+                if isinstance(record, dict)
+            },
         )
 
 
