@@ -852,6 +852,7 @@ def qualify_source_functions(
     result["qualified"] = bool(
         result["returncode"] == 0
         and result["function_replay_success"]
+        and result["official_validator_success"]
         and result["model_calls"] == 0
         and result["fallback_steps"] == 0
     )

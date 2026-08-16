@@ -759,6 +759,66 @@ def test_source_function_sequence_qualification_uses_one_ordered_episode(
     assert json.loads(command[calls_index]) == source_calls
 
 
+def test_ordered_source_qualification_requires_official_validator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.json"
+    source.write_text("{}\n", encoding="utf-8")
+    store = tmp_path / "store.json"
+    store.write_text("{}\n", encoding="utf-8")
+    args = _args(tmp_path)
+
+    def runner(command, **kwargs):
+        output_root = Path(command[command.index("--output-path") + 1])
+        output_root.mkdir(parents=True, exist_ok=True)
+        (output_root / "task_results.jsonl").write_text(
+            json.dumps(
+                {
+                    "official_validator_success": False,
+                    "model_calls": 0,
+                    "fallback_steps": 0,
+                    "canonical_run": {
+                        "status": "failed",
+                        "diagnostics": {
+                            "execution_summary": {"success": True, "steps": 1},
+                            "execution_trace": [{"result": {"success": True}}],
+                        },
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return {
+            "returncode": 0,
+            "timed_out": False,
+            "wall_sec": 0.1,
+            "log_path": str(kwargs["log_path"]),
+        }
+
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.run_logged_command",
+        runner,
+    )
+    result = qualify_source_functions(
+        args=args,
+        source_path=source,
+        run_log={"task_parameters": {}},
+        function_store={
+            "store_path": str(store),
+            "transfer_states_sha256": "a" * 64,
+        },
+        source_calls=[{"function_id": "create_note", "arguments": {}}],
+        attempt_root=tmp_path / "attempt",
+        deadline=Deadline(10),
+    )
+
+    assert result["function_replay_success"] is True
+    assert result["official_validator_success"] is False
+    assert result["qualified"] is False
+
+
 def test_function_replay_success_is_independent_of_validator() -> None:
     row = {
         "official_validator_success": False,

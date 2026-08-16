@@ -37,6 +37,7 @@ _PATH_TOKEN = re.compile(r"\.([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)]")
 _PARAMETER_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _PARAMETERIZABLE_ACTION_ARGS = {
     "input_text": frozenset({"text"}),
+    "open_app": frozenset({"package_name"}),
 }
 
 
@@ -882,6 +883,18 @@ def enhance_function(
         if replacement and replacement != updated[field]:
             updated[field] = replacement
             changes.append({"part": "function", "field": field})
+    if "steps" in proposal:
+        replacement_steps = _grounded_replacement_steps(proposal["steps"], run_log)
+        if replacement_steps != updated["steps"]:
+            updated["steps"] = replacement_steps
+            updated["input_schema"] = {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": False,
+            }
+            updated["bindings"] = []
+            changes.append({"part": "function", "field": "steps"})
     if "parameters" in proposal and _apply_parameters(
         updated,
         proposal["parameters"],
@@ -916,7 +929,8 @@ def _enhancement_prompt(
     run_log_facts = {
         "run_id": str(run_log.get("run_id") or ""),
         "goal": str(run_log.get("goal") or ""),
-        "steps": [
+        "successful_function_steps": _successful_source_steps(run_log),
+        "raw_steps": [
             {
                 key: step.get(key)
                 for key in (
@@ -943,20 +957,27 @@ def _enhancement_prompt(
     }
     return f"""
 Improve the reusable Android automation Function below for future recall.
-Return one JSON object with optional keys: name, description, parameters, and checker_rules.
+Return one JSON object with optional keys: name, description, steps, parameters, and checker_rules.
 Describe when to reuse the Function, visible operations, inputs, success signal, and avoid cases.
-Never add, remove, reorder, or alter actions, tools, arguments, coordinates, selectors, or function_id.
-Do not invent app state. Use the same language as the current name/description.
+You may add, remove, modify, or reorder actions when needed to recover the complete reusable
+semantic operation. The final steps must be one exact contiguous sequence of successful actions
+from the supplied source RunLog. Copy every source_state_id, tool, and argument exactly; never
+invent an action or state. Keep function_id unchanged. Use the same language as the current
+name/description.
 Treat user_instruction as optional enhancement guidance. It may refine semantic naming,
-description, parameter selection, and evidence-backed checker rules, but it cannot override
-the action immutability and RunLog evidence requirements above.
+description, action selection, parameter selection, and evidence-backed checker rules, but it
+cannot override the RunLog evidence requirements above.
+
+steps is the complete replacement action sequence. Each item has exactly:
+{{"source_state_id":"state-id","action":{{"tool":"click","args":{{"x":10,"y":20}}}}}}.
+Omit steps only when the current action sequence is already complete.
 
 parameters is an array of semantic input bindings. Each item has exactly:
 {{"name":"query","description":"Text to search for","step_index":1,"arg_name":"text"}}.
-Only select entries listed in parameter_candidates and copy step_index and arg_name exactly.
+Only select entries present in the final steps and copy step_index and arg_name exactly.
 Choose a stable identifier name and a concise user-facing description. Return parameters=[]
-when the recorded value is intentionally fixed. Do not return input_schema, bindings, or steps;
-the runtime derives them and verifies the original successful RunLog evidence.
+when the recorded value is intentionally fixed. Do not return input_schema or bindings; the
+runtime derives them and verifies the successful RunLog evidence.
 
 checker_rules is an ordered array. Each rule has exactly:
 {{"schema_version":"omniflow.checker_rule.v1","trigger":"text_contains(\\"跳过广告\\")","source_state_id":"state-id","action":{{"tool":"click","args":{{"x":900,"y":100}}}}}}.
@@ -967,6 +988,96 @@ When metadata.checker_trigger exists, copy it exactly. Otherwise return checker_
 Function:
 {json.dumps(brief, ensure_ascii=False, separators=(",", ":"))}
 """.strip()
+
+
+def _grounded_replacement_steps(
+    proposal: Any,
+    run_log: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not isinstance(proposal, list) or not proposal:
+        raise ValueError("function_enhancement_steps_invalid")
+    steps: list[dict[str, Any]] = []
+    for index, raw_step in enumerate(proposal):
+        if not isinstance(raw_step, dict) or set(raw_step) - {
+            "step_index",
+            "source_state_id",
+            "action",
+        }:
+            raise ValueError("function_enhancement_step_contract_invalid")
+        steps.append(
+            {
+                "step_index": index,
+                "source_state_id": str(raw_step.get("source_state_id") or "").strip(),
+                "action": raw_step.get("action"),
+            }
+        )
+    candidate = {
+        "schema_version": FUNCTION_ARTIFACT_VERSION,
+        "function_id": "EnhancedFunctionEvidenceCheck",
+        "name": "Enhanced Function evidence check",
+        "description": "Validate replacement actions against source evidence.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+        "bindings": [],
+        "steps": steps,
+        "checker_rules": [],
+        "agent_visible": False,
+    }
+    function = parse_function_artifact(candidate)
+    evidence = _successful_source_steps(run_log)
+    expected = [
+        (step.source_state_id, step.action.to_dict())
+        for step in function.steps
+    ]
+    width = len(expected)
+    if not any(
+        [
+            (str(step.get("source_state_id") or ""), step["action"])
+            for step in evidence[start : start + width]
+        ]
+        == expected
+        for start in range(len(evidence) - width + 1)
+    ):
+        raise ValueError(
+            "function_action_not_grounded:"
+            f"{function.id}:{function.steps[0].step_index}"
+        )
+    return [step.to_dict() for step in function.steps]
+
+
+def _successful_source_steps(run_log: dict[str, Any]) -> list[dict[str, Any]]:
+    evidence: list[dict[str, Any]] = []
+    for raw_step in run_log.get("steps") or ():
+        if not isinstance(raw_step, dict):
+            continue
+        result = raw_step.get("result")
+        metadata = raw_step.get("metadata")
+        if not isinstance(result, dict) or result.get("success") is not True:
+            continue
+        if isinstance(metadata, dict) and metadata.get("origin") == "checker":
+            continue
+        observation = raw_step.get("observation")
+        action = raw_step.get("action")
+        if isinstance(observation, dict):
+            source_state_id = state_id(observation)
+            projected = project_androidworld_step_actions(raw_step)
+        elif isinstance(action, dict) and set(action) == {"tool", "args"}:
+            source_state_id = str(raw_step.get("before_state_id") or "").strip()
+            projected = [canonicalize_action(action, replayable_only=True)]
+        else:
+            continue
+        evidence.extend(
+            {
+                "source_state_id": source_state_id,
+                "action": projected_action,
+            }
+            for projected_action in projected
+        )
+    return evidence
 
 
 def _parameter_candidates(function: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1063,20 +1174,13 @@ def _has_parameter_evidence(
     value: Any,
     run_log: dict[str, Any],
 ) -> bool:
-    for raw_step in run_log.get("steps") or ():
-        if not isinstance(raw_step, dict):
-            continue
-        result = raw_step.get("result")
-        action = raw_step.get("action")
-        if not isinstance(result, dict) or result.get("success") is not True:
-            continue
-        if not isinstance(action, dict):
-            continue
+    for raw_step in _successful_source_steps(run_log):
+        action = raw_step["action"]
         args = action.get("args")
         if not isinstance(args, dict):
             continue
         if (
-            str(raw_step.get("before_state_id") or "")
+            str(raw_step.get("source_state_id") or "")
             == str(function_step.get("source_state_id") or "")
             and str(action.get("tool") or "")
             == str(function_step.get("action", {}).get("tool") or "")

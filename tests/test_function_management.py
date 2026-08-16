@@ -63,6 +63,253 @@ def test_enhancement_uses_default_guidance_when_instruction_is_empty() -> None:
     assert '"user_instruction":""' in prompts[0]
 
 
+def test_enhancement_prompt_projects_androidworld_actions_with_state_ids() -> None:
+    prompts: list[str] = []
+    run_log = androidworld_run_log(
+        [{"action_type": "open_app", "app_name": "com.android.settings"}],
+        observations=[androidworld_state("source-state")],
+        goal="Open Settings.",
+    )
+
+    enhance_function(
+        _function(),
+        run_log,
+        lambda prompt: prompts.append(prompt) or "{}",
+    )
+
+    assert '"source_state_id":"source-state"' in prompts[0]
+    assert '"tool":"open_app"' in prompts[0]
+    assert '"package_name":"com.android.settings"' in prompts[0]
+
+
+def test_enhancement_parameterizes_projected_androidworld_input_text() -> None:
+    run_log = androidworld_run_log(
+        [{"action_type": "input_text", "text": "Paid by card"}],
+        observations=[androidworld_state("note-state")],
+        goal="Enter an expense note.",
+    )
+    function = {
+        **_function(),
+        "function_id": "enter_note",
+        "name": "Enter note",
+        "description": "Enter one expense note.",
+        "steps": [
+            {
+                "step_index": 0,
+                "source_state_id": "note-state",
+                "action": {
+                    "tool": "input_text",
+                    "args": {"text": "Paid by card"},
+                },
+            }
+        ],
+    }
+
+    enhanced, _, status = enhance_function(
+        function,
+        run_log,
+        lambda _prompt: json.dumps(
+            {
+                "parameters": [
+                    {
+                        "name": "note",
+                        "description": "Expense note",
+                        "step_index": 0,
+                        "arg_name": "text",
+                    }
+                ]
+            }
+        ),
+    )
+
+    assert enhanced["steps"][0]["action"]["args"] == {"text": ""}
+    assert enhanced["bindings"][0]["source"] == "$.arguments.note"
+    assert status == "enhanced"
+
+
+def test_enhancement_parameterizes_task_varying_open_app_package() -> None:
+    run_log = {
+        "run_id": "source-run",
+        "steps": [
+            {
+                "before_state_id": "state-1",
+                "action": {
+                    "tool": "open_app",
+                    "args": {"package_name": "com.android.settings"},
+                },
+                "result": {"success": True},
+            }
+        ],
+    }
+
+    enhanced, changes, status = enhance_function(
+        _function(),
+        run_log,
+        lambda _prompt: json.dumps(
+            {
+                "name": "Open requested app",
+                "description": "Open the requested installed Android app.",
+                "parameters": [
+                    {
+                        "name": "package_name",
+                        "description": "Installed Android package to open",
+                        "step_index": 0,
+                        "arg_name": "package_name",
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert enhanced["input_schema"] == {
+        "type": "object",
+        "properties": {
+            "package_name": {
+                "type": "string",
+                "description": "Installed Android package to open",
+            }
+        },
+        "required": ["package_name"],
+        "additionalProperties": False,
+    }
+    assert enhanced["bindings"] == [
+        {
+            "source": "$.arguments.package_name",
+            "target": "$.steps[0].action.args.package_name",
+        }
+    ]
+    assert enhanced["steps"][0]["action"]["args"] == {"package_name": ""}
+    assert {"part": "function", "field": "parameters"} in changes
+    assert status == "enhanced"
+
+
+def test_enhancement_replaces_steps_with_successful_runlog_segment() -> None:
+    run_log = {
+        "run_id": "source-run",
+        "steps": [
+            {
+                "before_state_id": "state-1",
+                "action": {
+                    "tool": "open_app",
+                    "args": {"package_name": "com.example.expense"},
+                },
+                "result": {"success": True},
+            },
+            {
+                "before_state_id": "state-2",
+                "action": {"tool": "click", "args": {"x": 90, "y": 120}},
+                "result": {"success": True},
+            },
+            {
+                "before_state_id": "state-3",
+                "action": {
+                    "tool": "input_text",
+                    "args": {"text": "Paid by card"},
+                },
+                "result": {"success": True},
+            },
+        ],
+    }
+
+    enhanced, changes, status = enhance_function(
+        _function(),
+        run_log,
+        lambda _prompt: json.dumps(
+            {
+                "name": "Add expense note",
+                "description": "Open the expense app and enter one expense note.",
+                "steps": [
+                    {
+                        "source_state_id": "state-1",
+                        "action": {
+                            "tool": "open_app",
+                            "args": {"package_name": "com.example.expense"},
+                        },
+                    },
+                    {
+                        "source_state_id": "state-2",
+                        "action": {
+                            "tool": "click",
+                            "args": {"x": 90, "y": 120},
+                        },
+                    },
+                    {
+                        "source_state_id": "state-3",
+                        "action": {
+                            "tool": "input_text",
+                            "args": {"text": "Paid by card"},
+                        },
+                    },
+                ],
+                "parameters": [
+                    {
+                        "name": "note",
+                        "description": "Expense note",
+                        "step_index": 2,
+                        "arg_name": "text",
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert [step["source_state_id"] for step in enhanced["steps"]] == [
+        "state-1",
+        "state-2",
+        "state-3",
+    ]
+    assert [step["action"]["tool"] for step in enhanced["steps"]] == [
+        "open_app",
+        "click",
+        "input_text",
+    ]
+    assert enhanced["steps"][2]["action"]["args"] == {"text": ""}
+    assert enhanced["bindings"] == [
+        {
+            "source": "$.arguments.note",
+            "target": "$.steps[2].action.args.text",
+        }
+    ]
+    assert {"part": "function", "field": "steps"} in changes
+    assert status == "enhanced"
+
+
+def test_enhancement_rejects_action_not_grounded_in_runlog() -> None:
+    run_log = {
+        "run_id": "source-run",
+        "steps": [
+            {
+                "before_state_id": "state-1",
+                "action": {"tool": "click", "args": {"x": 90, "y": 120}},
+                "result": {"success": True},
+            }
+        ],
+    }
+
+    try:
+        enhance_function(
+            _function(),
+            run_log,
+            lambda _prompt: json.dumps(
+                {
+                    "steps": [
+                        {
+                            "source_state_id": "state-1",
+                            "action": {
+                                "tool": "click",
+                                "args": {"x": 900, "y": 800},
+                            },
+                        }
+                    ]
+                }
+            ),
+        )
+    except ValueError as error:
+        assert str(error).startswith("function_action_not_grounded:")
+    else:
+        raise AssertionError("invented action must be rejected")
+
+
 def test_tools_expose_one_function_save_interface(tmp_path) -> None:
     bridge = JsonLineBridge(tmp_path / "functions.json")
 
