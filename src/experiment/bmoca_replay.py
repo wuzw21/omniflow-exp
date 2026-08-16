@@ -51,6 +51,11 @@ _MOCK_E2E_METHODS = (
     "omnitransfer_fixed",
     "omnitransfer_prefix_dp",
 )
+_FUNCTION_REPLAY_METHODS = (
+    "selector_identity",
+    "selector_structured",
+    "omnitransfer_function",
+)
 _MOCK_SKIPPABLE_SOURCE_ACTIONS = frozenset({"open_app", "press_key", "wait"})
 _BOUNDS_PATTERN = re.compile(
     r"\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]"
@@ -767,6 +772,61 @@ def evaluate_mock_e2e(
         },
         "episodes": episodes,
     }
+
+
+def evaluate_function_replay(
+    corpus_root: str | Path,
+    *,
+    target_environments: Sequence[str] = ("101", "105"),
+    limit_episodes: int = 20,
+    selector_use_resource_id: bool = True,
+) -> dict[str, Any]:
+    """Evaluate pure Function replay against selector-only controls.
+
+    The source Function/action sequence and parameters are treated as already
+    recalled by the small LLM.  Only target-page grounding is evaluated here:
+    selector controls use text/resource-id structure, while the method uses
+    the canonical OmniTransfer implementation.  No VLM fallback, source
+    coordinate passthrough, or target action oracle is exposed before a
+    prediction; the recorded target trace is used only for post-prediction
+    transition and hit accounting.
+    """
+
+    raw = evaluate_mock_e2e(
+        corpus_root,
+        target_environments=target_environments,
+        limit_episodes=limit_episodes,
+        methods=("identity_fixed", "structured_fixed", "omnitransfer_fixed"),
+        selector_use_resource_id=selector_use_resource_id,
+    )
+    method_names = {
+        "identity_fixed": "selector_identity",
+        "structured_fixed": "selector_structured",
+        "omnitransfer_fixed": "omnitransfer_function",
+    }
+    for episode in raw["episodes"]:
+        episode["methods"] = {
+            method_names[name]: value
+            for name, value in episode["methods"].items()
+        }
+    raw["summary"]["methods"] = {
+        method_names[name]: value
+        for name, value in raw["summary"]["methods"].items()
+    }
+    raw["schema_version"] = "omniflow.bmoca-function-replay.v1"
+    raw["configuration"].update(
+        {
+            "methods": list(_FUNCTION_REPLAY_METHODS),
+            "protocol": "function_replay_cross_environment_v1",
+            "parameter_source": "small_llm_function_recall_only",
+            "parameter_model_calls": "not_measured_in_offline_corpus",
+            "grounding": "current_target_page_only",
+            "selector_controls": ["text", "content_description", "resource_id", "class"],
+            "vlm_fallback": "disabled",
+            "source_coordinate_fallback": "disabled",
+        }
+    )
+    return raw
 
 
 def _load_baseline_traces(
@@ -2747,7 +2807,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument(
         "--suite",
-        choices=("transfer-dp", "replay-baselines", "mock-e2e"),
+        choices=("transfer-dp", "replay-baselines", "mock-e2e", "function-replay"),
         default="transfer-dp",
     )
     parser.add_argument("--target-env", action="append", dest="target_environments")
@@ -2768,6 +2828,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     environments = tuple(args.target_environments or ("101", "105"))
+    if args.suite == "function-replay":
+        report = evaluate_function_replay(
+            args.corpus,
+            target_environments=environments,
+            limit_episodes=args.limit_episodes,
+            selector_use_resource_id=not args.disable_selector_resource_id,
+        )
+        _write_report(args.output.expanduser().resolve(), report)
+        print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
+        return 0
     if args.suite == "mock-e2e":
         report = evaluate_mock_e2e(
             args.corpus,
@@ -2829,6 +2899,7 @@ __all__ = [
     "BmocaStep",
     "BmocaTrace",
     "evaluate_bmoca_corpus",
+    "evaluate_function_replay",
     "evaluate_mock_e2e",
     "evaluate_replay_baselines",
     "evaluate_trace_pair",
