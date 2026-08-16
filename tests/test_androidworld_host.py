@@ -17,6 +17,7 @@ from src.integrations.android_world.launch import (
     _androidworld_setup_apps_for_suite,
     _ensure_androidworld_a11y_forwarder,
     _ExperimentAgentAdapter,
+    _prepare_androidworld_episode_apps,
     _result_has_official_validator_conclusion,
     _run_androidworld_setup_apps,
     _runtime_execution_trace,
@@ -333,6 +334,107 @@ def test_androidworld_official_setup_entry_clears_late_permission_dialog(
     assert controller.permission_denied is True
     assert snapshots == [False, True]
     assert controller.app_open is False
+
+
+def test_androidworld_episode_reset_clears_permission_dialog_before_first_observe(
+    monkeypatch,
+) -> None:
+    calls: list[object] = []
+
+    class Controller:
+        def __init__(self) -> None:
+            self.screen = "closed"
+            self.permission_denied = False
+
+        def get_ui_elements(self):
+            if self.screen == "permission":
+                return [
+                    SimpleNamespace(
+                        package_name="com.google.android.permissioncontroller",
+                        resource_name=(
+                            "com.android.permissioncontroller:id/permission_deny_button"
+                        ),
+                    )
+                ]
+            if self.screen == "app":
+                return [
+                    SimpleNamespace(
+                        package_name="com.example.target",
+                        resource_name="com.example.target:id/root",
+                    )
+                ]
+            return []
+
+    controller = Controller()
+    env = SimpleNamespace(controller=controller)
+
+    class App:
+        app_name = "target"
+
+        @classmethod
+        def package_name(cls) -> str:
+            return "com.example.target"
+
+    def launch_app(app_name, _controller) -> None:
+        calls.append(("launch", app_name))
+        controller.screen = "permission" if not controller.permission_denied else "app"
+
+    def close_app(app_name, _controller) -> None:
+        calls.append(("close", app_name))
+        controller.screen = "closed"
+
+    def click_resource_id(resource_ids, _controller, timeout_sec=10.0) -> None:
+        calls.append(("deny", tuple(resource_ids), timeout_sec))
+        controller.permission_denied = True
+        controller.screen = "app"
+
+    setup_module = SimpleNamespace(
+        adb_utils=SimpleNamespace(launch_app=launch_app, close_app=close_app)
+    )
+    real_import_module = __import__("importlib").import_module
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.importlib.import_module",
+        lambda name: SimpleNamespace(
+            find_and_click_element_by_resource_id=click_resource_id
+        )
+        if name == "android_world.env.actuation"
+        else real_import_module(name),
+    )
+    monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
+
+    class Agent:
+        def reset(self, go_home: bool = False) -> None:
+            calls.append(("reset", go_home))
+
+    adapter = _ExperimentAgentAdapter(
+        Agent(),
+        recording_session=SimpleNamespace(),
+        prepare_after_reset=lambda: _prepare_androidworld_episode_apps(
+            env,
+            setup_module=setup_module,
+            setup_apps=(App,),
+        ),
+    )
+
+    adapter.reset(go_home=False)
+    launch_app("target", controller)
+    observed_packages = {
+        element.package_name for element in controller.get_ui_elements()
+    }
+
+    assert controller.permission_denied is True
+    assert observed_packages == {"com.example.target"}
+    assert calls == [
+        ("reset", False),
+        ("launch", "target"),
+        (
+            "deny",
+            ANDROID_PERMISSION_DENY_RESOURCE_IDS,
+            10.0,
+        ),
+        ("close", "target"),
+        ("launch", "target"),
+    ]
 
 
 def test_androidworld_waits_for_native_a11y_before_setup(monkeypatch) -> None:

@@ -314,15 +314,23 @@ class _ExperimentAgentAdapter:
         recording_session: Any,
         goal_hint: str = "",
         max_steps: int | None = None,
+        prepare_after_reset: Callable[[], None] | None = None,
     ):
         self._agent = agent
         self._recording_session = recording_session
         self._goal_hint = str(goal_hint or "").strip()
         self._max_steps = max(1, int(max_steps)) if max_steps is not None else None
+        self._prepare_after_reset = prepare_after_reset
         self._completed_steps = 0
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._agent, name)
+
+    def reset(self, go_home: bool = False) -> None:
+        self._completed_steps = 0
+        self._agent.reset(go_home=go_home)
+        if self._prepare_after_reset is not None:
+            self._prepare_after_reset()
 
     def step(self, goal: str) -> Any:
         if self._max_steps is not None and self._completed_steps >= self._max_steps:
@@ -1636,6 +1644,21 @@ def _run_androidworld_setup_apps(
         setup_env,
         app_list=tuple(setup_apps),
     )
+    _prepare_androidworld_episode_apps(
+        setup_env,
+        setup_module=setup_module,
+        setup_apps=setup_apps,
+        save_snapshots=True,
+    )
+
+
+def _prepare_androidworld_episode_apps(
+    env: Any,
+    *,
+    setup_module: Any,
+    setup_apps: Sequence[Any],
+    save_snapshots: bool = False,
+) -> None:
     for app in setup_apps:
         app_name = str(getattr(app, "app_name", "") or "").strip()
         package_name_getter = getattr(app, "package_name", None)
@@ -1647,10 +1670,10 @@ def _run_androidworld_setup_apps(
         if not app_name or not package_name:
             continue
         actuation = importlib.import_module("android_world.env.actuation")
-        setup_module.adb_utils.launch_app(app_name, setup_env.controller)
+        setup_module.adb_utils.launch_app(app_name, env.controller)
         try:
             time.sleep(2.0)
-            elements = setup_env.controller.get_ui_elements()
+            elements = env.controller.get_ui_elements()
             permission_dialog = any(
                 str(getattr(element, "package_name", "") or "").endswith(
                     ".permissioncontroller"
@@ -1661,12 +1684,12 @@ def _run_androidworld_setup_apps(
                 continue
             actuation.find_and_click_element_by_resource_id(
                 ANDROID_PERMISSION_DENY_RESOURCE_IDS,
-                setup_env.controller,
+                env.controller,
                 timeout_sec=10.0,
             )
             deadline = time.monotonic() + 10.0
             while True:
-                elements = setup_env.controller.get_ui_elements()
+                elements = env.controller.get_ui_elements()
                 packages = {
                     str(getattr(element, "package_name", "") or "").strip()
                     for element in elements
@@ -1685,8 +1708,9 @@ def _run_androidworld_setup_apps(
                     )
                 time.sleep(0.25)
         finally:
-            setup_module.adb_utils.close_app(app_name, setup_env.controller)
-        setup_module.app_snapshot.save_snapshot(app_name, setup_env.controller)
+            setup_module.adb_utils.close_app(app_name, env.controller)
+        if save_snapshots:
+            setup_module.app_snapshot.save_snapshot(app_name, env.controller)
 
 
 def _prepare_official_harness_episode(env: Any, *, selected_agent: str) -> None:
@@ -3665,6 +3689,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             recording_session=recording_session,
             goal_hint=official_goal_hint_text,
             max_steps=max(1, int(args.max_steps)),
+            prepare_after_reset=lambda: _prepare_androidworld_episode_apps(
+                env,
+                setup_module=aw_setup,
+                setup_apps=setup_app_list,
+            ),
         )
         print(
             "Starting official AndroidWorld runner with "

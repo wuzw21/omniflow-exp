@@ -388,7 +388,11 @@ Android permission dialog through the platform's stable deny resource IDs. It
 requires the declared package to regain the foreground, closes the app, and
 overwrites the official snapshot before evaluation. This handles permission
 prompts that appear only after a second launch without changing any evaluated
-method.
+method. AndroidWorld task initialization may restore a snapshot whose first
+subsequent launch presents the same platform dialog again, so the adapter repeats
+that readiness check immediately after the official agent reset, without saving
+another snapshot. The first evaluated observation therefore reaches the declared
+app rather than `com.google.android.permissioncontroller`.
 
 Before each agent step, the launcher asks the pinned AndroidWorld controller to
 check for the known AccessibilityForwarder crash window. Healthy steps do not
