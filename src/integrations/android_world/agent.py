@@ -40,6 +40,10 @@ class _TaskHost:
         self.state = state
         self.transfer_states = transfer_states
 
+    @property
+    def env(self) -> Any:
+        return self.host.env
+
     def observe(self, **kwargs: Any) -> Observation:
         observation = Observation.from_value(self.host.observe(**kwargs))
         official_state = observation.extra.get("androidworld_state")

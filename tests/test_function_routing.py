@@ -134,6 +134,17 @@ def test_androidworld_host_keeps_the_captured_transfer_state() -> None:
     assert set(runtime_state["captured_transfer_states"]) == {identifier}
 
 
+def test_task_host_exposes_the_native_androidworld_environment() -> None:
+    environment = object()
+    host = _TaskHost(
+        SimpleNamespace(env=environment),
+        {"captured_transfer_states": {}},
+        {},
+    )
+
+    assert host.env is environment
+
+
 class FinishingPlanner:
     def __init__(self) -> None:
         self.visible_function_ids: list[tuple[str, ...]] = []
