@@ -309,8 +309,6 @@ def ensure_source_device(
         "--json-out",
         str(preflight_path),
     ]
-    if args.task.startswith("Contacts"):
-        command.append("--require-contacts-ready")
     result = run_logged_command(
         command,
         cwd=args.repo,
