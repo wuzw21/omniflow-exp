@@ -43,8 +43,8 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
 )
 from src.experiment.result_registry import register_attempt_summary
-from src.integrations.appagent_adapter import validate_appagent_demo_memory
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
+from src.integrations.appagent_adapter import validate_appagent_demo_memory
 
 DEFAULT_ARCHIVE_INDEX = (
     REPO_ROOT
