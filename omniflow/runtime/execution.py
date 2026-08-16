@@ -31,6 +31,7 @@ from omniflow.runtime.core import (
 from omniflow.runtime.core import (
     prepare_action as prepare_core_action,
 )
+from omniflow.runtime.semantic_grounding import resolve_semantic_action
 from omniflow.transfer.runtime import transfer_action
 
 _OPEN_APP_READY_POLL_SECONDS = 0.5
@@ -267,11 +268,17 @@ async def execute_robust_action(
         and not _observation_screenshot_path(observation)
     ):
         observation = await _observe_ready(host)
+    semantic = resolve_semantic_action(action, observation)
+    action = semantic.action
+    semantic_detail = semantic.detail
+    transfer_source_state = source_state
+    if semantic_detail is not None and semantic_detail.get("status") == "resolved":
+        transfer_source_state = None
     decision = await prepare_action(
         action,
         observation=observation,
         plugins=plugins,
-        source_state=source_state,
+        source_state=transfer_source_state,
     )
     if decision.kind == "block" or decision.action is None:
         blocked = StepResult(
@@ -281,7 +288,7 @@ async def execute_robust_action(
             error=decision.reason or "action_blocked",
             origin="blocked",
             function_id=function_id,
-            detail=decision.detail,
+            detail=_merge_action_detail(decision.detail, semantic_detail),
         )
         if not executed_steps:
             return blocked
@@ -300,7 +307,7 @@ async def execute_robust_action(
     result = replace(
         result,
         function_id=function_id,
-        detail=decision.detail,
+        detail=_merge_action_detail(decision.detail, semantic_detail),
     )
     if not executed_steps:
         return result
@@ -325,6 +332,18 @@ async def prepare_action(
         plugins=plugins,
         source_state=source_state,
     )
+
+
+def _merge_action_detail(
+    decision_detail: dict[str, Any] | None,
+    semantic_detail: dict[str, object] | None,
+) -> dict[str, Any] | None:
+    if decision_detail is None and semantic_detail is None:
+        return None
+    detail = dict(decision_detail or {})
+    if semantic_detail is not None:
+        detail["semantic_grounding"] = dict(semantic_detail)
+    return detail
 
 
 def _recovery_action_available(

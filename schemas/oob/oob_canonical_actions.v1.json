@@ -19,7 +19,7 @@
       "coordinate_action": true,
       "point_target_action": true,
       "args": [
-        {"name": "target_description", "type": "string", "persisted": false, "description": {"zh_cn": "可选。要点击的目标描述，用于补充 grounding。", "en_us": "Optional. Description of the target to tap, used as a grounding hint."}},
+        {"name": "target_description", "type": "string", "description": {"zh_cn": "可选。要点击的目标描述，用于语义 grounding。", "en_us": "Optional. Description of the target to tap, used for semantic grounding."}},
         {"name": "node_id", "type": "string", "persisted": false, "description": {"zh_cn": "可选。live XML 中已确认的无障碍节点 id。", "en_us": "Optional. Confirmed accessibility node id from live XML."}},
         {"name": "node_resource_id", "type": "string", "persisted": false, "description": {"zh_cn": "可选。录制或 XML grounding 得到的 Android resource-id，用于重放定位诊断和迁移。", "en_us": "Optional. Android resource-id captured from recording or XML grounding, used for replay targeting diagnostics and transfer."}},
         {"name": "x", "type": "number", "required": true, "description": {"zh_cn": "点击位置的 required 0..1000 相对 X 坐标；执行前会解码为屏幕绝对像素。", "en_us": "Required 0..1000 relative X coordinate of the tap target; decoded to absolute screen pixels before execution."}, "minimum": 0, "maximum": 1000},

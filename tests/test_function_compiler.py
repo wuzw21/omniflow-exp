@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
@@ -102,6 +103,223 @@ def test_compiler_freezes_only_function_referenced_states(
     assert result["prompt_tokens"] == 0
     assert result["completion_tokens"] == 0
     assert result["total_tokens"] == 0
+
+
+def test_compiler_binds_parameterized_open_app_to_source_evidence(
+    tmp_path: Path,
+) -> None:
+    bundle = {
+        "schema_version": "omniflow.function-bundle.v2",
+        "run_id": "source-run",
+        "arguments": {
+            "open_requested_app": {
+                "package_name": "com.android.settings",
+            }
+        },
+        "functions": [
+            {
+                "schema_version": "omniflow.function.v2",
+                "function_id": "open_requested_app",
+                "name": "Open requested app",
+                "description": "Open the requested installed Android app.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "package_name": {
+                            "type": "string",
+                            "description": "Installed Android package to open",
+                        }
+                    },
+                    "required": ["package_name"],
+                    "additionalProperties": False,
+                },
+                "bindings": [
+                    {
+                        "source": "$.arguments.package_name",
+                        "target": "$.steps[0].action.args.package_name",
+                    }
+                ],
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "source_state_id": "state_0",
+                        "action": {
+                            "tool": "open_app",
+                            "args": {"package_name": ""},
+                        },
+                    }
+                ],
+                "checker_rules": [],
+                "agent_visible": True,
+            }
+        ],
+    }
+
+    result = compile_runlog_to_store(
+        _run_log(1),
+        tmp_path / "output",
+        function_bundle=bundle,
+        source_states={"state_0": {"state_id": "state_0"}},
+    )
+
+    assert result["function_ids"] == ["open_requested_app"]
+    assert result["source_arguments"] == bundle["arguments"]
+
+
+def test_compiler_binds_semantic_click_target_to_source_evidence(
+    tmp_path: Path,
+) -> None:
+    run_log = androidworld_run_log(
+        [{"action_type": "click", "x": 107, "y": 400}],
+        observations=[
+            androidworld_state(
+                "category-state",
+                forest=(
+                    '<hierarchy><node bounds="[56,358][158,442]" clickable="true">'
+                    '<node text="Food" bounds="[70,370][140,430]"/>'
+                    "</node></hierarchy>"
+                ),
+                width=720,
+                height=1280,
+            )
+        ],
+        goal="Select an expense category.",
+    )
+    bundle = {
+        "schema_version": "omniflow.function-bundle.v2",
+        "run_id": "source-run",
+        "arguments": {"select_category": {"category": "Food"}},
+        "functions": [
+            {
+                "schema_version": "omniflow.function.v2",
+                "function_id": "select_category",
+                "name": "Select category",
+                "description": "Select the requested visible category.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"category": {"type": "string"}},
+                    "required": ["category"],
+                    "additionalProperties": False,
+                },
+                "bindings": [
+                    {
+                        "source": "$.arguments.category",
+                        "target": "$.steps[0].action.args.target_description",
+                    }
+                ],
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "source_state_id": "category-state",
+                        "action": {
+                            "tool": "click",
+                            "args": {
+                                "target_description": "",
+                                "x": 148.61111111111111,
+                                "y": 312.5,
+                            },
+                        },
+                    }
+                ],
+                "checker_rules": [],
+                "agent_visible": True,
+            }
+        ],
+    }
+
+    result = compile_runlog_to_store(
+        run_log,
+        tmp_path / "output",
+        function_bundle=bundle,
+        source_states={
+            "category-state": {
+                "state_id": "category-state",
+                "xml": run_log["steps"][0]["observation"]["forest"],
+                "display": {"width": 720, "height": 1280},
+            }
+        },
+    )
+
+    assert result["function_ids"] == ["select_category"]
+
+
+def test_compiler_rejects_semantic_click_target_without_source_evidence(
+    tmp_path: Path,
+) -> None:
+    run_log = androidworld_run_log(
+        [{"action_type": "click", "x": 107, "y": 400}],
+        observations=[
+            androidworld_state(
+                "category-state",
+                forest=(
+                    '<hierarchy><node bounds="[56,358][158,442]" clickable="true">'
+                    '<node text="Food" bounds="[70,370][140,430]"/>'
+                    "</node></hierarchy>"
+                ),
+                width=720,
+                height=1280,
+            )
+        ],
+        goal="Select an expense category.",
+    )
+    bundle = {
+        "schema_version": "omniflow.function-bundle.v2",
+        "run_id": "source-run",
+        "arguments": {"select_category": {"category": "Income"}},
+        "functions": [
+            {
+                "schema_version": "omniflow.function.v2",
+                "function_id": "select_category",
+                "name": "Select category",
+                "description": "Select the requested visible category.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"category": {"type": "string"}},
+                    "required": ["category"],
+                    "additionalProperties": False,
+                },
+                "bindings": [
+                    {
+                        "source": "$.arguments.category",
+                        "target": "$.steps[0].action.args.target_description",
+                    }
+                ],
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "source_state_id": "category-state",
+                        "action": {
+                            "tool": "click",
+                            "args": {
+                                "target_description": "",
+                                "x": 148.61111111111111,
+                                "y": 312.5,
+                            },
+                        },
+                    }
+                ],
+                "checker_rules": [],
+                "agent_visible": True,
+            }
+        ],
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="function_action_not_grounded:select_category:0",
+    ):
+        compile_runlog_to_store(
+            run_log,
+            tmp_path / "output",
+            function_bundle=bundle,
+            source_states={
+                "category-state": {
+                    "state_id": "category-state",
+                    "xml": run_log["steps"][0]["observation"]["forest"],
+                    "display": {"width": 720, "height": 1280},
+                }
+            },
+        )
 
 
 def _single_input_bundle(parameter_name: str, *, text: str = "Paid by card") -> dict:

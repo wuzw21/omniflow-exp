@@ -127,6 +127,71 @@ def test_enhancement_parameterizes_projected_androidworld_input_text() -> None:
     assert status == "enhanced"
 
 
+def test_enhancement_parameterizes_projected_androidworld_click_target() -> None:
+    run_log = androidworld_run_log(
+        [{"action_type": "click", "x": 107, "y": 400}],
+        observations=[
+            androidworld_state(
+                "category-state",
+                forest=(
+                    '<hierarchy><node bounds="[56,358][158,442]" clickable="true">'
+                    '<node text="Food" bounds="[70,370][140,430]"/>'
+                    "</node></hierarchy>"
+                ),
+                width=720,
+                height=1280,
+            )
+        ],
+        goal="Add a Food expense.",
+    )
+    function = {
+        **_function(),
+        "function_id": "select_expense_category",
+        "name": "Select expense category",
+        "description": "Select the requested expense category.",
+        "steps": [
+            {
+                "step_index": 0,
+                "source_state_id": "category-state",
+                "action": {
+                    "tool": "click",
+                    "args": {
+                        "target_description": "Food",
+                        "x": 148.61111111111111,
+                        "y": 312.5,
+                    },
+                },
+            }
+        ],
+    }
+
+    enhanced, _, status = enhance_function(
+        function,
+        run_log,
+        lambda _prompt: json.dumps(
+            {
+                "parameters": [
+                    {
+                        "name": "category",
+                        "description": "Expense category to select",
+                        "step_index": 0,
+                        "arg_name": "target_description",
+                    }
+                ]
+            }
+        ),
+    )
+
+    assert enhanced["steps"][0]["action"]["args"]["target_description"] == ""
+    assert enhanced["bindings"] == [
+        {
+            "source": "$.arguments.category",
+            "target": "$.steps[0].action.args.target_description",
+        }
+    ]
+    assert status == "enhanced"
+
+
 def test_enhancement_parameterizes_task_varying_open_app_package() -> None:
     run_log = {
         "run_id": "source-run",
@@ -498,11 +563,6 @@ def test_agent_enhancement_generates_checker_from_runlog_evidence() -> None:
         instruction="Add only evidence-backed recovery conditions.",
     )
 
-    assert enhanced["checker_rules"] == [
-        {
-            **checker_rule,
-            "action": {"tool": "click", "args": {"x": 500, "y": 500}},
-        }
-    ]
+    assert enhanced["checker_rules"] == [checker_rule]
     assert {"part": "function", "field": "checker_rules"} in changes
     assert status == "enhanced"

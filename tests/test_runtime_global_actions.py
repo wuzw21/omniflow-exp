@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from omniflow.core.config import PluginSet
 from omniflow.core.model import (
     Action,
@@ -110,6 +112,161 @@ def test_payment_text_does_not_create_hidden_runtime_policy(monkeypatch) -> None
 
     assert result.success is True
     assert host.actions == [action]
+
+
+def test_runtime_dispatches_semantically_grounded_vlm_action(monkeypatch) -> None:
+    import omniflow.runtime.core as core
+
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    current = Observation(
+        xml=(
+            '<hierarchy><node id="64:5" text="Turn off" '
+            'resource-id="android:id/button1" bounds="[730,1310][926,1436]" '
+            'clickable="true" enabled="true"/></hierarchy>'
+        ),
+        extra={"display": {"width": 1080, "height": 2400}},
+    )
+
+    class Host:
+        def __init__(self) -> None:
+            self.actions = []
+
+        def act(self, action):
+            self.actions.append(action)
+            return {"success": True}
+
+        def observe(self, **_kwargs):
+            return current
+
+    host = Host()
+    result = asyncio.run(
+        execute_robust_action(
+            Action(
+                "click",
+                {"target_description": "Turn off", "x": 572, "y": 572},
+            ),
+            observation=current,
+            host=host,
+            plugins=PluginSet(),
+        )
+    )
+
+    assert result.success is True
+    assert host.actions[0].args["x"] == pytest.approx(828 / 1080 * 1000)
+    assert host.actions[0].args["y"] == pytest.approx(1373 / 2400 * 1000)
+    assert result.detail["semantic_grounding"]["status"] == "resolved"
+
+
+def test_runtime_dispatches_semantically_grounded_function_action(monkeypatch) -> None:
+    import omniflow.runtime.core as core
+
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    current = Observation(
+        xml=(
+            '<hierarchy><node bounds="[174,358][309,442]" clickable="true" '
+            'enabled="true"><node text="Income" bounds="[190,370][290,430]"/>'
+            "</node></hierarchy>"
+        ),
+        extra={"display": {"width": 720, "height": 1280}},
+    )
+    source = Observation(
+        xml=(
+            '<hierarchy><node bounds="[56,358][158,442]" clickable="true" '
+            'enabled="true"><node text="Food" bounds="[70,370][140,430]"/>'
+            "</node></hierarchy>"
+        ),
+        extra={"display": {"width": 720, "height": 1280}},
+    )
+
+    class Host:
+        def __init__(self) -> None:
+            self.actions = []
+
+        def act(self, action):
+            self.actions.append(action)
+            return {"success": True}
+
+        def observe(self, **_kwargs):
+            return current
+
+    host = Host()
+    result = asyncio.run(
+        execute_robust_action(
+            Action(
+                "click",
+                {
+                    "target_description": "Income",
+                    "x": 148.61111111111111,
+                    "y": 312.5,
+                },
+            ),
+            observation=current,
+            host=host,
+            plugins=PluginSet(),
+            source_state=source,
+        )
+    )
+
+    assert result.success is True
+    assert host.actions[0].args["x"] == pytest.approx(241.5 / 720 * 1000)
+    assert host.actions[0].args["y"] == pytest.approx(400 / 1280 * 1000)
+    assert result.detail["semantic_grounding"]["status"] == "resolved"
+
+
+def test_function_semantic_target_falls_back_to_transfer_when_missing(
+    monkeypatch,
+) -> None:
+    import omniflow.runtime.core as core
+
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    current = Observation(
+        xml='<hierarchy><node text="Food" bounds="[0,0][100,100]"/></hierarchy>',
+        extra={"display": {"width": 720, "height": 1280}},
+    )
+    source = Observation(
+        xml='<hierarchy><node text="Food" bounds="[0,0][100,100]"/></hierarchy>',
+        extra={"display": {"width": 720, "height": 1280}},
+    )
+    mapped = Action("click", {"x": 600, "y": 700})
+    transfer_calls = []
+
+    async def transfer(action, observation, source_state):
+        transfer_calls.append((action, observation, source_state))
+        return TransferResult(mapped, reason="mapped")
+
+    class Host:
+        def __init__(self) -> None:
+            self.actions = []
+
+        def act(self, action):
+            self.actions.append(action)
+            return {"success": True}
+
+        def observe(self, **_kwargs):
+            return current
+
+    host = Host()
+    result = asyncio.run(
+        execute_robust_action(
+            Action(
+                "click",
+                {
+                    "target_description": "Income",
+                    "x": 148.61111111111111,
+                    "y": 312.5,
+                },
+            ),
+            observation=current,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            source_state=source,
+        )
+    )
+
+    assert result.success is True
+    assert len(transfer_calls) == 1
+    assert host.actions == [mapped]
+    assert result.detail["semantic_grounding"]["status"] == "fallback"
 
 
 def test_checker_drains_consecutive_explicit_obstructions_before_function_action(

@@ -2,15 +2,22 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
+import math
 from pathlib import Path
 import re
 from typing import Any, Callable, Iterable
 
 from omniflow.core.model import Action, Function, FunctionStep
 from omniflow.core.schemas import canonicalize_action, load_canonical_action_schema
-from omniflow.core.trajectory import canonicalize_run_log, state_id
+from omniflow.core.trajectory import (
+    canonicalize_run_log,
+    observation_display,
+    observation_xml,
+    state_id,
+)
 from omniflow.runlog import project_androidworld_step_actions
 from omniflow.runtime.checker import validate_checker_rule
+from omniflow.runtime.semantic_grounding import semantic_target_at_point
 
 FUNCTION_ARTIFACT_VERSION = "omniflow.function.v2"
 STORE_VERSION = "omniflow.store.v2"
@@ -36,6 +43,7 @@ _TARGET_PATH = re.compile(
 _PATH_TOKEN = re.compile(r"\.([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)]")
 _PARAMETER_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _PARAMETERIZABLE_ACTION_ARGS = {
+    "click": frozenset({"target_description"}),
     "input_text": frozenset({"text"}),
     "open_app": frozenset({"package_name"}),
 }
@@ -504,6 +512,10 @@ def compile_runlog_to_store(
             if str(metadata.get(key) or "").strip()
         }
         for action in projected_actions:
+            step_metadata = dict(action_metadata)
+            semantic_target = _projected_semantic_target(action, observation)
+            if semantic_target:
+                step_metadata["semantic_target"] = semantic_target
             steps.append(
                 {
                     "step_index": len(steps),
@@ -511,7 +523,7 @@ def compile_runlog_to_store(
                     "action": action,
                     "result": {"success": True},
                     "after_state_id": after_state_id,
-                    "metadata": action_metadata,
+                    "metadata": step_metadata,
                 }
             )
     if not steps:
@@ -756,7 +768,14 @@ def _validate_action_grounding(
     expected = [step.action.to_dict() for step in function.steps]
     width = len(expected)
     if any(
-        [step["action"] for step in source_steps[start : start + width]] == expected
+        all(
+            _grounded_action_matches(expected_action, source_step)
+            for expected_action, source_step in zip(
+                expected,
+                source_steps[start : start + width],
+                strict=True,
+            )
+        )
         for start in range(len(source_steps) - width + 1)
     ):
         return
@@ -764,6 +783,37 @@ def _validate_action_grounding(
         "function_action_not_grounded:"
         f"{function.id}:{function.steps[0].step_index}"
     )
+
+
+def _grounded_action_matches(
+    expected_action: dict[str, Any],
+    source_step: dict[str, Any],
+) -> bool:
+    source_action = source_step["action"]
+    if source_action == expected_action:
+        return True
+    if expected_action.get("tool") != "click" or source_action.get("tool") != "click":
+        return False
+    expected_args = expected_action.get("args")
+    source_args = source_action.get("args")
+    if not isinstance(expected_args, dict) or not isinstance(source_args, dict):
+        return False
+    target = str(expected_args.get("target_description") or "").strip()
+    metadata = source_step.get("metadata")
+    if (
+        not target
+        or not isinstance(metadata, dict)
+        or str(metadata.get("semantic_target") or "").strip() != target
+    ):
+        return False
+    return {
+        "tool": "click",
+        "args": {
+            key: value
+            for key, value in expected_args.items()
+            if key != "target_description"
+        },
+    } == source_action
 
 
 def _validate_checker_evidence(
@@ -951,7 +1001,7 @@ def _enhancement_prompt(
         "name": function["name"],
         "description": function["description"],
         "steps": steps,
-        "parameter_candidates": _parameter_candidates(function),
+        "parameter_candidates": _parameter_candidates(function, run_log),
         "run_log": run_log_facts,
         "user_instruction": str(instruction or "").strip()[:2000],
     }
@@ -1080,7 +1130,10 @@ def _successful_source_steps(run_log: dict[str, Any]) -> list[dict[str, Any]]:
     return evidence
 
 
-def _parameter_candidates(function: dict[str, Any]) -> list[dict[str, Any]]:
+def _parameter_candidates(
+    function: dict[str, Any],
+    run_log: dict[str, Any],
+) -> list[dict[str, Any]]:
     bound_targets = {
         str(binding.get("target") or "")
         for binding in function.get("bindings") or ()
@@ -1097,9 +1150,12 @@ def _parameter_candidates(function: dict[str, Any]) -> list[dict[str, Any]]:
         args = action.get("args")
         if not isinstance(args, dict):
             continue
-        for arg_name in _PARAMETERIZABLE_ACTION_ARGS.get(tool, ()):
+        parameterizable = _PARAMETERIZABLE_ACTION_ARGS.get(tool, ())
+        for arg_name in parameterizable:
             target = f"$.steps[{step_index}].action.args.{arg_name}"
             value = args.get(arg_name)
+            if tool == "click" and arg_name == "target_description" and not value:
+                value = _semantic_click_target(step, run_log)
             if target in bound_targets or not isinstance(value, str) or not value:
                 continue
             candidates.append(
@@ -1122,7 +1178,7 @@ def _apply_parameters(
         raise ValueError("function_enhancement_parameters_invalid")
     candidates = {
         (candidate["step_index"], candidate["arg_name"]): candidate
-        for candidate in _parameter_candidates(function)
+        for candidate in _parameter_candidates(function, run_log)
     }
     schema = function["input_schema"]
     properties = schema["properties"]
@@ -1148,7 +1204,7 @@ def _apply_parameters(
         if _PARAMETER_NAME.fullmatch(name) is None or name in existing_names:
             raise ValueError("function_enhancement_parameter_name_invalid")
         step = function["steps"][step_index]
-        value = step["action"]["args"][arg_name]
+        value = candidate["recorded_value"]
         if not _has_parameter_evidence(step, arg_name, value, run_log):
             raise ValueError("function_enhancement_parameter_evidence_missing")
         definition: dict[str, Any] = {"type": "string"}
@@ -1174,6 +1230,8 @@ def _has_parameter_evidence(
     value: Any,
     run_log: dict[str, Any],
 ) -> bool:
+    if arg_name == "target_description":
+        return _semantic_click_target(function_step, run_log) == value
     for raw_step in _successful_source_steps(run_log):
         action = raw_step["action"]
         args = action.get("args")
@@ -1188,6 +1246,70 @@ def _has_parameter_evidence(
         ):
             return True
     return False
+
+
+def _semantic_click_target(
+    function_step: dict[str, Any],
+    run_log: dict[str, Any],
+) -> str:
+    action = function_step.get("action")
+    if not isinstance(action, dict) or action.get("tool") != "click":
+        return ""
+    args = action.get("args")
+    if not isinstance(args, dict):
+        return ""
+    try:
+        target_x = float(args["x"])
+        target_y = float(args["y"])
+    except (KeyError, TypeError, ValueError):
+        return ""
+    expected_state_id = str(function_step.get("source_state_id") or "")
+    for raw_step in run_log.get("steps") or ():
+        if not isinstance(raw_step, dict):
+            continue
+        result = raw_step.get("result")
+        observation = raw_step.get("observation")
+        if (
+            not isinstance(result, dict)
+            or result.get("success") is not True
+            or not isinstance(observation, dict)
+            or state_id(observation) != expected_state_id
+        ):
+            continue
+        for projected in project_androidworld_step_actions(raw_step):
+            projected_args = projected.get("args")
+            if projected.get("tool") != "click" or not isinstance(projected_args, dict):
+                continue
+            try:
+                projected_x = float(projected_args["x"])
+                projected_y = float(projected_args["y"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not (
+                math.isclose(projected_x, target_x)
+                and math.isclose(projected_y, target_y)
+            ):
+                continue
+            return _projected_semantic_target(projected, observation)
+    return ""
+
+
+def _projected_semantic_target(
+    action: dict[str, Any],
+    observation: dict[str, Any],
+) -> str:
+    if action.get("tool") != "click":
+        return ""
+    args = action.get("args")
+    display = observation_display(observation)
+    if not isinstance(args, dict) or display is None:
+        return ""
+    try:
+        x = float(args["x"]) / 1000.0 * display[0]
+        y = float(args["y"]) / 1000.0 * display[1]
+    except (KeyError, TypeError, ValueError):
+        return ""
+    return semantic_target_at_point(observation_xml(observation), x, y)
 
 
 def _require_checker_evidence(
