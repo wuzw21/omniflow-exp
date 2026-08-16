@@ -202,9 +202,7 @@ def _write_registered_result(
                 "command": command,
                 **(
                     {
-                        "execution_backend": (
-                            "selector_then_scaled_coordinate_fallback_v2"
-                        ),
+                        "execution_backend": "recorded_coordinate_replay_v1",
                         "source_run_log": str(source_run_log),
                         "source_run_log_sha256": _sha256(source_run_log),
                         "replay_run_log": str(source_run_log),

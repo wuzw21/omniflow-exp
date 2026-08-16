@@ -718,10 +718,7 @@ def validate_formal_result_protocol(
     if row.get("state_backend") != "androidworld":
         violations.append("state_backend")
     if method == "fixed_replay":
-        if (
-            row.get("execution_backend")
-            != "selector_then_scaled_coordinate_fallback_v2"
-        ):
+        if row.get("execution_backend") != "recorded_coordinate_replay_v1":
             violations.append("execution_backend")
 
     task_params = row.get("task_params")

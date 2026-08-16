@@ -1590,6 +1590,21 @@ def _androidworld_setup_apps_for_suite(
     return tuple(setup_apps)
 
 
+def _setup_androidworld_apps_strict(env: Any, setup_apps: Sequence[Any]) -> None:
+    """Run AndroidWorld's app setup without swallowing setup failures."""
+
+    from android_world.env import adb_utils
+    from android_world.env.setup_device import setup as aw_setup
+    from android_world.utils import app_snapshot
+
+    adb_utils.press_home_button(env.controller)
+    adb_utils.set_root_if_needed(env.controller)
+    for app in setup_apps:
+        aw_setup.maybe_install_app(app, env)
+        app.setup(env)
+        app_snapshot.save_snapshot(app.app_name, env.controller)
+
+
 def _prepare_official_harness_episode(env: Any, *, selected_agent: str) -> None:
     if not str(selected_agent or "").startswith("official:"):
         return
@@ -1637,8 +1652,11 @@ def _wait_for_androidworld_a11y(env: Any, *, attempts: int = 6) -> None:
     for attempt in range(max(1, int(attempts))):
         try:
             state = env.get_state(wait_to_stabilize=False)
-            if getattr(state, "forest", None) is None:
-                raise RuntimeError("AndroidWorld state has no accessibility forest")
+            forest = getattr(state, "forest", None)
+            if forest is None or (
+                isinstance(forest, (dict, list, tuple, set)) and not forest
+            ):
+                raise RuntimeError("AndroidWorld accessibility forest is empty")
             return
         except RuntimeError as error:
             last_error = error
@@ -2817,7 +2835,7 @@ def _apply_fixed_replay(
                     "summary": "fixed replay already completed",
                     "run_id": payload.get("run_id"),
                     "step_index": 0,
-                    "source": "selector_then_scaled_coordinate_fallback_v2",
+                    "source": "recorded_coordinate_replay_v1",
                     "actions_executed": int(summary.get("actions_executed") or 0),
                     "fallback": False,
                     "error": None,
@@ -2841,9 +2859,7 @@ def _apply_fixed_replay(
         completed = True
         error_text: str | None = None
         actions_executed = 0
-        selector_actions = 0
-        scaled_coordinate_actions = 0
-        selector_fallback_actions = 0
+        recorded_coordinate_actions = 0
         direct_actions = 0
         parameter_bound_actions = 0
         parameter_bindings_applied = 0
@@ -2922,7 +2938,7 @@ def _apply_fixed_replay(
                 )
                 actions_executed += 1
                 if parameter_source == "recorded_coordinate":
-                    scaled_coordinate_actions += 1
+                    recorded_coordinate_actions += 1
                 else:
                     direct_actions += 1
                 step_record["completed"] = True
@@ -2972,12 +2988,10 @@ def _apply_fixed_replay(
         execution_summary = {
             "completed": bool(completed),
             "replay_completed": bool(completed),
-            "execution_backend": "selector_then_scaled_coordinate_fallback_v2",
+            "execution_backend": "recorded_coordinate_replay_v1",
             "steps": int(actions_executed),
             "actions_executed": int(actions_executed),
-            "selector_actions": int(selector_actions),
-            "scaled_coordinate_actions": int(scaled_coordinate_actions),
-            "selector_fallback_actions": int(selector_fallback_actions),
+            "recorded_coordinate_actions": int(recorded_coordinate_actions),
             "direct_actions": int(direct_actions),
             "parameter_bound_actions": int(parameter_bound_actions),
             "parameter_bindings_applied": int(parameter_bindings_applied),
@@ -3012,18 +3026,14 @@ def _apply_fixed_replay(
                 {
                     "step_index": 0,
                     "selection_source": "fixed_replay",
-                    "execution_source": "selector_then_scaled_coordinate_fallback_v2",
+                    "execution_source": "recorded_coordinate_replay_v1",
                     "provider_detail": {
                         "raw_replay": {
                             "source_run_log": str(run_log_json_path),
                             "source_action_count": len(source_actions),
                             "actions_executed": int(actions_executed),
-                            "selector_actions": int(selector_actions),
-                            "scaled_coordinate_actions": int(
-                                scaled_coordinate_actions
-                            ),
-                            "selector_fallback_actions": int(
-                                selector_fallback_actions
+                            "recorded_coordinate_actions": int(
+                                recorded_coordinate_actions
                             ),
                             "direct_actions": int(direct_actions),
                             "parameter_bound_actions": int(parameter_bound_actions),
@@ -3078,12 +3088,8 @@ def _apply_fixed_replay(
                                 "run_id": run_id,
                                 "step_count": len(step_results),
                                 "actions_executed": int(actions_executed),
-                                "selector_actions": int(selector_actions),
-                                "scaled_coordinate_actions": int(
-                                    scaled_coordinate_actions
-                                ),
-                                "selector_fallback_actions": int(
-                                    selector_fallback_actions
+                                "recorded_coordinate_actions": int(
+                                    recorded_coordinate_actions
                                 ),
                                 "direct_actions": int(direct_actions),
                                 "parameter_bound_actions": int(
@@ -3110,7 +3116,7 @@ def _apply_fixed_replay(
                 "summary": error_text or "fixed replay executed",
                 "run_id": run_id,
                 "step_index": 0,
-                "source": "selector_then_scaled_coordinate_fallback_v2",
+                "source": "recorded_coordinate_replay_v1",
                 "actions_executed": int(actions_executed),
                 "fallback": False,
                 "error": error_text,
@@ -3446,7 +3452,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "Setting up AndroidWorld snapshots for selected tasks: %s",
                 ", ".join(selected_task_names) or "<all>",
             )
-            aw_setup.setup_apps(env, app_list=setup_app_list)
+            _setup_androidworld_apps_strict(env, setup_app_list)
         _prepare_androidworld_snapshot_restore(env, setup_app_list or ())
         if task_params:
             if len(selected_task_names) != 1:

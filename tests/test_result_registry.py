@@ -79,7 +79,7 @@ def _write_registered_cell(
     include_task_params: bool = True,
     legacy_fixed_replay: bool = False,
     include_uses_source_xml: bool = True,
-    fixed_replay_backend: str = "selector_then_scaled_coordinate_fallback_v2",
+    fixed_replay_backend: str = "recorded_coordinate_replay_v1",
     error: str = "",
 ) -> None:
     cell = runs_root / task / method / device / attempt
@@ -337,7 +337,7 @@ def test_registered_cell_plan_rejects_previous_selector_stop_policy(
         )
 
 
-def test_registered_cell_plan_accepts_selector_replay_missing_redundant_audit_flag(
+def test_registered_cell_plan_accepts_coordinate_replay_missing_redundant_audit_flag(
     tmp_path: Path,
 ) -> None:
     runs_root = tmp_path / "runs"

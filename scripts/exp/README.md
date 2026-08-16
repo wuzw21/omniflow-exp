@@ -13,8 +13,10 @@ seams, not alternate launchers:
 | Static validation | `run_androidworld.sh --check-only` | No emulator or method execution |
 
 `--collect-source` resolves the canonical successful seed-111 RunLog from
-`current.json`, replays its actions unchanged on the source AVD, and records
-AndroidWorld native screenshots/XML before every action plus the final state.
+`current.json`, replays its recorded coordinates through the official
+AndroidWorld task loop on the source AVD, and records native screenshots/XML
+before every action plus the final state. It performs no selector lookup,
+transfer, planning, or model call.
 Collection succeeds only when fixed replay completes, the official validator
 passes, and `model_calls=0`.
 

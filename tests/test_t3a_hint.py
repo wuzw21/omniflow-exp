@@ -66,7 +66,7 @@ def test_t3a_hint_alignment_normalizes_androidworld_key_aliases(
     assert _t3a_hint_action_identity(runlog_action) == identity
 
 
-def test_fixed_replay_source_xml_metadata_is_promoted() -> None:
+def test_fixed_replay_coordinate_metadata_is_promoted() -> None:
     row: dict[str, object] = {}
 
     _promote_one_task_metadata_to_row(
@@ -74,15 +74,15 @@ def test_fixed_replay_source_xml_metadata_is_promoted() -> None:
         [
             {
                 "metadata": {
-                    "execution_backend": "selector_then_scaled_coordinate_fallback_v2",
-                    "uses_source_xml": True,
+                    "execution_backend": "recorded_coordinate_replay_v1",
+                    "uses_source_xml": False,
                 }
             }
         ],
     )
 
-    assert row["execution_backend"] == "selector_then_scaled_coordinate_fallback_v2"
-    assert row["uses_source_xml"] is True
+    assert row["execution_backend"] == "recorded_coordinate_replay_v1"
+    assert row["uses_source_xml"] is False
 
 
 def _put_function(
