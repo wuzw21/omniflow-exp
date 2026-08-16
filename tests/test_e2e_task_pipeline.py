@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import time
 from types import SimpleNamespace
 
 import pytest
+from runlog_fixtures import androidworld_run_log
 
 from src.experiment.batch_outcomes import record_cell_outcome
 from src.experiment.e2e_task_pipeline import (
@@ -26,7 +28,7 @@ from src.experiment.e2e_task_pipeline import (
     _source_device_ready,
     _source_selection_manifest,
     build_parser,
-    collect_online_source,
+    collect_replayed_source,
     qualify_source_function,
     qualify_source_functions,
     run_logged_command,
@@ -55,6 +57,7 @@ def _args(tmp_path: Path) -> SimpleNamespace:
         adb_path=tmp_path / "adb",
         source_model="glm-5.1",
         source_qualification_only=False,
+        source_only=False,
         dry_run=False,
     )
 
@@ -313,30 +316,164 @@ def test_zero_remaining_deadline_does_not_launch_child(tmp_path: Path) -> None:
     assert "deadline exceeded" in log_path.read_text(encoding="utf-8")
 
 
-def test_failed_online_source_preserves_model_usage(
+def test_collect_replayed_source_uses_fixed_replay_and_captures_screenshots(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     args = _args(tmp_path)
+    source_path = tmp_path / "source.run_log.json"
+    source = androidworld_run_log(
+        [{"action_type": "click", "x": 50, "y": 50}],
+        task_name=args.task,
+    )
+    source_path.write_text(json.dumps(source), encoding="utf-8")
+    screenshot = tmp_path / "screen.png"
+    screenshot.write_bytes(b"captured-screen")
+    screenshot_hash = hashlib.sha256(screenshot.read_bytes()).hexdigest()
+    state = {
+        "pixels": {
+            "path": str(screenshot.resolve()),
+            "sha256": screenshot_hash,
+            "width": 100,
+            "height": 200,
+            "mime_type": "image/png",
+        },
+        "forest": "<hierarchy />",
+        "ui_elements": [],
+        "auxiliaries": {
+            "state_id": "captured-state",
+            "display": {"width": 100, "height": 200},
+        },
+    }
 
     def runner(command: list[str], **kwargs: object) -> dict[str, object]:
+        assert command[command.index("--agent") + 1] == "fixed_replay"
+        assert command[command.index("--raw-replay-run-log") + 1] == str(source_path)
+        assert "--model" not in command
+        assert "--planner-provider" not in command
+        assert "--store-path" not in command
+        environment = kwargs["environment"]
+        assert isinstance(environment, dict)
+        assert environment["OMNIFLOW_RAW_REPLAY_CAPTURE_OBSERVATIONS"] == "1"
         output = Path(command[command.index("--output-path") + 1])
-        output.mkdir(parents=True)
+        output.mkdir(parents=True, exist_ok=True)
         (output / "task_results.jsonl").write_text(
             json.dumps(
                 {
-                    "official_validator_success": False,
-                    "model_calls": 2,
-                    "prompt_tokens": 100,
-                    "completion_tokens": 20,
-                    "total_tokens": 120,
+                    "official_validator_used": True,
+                    "androidworld_validator_result": {
+                        "success": True,
+                        "reward": 1.0,
+                        "uses_androidworld_official_validator": True,
+                    },
+                    "model_calls": 0,
+                    "total_tokens": 0,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        raw_replay_result = Path(environment["OMNIFLOW_RAW_REPLAY_RESULT_JSON"])
+        raw_replay_result.parent.mkdir(parents=True, exist_ok=True)
+        raw_replay_result.write_text(
+            json.dumps(
+                {
+                    "completed": True,
+                    "replay_completed": True,
+                    "run_id": "fixed-replay-capture",
+                    "execution_trace": {
+                        "steps": [
+                            {
+                                "provider_detail": {
+                                    "raw_replay": {
+                                        "step_results": [
+                                            {
+                                                "completed": True,
+                                                "observation_before_act": {
+                                                    "androidworld_state": state
+                                                },
+                                            }
+                                        ],
+                                        "final_observation": {
+                                            "androidworld_state": state
+                                        },
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "returncode": 0,
+            "timed_out": False,
+            "wall_sec": 0.1,
+            "log_path": str(kwargs["log_path"]),
+        }
+
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.run_logged_command",
+        runner,
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.select_source_run_log",
+        lambda **kwargs: (
+            Path(kwargs["run_log_path"]),
+            json.loads(Path(kwargs["run_log_path"]).read_text(encoding="utf-8")),
+        ),
+    )
+
+    captured_path, captured, phase = collect_replayed_source(
+        args=args,
+        deadline=Deadline(10),
+        attempt_root=tmp_path / "attempt",
+        source_path=source_path,
+        source_run_log=source,
+    )
+
+    assert captured_path.is_file()
+    assert captured["steps"][0]["action"] == source["steps"][0]["action"]
+    assert captured["steps"][0]["observation"]["pixels"]["sha256"] == screenshot_hash
+    assert phase["tool_calls"] == 0
+    assert phase["tokens"] == 0
+    assert phase["status"] == "collected"
+
+
+def test_collect_replayed_source_rejects_model_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    source_path = tmp_path / "source.run_log.json"
+    source = androidworld_run_log(
+        [{"action_type": "click", "x": 50, "y": 50}],
+        task_name=args.task,
+    )
+    source_path.write_text(json.dumps(source), encoding="utf-8")
+
+    def runner(command: list[str], **kwargs: object) -> dict[str, object]:
+        output = Path(command[command.index("--output-path") + 1])
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "task_results.jsonl").write_text(
+            json.dumps(
+                {
+                    "official_validator_used": True,
+                    "androidworld_validator_result": {
+                        "success": True,
+                        "reward": 1.0,
+                        "uses_androidworld_official_validator": True,
+                    },
+                    "model_calls": 1,
+                    "total_tokens": 10,
                 }
             )
             + "\n",
             encoding="utf-8",
         )
         return {
-            "returncode": 1,
+            "returncode": 0,
             "timed_out": False,
             "wall_sec": 0.1,
             "log_path": str(kwargs["log_path"]),
@@ -348,47 +485,16 @@ def test_failed_online_source_preserves_model_usage(
     )
 
     with pytest.raises(PipelinePhaseError) as raised:
-        collect_online_source(
+        collect_replayed_source(
             args=args,
             deadline=Deadline(10),
             attempt_root=tmp_path / "attempt",
-            round_index=1,
+            source_path=source_path,
+            source_run_log=source,
         )
 
-    assert raised.value.phase["tool_calls"] == 2
-    assert raised.value.phase["tokens"] == 120
-
-
-def test_failed_online_source_marks_missing_usage_unavailable(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    args = _args(tmp_path)
-
-    def runner(command: list[str], **kwargs: object) -> dict[str, object]:
-        output = Path(command[command.index("--output-path") + 1])
-        output.mkdir(parents=True)
-        return {
-            "returncode": 124,
-            "timed_out": True,
-            "wall_sec": 0.1,
-            "log_path": str(kwargs["log_path"]),
-        }
-
-    monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.run_logged_command",
-        runner,
-    )
-
-    with pytest.raises(PipelinePhaseError) as raised:
-        collect_online_source(
-            args=args,
-            deadline=Deadline(10),
-            attempt_root=tmp_path / "attempt",
-            round_index=1,
-        )
-
-    assert raised.value.phase["usage_accounting_status"] == "unavailable"
+    assert raised.value.phase["tool_calls"] == 1
+    assert raised.value.phase["tokens"] == 10
 
 
 def test_pipeline_does_not_collect_missing_canonical_source(
@@ -396,7 +502,7 @@ def test_pipeline_does_not_collect_missing_canonical_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     args = _args(tmp_path)
-    args.source_backend = "online"
+    args.source_backend = "auto"
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.ensure_source_device",
         lambda **_: {"status": "ready", "tool_calls": 0, "tokens": 0},
@@ -409,7 +515,7 @@ def test_pipeline_does_not_collect_missing_canonical_source(
         raise AssertionError("formal orchestration must not collect source data")
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.collect_online_source",
+        "src.experiment.e2e_task_pipeline.collect_replayed_source",
         collect,
     )
     monkeypatch.setattr(
@@ -427,6 +533,51 @@ def test_pipeline_does_not_collect_missing_canonical_source(
     assert phases["source"]["tool_calls"] == 0
     assert phases["source"]["tokens"] == 0
     assert collected is False
+
+
+def test_source_only_pipeline_collects_replayed_source_and_stops(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.source_backend = "auto"
+    args.source_only = True
+    source_path = tmp_path / "source.run_log.json"
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.ensure_source_device",
+        lambda **_: {"status": "ready", "tool_calls": 0, "tokens": 0},
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._canonical_source",
+        lambda *_: ({}, source_path, {"task_name": args.task}),
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.collect_replayed_source",
+        lambda **_: (
+            source_path,
+            {"task_name": args.task},
+            {
+                "status": "collected",
+                "source_run_log": str(source_path),
+                "tool_calls": 0,
+                "tokens": 0,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.prepare_function_asset",
+        lambda **_: (_ for _ in ()).throw(
+            AssertionError("source-only collection must not prepare Functions")
+        ),
+    )
+
+    report = run_pipeline(args)
+
+    assert report["schema_version"] == (
+        "omniflow.androidworld.source-collection-report.v1"
+    )
+    assert report["status"] == "collected"
+    assert report["phases"]["source"]["source_run_log"] == str(source_path)
 
 
 def test_pipeline_stops_when_canonical_function_store_is_missing(

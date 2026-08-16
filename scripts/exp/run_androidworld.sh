@@ -128,6 +128,7 @@ dry_run=0
 check_only=0
 development_run=0
 source_qualification_only=0
+source_collection=0
 stock_capture=0
 all_tasks=0
 eight_cells=0
@@ -255,6 +256,8 @@ Options:
   --source-qualification-only
                             Stop that pipeline after immutable seed-111 Function
                             qualification; create no target result cells.
+  --collect-source         Re-run one task on the source device only and save
+                            screenshot-backed native RunLog evidence.
   --source-backend MODE     Source mode for --e2e-task: auto, reuse-only,
                             manual, or online. Default: auto.
   --source-runlog PATH      Successful native seed-111 RunLog for manual mode.
@@ -455,6 +458,9 @@ while [[ "$#" -gt 0 ]]; do
     --source-qualification-only)
       source_qualification_only=1
       ;;
+    --collect-source)
+      source_collection=1
+      ;;
     --source-backend)
       shift
       if [[ "$#" -eq 0 || -z "$1" ]]; then
@@ -494,6 +500,16 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
+if [[ "$source_collection" -eq 1 ]]; then
+  if [[ -z "$batch_task_filter" || "$batch_task_filter" == *,* ]]; then
+    echo "--collect-source requires exactly one task through --tasks." >&2
+    exit 2
+  fi
+  e2e_task="$batch_task_filter"
+  batch_task_filter=""
+  e2e_source_backend="auto"
+  source_qualification_only=0
+fi
 if [[ -n "$convert_runlog_memory_method" ]]; then
   if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || "$page_store" -eq 1 || "$stock_capture" != "0" || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$e2e_task" || -n "$batch_task_filter" ]]; then
     echo "--convert-runlog-memory cannot be combined with another experiment mode." >&2
@@ -1059,6 +1075,9 @@ if [[ -n "$e2e_task" ]]; then
   fi
   if [[ "$source_qualification_only" -eq 1 ]]; then
     e2e_args+=(--source-qualification-only)
+  fi
+  if [[ "$source_collection" -eq 1 ]]; then
+    e2e_args+=(--source-only)
   fi
   if [[ -n "$appagent_demo_memory_root" ]]; then
     e2e_args+=(--appagent-memory-root "$appagent_demo_memory_root")

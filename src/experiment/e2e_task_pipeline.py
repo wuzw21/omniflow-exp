@@ -16,7 +16,7 @@ import time
 from typing import Any, Callable, Sequence
 
 from omniflow.core.trajectory import require_complete_source_run_log
-from src.experiment.androidworld import save_success_source_runlogs_from_results
+from src.experiment.androidworld import ArchivedRunLog, build_fixed_replay_command
 from src.experiment.artifact_memory import (
     canonical_mobilegpt_memory_from_memory,
     load_artifact_memory,
@@ -49,7 +49,7 @@ MAX_FALLBACK_STEPS = 5
 DEFAULT_DEADLINE_SEC = 1800
 PHASE_TIMEOUTS_SEC = {
     "source_device": 240,
-    "online_source": 480,
+    "source_replay": 480,
     "semantic_function": 180,
     "source_qualification": 300,
     "mobilegpt_memory": 300,
@@ -499,66 +499,175 @@ def _function_replay_success(row: dict[str, Any]) -> bool:
     return int(execution_summary.get("steps") or 0) > 0
 
 
-def collect_online_source(
+def _captured_androidworld_state(record: Any) -> dict[str, Any]:
+    if not isinstance(record, dict):
+        raise ValueError("fixed_replay_capture_observation_required")
+    state = record.get("androidworld_state")
+    if not isinstance(state, dict):
+        raise ValueError("fixed_replay_capture_androidworld_state_required")
+    pixels = state.get("pixels")
+    if not isinstance(pixels, dict):
+        raise ValueError("fixed_replay_capture_screenshot_required")
+    screenshot = Path(str(pixels.get("path") or "")).expanduser().resolve()
+    if not screenshot.is_file():
+        raise FileNotFoundError(f"fixed_replay_capture_screenshot_missing:{screenshot}")
+    expected = str(pixels.get("sha256") or "").strip().lower()
+    actual = _sha256(screenshot)
+    if expected != actual:
+        raise ValueError(
+            "fixed_replay_capture_screenshot_hash_mismatch:"
+            f"expected={expected}:actual={actual}"
+        )
+    return json.loads(json.dumps(state, ensure_ascii=False))
+
+
+def _captured_source_run_log(
+    *,
+    source_path: Path,
+    source_run_log: dict[str, Any],
+    raw_replay_result: Path,
+    task_result: dict[str, Any],
+    output_path: Path,
+) -> dict[str, Any]:
+    replay = _read_object(raw_replay_result)
+    trace = replay.get("execution_trace")
+    trace_steps = trace.get("steps") if isinstance(trace, dict) else None
+    provider = (
+        trace_steps[0].get("provider_detail")
+        if isinstance(trace_steps, list)
+        and trace_steps
+        and isinstance(trace_steps[0], dict)
+        else None
+    )
+    raw = provider.get("raw_replay") if isinstance(provider, dict) else None
+    captured_steps = raw.get("step_results") if isinstance(raw, dict) else None
+    source_steps = list(source_run_log.get("steps") or ())
+    if replay.get("completed") is not True or replay.get("replay_completed") is not True:
+        raise ValueError("fixed_replay_capture_not_completed")
+    if not isinstance(captured_steps, list) or len(captured_steps) != len(source_steps):
+        raise ValueError(
+            "fixed_replay_capture_step_count_mismatch:"
+            f"expected={len(source_steps)}:actual="
+            f"{len(captured_steps) if isinstance(captured_steps, list) else 0}"
+        )
+    observations: list[dict[str, Any]] = []
+    for index, step in enumerate(captured_steps):
+        if not isinstance(step, dict) or step.get("completed") is not True:
+            raise ValueError(f"fixed_replay_capture_step_failed:{index}")
+        observations.append(
+            _captured_androidworld_state(step.get("observation_before_act"))
+        )
+    final_observation = _captured_androidworld_state(
+        raw.get("final_observation") if isinstance(raw, dict) else None
+    )
+    validator = task_result.get("androidworld_validator_result")
+    reward = validator.get("reward") if isinstance(validator, dict) else None
+    if not isinstance(reward, (int, float)) or isinstance(reward, bool):
+        raise ValueError("fixed_replay_capture_validator_reward_required")
+    steps: list[dict[str, Any]] = []
+    for index, source_step in enumerate(source_steps):
+        next_observation = (
+            observations[index + 1]
+            if index + 1 < len(observations)
+            else final_observation
+        )
+        steps.append(
+            {
+                "step_index": index,
+                "observation": observations[index],
+                "action": dict(source_step["action"]),
+                "result": {"success": True},
+                "next_observation": next_observation,
+                "metadata": {
+                    "capture": "fixed_replay",
+                    "source_step_index": int(source_step["step_index"]),
+                },
+            }
+        )
+    captured = require_complete_source_run_log(
+        {
+            "schema_version": "omniflow.run_log.v1",
+            "run_id": str(replay.get("run_id") or "fixed_replay_capture"),
+            "task_name": source_run_log["task_name"],
+            "goal": source_run_log["goal"],
+            "task_parameters": dict(source_run_log["task_parameters"]),
+            "seed": source_run_log["seed"],
+            "status": "succeeded",
+            "success": True,
+            "validator": {
+                "official": True,
+                "success": True,
+                "reward": float(reward),
+            },
+            "provenance": {"kind": "runtime"},
+            "steps": steps,
+            "final_observation": final_observation,
+            "diagnostics": {
+                "capture": "fixed_replay",
+                "source_run_log": str(source_path),
+                "source_run_log_sha256": _sha256(source_path),
+                "model_calls": 0,
+            },
+        }
+    )
+    _write_json(output_path, captured)
+    return captured
+
+
+def collect_replayed_source(
     *,
     args: argparse.Namespace,
     deadline: Deadline,
     attempt_root: Path,
-    round_index: int,
+    source_path: Path,
+    source_run_log: dict[str, Any],
 ) -> tuple[Path, dict[str, Any], dict[str, Any]]:
-    phase_root = attempt_root / "source" / f"online_round_{round_index:02d}"
-    run_root = phase_root / "episode"
-    command = [
-        str(args.python_bin),
-        "-m",
-        "src.integrations.android_world.launch",
-        "--android-world-root",
-        str(args.android_world_root),
-        "--tasks",
-        args.task,
-        "--task-random-seed",
-        str(SOURCE_SEED),
-        "--n-task-combinations",
-        "1",
-        "--console-port",
-        str(SOURCE_DEVICE[2]),
-        "--agent",
-        "omniflow",
-        "--max-steps",
-        str(SOURCE_MAX_STEPS),
-        "--output-path",
-        str(run_root),
-        "--store-path",
-        str(phase_root / "online_store.json"),
-        "--fixed-task-seed",
-        "--perform-emulator-setup",
-        "--planner-provider",
-        "openai",
-        "--model",
-        args.source_model,
-        "--planner-timeout-sec",
-        "60",
-        "--adb-path",
-        str(args.adb_path),
-    ]
+    phase_root = attempt_root / "source" / "fixed_replay_capture"
+    item = ArchivedRunLog(
+        task=args.task,
+        goal=str(source_run_log["goal"]),
+        params=dict(source_run_log["task_parameters"]),
+        source_run_log=source_path,
+        replay_seed=SOURCE_SEED,
+        step_count=len(source_run_log["steps"]),
+        meta={"androidworld_success": True},
+    )
+    command_spec = build_fixed_replay_command(
+        item,
+        android_world_root=args.android_world_root,
+        output_root=phase_root,
+        method_name="source_capture",
+        device_label=SOURCE_DEVICE[0],
+        serial=SOURCE_DEVICE[1],
+        console_port=SOURCE_DEVICE[2],
+        adb_path=str(args.adb_path),
+        max_steps=len(source_run_log["steps"]) + 1,
+        timeout_sec=int(PHASE_TIMEOUTS_SEC["source_replay"]),
+        task_random_seed=SOURCE_SEED,
+        task_params_override=dict(source_run_log["task_parameters"]),
+        perform_emulator_setup=True,
+        python_executable=str(args.python_bin),
+        repo_root=args.repo,
+    )
+    if command_spec.output_path is None:
+        raise RuntimeError("fixed_replay_capture_output_path_required")
     environment = dict(os.environ)
     environment.update(
         {
             "ANDROID_SERIAL": SOURCE_DEVICE[1],
-            "OMNIFLOW_MAX_FALLBACK_STEPS": str(MAX_FALLBACK_STEPS),
-            "OMNITRANSFER_ROOT": str(args.omnitransfer_root),
-            "OMNIFLOW_MODEL_ENDPOINT_PROFILE": "llmthu",
+            **command_spec.env,
+            "OMNIFLOW_RAW_REPLAY_CAPTURE_OBSERVATIONS": "1",
             "PYTHONPATH": f"{args.repo}:{args.repo / 'src'}:{args.android_world_root}",
         }
     )
     result = run_logged_command(
-        command,
+        command_spec.argv,
         cwd=args.repo,
         environment=environment,
-        log_path=phase_root / "episode.log",
-        timeout_sec=deadline.remaining(PHASE_TIMEOUTS_SEC["online_source"]),
+        log_path=phase_root / "fixed_replay.log",
+        timeout_sec=deadline.remaining(PHASE_TIMEOUTS_SEC["source_replay"]),
     )
-    task_results = run_root / "task_results.jsonl"
+    task_results = command_spec.output_path / "task_results.jsonl"
     row = _last_jsonl_row(task_results)
     usage = _usage_from_result(row)
     result.update(
@@ -570,36 +679,39 @@ def collect_online_source(
         }
     )
     result["official_validator_success"] = _official_success(row)
-    if result["returncode"] != 0 or not result["official_validator_success"]:
+    if (
+        result["returncode"] != 0
+        or not result["official_validator_success"]
+        or usage["tool_calls"] != 0
+    ):
         raise PipelinePhaseError(
             (
-                f"online_source_failed:returncode={result['returncode']}:"
-                f"validator={result['official_validator_success']}"
+                f"fixed_replay_capture_failed:returncode={result['returncode']}:"
+                f"validator={result['official_validator_success']}:"
+                f"model_calls={usage['tool_calls']}"
             ),
             result,
         )
-    archive_root = phase_root / "success_source_archive"
-    harvested = save_success_source_runlogs_from_results(
-        [task_results],
-        output_root=archive_root,
-    )
-    index_path = Path(str(harvested.get("global_index_by_task") or ""))
-    index = _read_object(index_path)
-    item = index.get(args.task)
-    if not isinstance(item, dict):
-        raise RuntimeError("online_source_archive_task_missing")
-    source_path = _resolve_reference(
-        index_path,
-        item.get("retained_source_run_log") or item.get("source_run_log"),
+    captured_path = phase_root / "source.run_log.json"
+    captured = _captured_source_run_log(
+        source_path=source_path,
+        source_run_log=source_run_log,
+        raw_replay_result=Path(str(command_spec.metadata["raw_replay_result"])),
+        task_result=row,
+        output_path=captured_path,
     )
     selected_path, selected = select_source_run_log(
         memory_index=args.memory_index,
         task=args.task,
-        run_log_path=source_path,
+        run_log_path=captured_path,
         attempt_root=attempt_root,
-        reason="Official-validator-successful seed-111 online source collection.",
+        reason="Screenshot-backed seed-111 fixed replay capture.",
     )
-    result["harvest"] = harvested
+    result["input_source"] = str(source_path)
+    result["input_source_sha256"] = _sha256(source_path)
+    result["captured_source"] = str(captured_path)
+    result["captured_source_sha256"] = _sha256(captured_path)
+    result["captured_steps"] = len(captured["steps"])
     result["selected_source"] = str(selected_path)
     result["status"] = "collected"
     return selected_path, selected, result
@@ -1208,7 +1320,9 @@ def _blocked_all(
     stage: str,
     evidence: Path,
 ) -> None:
-    if getattr(args, "source_qualification_only", False):
+    if getattr(args, "source_qualification_only", False) or getattr(
+        args, "source_only", False
+    ):
         return
     completed = _concluded_cells(args, outcomes_root, attempt_id)
     for method in METHODS:
@@ -1301,6 +1415,31 @@ def _report(
     deadline: Deadline,
     phases: dict[str, Any],
 ) -> dict[str, Any]:
+    if getattr(args, "source_only", False):
+        source = phases.get("source")
+        collected = isinstance(source, dict) and source.get("status") == "collected"
+        summary = {
+            "schema_version": "omniflow.androidworld.source-collection-report.v1",
+            "immutable": True,
+            "task": args.task,
+            "attempt_id": attempt_id,
+            "status": "collected" if collected else "failed",
+            "source_seed": SOURCE_SEED,
+            "outer_wall_sec": deadline.elapsed,
+            "tool_calls": sum(
+                int(phase.get("tool_calls") or 0)
+                for phase in phases.values()
+                if isinstance(phase, dict)
+            ),
+            "tokens": sum(
+                int(phase.get("tokens") or 0)
+                for phase in phases.values()
+                if isinstance(phase, dict)
+            ),
+            "phases": phases,
+        }
+        _write_json(attempt_root / "pipeline_summary.json", summary)
+        return summary
     if getattr(args, "source_qualification_only", False):
         qualification = phases.get("source_qualification")
         qualified = (
@@ -1508,6 +1647,19 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 "tokens": 0,
                 "source_run_log": str(source_path),
             }
+        elif getattr(args, "source_only", False):
+            _, source_path, run_log = _canonical_source(
+                args.memory_index,
+                args.task,
+            )
+            source_path, run_log, source_phase = collect_replayed_source(
+                args=args,
+                deadline=deadline,
+                attempt_root=attempt_root,
+                source_path=source_path,
+                source_run_log=run_log,
+            )
+            phases["source"] = source_phase
         else:
             _, source_path, run_log = _canonical_source(
                 args.memory_index,
@@ -1541,6 +1693,16 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             stage="source_run_log",
             evidence=error_path,
         )
+        return _report(
+            args=args,
+            attempt_id=attempt_id,
+            attempt_root=attempt_root,
+            outcomes_root=outcomes_root,
+            deadline=deadline,
+            phases=phases,
+        )
+
+    if getattr(args, "source_only", False):
         return _report(
             args=args,
             attempt_id=attempt_id,
@@ -1830,6 +1992,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--formal-model", default="GLM-5.1")
     parser.add_argument("--attempt-id", default="")
     parser.add_argument("--source-qualification-only", action="store_true")
+    parser.add_argument("--source-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser
 

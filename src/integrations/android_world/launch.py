@@ -2834,6 +2834,9 @@ def _raw_replay_observation_record(
     if not xml and not package_name and not activity_name:
         raise RuntimeError("raw replay observe returned no usable state")
     extra = dict(getattr(observation, "extra", {}) or {})
+    androidworld_state = extra.get("androidworld_state")
+    if androidworld_state is not None and not isinstance(androidworld_state, dict):
+        raise RuntimeError("raw replay AndroidWorld state is not serializable")
     display = (
         dict(extra.get("display") or {})
         if isinstance(extra.get("display"), dict)
@@ -2852,6 +2855,8 @@ def _raw_replay_observation_record(
         "xml_available": bool(xml),
         "checker_passed": True,
     }
+    if isinstance(androidworld_state, dict):
+        record["androidworld_state"] = to_serializable(androidworld_state)
     if width and height:
         record.update(
             width=width,
