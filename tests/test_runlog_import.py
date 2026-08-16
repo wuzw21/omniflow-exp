@@ -1094,12 +1094,8 @@ def test_fixed_replay_accepts_only_omniflow_run_log() -> None:
         {
             "type": "click",
             "params": {
-                "selector": {
-                    "text": "Network & internet",
-                    "resource_id": "com.android.settings:id/network_dashboard",
-                },
-                "x": 500.0,
-                "y": 500.0,
+                "x": 500,
+                "y": 500,
             },
             "coordinate_space": "canonical_0_1000",
         },
@@ -1196,13 +1192,7 @@ def test_fixed_replay_preserves_androidworld_directional_gestures() -> None:
     ) == ({"action_type": "swipe", "direction": "right"}, None)
 
 
-def test_fixed_replay_resolves_click_from_target_selector() -> None:
-    target_xml = (
-        '<hierarchy><node text="Network &amp; internet" '
-        'resource-id="com.android.settings:id/network_dashboard" '
-        'bounds="[200,800][600,1000]" clickable="true" /></hierarchy>'
-    )
-
+def test_fixed_replay_requires_recorded_click_coordinates() -> None:
     payload, error = _raw_replay_action_to_payload(
         {
             "type": "click",
@@ -1215,14 +1205,13 @@ def test_fixed_replay_resolves_click_from_target_selector() -> None:
         },
         source_size=(720, 1280),
         target_size=(800, 1600),
-        target_xml=target_xml,
     )
 
-    assert error is None
-    assert payload == {"action_type": "click", "x": 400, "y": 900}
+    assert payload is None
+    assert error == "missing_coordinates"
 
 
-def test_fixed_replay_normalizes_selector_against_observation_display(
+def test_fixed_replay_scales_recorded_coordinates_to_target_display(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1289,14 +1278,14 @@ def test_fixed_replay_normalizes_selector_against_observation_display(
         {
             "tool": "click",
             "args": {
-                "x": pytest.approx(1100 / 2208 * 1000),
-                "y": pytest.approx(700 / 1840 * 1000),
+                "x": pytest.approx(500),
+                "y": pytest.approx(500),
             },
         }
     ]
 
 
-def test_fixed_replay_resolves_selector_within_foreground_package(
+def test_fixed_replay_does_not_read_target_xml_for_coordinates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1370,8 +1359,8 @@ def test_fixed_replay_resolves_selector_within_foreground_package(
         {
             "tool": "click",
             "args": {
-                "x": pytest.approx(1572 / 2208 * 1000),
-                "y": pytest.approx(970 / 1840 * 1000),
+                "x": pytest.approx(356 / 720 * 1000, abs=0.25),
+                "y": pytest.approx(781 / 1280 * 1000, abs=0.25),
             },
         }
     ]
@@ -1409,7 +1398,7 @@ def test_fixed_replay_opens_packages_through_androidworld_launcher(
     ]
 
 
-def test_fixed_replay_waits_for_open_app_before_resolving_selector(
+def test_fixed_replay_waits_for_open_app_before_recorded_click(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1521,8 +1510,8 @@ def test_fixed_replay_waits_for_open_app_before_resolving_selector(
         {
             "tool": "click",
             "args": {
-                "x": pytest.approx(2071 / 2208 * 1000),
-                "y": pytest.approx(1356 / 1840 * 1000),
+                "x": pytest.approx(650 / 720 * 1000, abs=0.25),
+                "y": pytest.approx(950 / 1280 * 1000, abs=0.25),
             },
         },
     ]
@@ -1543,7 +1532,7 @@ def test_fixed_replay_scales_coordinates_only_without_selector() -> None:
     assert payload == {"action_type": "click", "x": 720, "y": 1280}
 
 
-def test_fixed_replay_scales_source_coordinates_when_selector_misses() -> None:
+def test_fixed_replay_ignores_selector_when_coordinates_are_recorded() -> None:
     resolution: dict[str, object] = {}
     payload, error = _raw_replay_action_to_payload(
         {
@@ -1557,22 +1546,15 @@ def test_fixed_replay_scales_source_coordinates_when_selector_misses() -> None:
         },
         source_size=(720, 1280),
         target_size=(1440, 2560),
-        target_xml=(
-            '<hierarchy><node text="Different target" '
-            'bounds="[100,100][300,300]" /></hierarchy>'
-        ),
         resolution=resolution,
     )
 
     assert error is None
     assert payload == {"action_type": "click", "x": 720, "y": 1280}
-    assert resolution == {
-        "parameter_source": "scaled_coordinate_fallback",
-        "selector_error": "selector_target_not_found",
-    }
+    assert resolution == {"parameter_source": "recorded_coordinate"}
 
 
-def test_fixed_replay_scales_source_coordinates_when_selector_is_ambiguous() -> None:
+def test_fixed_replay_ignores_structural_selector_with_recorded_coordinates() -> None:
     resolution: dict[str, object] = {}
     payload, error = _raw_replay_action_to_payload(
         {
@@ -1589,29 +1571,15 @@ def test_fixed_replay_scales_source_coordinates_when_selector_is_ambiguous() -> 
         },
         source_size=(720, 1280),
         target_size=(1440, 2560),
-        target_xml=(
-            '<hierarchy><node><node text="task.html" /></node>'
-            '<node><node text="task.html" /></node></hierarchy>'
-        ),
         resolution=resolution,
     )
 
     assert error is None
     assert payload == {"action_type": "click", "x": 720, "y": 1280}
-    assert resolution == {
-        "parameter_source": "scaled_coordinate_fallback",
-        "selector_error": "selector_container_anchor_ambiguous",
-    }
+    assert resolution == {"parameter_source": "recorded_coordinate"}
 
 
-def test_fixed_replay_resolves_structural_selector() -> None:
-    target_xml = (
-        '<hierarchy><node bounds="[0,0][600,300]">'
-        '<node text="Dreamer&apos;s Awake" bounds="[20,40][400,180]" />'
-        '<node clickable="true" bounds="[440,40][580,180]" />'
-        "</node></hierarchy>"
-    )
-
+def test_fixed_replay_rejects_structural_selector_without_coordinates() -> None:
     payload, error = _raw_replay_action_to_payload(
         {
             "type": "click",
@@ -1624,8 +1592,7 @@ def test_fixed_replay_resolves_structural_selector() -> None:
         },
         source_size=(600, 300),
         target_size=(600, 300),
-        target_xml=target_xml,
     )
 
-    assert error is None
-    assert payload == {"action_type": "click", "x": 510, "y": 110}
+    assert payload is None
+    assert error == "missing_coordinates"

@@ -25,7 +25,6 @@ from typing import Any, Callable, Sequence
 import urllib.error
 import urllib.parse
 import urllib.request
-import xml.etree.ElementTree as ET
 
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import token_usage_status
@@ -1922,45 +1921,14 @@ def _read_raw_replay_run_log(path_text: str) -> dict[str, Any]:
 
 
 def _raw_replay_step_actions(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Project the only accepted RunLog schema to fixed-replay actions."""
+    """Project the accepted RunLog schema to recorded actions."""
 
-    from omniflow.core.trajectory import observation_display, observation_xml
-    from src.experiment.source_assets import _identity_at_action_point
-
-    def replay_action(
-        step: dict[str, Any],
-        action: dict[str, Any],
-    ) -> dict[str, Any]:
+    def replay_action(action: dict[str, Any]) -> dict[str, Any]:
         tool = str(action["tool"])
         params = dict(action.get("args") or {})
-        if tool in {"click", "long_press"}:
-            observation = step["observation"]
-            display_size = observation_display(observation)
-            display = (
-                {"width": display_size[0], "height": display_size[1]}
-                if display_size is not None
-                else {}
-            )
-            selector = _identity_at_action_point(
-                observation_xml(observation),
-                action_args=params,
-                display=display,
-            )
-            if selector:
-                projected = {
-                    "type": tool,
-                    "params": {**params, "selector": selector},
-                }
-                if any(key in params for key in ("x", "y")):
-                    projected["coordinate_space"] = "canonical_0_1000"
-                return projected
-            projected = {"type": tool, "params": params}
-            if any(key in params for key in ("x", "y")):
-                projected["coordinate_space"] = "canonical_0_1000"
-            return projected
         projected = {"type": tool, "params": params}
         if (
-            tool in {"input_text", "swipe"}
+            tool in {"click", "long_press", "input_text", "swipe"}
             and any(
                 key in params
                 for key in ("x", "y", "x1", "y1", "x2", "y2")
@@ -1988,7 +1956,7 @@ def _raw_replay_step_actions(data: dict[str, Any]) -> list[dict[str, Any]]:
             )
             continue
         actions.extend(
-            replay_action(step, action)
+            replay_action(action)
             for action in project_androidworld_step_actions(step)
         )
     return actions
@@ -2351,155 +2319,11 @@ def _raw_replay_direction_from_points(
     return "up" if dy < 0 else "down"
 
 
-def _fixed_replay_normalize_selector_value(value: Any) -> str:
-    return " ".join(str(value or "").casefold().split())
-
-
-def _fixed_replay_selector_nodes(
-    xml_text: str,
-    selector: dict[str, Any],
-    *,
-    package_name: str = "",
-) -> tuple[list[ET.Element], str | None]:
-    try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError:
-        return [], "selector_target_xml_invalid"
-    return _fixed_replay_selector_nodes_from_root(
-        root,
-        selector,
-        package_name=package_name,
-    )
-
-
-def _fixed_replay_selector_nodes_from_root(
-    root: ET.Element,
-    selector: dict[str, Any],
-    *,
-    package_name: str = "",
-) -> tuple[list[ET.Element], str | None]:
-    all_nodes = list(root.iter())
-    normalized_package = _fixed_replay_normalize_selector_value(package_name)
-    package_nodes = [
-        node
-        for node in all_nodes
-        if normalized_package
-        and _fixed_replay_normalize_selector_value(node.attrib.get("package"))
-        == normalized_package
-    ]
-    nodes = package_nodes or all_nodes
-    relation = str(selector.get("relation") or "").strip()
-    if relation == "unique_actionable_descendant":
-        anchor = selector.get("container_anchor")
-        if not isinstance(anchor, dict) or not anchor:
-            return [], "selector_container_anchor_missing"
-        anchor_nodes, anchor_error = _fixed_replay_selector_nodes_from_root(
-            root,
-            anchor,
-            package_name=package_name,
-        )
-        if anchor_error is not None:
-            return [], anchor_error
-        if len(anchor_nodes) != 1:
-            return [], "selector_container_anchor_ambiguous"
-        parents = {child: parent for parent in root.iter() for child in list(parent)}
-        container = parents.get(anchor_nodes[0])
-        if container is None:
-            return [], "selector_container_missing"
-        actionable = [
-            node
-            for node in container.iter()
-            if node is not anchor_nodes[0]
-            and (not package_nodes or node in package_nodes)
-            and any(
-                str(node.attrib.get(key) or "").lower() == "true"
-                for key in ("clickable", "editable", "long-clickable")
-            )
-        ]
-        return actionable, None
-    if str(selector.get("role") or "").strip() == "editable":
-        editable = [
-            node
-            for node in nodes
-            if str(node.attrib.get("editable") or "").lower() == "true"
-            or str(node.attrib.get("class") or "") == "android.widget.EditText"
-        ]
-        return editable, None
-    aliases = {
-        "resource_id": "resource-id",
-        "text": "text",
-        "content_desc": "content-desc",
-    }
-    expected = {
-        attribute: _fixed_replay_normalize_selector_value(selector.get(key))
-        for key, attribute in aliases.items()
-        if _fixed_replay_normalize_selector_value(selector.get(key))
-    }
-    if not expected:
-        return [], "selector_identity_missing"
-    resource_id = expected.get("resource-id")
-    if resource_id:
-        resource_matches = [
-            node
-            for node in nodes
-            if _fixed_replay_normalize_selector_value(
-                node.attrib.get("resource-id")
-            )
-            == resource_id
-        ]
-        if len(resource_matches) == 1:
-            return resource_matches, None
-        if resource_matches:
-            nodes = resource_matches
-    matches = [
-        node
-        for node in nodes
-        if all(
-            _fixed_replay_normalize_selector_value(node.attrib.get(attribute))
-            == value
-            for attribute, value in expected.items()
-        )
-    ]
-    return matches, None
-
-
-def _fixed_replay_selector_center(
-    xml_text: str,
-    selector: dict[str, Any],
-    *,
-    package_name: str = "",
-) -> tuple[tuple[int, int] | None, str | None]:
-    matches, error = _fixed_replay_selector_nodes(
-        xml_text,
-        selector,
-        package_name=package_name,
-    )
-    if error is not None:
-        return None, error
-    if not matches:
-        return None, "selector_target_not_found"
-    if len(matches) != 1:
-        return None, "selector_target_ambiguous"
-    bounds = str(matches[0].attrib.get("bounds") or "").strip()
-    match = re.fullmatch(
-        r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]",
-        bounds,
-    )
-    if match is None:
-        return None, "selector_target_bounds_missing"
-    left, top, right, bottom = (int(value) for value in match.groups())
-    if right <= left or bottom <= top:
-        return None, "selector_target_bounds_invalid"
-    return ((left + right) // 2, (top + bottom) // 2), None
-
-
 def _raw_replay_action_to_payload(
     source_action: dict[str, Any],
     *,
     source_size: tuple[int, int] | None,
     target_size: tuple[int, int],
-    target_xml: str = "",
-    target_package_name: str = "",
     resolution: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     action_type = str(
@@ -2523,16 +2347,10 @@ def _raw_replay_action_to_payload(
         source_width, source_height = source_size or (target_size[0], target_size[1])
     target_width, target_height = target_size
 
-    def _record_resolution(
-        parameter_source: str,
-        *,
-        selector_error: str = "",
-    ) -> None:
+    def _record_resolution(parameter_source: str) -> None:
         if resolution is None:
             return
         resolution["parameter_source"] = parameter_source
-        if selector_error:
-            resolution["selector_error"] = selector_error
 
     def _scaled_xy() -> tuple[int | None, int | None]:
         relative_x, relative_y = _raw_replay_relative_coord_pair(
@@ -2559,34 +2377,10 @@ def _raw_replay_action_to_payload(
         return x, y
 
     if action_type in {"click", "tap", "double_tap", "long_press", "longpress"}:
-        selector = (
-            dict(params.get("selector") or {})
-            if isinstance(params.get("selector"), dict)
-            else {}
-        )
-        if selector:
-            center, selector_error = _fixed_replay_selector_center(
-                target_xml,
-                selector,
-                package_name=target_package_name,
-            )
-            if selector_error is not None:
-                x, y = _scaled_xy()
-                if x is None or y is None:
-                    return None, selector_error
-                _record_resolution(
-                    "scaled_coordinate_fallback",
-                    selector_error=selector_error,
-                )
-            else:
-                assert center is not None
-                x, y = center
-                _record_resolution("selector")
-        else:
-            x, y = _scaled_xy()
-            _record_resolution("scaled_coordinate_fallback")
+        x, y = _scaled_xy()
+        _record_resolution("recorded_coordinate")
         if x is None or y is None:
-            return None, "missing_selector_and_coordinates"
+            return None, "missing_coordinates"
         return {
             "action_type": "long_press"
             if action_type in {"long_press", "longpress"}
@@ -2918,7 +2712,7 @@ def _apply_fixed_replay(
     run_log_json_path: str,
     adb_path: str = "",
 ) -> Any:
-    """Replay fixed source actions through selector-first AndroidWorld parameters."""
+    """Replay fixed source actions through recorded AndroidWorld parameters."""
 
     original_set_max_steps = getattr(agent, "set_max_steps", None)
     run_log_data = _read_raw_replay_run_log(run_log_json_path)
@@ -2931,16 +2725,8 @@ def _apply_fixed_replay(
         os.environ.get("OMNIFLOW_RAW_REPLAY_CAPTURE_OBSERVATIONS") or ""
     ).strip().lower() in {"1", "true", "yes", "on"}
     capture_observations = capture_native_observations
-    requires_selector_observations = any(
-        isinstance(action.get("params"), dict)
-        and isinstance(action["params"].get("selector"), dict)
-        and bool(action["params"]["selector"])
-        for action in source_actions
-    )
-    if (
-        capture_observations or requires_selector_observations
-    ) and not callable(replay_observe):
-        raise RuntimeError("fixed replay selector resolution requires host.observe")
+    if capture_observations and not callable(replay_observe):
+        raise RuntimeError("fixed replay observation capture requires host.observe")
 
     def _forced_reset(go_home: bool = False) -> None:
         state["ran"] = False
@@ -3077,23 +2863,7 @@ def _apply_fixed_replay(
                 parameter_bound_actions += 1
                 parameter_bindings_applied += len(action_parameter_bindings)
             observation_record: dict[str, Any] | None = None
-            source_params = (
-                dict(source_action.get("params") or {})
-                if isinstance(source_action.get("params"), dict)
-                else {}
-            )
-            needs_selector_observation = bool(
-                isinstance(source_params.get("selector"), dict)
-                and source_params["selector"]
-            )
-            uses_scaled_coordinates = bool(
-                not needs_selector_observation
-                and any(
-                    key in source_params
-                    for key in ("x", "y", "x1", "y1", "x2", "y2")
-                )
-            )
-            if capture_observations or needs_selector_observation:
+            if capture_observations:
                 observation_record = _raw_replay_observation_record(
                     replay_observe(xml=True, screenshot=False, app_info=True),
                     fallback_size=(int(target_size[0]), int(target_size[1])),
@@ -3113,21 +2883,11 @@ def _apply_fixed_replay(
                 source_action,
                 source_size=source_size,
                 target_size=action_target_size,
-                target_xml=str((observation_record or {}).get("xml") or ""),
-                target_package_name=str(
-                    (observation_record or {}).get("package_name") or ""
-                ),
                 resolution=action_resolution,
             )
             parameter_source = str(
                 action_resolution.get("parameter_source")
-                or (
-                    "selector"
-                    if needs_selector_observation
-                    else "scaled_coordinate_fallback"
-                    if uses_scaled_coordinates
-                    else "direct_androidworld_action"
-                )
+                or "direct_androidworld_action"
             )
             step_record: dict[str, Any] = {
                 "index": index,
@@ -3146,11 +2906,6 @@ def _apply_fixed_replay(
                     _sanitize_raw_replay_source_action(source_action)
                 )
                 step_record["task_parameter_bindings"] = action_parameter_bindings
-            selector_fallback_reason = str(
-                action_resolution.get("selector_error") or ""
-            )
-            if selector_fallback_reason:
-                step_record["selector_fallback_reason"] = selector_fallback_reason
             if observation_record is not None:
                 step_record["observation_before_act"] = observation_record
             if skip_reason:
@@ -3166,12 +2921,8 @@ def _apply_fixed_replay(
                     target_size=action_target_size,
                 )
                 actions_executed += 1
-                if parameter_source == "selector":
-                    selector_actions += 1
-                elif parameter_source == "scaled_coordinate_fallback":
+                if parameter_source == "recorded_coordinate":
                     scaled_coordinate_actions += 1
-                    if selector_fallback_reason:
-                        selector_fallback_actions += 1
                 else:
                     direct_actions += 1
                 step_record["completed"] = True
