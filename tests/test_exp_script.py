@@ -574,6 +574,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
             "OMNIFLOW_MOBILEGPT_ROOT": str(mobilegpt),
             "OMNIFLOW_APPAGENT_ROOT": str(appagent),
             "OMNITRANSFER_ROOT": str(omnitransfer),
+            "OMNIFLOW_SOURCE_DEVICE": "source5570:emulator-5570:5570",
         },
         check=False,
         capture_output=True,
@@ -586,6 +587,9 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
     assert invocation[invocation.index("--task") + 1] == "BrowserDraw"
     assert invocation[invocation.index("--source-backend") + 1] == "reuse-only"
     assert invocation[invocation.index("--task-deadline-sec") + 1] == "1800"
+    assert invocation[invocation.index("--source-device") + 1] == (
+        "source5570:emulator-5570:5570"
+    )
     assert invocation[-1] == "--dry-run"
 
 

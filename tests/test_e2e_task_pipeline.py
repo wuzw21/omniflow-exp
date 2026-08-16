@@ -26,6 +26,7 @@ from src.experiment.e2e_task_pipeline import (
     Deadline,
     PipelinePhaseError,
     _function_replay_success,
+    _parse_source_device,
     _report,
     _resolve_args,
     _source_device_ready,
@@ -60,6 +61,7 @@ def _args(tmp_path: Path) -> SimpleNamespace:
         python_bin=tmp_path / "python",
         adb_path=tmp_path / "adb",
         source_model="glm-5.1",
+        source_device=SOURCE_DEVICE,
         source_qualification_only=False,
         source_only=False,
         dry_run=False,
@@ -107,6 +109,15 @@ def test_source_device_uses_independent_small_phone_avd() -> None:
     parser = build_parser()
 
     assert parser.get_default("source_avd") == "SmallPhone"
+    assert parser.get_default("source_device") == SOURCE_DEVICE
+
+
+def test_source_device_accepts_an_isolated_console_port() -> None:
+    assert _parse_source_device("source5570:emulator-5570:5570") == (
+        "source5570",
+        "emulator-5570",
+        5570,
+    )
 
 
 def test_resolve_args_preserves_symlinked_virtualenv_python(
@@ -195,7 +206,7 @@ def test_formal_timeout_covers_frozen_steps_and_validator_flush() -> None:
 def test_source_device_ready_requires_exact_avd_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    args = SimpleNamespace(source_avd="SmallPhone")
+    args = SimpleNamespace(source_avd="SmallPhone", source_device=SOURCE_DEVICE)
 
     def adb_output(_args: object, *command: str) -> str:
         if command[-3:] == ("emu", "avd", "name"):

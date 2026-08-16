@@ -1142,6 +1142,7 @@ if [[ -n "$e2e_task" ]]; then
     --python-bin "$python_bin"
     --adb-path "$e2e_adb_path"
     --emulator-bin "$e2e_emulator_bin"
+    --source-device "$source_device"
     --source-avd "${OMNIFLOW_E2E_SOURCE_AVD:-SmallPhone}"
     --emulator-gpu "${OMNIFLOW_SINGLE_TASK_EMULATOR_GPU:-swiftshader_indirect}"
     --runtime-preflight "$repo/src/experiment/preflight.py"

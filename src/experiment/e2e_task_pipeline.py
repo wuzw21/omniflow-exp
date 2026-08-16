@@ -223,22 +223,23 @@ def _adb_output(args: argparse.Namespace, *command: str) -> str:
 
 
 def _source_device_ready(args: argparse.Namespace) -> bool:
+    source_serial = args.source_device[1]
     avd_name = _adb_output(
         args,
         "-s",
-        SOURCE_DEVICE[1],
+        source_serial,
         "emu",
         "avd",
         "name",
     ).replace("\r", "").splitlines()
     active_avd = avd_name[0].strip() if avd_name else ""
     return (
-        _adb_output(args, "-s", SOURCE_DEVICE[1], "get-state") == "device"
+        _adb_output(args, "-s", source_serial, "get-state") == "device"
         and active_avd == args.source_avd
         and _adb_output(
             args,
             "-s",
-            SOURCE_DEVICE[1],
+            source_serial,
             "shell",
             "getprop",
             "sys.boot_completed",
@@ -254,8 +255,10 @@ def ensure_source_device(
     deadline: Deadline,
 ) -> dict[str, Any]:
     started = time.monotonic()
-    if SOURCE_DEVICE[1] in _adb_output(args, "devices"):
-        _adb_output(args, "-s", SOURCE_DEVICE[1], "emu", "kill")
+    source_serial = args.source_device[1]
+    source_console_port = args.source_device[2]
+    if source_serial in _adb_output(args, "devices"):
+        _adb_output(args, "-s", source_serial, "emu", "kill")
         time.sleep(2)
     log_path = attempt_root / "preflight" / "source_emulator.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -266,9 +269,9 @@ def ensure_source_device(
             "-avd",
             args.source_avd,
             "-port",
-            str(SOURCE_DEVICE[2]),
+            str(source_console_port),
             "-grpc",
-            str(SOURCE_DEVICE[2] + 3000),
+            str(source_console_port + 3000),
             "-no-window",
             "-no-audio",
             "-no-boot-anim",
@@ -292,7 +295,7 @@ def ensure_source_device(
             break
         time.sleep(1)
     else:
-        raise RuntimeError(f"source_emulator_not_ready:{SOURCE_DEVICE[1]}")
+        raise RuntimeError(f"source_emulator_not_ready:{source_serial}")
     pointer = _read_object(args.memory_index)
     preflight_path = attempt_root / "preflight" / "source_native.json"
     command = [
@@ -305,7 +308,7 @@ def ensure_source_device(
         "--profile",
         "androidworld_native",
         "--serial",
-        SOURCE_DEVICE[1],
+        source_serial,
         "--require-kvm",
         "--require-device",
         "--expected-tasks",
@@ -330,7 +333,7 @@ def ensure_source_device(
         **result,
         "status": "ready",
         "launched": True,
-        "serial": SOURCE_DEVICE[1],
+        "serial": source_serial,
         "avd": args.source_avd,
         "wall_sec": round(time.monotonic() - started, 6),
         "tool_calls": 0,
@@ -626,6 +629,7 @@ def collect_replayed_source(
     source_run_log: dict[str, Any],
 ) -> tuple[Path, dict[str, Any], dict[str, Any]]:
     phase_root = attempt_root / "source" / "fixed_replay_capture"
+    source_label, source_serial, source_console_port = args.source_device
     item = ArchivedRunLog(
         task=args.task,
         goal=str(source_run_log["goal"]),
@@ -640,9 +644,9 @@ def collect_replayed_source(
         android_world_root=args.android_world_root,
         output_root=phase_root,
         method_name="source_capture",
-        device_label=SOURCE_DEVICE[0],
-        serial=SOURCE_DEVICE[1],
-        console_port=SOURCE_DEVICE[2],
+        device_label=source_label,
+        serial=source_serial,
+        console_port=source_console_port,
         adb_path=str(args.adb_path),
         max_steps=len(source_run_log["steps"]) + 1,
         timeout_sec=int(PHASE_TIMEOUTS_SEC["source_replay"]),
@@ -657,7 +661,7 @@ def collect_replayed_source(
     environment = dict(os.environ)
     environment.update(
         {
-            "ANDROID_SERIAL": SOURCE_DEVICE[1],
+            "ANDROID_SERIAL": source_serial,
             **command_spec.env,
             "OMNIFLOW_RAW_REPLAY_CAPTURE_OBSERVATIONS": "1",
             "PYTHONPATH": f"{args.repo}:{args.repo / 'src'}:{args.android_world_root}",
@@ -799,7 +803,7 @@ def qualify_source_function(
         "--n-task-combinations",
         "1",
         "--console-port",
-        str(SOURCE_DEVICE[2]),
+        str(args.source_device[2]),
         "--agent",
         "omniflow",
         "--max-steps",
@@ -818,7 +822,7 @@ def qualify_source_function(
     environment = dict(os.environ)
     environment.update(
         {
-            "ANDROID_SERIAL": SOURCE_DEVICE[1],
+            "ANDROID_SERIAL": args.source_device[1],
             "OMNIFLOW_MAX_FALLBACK_STEPS": "0",
             "OMNITRANSFER_ROOT": str(args.omnitransfer_root),
             "PYTHONPATH": f"{args.repo}:{args.repo / 'src'}:{args.android_world_root}",
@@ -902,7 +906,7 @@ def qualify_source_functions(
         "--n-task-combinations",
         "1",
         "--console-port",
-        str(SOURCE_DEVICE[2]),
+        str(args.source_device[2]),
         "--agent",
         "omniflow",
         "--max-steps",
@@ -921,7 +925,7 @@ def qualify_source_functions(
     environment = dict(os.environ)
     environment.update(
         {
-            "ANDROID_SERIAL": SOURCE_DEVICE[1],
+            "ANDROID_SERIAL": args.source_device[1],
             "OMNIFLOW_MAX_FALLBACK_STEPS": "0",
             "OMNITRANSFER_ROOT": str(args.omnitransfer_root),
             "PYTHONPATH": f"{args.repo}:{args.repo / 'src'}:{args.android_world_root}",
@@ -1988,6 +1992,16 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
+def _parse_source_device(value: str) -> tuple[str, str, int]:
+    parts = value.split(":")
+    if len(parts) != 3 or not parts[0] or not parts[2].isdigit():
+        raise argparse.ArgumentTypeError(f"invalid_source_device:{value}")
+    console_port = int(parts[2])
+    if parts[1] != f"emulator-{console_port}":
+        raise argparse.ArgumentTypeError(f"source_serial_console_mismatch:{value}")
+    return parts[0], parts[1], console_port
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, required=True)
@@ -2012,6 +2026,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--python-bin", type=Path, required=True)
     parser.add_argument("--adb-path", type=Path, required=True)
     parser.add_argument("--emulator-bin", type=Path, required=True)
+    parser.add_argument(
+        "--source-device",
+        type=_parse_source_device,
+        default=SOURCE_DEVICE,
+    )
     parser.add_argument("--source-avd", default="SmallPhone")
     parser.add_argument("--emulator-gpu", default="swiftshader_indirect")
     parser.add_argument("--runtime-preflight", type=Path, required=True)
