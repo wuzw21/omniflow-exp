@@ -53,6 +53,13 @@ AndroidWorld owns only the LiveTask lifecycle, step-budget shell, and official
 validator for this baseline. Converted RunLog actions remain offline provenance;
 they are never replayed or injected into AppAgent online.
 
+The same native-baseline rule applies to MobileGPT: only an
+official-validator-successful seed-111 RunLog may be converted, conversion must
+produce MobileGPT's standard memory schema, and MobileGPT retains its upstream
+online retrieval and execution behavior. The required AndroidWorld adapters for
+both baselines translate lifecycle, observations, actions, and accounting only;
+they do not introduce a second planner or alter the baseline policy.
+
 Every result records `reuse_numerator`, `reuse_denominator`, `reuse_rate`,
 `reuse_unit`, and `reuse_evidence_status`. The rate is the fraction of native
 reuse opportunities actually served by the method's converted source asset:

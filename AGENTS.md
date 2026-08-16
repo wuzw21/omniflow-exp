@@ -78,13 +78,18 @@ the formal model, parser, retry policy, step budget, action policy, or output
 contract. A failure after `task_started` and an official validator conclusion
 is a method result, not an environment failure.
 
-`appagent_demo` and `mobilegpt_offline_retrieval` are absolutely frozen external
-baselines. Do not inspect, repair, patch, regenerate, reinterpret, or duplicate
-their internals, adapters, converters, runtimes, prompts, parsers, memories, or
-assets. The unified script may only reuse an already-valid registered baseline
-asset and execute or skip its cell. If either baseline cannot consume the
-canonical schema or cannot run in the official environment, record the exact
-failure or unavailable status and continue; do not fix it.
+`appagent_demo` and `mobilegpt_offline_retrieval` are native external baselines.
+Keep their upstream online prompts, planners, parsers, policies, retries, step
+budgets, models, and execution flow unchanged. Give each baseline only source
+experience derived from an official-validator-successful seed-111 RunLog and
+converted into that baseline's standard native memory or demonstration schema.
+The AndroidWorld adapter is required, but its scope is limited to LiveTask
+lifecycle, native observation/action bridging, setup, accounting, RunLog capture,
+and official validation. Schema conversion and this adapter may be maintained to
+preserve the native contract; they must not repair, reinterpret, or replace the
+baseline method. If a successful source experience cannot be represented by the
+native schema, record the exact conversion failure or unavailable status rather
+than fabricating experience or changing the baseline.
 
 ## Mandatory execution entry
 
