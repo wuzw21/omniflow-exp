@@ -5,6 +5,19 @@ owns source-asset conversion, long-term-memory refresh, static validation, and
 real-time AndroidWorld execution. The Python modules below are implementation
 seams, not alternate launchers:
 
+| Purpose | Unified invocation | Internal path |
+| --- | --- | --- |
+| Formal task matrix | `run_androidworld.sh --tasks TASK` | Frozen five-method evaluation |
+| Bounded `ours` development | `run_androidworld.sh --development-run --tasks TASK` | OmniFlow online Planner |
+| Source screenshot refresh | `run_androidworld.sh --collect-source --tasks TASK` | Existing `fixed_replay`; no Planner or model calls |
+| Static validation | `run_androidworld.sh --check-only` | No emulator or method execution |
+
+`--collect-source` resolves the canonical successful seed-111 RunLog from
+`current.json`, replays its actions unchanged on the source AVD, and records
+AndroidWorld native screenshots/XML before every action plus the final state.
+Collection succeeds only when fixed replay completes, the official validator
+passes, and `model_calls=0`.
+
 This rule also applies to development debugging. Agents must not manually call
 the Python launcher or maintain a second runtime script.
 

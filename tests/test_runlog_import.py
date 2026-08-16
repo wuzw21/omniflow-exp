@@ -17,6 +17,7 @@ from src.integrations.android_world.launch import (
     _fixed_replay_goal_parameter_bindings,
     _launch_raw_replay_app,
     _raw_replay_action_to_payload,
+    _raw_replay_observation_record,
     _raw_replay_step_actions,
 )
 from src.integrations.runlog import (
@@ -67,6 +68,24 @@ def test_runlog_import_recovers_missing_display_from_fullscreen_xml() -> None:
     assert project_androidworld_step_actions(run_log["steps"][1]) == [
         {"tool": "click", "args": {"x": 500.0, "y": 500.0}}
     ]
+
+
+def test_fixed_replay_capture_preserves_native_androidworld_state() -> None:
+    native_state = androidworld_state("capture", with_pixels=True)
+    observation = SimpleNamespace(
+        xml="<hierarchy />",
+        package_name="com.example.app",
+        activity_name=".MainActivity",
+        extra={
+            "observe_backend": "androidworld",
+            "androidworld_state": native_state,
+            "display": {"width": 1000, "height": 1000},
+        },
+    )
+
+    record = _raw_replay_observation_record(observation)
+
+    assert record["androidworld_state"] == native_state
 
 
 def test_input_text_point_outside_editable_node_does_not_add_click() -> None:
