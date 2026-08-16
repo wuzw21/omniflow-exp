@@ -31,6 +31,7 @@ from src.experiment.e2e_task_pipeline import (
     _resolve_args,
     _source_device_ready,
     _source_selection_manifest,
+    _fixed_replay_source_step_width,
     build_parser,
     collect_replayed_source,
     ensure_source_device,
@@ -574,6 +575,25 @@ def test_collect_replayed_source_uses_fixed_replay_and_captures_screenshots(
     assert phase["tool_calls"] == 0
     assert phase["tokens"] == 0
     assert phase["status"] == "collected"
+
+
+def test_fixed_replay_groups_editable_input_text_raw_actions() -> None:
+    source = androidworld_run_log(
+        [{"action_type": "input_text", "x": 50, "y": 50, "text": "hello"}],
+        observations=[
+            {
+                "pixels": None,
+                "forest": (
+                    '<hierarchy><node class="android.widget.EditText" '
+                    'editable="true" bounds="[0,0][100,100]" /></hierarchy>'
+                ),
+                "ui_elements": [],
+                "auxiliaries": {"display": {"width": 1000, "height": 1000}},
+            }
+        ],
+    )
+
+    assert _fixed_replay_source_step_width(source["steps"][0]) == 2
 
 
 def test_collect_replayed_source_rejects_model_calls(

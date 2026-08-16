@@ -29,6 +29,7 @@ from src.experiment.batch_outcomes import (
     record_cell_outcome,
     write_batch_report,
 )
+from src.integrations.runlog import project_androidworld_step_actions
 
 METHODS = (
     "fixed_replay",
@@ -527,6 +528,18 @@ def _captured_androidworld_state(record: Any) -> dict[str, Any]:
     return json.loads(json.dumps(state, ensure_ascii=False))
 
 
+def _fixed_replay_source_step_width(source_step: dict[str, Any]) -> int:
+    """Return the number of raw AndroidWorld actions for one semantic step."""
+
+    action = source_step.get("action")
+    action_type = str(action.get("action_type") or "") if isinstance(action, dict) else ""
+    if action_type in {"status", "unknown"}:
+        return 0
+    if action_type == "answer":
+        return 1
+    return len(project_androidworld_step_actions(source_step))
+
+
 def _captured_source_run_log(
     *,
     source_path: Path,
@@ -550,22 +563,55 @@ def _captured_source_run_log(
     source_steps = list(source_run_log.get("steps") or ())
     if replay.get("completed") is not True or replay.get("replay_completed") is not True:
         raise ValueError("fixed_replay_capture_not_completed")
-    if not isinstance(captured_steps, list) or len(captured_steps) != len(source_steps):
+    widths = [_fixed_replay_source_step_width(step) for step in source_steps]
+    expected_raw_steps = sum(widths)
+    if not isinstance(captured_steps, list) or len(captured_steps) != expected_raw_steps:
         raise ValueError(
             "fixed_replay_capture_step_count_mismatch:"
-            f"expected={len(source_steps)}:actual="
+            f"expected={expected_raw_steps}:actual="
             f"{len(captured_steps) if isinstance(captured_steps, list) else 0}"
-        )
-    observations: list[dict[str, Any]] = []
-    for index, step in enumerate(captured_steps):
-        if not isinstance(step, dict) or step.get("completed") is not True:
-            raise ValueError(f"fixed_replay_capture_step_failed:{index}")
-        observations.append(
-            _captured_androidworld_state(step.get("observation_before_act"))
         )
     final_observation = _captured_androidworld_state(
         raw.get("final_observation") if isinstance(raw, dict) else None
     )
+    semantic_observations: list[dict[str, Any] | None] = []
+    raw_index = 0
+    for source_index, width in enumerate(widths):
+        if width == 0:
+            semantic_observations.append(None)
+            continue
+        first_raw_step = captured_steps[raw_index]
+        for offset in range(width):
+            raw_step = captured_steps[raw_index + offset]
+            if not isinstance(raw_step, dict) or raw_step.get("completed") is not True:
+                raise ValueError(
+                    f"fixed_replay_capture_step_failed:{source_index}:{offset}"
+                )
+        semantic_observations.append(
+            _captured_androidworld_state(first_raw_step.get("observation_before_act"))
+        )
+        raw_index += width
+    if raw_index != len(captured_steps):
+        raise ValueError(
+            "fixed_replay_capture_raw_step_accounting_mismatch:"
+            f"consumed={raw_index}:actual={len(captured_steps)}"
+        )
+    for index, observation in enumerate(semantic_observations):
+        if observation is not None:
+            continue
+        next_observation = next(
+            (
+                candidate
+                for candidate in semantic_observations[index + 1 :]
+                if candidate is not None
+            ),
+            final_observation,
+        )
+        semantic_observations[index] = next_observation
+    observations = [
+        observation if observation is not None else final_observation
+        for observation in semantic_observations
+    ]
     validator = task_result.get("androidworld_validator_result")
     reward = validator.get("reward") if isinstance(validator, dict) else None
     if not isinstance(reward, (int, float)) or isinstance(reward, bool):
