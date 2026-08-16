@@ -21,6 +21,7 @@ from src.integrations.android_world.launch import (
     _ensure_androidworld_a11y_forwarder,
     _ExperimentAgentAdapter,
     _prepare_androidworld_episode_apps,
+    _repair_androidworld_chrome_first_run,
     _result_has_official_validator_conclusion,
     _run_androidworld_setup_apps,
     _runtime_execution_trace,
@@ -153,6 +154,55 @@ def test_androidworld_setup_normalizes_permission_prompt_typography() -> None:
         )
     ]
     assert controller.get_ui_elements()[0].text == "Don’t allow"
+
+
+def test_androidworld_chrome_setup_falls_back_to_semantic_labels(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    class ChromeApp:
+        app_name = "chrome"
+
+    class Controller:
+        def click_resource_id(self, resource_ids, **_kwargs):
+            calls.append(("resource", resource_ids))
+            raise ValueError("resource id unavailable")
+
+        def click_element(self, label):
+            calls.append(("text", label))
+
+    class AdbUtils:
+        def launch_app(self, app_name, _controller):
+            calls.append(("launch", app_name))
+
+        def close_app(self, app_name, _controller):
+            calls.append(("close", app_name))
+
+    class Tools:
+        @staticmethod
+        def AndroidToolController(**_kwargs):
+            return Controller()
+
+    real_import_module = __import__("importlib").import_module
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.importlib.import_module",
+        lambda name: Tools()
+        if name == "android_world.env.tools"
+        else real_import_module(name),
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.time.sleep", lambda _seconds: None
+    )
+
+    _repair_androidworld_chrome_first_run(
+        SimpleNamespace(controller=object()),
+        setup_module=SimpleNamespace(adb_utils=AdbUtils()),
+        setup_apps=(ChromeApp,),
+    )
+
+    assert calls[0] == ("launch", "chrome")
+    assert ("text", "Accept & continue") in calls
+    assert ("text", "No thanks") in calls
+    assert calls[-1] == ("close", "chrome")
 
 
 def test_androidworld_setup_clears_late_permission_dialog_before_resnapshot(

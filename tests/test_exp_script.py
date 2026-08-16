@@ -283,7 +283,7 @@ def test_androidworld_defaults_to_pinned_immutable_release_without_fallback(
     script_text = SCRIPT.read_text(encoding="utf-8")
 
     assert (
-        'android_world_revision="0d751989821aa52cca048586433bf6ec5deb68b5"'
+        'android_world_revision="471dfce82c180ae6e0c76cfc4cb7a68570d80594"'
         in script_text
     )
     asset_root = tmp_path / "OmniFlow"
@@ -308,7 +308,7 @@ def test_androidworld_defaults_to_pinned_immutable_release_without_fallback(
     expected_release = (
         tmp_path
         / "releases"
-        / "android-world-0d751989821aa52cca048586433bf6ec5deb68b5"
+        / "android-world-471dfce82c180ae6e0c76cfc4cb7a68570d80594"
     )
     assert completed.returncode == 0, completed.stderr
     assert f"+ android_world_root={expected_release}" in completed.stderr

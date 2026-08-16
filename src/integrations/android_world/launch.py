@@ -1606,6 +1606,70 @@ def _androidworld_setup_apps_for_suite(
     return tuple(setup_apps)
 
 
+def _repair_androidworld_chrome_first_run(
+    env: Any,
+    *,
+    setup_module: Any,
+    setup_apps: Sequence[Any],
+) -> None:
+    """Finish Chrome onboarding when the pinned setup IDs are unavailable.
+
+    AndroidWorld's Chrome setup uses resource IDs that vary across the Chrome
+    image bundled in the otherwise fixed emulator.  Keep the official setup
+    as the first attempt, then use its semantic text controller as a narrow,
+    task-independent environment recovery seam.
+    """
+
+    chrome_apps = [
+        app
+        for app in setup_apps
+        if str(getattr(app, "app_name", "") or "").strip().casefold() == "chrome"
+    ]
+    if not chrome_apps:
+        return
+    tools = importlib.import_module("android_world.env.tools")
+    controller = tools.AndroidToolController(env=env.controller)
+    adb_utils = setup_module.adb_utils
+    adb_utils.launch_app("chrome", env.controller)
+    try:
+        try:
+            controller.click_resource_id(
+                (
+                    "com.android.chrome:id/signin_fre_dismiss_button",
+                    "com.android.chrome:id/terms_accept",
+                )
+            )
+        except ValueError:
+            for label in (
+                "Accept & continue",
+                "Accept & Continue",
+                "No thanks",
+                "NEXT",
+                "Next",
+                "Skip",
+            ):
+                try:
+                    controller.click_element(label)
+                except ValueError:
+                    continue
+        for _ in range(2):
+            try:
+                controller.click_resource_id(
+                    "com.android.chrome:id/negative_button",
+                    timeout_sec=2.0,
+                )
+            except ValueError:
+                for label in ("No thanks", "Not now", "Cancel"):
+                    try:
+                        controller.click_element(label)
+                    except ValueError:
+                        continue
+                    break
+            time.sleep(1.0)
+    finally:
+        adb_utils.close_app("chrome", env.controller)
+
+
 def _run_androidworld_setup_apps(
     env: Any,
     *,
@@ -1704,6 +1768,11 @@ def _run_androidworld_setup_apps(
         setup_module.setup_apps(
             setup_env,
             app_list=tuple(setup_apps),
+        )
+        _repair_androidworld_chrome_first_run(
+            setup_env,
+            setup_module=setup_module,
+            setup_apps=setup_apps,
         )
         _prepare_androidworld_episode_apps(
             setup_env,
