@@ -147,7 +147,7 @@ the resulting contract here.
 | `OMNIFLOW_SINGLE_TASK_EVALUATION_SEED` | Target evaluation seed; formal value is `113` |
 | `OMNIFLOW_OURS_CONVERTED_ASSET_ROOT` | A new, empty conversion version directory |
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
-| `OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT` | Optional immutable AndroidWorld checkout root containing the `android_world` package; defaults to the pinned `22b977d` release beside the asset root when present |
+| `OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT` | Optional immutable AndroidWorld checkout root containing the `android_world` package; defaults to the pinned `471dfce` release beside the asset root |
 | `OMNIFLOW_SQLITE_FTS4_LIBRARY` | Optional absolute compatible `libsqlite3` path; the unified entry automatically selects a system library when the experiment Python lacks AndroidWorld's required FTS4 support |
 | `OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC` | Positive timeout for each official AndroidWorld adb file push/copy; defaults to 300 seconds and never permits the upstream `None`/`0` unbounded wait |
 | `OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC` | Positive hard deadline for the complete official per-cell app setup; defaults to 300 seconds so an AndroidEnv/adb coordinator stall cannot consume the full episode budget |
@@ -402,10 +402,10 @@ Fold hierarchy is marked explicitly and cannot enter OmniTransfer; normal VLM
 fallback receives the saved screenshot instead.
 
 The runtime pins the AndroidWorld adapter to commit
-`22b977d5eff0a163abae538a8f4f35f044b5be18` when its immutable release is
-present. An explicit `OMNIFLOW_ANDROID_WORLD_ROOT` remains the only override
-for a checked external copy; the unified script never silently uses an
-unversioned dirty checkout when the pinned release is available.
+`471dfce82c180ae6e0c76cfc4cb7a68570d80594`. An explicit
+`OMNIFLOW_ANDROID_WORLD_ROOT` remains the only override for a checked external
+copy; when the pinned release is absent, the unified script fails closed
+instead of silently using an unversioned dirty checkout.
 
 If native `get_state()` reports a stale accessibility/gRPC tree, the shared
 adapter force-toggles AndroidWorld's AccessibilityForwarder, rebuilds the

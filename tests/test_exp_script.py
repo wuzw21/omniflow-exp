@@ -277,18 +277,42 @@ def test_formal_dry_run_exits_before_output_and_emulator_management() -> None:
     assert 'command+=(--dry-run)' not in script_text
 
 
-def test_androidworld_prefers_pinned_immutable_release_when_present() -> None:
+def test_androidworld_defaults_to_pinned_immutable_release_without_fallback(
+    tmp_path: Path,
+) -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
 
     assert (
-        'android_world_revision="22b977d5eff0a163abae538a8f4f35f044b5be18"'
+        'android_world_revision="471dfce82c180ae6e0c76cfc4cb7a68570d80594"'
         in script_text
     )
-    assert "OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT" in script_text
-    assert (
-        'default_android_world_root="$android_world_release_root"'
-        in script_text
+    asset_root = tmp_path / "OmniFlow"
+    dirty_fallback = (
+        asset_root / "runtime" / "external" / "droidrun-android-world" / "android_world"
     )
+    dirty_fallback.mkdir(parents=True)
+    environment = os.environ.copy()
+    environment["OMNIFLOW_EXP_ASSET_ROOT"] = str(asset_root)
+    environment.pop("OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT", None)
+    environment.pop("OMNIFLOW_ANDROID_WORLD_ROOT", None)
+
+    completed = subprocess.run(
+        ["bash", "-x", str(SCRIPT), "--help"],
+        cwd=REPO,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    expected_release = (
+        tmp_path
+        / "releases"
+        / "android-world-471dfce82c180ae6e0c76cfc4cb7a68570d80594"
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert f"+ android_world_root={expected_release}" in completed.stderr
+    assert f"+ android_world_root={dirty_fallback}" not in completed.stderr
 
 
 def test_unified_script_repairs_missing_androidworld_sqlite_fts4_support() -> None:
