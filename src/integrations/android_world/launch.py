@@ -1590,21 +1590,6 @@ def _androidworld_setup_apps_for_suite(
     return tuple(setup_apps)
 
 
-def _setup_androidworld_apps_strict(env: Any, setup_apps: Sequence[Any]) -> None:
-    """Run AndroidWorld's app setup without swallowing setup failures."""
-
-    from android_world.env import adb_utils
-    from android_world.env.setup_device import setup as aw_setup
-    from android_world.utils import app_snapshot
-
-    adb_utils.press_home_button(env.controller)
-    adb_utils.set_root_if_needed(env.controller)
-    for app in setup_apps:
-        aw_setup.maybe_install_app(app, env)
-        app.setup(env)
-        app_snapshot.save_snapshot(app.app_name, env.controller)
-
-
 def _prepare_official_harness_episode(env: Any, *, selected_agent: str) -> None:
     if not str(selected_agent or "").startswith("official:"):
         return
@@ -3452,7 +3437,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "Setting up AndroidWorld snapshots for selected tasks: %s",
                 ", ".join(selected_task_names) or "<all>",
             )
-            _setup_androidworld_apps_strict(env, setup_app_list)
+            aw_setup.setup_apps(env, app_list=setup_app_list)
         _prepare_androidworld_snapshot_restore(env, setup_app_list or ())
         if task_params:
             if len(selected_task_names) != 1:

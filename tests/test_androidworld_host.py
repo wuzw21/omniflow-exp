@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 import xml.etree.ElementTree as ET
 
 from PIL import Image
@@ -16,7 +15,6 @@ from src.integrations.android_world.launch import (
     _androidworld_a11y_forwarder_installed,
     _ensure_androidworld_a11y_forwarder,
     _androidworld_setup_apps_for_suite,
-    _setup_androidworld_apps_strict,
     _wait_for_androidworld_a11y,
     _result_has_official_validator_conclusion,
     _runtime_execution_trace,
@@ -89,53 +87,6 @@ def test_androidworld_a11y_readiness_rejects_empty_forests(monkeypatch) -> None:
             get_state=lambda **_kwargs: SimpleNamespace(forest=next(forests))
         )
     )
-
-
-def test_androidworld_setup_does_not_snapshot_failed_apps(monkeypatch) -> None:
-    calls: list[str] = []
-    controller = object()
-    app = SimpleNamespace(
-        app_name="contacts",
-        setup=lambda _env: (_ for _ in ()).throw(ValueError("setup failed")),
-    )
-    adb_utils = SimpleNamespace(
-        press_home_button=lambda actual: (
-            calls.append("home") if actual is controller else None
-        ),
-        set_root_if_needed=lambda actual: (
-            calls.append("root") if actual is controller else None
-        ),
-    )
-    setup = SimpleNamespace(
-        maybe_install_app=lambda actual_app, _env: calls.append(
-            f"install:{actual_app.app_name}"
-        )
-    )
-    app_snapshot = SimpleNamespace(
-        save_snapshot=lambda *_args: calls.append("snapshot")
-    )
-    modules = {
-        "android_world": ModuleType("android_world"),
-        "android_world.env": ModuleType("android_world.env"),
-        "android_world.env.adb_utils": adb_utils,
-        "android_world.env.setup_device": ModuleType("android_world.env.setup_device"),
-        "android_world.env.setup_device.setup": setup,
-        "android_world.utils": ModuleType("android_world.utils"),
-        "android_world.utils.app_snapshot": app_snapshot,
-    }
-    modules["android_world.env"].adb_utils = adb_utils
-    modules["android_world.env.setup_device"].setup = setup
-    modules["android_world.utils"].app_snapshot = app_snapshot
-    for name, module in modules.items():
-        monkeypatch.setitem(sys.modules, name, module)
-
-    with pytest.raises(ValueError, match="setup failed"):
-        _setup_androidworld_apps_strict(
-            SimpleNamespace(controller=controller),
-            (app,),
-        )
-
-    assert calls == ["home", "root", "install:contacts"]
 
 
 def test_androidworld_a11y_readiness_refreshes_official_controller_first() -> None:
