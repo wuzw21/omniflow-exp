@@ -11,13 +11,14 @@ import pytest
 from omniflow import Action
 from src.integrations.android_world.host import AndroidWorldHost
 from src.integrations.android_world.launch import (
-    _ExperimentAgentAdapter,
     _androidworld_a11y_forwarder_installed,
-    _ensure_androidworld_a11y_forwarder,
     _androidworld_setup_apps_for_suite,
-    _wait_for_androidworld_a11y,
+    _ensure_androidworld_a11y_forwarder,
+    _ExperimentAgentAdapter,
     _result_has_official_validator_conclusion,
+    _run_androidworld_setup_apps,
     _runtime_execution_trace,
+    _wait_for_androidworld_a11y,
 )
 
 
@@ -44,6 +45,37 @@ def test_androidworld_setup_rejects_unmapped_task_dependency() -> None:
             {"Task": [SimpleNamespace(app_names=("unknown",))]},
             get_app_mapping=lambda _name: None,
         )
+
+
+def test_androidworld_setup_normalizes_permission_prompt_typography() -> None:
+    permission_prompt = SimpleNamespace(
+        text="Don’t allow",
+        content_description=None,
+        package_name="com.google.android.permissioncontroller",
+        resource_id="com.android.permissioncontroller:id/permission_deny_button",
+    )
+    controller = SimpleNamespace(get_ui_elements=lambda: [permission_prompt])
+    env = SimpleNamespace(controller=controller)
+    observed: list[tuple[str, str]] = []
+
+    def setup_apps(setup_env, *, app_list) -> None:
+        element = setup_env.controller.get_ui_elements()[0]
+        observed.append((element.text, element.resource_id))
+        assert app_list == ("contacts",)
+
+    _run_androidworld_setup_apps(
+        env,
+        setup_module=SimpleNamespace(setup_apps=setup_apps),
+        setup_apps=("contacts",),
+    )
+
+    assert observed == [
+        (
+            "Don't allow",
+            "com.android.permissioncontroller:id/permission_deny_button",
+        )
+    ]
+    assert controller.get_ui_elements()[0].text == "Don’t allow"
 
 
 def test_androidworld_waits_for_native_a11y_before_setup(monkeypatch) -> None:

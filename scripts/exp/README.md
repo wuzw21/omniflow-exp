@@ -375,6 +375,12 @@ present. An explicit `OMNIFLOW_ANDROID_WORLD_ROOT` remains the only override
 for a checked external copy; the unified script never silently uses an
 unversioned dirty checkout when the pinned release is available.
 
+During official app setup only, the shared AndroidWorld adapter normalizes
+Unicode presentation variants in visible UI labels while preserving native
+resource IDs, bounds, actions, and the original observation. This keeps system
+permission buttons such as `Don’t allow` compatible with AndroidWorld's
+canonical `Don't allow` setup target without changing any evaluated method.
+
 Before each agent step, the launcher asks the pinned AndroidWorld controller to
 check for the known AccessibilityForwarder crash window. Healthy steps do not
 refresh the environment or read another page. When that exact crash is visible,

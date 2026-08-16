@@ -22,6 +22,7 @@ import time
 from time import perf_counter
 import types
 from typing import Any, Callable, Sequence
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1588,6 +1589,62 @@ def _androidworld_setup_apps_for_suite(
             "AndroidWorld setup app mapping missing: " + ", ".join(missing)
         )
     return tuple(setup_apps)
+
+
+def _run_androidworld_setup_apps(
+    env: Any,
+    *,
+    setup_module: Any,
+    setup_apps: Sequence[Any],
+) -> None:
+    typography = str.maketrans(
+        {
+            "\u2018": "'",
+            "\u2019": "'",
+            "\u201a": "'",
+            "\u201b": "'",
+            "\u201c": '"',
+            "\u201d": '"',
+            "\u201e": '"',
+            "\u201f": '"',
+        }
+    )
+
+    def normalize_label(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        return unicodedata.normalize("NFKC", value).translate(typography)
+
+    class SetupController:
+        def __init__(self, controller: Any) -> None:
+            self._controller = controller
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._controller, name)
+
+        def get_ui_elements(self) -> list[Any]:
+            normalized = []
+            for element in self._controller.get_ui_elements() or ():
+                element_copy = copy.copy(element)
+                element_copy.text = normalize_label(getattr(element, "text", None))
+                element_copy.content_description = normalize_label(
+                    getattr(element, "content_description", None)
+                )
+                normalized.append(element_copy)
+            return normalized
+
+    class SetupEnvironment:
+        def __init__(self, raw_env: Any) -> None:
+            self._raw_env = raw_env
+            self.controller = SetupController(raw_env.controller)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._raw_env, name)
+
+    setup_module.setup_apps(
+        SetupEnvironment(env),
+        app_list=tuple(setup_apps),
+    )
 
 
 def _prepare_official_harness_episode(env: Any, *, selected_agent: str) -> None:
@@ -3437,7 +3494,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "Setting up AndroidWorld snapshots for selected tasks: %s",
                 ", ".join(selected_task_names) or "<all>",
             )
-            aw_setup.setup_apps(env, app_list=setup_app_list)
+            _run_androidworld_setup_apps(
+                env,
+                setup_module=aw_setup,
+                setup_apps=setup_app_list,
+            )
         _prepare_androidworld_snapshot_restore(env, setup_app_list or ())
         if task_params:
             if len(selected_task_names) != 1:
