@@ -132,6 +132,7 @@ the resulting contract here.
 | `OMNIFLOW_SINGLE_TASK_EVALUATION_SEED` | Target evaluation seed; formal value is `113` |
 | `OMNIFLOW_OURS_CONVERTED_ASSET_ROOT` | A new, empty conversion version directory |
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
+| `OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT` | Optional immutable AndroidWorld release root; defaults to the pinned `653d449` release beside the asset root when present |
 | `OMNIFLOW_APPAGENT_DOCUMENT_MODEL` | AppAgent offline documentation VLM; defaults to the paper model `GLM-5.1` |
 | `OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL` | MobileGPT offline embedding model; defaults to its native `text-embedding-v4` |
 | `OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE` | Development endpoint profile; defaults to `llmthu` |
@@ -352,6 +353,12 @@ native accessibility forest. The Host converts a complete forest to
 hierarchical XML locally and does not issue another UI dump. An incomplete
 Fold hierarchy is marked explicitly and cannot enter OmniTransfer; normal VLM
 fallback receives the saved screenshot instead.
+
+The runtime pins the AndroidWorld adapter to commit
+`653d449e4a95cbb9fa0704c56968753196c05170` when its immutable release is
+present. An explicit `OMNIFLOW_ANDROID_WORLD_ROOT` remains the only override
+for a checked external copy; the unified script never silently uses an
+unversioned dirty checkout when the pinned release is available.
 
 Before each agent step, the launcher asks the pinned AndroidWorld controller to
 check for the known AccessibilityForwarder crash window. Healthy steps do not

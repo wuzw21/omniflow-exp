@@ -257,6 +257,20 @@ def test_formal_dry_run_exits_before_output_and_emulator_management() -> None:
     assert 'command+=(--dry-run)' not in script_text
 
 
+def test_androidworld_prefers_pinned_immutable_release_when_present() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+
+    assert (
+        'android_world_revision="653d449e4a95cbb9fa0704c56968753196c05170"'
+        in script_text
+    )
+    assert "OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT" in script_text
+    assert (
+        'default_android_world_root="$android_world_release_root/android_world"'
+        in script_text
+    )
+
+
 def test_unified_script_discovers_android_studio_jbr_on_macos() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert '/Applications/Android Studio.app/Contents/jbr/Contents/Home' in source
