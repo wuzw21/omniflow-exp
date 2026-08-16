@@ -147,7 +147,7 @@ the resulting contract here.
 | `OMNIFLOW_SINGLE_TASK_EVALUATION_SEED` | Target evaluation seed; formal value is `113` |
 | `OMNIFLOW_OURS_CONVERTED_ASSET_ROOT` | A new, empty conversion version directory |
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
-| `OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT` | Optional immutable AndroidWorld checkout root containing the `android_world` package; defaults to the pinned `38d1214` release beside the asset root when present |
+| `OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT` | Optional immutable AndroidWorld checkout root containing the `android_world` package; defaults to the pinned `471dfce` release beside the asset root when present |
 | `OMNIFLOW_SQLITE_FTS4_LIBRARY` | Optional absolute compatible `libsqlite3` path; the unified entry automatically selects a system library when the experiment Python lacks AndroidWorld's required FTS4 support |
 | `OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC` | Positive timeout for each official AndroidWorld adb file push/copy; defaults to 300 seconds and never permits the upstream `None`/`0` unbounded wait |
 | `OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC` | Positive hard deadline for the complete official per-cell app setup; defaults to 300 seconds so an AndroidEnv/adb coordinator stall cannot consume the full episode budget |
@@ -383,7 +383,7 @@ Fold hierarchy is marked explicitly and cannot enter OmniTransfer; normal VLM
 fallback receives the saved screenshot instead.
 
 The runtime pins the AndroidWorld adapter to commit
-`38d1214d7df6cc7ec8503d912dad7aec814dd640` when its immutable release is
+`471dfce82c180ae6e0c76cfc4cb7a68570d80594` when its immutable release is
 present. An explicit `OMNIFLOW_ANDROID_WORLD_ROOT` remains the only override
 for a checked external copy; the unified script never silently uses an
 unversioned dirty checkout when the pinned release is available.
@@ -411,6 +411,10 @@ The complete official setup call also has a separate 300-second hard deadline.
 This covers AndroidEnv coordinator stalls where an adb child has already exited
 but the upstream future never resolves; the cell remains an environment failure
 with no fabricated validator conclusion, and the batch can advance.
+The pinned AndroidWorld setup retries an app once with UIAutomator when its
+native accessibility-backed setup raises `ValueError`. It saves the app snapshot
+only after setup succeeds; a failed retry propagates and cannot persist an
+onboarding or permission-dialog snapshot.
 
 During official app setup only, the shared AndroidWorld adapter normalizes
 Unicode presentation variants in visible UI labels while preserving native
