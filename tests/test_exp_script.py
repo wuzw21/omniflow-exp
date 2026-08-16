@@ -266,7 +266,7 @@ def test_androidworld_prefers_pinned_immutable_release_when_present() -> None:
     )
     assert "OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT" in script_text
     assert (
-        'default_android_world_root="$android_world_release_root/android_world"'
+        'default_android_world_root="$android_world_release_root"'
         in script_text
     )
 

@@ -132,7 +132,7 @@ the resulting contract here.
 | `OMNIFLOW_SINGLE_TASK_EVALUATION_SEED` | Target evaluation seed; formal value is `113` |
 | `OMNIFLOW_OURS_CONVERTED_ASSET_ROOT` | A new, empty conversion version directory |
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
-| `OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT` | Optional immutable AndroidWorld release root; defaults to the pinned `653d449` release beside the asset root when present |
+| `OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT` | Optional immutable AndroidWorld checkout root containing the `android_world` package; defaults to the pinned `653d449` release beside the asset root when present |
 | `OMNIFLOW_APPAGENT_DOCUMENT_MODEL` | AppAgent offline documentation VLM; defaults to the paper model `GLM-5.1` |
 | `OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL` | MobileGPT offline embedding model; defaults to its native `text-embedding-v4` |
 | `OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE` | Development endpoint profile; defaults to `llmthu` |

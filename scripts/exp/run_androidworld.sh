@@ -43,7 +43,7 @@ omnitransfer_root="${OMNITRANSFER_ROOT:-$workspace_root/OmniTransfer}"
 android_world_release_root="${OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT:-$(dirname "$asset_root")/releases/android-world-$android_world_revision}"
 default_android_world_root="${asset_root:+$asset_root/runtime/external/droidrun-android-world/android_world}"
 if [[ -d "$android_world_release_root/android_world" ]]; then
-  default_android_world_root="$android_world_release_root/android_world"
+  default_android_world_root="$android_world_release_root"
 fi
 android_world_root="${OMNIFLOW_ANDROID_WORLD_ROOT:-$default_android_world_root}"
 export PYTHONPATH="$repo:$repo/src${android_world_root:+:$android_world_root}${PYTHONPATH:+:$PYTHONPATH}"
