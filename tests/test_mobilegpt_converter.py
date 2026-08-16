@@ -13,6 +13,7 @@ from src.integrations.mobilegpt_converter import (
     MobileGPTConversionError,
     _load_runlog_trajectory,
     _mobilegpt_action_from_runlog,
+    _parameter_values,
     _target_element,
     convert_runlog_to_mobilegpt_memory,
     preflight_runlog_conversion,
@@ -555,6 +556,118 @@ def test_anonymous_verified_input_avoids_unrelated_children_generalization(
             },
         },
     }
+
+
+def test_action_generalization_avoids_nested_native_placeholders(
+    tmp_path: Path,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "input_text", "text": "A useful description"}],
+        forests=[
+            '<hierarchy><node class="android.widget.EditText" '
+            'text="Description" focused="true" editable="true" '
+            'bounds="[0,0][100,100]"/></hierarchy>'
+        ],
+    )
+    trajectory = _load_runlog_trajectory(source)
+    transition = trajectory["transitions"][0]
+    server_root = MOBILEGPT_ROOT / "Server"
+    if str(server_root) not in sys.path:
+        sys.path.insert(0, str(server_root))
+    from screenParser.parseXML import reformat_xml
+
+    parsed_xml = reformat_xml(mobilegpt_compatible_xml(transition.forest))
+    calls: list[dict[str, str]] = []
+
+    def generalize(action: dict, subtask: dict, _screen: str) -> dict:
+        calls.append(dict(subtask["parameters"]))
+        assert len(subtask["parameters"]) <= 1
+        parameters = subtask["parameters"]
+        if "input_text" in parameters:
+            action["parameters"]["input_text"] = "<input_text__-1>"
+        if "target_text" in parameters:
+            action["parameters"]["text"] = "<target_text__-1>"
+        else:
+            action["parameters"]["text"] = "Description"
+        return action
+
+    converted, _, _ = _mobilegpt_action_from_runlog(
+        transition,
+        parsed_xml,
+        task_parameters={},
+        selected_subtask={
+            "name": "enter_description",
+            "parameters": {
+                "target_text": "Description",
+                "input_text": "A useful description",
+            },
+        },
+        generalize_action=generalize,
+    )
+
+    assert calls == [
+        {},
+        {"target_text": "Description"},
+        {"input_text": "A useful description"},
+    ]
+    assert converted["parameters"]["input_text"] == "<input_text__-1>"
+    assert converted["parameters"]["text"] == "<target_text__-1>"
+
+
+def test_action_generalization_rejects_invalid_native_placeholder(
+    tmp_path: Path,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "click", "x": 50, "y": 50}],
+        forests=[
+            '<hierarchy><node text="Save" clickable="true" '
+            'bounds="[0,0][100,100]"/></hierarchy>'
+        ],
+    )
+    transition = _load_runlog_trajectory(source)["transitions"][0]
+    server_root = MOBILEGPT_ROOT / "Server"
+    if str(server_root) not in sys.path:
+        sys.path.insert(0, str(server_root))
+    from screenParser.parseXML import reformat_xml
+
+    parsed_xml = reformat_xml(mobilegpt_compatible_xml(transition.forest))
+
+    with pytest.raises(
+        MobileGPTConversionError,
+        match="mobilegpt_action_placeholder_invalid",
+    ):
+        _mobilegpt_action_from_runlog(
+            transition,
+            parsed_xml,
+            task_parameters={},
+            selected_subtask={
+                "name": "save",
+                "parameters": {"target_text": "Save"},
+            },
+            generalize_action=lambda action, *_args: {
+                **action,
+                "parameters": {
+                    **action["parameters"],
+                    "text": "<t<input_text__0>rget_text__-1>",
+                },
+            },
+        )
+
+
+def test_parameter_names_follow_native_placeholder_grammar() -> None:
+    parameters = _parameter_values(
+        {
+            "recipe__name": "Soup",
+            "servings count": 4,
+        }
+    )
+
+    assert set(parameters.values()) == {"Soup", "4"}
+    assert any(name.startswith("recipe_name_") for name in parameters)
+    assert any(name.startswith("servings_count_") for name in parameters)
+    assert all("__" not in name for name in parameters)
 
 
 def test_conversion_rejects_ambiguous_coordinate_free_input(

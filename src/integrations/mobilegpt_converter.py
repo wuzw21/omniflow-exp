@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from copy import deepcopy
 import csv
 from dataclasses import dataclass
 import hashlib
@@ -55,6 +56,8 @@ _ANDROIDWORLD_SWIPE_TO_MOBILEGPT_SCROLL = {
     "left": "right",
     "right": "left",
 }
+_MOBILEGPT_PLACEHOLDER = re.compile(r"<[^>]*>")
+_MOBILEGPT_PLACEHOLDER_GRAMMAR = re.compile(r"<([^<>]+)__(-?\d+)>")
 
 
 class MobileGPTConversionError(RuntimeError):
@@ -660,11 +663,106 @@ def _target_element(
 
 
 def _parameter_values(task_parameters: dict[str, Any]) -> dict[str, str]:
-    return {
-        str(name): str(value)
-        for name, value in task_parameters.items()
-        if str(name).strip() and str(value).strip()
-    }
+    parameters: dict[str, str] = {}
+    for raw_name, raw_value in task_parameters.items():
+        name = str(raw_name).strip()
+        value = str(raw_value)
+        if not name or not value.strip():
+            continue
+        normalized = re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_")
+        normalized = re.sub(r"_{2,}", "_", normalized) or "parameter"
+        if normalized != name:
+            digest = hashlib.sha256(name.encode()).hexdigest()[:8]
+            normalized = f"{normalized}_{digest}"
+        parameters[normalized] = value
+    return parameters
+
+
+def _validate_action_placeholders(
+    value: Any,
+    *,
+    step_index: int,
+) -> None:
+    if isinstance(value, dict):
+        for nested in value.values():
+            _validate_action_placeholders(nested, step_index=step_index)
+        return
+    if isinstance(value, (list, tuple)):
+        for nested in value:
+            _validate_action_placeholders(nested, step_index=step_index)
+        return
+    if not isinstance(value, str):
+        return
+    for match in _MOBILEGPT_PLACEHOLDER.finditer(value):
+        placeholder = match.group(0)
+        parsed = _MOBILEGPT_PLACEHOLDER_GRAMMAR.fullmatch(placeholder)
+        if parsed is None or "__" in parsed.group(1):
+            raise MobileGPTConversionError(
+                "mobilegpt_action_placeholder_invalid",
+                step_index=step_index,
+                placeholder=placeholder,
+            )
+
+
+def _contains_parameter_placeholder(value: Any, parameter_name: str) -> bool:
+    if isinstance(value, dict):
+        return any(
+            _contains_parameter_placeholder(nested, parameter_name)
+            for nested in value.values()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(
+            _contains_parameter_placeholder(nested, parameter_name)
+            for nested in value
+        )
+    if not isinstance(value, str):
+        return False
+    for match in _MOBILEGPT_PLACEHOLDER_GRAMMAR.finditer(value):
+        if match.group(1) == parameter_name:
+            return True
+    return False
+
+
+def _generalize_action_safely(
+    action: dict[str, Any],
+    *,
+    subtask_name: str,
+    semantic_parameters: dict[str, str],
+    screen: str,
+    step_index: int,
+    generalize_action: Callable[[dict[str, Any], dict[str, Any], str], dict[str, Any]],
+) -> dict[str, Any]:
+    base_subtask = {"name": subtask_name, "parameters": {}}
+    converted = generalize_action(deepcopy(action), base_subtask, screen)
+    if not isinstance(converted, dict):
+        raise MobileGPTConversionError(
+            "mobilegpt_action_generalization_failed",
+            step_index=step_index,
+        )
+    for parameter_name, parameter_value in semantic_parameters.items():
+        candidate = generalize_action(
+            deepcopy(action),
+            {
+                "name": subtask_name,
+                "parameters": {parameter_name: parameter_value},
+            },
+            screen,
+        )
+        if not isinstance(candidate, dict):
+            continue
+        _validate_action_placeholders(candidate, step_index=step_index)
+        candidate_parameters = candidate.get("parameters")
+        converted_parameters = converted.get("parameters")
+        if not isinstance(candidate_parameters, dict) or not isinstance(
+            converted_parameters,
+            dict,
+        ):
+            continue
+        for key, value in candidate_parameters.items():
+            if _contains_parameter_placeholder(value, parameter_name):
+                converted_parameters[key] = value
+    _validate_action_placeholders(converted, step_index=step_index)
+    return converted
 
 
 def _action_parameter_bindings(
@@ -937,13 +1035,13 @@ def _mobilegpt_action_from_runlog(
             and str(value).strip().casefold() != "unknown"
         }
         semantic_parameters.update(bindings)
-        converted = generalize_action(
+        converted = _generalize_action_safely(
             converted,
-            {
-                "name": str(selected_subtask.get("name") or "sourceStep"),
-                "parameters": semantic_parameters,
-            },
-            generalization_screen,
+            subtask_name=str(selected_subtask.get("name") or "sourceStep"),
+            semantic_parameters=semantic_parameters,
+            screen=generalization_screen,
+            step_index=transition.step_index,
+            generalize_action=generalize_action,
         )
     label = _element_semantic_label(target)
     return converted, bindings, label

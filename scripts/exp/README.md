@@ -168,6 +168,9 @@ MobileGPT and AppAgent memory preparation share one RunLog conversion API:
 official-validator-successful seed-111 `omniflow.run_log.v1` and writes the
 selected baseline's native immutable memory. MobileGPT delegates encoding,
 memory access, and action generalization to its pinned upstream modules.
+The adapter invokes the upstream action generalizer once per semantic parameter
+and accepts only its native `<parameter__index>` placeholder grammar, preventing
+one generated placeholder from being generalized again as ordinary text.
 AppAgent writes the official demo directory and runs its pinned official
 document generator. AppAgent additionally requires immutable before/after
 screenshot references and XML in the RunLog; missing evidence is an explicit
