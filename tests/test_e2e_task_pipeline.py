@@ -557,10 +557,7 @@ def test_collect_replayed_source_uses_fixed_replay_and_captures_screenshots(
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.select_source_run_log",
-        lambda **kwargs: (
-            Path(kwargs["run_log_path"]),
-            json.loads(Path(kwargs["run_log_path"]).read_text(encoding="utf-8")),
-        ),
+        lambda **_: pytest.fail("source_collection_must_not_refresh_memory"),
     )
 
     captured_path, captured, phase = collect_replayed_source(

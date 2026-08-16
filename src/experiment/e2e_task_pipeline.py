@@ -707,13 +707,12 @@ def collect_replayed_source(
         task_result=row,
         output_path=captured_path,
     )
-    selected_path, selected = select_source_run_log(
-        memory_index=args.memory_index,
-        task=args.task,
-        run_log_path=captured_path,
-        attempt_root=attempt_root,
-        reason="Screenshot-backed seed-111 fixed replay capture.",
-    )
+    # Source-only collection produces an immutable candidate attempt.  Do not
+    # refresh the long-term memory here: a changed source hash may invalidate
+    # derived baseline assets, and memory selection must be audited after the
+    # complete collection batch.  The caller still gets the fully validated
+    # captured RunLog for the source-only report.
+    selected_path, selected = captured_path, captured
     result["input_source"] = str(source_path)
     result["input_source_sha256"] = _sha256(source_path)
     result["captured_source"] = str(captured_path)
