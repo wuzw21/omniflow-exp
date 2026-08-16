@@ -3103,6 +3103,10 @@ if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
   echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=$mobilegpt_runtime_embedding_model embedding_dimension=$mobilegpt_runtime_embedding_dimension"
 fi
 echo "[model] model=$paper_model model_endpoint_profile=$formal_model_endpoint_profile model_endpoint=$selected_model_base_url"
+if [[ "$dry_run" -eq 1 ]]; then
+  echo "[dry-run] ready task=$task methods=$methods devices=$device_targets; no device or persistent output created"
+  exit 0
+fi
 
 avd_for_serial() {
   local wanted_serial="$1"
@@ -3511,8 +3515,4 @@ fi
 if [[ -n "$appagent_demo_memory_root" ]]; then
   command+=(--appagent-demo-memory-root "$appagent_demo_memory_root")
 fi
-if [[ "$dry_run" -eq 1 ]]; then
-  command+=(--dry-run)
-fi
-
 exec "${command[@]}"

@@ -243,6 +243,20 @@ def test_mobilegpt_runtime_uses_sealed_embedding_contract_and_split_endpoints() 
     assert "mobilegpt_embedding_dimension_mismatch" in runtime_text
 
 
+def test_formal_dry_run_exits_before_output_and_emulator_management() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+    dry_run_gate = script_text.index(
+        'echo "[dry-run] ready task=$task methods=$methods devices=$device_targets; '
+        'no device or persistent output created"'
+    )
+
+    assert dry_run_gate < script_text.index('mkdir -p "$preflight_output_root"')
+    assert dry_run_gate < script_text.index(
+        'for serial in "${target_serials[@]}"; do\n  ensure_emulator "$serial"'
+    )
+    assert 'command+=(--dry-run)' not in script_text
+
+
 def test_unified_script_discovers_android_studio_jbr_on_macos() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert '/Applications/Android Studio.app/Contents/jbr/Contents/Home' in source

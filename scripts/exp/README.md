@@ -264,6 +264,11 @@ will fail rather than create a missing method asset:
 bash scripts/exp/run_androidworld.sh --check-only
 ```
 
+`--dry-run` additionally resolves the selected model endpoint and validates
+MobileGPT chat/embedding capabilities when that method is selected. It exits
+before creating an attempt or preflight directory, starting or stopping an
+emulator, or invoking a method runner.
+
 `--convert-ours-assets` remains available for conversion-only maintenance. It
 does not mechanically create Function semantics: it accepts a complete offline
 Agent response, verifies its instruction version and source RunLog hash, audits
