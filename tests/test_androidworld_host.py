@@ -804,6 +804,54 @@ def test_experiment_agent_adapter_checks_androidworld_before_each_step() -> None
     ]
 
 
+def test_experiment_agent_adapter_preserves_parameterless_reset_contract() -> None:
+    calls: list[str] = []
+
+    class Agent:
+        def reset(self) -> None:
+            calls.append("reset")
+
+    adapted = _ExperimentAgentAdapter(
+        Agent(),
+        recording_session=SimpleNamespace(),
+    )
+
+    adapted.reset(go_home=True)
+
+    assert calls == ["reset"]
+
+
+def test_experiment_agent_adapter_passes_go_home_when_supported() -> None:
+    calls: list[bool] = []
+
+    class Agent:
+        def reset(self, go_home: bool = False) -> None:
+            calls.append(go_home)
+
+    adapted = _ExperimentAgentAdapter(
+        Agent(),
+        recording_session=SimpleNamespace(),
+    )
+
+    adapted.reset(go_home=True)
+
+    assert calls == [True]
+
+
+def test_experiment_agent_adapter_does_not_mask_reset_type_error() -> None:
+    class Agent:
+        def reset(self) -> None:
+            raise TypeError("reset implementation failed")
+
+    adapted = _ExperimentAgentAdapter(
+        Agent(),
+        recording_session=SimpleNamespace(),
+    )
+
+    with pytest.raises(TypeError, match="reset implementation failed"):
+        adapted.reset()
+
+
 def test_experiment_agent_adapter_enforces_step_budget_without_extra_model_call() -> None:
     calls: list[str] = []
     recording_session = SimpleNamespace(

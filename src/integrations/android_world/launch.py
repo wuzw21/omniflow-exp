@@ -7,6 +7,7 @@ import dataclasses
 import datetime
 import hashlib
 import importlib
+import inspect
 import io
 import json
 import logging
@@ -328,7 +329,17 @@ class _ExperimentAgentAdapter:
 
     def reset(self, go_home: bool = False) -> None:
         self._completed_steps = 0
-        self._agent.reset(go_home=go_home)
+        reset = self._agent.reset
+        reset_parameters = inspect.signature(reset).parameters.values()
+        supports_go_home = any(
+            parameter.name == "go_home"
+            or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in reset_parameters
+        )
+        if supports_go_home:
+            reset(go_home=go_home)
+        else:
+            reset()
         if self._prepare_after_reset is not None:
             self._prepare_after_reset()
 
