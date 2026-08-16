@@ -475,7 +475,7 @@ while [[ "$#" -gt 0 ]]; do
   shift
 done
 if [[ -n "$convert_runlog_memory_method" ]]; then
-  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || "$page_store" -eq 1 || -n "$stock_capture" || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$e2e_task" || -n "$batch_task_filter" ]]; then
+  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || "$page_store" -eq 1 || "$stock_capture" != "0" || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$e2e_task" || -n "$batch_task_filter" ]]; then
     echo "--convert-runlog-memory cannot be combined with another experiment mode." >&2
     exit 2
   fi

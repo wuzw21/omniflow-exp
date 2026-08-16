@@ -164,6 +164,36 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "No emulator process found while device remained visible" in script_text
 
 
+def test_runlog_memory_mode_does_not_treat_disabled_stock_capture_as_active(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT),
+            "--convert-runlog-memory",
+            "mobilegpt_offline_retrieval",
+            "--source-runlog",
+            str(source),
+        ],
+        cwd=REPO,
+        env={
+            **os.environ,
+            "OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT": str(tmp_path / "output"),
+            "OMNIFLOW_ENV_FILE": str(tmp_path / "missing.env"),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert "cannot be combined" not in completed.stderr
+    assert "OMNIFLOW_ENV_FILE" in completed.stderr
+
+
 def test_unified_script_discovers_android_studio_jbr_on_macos() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert '/Applications/Android Studio.app/Contents/jbr/Contents/Home' in source
