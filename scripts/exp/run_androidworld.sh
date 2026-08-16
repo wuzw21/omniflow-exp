@@ -154,7 +154,8 @@ source_screenshot_roots="${OMNIFLOW_SOURCE_SCREENSHOT_ROOTS:-}"
 
 select_model_endpoint() {
   local profile="$1"
-  if ! selected_model_base_url="$($python_bin - "$profile" <<'PY'
+  local selected_model_config
+  if ! selected_model_config="$($python_bin - "$profile" <<'PY'
 import sys
 
 from omniflow.vlm.model_config import resolve_openai_compatible_config
@@ -166,11 +167,20 @@ except ValueError as error:
     raise SystemExit(str(error)) from error
 if not api_key or not base_url:
     raise SystemExit(f"model_endpoint_profile_incomplete:{profile}")
+print(api_key)
 print(base_url)
 PY
   )"; then
     exit 2
   fi
+  selected_model_api_key="${selected_model_config%%$'\n'*}"
+  selected_model_base_url="${selected_model_config#*$'\n'}"
+  if [[ -z "$selected_model_api_key" || -z "$selected_model_base_url" ]]; then
+    echo "model_endpoint_profile_incomplete:$profile" >&2
+    exit 2
+  fi
+  export OPENAI_API_KEY="$selected_model_api_key"
+  export OPENAI_BASE_URL="$selected_model_base_url"
   export OMNIFLOW_MODEL_ENDPOINT_PROFILE="$profile"
 }
 

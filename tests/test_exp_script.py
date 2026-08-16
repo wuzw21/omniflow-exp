@@ -194,6 +194,13 @@ def test_runlog_memory_mode_does_not_treat_disabled_stock_capture_as_active(
     assert "OMNIFLOW_ENV_FILE" in completed.stderr
 
 
+def test_selected_model_profile_is_exported_for_native_openai_clients() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+
+    assert 'export OPENAI_API_KEY="$selected_model_api_key"' in script_text
+    assert 'export OPENAI_BASE_URL="$selected_model_base_url"' in script_text
+
+
 def test_unified_script_discovers_android_studio_jbr_on_macos() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert '/Applications/Android Studio.app/Contents/jbr/Contents/Home' in source
