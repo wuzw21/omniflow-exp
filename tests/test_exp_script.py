@@ -163,6 +163,10 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert 'while [[ -n "$(device_state "$serial")" ]] || grpc_ready "$grpc_port"; do' in script_text
     assert 'echo "[emulator] already stopped serial=$serial"' in script_text
     assert "No emulator process found while device remained visible" in script_text
+    assert 'formal_step_timeout_sec=60' in script_text
+    assert 'official_validator_flush_grace_sec=300' in script_text
+    assert 'formal_episode_timeout_sec="$((formal_max_steps * formal_step_timeout_sec + official_validator_flush_grace_sec))"' in script_text
+    assert 'timeout_sec="${OMNIFLOW_SINGLE_TASK_TIMEOUT_SEC:-$formal_episode_timeout_sec}"' in script_text
 
 
 def test_runlog_memory_mode_does_not_treat_disabled_stock_capture_as_active(

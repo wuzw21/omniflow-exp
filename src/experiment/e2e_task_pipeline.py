@@ -47,6 +47,13 @@ SOURCE_MAX_STEPS = 30
 FORMAL_MAX_STEPS = 20
 MAX_FALLBACK_STEPS = 5
 DEFAULT_DEADLINE_SEC = 1800
+FORMAL_STEP_TIMEOUT_SEC = 60
+OFFICIAL_VALIDATOR_FLUSH_GRACE_SEC = 300
+FORMAL_EPISODE_TIMEOUT_SEC = (
+    FORMAL_MAX_STEPS * FORMAL_STEP_TIMEOUT_SEC
+    + OFFICIAL_VALIDATOR_FLUSH_GRACE_SEC
+)
+FORMAL_CELL_TIMEOUT_SEC = FORMAL_EPISODE_TIMEOUT_SEC + 120
 PHASE_TIMEOUTS_SEC = {
     "source_device": 240,
     "source_replay": 480,
@@ -54,8 +61,8 @@ PHASE_TIMEOUTS_SEC = {
     "source_qualification": 300,
     "mobilegpt_memory": 300,
     "appagent_memory": 360,
-    "target_episode": 600,
-    "target_cell": 720,
+    "target_episode": FORMAL_EPISODE_TIMEOUT_SEC,
+    "target_cell": FORMAL_CELL_TIMEOUT_SEC,
 }
 
 

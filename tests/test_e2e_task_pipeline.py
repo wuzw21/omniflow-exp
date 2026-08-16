@@ -14,7 +14,10 @@ from src.experiment.e2e_task_pipeline import (
     DEFAULT_DEADLINE_SEC,
     DEVICES,
     EVALUATION_SEED,
+    FORMAL_CELL_TIMEOUT_SEC,
+    FORMAL_EPISODE_TIMEOUT_SEC,
     FORMAL_MAX_STEPS,
+    FORMAL_STEP_TIMEOUT_SEC,
     MAX_FALLBACK_STEPS,
     METHODS,
     SOURCE_DEVICE,
@@ -181,6 +184,12 @@ def test_cell_environment_uses_orchestrator_budget_and_child_guard(
         PHASE_TIMEOUTS_SEC["target_episode"]
     )
     assert PHASE_TIMEOUTS_SEC["target_cell"] > PHASE_TIMEOUTS_SEC["target_episode"]
+
+
+def test_formal_timeout_covers_frozen_steps_and_validator_flush() -> None:
+    assert FORMAL_EPISODE_TIMEOUT_SEC == FORMAL_MAX_STEPS * FORMAL_STEP_TIMEOUT_SEC + 300
+    assert FORMAL_EPISODE_TIMEOUT_SEC > 600
+    assert FORMAL_CELL_TIMEOUT_SEC > FORMAL_EPISODE_TIMEOUT_SEC
 
 
 def test_source_device_ready_requires_exact_avd_identity(
