@@ -875,20 +875,7 @@ def _verified_registered_result(path: Path) -> dict[str, Any]:
         validator_coverage = float(row.get("official_validator_coverage_rate") or 0)
     except (TypeError, ValueError) as error:
         raise ValueError("registered_result_validator_coverage_invalid") from error
-    validator_error = str(row.get("error") or "").strip()
-    task_started_once = any(
-        row.get(field) == 1
-        for field in (
-            "episode_task_started_count",
-            "warm_task_started_count",
-            "mobilegpt_task_started_count",
-        )
-    )
-    conclusion = (not validator_error or task_started_once) and (
-        (official_used and isinstance(official_success, bool))
-        or validator_count > 0
-        or validator_coverage > 0
-    )
+    conclusion = official_used and isinstance(official_success, bool)
     return {
         "payload": payload,
         "manifest": manifest,
@@ -1051,6 +1038,7 @@ def _formal_result_protocol_error(
         FORMAL_METHODS,
         FORMAL_SOURCE_SEED,
         formal_result_environment_failure_reasons,
+        has_official_validator_conclusion,
         validate_formal_result_protocol,
     )
 
@@ -1075,6 +1063,11 @@ def _formal_result_protocol_error(
         return (
             "formal_result_environment_failure:"
             f"{task}:{method}:{device}:{','.join(environment_reasons)}"
+        )
+    if not has_official_validator_conclusion(row):
+        return (
+            "official_validator_conclusion_missing:"
+            f"{task}:{method}:{device}"
         )
     try:
         validate_formal_result_protocol(
@@ -1199,8 +1192,6 @@ def _load_results(
             )
             continue
         record["verified_registration"] = True
-        if not verified["validator_conclusion"]:
-            continue
         result_row = verified["row"]
         result_payload = verified["payload"]
         manifest = verified["manifest"]
@@ -1231,6 +1222,8 @@ def _load_results(
                     ]
                 )
             )
+            continue
+        if not verified["validator_conclusion"]:
             continue
         manifest_path = verified["manifest_path"]
         manifest_digest = _sha256(manifest_path)

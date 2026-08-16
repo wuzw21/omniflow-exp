@@ -425,7 +425,7 @@ def test_registered_cell_plan_retries_rows_without_validator_coverage(
     assert plan["pending"] == [("ours", "small5554")]
 
 
-def test_registered_cell_plan_retries_validator_rows_with_environment_error(
+def test_registered_cell_plan_keeps_validator_rows_with_environment_error(
     tmp_path: Path,
 ) -> None:
     runs_root = tmp_path / "runs"
@@ -448,8 +448,8 @@ def test_registered_cell_plan_retries_validator_rows_with_environment_error(
         evaluation_seed=113,
     )
 
-    assert plan["completed"] == []
-    assert plan["pending"] == [("fixed_replay", "fold5564")]
+    assert plan["completed"] == [("fixed_replay", "fold5564")]
+    assert plan["pending"] == []
 
 
 def test_registered_cell_plan_accepts_per_episode_validator_conclusion(
@@ -508,8 +508,17 @@ def test_registered_cell_plan_does_not_treat_coverage_as_a_conclusion(
     assert plan["pending"] == [("t3a_hint", "fold5564")]
 
 
+@pytest.mark.parametrize(
+    "parser_error",
+    (
+        "TypeError: baseline action parser failed",
+        "ValueError: baseline action parser failed",
+        "unclassified parser failure",
+    ),
+)
 def test_registered_cell_plan_keeps_validator_failure_with_parser_error(
     tmp_path: Path,
+    parser_error: str,
 ) -> None:
     runs_root = tmp_path / "runs"
     task = "AudioRecorderRecordAudioWithFileName"
@@ -519,8 +528,8 @@ def test_registered_cell_plan_keeps_validator_failure_with_parser_error(
         method="t3a_hint",
         device="fold5564",
         success=False,
-        error="TypeError: baseline action parser failed",
-        runtime_integrity_error="TypeError: baseline action parser failed",
+        error=parser_error,
+        runtime_integrity_error=parser_error,
     )
 
     plan = registered_cell_plan(
@@ -549,7 +558,7 @@ def test_registered_cell_plan_keeps_validator_failure_with_parser_error(
         ),
     ),
 )
-def test_registered_cell_plan_retries_environment_failures_even_with_validator(
+def test_registered_cell_plan_keeps_validator_conclusions_with_error_evidence(
     tmp_path: Path,
     method: str,
     runtime_integrity_error: str,
@@ -578,9 +587,9 @@ def test_registered_cell_plan_retries_environment_failures_even_with_validator(
         evaluation_seed=113,
     )
 
-    assert plan["completed"] == []
-    assert plan["pending"] == [(method, "small5554")]
-    assert load_summary_rows(runs_root, {}, []) == []
+    assert plan["completed"] == [(method, "small5554")]
+    assert plan["pending"] == []
+    assert len(load_summary_rows(runs_root, {}, [])) == 1
 
 
 def test_registered_cell_plan_rejects_incompatible_formal_protocol(
@@ -730,7 +739,7 @@ def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
     assert cell["official_validator_success"] is False
 
 
-def test_result_registration_rejects_runtime_integrity_failure(
+def test_result_registration_keeps_runtime_integrity_evidence_after_conclusion(
     tmp_path: Path,
 ) -> None:
     summary = tmp_path / "attempt" / "one_task_summary.json"
@@ -760,17 +769,22 @@ def test_result_registration_rejects_runtime_integrity_failure(
         },
     )
     runs_root = tmp_path / "runs"
+    source_index = tmp_path / "source_index.json"
+    _write_json(source_index, {})
 
-    with pytest.raises(ValueError, match="formal_result_environment_failure"):
-        register_attempt_summary(
-            summary_path=summary,
-            attempt_manifest_path=attempt_manifest,
-            runs_root=runs_root,
-            master_root=tmp_path / "master",
-            source_index_path=tmp_path / "source_index.json",
-        )
+    registration = register_attempt_summary(
+        summary_path=summary,
+        attempt_manifest_path=attempt_manifest,
+        runs_root=runs_root,
+        master_root=tmp_path / "master",
+        source_index_path=source_index,
+    )
 
-    assert not runs_root.exists()
+    row = json.loads(
+        Path(registration["registered_results"][0]).read_text(encoding="utf-8")
+    )["rows"][0]
+    assert row["official_validator_success"] is False
+    assert row["runtime_integrity_error"] == "mobilegpt_app_ui_not_ready"
 
 
 def test_result_registration_rejects_missing_boolean_validator_conclusion(
@@ -817,8 +831,17 @@ def test_result_registration_rejects_missing_boolean_validator_conclusion(
     assert not runs_root.exists()
 
 
+@pytest.mark.parametrize(
+    "parser_error",
+    (
+        "TypeError: baseline action parser failed",
+        "ValueError: baseline action parser failed",
+        "arbitrary parser failure",
+    ),
+)
 def test_result_registration_keeps_parser_failure_after_validator_conclusion(
     tmp_path: Path,
+    parser_error: str,
 ) -> None:
     summary = tmp_path / "attempt" / "one_task_summary.json"
     _write_json(
@@ -831,10 +854,8 @@ def test_result_registration_keeps_parser_failure_after_validator_conclusion(
                     "device": "small5554",
                     "official_validator_used": True,
                     "official_validator_success": False,
-                    "error": "TypeError: baseline action parser failed",
-                    "runtime_integrity_error": (
-                        "TypeError: baseline action parser failed"
-                    ),
+                    "error": parser_error,
+                    "runtime_integrity_error": parser_error,
                 }
             ],
         },
@@ -863,6 +884,4 @@ def test_result_registration_keeps_parser_failure_after_validator_conclusion(
     registered = Path(registration["registered_results"][0])
     row = json.loads(registered.read_text(encoding="utf-8"))["rows"][0]
     assert row["official_validator_success"] is False
-    assert row["runtime_integrity_error"] == (
-        "TypeError: baseline action parser failed"
-    )
+    assert row["runtime_integrity_error"] == parser_error

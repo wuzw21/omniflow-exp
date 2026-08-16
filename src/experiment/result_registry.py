@@ -678,7 +678,7 @@ def _load_verified_registered_result(summary_path: Path) -> dict[str, Any]:
 
 
 def mobilegpt_runtime_integrity_error(value: Any) -> str | None:
-    """Classify MobileGPT transport/runtime errors, not method terminals."""
+    """Classify MobileGPT transport/runtime evidence for run accounting."""
 
     error = str(value or "").strip()
     if not error or "mobilegpt_step_budget_exhausted" in error:
@@ -701,31 +701,19 @@ def formal_result_environment_failure_reasons(
 ) -> tuple[str, ...]:
     """Return explicit runtime/environment failures that forbid registration."""
 
+    if has_official_validator_conclusion(row):
+        return ()
+
     reasons: list[str] = []
-    parser_failure_with_validator = (
-        row.get("official_validator_used") is True
-        and isinstance(row.get("official_validator_success"), bool)
-        and "TypeError:" in str(row.get("error") or "")
-    )
     runtime_integrity_error = row.get("runtime_integrity_error")
-    if not parser_failure_with_validator and (
-        (
-            isinstance(runtime_integrity_error, str)
-            and runtime_integrity_error.strip()
-        )
-        or (
-            runtime_integrity_error is not None
-            and not isinstance(runtime_integrity_error, str)
-            and bool(runtime_integrity_error)
-        )
-    ):
-        reasons.append("runtime_integrity_error")
     if (
-        str(row.get("method") or "") == "mobilegpt_offline_retrieval"
-        and mobilegpt_runtime_integrity_error(row.get("error"))
+        isinstance(runtime_integrity_error, str)
+        and runtime_integrity_error.strip()
+    ) or (
+        runtime_integrity_error is not None
+        and not isinstance(runtime_integrity_error, str)
+        and bool(runtime_integrity_error)
     ):
-        reasons.append("runtime_integrity_error")
-    if "FileNotFoundError:" in str(row.get("error") or ""):
         reasons.append("runtime_integrity_error")
 
     environment_failure = row.get("environment_failure")

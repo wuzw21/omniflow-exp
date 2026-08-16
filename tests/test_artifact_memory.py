@@ -128,7 +128,8 @@ def _write_registered_result(
     *,
     attempt: str,
     registered_at: str,
-    success: bool,
+    success: bool | None,
+    validator_used: bool = True,
     device: str = "small5554",
     max_steps: int = 20,
     use_oob: bool = False,
@@ -178,7 +179,7 @@ def _write_registered_result(
                 "console_port": (
                     5554 if device in {"small5554", "target5554"} else 5564
                 ),
-                "official_validator_used": True,
+                "official_validator_used": validator_used,
                 "official_validator_success": success,
                 "official_validator_task_count": 1,
                 "error": error,
@@ -2069,7 +2070,7 @@ def test_refresh_selects_fixed_replay_result_for_canonical_source_only(
     )
 
 
-def test_refresh_preserves_but_does_not_select_environment_error_result(
+def test_refresh_selects_validator_conclusion_with_error_evidence(
     tmp_path: Path,
 ) -> None:
     source = _write_source_run_log(tmp_path)
@@ -2099,8 +2100,11 @@ def test_refresh_preserves_but_does_not_select_environment_error_result(
         result_roots=(runs,),
     )
 
-    assert report["counts"]["canonical_result_cells"] == 0
-    assert report["canonical"]["result_cells"] == {}
+    assert report["counts"]["canonical_result_cells"] == 1
+    cell = report["canonical"]["result_cells"][
+        "RecordWithName|ours|small5554|111|113"
+    ]
+    assert cell["official_validator_success"] is False
     assert report["artifacts"]["results"][_sha256(invalid)][
         "verified_registration"
     ] is True
@@ -2119,7 +2123,7 @@ def test_refresh_preserves_but_does_not_select_environment_error_result(
         ),
     ),
 )
-def test_refresh_preserves_but_excludes_runtime_environment_failures(
+def test_refresh_selects_validator_conclusions_with_error_evidence(
     tmp_path: Path,
     method: str,
     runtime_integrity_error: str,
@@ -2161,9 +2165,48 @@ def test_refresh_preserves_but_excludes_runtime_environment_failures(
         result_roots=(tmp_path / "runs",),
     )
 
-    assert report["canonical"]["result_cells"] == {}
+    cell = report["canonical"]["result_cells"][
+        f"RecordWithName|{method}|small5554|111|113"
+    ]
+    assert cell["official_validator_success"] is False
     record = report["artifacts"]["results"][_sha256(invalid)]
     assert record["verified_registration"] is True
+    assert record.get("canonical_exclusion_errors", []) == []
+
+
+def test_refresh_keeps_environment_attempt_without_boolean_conclusion_pending(
+    tmp_path: Path,
+) -> None:
+    source = _write_source_run_log(tmp_path)
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    attempt = _write_registered_result(
+        tmp_path / "runs",
+        attempt="attempt_001",
+        registered_at="2026-07-20T00:00:00+00:00",
+        success=None,
+        runtime_integrity_error="ValueError: state collection failed",
+        environment_failure=True,
+        error="arbitrary environment failure",
+    )
+
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "evidence",),
+        result_roots=(tmp_path / "runs",),
+    )
+
+    assert report["canonical"]["result_cells"] == {}
+    record = report["artifacts"]["results"][_sha256(attempt)]
     assert any(
         "formal_result_environment_failure" in error
         for error in record["canonical_exclusion_errors"]
