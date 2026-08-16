@@ -833,9 +833,11 @@ def _official_validator_success(row: dict[str, Any]) -> bool:
 def _result_has_official_validator_conclusion(result: Any) -> bool:
     if not isinstance(result, dict):
         return False
+    reward = result.get("is_successful")
+    if isinstance(reward, bool):
+        return True
     if str(result.get("exception_info") or result.get("error") or "").strip():
         return False
-    reward = result.get("is_successful")
     if reward is None:
         return False
     try:

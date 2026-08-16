@@ -702,20 +702,30 @@ def formal_result_environment_failure_reasons(
     """Return explicit runtime/environment failures that forbid registration."""
 
     reasons: list[str] = []
+    parser_failure_with_validator = (
+        row.get("official_validator_used") is True
+        and isinstance(row.get("official_validator_success"), bool)
+        and "TypeError:" in str(row.get("error") or "")
+    )
     runtime_integrity_error = row.get("runtime_integrity_error")
-    if (
-        isinstance(runtime_integrity_error, str)
-        and runtime_integrity_error.strip()
-    ) or (
-        runtime_integrity_error is not None
-        and not isinstance(runtime_integrity_error, str)
-        and bool(runtime_integrity_error)
+    if not parser_failure_with_validator and (
+        (
+            isinstance(runtime_integrity_error, str)
+            and runtime_integrity_error.strip()
+        )
+        or (
+            runtime_integrity_error is not None
+            and not isinstance(runtime_integrity_error, str)
+            and bool(runtime_integrity_error)
+        )
     ):
         reasons.append("runtime_integrity_error")
     if (
         str(row.get("method") or "") == "mobilegpt_offline_retrieval"
         and mobilegpt_runtime_integrity_error(row.get("error"))
     ):
+        reasons.append("runtime_integrity_error")
+    if "FileNotFoundError:" in str(row.get("error") or ""):
         reasons.append("runtime_integrity_error")
 
     environment_failure = row.get("environment_failure")
@@ -735,6 +745,12 @@ def formal_result_environment_failure_reasons(
         if str(row.get(field) or "").strip().lower() == "environment_failure":
             reasons.append(field)
     return tuple(dict.fromkeys(reasons))
+
+
+def has_official_validator_conclusion(row: dict[str, Any]) -> bool:
+    return row.get("official_validator_used") is True and isinstance(
+        row.get("official_validator_success"), bool
+    )
 
 
 def validate_formal_result_protocol(
@@ -876,29 +892,7 @@ def registered_cell_plan(
                 continue
             if formal_result_environment_failure_reasons(row):
                 continue
-            try:
-                validator_task_count = float(
-                    row.get("official_validator_task_count") or 0
-                )
-                validator_coverage = float(
-                    row.get("official_validator_coverage_rate") or 0
-                )
-            except (TypeError, ValueError) as error:
-                raise ValueError(
-                    f"registered validator coverage is invalid: {path}"
-                ) from error
-            validator_used = row.get("official_validator_used") is True
-            validator_success = row.get("official_validator_success")
-            validator_error = str(row.get("error") or "").strip()
-            validator_conclusion = validator_used and isinstance(
-                validator_success,
-                bool,
-            )
-            cell_completed = not validator_error and (
-                validator_conclusion
-                or validator_task_count > 0
-                or validator_coverage > 0
-            )
+            cell_completed = has_official_validator_conclusion(row)
             if not cell_completed:
                 continue
             if formal_max_steps is not None:
@@ -1347,6 +1341,11 @@ def register_attempt_summary(
             raise ValueError(
                 "formal_result_environment_failure:"
                 f"{task_name}:{','.join(reasons)}"
+            )
+        if not has_official_validator_conclusion(row):
+            raise ValueError(
+                "official_validator_conclusion_missing:"
+                f"{task_name}:{row.get('method')}:{row.get('device')}"
             )
 
     ledger_records: list[dict[str, Any]] = []

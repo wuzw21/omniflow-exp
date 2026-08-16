@@ -147,7 +147,7 @@ the resulting contract here.
 | `OMNIFLOW_SINGLE_TASK_EVALUATION_SEED` | Target evaluation seed; formal value is `113` |
 | `OMNIFLOW_OURS_CONVERTED_ASSET_ROOT` | A new, empty conversion version directory |
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
-| `OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT` | Optional immutable AndroidWorld checkout root containing the `android_world` package; defaults to the pinned `653d449` release beside the asset root when present |
+| `OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT` | Optional immutable AndroidWorld checkout root containing the `android_world` package; defaults to the pinned `38d1214` release beside the asset root when present |
 | `OMNIFLOW_APPAGENT_DOCUMENT_MODEL` | AppAgent offline documentation VLM; defaults to the paper model `GLM-5.1` |
 | `OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL` | MobileGPT offline embedding model; defaults to its native `text-embedding-v4` |
 | `OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE` | Development endpoint profile; defaults to `llmthu` |
@@ -375,10 +375,15 @@ Fold hierarchy is marked explicitly and cannot enter OmniTransfer; normal VLM
 fallback receives the saved screenshot instead.
 
 The runtime pins the AndroidWorld adapter to commit
-`653d449e4a95cbb9fa0704c56968753196c05170` when its immutable release is
+`38d1214d7df6cc7ec8503d912dad7aec814dd640` when its immutable release is
 present. An explicit `OMNIFLOW_ANDROID_WORLD_ROOT` remains the only override
 for a checked external copy; the unified script never silently uses an
 unversioned dirty checkout when the pinned release is available.
+
+If native `get_state()` reports a stale accessibility/gRPC tree, the shared
+adapter force-toggles AndroidWorld's AccessibilityForwarder, rebuilds the
+official wrapper, and retries that same observation once. Healthy observations
+take no extra read, and unrelated state errors still fail unchanged.
 
 During official app setup only, the shared AndroidWorld adapter normalizes
 Unicode presentation variants in visible UI labels while preserving native

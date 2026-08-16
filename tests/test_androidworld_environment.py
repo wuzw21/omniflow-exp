@@ -106,3 +106,65 @@ def test_shared_environment_proxy_delegates_other_attributes(tmp_path) -> None:
     session.env.interaction_cache = "message"
     assert env.interaction_cache == "message"
     session.close()
+
+
+def test_shared_environment_recovers_stale_accessibility_state_once(tmp_path) -> None:
+    calls: list[str] = []
+    states = iter(
+        [
+            RuntimeError("stale gRPC accessibility tree"),
+            _state("recovered"),
+        ]
+    )
+
+    def get_state():
+        value = next(states)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    controller = SimpleNamespace(
+        restart_accessibility_forwarder=lambda: calls.append("restart"),
+    )
+    env = SimpleNamespace(
+        controller=controller,
+        get_state=get_state,
+        execute_action=lambda _: None,
+    )
+    experiment_environment = AndroidWorldExperimentEnvironment(
+        env,
+        AndroidWorldEnvironmentConfig(evidence_root=tmp_path),
+    )
+
+    with experiment_environment.install_episode_recorder() as session:
+        state = session.env.get_state()
+
+    assert state.forest == "recovered"
+    assert calls == ["restart"]
+
+
+def test_shared_environment_does_not_recover_unrelated_state_errors(tmp_path) -> None:
+    calls: list[str] = []
+    controller = SimpleNamespace(
+        restart_accessibility_forwarder=lambda: calls.append("restart"),
+        refresh_env=lambda: calls.append("refresh"),
+    )
+    env = SimpleNamespace(
+        controller=controller,
+        get_state=lambda: (_ for _ in ()).throw(ValueError("bad state schema")),
+        execute_action=lambda _: None,
+    )
+    experiment_environment = AndroidWorldExperimentEnvironment(
+        env,
+        AndroidWorldEnvironmentConfig(evidence_root=tmp_path),
+    )
+
+    with experiment_environment.install_episode_recorder() as session:
+        try:
+            session.env.get_state()
+        except ValueError as error:
+            assert str(error) == "bad state schema"
+        else:
+            raise AssertionError("unrelated state error must propagate")
+
+    assert calls == []

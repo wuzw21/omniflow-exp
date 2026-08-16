@@ -68,7 +68,7 @@ def _write_registered_cell(
     task: str,
     method: str,
     device: str,
-    success: bool,
+    success: bool | None,
     attempt: str = "iteration_01",
     validator_task_count: int = 1,
     validator_used: bool = True,
@@ -480,6 +480,62 @@ def test_registered_cell_plan_accepts_per_episode_validator_conclusion(
     assert plan["pending"] == []
 
 
+def test_registered_cell_plan_does_not_treat_coverage_as_a_conclusion(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "runs"
+    task = "AudioRecorderRecordAudioWithFileName"
+    _write_registered_cell(
+        runs_root,
+        task=task,
+        method="t3a_hint",
+        device="fold5564",
+        success=None,
+        validator_task_count=1,
+        validator_used=True,
+    )
+
+    plan = registered_cell_plan(
+        runs_root=runs_root,
+        task_name=task,
+        methods=("t3a_hint",),
+        devices=("fold5564",),
+        source_seed=111,
+        evaluation_seed=113,
+    )
+
+    assert plan["completed"] == []
+    assert plan["pending"] == [("t3a_hint", "fold5564")]
+
+
+def test_registered_cell_plan_keeps_validator_failure_with_parser_error(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "runs"
+    task = "AudioRecorderRecordAudioWithFileName"
+    _write_registered_cell(
+        runs_root,
+        task=task,
+        method="t3a_hint",
+        device="fold5564",
+        success=False,
+        error="TypeError: baseline action parser failed",
+        runtime_integrity_error="TypeError: baseline action parser failed",
+    )
+
+    plan = registered_cell_plan(
+        runs_root=runs_root,
+        task_name=task,
+        methods=("t3a_hint",),
+        devices=("fold5564",),
+        source_seed=111,
+        evaluation_seed=113,
+    )
+
+    assert plan["completed"] == [("t3a_hint", "fold5564")]
+    assert plan["pending"] == []
+
+
 @pytest.mark.parametrize(
     ("method", "runtime_integrity_error", "environment_failure", "error"),
     (
@@ -715,3 +771,98 @@ def test_result_registration_rejects_runtime_integrity_failure(
         )
 
     assert not runs_root.exists()
+
+
+def test_result_registration_rejects_missing_boolean_validator_conclusion(
+    tmp_path: Path,
+) -> None:
+    summary = tmp_path / "attempt" / "one_task_summary.json"
+    _write_json(
+        summary,
+        {
+            "task_name": "ContactsNewContactDraft",
+            "rows": [
+                {
+                    "method": "t3a_hint",
+                    "device": "fold5564",
+                    "official_validator_used": True,
+                    "official_validator_success": None,
+                    "official_validator_task_count": 1,
+                    "official_validator_coverage_rate": 1.0,
+                }
+            ],
+        },
+    )
+    attempt_manifest = summary.with_name("attempt_manifest.json")
+    _write_json(
+        attempt_manifest,
+        {
+            "immutable": True,
+            "attempt_id": "iteration_01",
+            "source_seed": 111,
+            "evaluation_seed": 113,
+        },
+    )
+    runs_root = tmp_path / "runs"
+
+    with pytest.raises(ValueError, match="official_validator_conclusion_missing"):
+        register_attempt_summary(
+            summary_path=summary,
+            attempt_manifest_path=attempt_manifest,
+            runs_root=runs_root,
+            master_root=tmp_path / "master",
+            source_index_path=tmp_path / "source_index.json",
+        )
+
+    assert not runs_root.exists()
+
+
+def test_result_registration_keeps_parser_failure_after_validator_conclusion(
+    tmp_path: Path,
+) -> None:
+    summary = tmp_path / "attempt" / "one_task_summary.json"
+    _write_json(
+        summary,
+        {
+            "task_name": "ExpenseAddSingle",
+            "rows": [
+                {
+                    "method": "mobilegpt_offline_retrieval",
+                    "device": "small5554",
+                    "official_validator_used": True,
+                    "official_validator_success": False,
+                    "error": "TypeError: baseline action parser failed",
+                    "runtime_integrity_error": (
+                        "TypeError: baseline action parser failed"
+                    ),
+                }
+            ],
+        },
+    )
+    attempt_manifest = summary.with_name("attempt_manifest.json")
+    _write_json(
+        attempt_manifest,
+        {
+            "immutable": True,
+            "attempt_id": "iteration_01",
+            "source_seed": 111,
+            "evaluation_seed": 113,
+        },
+    )
+    source_index = tmp_path / "source_index.json"
+    _write_json(source_index, {})
+
+    registration = register_attempt_summary(
+        summary_path=summary,
+        attempt_manifest_path=attempt_manifest,
+        runs_root=tmp_path / "runs",
+        master_root=tmp_path / "master",
+        source_index_path=source_index,
+    )
+
+    registered = Path(registration["registered_results"][0])
+    row = json.loads(registered.read_text(encoding="utf-8"))["rows"][0]
+    assert row["official_validator_success"] is False
+    assert row["runtime_integrity_error"] == (
+        "TypeError: baseline action parser failed"
+    )

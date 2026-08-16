@@ -277,9 +277,10 @@ def test_target_workers_parallelize_devices_and_serialize_methods(
 ) -> None:
     args = _args(tmp_path)
     calls: list[tuple[str, str, float, float]] = []
+    completed: set[tuple[str, str]] = set()
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline._completed_cells",
-        lambda _: set(),
+        lambda _: set(completed),
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.concluded_cell_keys",
@@ -299,7 +300,8 @@ def test_target_workers_parallelize_devices_and_serialize_methods(
         time.sleep(0.03)
         finished = time.monotonic()
         calls.append((device, method, started, finished))
-        return {"returncode": 1, "timed_out": False, "wall_sec": 0.03}
+        completed.add((method, device))
+        return {"returncode": 0, "timed_out": False, "wall_sec": 0.03}
 
     run_target_workers(
         args=args,
@@ -324,15 +326,67 @@ def test_target_workers_parallelize_devices_and_serialize_methods(
     assert max(small_first[2], fold_first[2]) < min(small_first[3], fold_first[3])
 
 
+def test_target_workers_fail_stop_after_pending_environment_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    calls: list[tuple[str, str]] = []
+    recorded: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._completed_cells",
+        lambda _: set(),
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.concluded_cell_keys",
+        lambda **_: set(),
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.record_cell_outcome",
+        lambda **kwargs: recorded.append(kwargs) or tmp_path / "outcome.json",
+    )
+
+    def runner(command: list[str], **kwargs: object) -> dict[str, object]:
+        environment = kwargs["environment"]
+        assert isinstance(environment, dict)
+        calls.append(
+            (
+                str(environment["OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS"]).split(":")[0],
+                str(environment["OMNIFLOW_SINGLE_TASK_METHODS"]),
+            )
+        )
+        return {"returncode": 1, "timed_out": False, "wall_sec": 0.01}
+
+    with pytest.raises(PipelinePhaseError, match="target_episode_environment_failure"):
+        run_target_workers(
+            args=args,
+            deadline=Deadline(10),
+            attempt_id="attempt-test",
+            attempt_root=tmp_path / "attempt",
+            outcomes_root=tmp_path / "outcomes",
+            store_path=tmp_path / "store.json",
+            mobilegpt_memory=tmp_path / "mobilegpt",
+            appagent_memory=tmp_path / "appagent",
+            blocked_methods={},
+            command_runner=runner,
+        )
+
+    assert recorded
+    assert all(row["status"] == "environment_failure" for row in recorded)
+    for device in ("small5554", "fold5564"):
+        assert len([call for call in calls if call[0] == device]) <= 1
+
+
 def test_blocked_cells_do_not_duplicate_shared_prep_accounting(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     args = _args(tmp_path)
     recorded: list[dict[str, object]] = []
+    completed: set[tuple[str, str]] = set()
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline._completed_cells",
-        lambda _: set(),
+        lambda _: set(completed),
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.concluded_cell_keys",
@@ -355,11 +409,17 @@ def test_blocked_cells_do_not_duplicate_shared_prep_accounting(
         blocked_methods={
             "ours": ("prep_failed", "function_asset", str(tmp_path / "failure.json"))
         },
-        command_runner=lambda *args, **kwargs: {
-            "returncode": 1,
-            "timed_out": False,
-            "wall_sec": 0,
-        },
+        command_runner=lambda *args, **kwargs: (
+            completed.add(
+                (
+                    str(kwargs["environment"]["OMNIFLOW_SINGLE_TASK_METHODS"]),
+                    str(
+                        kwargs["environment"]["OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS"]
+                    ).split(":")[0],
+                )
+            )
+            or {"returncode": 0, "timed_out": False, "wall_sec": 0}
+        ),
     )
 
     ours = [row for row in recorded if row["method"] == "ours"]

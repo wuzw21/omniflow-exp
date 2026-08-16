@@ -666,6 +666,12 @@ def test_androidworld_skipped_episode_is_not_validator_conclusion() -> None:
     assert _result_has_official_validator_conclusion(
         {"is_successful": 0.0, "exception_info": None}
     )
+    assert _result_has_official_validator_conclusion(
+        {
+            "is_successful": False,
+            "exception_info": "TypeError: baseline action parser failed",
+        }
+    )
 
 
 def test_observe_preserves_one_official_androidworld_state(tmp_path) -> None:

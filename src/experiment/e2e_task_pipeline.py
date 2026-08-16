@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import signal
 import subprocess
+import threading
 import time
 from typing import Any, Callable, Sequence
 
@@ -1214,6 +1215,7 @@ def run_target_workers(
     """Run methods sequentially per device and devices concurrently."""
 
     completed = _concluded_cells(args, outcomes_root, attempt_id)
+    stop_event = threading.Event()
     for method, (status, stage, evidence) in blocked_methods.items():
         for label, serial, _ in DEVICES:
             if (method, label) in completed:
@@ -1237,13 +1239,15 @@ def run_target_workers(
         label, serial, _ = device
         worker_results: list[dict[str, Any]] = []
         for method in METHODS:
+            if stop_event.is_set():
+                break
             if method in blocked_methods or (method, label) in _completed_cells(args):
                 worker_results.append(
                     {"method": method, "device": label, "status": "reused_or_blocked"}
                 )
                 continue
             if deadline.expired:
-                record_cell_outcome(
+                outcome_path = record_cell_outcome(
                     outcomes_root=outcomes_root,
                     task_name=args.task,
                     method=method,
@@ -1260,7 +1264,17 @@ def run_target_workers(
                 worker_results.append(
                     {"method": method, "device": label, "status": "deadline_exceeded"}
                 )
-                continue
+                stop_event.set()
+                raise PipelinePhaseError(
+                    "target_episode_environment_failure",
+                    {
+                        "status": "deadline_exceeded",
+                        "stage": "target_episode",
+                        "method": method,
+                        "device": label,
+                        "outcome": str(outcome_path),
+                    },
+                )
             log_path = attempt_root / "logs" / label / f"{method}.log"
             result = command_runner(
                 ["bash", str(args.script)],
@@ -1279,7 +1293,12 @@ def run_target_workers(
                 timeout_sec=deadline.remaining(PHASE_TIMEOUTS_SEC["target_cell"]),
             )
             if (method, label) not in _completed_cells(args):
-                record_cell_outcome(
+                status = (
+                    "deadline_exceeded"
+                    if result.get("timed_out") or deadline.expired
+                    else "environment_failure"
+                )
+                outcome_path = record_cell_outcome(
                     outcomes_root=outcomes_root,
                     task_name=args.task,
                     method=method,
@@ -1288,11 +1307,7 @@ def run_target_workers(
                     attempt_id=attempt_id,
                     source_seed=SOURCE_SEED,
                     evaluation_seed=EVALUATION_SEED,
-                    status=(
-                        "deadline_exceeded"
-                        if result.get("timed_out") or deadline.expired
-                        else "execution_failed"
-                    ),
+                    status=status,
                     stage="target_episode",
                     task_log=log_path,
                     artifact_root=(
@@ -1303,6 +1318,17 @@ def run_target_workers(
                         / f"{attempt_id}.{method}.{label}"
                     ),
                     outer_wall_sec=float(result.get("wall_sec") or 0),
+                )
+                stop_event.set()
+                raise PipelinePhaseError(
+                    "target_episode_environment_failure",
+                    {
+                        "status": status,
+                        "stage": "target_episode",
+                        "method": method,
+                        "device": label,
+                        "outcome": str(outcome_path),
+                    },
                 )
             worker_results.append({"method": method, "device": label, **result})
         return worker_results
