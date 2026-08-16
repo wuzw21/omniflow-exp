@@ -191,10 +191,47 @@ def _official_hint_text(value: Any, *, max_len: int = 100) -> str:
     return text
 
 
+def _official_hint_node(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ""
+    allowed_keys = {
+        "node_id",
+        "class_name",
+        "text",
+        "content_description",
+        "resource_id",
+        "package_name",
+    }
+    if any(str(key) not in allowed_keys for key in value):
+        return ""
+    labels = (
+        ("id", "node_id"),
+        ("class", "class_name"),
+        ("text", "text"),
+        ("content-desc", "content_description"),
+        ("resource-id", "resource_id"),
+        ("package", "package_name"),
+    )
+    fields = []
+    for label, key in labels:
+        text = _official_hint_text(value.get(key), max_len=120)
+        if text:
+            fields.append(f"{label}={text!r}")
+    return ", ".join(fields)
+
+
 def _render_official_semantic_hint_step(index: int, step: Any) -> str:
     if not isinstance(step, dict):
         return ""
-    allowed_keys = {"action", "target", "app", "direction", "key"}
+    allowed_keys = {
+        "action",
+        "target",
+        "app",
+        "direction",
+        "key",
+        "purpose",
+        "source_node",
+    }
     if any(str(key) not in allowed_keys for key in step):
         return ""
     action = str(step.get("action") or "").strip().lower()
@@ -204,35 +241,47 @@ def _render_official_semantic_hint_step(index: int, step: Any) -> str:
     app = _official_hint_text(step.get("app"), max_len=80)
     direction = _official_hint_text(step.get("direction"), max_len=24)
     key = _official_hint_text(step.get("key"), max_len=24)
+    purpose = _official_hint_text(step.get("purpose"), max_len=320)
+    source_node = _official_hint_node(step.get("source_node"))
     prefix = f"{index}. "
+    suffix_parts = []
+    if source_node:
+        suffix_parts.append(f"Source accessibility node: {source_node}.")
+    if purpose:
+        suffix_parts.append(f"Purpose observed in the successful run: {purpose}")
+    suffix = (" " + " ".join(suffix_parts)) if suffix_parts else ""
     if action in {"open_app", "launch_app"}:
-        return prefix + (f"Open app {app}." if app else "Open the relevant app.")
+        return prefix + (f"Open app {app}." if app else "Open the relevant app.") + suffix
     if action in {"click", "tap", "long_press"}:
+        if not target and not source_node:
+            return ""
         verb = "Long press" if action == "long_press" else "Click"
         return prefix + (
             f"{verb} the UI target described as '{target}'."
             if target
-            else f"{verb} the relevant visible UI target."
-        )
+            else f"{verb} the UI object identified by the source accessibility node."
+        ) + suffix
     if action in {"input_text", "type_text", "set_text", "enter_text"}:
+        if not target and not source_node:
+            return ""
         return prefix + (
             f"Enter the value requested by the current task into '{target}'."
             if target
-            else "Enter the value requested by the current task into the relevant text field."
-        )
+            else "Enter the value requested by the current task into the text field identified by the source accessibility node."
+        ) + suffix
     if action in {"press_key", "key_event"}:
-        return prefix + (f"Press key {key}." if key else "Press the relevant key.")
+        return prefix + (f"Press key {key}." if key else "Press the relevant key.") + suffix
     if action in {"swipe", "scroll"}:
         if direction and target:
-            return prefix + f"Scroll {direction} on '{target}'."
+            return prefix + f"Scroll {direction} on '{target}'." + suffix
         if direction:
-            return prefix + f"Scroll {direction}."
-        return prefix + "Scroll as needed to reveal the next target."
+            return prefix + f"Scroll {direction}." + suffix
+        return prefix + "Scroll as needed to reveal the next target." + suffix
     if action in {"wait", "sleep"}:
-        return prefix + "Wait for the screen to update."
+        return prefix + "Wait for the screen to update." + suffix
     return prefix + (
         f"Use action {action} on '{target}'." if target else f"Use action {action}."
-    )
+    ) + suffix
 
 
 def _render_official_reference_prompt(steps: list[Any]) -> tuple[str, int]:
@@ -249,9 +298,9 @@ def _render_official_reference_prompt(steps: list[Any]) -> tuple[str, int]:
     return (
         "\n".join(
             [
-                "The following is an action sequence that you may use as a reference:",
+                "The following is a successful source-device action sequence that you may use as semantic reference. Each step preserves the operated UI object, source accessibility-node evidence when available, and the observed purpose:",
                 *rendered,
-                "This sequence is reference guidance, not a replay command. Inspect every current screen and independently choose each next action for the current task. Never infer coordinates or reuse old input values.",
+                "This sequence is reference guidance, not a replay command. On every current screen, locate the equivalent semantic control; resource IDs, node IDs, classes, text, and layout may differ across devices. Independently choose one next action, never reuse source coordinates, and substitute values from the current task rather than old source values.",
             ]
         ),
         len(rendered),
@@ -283,9 +332,10 @@ def _load_official_agent_goal_hint(
     except Exception as exc:  # noqa: BLE001
         meta["error"] = str(exc)
         return "", meta
-    if not isinstance(payload, dict) or payload.get("schema_version") != (
-        "omniflow.t3a_semantic_hint.v1"
-    ):
+    if not isinstance(payload, dict) or payload.get("schema_version") not in {
+        "omniflow.t3a_semantic_hint.v1",
+        "omniflow.t3a_semantic_hint.v2",
+    }:
         meta["error"] = "unsupported or unsafe source hint schema"
         return "", meta
     steps = payload.get("steps")

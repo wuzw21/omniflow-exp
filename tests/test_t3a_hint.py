@@ -9,10 +9,12 @@ from src.experiment.androidworld import (
     _parse_one_task_methods,
     _promote_one_task_metadata_to_row,
     _select_complete_function,
+    _t3a_semantic_hint_step,
     _t3a_hint_action_identity,
     _t3a_hint_step_action,
     build_official_androidworld_command,
 )
+from src.integrations.android_world.launch import _render_official_reference_prompt
 
 
 def test_formal_one_task_method_set_is_exact() -> None:
@@ -34,7 +36,129 @@ def test_t3a_hint_is_a_supported_one_task_method() -> None:
 def test_t3a_hint_reads_androidworld_action_type() -> None:
     assert _t3a_hint_step_action(
         {"action": {"action_type": "open_app", "app_name": "settings"}}
-    ) == ("open_app", {})
+    ) == ("open_app", {"app_name": "settings"})
+
+
+def test_t3a_hint_preserves_semantic_target_and_source_node() -> None:
+    semantic = _t3a_semantic_hint_step(
+        {
+            "action": {"action_type": "click", "x": 632, "y": 1032},
+            "metadata": {
+                "summary": (
+                    'Action selected: {"action_type": "click", "index": 30}. '
+                    'Clicked the "+" button (index 30) to create a new file.'
+                )
+            },
+            "observation": {
+                "forest": (
+                    '<hierarchy><node id="30" class="android.widget.ImageButton" '
+                    'text="" content-desc="Create a new file or folder" '
+                    'resource-id="net.gsantner.markor:id/fab_add_new_item" '
+                    'package="net.gsantner.markor" bounds="[576,976][688,1088]" '
+                    'clickable="true" editable="false" scrollable="false" />'
+                    "</hierarchy>"
+                )
+            },
+        },
+        forbidden_values=(),
+    )
+
+    assert semantic == {
+        "action": "click",
+        "target": "+ button",
+        "purpose": 'Clicked the "+" button (index 30) to create a new file.',
+        "source_node": {
+            "node_id": "30",
+            "class_name": "android.widget.ImageButton",
+            "content_description": "Create a new file or folder",
+            "resource_id": "net.gsantner.markor:id/fab_add_new_item",
+            "package_name": "net.gsantner.markor",
+        },
+    }
+
+
+def test_t3a_hint_reads_canonical_runlog_xml_with_android_namespace() -> None:
+    semantic = _t3a_semantic_hint_step(
+        {
+            "tool_call": {
+                "name": "click",
+                "params": {
+                    "target_description": "Create a new file or folder",
+                    "x": 632.0,
+                    "y": 1032.0,
+                },
+                "reason": "Click Create a new file or folder.",
+            },
+            "observation_before_act": {
+                "xml": (
+                    '<hierarchy xmlns="http://schemas.android.com/apk/res/android">'
+                    '<node id="30" class="android.widget.ImageButton" '
+                    'content-desc="Create a new file or folder" '
+                    'resource-id="net.gsantner.markor:id/fab_add_new_item" '
+                    'bounds="[576,976][688,1088]" clickable="true" />'
+                    "</hierarchy>"
+                )
+            },
+        },
+        forbidden_values=(),
+    )
+
+    assert semantic is not None
+    assert semantic["target"] == "Create a new file or folder"
+    assert semantic["purpose"] == "Click Create a new file or folder."
+    assert semantic["source_node"] == {
+        "node_id": "30",
+        "class_name": "android.widget.ImageButton",
+        "content_description": "Create a new file or folder",
+        "resource_id": "net.gsantner.markor:id/fab_add_new_item",
+    }
+
+
+def test_t3a_hint_rejects_unidentified_pointer_action() -> None:
+    with pytest.raises(ValueError, match="t3a_hint_unidentified_target:click"):
+        _t3a_semantic_hint_step(
+            {"action": {"action_type": "click", "x": 10, "y": 20}},
+            forbidden_values=(),
+        )
+
+
+def test_t3a_hint_redacts_old_values_and_renders_node_evidence() -> None:
+    semantic = _t3a_semantic_hint_step(
+        {
+            "action": {
+                "action_type": "input_text",
+                "clear_text": True,
+                "text": "old_note",
+            },
+            "metadata": {
+                "summary": (
+                    'Action selected: {"action_type": "input_text", "index": 12}. '
+                    'Renamed the note to "old_note" in the name field (index 12).'
+                )
+            },
+            "observation": {
+                "forest": (
+                    '<hierarchy><node id="12" class="android.widget.EditText" '
+                    'text="old_note" content-desc="" resource-id="name_input" '
+                    'package="example" bounds="[64,399][433,482]" '
+                    'clickable="true" editable="true" scrollable="false" />'
+                    "</hierarchy>"
+                )
+            },
+        },
+        forbidden_values=("old_note",),
+    )
+
+    assert semantic is not None
+    assert "old_note" not in str(semantic)
+    assert semantic["target"] == "name field"
+    prompt, rendered_steps = _render_official_reference_prompt([semantic])
+    assert rendered_steps == 1
+    assert "name field" in prompt
+    assert "resource-id='name_input'" in prompt
+    assert "class='android.widget.EditText'" in prompt
+    assert "source coordinates" in prompt
+    assert "old_note" not in prompt
 
 
 @pytest.mark.parametrize(

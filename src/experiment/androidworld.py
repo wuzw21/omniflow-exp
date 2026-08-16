@@ -22,6 +22,7 @@ import sys
 import tempfile
 import time
 from typing import Any, Iterable, Sequence
+import xml.etree.ElementTree as ET
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -5057,9 +5058,48 @@ def _t3a_hint_forbidden_values(params: dict[str, Any]) -> tuple[str, ...]:
         text = re.sub(r"\s+", " ", str(value)).strip().casefold()
         if text:
             values.add(text)
+            suffix = Path(text).suffix
+            if suffix:
+                stem = Path(text).stem.strip().casefold()
+                if len(stem) >= 3:
+                    values.add(stem)
 
     collect(params)
     return tuple(sorted(values, key=len, reverse=True))
+
+
+def _t3a_hint_redacted_text(
+    value: Any,
+    *,
+    forbidden_values: Sequence[str],
+    max_len: int = 320,
+) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    lowered = text.casefold()
+    if not text or any(
+        marker in lowered
+        for marker in (
+            "<hierarchy",
+            "<?xml",
+            "screenshot",
+            ".png",
+            ".jpg",
+            ".jpeg",
+        )
+    ):
+        return ""
+    for forbidden in forbidden_values:
+        if len(forbidden) < 3:
+            continue
+        text = re.sub(
+            re.escape(forbidden),
+            "<current task value>",
+            text,
+            flags=re.IGNORECASE,
+        )
+    if len(text) > max_len:
+        text = text[: max(0, max_len - 3)].rstrip() + "..."
+    return text
 
 
 def _t3a_hint_text(
@@ -5115,7 +5155,14 @@ def _t3a_hint_step_action(step: Any) -> tuple[str, dict[str, Any]]:
         if raw_params is None:
             raw_params = action.get("args")
         if name:
-            return name, dict(raw_params or {}) if isinstance(raw_params, dict) else {}
+            if isinstance(raw_params, dict):
+                return name, dict(raw_params)
+            return name, {
+                str(param_key): param_value
+                for param_key, param_value in action.items()
+                if param_key
+                not in {"name", "type", "tool", "action_type", "params", "arguments", "args"}
+            }
     for key in ("executed_actions", "actions"):
         actions = step.get(key)
         if not isinstance(actions, list):
@@ -5190,21 +5237,220 @@ def _t3a_hint_target(
     return ""
 
 
+def _t3a_hint_step_summary(
+    step: Any,
+    *,
+    forbidden_values: Sequence[str],
+) -> str:
+    if not isinstance(step, dict):
+        return ""
+    candidates: list[Any] = []
+    metadata = step.get("metadata")
+    if isinstance(metadata, dict):
+        candidates.append(metadata.get("summary"))
+    candidates.extend((step.get("summary"), step.get("title"), step.get("description")))
+    for action_key in ("tool_call", "action", "selected_action"):
+        action = step.get(action_key)
+        if isinstance(action, dict):
+            candidates.extend((action.get("reason"), action.get("description")))
+    actions = step.get("actions")
+    if isinstance(actions, list):
+        candidates.extend(
+            action.get("description")
+            for action in actions
+            if isinstance(action, dict)
+        )
+    for candidate in candidates:
+        summary = re.sub(
+            r"^Action selected:\s*\{.*?\}\.\s*",
+            "",
+            str(candidate or ""),
+        )
+        summary = _t3a_hint_redacted_text(
+            summary,
+            forbidden_values=forbidden_values,
+        )
+        if summary:
+            return summary
+    return ""
+
+
+def _t3a_hint_summary_target(summary: str) -> str:
+    patterns = (
+        r"\bClicked\s+(?:the\s+)?(?P<target>.+?)(?:\s*\(index|\s+to\b|\s*;|\s*[—–-])",
+        r"\bLong-pressed\s+(?:the\s+)?(?P<target>.+?)(?:\s*\(index|\s+to\b|\s*;|\s*[—–-])",
+        r"\b(?:Entered|Typed|Inserted)\s+.+?\s+(?:into|in)\s+(?:the\s+)?(?P<target>.+?)(?:\s*\(index|\s*;|\s*[—–-])",
+        r"\bRenamed\s+.+?\s+in\s+(?:the\s+)?(?P<target>.+?)(?:\s*\(index|\s*;|\s*[—–-])",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, summary, flags=re.IGNORECASE)
+        if not match:
+            continue
+        target = re.sub(r'["“”]', "", match.group("target")).strip(" \t'.,")
+        if target:
+            return target
+    return ""
+
+
+def _t3a_hint_bounds(value: str) -> tuple[int, int, int, int] | None:
+    match = re.fullmatch(
+        r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]",
+        str(value or "").strip(),
+    )
+    if not match:
+        return None
+    return tuple(int(item) for item in match.groups())
+
+
+def _t3a_hint_source_node(
+    step: Any,
+    *,
+    forbidden_values: Sequence[str],
+) -> dict[str, str]:
+    if not isinstance(step, dict):
+        return {}
+    observation = next(
+        (
+            value
+            for value in (
+                step.get("observation"),
+                step.get("before"),
+                step.get("observation_before_act"),
+            )
+            if isinstance(value, dict)
+        ),
+        {},
+    )
+    forest = next(
+        (
+            value
+            for value in (
+                observation.get("forest"),
+                observation.get("xml"),
+                observation.get("observation_xml"),
+                observation.get("page"),
+            )
+            if isinstance(value, str) and "<node" in value
+        ),
+        "",
+    )
+    _, params = _t3a_hint_step_action(step)
+    if not forest:
+        source_context = params.get("source_context")
+        if isinstance(source_context, dict):
+            forest = next(
+                (
+                    value
+                    for value in (
+                        source_context.get("page"),
+                        source_context.get("xml"),
+                        source_context.get("observation_xml"),
+                    )
+                    if isinstance(value, str) and "<node" in value
+                ),
+                "",
+            )
+    if not isinstance(forest, str) or "<node" not in forest:
+        return {}
+    try:
+        root = ET.fromstring(forest)
+    except ET.ParseError:
+        return {}
+    x = params.get("x")
+    y = params.get("y")
+    metadata = step.get("metadata")
+    raw_summary = (
+        str(metadata.get("summary") or "") if isinstance(metadata, dict) else ""
+    )
+    index_match = re.search(r'"index"\s*:\s*(\d+)', raw_summary)
+    indexed_id = index_match.group(1) if index_match else ""
+    candidates: list[tuple[tuple[int, int, int], dict[str, str]]] = []
+    for node in root.iter():
+        if str(node.tag).rsplit("}", 1)[-1] != "node":
+            continue
+        attributes = {str(key): str(value) for key, value in node.attrib.items()}
+        bounds = _t3a_hint_bounds(attributes.get("bounds", ""))
+        coordinate_match = False
+        if bounds is not None and isinstance(x, (int, float)) and isinstance(y, (int, float)):
+            left, top, right, bottom = bounds
+            coordinate_match = left <= x <= right and top <= y <= bottom
+        index_match_node = bool(indexed_id and attributes.get("id") == indexed_id)
+        if not coordinate_match and not index_match_node:
+            continue
+        actionable = any(
+            attributes.get(key) == "true"
+            for key in ("clickable", "editable", "scrollable")
+        )
+        semantic = any(
+            attributes.get(key)
+            for key in ("text", "content-desc", "resource-id")
+        )
+        area = (
+            max(0, bounds[2] - bounds[0]) * max(0, bounds[3] - bounds[1])
+            if bounds is not None
+            else 10**12
+        )
+        candidates.append(((not actionable, not semantic, area), attributes))
+    if not candidates:
+        return {}
+    attributes = min(candidates, key=lambda item: item[0])[1]
+    field_map = {
+        "id": "node_id",
+        "class": "class_name",
+        "text": "text",
+        "content-desc": "content_description",
+        "resource-id": "resource_id",
+        "package": "package_name",
+    }
+    evidence: dict[str, str] = {}
+    for source_key, target_key in field_map.items():
+        value = _t3a_hint_redacted_text(
+            attributes.get(source_key),
+            forbidden_values=forbidden_values,
+            max_len=120,
+        )
+        if value:
+            evidence[target_key] = value
+    return evidence
+
+
 def _t3a_semantic_hint_step(
     step: Any,
     *,
     forbidden_values: Sequence[str],
-) -> dict[str, str] | None:
+) -> dict[str, Any] | None:
     name, params = _t3a_hint_step_action(step)
     action = name.strip().lower()
     if not action or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", action):
         return None
     if action in {"status", "finish", "done"}:
         return None
-    semantic: dict[str, str] = {"action": action}
+    semantic: dict[str, Any] = {"action": action}
+    purpose = _t3a_hint_step_summary(
+        step,
+        forbidden_values=forbidden_values,
+    )
+    source_node = _t3a_hint_source_node(
+        step,
+        forbidden_values=forbidden_values,
+    )
     target = _t3a_hint_target(params, forbidden_values=forbidden_values)
+    if not target:
+        target = _t3a_hint_summary_target(purpose)
+    if not target:
+        target = (
+            source_node.get("content_description")
+            or source_node.get("text")
+            or source_node.get("resource_id")
+        )
+    if action in {"click", "tap", "long_press", "input_text", "type_text", "set_text", "enter_text"} and not target and not source_node:
+        raise ValueError(f"t3a_hint_unidentified_target:{action}")
     if target:
         semantic["target"] = target
+    if purpose:
+        semantic["purpose"] = purpose
+    if source_node:
+        semantic["source_node"] = source_node
     if action in {"open_app", "launch_app"}:
         app = _t3a_hint_text(
             params.get("app_name")
@@ -5353,7 +5599,7 @@ def _source_action_hint_path_for_item(
                     "t3a_hint_function_runlog_action_mismatch:"
                     f"{function_state_id}:{function_action}"
                 )
-            semantic_input_steps.append(function_step)
+            semantic_input_steps.append(source_steps[aligned_index])
             alignment_modes.append(alignment_mode)
             source_cursor = aligned_index + 1
         semantic_source = "omniflow_function_store"
@@ -5376,7 +5622,7 @@ def _source_action_hint_path_for_item(
     if not semantic_steps:
         raise ValueError(f"source runlog produced no safe T3A hints: {item.task}")
     hint_payload = {
-        "schema_version": "omniflow.t3a_semantic_hint.v1",
+        "schema_version": "omniflow.t3a_semantic_hint.v2",
         "task": item.task,
         "source_format": profile.replay_format,
         "semantic_source": semantic_source,

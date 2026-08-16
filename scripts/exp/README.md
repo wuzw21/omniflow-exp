@@ -51,7 +51,13 @@ One normal single-task invocation performs the complete workflow:
      RunLog plan into MobileGPT's native task/page/subtask/action memory, then
      use MobileGPT's native app and page retrieval online;
    - `appagent_demo`: convert the canonical RunLog schema to the native demonstration format, reusing only exact lineage-matched screenshot evidence;
-   - `t3a_hint`: derive the semantic hint from the same Function and RunLog.
+   - `t3a_hint`: derive a versioned semantic hint from the aligned Function and
+     source RunLog. Hint v2 identifies each operated UI object with its semantic
+     target, successful-run purpose, and source accessibility evidence
+     (`node id`, class, text, content description, resource ID, and package)
+     when present. Source coordinates and source task values are never exposed;
+     an unidentified pointer action fails conversion instead of becoming a
+     generic “relevant UI target” instruction.
 3. Reuse every already registered or frozen source asset without regeneration.
 4. Cold-restart each pending cell's managed AVD without Quick Boot snapshot
    load/save, run AndroidWorld setup and preflight, and replay the method.
