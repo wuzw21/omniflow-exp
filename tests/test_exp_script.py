@@ -275,6 +275,23 @@ def test_androidworld_prefers_pinned_immutable_release_when_present() -> None:
     )
 
 
+def test_unified_script_repairs_missing_androidworld_sqlite_fts4_support() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+
+    assert "ensure_androidworld_sqlite_fts4()" in script_text
+    assert script_text.count(
+        'CREATE VIRTUAL TABLE androidworld_fts4_probe USING fts4(value)'
+    ) == 2
+    assert 'OMNIFLOW_SQLITE_FTS4_LIBRARY' in script_text
+    assert 'export LD_PRELOAD="$candidate_preload"' in script_text
+    sqlite_gate = script_text.index("ensure_androidworld_sqlite_fts4\n")
+    dry_run_gate = script_text.index(
+        'echo "[dry-run] ready task=$task methods=$methods devices=$device_targets; '
+    )
+    assert dry_run_gate < sqlite_gate
+    assert sqlite_gate < script_text.index('mkdir -p "$preflight_output_root"')
+
+
 def test_unified_script_discovers_android_studio_jbr_on_macos() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert '/Applications/Android Studio.app/Contents/jbr/Contents/Home' in source

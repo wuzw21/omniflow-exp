@@ -148,6 +148,7 @@ the resulting contract here.
 | `OMNIFLOW_OURS_CONVERTED_ASSET_ROOT` | A new, empty conversion version directory |
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
 | `OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT` | Optional immutable AndroidWorld checkout root containing the `android_world` package; defaults to the pinned `38d1214` release beside the asset root when present |
+| `OMNIFLOW_SQLITE_FTS4_LIBRARY` | Optional absolute compatible `libsqlite3` path; the unified entry automatically selects a system library when the experiment Python lacks AndroidWorld's required FTS4 support |
 | `OMNIFLOW_APPAGENT_DOCUMENT_MODEL` | AppAgent offline documentation VLM; defaults to the paper model `GLM-5.1` |
 | `OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL` | MobileGPT offline embedding model; defaults to its native `text-embedding-v4` |
 | `OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE` | Development endpoint profile; defaults to `llmthu` |
@@ -386,6 +387,13 @@ If native `get_state()` reports a stale accessibility/gRPC tree, the shared
 adapter force-toggles AndroidWorld's AccessibilityForwarder, rebuilds the
 official wrapper, and retries that same observation once. Healthy observations
 take no extra read, and unrelated state errors still fail unchanged.
+
+Before any AndroidWorld formal or development path, the unified script verifies
+that the selected Python SQLite can create an FTS4 virtual table. If the managed
+Python lacks FTS4, it selects and validates a compatible system `libsqlite3`
+through `LD_PRELOAD`; setup fails closed when no compatible library exists. This
+keeps the official Joplin database setup unchanged while making the required
+host capability persistent across every task and batch.
 
 During official app setup only, the shared AndroidWorld adapter normalizes
 Unicode presentation variants in visible UI labels while preserving native

@@ -119,6 +119,55 @@ resolve_default_android_sdk_root() {
   done
   printf '%s\n' "$user_root/Android/Sdk"
 }
+ensure_androidworld_sqlite_fts4() {
+  if "$python_bin" - <<'PY' >/dev/null 2>&1
+import sqlite3
+
+connection = sqlite3.connect(":memory:")
+connection.execute("CREATE VIRTUAL TABLE androidworld_fts4_probe USING fts4(value)")
+PY
+  then
+    return 0
+  fi
+
+  local candidate
+  local configured_library="${OMNIFLOW_SQLITE_FTS4_LIBRARY:-}"
+  local candidates=("")
+  if [[ -n "$configured_library" ]]; then
+    candidates+=("$configured_library")
+  elif [[ "$(uname -s)" == "Linux" ]]; then
+    if command -v ldconfig >/dev/null 2>&1; then
+      while IFS= read -r candidate; do
+        [[ -n "$candidate" ]] && candidates+=("$candidate")
+      done < <(ldconfig -p 2>/dev/null | awk '$1 == "libsqlite3.so.0" {print $NF}')
+    fi
+    candidates+=(
+      "/usr/lib/x86_64-linux-gnu/libsqlite3.so.0"
+      "/lib/x86_64-linux-gnu/libsqlite3.so.0"
+      "/usr/lib/aarch64-linux-gnu/libsqlite3.so.0"
+      "/lib/aarch64-linux-gnu/libsqlite3.so.0"
+    )
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    [[ "$candidate" == /* && -f "$candidate" ]] || continue
+    local candidate_preload="$candidate${LD_PRELOAD:+:$LD_PRELOAD}"
+    if LD_PRELOAD="$candidate_preload" "$python_bin" - <<'PY' >/dev/null 2>&1
+import sqlite3
+
+connection = sqlite3.connect(":memory:")
+connection.execute("CREATE VIRTUAL TABLE androidworld_fts4_probe USING fts4(value)")
+PY
+    then
+      export LD_PRELOAD="$candidate_preload"
+      echo "[sqlite] AndroidWorld FTS4 enabled library=$candidate"
+      return 0
+    fi
+  done
+
+  echo "AndroidWorld setup requires Python SQLite with FTS4 support. Set OMNIFLOW_SQLITE_FTS4_LIBRARY to an absolute compatible libsqlite3 path." >&2
+  return 1
+}
 default_emulator_avd_specs="SmallPhone|system-images;android-33;google_apis;$default_emulator_system_image_abi|small_phone,OmniFlowTargetSmall|system-images;android-33;google_apis;$default_emulator_system_image_abi|small_phone,OmniFlowTargetFold|system-images;android-34;google_apis;$default_emulator_system_image_abi|pixel_fold"
 emulator_avd_specs="${OMNIFLOW_SINGLE_TASK_EMULATOR_AVD_SPECS:-$default_emulator_avd_specs}"
 emulator_gpu="${OMNIFLOW_SINGLE_TASK_EMULATOR_GPU:-swiftshader_indirect}"
@@ -3145,6 +3194,7 @@ if [[ "$dry_run" -eq 1 ]]; then
   echo "[dry-run] ready task=$task methods=$methods devices=$device_targets; no device or persistent output created"
   exit 0
 fi
+ensure_androidworld_sqlite_fts4
 
 avd_for_serial() {
   local wanted_serial="$1"
