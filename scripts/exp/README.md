@@ -439,8 +439,8 @@ The pinned AndroidWorld setup retries an app once with UIAutomator when its
 native accessibility-backed setup raises `ValueError`. It saves the app snapshot
 only after setup succeeds; a failed retry propagates and cannot persist an
 onboarding or permission-dialog snapshot.
-Clipper's Android compatibility and confirmation dialogs are optional because
-their presence varies by platform version; missing dialogs do not fail setup.
+Legacy-app setup clears package permissions marked `REVIEW_REQUIRED` before
+launch, so Android 14 cannot divert setup into a compatibility-review activity.
 
 During official app setup only, the shared AndroidWorld adapter normalizes
 Unicode presentation variants in visible UI labels while preserving native
