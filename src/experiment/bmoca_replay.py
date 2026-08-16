@@ -2810,7 +2810,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--suite",
         choices=("transfer-dp", "replay-baselines", "mock-e2e", "function-replay"),
-        default="transfer-dp",
+        default="function-replay",
     )
     parser.add_argument("--target-env", action="append", dest="target_environments")
     parser.add_argument("--limit-tasks", type=int)
