@@ -1102,6 +1102,27 @@ def test_fixed_replay_accepts_only_omniflow_run_log() -> None:
     ]
 
 
+def test_fixed_replay_preserves_terminal_androidworld_answer() -> None:
+    run_log = androidworld_run_log(
+        [
+            {"action_type": "open_app", "app_name": "com.android.settings"},
+            {"action_type": "answer", "text": "The beach"},
+        ]
+    )
+
+    assert _raw_replay_step_actions(run_log)[-1] == {
+        "type": "answer",
+        "params": {"text": "The beach"},
+    }
+    payload, error = _raw_replay_action_to_payload(
+        {"type": "answer", "params": {"text": "The beach"}},
+        source_size=(720, 1280),
+        target_size=(720, 1280),
+    )
+    assert error is None
+    assert payload == {"action_type": "answer", "text": "The beach"}
+
+
 def test_fixed_replay_binds_goal_parameter_to_input_text() -> None:
     run_log = androidworld_run_log(
         [{"action_type": "input_text", "text": "source_name.m4a"}],

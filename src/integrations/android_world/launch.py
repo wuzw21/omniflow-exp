@@ -2205,7 +2205,17 @@ def _raw_replay_step_actions(data: dict[str, Any]) -> list[dict[str, Any]]:
         if step["result"]["success"] is not True:
             continue
         action_type = str(step["action"].get("action_type") or "")
-        if action_type in {"answer", "status", "unknown"}:
+        if action_type in {"status", "unknown"}:
+            continue
+        if action_type == "answer":
+            actions.append(
+                {
+                    "type": "answer",
+                    "params": {
+                        "text": str(step["action"].get("text") or ""),
+                    },
+                }
+            )
             continue
         if action_type in {"scroll", "swipe"}:
             actions.append(
@@ -2727,6 +2737,12 @@ def _raw_replay_action_to_payload(
         if content:
             return {"action_type": "answer", "text": content}, None
         return {"action_type": "status", "goal_status": "complete"}, None
+
+    if action_type == "answer":
+        return {
+            "action_type": "answer",
+            "text": str(params.get("text") if params.get("text") is not None else ""),
+        }, None
 
     if action_type in {"swipe", "scroll"}:
         x1 = _raw_replay_number(params, "x1", "start_x", "from_x", "touch_x")
