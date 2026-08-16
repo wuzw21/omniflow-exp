@@ -174,6 +174,8 @@ emulator_gpu="${OMNIFLOW_SINGLE_TASK_EMULATOR_GPU:-swiftshader_indirect}"
 emulator_boot_timeout_sec="${OMNIFLOW_SINGLE_TASK_EMULATOR_BOOT_TIMEOUT_SEC:-240}"
 emulator_graceful_shutdown_timeout_sec="${OMNIFLOW_SINGLE_TASK_EMULATOR_GRACEFUL_SHUTDOWN_TIMEOUT_SEC:-30}"
 emulator_forced_shutdown_timeout_sec="${OMNIFLOW_SINGLE_TASK_EMULATOR_FORCED_SHUTDOWN_TIMEOUT_SEC:-10}"
+androidworld_adb_file_transfer_timeout_sec="${OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC:-300}"
+export OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC="$androidworld_adb_file_transfer_timeout_sec"
 fold_serial="${OMNIFLOW_SINGLE_TASK_FOLD_SERIAL:-emulator-5564}"
 fold_state="${OMNIFLOW_SINGLE_TASK_FOLD_STATE:-$formal_fold_state}"
 fold_size="${OMNIFLOW_SINGLE_TASK_FOLD_SIZE:-$formal_fold_size}"
@@ -1772,6 +1774,10 @@ if [[ ! "$emulator_graceful_shutdown_timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
 fi
 if [[ ! "$emulator_forced_shutdown_timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
   echo "OMNIFLOW_SINGLE_TASK_EMULATOR_FORCED_SHUTDOWN_TIMEOUT_SEC must be a positive integer." >&2
+  exit 2
+fi
+if [[ ! "$androidworld_adb_file_transfer_timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
+  echo "OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC must be a positive integer." >&2
   exit 2
 fi
 printf -v iteration_label '%02d' "$task_iteration"

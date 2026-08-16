@@ -14,7 +14,9 @@ from src.integrations.android_world.host import AndroidWorldHost
 from src.integrations.android_world.launch import (
     ANDROID_PERMISSION_DENY_RESOURCE_IDS,
     _androidworld_a11y_forwarder_installed,
+    _androidworld_adb_file_transfer_timeout_sec,
     _androidworld_setup_apps_for_suite,
+    _bounded_androidworld_adb_file_transfer_timeout,
     _ensure_androidworld_a11y_forwarder,
     _ExperimentAgentAdapter,
     _prepare_androidworld_episode_apps,
@@ -23,6 +25,27 @@ from src.integrations.android_world.launch import (
     _runtime_execution_trace,
     _wait_for_androidworld_a11y,
 )
+
+
+def test_androidworld_file_transfer_timeout_bounds_unset_and_zero(
+    monkeypatch,
+) -> None:
+    assert _bounded_androidworld_adb_file_transfer_timeout(
+        None,
+        default_timeout_sec=300.0,
+    ) == 300.0
+    assert _bounded_androidworld_adb_file_transfer_timeout(
+        0,
+        default_timeout_sec=300.0,
+    ) == 300.0
+    assert _bounded_androidworld_adb_file_transfer_timeout(
+        45,
+        default_timeout_sec=300.0,
+    ) == 45.0
+
+    monkeypatch.setenv("OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC", "0")
+    with pytest.raises(RuntimeError, match="must be positive"):
+        _androidworld_adb_file_transfer_timeout_sec()
 
 
 def test_androidworld_setup_uses_task_declared_app_dependencies() -> None:

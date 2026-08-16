@@ -11,6 +11,7 @@ import inspect
 import io
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import pickle
@@ -73,6 +74,7 @@ ANDROID_PERMISSION_DENY_RESOURCE_IDS = (
     "com.android.permissioncontroller:id/permission_deny_button",
     "com.android.permissioncontroller:id/permission_deny_and_dont_ask_again_button",
 )
+DEFAULT_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC = 300.0
 
 
 def utc_now_iso() -> str:
@@ -1608,6 +1610,34 @@ def _run_androidworld_setup_apps(
     setup_module: Any,
     setup_apps: Sequence[Any],
 ) -> None:
+    transfer_timeout_sec = _androidworld_adb_file_transfer_timeout_sec()
+    file_utils = (
+        importlib.import_module("android_world.utils.file_utils")
+        if "android_world" in sys.modules
+        else None
+    )
+    original_copy_file_to_device = (
+        file_utils.copy_file_to_device if file_utils is not None else None
+    )
+
+    def copy_file_to_device(
+        local_file_path: str,
+        remote_file_path: str,
+        controller: Any,
+        timeout_sec: float | None = None,
+    ) -> Any:
+        if original_copy_file_to_device is None:
+            raise RuntimeError("AndroidWorld file transfer module is unavailable")
+        return original_copy_file_to_device(
+            local_file_path,
+            remote_file_path,
+            controller,
+            timeout_sec=_bounded_androidworld_adb_file_transfer_timeout(
+                timeout_sec,
+                default_timeout_sec=transfer_timeout_sec,
+            ),
+        )
+
     typography = str.maketrans(
         {
             "\u2018": "'",
@@ -1653,16 +1683,52 @@ def _run_androidworld_setup_apps(
             return getattr(self._raw_env, name)
 
     setup_env = SetupEnvironment(env)
-    setup_module.setup_apps(
-        setup_env,
-        app_list=tuple(setup_apps),
-    )
-    _prepare_androidworld_episode_apps(
-        setup_env,
-        setup_module=setup_module,
-        setup_apps=setup_apps,
-        save_snapshots=True,
-    )
+    if file_utils is not None:
+        file_utils.copy_file_to_device = copy_file_to_device
+    try:
+        setup_module.setup_apps(
+            setup_env,
+            app_list=tuple(setup_apps),
+        )
+        _prepare_androidworld_episode_apps(
+            setup_env,
+            setup_module=setup_module,
+            setup_apps=setup_apps,
+            save_snapshots=True,
+        )
+    finally:
+        if file_utils is not None:
+            file_utils.copy_file_to_device = original_copy_file_to_device
+
+
+def _bounded_androidworld_adb_file_transfer_timeout(
+    timeout_sec: float | None,
+    *,
+    default_timeout_sec: float,
+) -> float:
+    if timeout_sec is None or float(timeout_sec) <= 0:
+        return float(default_timeout_sec)
+    return float(timeout_sec)
+
+
+def _androidworld_adb_file_transfer_timeout_sec() -> float:
+    raw_value = str(
+        os.environ.get(
+            "OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC",
+            DEFAULT_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC,
+        )
+    ).strip()
+    try:
+        timeout_sec = float(raw_value)
+    except ValueError as exc:
+        raise RuntimeError(
+            "OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC must be positive"
+        ) from exc
+    if not math.isfinite(timeout_sec) or timeout_sec <= 0:
+        raise RuntimeError(
+            "OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC must be positive"
+        )
+    return timeout_sec
 
 
 def _prepare_androidworld_episode_apps(

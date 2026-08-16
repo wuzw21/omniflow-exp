@@ -149,6 +149,7 @@ the resulting contract here.
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
 | `OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT` | Optional immutable AndroidWorld checkout root containing the `android_world` package; defaults to the pinned `38d1214` release beside the asset root when present |
 | `OMNIFLOW_SQLITE_FTS4_LIBRARY` | Optional absolute compatible `libsqlite3` path; the unified entry automatically selects a system library when the experiment Python lacks AndroidWorld's required FTS4 support |
+| `OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC` | Positive timeout for each official AndroidWorld adb file push/copy; defaults to 300 seconds and never permits the upstream `None`/`0` unbounded wait |
 | `OMNIFLOW_APPAGENT_DOCUMENT_MODEL` | AppAgent offline documentation VLM; defaults to the paper model `GLM-5.1` |
 | `OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL` | MobileGPT offline embedding model; defaults to its native `text-embedding-v4` |
 | `OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE` | Development endpoint profile; defaults to `llmthu` |
@@ -394,6 +395,11 @@ Python lacks FTS4, it selects and validates a compatible system `libsqlite3`
 through `LD_PRELOAD`; setup fails closed when no compatible library exists. This
 keeps the official Joplin database setup unchanged while making the required
 host capability persistent across every task and batch.
+
+During official app setup, every AndroidWorld adb file push/copy has the
+script-owned positive timeout above. The adapter preserves any explicit
+positive upstream timeout, but replaces upstream `None` or `0` so a dead adb
+transfer terminates as an environment failure instead of blocking a batch.
 
 During official app setup only, the shared AndroidWorld adapter normalizes
 Unicode presentation variants in visible UI labels while preserving native
