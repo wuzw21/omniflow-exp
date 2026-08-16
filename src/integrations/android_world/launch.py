@@ -68,6 +68,10 @@ ANDROIDWORLD_A11Y_FORWARDER_PACKAGE = (
 ANDROIDWORLD_A11Y_FORWARDER_SHA256 = (
     "97a56a544e44d79f9b3181fc7dbdd72cffa908efd3d53c82afad1773061a350a"
 )
+ANDROID_PERMISSION_DENY_RESOURCE_IDS = (
+    "com.android.permissioncontroller:id/permission_deny_button",
+    "com.android.permissioncontroller:id/permission_deny_and_dont_ask_again_button",
+)
 
 
 def utc_now_iso() -> str:
@@ -1627,10 +1631,62 @@ def _run_androidworld_setup_apps(
         def __getattr__(self, name: str) -> Any:
             return getattr(self._raw_env, name)
 
+    setup_env = SetupEnvironment(env)
     setup_module.setup_apps(
-        SetupEnvironment(env),
+        setup_env,
         app_list=tuple(setup_apps),
     )
+    for app in setup_apps:
+        app_name = str(getattr(app, "app_name", "") or "").strip()
+        package_name_getter = getattr(app, "package_name", None)
+        package_name = (
+            str(package_name_getter() or "").strip()
+            if callable(package_name_getter)
+            else ""
+        )
+        if not app_name or not package_name:
+            continue
+        actuation = importlib.import_module("android_world.env.actuation")
+        setup_module.adb_utils.launch_app(app_name, setup_env.controller)
+        try:
+            time.sleep(2.0)
+            elements = setup_env.controller.get_ui_elements()
+            permission_dialog = any(
+                str(getattr(element, "package_name", "") or "").endswith(
+                    ".permissioncontroller"
+                )
+                for element in elements
+            )
+            if not permission_dialog:
+                continue
+            actuation.find_and_click_element_by_resource_id(
+                ANDROID_PERMISSION_DENY_RESOURCE_IDS,
+                setup_env.controller,
+                timeout_sec=10.0,
+            )
+            deadline = time.monotonic() + 10.0
+            while True:
+                elements = setup_env.controller.get_ui_elements()
+                packages = {
+                    str(getattr(element, "package_name", "") or "").strip()
+                    for element in elements
+                }
+                permission_dialog = any(
+                    package.endswith(".permissioncontroller")
+                    for package in packages
+                )
+                if not permission_dialog and package_name in packages:
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        "AndroidWorld app setup permission dialog did not settle: "
+                        f"app={app_name}:expected={package_name}:"
+                        f"observed={','.join(sorted(packages)) or '<none>'}"
+                    )
+                time.sleep(0.25)
+        finally:
+            setup_module.adb_utils.close_app(app_name, setup_env.controller)
+        setup_module.app_snapshot.save_snapshot(app_name, setup_env.controller)
 
 
 def _prepare_official_harness_episode(env: Any, *, selected_agent: str) -> None:

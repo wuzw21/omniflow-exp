@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import xml.etree.ElementTree as ET
@@ -11,6 +12,7 @@ import pytest
 from omniflow import Action
 from src.integrations.android_world.host import AndroidWorldHost
 from src.integrations.android_world.launch import (
+    ANDROID_PERMISSION_DENY_RESOURCE_IDS,
     _androidworld_a11y_forwarder_installed,
     _androidworld_setup_apps_for_suite,
     _ensure_androidworld_a11y_forwarder,
@@ -76,6 +78,261 @@ def test_androidworld_setup_normalizes_permission_prompt_typography() -> None:
         )
     ]
     assert controller.get_ui_elements()[0].text == "Don’t allow"
+
+
+def test_androidworld_setup_clears_late_permission_dialog_before_resnapshot(
+    monkeypatch,
+) -> None:
+    calls: list[object] = []
+
+    class Controller:
+        def __init__(self) -> None:
+            self.app_open = False
+            self.permission_denied = False
+
+        def get_ui_elements(self):
+            if not self.app_open:
+                return []
+            if not self.permission_denied:
+                return [
+                    SimpleNamespace(
+                        text="Allow Contacts to send you notifications?",
+                        content_description=None,
+                        package_name="com.google.android.permissioncontroller",
+                        resource_id=None,
+                        resource_name="com.android.permissioncontroller:id/permission_message",
+                    ),
+                    SimpleNamespace(
+                        text="Don’t allow",
+                        content_description=None,
+                        package_name="com.google.android.permissioncontroller",
+                        resource_id=None,
+                        resource_name="com.android.permissioncontroller:id/permission_deny_button",
+                    ),
+                ]
+            return [
+                SimpleNamespace(
+                    text="Contacts",
+                    content_description=None,
+                    package_name="com.google.android.contacts",
+                    resource_id=None,
+                    resource_name="com.google.android.contacts:id/toolbar",
+                )
+            ]
+
+    controller = Controller()
+    env = SimpleNamespace(controller=controller)
+
+    class ContactsApp:
+        app_name = "contacts"
+
+        @classmethod
+        def package_name(cls) -> str:
+            return "com.google.android.contacts"
+
+        @classmethod
+        def setup(cls, setup_env) -> None:
+            calls.append("ContactsApp.setup")
+            calls.append(("click_element", "Skip"))
+            calls.append(("click_element", "Don't allow"))
+
+    def save_snapshot(app_name, raw_controller) -> None:
+        source = getattr(raw_controller, "_controller", raw_controller)
+        calls.append(
+            (
+                "save_snapshot",
+                app_name,
+                source.permission_denied,
+            )
+        )
+
+    def setup_app(app, setup_env) -> None:
+        calls.append("setup_app")
+        app.setup(setup_env)
+        save_snapshot(app.app_name, setup_env.controller)
+
+    def setup_apps(setup_env, *, app_list) -> None:
+        calls.append("setup_apps")
+        for app in app_list:
+            setup_app(app, setup_env)
+
+    def launch_app(app_name, raw_controller) -> None:
+        calls.append(("launch_app", app_name))
+        getattr(raw_controller, "_controller", raw_controller).app_open = True
+
+    def close_app(app_name, raw_controller) -> None:
+        calls.append(("close_app", app_name))
+        getattr(raw_controller, "_controller", raw_controller).app_open = False
+
+    def click_resource_id(resource_ids, raw_controller, timeout_sec=10.0) -> None:
+        calls.append(("click_resource_id", tuple(resource_ids), timeout_sec))
+        getattr(raw_controller, "_controller", raw_controller).permission_denied = True
+
+    setup_module = SimpleNamespace(
+        setup_apps=setup_apps,
+        adb_utils=SimpleNamespace(launch_app=launch_app, close_app=close_app),
+        app_snapshot=SimpleNamespace(save_snapshot=save_snapshot),
+    )
+    real_import_module = __import__("importlib").import_module
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.importlib.import_module",
+        lambda name: SimpleNamespace(
+            find_and_click_element_by_resource_id=click_resource_id
+        )
+        if name == "android_world.env.actuation"
+        else real_import_module(name),
+    )
+    monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
+
+    _run_androidworld_setup_apps(
+        env,
+        setup_module=setup_module,
+        setup_apps=(ContactsApp,),
+    )
+
+    assert controller.permission_denied is True
+    assert calls[:4] == [
+        "setup_apps",
+        "setup_app",
+        "ContactsApp.setup",
+        ("click_element", "Skip"),
+    ]
+    assert (
+        "click_resource_id",
+        (
+            "com.android.permissioncontroller:id/permission_deny_button",
+            "com.android.permissioncontroller:id/permission_deny_and_dont_ask_again_button",
+        ),
+        10.0,
+    ) in calls
+    assert (
+        "save_snapshot",
+        "contacts",
+        True,
+    ) in calls
+
+
+def test_androidworld_official_setup_entry_clears_late_permission_dialog(
+    monkeypatch,
+) -> None:
+    android_world_root_value = os.environ.get("OMNIFLOW_ANDROID_WORLD_ROOT", "")
+    if not android_world_root_value:
+        pytest.skip("requires the pinned AndroidWorld checkout")
+    android_world_root = Path(android_world_root_value).expanduser()
+    if not android_world_root.is_dir():
+        pytest.skip("requires the pinned AndroidWorld checkout")
+    monkeypatch.syspath_prepend(str(android_world_root))
+
+    from android_world.env import actuation
+    from android_world.env import tools
+    from android_world.env.setup_device import apps
+    from android_world.env.setup_device import setup as aw_setup
+
+    class Controller:
+        def __init__(self) -> None:
+            self.app_open = False
+            self.launch_count = 0
+            self.permission_denied = False
+            self.screen = "closed"
+
+        def get_ui_elements(self):
+            if self.screen == "skip":
+                return [
+                    SimpleNamespace(
+                        text="Skip",
+                        content_description=None,
+                        package_name="com.google.android.contacts",
+                        resource_id=None,
+                        resource_name="com.google.android.contacts:id/skip",
+                    )
+                ]
+            if self.screen == "permission":
+                return [
+                    SimpleNamespace(
+                        text="Allow Contacts to send you notifications?",
+                        content_description=None,
+                        package_name="com.google.android.permissioncontroller",
+                        resource_id=None,
+                        resource_name="com.android.permissioncontroller:id/permission_message",
+                    ),
+                    SimpleNamespace(
+                        text="Don’t allow",
+                        content_description=None,
+                        package_name="com.google.android.permissioncontroller",
+                        resource_id=None,
+                        resource_name="com.android.permissioncontroller:id/permission_deny_button",
+                    ),
+                ]
+            if self.screen == "contacts":
+                return [
+                    SimpleNamespace(
+                        text="Contacts",
+                        content_description=None,
+                        package_name="com.google.android.contacts",
+                        resource_id=None,
+                        resource_name="com.google.android.contacts:id/toolbar",
+                    )
+                ]
+            return []
+
+    controller = Controller()
+    env = SimpleNamespace(controller=controller)
+    click_targets: list[str] = []
+    snapshots: list[bool] = []
+    original_click_element = tools.AndroidToolController.click_element
+
+    def launch_app(_app_name, raw_controller) -> None:
+        source = getattr(raw_controller, "_controller", raw_controller)
+        source.app_open = True
+        source.launch_count += 1
+        source.screen = "skip" if source.launch_count == 1 else "permission"
+
+    def close_app(_app_name, raw_controller) -> None:
+        source = getattr(raw_controller, "_controller", raw_controller)
+        source.app_open = False
+        source.screen = "closed"
+
+    def execute_action(action, screen_elements, _screen_size, raw_controller) -> None:
+        source = getattr(raw_controller, "_controller", raw_controller)
+        selected = screen_elements[action.index]
+        if selected.text == "Skip":
+            source.screen = "contacts"
+        elif selected.resource_name in ANDROID_PERMISSION_DENY_RESOURCE_IDS:
+            source.permission_denied = True
+            source.screen = "contacts"
+
+    def click_element(tool_controller, target: str) -> None:
+        click_targets.append(target)
+        original_click_element(tool_controller, target)
+
+    clock = iter((0.0, 0.0, 0.0, 0.0, 11.0))
+    monkeypatch.setattr(aw_setup, "maybe_install_app", lambda *_args: None)
+    monkeypatch.setattr(aw_setup.adb_utils, "press_home_button", lambda *_args: None)
+    monkeypatch.setattr(aw_setup.adb_utils, "set_root_if_needed", lambda *_args: None)
+    monkeypatch.setattr(aw_setup.adb_utils, "clear_app_data", lambda *_args: None)
+    monkeypatch.setattr(aw_setup.adb_utils, "launch_app", launch_app)
+    monkeypatch.setattr(aw_setup.adb_utils, "close_app", close_app)
+    monkeypatch.setattr(
+        aw_setup.app_snapshot,
+        "save_snapshot",
+        lambda _app_name, _controller: snapshots.append(controller.permission_denied),
+    )
+    monkeypatch.setattr(tools.AndroidToolController, "click_element", click_element)
+    monkeypatch.setattr(actuation, "execute_adb_action", execute_action)
+    monkeypatch.setattr(actuation.time, "time", lambda: next(clock, 11.0))
+    monkeypatch.setattr(apps.time, "sleep", lambda _: None)
+    monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
+
+    _run_androidworld_setup_apps(
+        env,
+        setup_module=aw_setup,
+        setup_apps=(apps.ContactsApp,),
+    )
+
+    assert click_targets == ["Skip", "Don't allow"]
+    assert controller.permission_denied is True
+    assert snapshots == [False, True]
+    assert controller.app_open is False
 
 
 def test_androidworld_waits_for_native_a11y_before_setup(monkeypatch) -> None:

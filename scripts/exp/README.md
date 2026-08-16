@@ -382,9 +382,13 @@ unversioned dirty checkout when the pinned release is available.
 
 During official app setup only, the shared AndroidWorld adapter normalizes
 Unicode presentation variants in visible UI labels while preserving native
-resource IDs, bounds, actions, and the original observation. This keeps system
-permission buttons such as `Don’t allow` compatible with AndroidWorld's
-canonical `Don't allow` setup target without changing any evaluated method.
+resource IDs, bounds, actions, and the original observation. After the official
+setup returns, it reopens every declared app once and clears any remaining
+Android permission dialog through the platform's stable deny resource IDs. It
+requires the declared package to regain the foreground, closes the app, and
+overwrites the official snapshot before evaluation. This handles permission
+prompts that appear only after a second launch without changing any evaluated
+method.
 
 Before each agent step, the launcher asks the pinned AndroidWorld controller to
 check for the known AccessibilityForwarder crash window. Healthy steps do not
