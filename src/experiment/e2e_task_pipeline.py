@@ -1222,6 +1222,8 @@ def _blocked_all(
     stage: str,
     evidence: Path,
 ) -> None:
+    if getattr(args, "source_qualification_only", False):
+        return
     completed = _concluded_cells(args, outcomes_root, attempt_id)
     for method in METHODS:
         for label, serial, _ in DEVICES:
@@ -1313,6 +1315,34 @@ def _report(
     deadline: Deadline,
     phases: dict[str, Any],
 ) -> dict[str, Any]:
+    if getattr(args, "source_qualification_only", False):
+        qualification = phases.get("source_qualification")
+        qualified = (
+            isinstance(qualification, dict)
+            and qualification.get("qualified") is True
+        )
+        summary = {
+            "schema_version": "omniflow.androidworld.source-qualification-report.v1",
+            "immutable": True,
+            "task": args.task,
+            "attempt_id": attempt_id,
+            "status": "qualified" if qualified else "failed",
+            "source_seed": SOURCE_SEED,
+            "outer_wall_sec": deadline.elapsed,
+            "tool_calls": sum(
+                int(phase.get("tool_calls") or 0)
+                for phase in phases.values()
+                if isinstance(phase, dict)
+            ),
+            "tokens": sum(
+                int(phase.get("tokens") or 0)
+                for phase in phases.values()
+                if isinstance(phase, dict)
+            ),
+            "phases": phases,
+        }
+        _write_json(attempt_root / "pipeline_summary.json", summary)
+        return summary
     pointer = _read_object(args.memory_index)
     target_report = write_batch_report(
         report_root=attempt_root / "report",
@@ -1649,6 +1679,16 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 str(failure),
             )
 
+    if getattr(args, "source_qualification_only", False):
+        return _report(
+            args=args,
+            attempt_id=attempt_id,
+            attempt_root=attempt_root,
+            outcomes_root=outcomes_root,
+            deadline=deadline,
+            phases=phases,
+        )
+
     mobilegpt_memory: Path | None = None
     try:
         mobilegpt_memory, phases["mobilegpt_memory"] = prepare_mobilegpt_memory(
@@ -1803,6 +1843,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--semantic-model", default="glm-5.1")
     parser.add_argument("--formal-model", default="qwen3-vl-plus")
     parser.add_argument("--attempt-id", default="")
+    parser.add_argument("--source-qualification-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser
 

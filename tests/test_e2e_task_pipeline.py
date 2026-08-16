@@ -54,6 +54,7 @@ def _args(tmp_path: Path) -> SimpleNamespace:
         python_bin=tmp_path / "python",
         adb_path=tmp_path / "adb",
         source_model="glm-5.1",
+        source_qualification_only=False,
         dry_run=False,
     )
 
@@ -555,6 +556,69 @@ def test_pipeline_qualifies_ordered_source_calls_before_target_workers(
     phases = run_pipeline(args)
 
     assert events == ["qualify", "targets"]
+    assert phases["source_qualification"]["qualified"] is True
+
+
+def test_source_qualification_only_stops_before_baselines_and_targets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.source_qualification_only = True
+    source_path = tmp_path / "source.json"
+    source_path.write_text("{}", encoding="utf-8")
+    store_path = tmp_path / "store.json"
+    store_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.ensure_source_device",
+        lambda **_: {"status": "ready", "tool_calls": 0, "tokens": 0},
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._canonical_source",
+        lambda *_: ({}, source_path, {"task_parameters": {}}),
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.prepare_function_asset",
+        lambda **_: (
+            {"store_path": str(store_path)},
+            {
+                "status": "reused",
+                "tool_calls": 0,
+                "tokens": 0,
+                "source_calls": [
+                    {"function_id": "create_note", "arguments": {}}
+                ],
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.qualify_source_functions",
+        lambda **_: {
+            "status": "qualified",
+            "qualified": True,
+            "tool_calls": 0,
+            "tokens": 0,
+        },
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.prepare_mobilegpt_memory",
+        lambda **_: (_ for _ in ()).throw(AssertionError("baseline prepared")),
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.prepare_appagent_memory",
+        lambda **_: (_ for _ in ()).throw(AssertionError("baseline prepared")),
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.run_target_workers",
+        lambda **_: (_ for _ in ()).throw(AssertionError("targets started")),
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._report",
+        lambda **kwargs: kwargs["phases"],
+    )
+
+    phases = run_pipeline(args)
+
     assert phases["source_qualification"]["qualified"] is True
 
 

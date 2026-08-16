@@ -119,6 +119,7 @@ fold_size="${OMNIFLOW_SINGLE_TASK_FOLD_SIZE:-$formal_fold_size}"
 dry_run=0
 check_only=0
 development_run=0
+source_qualification_only=0
 all_tasks=0
 eight_cells=0
 batch_task_filter=""
@@ -187,6 +188,9 @@ Options:
                             RunLogs only. With --check-only, run zero-model
                             preflight and create nothing.
   --e2e-task TASK           Run one bounded source-to-matrix task pipeline.
+  --source-qualification-only
+                            Stop that pipeline after immutable seed-111 Function
+                            qualification; create no target result cells.
   --source-backend MODE     Source mode for --e2e-task: auto, reuse-only,
                             manual, or online. Default: auto.
   --source-runlog PATH      Successful native seed-111 RunLog for manual mode.
@@ -324,6 +328,9 @@ while [[ "$#" -gt 0 ]]; do
         exit 2
       fi
       e2e_task="$1"
+      ;;
+    --source-qualification-only)
+      source_qualification_only=1
       ;;
     --source-backend)
       shift
@@ -470,6 +477,10 @@ if [[ -n "$e2e_task" ]]; then
       exit 2
       ;;
   esac
+  if [[ "$source_qualification_only" -eq 1 && "$e2e_source_backend" != "reuse-only" ]]; then
+    echo "--source-qualification-only requires --source-backend reuse-only." >&2
+    exit 2
+  fi
   if [[ ! "$e2e_task_deadline_sec" =~ ^[1-9][0-9]*$ ]] || (( e2e_task_deadline_sec > 1800 )); then
     echo "--task-deadline-sec must be a positive integer no greater than 1800." >&2
     exit 2
@@ -570,6 +581,9 @@ if [[ -n "$e2e_task" ]]; then
   fi
   if [[ -n "${OMNIFLOW_E2E_ATTEMPT_ID:-}" ]]; then
     e2e_args+=(--attempt-id "$OMNIFLOW_E2E_ATTEMPT_ID")
+  fi
+  if [[ "$source_qualification_only" -eq 1 ]]; then
+    e2e_args+=(--source-qualification-only)
   fi
   if [[ -n "$appagent_demo_memory_root" ]]; then
     e2e_args+=(--appagent-memory-root "$appagent_demo_memory_root")

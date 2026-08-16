@@ -93,7 +93,12 @@ bash scripts/exp/run_androidworld.sh \
 ```
 
 Source qualification also enters through the unified script's E2E pipeline,
-never through a Skill-owned or direct Python runner.
+never through a Skill-owned or direct Python runner:
+
+```bash
+bash scripts/exp/run_androidworld.sh \
+  --e2e-task TASK --source-backend reuse-only --source-qualification-only
+```
 
 ## Acceptance
 
