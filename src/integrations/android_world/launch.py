@@ -1898,8 +1898,12 @@ def _wait_for_androidworld_a11y(env: Any, *, attempts: int = 6) -> None:
         except RuntimeError as error:
             last_error = error
             if not forwarder_restarted and callable(restart_forwarder):
-                restart_forwarder()
-                forwarder_restarted = True
+                try:
+                    restart_forwarder()
+                except RuntimeError as restart_error:
+                    last_error = restart_error
+                else:
+                    forwarder_restarted = True
             if attempt + 1 < attempts:
                 time.sleep(1.0)
     raise RuntimeError("AndroidWorld accessibility forest not ready") from last_error

@@ -392,6 +392,9 @@ If native `get_state()` reports a stale accessibility/gRPC tree, the shared
 adapter force-toggles AndroidWorld's AccessibilityForwarder, rebuilds the
 official wrapper, and retries that same observation once. Healthy observations
 take no extra read, and unrelated state errors still fail unchanged.
+If the official forwarder restart is itself temporarily unable to bind, that
+failure remains inside the same bounded readiness loop instead of aborting the
+cell before task start.
 
 Before any AndroidWorld formal or development path, the unified script verifies
 that the selected Python SQLite can create an FTS4 virtual table. If the managed

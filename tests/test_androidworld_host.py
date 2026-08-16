@@ -569,6 +569,34 @@ def test_androidworld_a11y_readiness_restarts_bound_stale_forwarder(
     assert calls == ["state", "restart", "state"]
 
 
+def test_androidworld_a11y_readiness_retries_when_forwarder_restart_is_unbound(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    class Env:
+        class Controller:
+            @staticmethod
+            def restart_accessibility_forwarder() -> None:
+                calls.append("restart")
+                raise RuntimeError("Accessibility forwarder did not become bound.")
+
+        controller = Controller()
+
+        def get_state(self, *, wait_to_stabilize: bool = False):
+            assert wait_to_stabilize is False
+            calls.append("state")
+            if calls.count("state") == 1:
+                raise RuntimeError("Could not get a11y tree after 5 attempts.")
+            return SimpleNamespace(forest=object())
+
+    monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
+
+    _wait_for_androidworld_a11y(Env())
+
+    assert calls == ["state", "restart", "state"]
+
+
 def test_androidworld_a11y_readiness_rejects_empty_forests(monkeypatch) -> None:
     forests = iter(({}, [], {"window": object()}))
     monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
