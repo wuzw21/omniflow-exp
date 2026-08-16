@@ -7,11 +7,13 @@ import sys
 from types import ModuleType, SimpleNamespace
 
 import numpy as np
+from PIL import Image
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment import androidworld as pipeline
 from src.experiment import appagent_source
+from src.experiment.source_assets import convert_runlog_memory
 from src.integrations import appagent_adapter
 
 
@@ -564,30 +566,53 @@ def test_appagent_model_failure_does_not_parse_or_retry(tmp_path: Path) -> None:
 
 def _write_source_index(root: Path) -> Path:
     root.mkdir(parents=True)
+    before_image = root / "state-0.png"
+    after_image = root / "state-1.png"
+    Image.new("RGB", (100, 100), "white").save(before_image)
+    Image.new("RGB", (100, 100), "black").save(after_image)
+    forest = (
+        '<hierarchy><node class="android.widget.FrameLayout" '
+        'bounds="[0,0][100,100]"><node text="Bluetooth" '
+        'resource-id="android:id/switch_widget" '
+        'clickable="true" bounds="[0,0][100,100]" />'
+        "</node></hierarchy>"
+    )
+    before_state = androidworld_state(
+        "state-0",
+        forest=forest,
+        width=100,
+        height=100,
+    )
+    before_state["pixels"] = {
+        "path": str(before_image.resolve()),
+        "sha256": hashlib.sha256(before_image.read_bytes()).hexdigest(),
+        "width": 100,
+        "height": 100,
+        "mime_type": "image/png",
+    }
+    after_state = androidworld_state(
+        "state-1",
+        forest=forest,
+        width=100,
+        height=100,
+    )
+    after_state["pixels"] = {
+        "path": str(after_image.resolve()),
+        "sha256": hashlib.sha256(after_image.read_bytes()).hexdigest(),
+        "width": 100,
+        "height": 100,
+        "mime_type": "image/png",
+    }
+    run_log = androidworld_run_log(
+        [{"action_type": "click", "x": 50, "y": 50}],
+        observations=[before_state],
+        task_name="SystemBluetoothTurnOn",
+        goal="Turn Bluetooth on.",
+    )
+    run_log["steps"][0]["next_observation"] = after_state
     source_run_log = root / "source.run_log.json"
     source_run_log.write_text(
-        json.dumps(
-            androidworld_run_log(
-                [{"action_type": "click", "x": 50, "y": 50}],
-                observations=[
-                    androidworld_state(
-                        "state-0",
-                        forest=(
-                            '<hierarchy><node class="android.widget.FrameLayout" '
-                            'bounds="[0,0][100,100]"><node text="Bluetooth" '
-                            'resource-id="android:id/switch_widget" '
-                            'clickable="true" bounds="[0,0][100,100]" />'
-                            "</node></hierarchy>"
-                        ),
-                        width=100,
-                        height=100,
-                        with_pixels=True,
-                    )
-                ],
-                task_name="SystemBluetoothTurnOn",
-                goal="Turn Bluetooth on.",
-            )
-        ),
+        json.dumps(run_log),
         encoding="utf-8",
     )
     state_catalog = root / "transfer_states.json"
@@ -600,11 +625,7 @@ def _write_source_index(root: Path) -> Path:
                     "state-0": {
                         "state_id": "state-0",
                         "xml": (
-                            '<hierarchy><node class="android.widget.FrameLayout" '
-                            'bounds="[0,0][100,100]"><node text="Bluetooth" '
-                            'resource-id="android:id/switch_widget" '
-                            'clickable="true" bounds="[0,0][100,100]" />'
-                            "</node></hierarchy>"
+                            forest
                         ),
                         "display": {"width": 100, "height": 100},
                     }
@@ -726,97 +747,25 @@ def test_appagent_preflight_skips_back_control_grounding(
 
 def test_appagent_source_generation_is_offline_conversion(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     index = _write_source_index(tmp_path / "source")
     bundle = tmp_path / "bundle"
-    calls = {"seal": 0}
     captured: dict[str, object] = {}
-    monkeypatch.setenv(
-        "OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON",
-        "launch_source_app_package_from_teacher_contract@7709f60",
-    )
+
+    def convert(method: str, **kwargs: object) -> dict[str, object]:
+        captured.update({"method": method, **kwargs})
+        return {
+            "task_name": "SystemBluetoothTurnOn",
+            "source_run_log": str(kwargs["source_run_log"]),
+            "memory_root": str(kwargs["output_root"]),
+            "manifest": {"source_method": kwargs["source_method"]},
+        }
 
     monkeypatch.setattr(
-        appagent_source,
-        "build_appagent_teacher_source",
-        lambda *_args, **_kwargs: {
-            "action_count": 1,
-            "demo_action_count": 1,
-            "actions": [
-                {
-                    "source_step_index": 0,
-                    "action": {
-                        "type": "click",
-                        "params": {
-                            "source_context": {
-                                "element": {
-                                    "text": "Bluetooth",
-                                    "resource_id": (
-                                        "android:id/switch_widget"
-                                    ),
-                                }
-                            }
-                        },
-                    },
-                }
-            ],
-        },
+        "src.experiment.source_assets.convert_runlog_memory",
+        convert,
     )
-    evidence = tmp_path / "evidence"
-    demo = evidence / "demo"
-    docs = evidence / "docs"
-    demo.mkdir(parents=True)
-    docs.mkdir()
-    (demo / "teacher_trace.jsonl").write_text(
-        json.dumps(
-            {
-                "teacher_cursor": 1,
-                "source_step_index": 0,
-                "source_action_index": 0,
-                "action_type": "click",
-                "source_coordinates_used": False,
-            }
-        )
-        + "\n"
-    )
-    document_log = evidence / "document.log"
-    document_usage = evidence / "document_usage.jsonl"
-    manifest = evidence / "appagent_demo_manifest.json"
-    document_log.write_text("ok\n")
-    document_usage.write_text(
-        json.dumps(
-            {
-                "model": "qwen3-vl-plus",
-                "prompt_tokens": 10,
-                "completion_tokens": 2,
-                "total_tokens": 12,
-            }
-        )
-        + "\n"
-    )
-    manifest.write_text("{}\n")
-    monkeypatch.setattr(
-        appagent_source,
-        "_native_memory_evidence",
-        lambda **_kwargs: {
-            "manifest": manifest,
-            "app_name": "settings",
-            "demo_name": "demo_SystemBluetoothTurnOn_seed111",
-            "demo_root": demo,
-            "docs_root": docs,
-            "document_log": document_log,
-            "document_usage": document_usage,
-            "document_model": "qwen3-vl-plus",
-        },
-    )
-
-    def seal(**kwargs):
-        calls["seal"] += 1
-        captured["seal_kwargs"] = kwargs
-        return {"source_method": kwargs["source_method"]}
-
-    monkeypatch.setattr(appagent_source, "seal_appagent_demo_memory", seal)
 
     result = appagent_source.prepare_appagent_demo_memory(
         index_path=index,
@@ -825,25 +774,177 @@ def test_appagent_source_generation_is_offline_conversion(
         android_world_root=tmp_path / "android_world",
         memory_root=bundle,
         model="qwen3-vl-plus",
-        evidence_roots=[evidence],
+        evidence_roots=[tmp_path / "unused-old-evidence"],
     )
 
-    assert calls == {"seal": 1}
-    seal_kwargs = captured["seal_kwargs"]
-    assert seal_kwargs["source_method"] == "ours"
-    assert seal_kwargs["document_generation_model"] == "qwen3-vl-plus"
-    assert seal_kwargs["conversion_mode"] == "canonical_runlog_offline"
-    assert seal_kwargs["source_result"] is None
+    assert captured["method"] == "appagent_demo"
+    assert captured["source_method"] == "ours"
+    assert captured["upstream_root"] == tmp_path / "appagent"
+    assert captured["output_root"] == bundle
     assert result["source_method"] == "ours"
     assert result["source_emulator_used"] is False
-    audit = json.loads(
-        (bundle / "conversion_audit.json").read_text(encoding="utf-8")
+    assert result["native_memory_evidence"] is None
+
+
+def test_convert_runlog_memory_builds_native_appagent_demo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.run_log.json"
+    before = tmp_path / "before.png"
+    after = tmp_path / "after.png"
+    Image.new("RGB", (100, 100), "white").save(before)
+    Image.new("RGB", (100, 100), "black").save(after)
+    xml = (
+        '<hierarchy><node text="Bluetooth" clickable="true" '
+        'bounds="[0,0][100,100]" /></hierarchy>'
     )
-    assert audit["conversion_mode"] == "canonical_runlog_offline"
-    assert audit["source_emulator_used"] is False
-    assert audit["source_environment_repair_reason"] == (
-        "launch_source_app_package_from_teacher_contract@7709f60"
+    before_state = androidworld_state(
+        "before",
+        forest=xml,
+        package_name="com.android.settings",
+        width=100,
+        height=100,
     )
+    before_state["pixels"] = {
+        "path": str(before.resolve()),
+        "sha256": hashlib.sha256(before.read_bytes()).hexdigest(),
+        "width": 100,
+        "height": 100,
+        "mime_type": "image/png",
+    }
+    after_state = androidworld_state(
+        "after",
+        forest=xml,
+        package_name="com.android.settings",
+        width=100,
+        height=100,
+    )
+    after_state["pixels"] = {
+        "path": str(after.resolve()),
+        "sha256": hashlib.sha256(after.read_bytes()).hexdigest(),
+        "width": 100,
+        "height": 100,
+        "mime_type": "image/png",
+    }
+    payload = androidworld_run_log(
+        [{"action_type": "click", "x": 50, "y": 50}],
+        observations=[before_state],
+        task_name="SystemBluetoothTurnOn",
+        goal="Turn Bluetooth on.",
+    )
+    payload["steps"][0]["next_observation"] = after_state
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    class Runtime:
+        min_dist = 30.0
+
+        def __init__(self, _root: Path) -> None:
+            pass
+
+        def draw_elements(
+            self,
+            source_path: Path,
+            target_path: Path,
+            _elements: list[object],
+            *,
+            record_mode: bool,
+        ) -> None:
+            assert record_mode is True
+            Image.open(source_path).save(target_path)
+
+    def generate_docs(**kwargs: object) -> dict[str, object]:
+        workspace = Path(str(kwargs["workspace_root"]))
+        docs = workspace / "apps" / "settings" / "demo_docs"
+        docs.mkdir(parents=True)
+        (docs / "uid.txt").write_text(
+            repr(
+                {
+                    "tap": "Turn Bluetooth on",
+                    "text": "",
+                    "v_swipe": "",
+                    "h_swipe": "",
+                    "long_press": "",
+                }
+            ),
+            encoding="utf-8",
+        )
+        Path(str(kwargs["log_path"])).write_text("ok\n", encoding="utf-8")
+        Path(str(kwargs["usage_path"])).write_text(
+            json.dumps(
+                {
+                    "model": "qwen3-vl-plus",
+                    "prompt_tokens": 2,
+                    "completion_tokens": 1,
+                    "total_tokens": 3,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return {"wall_sec": 0.1}
+
+    monkeypatch.setattr(appagent_source, "OfficialAppAgentRuntime", Runtime)
+    monkeypatch.setattr(
+        appagent_source,
+        "run_official_document_generation",
+        generate_docs,
+    )
+
+    result = convert_runlog_memory(
+        "appagent_demo",
+        source_run_log=source,
+        output_root=tmp_path / "bundle",
+        upstream_root=tmp_path / "appagent",
+        model="qwen3-vl-plus",
+    )
+
+    manifest = result["manifest"]
+    assert manifest["conversion_mode"] == "canonical_runlog_offline"
+    assert manifest["native_memory_evidence"] is None
+    demo = Path(manifest["demo_root"])
+    record_lines = (demo / "record.txt").read_text(encoding="utf-8").splitlines()
+    assert record_lines[0].startswith("tap(1):::")
+    assert record_lines[1] == "stop"
+    assert len(list((demo / "raw_screenshots").glob("*.png"))) == 2
+
+
+def test_convert_runlog_memory_reports_missing_appagent_screenshot(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.run_log.json"
+    source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [{"action_type": "click", "x": 50, "y": 50}],
+                observations=[
+                    androidworld_state(
+                        "before",
+                        forest=(
+                            '<hierarchy><node text="Bluetooth" clickable="true" '
+                            'bounds="[0,0][100,100]" /></hierarchy>'
+                        ),
+                        width=100,
+                        height=100,
+                    )
+                ],
+                task_name="SystemBluetoothTurnOn",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="appagent_source_screenshot_missing:0:before",
+    ):
+        convert_runlog_memory(
+            "appagent_demo",
+            source_run_log=source,
+            output_root=tmp_path / "bundle",
+            upstream_root=tmp_path / "appagent",
+            model="qwen3-vl-plus",
+        )
 
 
 def test_appagent_source_failure_marker_forbids_retry(tmp_path: Path) -> None:

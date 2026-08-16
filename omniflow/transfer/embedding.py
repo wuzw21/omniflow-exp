@@ -124,6 +124,101 @@ class TreeEmbedding:
 
 
 @dataclass(frozen=True)
+class PageWordInputs:
+    descriptors: np.ndarray
+    evidence: np.ndarray
+    priors: np.ndarray
+    word_counts: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class SoftPageWordWeights:
+    input_projection: np.ndarray
+    input_bias: np.ndarray
+    attention_output: np.ndarray
+    attention_bias: np.ndarray
+    prior_strength: np.ndarray
+    presence_output: np.ndarray
+    presence_bias: np.ndarray
+
+    @property
+    def descriptor_dimension(self) -> int:
+        return int(self.input_projection.shape[0] - 16)
+
+    @property
+    def hidden_dimension(self) -> int:
+        return int(self.input_projection.shape[1])
+
+    @property
+    def parameter_count(self) -> int:
+        return sum(
+            int(np.asarray(value).size)
+            for value in (
+                self.input_projection,
+                self.input_bias,
+                self.attention_output,
+                self.attention_bias,
+                self.prior_strength,
+                self.presence_output,
+                self.presence_bias,
+            )
+        )
+
+    @classmethod
+    def from_npz(cls, path: str) -> SoftPageWordWeights:
+        with np.load(path, allow_pickle=False) as checkpoint:
+            weights = cls(
+                input_projection=checkpoint["input_projection"].astype(
+                    np.float32, copy=True
+                ),
+                input_bias=checkpoint["input_bias"].astype(np.float32, copy=True),
+                attention_output=checkpoint["attention_output"].astype(
+                    np.float32, copy=True
+                ),
+                attention_bias=checkpoint["attention_bias"].astype(
+                    np.float32, copy=True
+                ),
+                prior_strength=checkpoint["prior_strength"].astype(
+                    np.float32, copy=True
+                ),
+                presence_output=checkpoint["presence_output"].astype(
+                    np.float32, copy=True
+                ),
+                presence_bias=checkpoint["presence_bias"].astype(
+                    np.float32, copy=True
+                ),
+            )
+        weights.validate()
+        return weights
+
+    def validate(self) -> None:
+        descriptor_dimension = self.descriptor_dimension
+        hidden_dimension = self.hidden_dimension
+        expected = {
+            "input_projection": (descriptor_dimension + 16, hidden_dimension),
+            "input_bias": (hidden_dimension,),
+            "attention_output": (hidden_dimension, 8),
+            "attention_bias": (8,),
+            "prior_strength": (8,),
+            "presence_output": (hidden_dimension, 8),
+            "presence_bias": (8,),
+        }
+        for name, shape in expected.items():
+            value = np.asarray(getattr(self, name))
+            if value.shape != shape or not np.all(np.isfinite(value)):
+                raise ValueError(f"soft_page_word_weight_invalid:{name}")
+
+
+@dataclass(frozen=True)
+class SoftPageWordOutput:
+    vector: np.ndarray
+    words: np.ndarray
+    presence: np.ndarray
+    attention: np.ndarray
+    word_counts: tuple[int, ...]
+
+
+@dataclass(frozen=True)
 class _Element:
     id: str
     parent_id: str | None
@@ -189,6 +284,110 @@ class PageEncoder:
             self.version,
             self.weights.hash,
         )
+
+
+def pool_dynamic_page_words(
+    value: Observation | dict[str, Any] | str,
+    node_descriptors: np.ndarray,
+    *,
+    weights: EncoderWeights | None = None,
+) -> tuple[np.ndarray, tuple[int, ...]]:
+    """Pool aligned node descriptors into OmniFlow's eight dynamic page words."""
+
+    observation = (
+        Observation(xml=value)
+        if isinstance(value, str)
+        else Observation.from_value(value)
+    )
+    elements, root_bounds = _restore_tree(str(observation.xml or ""))
+    descriptors = np.asarray(node_descriptors, dtype=np.float32)
+    if descriptors.ndim != 2 or descriptors.shape[1] <= 0:
+        raise ValueError("page_word_descriptors_must_be_n_by_d")
+    if descriptors.shape[0] != len(elements):
+        raise ValueError(
+            "page_word_descriptor_count_mismatch:"
+            f"elements={len(elements)}:descriptors={descriptors.shape[0]}"
+        )
+    if not len(elements) or not np.all(np.isfinite(descriptors)):
+        raise ValueError("page_word_descriptors_unusable")
+    selected_weights = weights or EncoderWeights.manual_default()
+    masks = _slice_masks(elements, root_bounds)
+    vector = _pool_descriptor_words(
+        elements,
+        descriptors,
+        masks,
+        selected_weights,
+    )
+    return vector, tuple(int(np.count_nonzero(mask)) for mask in masks)
+
+
+def prepare_page_word_inputs(
+    value: Observation | dict[str, Any] | str,
+    node_descriptors: np.ndarray,
+) -> PageWordInputs:
+    observation = (
+        Observation(xml=value)
+        if isinstance(value, str)
+        else Observation.from_value(value)
+    )
+    elements, root_bounds = _restore_tree(str(observation.xml or ""))
+    descriptors = np.asarray(node_descriptors, dtype=np.float32)
+    if descriptors.ndim != 2 or descriptors.shape[1] <= 0:
+        raise ValueError("page_word_descriptors_must_be_n_by_d")
+    if descriptors.shape[0] != len(elements):
+        raise ValueError(
+            "page_word_descriptor_count_mismatch:"
+            f"elements={len(elements)}:descriptors={descriptors.shape[0]}"
+        )
+    if not len(elements) or not np.all(np.isfinite(descriptors)):
+        raise ValueError("page_word_descriptors_unusable")
+    priors = _slice_masks(elements, root_bounds)
+    evidence = _page_word_evidence(elements, root_bounds)
+    return PageWordInputs(
+        descriptors=np.asarray(
+            [_normalize(row) for row in descriptors], dtype=np.float32
+        ),
+        evidence=evidence,
+        priors=priors.astype(np.float32),
+        word_counts=tuple(int(np.count_nonzero(mask)) for mask in priors),
+    )
+
+
+def pool_soft_page_words(
+    value: Observation | dict[str, Any] | str,
+    node_descriptors: np.ndarray,
+    weights: SoftPageWordWeights,
+) -> SoftPageWordOutput:
+    weights.validate()
+    inputs = prepare_page_word_inputs(value, node_descriptors)
+    if inputs.descriptors.shape[1] != weights.descriptor_dimension:
+        raise ValueError("soft_page_word_descriptor_dimension_mismatch")
+    features = np.concatenate((inputs.descriptors, inputs.evidence), axis=1)
+    hidden = np.tanh(features @ weights.input_projection + weights.input_bias)
+    logits = (
+        hidden @ weights.attention_output
+        + weights.attention_bias
+        + inputs.priors.T * weights.prior_strength
+    )
+    attention = _column_softmax(logits).T
+    words = np.asarray(
+        [_normalize(row) for row in attention @ inputs.descriptors],
+        dtype=np.float32,
+    )
+    contexts = attention @ hidden
+    presence_logits = np.sum(
+        contexts * weights.presence_output.T,
+        axis=1,
+    ) + weights.presence_bias
+    presence = (1.0 / (1.0 + np.exp(-presence_logits))).astype(np.float32)
+    vector = _normalize((words * presence[:, None]).reshape(-1))
+    return SoftPageWordOutput(
+        vector=vector.astype(np.float32),
+        words=words,
+        presence=presence,
+        attention=attention.astype(np.float32),
+        word_counts=inputs.word_counts,
+    )
 
 
 def _restore_tree(xml_text: str) -> tuple[tuple[_Element, ...], tuple[int, int, int, int]]:
@@ -493,6 +692,49 @@ def _slice_masks(
     return masks
 
 
+def _page_word_evidence(
+    elements: tuple[_Element, ...],
+    root_bounds: tuple[int, int, int, int],
+) -> np.ndarray:
+    root_width = max(1, root_bounds[2] - root_bounds[0])
+    root_height = max(1, root_bounds[3] - root_bounds[1])
+    root_area = max(1, root_width * root_height)
+    rows = []
+    for element in elements:
+        attrs = element.attributes
+        width = max(0, element.bounds[2] - element.bounds[0])
+        height = max(0, element.bounds[3] - element.bounds[1])
+        center_x = (
+            (element.bounds[0] + element.bounds[2]) / 2 - root_bounds[0]
+        ) / root_width
+        center_y = (
+            (element.bounds[1] + element.bounds[3]) / 2 - root_bounds[1]
+        ) / root_height
+        area_ratio = min(1.0, width * height / root_area)
+        has_text = bool(attrs["text"] or attrs["content_description"])
+        rows.append(
+            [
+                center_x,
+                center_y,
+                width / root_width,
+                height / root_height,
+                area_ratio,
+                min(1.0, element.depth / 16.0),
+                float(has_text),
+                float(attrs["clickable"] or attrs["long_clickable"]),
+                float(attrs["editable"]),
+                float(attrs["scrollable"]),
+                float(attrs["checkable"]),
+                float(attrs["selected"] or attrs["checked"]),
+                float(attrs["focused"]),
+                float(attrs["in_list"]),
+                float(not element.children_ids),
+                float(bool(element.children_ids)),
+            ]
+        )
+    return np.asarray(rows, dtype=np.float32)
+
+
 def _pool_tree(
     elements: tuple[_Element, ...],
     vectors: np.ndarray,
@@ -560,6 +802,69 @@ def _pool_tree(
     return _normalize(np.concatenate(slices)).astype(np.float32)
 
 
+def _pool_descriptor_words(
+    elements: tuple[_Element, ...],
+    descriptors: np.ndarray,
+    masks: np.ndarray,
+    weights: EncoderWeights,
+) -> np.ndarray:
+    attributes = [item.attributes for item in elements]
+    text_leaf = np.asarray(
+        [
+            bool(item["text"] or item["content_description"])
+            and not elements[index].children_ids
+            for index, item in enumerate(attributes)
+        ]
+    )
+    actionable = np.asarray(
+        [
+            bool(item["clickable"] or item["checkable"] or item["long_clickable"])
+            for item in attributes
+        ]
+    )
+    focus_target = np.asarray(
+        [
+            bool(item["focusable"] or item["editable"] or item["focused"])
+            for item in attributes
+        ]
+    )
+    selected = np.asarray(
+        [bool(item["selected"] or item["checked"]) for item in attributes]
+    )
+    neutral = np.asarray(
+        [
+            bool(elements[index].children_ids)
+            and not text_leaf[index]
+            and not actionable[index]
+            and not focus_target[index]
+            for index in range(len(elements))
+        ]
+    )
+    in_list = np.asarray([bool(item["in_list"]) for item in attributes])
+    base = np.ones(len(elements), dtype=np.float32)
+    base[neutral] *= weights.pooling[0]
+    base[text_leaf] *= weights.pooling[1]
+    base[actionable] *= weights.pooling[2]
+    base[focus_target] *= weights.pooling[3]
+    base[selected] *= weights.pooling[4]
+    words: list[np.ndarray] = []
+    for index, mask in enumerate(masks):
+        current_weights = base.copy()
+        current_weights[in_list] *= weights.pooling[5 if index < 5 else 6]
+        if not np.any(mask):
+            pooled = np.zeros(descriptors.shape[1], dtype=np.float32)
+        else:
+            word_weights = current_weights[mask]
+            total = float(np.sum(word_weights))
+            pooled = (
+                np.sum(descriptors[mask] * word_weights[:, None], axis=0) / total
+                if total > 1e-9
+                else np.zeros(descriptors.shape[1], dtype=np.float32)
+            )
+        words.append(_normalize(pooled) * weights.slices[index])
+    return _normalize(np.concatenate(words)).astype(np.float32)
+
+
 def _weighted_blocks(
     blocks: tuple[np.ndarray, ...], weights: tuple[float, ...]
 ) -> np.ndarray:
@@ -621,6 +926,12 @@ def _softmax(values: np.ndarray) -> np.ndarray:
     return exponent / np.sum(exponent)
 
 
+def _column_softmax(values: np.ndarray) -> np.ndarray:
+    shifted = values - np.max(values, axis=0, keepdims=True)
+    exponent = np.exp(shifted)
+    return exponent / np.sum(exponent, axis=0, keepdims=True)
+
+
 def _bounds(value: Any) -> tuple[int, int, int, int] | None:
     numbers = [int(item) for item in re.findall(r"-?\d+", str(value or ""))]
     if len(numbers) != 4 or numbers[2] <= numbers[0] or numbers[3] <= numbers[1]:
@@ -641,5 +952,11 @@ __all__ = [
     "ElementEmbedding",
     "EncoderWeights",
     "PageEncoder",
+    "PageWordInputs",
+    "SoftPageWordOutput",
+    "SoftPageWordWeights",
     "TreeEmbedding",
+    "pool_soft_page_words",
+    "pool_dynamic_page_words",
+    "prepare_page_word_inputs",
 ]

@@ -986,7 +986,6 @@ class AppAgentTeacherAgent:
         x, y = _bbox_center(grounded.bbox)
         if action_type == "click":
             native_action = self._new_action(action_type="click", x=x, y=y)
-            record = f"tap({grounded.tag}):::{grounded.uid}"
         elif action_type == "input_text":
             text = re.sub(r"[\r\n]+", " ", str(params.get("text") or ""))
             native_action = self._new_action(
@@ -994,21 +993,18 @@ class AppAgentTeacherAgent:
                 text=text,
                 clear_text=True,
             )
-            record = f'text({grounded.tag}:sep:"{text}"):::{grounded.uid}'
         elif action_type == "long_press":
             native_action = self._new_action(action_type="long_press", x=x, y=y)
-            record = f"long_press({grounded.tag}):::{grounded.uid}"
         elif action_type == "swipe":
             direction = str(params.get("direction") or "")
             native_action = self._new_action(
                 action_type="swipe",
                 direction=direction,
             )
-            record = f"swipe({grounded.tag}:sep:{direction}):::{grounded.uid}"
         else:
             raise ValueError(f"appagent_teacher_action_unsupported:{action_type}")
         self.env.execute_action(native_action)
-        self._append_record(record)
+        self._append_record(appagent_record_line(action, grounded))
 
     def _new_action(self, **kwargs: Any) -> Any:
         if self._action_factory is not None:
@@ -1456,8 +1452,9 @@ def validate_appagent_demo_memory(
     if offline_conversion:
         if payload.get("source_emulator_used") is not False:
             raise ValueError("appagent_demo_memory_source_emulator_forbidden")
-        evidence = Path(str(payload.get("native_memory_evidence") or ""))
-        if not evidence.is_file():
+        evidence_value = str(payload.get("native_memory_evidence") or "").strip()
+        evidence = Path(evidence_value) if evidence_value else None
+        if evidence is not None and not evidence.is_file():
             raise FileNotFoundError(
                 f"appagent_native_memory_evidence_missing:{evidence}"
             )
@@ -1662,6 +1659,29 @@ def ground_appagent_teacher_action(
         bbox=element.bbox,
         match_reason=match_reason,
     )
+
+
+def appagent_record_line(
+    action: dict[str, Any],
+    grounded: GroundedAppAgentAction,
+) -> str:
+    """Serialize one grounded action with AppAgent's official recorder syntax."""
+
+    action_type = str(action.get("type") or "")
+    params = dict(action.get("params") or {})
+    if action_type == "click":
+        return f"tap({grounded.tag}):::{grounded.uid}"
+    if action_type == "input_text":
+        text = re.sub(r"[\r\n]+", " ", str(params.get("text") or ""))
+        return f'text({grounded.tag}:sep:"{text}"):::{grounded.uid}'
+    if action_type == "long_press":
+        return f"long_press({grounded.tag}):::{grounded.uid}"
+    if action_type == "swipe":
+        return (
+            f"swipe({grounded.tag}:sep:{params.get('direction', '')})"
+            f":::{grounded.uid}"
+        )
+    raise ValueError(f"appagent_teacher_action_unsupported:{action_type}")
 
 
 def _source_run_log_steps(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2306,6 +2326,7 @@ __all__ = [
     "GroundedAppAgentAction",
     "OfficialAppAgentRuntime",
     "appagent_elements_from_xml",
+    "appagent_record_line",
     "build_appagent_teacher_source",
     "ground_appagent_teacher_action",
     "load_appagent_teacher_source",

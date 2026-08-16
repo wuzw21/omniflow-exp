@@ -953,6 +953,88 @@ def test_qwen_adapter_preserves_normalized_scalar_coordinates() -> None:
     assert metadata is None
 
 
+def test_planner_adapter_normalizes_raw_pixel_coordinates() -> None:
+    adapted, metadata = adapt_tool_arguments(
+        tool="click",
+        arguments={"x": 632, "y": 1112},
+        requested_model="GLM-5.1",
+        resolved_model="GLM-5.1",
+        display={"width": 720, "height": 1280},
+    )
+
+    assert adapted == {
+        "x": pytest.approx(632 / 720 * 1000),
+        "y": pytest.approx(1112 / 1280 * 1000),
+    }
+    assert metadata is not None
+    assert metadata["name"] == "planner_coordinate_adapter.v1"
+    assert metadata["model"] == "GLM-5.1"
+
+
+def test_planner_adapter_preserves_canonical_coordinates() -> None:
+    adapted, metadata = adapt_tool_arguments(
+        tool="click",
+        arguments={"x": 878, "y": 869},
+        requested_model="GLM-5.1",
+        resolved_model="GLM-5.1",
+        display={"width": 720, "height": 1280},
+    )
+
+    assert adapted == {"x": 878, "y": 869}
+    assert metadata is None
+
+
+def test_planner_adapter_normalizes_mixed_coordinate_axes() -> None:
+    adapted, metadata = adapt_tool_arguments(
+        tool="click",
+        arguments={"x": 878, "y": 1112},
+        requested_model="GLM-5.1",
+        resolved_model="GLM-5.1",
+        display={"width": 720, "height": 1280},
+    )
+
+    assert adapted == {"x": 878, "y": pytest.approx(1112 / 1280 * 1000)}
+    assert metadata is not None
+    assert metadata["name"] == "planner_coordinate_adapter.v1"
+
+
+def test_planner_adapter_rejects_raw_pixel_axis_outside_display() -> None:
+    with pytest.raises(ValueError, match="canonical_action_arg_range_invalid:y"):
+        adapt_tool_arguments(
+            tool="click",
+            arguments={"x": 632, "y": 1281},
+            requested_model="GLM-5.1",
+            resolved_model="GLM-5.1",
+            display={"width": 720, "height": 1280},
+        )
+
+
+def test_qwen36_adapter_normalizes_swipe_coordinate_arrays() -> None:
+    adapted, metadata = adapt_tool_arguments(
+        tool="swipe",
+        arguments={
+            "direction": "left",
+            "x1": [875, 449],
+            "y1": [875, 449],
+            "x2": [125, 449],
+            "y2": [125, 449],
+        },
+        requested_model="Qwen3.6-Plus",
+        resolved_model="Qwen3.6-Plus",
+        display={"width": 720, "height": 1280},
+    )
+
+    assert adapted == {
+        "direction": "left",
+        "x1": 875,
+        "y1": 449,
+        "x2": 125,
+        "y2": 449,
+    }
+    assert metadata is not None
+    assert metadata["model"] == "Qwen3.6-Plus"
+
+
 def test_planner_exposes_normalized_coordinates_independent_of_display() -> None:
     request = build_model_turn_request(
         goal="Tap add",
@@ -1588,6 +1670,59 @@ def test_open_app_exposes_complete_installed_app_vocabulary() -> None:
     assert "Chrome -> com.android.chrome" in package_schema["description"]
 
 
+def test_parameterized_app_function_exposes_installed_app_vocabulary() -> None:
+    function = Function(
+        function_id="open_requested_app",
+        name="Open requested app",
+        description="Verified path that opens the requested installed app.",
+        steps=(),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "package_name": {
+                    "type": "string",
+                    "description": "Installed Android package to open.",
+                }
+            },
+            "required": ["package_name"],
+            "additionalProperties": False,
+        },
+    )
+    request = build_model_turn_request(
+        goal="Open contacts",
+        model="test-model",
+        state={
+            "package_name": "com.android.launcher",
+            "display": {"width": 720, "height": 1280},
+        },
+        installed_apps={
+            "Contacts": "com.android.contacts",
+            "Settings": "com.android.settings",
+        },
+        functions=(function,),
+        max_steps=8,
+        turn_index=1,
+    )
+
+    function_tool = next(
+        tool
+        for tool in request["tools"]
+        if tool["function"]["name"] == "open_requested_app"
+    )
+    package_schema = function_tool["function"]["parameters"]["properties"][
+        "package_name"
+    ]
+    assert package_schema["enum"] == [
+        "com.android.contacts",
+        "com.android.settings",
+    ]
+    assert package_schema["description"].startswith(
+        "Installed Android package to open."
+    )
+    assert "Contacts -> com.android.contacts" in package_schema["description"]
+    assert "Settings -> com.android.settings" in package_schema["description"]
+
+
 def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     request = build_model_turn_request(
         goal="Search for a contact",
@@ -1603,7 +1738,9 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert "You are a GUI agent" in SYSTEM_PROMPT
     assert "task and your action history, with screenshots" in SYSTEM_PROMPT
     assert "Choose exactly one provided tool call" in SYSTEM_PROMPT
-    assert "Functions are actions in the same action space" in SYSTEM_PROMPT
+    assert "Functions are verified multi-step action paths" in SYSTEM_PROMPT
+    assert "When a Function matches the task, prefer it" in SYSTEM_PROMPT
+    assert "if it fails" in SYSTEM_PROMPT
     assert "normalized 0..1000 coordinates" in SYSTEM_PROMPT
     assert "Accessibility XML is primary evidence" in SYSTEM_PROMPT
     assert "vision only supplements" in SYSTEM_PROMPT
@@ -1796,10 +1933,14 @@ def test_androidworld_launcher_configures_one_unified_planner(
         adb_serial="emulator-5554",
         planner_provider="openai",
         planner_model="test-model",
+        step_skill_guidance="Use the selected candidate policy.",
     )
 
     assert planner_options["api_key"] == "unified-key"
     assert planner_options["base_url"] == "https://llmapi.example/v1"
+    assert planner_options["step_skill_guidance"] == (
+        "Use the selected candidate policy."
+    )
     assert flow.planner is not None
 
 

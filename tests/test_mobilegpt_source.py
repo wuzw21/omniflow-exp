@@ -9,6 +9,7 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment import androidworld as pipeline
 from src.experiment import mobilegpt_source, preflight
+from src.experiment.source_assets import convert_runlog_memory
 from src.experiment.artifact_memory import (
     canonical_mobilegpt_memory_from_memory,
     refresh_artifact_memory,
@@ -404,6 +405,57 @@ def test_source_conversion_calls_only_converter_and_sealer(
     assert result["teacher_forcing"] is False
     assert result["actions_supplied_to_mobilegpt"] is True
     assert result["source_emulator_used"] is False
+
+
+def test_convert_runlog_memory_dispatches_to_mobilegpt_native_converter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.run_log.json"
+    source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [{"action_type": "click", "x": 50, "y": 50}],
+                observations=[
+                    androidworld_state(
+                        "state-0",
+                        forest=(
+                            '<hierarchy><node text="Bluetooth" clickable="true" '
+                            'bounds="[0,0][100,100]" /></hierarchy>'
+                        ),
+                        package_name="com.android.settings",
+                        width=100,
+                        height=100,
+                    )
+                ],
+                task_name="SystemBluetoothTurnOn",
+            )
+        ),
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+
+    def native(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"manifest": {"native_format": "mobilegpt.memory"}}
+
+    monkeypatch.setattr(
+        mobilegpt_source,
+        "convert_runlog_to_mobilegpt_bundle",
+        native,
+        raising=False,
+    )
+
+    result = convert_runlog_memory(
+        "mobilegpt_offline_retrieval",
+        source_run_log=source,
+        output_root=tmp_path / "bundle",
+        upstream_root=tmp_path / "mobilegpt",
+        model="qwen3-vl-plus",
+    )
+
+    assert captured["source_run_log"] == source.resolve()
+    assert result["manifest"]["native_format"] == "mobilegpt.memory"
 
 
 def test_source_cli_has_no_teacher_or_cold_learning_commands() -> None:

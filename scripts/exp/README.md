@@ -133,16 +133,25 @@ the resulting contract here.
 | `OMNIFLOW_OURS_CONVERTED_ASSET_ROOT` | A new, empty conversion version directory |
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
 | `OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE` | Development endpoint profile; defaults to `llmthu` |
-| `OMNIFLOW_FORMAL_MODEL_ENDPOINT_PROFILE` | Formal endpoint profile; defaults to `openai` |
+| `OMNIFLOW_FORMAL_MODEL_ENDPOINT_PROFILE` | Formal endpoint profile; fixed to `llmthu` for `GLM-5.1` |
 | `OMNIFLOW_OURS_AUTHORING_MANIFEST` | Immutable bundle manifest produced by `androidworld-runlog-harvester` using `omniflow.function-agent-skill-manifest.v1` |
 | `OMNIFLOW_OURS_REVISION_REASON` | Explicit reason for selecting one newly converted immutable Function revision over the existing canonical Store; requires one `--tasks` value |
 | `OMNIFLOW_MEMORY_MOBILEGPT_ROOTS` | Optional colon-separated roots containing sealed MobileGPT semantic memory |
-| `OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS` | Optional colon-separated roots containing immutable AppAgent-native demos whose manifest exactly matches the canonical RunLog lineage; defaults to the unified source-seed-111 task asset root |
 
 The source RunLog index defaults to
 `$OMNIFLOW_EXP_ASSET_ROOT/runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json`.
 Set `OMNIFLOW_OURS_SOURCE_ASSET_INDEX` only when an explicit immutable index is
 required.
+
+MobileGPT and AppAgent memory preparation share one RunLog conversion API:
+`src.experiment.source_assets.convert_runlog_memory(method, ...)`. It accepts an
+official-validator-successful seed-111 `omniflow.run_log.v1` and writes the
+selected baseline's native immutable memory. MobileGPT delegates encoding,
+memory access, and action generalization to its pinned upstream modules.
+AppAgent writes the official demo directory and runs its pinned official
+document generator. AppAgent additionally requires immutable before/after
+screenshot references and XML in the RunLog; missing evidence is an explicit
+conversion failure and never triggers source-coordinate replay or an emulator.
 
 ## Run one RunLog through all methods
 
@@ -214,6 +223,27 @@ The endpoint profile is explicit and fail-closed: `llmthu` reads only
 `LLMTHU_KEY`/`LLMTHU_BASE_URL`, while `openai` reads only
 `OPENAI_API_KEY`/`OPENAI_BASE_URL`. It never switches accounts because another
 credential happens to be present in the same environment file.
+
+## Unregistered stock T3A/M3A capture for SkyMark
+
+SkyMark may collect immutable stock AndroidWorld step requests without adding a
+method to the frozen five-method matrix. This diagnostic mode still enters only
+through the unified script, uses the official task lifecycle and validator, and
+caps the episode at seven decisions:
+
+```bash
+OMNIFLOW_STOCK_CAPTURE_OUTPUT_PATH=/absolute/new/attempt \
+OMNIFLOW_STOCK_CAPTURE_MODEL=GLM-5.1 \
+OMNIFLOW_STOCK_CAPTURE_MODEL_ENDPOINT_PROFILE=openai \
+bash scripts/exp/run_androidworld.sh \
+  --stock-capture m3a --tasks ContactsAddContact
+```
+
+Use `--stock-capture t3a` for the upstream text-only T3A Harness. The capture
+persists exact action prompts, responses, parser results, request timings, and,
+for M3A, the exact JPEG payloads sent to the model. It never exposes a reference
+action to the runtime and never registers a formal experiment result. The stock
+Harness and upstream prompts remain unchanged.
 
 `--check-only` is deliberately read-only. It validates existing assets but
 will fail rather than create a missing method asset:

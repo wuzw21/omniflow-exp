@@ -1247,3 +1247,44 @@ def build_grounded_teacher_run_log_from_store_index(
         }
     )
     return grounded, audit
+
+
+def convert_runlog_memory(
+    method: str,
+    *,
+    source_run_log: str | Path,
+    output_root: str | Path,
+    upstream_root: str | Path,
+    model: str,
+    source_method: str = "runlog_direct",
+) -> dict[str, Any]:
+    """Convert one successful RunLog into a baseline's native memory format."""
+
+    selector = str(method or "").strip()
+    source = Path(source_run_log).expanduser().resolve()
+    output = Path(output_root).expanduser().resolve()
+    upstream = Path(upstream_root).expanduser().resolve()
+    if selector == "mobilegpt_offline_retrieval":
+        from src.experiment.mobilegpt_source import (
+            convert_runlog_to_mobilegpt_bundle,
+        )
+
+        return convert_runlog_to_mobilegpt_bundle(
+            source_run_log=source,
+            mobilegpt_root=upstream,
+            output_root=output,
+            model=model,
+        )
+    if selector == "appagent_demo":
+        from src.experiment.appagent_source import (
+            convert_runlog_to_appagent_memory,
+        )
+
+        return convert_runlog_to_appagent_memory(
+            source_run_log=source,
+            appagent_root=upstream,
+            memory_root=output,
+            model=model,
+            source_method=source_method,
+        )
+    raise ValueError(f"runlog_memory_method_unsupported:{selector or 'missing'}")

@@ -1208,6 +1208,63 @@ def test_refresh_reports_invalid_indexed_runlog_task_and_path(
         )
 
 
+def test_refresh_migrates_valid_indexed_legacy_runlog_without_mutating_source(
+    tmp_path: Path,
+) -> None:
+    legacy_payload = {
+        "schema_version": "omniflow.canonical_run_log.v1",
+        "run_id": "legacy-indexed-source",
+        "goal": "Tap the selected control.",
+        "success": True,
+        "steps": [
+            {
+                "step_index": 0,
+                "observation_before_act": {
+                    "hierarchy_xml": '<hierarchy><node text="Selected" /></hierarchy>',
+                    "width": 100,
+                    "height": 200,
+                },
+                "action": {"type": "click", "params": {"x": 50, "y": 100}},
+                "success": True,
+            }
+        ],
+    }
+    legacy_source = _write_json(
+        tmp_path / "legacy" / "RecordWithName" / "source.run_log.json",
+        legacy_payload,
+    )
+    original_bytes = legacy_source.read_bytes()
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "params": {"file_name": "selected.m4a"},
+                "task_random_seed": 111,
+                "retained_source_run_log": str(legacy_source),
+            }
+        },
+    )
+
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(legacy_source.parent,),
+        result_roots=(),
+    )
+
+    canonical = report["canonical"]["source_run_logs"]["RecordWithName"]
+    converted = json.loads(Path(canonical["object_path"]).read_text())
+    assert canonical["sha256"] != _sha256(legacy_source)
+    assert converted["schema_version"] == "omniflow.run_log.v1"
+    assert converted["task_name"] == "RecordWithName"
+    assert converted["task_parameters"] == {"file_name": "selected.m4a"}
+    assert converted["seed"] == 111
+    assert converted["provenance"]["source_sha256"] == _sha256(legacy_source)
+    assert legacy_source.read_bytes() == original_bytes
+
+
 def test_refresh_registers_legacy_function_source_as_canonical_run_log(
     tmp_path: Path,
 ) -> None:

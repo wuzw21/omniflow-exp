@@ -317,15 +317,34 @@ def _load_official_agent_goal_hint(
 class _ExperimentAgentAdapter:
     """Add experiment-only recording and optional goal context to an agent."""
 
-    def __init__(self, agent: Any, *, recording_session: Any, goal_hint: str = ""):
+    def __init__(
+        self,
+        agent: Any,
+        *,
+        recording_session: Any,
+        goal_hint: str = "",
+        max_steps: int | None = None,
+    ):
         self._agent = agent
         self._recording_session = recording_session
         self._goal_hint = str(goal_hint or "").strip()
+        self._max_steps = max(1, int(max_steps)) if max_steps is not None else None
+        self._completed_steps = 0
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._agent, name)
 
     def step(self, goal: str) -> Any:
+        if self._max_steps is not None and self._completed_steps >= self._max_steps:
+            from android_world.agents import base_agent
+
+            return base_agent.AgentInteractionResult(
+                True,
+                {
+                    "summary": "Experiment step budget reached before another model call.",
+                    "experiment_step_budget_reached": True,
+                },
+            )
         ensure_ready = getattr(
             self._recording_session.env,
             "ensure_accessibility_forwarder_ready",
@@ -337,7 +356,12 @@ class _ExperimentAgentAdapter:
         effective_goal = str(goal or "")
         if self._goal_hint:
             effective_goal = f"{effective_goal}\n\n{self._goal_hint}"
-        return self._agent.step(effective_goal)
+        result = self._agent.step(effective_goal)
+        self._completed_steps += 1
+        if self._max_steps is not None and self._completed_steps >= self._max_steps:
+            result.done = True
+            result.data["experiment_step_budget_reached"] = True
+        return result
 
 
 def _coerce_int(value: Any) -> int:
@@ -384,7 +408,7 @@ class _OpenAICompatibleMultimodalWrapper:
             str(model_name or "").strip()
             or str(os.environ.get("OPENAI_MODEL") or "").strip()
             or str(os.environ.get("OMNIFLOW_PLANNER_MODEL") or "").strip()
-            or "qwen3-vl-plus"
+            or "GLM-5.1"
         )
         resolved_base_url = (
             str(base_url or "").strip()
@@ -423,6 +447,7 @@ class _OpenAICompatibleMultimodalWrapper:
         self.responses_without_usage = 0
         self.failed_calls = 0
         self.last_error: str | None = None
+        self.request_records: list[dict[str, Any]] = []
 
     @staticmethod
     def _chat_completions_url(base_url: str) -> str:
@@ -434,7 +459,7 @@ class _OpenAICompatibleMultimodalWrapper:
         return f"{normalized}/chat/completions"
 
     @staticmethod
-    def _encode_image(image: Any) -> str:
+    def _encode_image(image: Any) -> bytes:
         import io
 
         from PIL import Image
@@ -445,19 +470,20 @@ class _OpenAICompatibleMultimodalWrapper:
             pil_image = Image.fromarray(image)
         buffer = io.BytesIO()
         pil_image.save(buffer, format="JPEG")
-        return base64.b64encode(buffer.getvalue()).decode("utf-8")
+        return buffer.getvalue()
 
     def predict(self, text_prompt: str) -> tuple[str, bool | None, Any]:
         return self.predict_mm(text_prompt, [])
 
     def predict_mm(self, text_prompt: str, images: list[Any]) -> tuple[str, bool | None, Any]:
         content: list[dict[str, Any]] = [{"type": "text", "text": str(text_prompt)}]
-        for image in list(images or []):
+        encoded_images = [self._encode_image(image) for image in list(images or [])]
+        for image_bytes in encoded_images:
             content.append(
                 {
                     "type": "image_url",
                     "image_url": {
-                        "url": f"data:image/jpeg;base64,{self._encode_image(image)}"
+                        "url": f"data:image/jpeg;base64,{base64.b64encode(image_bytes).decode('utf-8')}"
                     },
                 }
             )
@@ -473,6 +499,27 @@ class _OpenAICompatibleMultimodalWrapper:
         }
         wait_seconds = float(os.environ.get("OMNIFLOW_OPENAI_RETRY_WAIT_SECONDS") or 2.0)
         last_response: dict[str, Any] | None = None
+        request_record = {
+            "request_index": len(self.request_records),
+            "kind": (
+                "action_consistency"
+                if "SkyMark action-consistency review" in str(text_prompt)
+                else
+                "action"
+                if "Your Answer:" in str(text_prompt)
+                else "summary"
+                if "Summary of this step:" in str(text_prompt)
+                else "unknown"
+            ),
+            "prompt": str(text_prompt),
+            "image_payloads": encoded_images,
+            "image_sha256": [hashlib.sha256(value).hexdigest() for value in encoded_images],
+            "started_at": utc_now_iso(),
+            "duration_ms": None,
+            "response_text": None,
+            "response_metadata": None,
+        }
+        request_started = perf_counter()
         for attempt_index in range(max(1, self.max_retry)):
             try:
                 request = urllib.request.Request(
@@ -528,7 +575,14 @@ class _OpenAICompatibleMultimodalWrapper:
                                 for item in content_text
                                 if isinstance(item, dict)
                             )
-                        return str(content_text or ""), None, last_response
+                        response_text = str(content_text or "")
+                        request_record["duration_ms"] = max(
+                            0.0, (perf_counter() - request_started) * 1000.0
+                        )
+                        request_record["response_text"] = response_text
+                        request_record["response_metadata"] = last_response
+                        self.request_records.append(request_record)
+                        return response_text, None, last_response
                 self.last_error = "OpenAI-compatible response did not include choices"
                 break
             except urllib.error.HTTPError as exc:
@@ -543,6 +597,12 @@ class _OpenAICompatibleMultimodalWrapper:
             if attempt_index < self.max_retry - 1:
                 time.sleep(wait_seconds)
                 wait_seconds *= 2.0
+        request_record["duration_ms"] = max(
+            0.0, (perf_counter() - request_started) * 1000.0
+        )
+        request_record["response_text"] = "Error calling LLM"
+        request_record["response_metadata"] = last_response
+        self.request_records.append(request_record)
         return "Error calling LLM", None, last_response
 
     def get_usage_summary(self) -> dict[str, Any]:
@@ -561,6 +621,131 @@ class _OpenAICompatibleMultimodalWrapper:
         }
         summary["token_usage_status"] = token_usage_status(summary)
         return summary
+
+
+def _valid_reason_action_output(output: object) -> bool:
+    text = str(output or "").strip()
+    if not text:
+        return False
+    try:
+        from android_world.agents import agent_utils, m3a_utils
+
+        reason, action_text = m3a_utils.parse_reason_action_output(text)
+        return bool(reason and action_text and agent_utils.extract_json(action_text))
+    except Exception:
+        return False
+
+
+def _candidate_action(text: object) -> dict[str, Any] | None:
+    match = re.search(r"Action:\s*(\{.*\})", str(text or "").strip(), flags=re.DOTALL)
+    if not match:
+        return None
+    try:
+        action = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return None
+    return action if isinstance(action, dict) else None
+
+
+def _last_prompt_action(text_prompt: str) -> dict[str, Any] | None:
+    matches = re.findall(r"Action selected:\s*(\{[^\n]*\})", str(text_prompt or ""))
+    for value in reversed(matches):
+        try:
+            action = json.loads(value)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(action, dict):
+            return action
+    return None
+
+
+def _keyboard_visible_in_prompt(text_prompt: str) -> bool:
+    prompt = str(text_prompt or "").lower()
+    markers = (
+        "switch input method",
+        "emoji button",
+        "symbol keyboard",
+        "voice input",
+        "gif keyboard",
+    )
+    return sum(marker in prompt for marker in markers) >= 2
+
+
+def _keyboard_obstruction_guard_applies(text_prompt: str, proposed: object) -> bool:
+    action = _candidate_action(proposed)
+    last_action = _last_prompt_action(text_prompt)
+    return bool(
+        action
+        and action.get("action_type") == "scroll"
+        and last_action
+        and last_action.get("action_type") == "input_text"
+        and _keyboard_visible_in_prompt(text_prompt)
+    )
+
+
+class _ActionConsistencyLlmWrapper:
+    """Candidate-only second-pass action review over the same multimodal prefix."""
+
+    def __init__(self, delegate: Any, policy: dict[str, Any]) -> None:
+        self.delegate = delegate
+        self.policy = dict(policy)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.delegate, name)
+
+    def predict(self, text_prompt: str) -> tuple[str, bool | None, Any]:
+        return self.predict_mm(text_prompt, [])
+
+    def predict_mm(
+        self,
+        text_prompt: str,
+        images: list[Any],
+    ) -> tuple[str, bool | None, Any]:
+        proposed, is_safe, raw_response = self.delegate.predict_mm(text_prompt, images)
+        if "Your Answer:" not in str(text_prompt):
+            return proposed, is_safe, raw_response
+        mode = str(self.policy.get("mode") or "always")
+        if mode == "keyboard_obstruction_guard":
+            if not _keyboard_obstruction_guard_applies(text_prompt, proposed):
+                return proposed, is_safe, raw_response
+            return (
+                "Reason: The software keyboard is still open after text entry and "
+                "obscures the form, so dismiss it before viewport navigation.\n"
+                'Action: {"action_type":"navigate_back"}',
+                is_safe,
+                {
+                    "first_pass": raw_response,
+                    "action_consistency_applied": True,
+                    "action_consistency_mode": mode,
+                },
+            )
+        instruction = str(self.policy.get("instruction") or "").strip()
+        review_prompt = (
+            f"{text_prompt}\n\n"
+            "SkyMark action-consistency review\n"
+            "The first-pass candidate action was:\n"
+            f"{proposed}\n\n"
+            f"{instruction}\n"
+            "Return one final answer in exactly the original Reason/Action format. "
+            "Do not discuss the review and do not emit multiple actions.\n\n"
+            "Final Answer:\n"
+        )
+        reviewed, reviewed_safe, reviewed_raw = self.delegate.predict_mm(
+            review_prompt,
+            images,
+        )
+        if _valid_reason_action_output(reviewed):
+            return reviewed, reviewed_safe, {
+                "first_pass": raw_response,
+                "review_pass": reviewed_raw,
+                "action_consistency_applied": True,
+            }
+        return proposed, is_safe, {
+            "first_pass": raw_response,
+            "review_pass": reviewed_raw,
+            "action_consistency_applied": False,
+            "fallback_reason": "review_output_parse_failed",
+        }
 
 
 _LLM_USAGE_COUNTER_KEYS = (
@@ -1406,6 +1591,45 @@ def _androidworld_setup_apps_for_suite(
     return tuple(setup_apps)
 
 
+def _prepare_official_harness_episode(env: Any, *, selected_agent: str) -> None:
+    if not str(selected_agent or "").startswith("official:"):
+        return
+    from android_world.env import adb_utils
+
+    adb_utils.press_home_button(env.controller)
+
+
+def _prepare_androidworld_snapshot_restore(
+    env: Any,
+    setup_apps: Sequence[Any],
+) -> None:
+    from android_world.env import adb_utils
+
+    for app in setup_apps:
+        package_name = str(app.package_name() or "").strip()
+        if not package_name:
+            raise RuntimeError("AndroidWorld setup app package name missing")
+        app_data_path = f"/data/data/{package_name}"
+        for arguments, message in (
+            (
+                ["shell", "mkdir", "-p", app_data_path],
+                f"Failed to prepare app data directory for {package_name}.",
+            ),
+            (
+                [
+                    "shell",
+                    "touch",
+                    f"{app_data_path}/omniflow_snapshot_restore_placeholder",
+                ],
+                f"Failed to prepare snapshot restore placeholder for {package_name}.",
+            ),
+        ):
+            adb_utils.check_ok(
+                adb_utils.issue_generic_request(arguments, env.controller),
+                message,
+            )
+
+
 def _wait_for_androidworld_a11y(env: Any, *, attempts: int = 3) -> None:
     last_error: RuntimeError | None = None
     for attempt in range(max(1, int(attempts))):
@@ -1489,16 +1713,199 @@ def _build_official_androidworld_agent(
         One upstream AndroidWorld agent instance bound to the current env.
     """
 
-    from android_world.agents import t3a
-
     resolved_name = str(official_agent_name or "").strip() or "t3a_gpt4"
-    if resolved_name != "t3a_gpt4":
+    if resolved_name not in {"t3a", "t3a_gpt4", "m3a"}:
         raise ValueError(f"Unknown AndroidWorld official agent: {resolved_name}")
     llm = _OpenAICompatibleMultimodalWrapper()
-    agent = t3a.T3A(env, llm)
+    if resolved_name == "m3a":
+        from android_world.agents import m3a
+
+        agent = m3a.M3A(env, llm)
+    else:
+        from android_world.agents import t3a
+
+        agent = t3a.T3A(env, llm)
     agent._omniflow_llm_usage_tracker = llm
     agent.name = resolved_name
     return agent
+
+
+def _official_parser_result(step: dict[str, Any]) -> dict[str, Any]:
+    parsed = step.get("action_output_json")
+    if parsed is not None:
+        return {"status": "parsed", "action": to_serializable(parsed)}
+    output = str(step.get("action_output") or "")
+    if not output:
+        return {"status": "missing_output", "action": None}
+    try:
+        from android_world.agents import agent_utils, m3a_utils
+
+        reason, action_text = m3a_utils.parse_reason_action_output(output)
+        if not reason or not action_text:
+            return {"status": "parse_failed", "action": None}
+        return {
+            "status": "parsed",
+            "reason": reason,
+            "action": to_serializable(agent_utils.extract_json(action_text)),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "parse_failed", "action": None, "error": str(exc)}
+
+
+def _persist_official_step_captures(
+    *,
+    output_dir: Path,
+    agent: Any,
+    selected_agent: str,
+    task_name: str,
+    goal: str,
+    task_params_sha256: str,
+    version_id: str = "stock",
+    candidate_proposal: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    if selected_agent not in {"official:t3a", "official:t3a_gpt4", "official:m3a"}:
+        return None
+    history = list(getattr(agent, "history", None) or [])
+    tracker = getattr(agent, "_omniflow_llm_usage_tracker", None)
+    action_requests = [
+        record
+        for record in list(getattr(tracker, "request_records", None) or [])
+        if record.get("kind") == "action"
+    ]
+    capture_root = output_dir / "skymark_stock_capture"
+    image_root = capture_root / "images"
+    image_root.mkdir(parents=True, exist_ok=True)
+    harness_id = "m3a" if selected_agent == "official:m3a" else "t3a"
+    rows = []
+    for step_index, step in enumerate(history[:7]):
+        if not isinstance(step, dict):
+            continue
+        request_record = action_requests[step_index] if step_index < len(action_requests) else {}
+        image_refs = []
+        for image_index, payload in enumerate(list(request_record.get("image_payloads") or [])):
+            image_sha256 = hashlib.sha256(payload).hexdigest()
+            image_path = image_root / f"{image_sha256}.jpg"
+            if not image_path.exists():
+                image_path.write_bytes(payload)
+            image_refs.append(
+                {
+                    "role": "raw_screenshot" if image_index == 0 else "som_screenshot",
+                    "path": str(image_path),
+                    "sha256": image_sha256,
+                    "mime_type": "image/jpeg",
+                    "exact_model_payload": True,
+                }
+            )
+        rows.append(
+            {
+                "schema_version": "skymark.stock_androidworld_step_capture.v1",
+                "request_id": f"{task_name}:{harness_id}:{version_id}:step-{step_index + 1}",
+                "logical_test_id": f"{task_name}:{harness_id}:step-{step_index + 1}",
+                "campaign_cell_id": f"{task_name}:{harness_id}:{version_id}",
+                "task_id": task_name,
+                "harness_id": harness_id,
+                "version_id": version_id,
+                "step_index": step_index + 1,
+                "goal": goal,
+                "task_params_sha256": task_params_sha256,
+                "action_prompt": str(step.get("action_prompt") or request_record.get("prompt") or ""),
+                "model_input_images": image_refs,
+                "modality": "vision_text" if image_refs else "text_only",
+                "raw_response": step.get("action_raw_response"),
+                "action_output": step.get("action_output"),
+                "parser_result": _official_parser_result(step),
+                "request_timing_ms": request_record.get("duration_ms"),
+                "prompt_tokens": _coerce_int(
+                    (request_record.get("response_metadata") or {}).get("usage", {}).get("prompt_tokens")
+                    if isinstance(request_record.get("response_metadata"), dict)
+                    else 0
+                ),
+                "completion_tokens": _coerce_int(
+                    (request_record.get("response_metadata") or {}).get("usage", {}).get("completion_tokens")
+                    if isinstance(request_record.get("response_metadata"), dict)
+                    else 0
+                ),
+                "reference_action_available_to_runtime": False,
+                "source": "stock_androidworld_agent_step_capture",
+                "candidate_proposal": to_serializable(candidate_proposal),
+            }
+        )
+    capture_path = capture_root / "steps.json"
+    capture_path.write_text(
+        json.dumps({"schema_version": "skymark.stock_capture_bundle.v1", "steps": rows}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return {
+        "path": str(capture_path),
+        "step_count": len(rows),
+        "harness_id": harness_id,
+        "version_id": version_id,
+    }
+
+
+def _apply_candidate_harness_proposal(agent: Any, path_text: str) -> dict[str, Any] | None:
+    text = str(path_text or "").strip()
+    if not text:
+        return None
+    path = Path(text).expanduser().resolve()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("schema_version") != "skymark.harness_revision.v1":
+        raise ValueError("unsupported_candidate_harness_proposal")
+    expected_harness = "m3a" if isinstance(getattr(agent, "history", None), list) and agent.__class__.__name__ == "M3A" else "t3a"
+    if str(payload.get("harness_id") or "") != expected_harness:
+        raise ValueError("candidate_harness_proposal_agent_mismatch")
+    guidelines = []
+    action_consistency_policy = None
+    for patch in payload.get("patches") or []:
+        if not isinstance(patch, dict):
+            raise ValueError("candidate_harness_patch_invalid")
+        if patch.get("seam") not in {
+            "history_policy",
+            "system_instruction",
+            "completion_policy",
+            "action_consistency_policy",
+        }:
+            raise ValueError(f"candidate_harness_patch_seam_not_runtime_safe:{patch.get('seam')}")
+        if patch.get("seam") == "action_consistency_policy":
+            if patch.get("operation") != "configure":
+                raise ValueError("action_consistency_policy_requires_configure")
+            value = patch.get("value")
+            if not isinstance(value, dict) or str(value.get("mode") or "") not in {
+                "always",
+                "keyboard_obstruction_guard",
+            }:
+                raise ValueError("action_consistency_policy_invalid")
+            if not str(value.get("instruction") or "").strip():
+                raise ValueError("action_consistency_instruction_required")
+            action_consistency_policy = dict(value)
+            continue
+        if patch.get("operation") != "append":
+            raise ValueError("candidate_harness_runtime_text_seams_only_support_append")
+        value = str(patch.get("value") or "").strip()
+        if value:
+            guidelines.append(value)
+    if not guidelines and action_consistency_policy is None:
+        raise ValueError("candidate_harness_patches_required")
+    if guidelines:
+        setter = getattr(agent, "set_task_guidelines", None)
+        if not callable(setter):
+            raise ValueError("candidate_harness_guideline_seam_unavailable")
+        setter(guidelines)
+    if action_consistency_policy is not None:
+        delegate = getattr(agent, "llm", None)
+        if delegate is None:
+            raise ValueError("candidate_harness_llm_seam_unavailable")
+        wrapped = _ActionConsistencyLlmWrapper(delegate, action_consistency_policy)
+        agent.llm = wrapped
+        agent._omniflow_llm_usage_tracker = wrapped
+    return {
+        "proposal_id": str(payload.get("proposal_id") or ""),
+        "harness_version_id": str(payload.get("harness_version_id") or ""),
+        "content_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "path": str(path),
+        "guidelines": guidelines,
+        "action_consistency_policy": to_serializable(action_consistency_policy),
+    }
 
 
 def _read_raw_replay_run_log(path_text: str) -> dict[str, Any]:
@@ -3057,6 +3464,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--checkpoint-dir", default="")
     parser.add_argument(
+        "--candidate-harness-proposal",
+        default="",
+        help=(
+            "Optional SkyMark harness_revision.v1 wrapper applied only to an "
+            "unregistered official:t3a or official:m3a capture."
+        ),
+    )
+    parser.add_argument(
         "--agent",
         default=MODE_OMNIFLOW,
         help=(
@@ -3064,7 +3479,9 @@ def build_parser() -> argparse.ArgumentParser:
             "`external:mobilegpt` delegates one official episode to MobileGPT; "
             "`external:appagent` runs pinned AppAgent deployment; "
             "`external:appagent_teacher` captures one source human demo; "
-            "`official:t3a_gpt4` runs the paper's upstream T3A agent."
+            "`official:t3a` and `official:m3a` run immutable stock AndroidWorld "
+            "agents for unregistered SkyMark capture; `official:t3a_gpt4` "
+            "keeps the paper baseline compatibility path."
         ),
     )
     parser.add_argument(
@@ -3241,17 +3658,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             tasks=selected_task_names,
             use_identical_params=bool(args.fixed_task_seed),
         )
-        setup_app_list = None
-        if bool(args.perform_emulator_setup):
-            if aw_setup is None:
-                raise RuntimeError(
-                    "AndroidWorld setup_device module is required when "
-                    "--perform-emulator-setup is set."
-                )
-            setup_app_list = _androidworld_setup_apps_for_suite(
-                suite,
-                get_app_mapping=aw_setup.get_app_mapping,
-            )
+        if aw_setup is None:
+            raise RuntimeError("AndroidWorld setup_device module is required.")
+        setup_app_list = _androidworld_setup_apps_for_suite(
+            suite,
+            get_app_mapping=aw_setup.get_app_mapping,
+        )
 
         reuse_a11y_forwarder = _ensure_androidworld_a11y_forwarder(
             console_port=int(args.console_port),
@@ -3276,6 +3688,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ", ".join(selected_task_names) or "<all>",
             )
             aw_setup.setup_apps(env, app_list=setup_app_list)
+        _prepare_androidworld_snapshot_restore(env, setup_app_list or ())
         if task_params:
             if len(selected_task_names) != 1:
                 raise ValueError("--task-params-json requires exactly one selected task")
@@ -3329,6 +3742,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             task_seed=int(args.task_random_seed),
             evidence_root=str(run_output_dir),
         )
+        candidate_harness = None
+        if str(args.candidate_harness_proposal or "").strip():
+            if selected_agent not in {"official:t3a", "official:m3a"}:
+                raise ValueError(
+                    "candidate_harness_proposal_requires_stock_capture_agent"
+                )
+            candidate_harness = _apply_candidate_harness_proposal(
+                agent,
+                args.candidate_harness_proposal,
+            )
         checkpoint_dir = (
             str(Path(args.checkpoint_dir).expanduser().resolve())
             if args.checkpoint_dir
@@ -3388,12 +3811,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             agent,
             recording_session=recording_session,
             goal_hint=official_goal_hint_text,
+            max_steps=max(1, int(args.max_steps)),
         )
         print(
             "Starting official AndroidWorld runner with "
             f"agent={mainline_name} and writing to {checkpoint_dir}"
         )
         try:
+            _prepare_official_harness_episode(
+                env,
+                selected_agent=selected_agent,
+            )
             results = suite_utils.run(
                 suite,
                 instrumented_agent,
@@ -3803,6 +4231,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                     task_result_record["androidworld_task_context"] = (
                         to_serializable(task_context)
                     )
+                stock_capture = _persist_official_step_captures(
+                    output_dir=run_output_dir,
+                    agent=agent,
+                    selected_agent=selected_agent,
+                    task_name=task_name,
+                    goal=goal_text,
+                    task_params_sha256=evaluation_task_params_sha256,
+                    version_id=(
+                        str(candidate_harness.get("harness_version_id") or "candidate")
+                        if candidate_harness
+                        else "stock"
+                    ),
+                    candidate_proposal=candidate_harness,
+                )
+                if stock_capture is not None:
+                    task_result_record["skymark_stock_capture"] = stock_capture
                 if canonical_run is not None:
                     task_result_record["canonical_run"] = to_serializable(
                         canonical_run

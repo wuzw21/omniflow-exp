@@ -16,6 +16,7 @@ from omniflow.functions.assets import validate_arguments
 from omniflow.vlm.context import analyze_page_context
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import LLMUsageTracker
+from omniflow.vlm_coordinates import screen_pixel_args_to_canonical
 
 SYSTEM_PROMPT = DEFAULT_PLANNER_SYSTEM_PROMPT
 
@@ -256,7 +257,7 @@ def constrain_open_app_tool(
     constrained: list[dict[str, Any]] = []
     for tool in tools:
         function = tool.get("function") if isinstance(tool, dict) else None
-        if not isinstance(function, dict) or function.get("name") != "open_app":
+        if not isinstance(function, dict):
             constrained.append(tool)
             continue
         parameters = function.get("parameters")
@@ -267,12 +268,19 @@ def constrain_open_app_tool(
             properties.get("package_name") if isinstance(properties, dict) else None
         )
         if not isinstance(package_schema, dict):
-            raise ValueError("open_app_package_schema_missing")
+            if function.get("name") == "open_app":
+                raise ValueError("open_app_package_schema_missing")
+            constrained.append(tool)
+            continue
         if packages:
             package_schema["enum"] = packages
-            package_schema["description"] = (
+            choices = (
                 "Choose one installed app (app label -> package): "
                 + "; ".join(f"{label} -> {package}" for label, package in candidates)
+            )
+            description = str(package_schema.get("description") or "").strip()
+            package_schema["description"] = " ".join(
+                part for part in (description, choices) if part
             )
         else:
             package_schema.pop("enum", None)
@@ -549,7 +557,7 @@ def resolve_step_guidance(goal: str, explicit: str = "") -> str:
 
 _ADAPTER_NAME = "qwen_vl_coordinate_arrays.v1"
 _QWEN_VL_MODEL = re.compile(
-    r"(?:^|[^a-z0-9])qwen(?:\d+(?:\.\d+)?)?[-_.]?vl(?:[^a-z0-9]|$)",
+    r"(?:^|[^a-z0-9])qwen(?:\d+(?:\.\d+)?)?(?:[-_.]?vl|[-_.]?plus)(?:[^a-z0-9]|$)",
     re.IGNORECASE,
 )
 _COORDINATE_PAIRS = {
@@ -571,26 +579,81 @@ def adapt_tool_arguments(
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     model = _adapter_model(requested_model, resolved_model)
     coordinate_pairs = _COORDINATE_PAIRS.get(tool)
-    if not model or coordinate_pairs is None:
+    if coordinate_pairs is None:
         return dict(arguments), None
 
     adapted = dict(arguments)
     changes: list[dict[str, Any]] = []
-    for x_field, y_field in coordinate_pairs:
-        _adapt_coordinate_pair(
-            adapted,
-            x_field,
-            y_field,
-            changes,
-        )
+    if model:
+        for x_field, y_field in coordinate_pairs:
+            _adapt_coordinate_pair(
+                adapted,
+                x_field,
+                y_field,
+                changes,
+            )
+    raw_pixel_changes = _adapt_raw_pixel_coordinates(
+        tool=tool,
+        arguments=adapted,
+        display=display,
+    )
+    if raw_pixel_changes is not None:
+        adapted, conversion = raw_pixel_changes
+        changes.append(conversion)
     if not changes:
         return adapted, None
     return adapted, {
-        "name": _ADAPTER_NAME,
-        "model": model,
+        "name": (
+            _ADAPTER_NAME
+            if all(change.get("source_shape") for change in changes)
+            else "planner_coordinate_adapter.v1"
+        ),
+        "model": model or str(resolved_model or requested_model).strip(),
         "tool": tool,
         "changes": changes,
     }
+
+
+def _adapt_raw_pixel_coordinates(
+    *,
+    tool: str,
+    arguments: dict[str, Any],
+    display: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    pairs = _COORDINATE_PAIRS.get(tool) or ()
+    present_pairs = [
+        (x_field, y_field)
+        for x_field, y_field in pairs
+        if x_field in arguments and y_field in arguments
+    ]
+    if not present_pairs:
+        return None
+    fields = [field for pair in present_pairs for field in pair]
+    values = [arguments[field] for field in fields]
+    if not all(_is_number(value) for value in values):
+        return None
+    if not any(float(value) > 1000 for value in values):
+        return None
+    width = float((display or {}).get("width") or 0)
+    height = float((display or {}).get("height") or 0)
+    dimensions = {
+        field: width if field.startswith("x") else height for field in fields
+    }
+    raw_fields = {
+        field: arguments[field]
+        for field in fields
+        if float(arguments[field]) > 1000
+    }
+    if all(float(arguments[field]) <= dimensions[field] for field in fields):
+        raw_fields = {field: arguments[field] for field in fields}
+    converted_fields, metadata = screen_pixel_args_to_canonical(
+        tool=tool,
+        args=raw_fields,
+        display=display,
+    )
+    converted = dict(arguments)
+    converted.update(converted_fields)
+    return converted, metadata or {}
 
 
 def _adapter_model(requested_model: str, resolved_model: str) -> str:
@@ -646,9 +709,18 @@ def _matches_inferred_y(value: Any, inferred_y: int | float) -> bool:
         return value == inferred_y
     return (
         isinstance(value, list)
-        and len(value) == 1
-        and _is_number(value[0])
-        and value[0] == inferred_y
+        and (
+            (
+                len(value) == 1
+                and _is_number(value[0])
+                and value[0] == inferred_y
+            )
+            or (
+                len(value) == 2
+                and all(_is_number(item) for item in value)
+                and value[1] == inferred_y
+            )
+        )
     )
 
 

@@ -956,18 +956,6 @@ def prepare_appagent_memory(
         }
     root = attempt_root / "assets" / "appagent"
     memory_pointer = _read_object(args.memory_index)
-    evidence_roots = [
-        value
-        for value in os.environ.get(
-            "OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS", ""
-        ).split(":")
-        if value
-    ]
-    if not evidence_roots:
-        raise PipelinePhaseError(
-            "appagent_native_memory_evidence_roots_required",
-            {"tool_calls": 0, "tokens": 0},
-        )
     command = [
         str(args.python_bin),
         "-m",
@@ -984,8 +972,6 @@ def prepare_appagent_memory(
         "--model",
         args.formal_model,
     ]
-    for evidence_root in evidence_roots:
-        command.extend(("--evidence-root", evidence_root))
     environment = dict(os.environ)
     result = run_logged_command(
         command,
@@ -1086,7 +1072,7 @@ def _cell_environment(
             "OMNIFLOW_SINGLE_TASK_PREFLIGHT_OUTPUT_ROOT": str(
                 attempt_root / "preflight" / label / method
             ),
-            "OMNIFLOW_FORMAL_MODEL_ENDPOINT_PROFILE": "openai",
+            "OMNIFLOW_FORMAL_MODEL_ENDPOINT_PROFILE": "llmthu",
         }
     )
     if mobilegpt_memory is not None:
@@ -1839,9 +1825,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-avd", default="SmallPhone")
     parser.add_argument("--emulator-gpu", default="swiftshader_indirect")
     parser.add_argument("--runtime-preflight", type=Path, required=True)
-    parser.add_argument("--source-model", default="glm-5.1")
-    parser.add_argument("--semantic-model", default="glm-5.1")
-    parser.add_argument("--formal-model", default="qwen3-vl-plus")
+    parser.add_argument("--source-model", default="GLM-5.1")
+    parser.add_argument("--semantic-model", default="GLM-5.1")
+    parser.add_argument("--formal-model", default="GLM-5.1")
     parser.add_argument("--attempt-id", default="")
     parser.add_argument("--source-qualification-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")

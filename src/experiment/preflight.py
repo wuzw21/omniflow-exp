@@ -279,7 +279,6 @@ def _valid_appagent_demo_manifest(payload: Any) -> bool:
         offline_conversion = (
             payload.get("conversion_mode") == "canonical_runlog_offline"
             and payload.get("source_emulator_used") is False
-            and payload.get("native_memory_evidence")
         )
         return (
             payload.get("schema_version") == "omniflow.appagent-demo-memory.v2"

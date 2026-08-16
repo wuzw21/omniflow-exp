@@ -28,7 +28,9 @@ formal_max_fallback_steps=5
 formal_fixed_task_params=0
 formal_fold_state=2
 formal_fold_size="2208x1840"
-formal_model="qwen3-vl-plus"
+formal_model="GLM-5.1"
+formal_model_endpoint_profile="llmthu"
+formal_model_base_url="https://llmapi.paratera.com/v1"
 mobilegpt_source_schema="omniflow.mobilegpt-runlog-direct-memory.v1"
 mobilegpt_source_method="mobilegpt_runlog_direct_memory"
 mobilegpt_source_manifest_name="mobilegpt_memory_manifest.json"
@@ -75,8 +77,6 @@ mobilegpt_root="${OMNIFLOW_MOBILEGPT_ROOT:-${asset_root:+$asset_root/runtime/ext
 mobilegpt_source_memory_root="${OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT:-}"
 appagent_root="${OMNIFLOW_APPAGENT_ROOT:-${asset_root:+$asset_root/runtime/external/appagent}}"
 appagent_demo_memory_root="${OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT:-}"
-default_appagent_native_memory_root="${asset_root:+$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111}"
-appagent_native_memory_roots="${OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS:-$default_appagent_native_memory_root}"
 source_device="${OMNIFLOW_SOURCE_DEVICE:-source5560:emulator-5560:5560}"
 preflight_profile="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_PROFILE:-}"
 preflight_serials="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_SERIALS:-}"
@@ -120,13 +120,28 @@ dry_run=0
 check_only=0
 development_run=0
 source_qualification_only=0
+stock_capture=0
 all_tasks=0
 eight_cells=0
 batch_task_filter=""
 convert_ours_assets=0
 refresh_memory=0
+page_store=0
+page_store_import=0
+page_store_root="${OMNIFLOW_PAGE_STORE_ROOT:-}"
+page_store_serial="${OMNIFLOW_PAGE_STORE_SERIAL:-}"
+page_store_top_k="${OMNIFLOW_PAGE_STORE_TOP_K:-5}"
+page_store_encoder="${OMNIFLOW_PAGE_STORE_ENCODER:-omnitransfer-v9.2-soft-1024}"
+page_store_checkpoint="${OMNIFLOW_PAGE_STORE_CHECKPOINT:-}"
+page_store_word_checkpoint="${OMNIFLOW_PAGE_WORD_CHECKPOINT:-$account_root/OmniFlowPageStore/models/soft_page_words_v1/soft_page_words_seed41.npz}"
+page_store_device="${OMNIFLOW_PAGE_STORE_DEVICE:-cpu}"
+page_store_state_package="${OMNIFLOW_PAGE_STORE_STATE_PACKAGE:-cn.com.omnimind.bot.debug}"
+page_store_run_limit="${OMNIFLOW_PAGE_STORE_RUN_LIMIT:-0}"
+page_store_merge_threshold="${OMNIFLOW_PAGE_STORE_AUTO_MERGE_THRESHOLD:-0.95}"
 convert_source_runlogs=0
 prepare_mobilegpt_memory=0
+convert_runlog_memory_method=""
+runlog_memory_output_root="${OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT:-}"
 selected_methods_arg=""
 selected_devices_arg=""
 e2e_task=""
@@ -159,6 +174,29 @@ PY
   export OMNIFLOW_MODEL_ENDPOINT_PROFILE="$profile"
 }
 
+validate_experiment_model() {
+  local model="$1"
+  local profile="$2"
+  local normalized_model
+  normalized_model="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$normalized_model" == "qwen3-vl-plus" ]]; then
+    echo "qwen3-vl-plus is prohibited for AndroidWorld experiments." >&2
+    exit 2
+  fi
+  if [[ "$normalized_model" != "glm-5.1" ]]; then
+    echo "AndroidWorld experiments require GLM-5.1, got: $model" >&2
+    exit 2
+  fi
+  if [[ "$profile" != "$formal_model_endpoint_profile" ]]; then
+    echo "GLM-5.1 requires model endpoint profile $formal_model_endpoint_profile, got: $profile" >&2
+    exit 2
+  fi
+  if [[ "$selected_model_base_url" != "$formal_model_base_url" ]]; then
+    echo "GLM-5.1 requires model endpoint $formal_model_base_url, got: $selected_model_base_url" >&2
+    exit 2
+  fi
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -169,6 +207,11 @@ Options:
                             assets, attempts, result directories, or emulators.
   --development-run         Run one unregistered `ours` episode through this
                             script for bounded method debugging.
+  --stock-capture AGENT     Run one unregistered immutable stock `t3a` or `m3a`
+                            episode and persist its step requests. The default
+                            diagnostic limit is seven; set
+                            OMNIFLOW_STOCK_CAPTURE_MAX_STEPS=20 for a bounded
+                            full episode with the official validator.
   --dry-run                 Build one task command without executing it.
   --all-tasks               Run the selected task set in task-major order.
   --eight-cells             Deprecated alias for the complete formal matrix:
@@ -187,6 +230,9 @@ Options:
                             Build task-local MobileGPT memory from canonical
                             RunLogs only. With --check-only, run zero-model
                             preflight and create nothing.
+  --convert-runlog-memory METHOD
+                            Convert one successful RunLog into native
+                            mobilegpt_offline_retrieval or appagent_demo memory.
   --e2e-task TASK           Run one bounded source-to-matrix task pipeline.
   --source-qualification-only
                             Stop that pipeline after immutable seed-111 Function
@@ -197,6 +243,13 @@ Options:
   --task-deadline-sec SEC   Whole-task wall deadline; maximum/default is 1800.
   --refresh-memory          Deduplicate and index all configured RunLogs,
                             method assets, and existing results.
+  --page-store              Interactively capture the current Android page,
+                            show separate OmniTransfer and native OmniFlow
+                            Top-K results, and save only a human-confirmed
+                            merge or new cluster.
+  --page-store-import       Import every page from recent OOB GUI recordings,
+                            exact-deduplicate it, run both Top-K encoders, and
+                            auto-merge with OmniTransfer at threshold 0.95.
   -h, --help                Show this help and exit.
 
 Required external roots:
@@ -213,14 +266,27 @@ Optional runtime overrides:
   OMNIFLOW_ANDROID_SDK_ROOT, OMNIFLOW_JAVA_HOME,
   OMNIFLOW_MOBILEGPT_SOURCE_ENVIRONMENT_REPAIR_REASON,
   OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON,
-  OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS (colon-separated immutable AppAgent demos),
   OMNIFLOW_DEVELOPMENT_OUTPUT_PATH, OMNIFLOW_DEVELOPMENT_MODEL,
   OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE (default: llmthu),
+  OMNIFLOW_DEVELOPMENT_STEP_GUIDANCE_PATH,
   OMNIFLOW_DEVELOPMENT_CONSOLE_PORT,
+  OMNIFLOW_DEVELOPMENT_AVD (default: OmniFlowTargetSmall),
+  OMNIFLOW_STOCK_CAPTURE_OUTPUT_PATH, OMNIFLOW_STOCK_CAPTURE_MODEL,
+  OMNIFLOW_STOCK_CAPTURE_MODEL_ENDPOINT_PROFILE (default: openai),
+  OMNIFLOW_STOCK_CAPTURE_TASK_PARAMS_JSON (fixed AndroidWorld task params),
+  OMNIFLOW_STOCK_CAPTURE_CANDIDATE_PROPOSAL (candidate Harness wrapper),
   OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP (0 reuses prior app snapshots),
   OMNIFLOW_BATCH_ATTEMPT_ID (resume one interrupted immutable batch).
   OMNIFLOW_E2E_OUTPUT_ROOT, OMNIFLOW_E2E_SOURCE_MODEL,
   OMNIFLOW_E2E_SEMANTIC_MODEL, OMNIFLOW_E2E_ATTEMPT_ID.
+  OMNIFLOW_PAGE_STORE_ROOT,
+  OMNIFLOW_PAGE_STORE_SERIAL (optional; otherwise select an adb device),
+  OMNIFLOW_PAGE_STORE_TOP_K, OMNIFLOW_PAGE_STORE_ENCODER,
+  OMNIFLOW_PAGE_STORE_CHECKPOINT, OMNIFLOW_PAGE_STORE_DEVICE,
+  OMNIFLOW_PAGE_WORD_CHECKPOINT, OMNIFLOW_PAGE_STORE_STATE_PACKAGE,
+  OMNIFLOW_PAGE_STORE_RUN_LIMIT (0 means all GUI recording groups),
+  OMNIFLOW_PAGE_STORE_AUTO_MERGE_THRESHOLD (default: 0.95),
+  OMNIFLOW_ADB_PATH.
   Managed emulators are cold-restarted before every pending cell.
 
 Asset conversion inputs:
@@ -228,6 +294,8 @@ Asset conversion inputs:
                                    source index.
   OMNIFLOW_OURS_AUTHORING_MANIFEST Immutable Function bundle skill manifest.
   OMNIFLOW_OURS_CONVERTED_ASSET_ROOT New immutable conversion output root.
+  OMNIFLOW_OURS_REVISION_REASON      Non-empty reason that replaces an existing
+                                     canonical Store using the supplied manifest.
   OMNIFLOW_EXP_MEMORY_INDEX          Existing memory current.json.
 
 Long-term-memory refresh inputs:
@@ -248,17 +316,29 @@ Source RunLog conversion inputs:
   OMNIFLOW_SOURCE_SCREENSHOT_ROOTS   Optional colon-separated screenshot roots.
   OMNIFLOW_MOBILEGPT_MEMORY_OUTPUT_ROOT
                                      Absolute immutable batch-attempt root.
+  OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT
+                                     Absolute immutable output for one native
+                                     baseline-memory conversion.
 
 Examples:
   bash scripts/exp/run_androidworld.sh --tasks AudioRecorderRecordAudio
   bash scripts/exp/run_androidworld.sh --convert-ours-assets \
     --tasks AudioRecorderRecordAudio
   bash scripts/exp/run_androidworld.sh --refresh-memory
+  OMNIFLOW_PAGE_STORE_ROOT=/abs/page-store \
+    bash scripts/exp/run_androidworld.sh --page-store
+  OMNIFLOW_PAGE_STORE_ROOT=/abs/page-store \
+    OMNIFLOW_PAGE_STORE_RUN_LIMIT=4 \
+    bash scripts/exp/run_androidworld.sh --page-store-import
   bash scripts/exp/run_androidworld.sh --convert-source-runlogs
   bash scripts/exp/run_androidworld.sh --check-only \
     --prepare-mobilegpt-memory
   bash scripts/exp/run_androidworld.sh --prepare-mobilegpt-memory \
     --tasks ContactsAddContact
+  OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT=/abs/new-memory \
+    bash scripts/exp/run_androidworld.sh \
+      --convert-runlog-memory mobilegpt_offline_retrieval \
+      --source-runlog /abs/success.run_log.json
   bash scripts/exp/run_androidworld.sh --check-only --all-tasks \
     --methods mobilegpt_offline_retrieval
   bash scripts/exp/run_androidworld.sh --all-tasks \
@@ -283,6 +363,14 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --development-run)
       development_run=1
+      ;;
+    --stock-capture)
+      shift
+      if [[ "$#" -eq 0 || ( "$1" != "t3a" && "$1" != "m3a" ) ]]; then
+        echo "--stock-capture requires t3a or m3a." >&2
+        exit 2
+      fi
+      stock_capture="$1"
       ;;
     --dry-run)
       dry_run=1
@@ -315,11 +403,26 @@ while [[ "$#" -gt 0 ]]; do
     --refresh-memory)
       refresh_memory=1
       ;;
+    --page-store)
+      page_store=1
+      ;;
+    --page-store-import)
+      page_store=1
+      page_store_import=1
+      ;;
     --convert-source-runlogs)
       convert_source_runlogs=1
       ;;
     --prepare-mobilegpt-memory)
       prepare_mobilegpt_memory=1
+      ;;
+    --convert-runlog-memory)
+      shift
+      if [[ "$#" -eq 0 || ( "$1" != "mobilegpt_offline_retrieval" && "$1" != "appagent_demo" ) ]]; then
+        echo "--convert-runlog-memory requires mobilegpt_offline_retrieval or appagent_demo." >&2
+        exit 2
+      fi
+      convert_runlog_memory_method="$1"
       ;;
     --e2e-task)
       shift
@@ -371,6 +474,294 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
+if [[ -n "$convert_runlog_memory_method" ]]; then
+  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || "$page_store" -eq 1 || -n "$stock_capture" || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$e2e_task" || -n "$batch_task_filter" ]]; then
+    echo "--convert-runlog-memory cannot be combined with another experiment mode." >&2
+    exit 2
+  fi
+  if [[ -z "$e2e_source_runlog" || "$e2e_source_runlog" != /* || ! -f "$e2e_source_runlog" ]]; then
+    echo "--convert-runlog-memory requires an existing absolute --source-runlog." >&2
+    exit 2
+  fi
+  if [[ -z "$runlog_memory_output_root" || "$runlog_memory_output_root" != /* ]]; then
+    echo "--convert-runlog-memory requires absolute OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT." >&2
+    exit 2
+  fi
+  if [[ -e "$runlog_memory_output_root" ]]; then
+    echo "Immutable RunLog memory output already exists: $runlog_memory_output_root" >&2
+    exit 2
+  fi
+  if ! python_bin="$(command -v "$python_bin")"; then
+    echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
+    exit 1
+  fi
+  if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
+    echo "RunLog memory conversion requires an existing absolute OMNIFLOW_ENV_FILE." >&2
+    exit 2
+  fi
+  case "$convert_runlog_memory_method" in
+    mobilegpt_offline_retrieval)
+      runlog_memory_upstream_root="$mobilegpt_root"
+      ;;
+    appagent_demo)
+      runlog_memory_upstream_root="$appagent_root"
+      ;;
+  esac
+  if [[ "$runlog_memory_upstream_root" != /* || ! -d "$runlog_memory_upstream_root" ]]; then
+    echo "Native baseline root missing: $runlog_memory_upstream_root" >&2
+    exit 2
+  fi
+  set -a
+  source "$env_file"
+  set +a
+  select_model_endpoint "$formal_model_endpoint_profile"
+  validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
+  cd "$repo"
+  "$python_bin" - \
+    "$convert_runlog_memory_method" \
+    "$e2e_source_runlog" \
+    "$runlog_memory_output_root" \
+    "$runlog_memory_upstream_root" \
+    "$formal_model" <<'PY'
+import json
+import sys
+
+from src.experiment.source_assets import convert_runlog_memory
+
+result = convert_runlog_memory(
+    sys.argv[1],
+    source_run_log=sys.argv[2],
+    output_root=sys.argv[3],
+    upstream_root=sys.argv[4],
+    model=sys.argv[5],
+)
+print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+PY
+  exit 0
+fi
+if [[ "$page_store" -eq 1 ]]; then
+  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$e2e_task" || -n "$batch_task_filter" ]]; then
+    echo "--page-store cannot be combined with experiment or maintenance options." >&2
+    exit 2
+  fi
+  if [[ -z "$page_store_root" || "$page_store_root" != /* ]]; then
+    echo "--page-store requires absolute OMNIFLOW_PAGE_STORE_ROOT." >&2
+    exit 2
+  fi
+  if [[ ! "$page_store_top_k" =~ ^[1-9][0-9]*$ ]]; then
+    echo "OMNIFLOW_PAGE_STORE_TOP_K must be a positive integer." >&2
+    exit 2
+  fi
+  if [[ ! "$page_store_run_limit" =~ ^[0-9]+$ ]]; then
+    echo "OMNIFLOW_PAGE_STORE_RUN_LIMIT must be a non-negative integer." >&2
+    exit 2
+  fi
+  if [[ ! "$page_store_merge_threshold" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]]; then
+    echo "OMNIFLOW_PAGE_STORE_AUTO_MERGE_THRESHOLD must be between 0 and 1." >&2
+    exit 2
+  fi
+  if [[ "$page_store_encoder" != "omnitransfer-v9.2-soft-1024" && "$page_store_encoder" != "omnitransfer-v9.2-dynamic-1024" && "$page_store_encoder" != "omniflow-native-512" ]]; then
+    echo "OMNIFLOW_PAGE_STORE_ENCODER must be omnitransfer-v9.2-soft-1024, omnitransfer-v9.2-dynamic-1024, or omniflow-native-512." >&2
+    exit 2
+  fi
+  if [[ -n "$page_store_checkpoint" && "$page_store_checkpoint" != /* ]]; then
+    echo "OMNIFLOW_PAGE_STORE_CHECKPOINT must be absolute when set." >&2
+    exit 2
+  fi
+  page_store_adb="${OMNIFLOW_ADB_PATH:-adb}"
+  if [[ -z "$page_store_serial" ]]; then
+    page_store_device_serials=()
+    page_store_device_names=()
+    while IFS=$'\t' read -r detected_serial detected_name; do
+      [[ -n "$detected_serial" ]] || continue
+      page_store_device_serials+=("$detected_serial")
+      page_store_device_names+=("$detected_name")
+    done < <(
+      "$page_store_adb" devices -l | awk '
+        NR > 1 && $2 == "device" {
+          model = $1
+          for (i = 3; i <= NF; i++) {
+            if ($i ~ /^model:/) {
+              sub(/^model:/, "", $i)
+              model = $i
+            }
+          }
+          printf "%s\t%s\n", $1, model
+        }
+      '
+    )
+    if [[ "${#page_store_device_serials[@]}" -eq 0 ]]; then
+      echo "--page-store found no authorized adb devices." >&2
+      exit 2
+    fi
+    if [[ "${#page_store_device_serials[@]}" -eq 1 ]]; then
+      page_store_serial="${page_store_device_serials[0]}"
+      echo "Using device: ${page_store_device_names[0]} ($page_store_serial)"
+    else
+      echo "Available adb devices:"
+      for ((device_index = 0; device_index < ${#page_store_device_serials[@]}; device_index++)); do
+        echo "  $((device_index + 1)). ${page_store_device_names[$device_index]} (${page_store_device_serials[$device_index]})"
+      done
+      while [[ -z "$page_store_serial" ]]; do
+        read -r -p "Select device by number, model name, or serial: " device_choice
+        for ((device_index = 0; device_index < ${#page_store_device_serials[@]}; device_index++)); do
+          if [[ "$device_choice" == "$((device_index + 1))" || "$device_choice" == "${page_store_device_names[$device_index]}" || "$device_choice" == "${page_store_device_serials[$device_index]}" ]]; then
+            if [[ -n "$page_store_serial" ]]; then
+              echo "Device name is ambiguous; select by number or serial." >&2
+              page_store_serial=""
+              break
+            fi
+            page_store_serial="${page_store_device_serials[$device_index]}"
+          fi
+        done
+        if [[ -z "$page_store_serial" ]]; then
+          echo "Unknown device; enter one of the displayed values." >&2
+        fi
+      done
+    fi
+  fi
+  page_store_args=(
+    --store "$page_store_root"
+    --serial "$page_store_serial"
+    --adb "$page_store_adb"
+    --top-k "$page_store_top_k"
+    --encoder "$page_store_encoder"
+    --omnitransfer-root "${omnitransfer_root:-$account_root/Projects/Omni/OmniTransfer}"
+    --device "$page_store_device"
+    --page-word-checkpoint "$page_store_word_checkpoint"
+    --state-package "$page_store_state_package"
+  )
+  if [[ -n "$page_store_checkpoint" ]]; then
+    page_store_args+=(--checkpoint "$page_store_checkpoint")
+  fi
+  if [[ "$page_store_import" -eq 1 ]]; then
+    page_store_args+=(
+      --import-recordings
+      --recording-run-limit "$page_store_run_limit"
+      --auto-merge-threshold "$page_store_merge_threshold"
+    )
+  fi
+  cd "$repo"
+  page_store_python="$python_bin"
+  canonical_omnitransfer_python="${omnitransfer_root:-$account_root/Projects/Omni/OmniTransfer}/.venv/bin/python"
+  if [[ -z "${PYTHON_BIN:-}" && -x "$canonical_omnitransfer_python" ]]; then
+    page_store_python="$canonical_omnitransfer_python"
+  fi
+  exec "$page_store_python" -m src.experiment.page_store "${page_store_args[@]}"
+fi
+if [[ "$stock_capture" != 0 ]]; then
+  if [[ "$development_run" -eq 1 || "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$e2e_task" ]]; then
+    echo "--stock-capture cannot be combined with maintenance, formal matrix, development, or E2E options." >&2
+    exit 2
+  fi
+  if [[ -n "$batch_task_filter" ]]; then
+    if [[ "$batch_task_filter" == *,* ]]; then
+      echo "--stock-capture accepts exactly one task." >&2
+      exit 2
+    fi
+    task="$batch_task_filter"
+  fi
+  stock_capture_output_path="${OMNIFLOW_STOCK_CAPTURE_OUTPUT_PATH:-}"
+  stock_capture_model="${OMNIFLOW_STOCK_CAPTURE_MODEL:-$formal_model}"
+  stock_capture_model_endpoint_profile="${OMNIFLOW_STOCK_CAPTURE_MODEL_ENDPOINT_PROFILE:-$formal_model_endpoint_profile}"
+  stock_capture_console_port="${OMNIFLOW_STOCK_CAPTURE_CONSOLE_PORT:-5554}"
+  stock_capture_avd="${OMNIFLOW_STOCK_CAPTURE_AVD:-OmniFlowTargetSmall}"
+  stock_capture_perform_setup="${OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP:-1}"
+  stock_capture_max_steps="${OMNIFLOW_STOCK_CAPTURE_MAX_STEPS:-7}"
+  stock_capture_candidate_proposal="${OMNIFLOW_STOCK_CAPTURE_CANDIDATE_PROPOSAL:-}"
+  stock_capture_task_params_json="${OMNIFLOW_STOCK_CAPTURE_TASK_PARAMS_JSON:-}"
+  if [[ -z "$task" || "$task" == *,* ]]; then
+    echo "--stock-capture requires exactly one task through --tasks or OMNIFLOW_SINGLE_TASK_TASK." >&2
+    exit 2
+  fi
+  if [[ -z "$stock_capture_output_path" || "$stock_capture_output_path" != /* ]]; then
+    echo "--stock-capture requires absolute OMNIFLOW_STOCK_CAPTURE_OUTPUT_PATH." >&2
+    exit 2
+  fi
+  if [[ -e "$stock_capture_output_path" ]]; then
+    echo "Stock capture attempt already exists: $stock_capture_output_path" >&2
+    exit 1
+  fi
+  if [[ -z "$android_world_root" || "$android_world_root" != /* || ! -d "$android_world_root/android_world" ]]; then
+    echo "--stock-capture requires an absolute AndroidWorld checkout." >&2
+    exit 2
+  fi
+  stock_capture_android_sdk_root="${OMNIFLOW_ANDROID_SDK_ROOT:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$(resolve_default_android_sdk_root)}}}"
+  stock_capture_adb_path="${OMNIFLOW_ADB_PATH:-$stock_capture_android_sdk_root/platform-tools/adb}"
+  stock_capture_emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$stock_capture_android_sdk_root/emulator/emulator}"
+  if [[ "$stock_capture_adb_path" != /* || ! -x "$stock_capture_adb_path" ]]; then
+    echo "--stock-capture requires an executable absolute ADB path: $stock_capture_adb_path" >&2
+    exit 2
+  fi
+  if [[ "$stock_capture_emulator_bin" != /* || ! -x "$stock_capture_emulator_bin" ]]; then
+    echo "--stock-capture requires an executable absolute emulator path: $stock_capture_emulator_bin" >&2
+    exit 2
+  fi
+  if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
+    echo "--stock-capture requires an existing absolute OMNIFLOW_ENV_FILE." >&2
+    exit 2
+  fi
+  if [[ -n "$stock_capture_task_params_json" ]]; then
+    if ! "$python_bin" -c 'import json,sys; value=json.loads(sys.argv[1]); assert isinstance(value, dict) and value' "$stock_capture_task_params_json"; then
+      echo "OMNIFLOW_STOCK_CAPTURE_TASK_PARAMS_JSON must be a non-empty JSON object." >&2
+      exit 2
+    fi
+  fi
+  if [[ ! "$stock_capture_max_steps" =~ ^[1-9][0-9]*$ ]] || (( stock_capture_max_steps > formal_max_steps )); then
+    echo "OMNIFLOW_STOCK_CAPTURE_MAX_STEPS must be an integer from 1 to $formal_max_steps." >&2
+    exit 2
+  fi
+  set -a
+  source "$env_file"
+  set +a
+  select_model_endpoint "$stock_capture_model_endpoint_profile"
+  validate_experiment_model "$stock_capture_model" "$stock_capture_model_endpoint_profile"
+  echo "[stock-capture] agent=$stock_capture task=$task model=$stock_capture_model model_endpoint=$selected_model_base_url"
+  stock_capture_command=(
+    "$python_bin" -m src.integrations.android_world.launch
+    --android-world-root "$android_world_root"
+    --tasks "$task"
+    --task-random-seed "$evaluation_seed"
+    --n-task-combinations 1
+    --console-port "$stock_capture_console_port"
+    --agent "official:$stock_capture"
+    --max-steps "$stock_capture_max_steps"
+    --output-path "$stock_capture_output_path"
+    --fixed-task-seed
+    --model "$stock_capture_model"
+    --model-endpoint-profile "$stock_capture_model_endpoint_profile"
+    --adb-path "$stock_capture_adb_path"
+  )
+  if [[ -n "$stock_capture_task_params_json" ]]; then
+    stock_capture_command+=(--task-params-json "$stock_capture_task_params_json")
+  fi
+  if [[ -n "$stock_capture_candidate_proposal" ]]; then
+    if [[ "$stock_capture_candidate_proposal" != /* || ! -f "$stock_capture_candidate_proposal" ]]; then
+      echo "OMNIFLOW_STOCK_CAPTURE_CANDIDATE_PROPOSAL must be an existing absolute file." >&2
+      exit 2
+    fi
+    stock_capture_command+=(--candidate-harness-proposal "$stock_capture_candidate_proposal")
+  fi
+  if [[ "$stock_capture_perform_setup" -eq 1 ]]; then
+    stock_capture_command+=(--perform-emulator-setup)
+  fi
+  if [[ "$dry_run" -eq 1 ]]; then
+    printf '%q ' "${stock_capture_command[@]}"
+    printf '\n'
+    exit 0
+  fi
+  cd "$repo"
+  "$python_bin" -m src.experiment.development_emulator \
+    --adb "$stock_capture_adb_path" \
+    --emulator "$stock_capture_emulator_bin" \
+    --serial "emulator-$stock_capture_console_port" \
+    --avd "$stock_capture_avd" \
+    --gpu "$emulator_gpu" \
+    --log-path "$stock_capture_output_path.emulator.log" \
+    --boot-timeout "$emulator_boot_timeout_sec"
+  "${stock_capture_command[@]}"
+  exit 0
+fi
 if [[ "$development_run" -eq 1 ]]; then
   if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$e2e_task" ]]; then
     echo "--development-run cannot be combined with maintenance, formal matrix, or E2E options." >&2
@@ -387,8 +778,25 @@ if [[ "$development_run" -eq 1 ]]; then
   development_model="${OMNIFLOW_DEVELOPMENT_MODEL:-}"
   development_model_endpoint_profile="${OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE:-llmthu}"
   development_console_port="${OMNIFLOW_DEVELOPMENT_CONSOLE_PORT:-5554}"
+  development_avd="${OMNIFLOW_DEVELOPMENT_AVD:-OmniFlowTargetSmall}"
   development_perform_setup="${OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP:-1}"
   development_planner_timeout="${OMNIFLOW_PLANNER_TIMEOUT_SEC:-60}"
+  development_step_guidance_path="${OMNIFLOW_DEVELOPMENT_STEP_GUIDANCE_PATH:-}"
+  development_runtime_files=(
+    "src/experiment/development_emulator.py"
+    "src/integrations/android_world/launch.py"
+  )
+  missing_development_runtime_files=()
+  for relative_path in "${development_runtime_files[@]}"; do
+    if [[ ! -f "$repo/$relative_path" ]]; then
+      missing_development_runtime_files+=("$relative_path")
+    fi
+  done
+  if [[ ${#missing_development_runtime_files[@]} -gt 0 ]]; then
+    echo "Development runtime deployment incomplete before device startup:" >&2
+    printf '  - %s\n' "${missing_development_runtime_files[@]}" >&2
+    exit 1
+  fi
   if [[ -z "$task" || "$task" == *,* ]]; then
     echo "--development-run requires exactly one task through --tasks or OMNIFLOW_SINGLE_TASK_TASK." >&2
     exit 2
@@ -423,18 +831,28 @@ if [[ "$development_run" -eq 1 ]]; then
   fi
   development_android_sdk_root="${OMNIFLOW_ANDROID_SDK_ROOT:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$(resolve_default_android_sdk_root)}}}"
   development_adb_path="${OMNIFLOW_ADB_PATH:-$development_android_sdk_root/platform-tools/adb}"
+  development_emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$development_android_sdk_root/emulator/emulator}"
   if [[ "$development_adb_path" != /* || ! -x "$development_adb_path" ]]; then
     echo "--development-run requires an executable absolute ADB path: $development_adb_path" >&2
+    exit 2
+  fi
+  if [[ "$development_emulator_bin" != /* || ! -x "$development_emulator_bin" ]]; then
+    echo "--development-run requires an executable absolute emulator path: $development_emulator_bin" >&2
     exit 2
   fi
   if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
     echo "--development-run requires an existing absolute OMNIFLOW_ENV_FILE." >&2
     exit 2
   fi
+  if [[ -n "$development_step_guidance_path" && ( "$development_step_guidance_path" != /* || ! -f "$development_step_guidance_path" ) ]]; then
+    echo "OMNIFLOW_DEVELOPMENT_STEP_GUIDANCE_PATH must be an existing absolute file." >&2
+    exit 2
+  fi
   set -a
   source "$env_file"
   set +a
   select_model_endpoint "$development_model_endpoint_profile"
+  validate_experiment_model "$development_model" "$development_model_endpoint_profile"
   echo "[model] model=$development_model model_endpoint_profile=$development_model_endpoint_profile model_endpoint=$selected_model_base_url"
   development_command=(
     "$python_bin" -m src.integrations.android_world.launch
@@ -454,6 +872,9 @@ if [[ "$development_run" -eq 1 ]]; then
     --planner-timeout-sec "$development_planner_timeout"
     --adb-path "$development_adb_path"
   )
+  if [[ -n "$development_step_guidance_path" ]]; then
+    development_command+=(--step-skill-guidance-path "$development_step_guidance_path")
+  fi
   if [[ "$development_perform_setup" -eq 1 ]]; then
     development_command+=(--perform-emulator-setup)
   fi
@@ -463,6 +884,14 @@ if [[ "$development_run" -eq 1 ]]; then
     exit 0
   fi
   cd "$repo"
+  "$python_bin" -m src.experiment.development_emulator \
+    --adb "$development_adb_path" \
+    --emulator "$development_emulator_bin" \
+    --serial "emulator-$development_console_port" \
+    --avd "$development_avd" \
+    --gpu "$emulator_gpu" \
+    --log-path "${development_output_path}.emulator.log" \
+    --boot-timeout "$emulator_boot_timeout_sec"
   exec "${development_command[@]}"
 fi
 if [[ -n "$e2e_task" ]]; then
@@ -546,6 +975,15 @@ if [[ -n "$e2e_task" ]]; then
   set -a
   source "$env_file"
   set +a
+  e2e_source_model="${OMNIFLOW_E2E_SOURCE_MODEL:-$formal_model}"
+  e2e_semantic_model="${OMNIFLOW_E2E_SEMANTIC_MODEL:-$formal_model}"
+  for e2e_model in "$e2e_source_model" "$e2e_semantic_model" "$formal_model"; do
+    normalized_e2e_model="$(printf '%s' "$e2e_model" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$normalized_e2e_model" != "glm-5.1" ]]; then
+      echo "AndroidWorld E2E requires GLM-5.1 for source, semantic, and formal models, got: $e2e_model" >&2
+      exit 2
+    fi
+  done
   e2e_output_root="${OMNIFLOW_E2E_OUTPUT_ROOT:-$results_root/androidworld_e2e_task_attempts}"
   if [[ "$e2e_output_root" != /* ]]; then
     echo "OMNIFLOW_E2E_OUTPUT_ROOT must be absolute." >&2
@@ -572,8 +1010,8 @@ if [[ -n "$e2e_task" ]]; then
     --source-avd "${OMNIFLOW_E2E_SOURCE_AVD:-SmallPhone}"
     --emulator-gpu "${OMNIFLOW_SINGLE_TASK_EMULATOR_GPU:-swiftshader_indirect}"
     --runtime-preflight "$repo/src/experiment/preflight.py"
-    --source-model "${OMNIFLOW_E2E_SOURCE_MODEL:-glm-5.1}"
-    --semantic-model "${OMNIFLOW_E2E_SEMANTIC_MODEL:-glm-5.1}"
+    --source-model "$e2e_source_model"
+    --semantic-model "$e2e_semantic_model"
     --formal-model "$formal_model"
   )
   if [[ -n "$e2e_source_runlog" ]]; then
@@ -1316,7 +1754,9 @@ if [[ -z "$java_home" ]]; then
   for java_candidate in \
     /home/wuzewen/Android/jdk17 \
     /home/wuzewen/.local/jdks/temurin-17 \
-    /home/wuzewen/.local/jdks/corretto-17; do
+    /home/wuzewen/.local/jdks/corretto-17 \
+    "/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
+    "$account_root/Applications/Android Studio.app/Contents/jbr/Contents/Home"; do
     if [[ -x "$java_candidate/bin/java" ]]; then
       java_home="$java_candidate"
       break
@@ -2473,7 +2913,7 @@ fi
 set -a
 source "$env_file"
 set +a
-formal_model_endpoint_profile="${OMNIFLOW_FORMAL_MODEL_ENDPOINT_PROFILE:-openai}"
+formal_model_endpoint_profile="${OMNIFLOW_FORMAL_MODEL_ENDPOINT_PROFILE:-$formal_model_endpoint_profile}"
 paper_model="$("$python_bin" - "$config" <<'PY'
 import json
 import sys
@@ -2593,24 +3033,10 @@ if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
 fi
 if [[ "$requires_appagent_source_memory" -eq 1 ]]; then
   if [[ "$appagent_source_generation_required" -eq 1 ]]; then
-    if [[ -z "$appagent_native_memory_roots" ]]; then
-      echo "AppAgent offline conversion requires OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS." >&2
-      exit 2
-    fi
-    appagent_evidence_args=()
-    IFS=':' read -r -a appagent_evidence_roots <<< "$appagent_native_memory_roots"
-    for evidence_root in "${appagent_evidence_roots[@]}"; do
-      if [[ -z "$evidence_root" || "$evidence_root" != /* || ! -d "$evidence_root" ]]; then
-        echo "AppAgent native memory evidence root must be an existing absolute directory: $evidence_root" >&2
-        exit 2
-      fi
-      appagent_evidence_args+=(--evidence-root "$evidence_root")
-    done
     "$python_bin" -m src.experiment.appagent_source preflight \
       --index "$source_index" \
       --task "$task" \
-      --model "$paper_model" \
-      "${appagent_evidence_args[@]}"
+      --model "$paper_model"
   else
     "$python_bin" -m src.experiment.appagent_source validate \
       --index "$source_index" \
@@ -2624,6 +3050,7 @@ if [[ "$check_only" -eq 1 ]]; then
   exit 0
 fi
 select_model_endpoint "$formal_model_endpoint_profile"
+validate_experiment_model "$paper_model" "$formal_model_endpoint_profile"
 echo "[model] model=$paper_model model_endpoint_profile=$formal_model_endpoint_profile model_endpoint=$selected_model_base_url"
 
 avd_for_serial() {
@@ -2940,8 +3367,7 @@ if [[ "$appagent_source_generation_required" -eq 1 ]]; then
     --task "$task" \
     --appagent-root "$appagent_root" \
     --memory-root "$appagent_demo_memory_root" \
-    --model "$paper_model" \
-    "${appagent_evidence_args[@]}"
+    --model "$paper_model"
 fi
 for serial in "${target_serials[@]}"; do
   ensure_emulator "$serial"

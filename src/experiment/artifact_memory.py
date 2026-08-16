@@ -1867,20 +1867,56 @@ def _refresh_artifact_memory_unlocked(
     paths.sort()
 
     records: dict[str, dict[str, Any]] = {}
+    indexed_canonical_digests: dict[str, str] = {}
     for path in paths:
         digest = _sha256(path)
         payload = _load_object(path)
         if not isinstance(payload, dict):
             raise ValueError(f"run_log_must_be_object:{path}")
         indexed_task = indexed_paths.get(path)
+        migrated_source: dict[str, Any] | None = None
+        migrated_digest = ""
+        migrated_object: Path | None = None
         if indexed_task:
             try:
                 source_run_log = require_complete_source_run_log(payload)
             except (TypeError, ValueError) as error:
-                raise ValueError(
-                    f"indexed_source_run_log_invalid:{indexed_task}:{path}:"
-                    f"{error}"
-                ) from error
+                source_metadata = source_payload[indexed_task]
+                try:
+                    migrated_source = require_complete_source_run_log(
+                        adapt_source_run_log(
+                            payload,
+                            task_name=indexed_task,
+                            task_parameters=dict(
+                                source_metadata.get("params")
+                                or source_metadata.get("task_parameters")
+                                or {}
+                            ),
+                            seed=(
+                                source_metadata.get("source_seed")
+                                if source_metadata.get("source_seed") is not None
+                                else source_metadata.get("task_random_seed")
+                                if source_metadata.get("task_random_seed") is not None
+                                else source_metadata.get("collect_seed")
+                            ),
+                            source_path=path,
+                            screenshot_roots=screenshot_roots,
+                            require_screenshots=False,
+                        )
+                    )
+                except (TypeError, ValueError, FileNotFoundError) as migration_error:
+                    raise ValueError(
+                        f"indexed_source_run_log_invalid:{indexed_task}:{path}:"
+                        f"{error}:legacy_migration_failed:{migration_error}"
+                    ) from migration_error
+                migrated_content = _json_bytes(migrated_source)
+                migrated_digest = hashlib.sha256(migrated_content).hexdigest()
+                migrated_object = _materialize_content(
+                    root,
+                    migrated_content,
+                    migrated_digest,
+                )
+                source_run_log = migrated_source
             if source_run_log["task_name"] != indexed_task:
                 raise ValueError(
                     "indexed_source_run_log_task_mismatch:"
@@ -1905,6 +1941,22 @@ def _refresh_artifact_memory_unlocked(
         record["aliases"].append(str(path))
         if task:
             record["tasks"].append(task)
+        if indexed_task:
+            indexed_canonical_digests[indexed_task] = migrated_digest or digest
+        if migrated_source is not None and migrated_object is not None:
+            migrated_record = _register_run_log_record(
+                records,
+                path=migrated_object,
+                digest=migrated_digest,
+                payload=migrated_source,
+                task=indexed_task,
+            )
+            migrated_record["migration"] = {
+                "kind": "indexed_legacy_source_to_omniflow_run_log_v1",
+                "source_path": str(path),
+                "source_sha256": digest,
+                "source_schema_version": str(payload.get("schema_version") or ""),
+            }
 
     for record in records.values():
         record["aliases"] = sorted(set(record["aliases"]))
@@ -1935,7 +1987,7 @@ def _refresh_artifact_memory_unlocked(
         digest = (
             str(selection["selected_source_run_log_sha256"])
             if selection is not None
-            else baseline_digest
+            else indexed_canonical_digests.get(task, baseline_digest)
         )
         canonical_sources[task] = dict(records[digest])
         if selection is not None:

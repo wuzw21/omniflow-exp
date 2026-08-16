@@ -98,12 +98,14 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert completed.returncode == 0
     assert "--check-only" in completed.stdout
     assert "--development-run" in completed.stdout
+    assert "--stock-capture" in completed.stdout
     assert "--all-tasks" in completed.stdout
     assert "--eight-cells" in completed.stdout
     assert "--methods" in completed.stdout
     assert "--devices" in completed.stdout
     assert "--tasks" in completed.stdout
     assert "--convert-ours-assets" in completed.stdout
+    assert "--convert-runlog-memory" in completed.stdout
     assert "--refresh-memory" in completed.stdout
     assert "--e2e-task" in completed.stdout
     assert "--source-backend" in completed.stdout
@@ -112,14 +114,16 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "OMNIFLOW_EXP_ASSET_ROOT" in completed.stdout
     assert "OMNIFLOW_EXP_MEMORY_ROOT" in completed.stdout
     assert "OMNIFLOW_OURS_AUTHORING_MANIFEST" in completed.stdout
+    assert "OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT" in completed.stdout
     assert "OMNIFLOW_DEVELOPMENT_OUTPUT_PATH" in completed.stdout
+    assert "OMNIFLOW_STOCK_CAPTURE_OUTPUT_PATH" in completed.stdout
     assert "OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP" in completed.stdout
     assert "cold-restarted before every pending cell" in completed.stdout
     assert completed.stderr == ""
     script_text = SCRIPT.read_text(encoding="utf-8")
     assert 'workspace_root="$(cd "$repo/.." && pwd)"' in script_text
     assert 'default_asset_root="$workspace_root/OmniFlow"' in script_text
-    assert "default_appagent_native_memory_root" in script_text
+    assert "OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS" not in script_text
     assert (
         'default_memory_root="$workspace_root/assets/'
         'androidworld-experiment-memory-v1"' in script_text
@@ -160,6 +164,12 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "No emulator process found while device remained visible" in script_text
 
 
+def test_unified_script_discovers_android_studio_jbr_on_macos() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert '/Applications/Android Studio.app/Contents/jbr/Contents/Home' in source
+    assert '$account_root/Applications/Android Studio.app/Contents/jbr/Contents/Home' in source
+
+
 def test_development_run_routes_through_the_only_script_without_repeated_setup(
     tmp_path: Path,
 ) -> None:
@@ -172,7 +182,7 @@ def test_development_run_routes_through_the_only_script_without_repeated_setup(
         "OPENAI_API_KEY=dashscope-key\n"
         "OPENAI_BASE_URL=https://dashscope.example/v1\n"
         "LLMTHU_KEY=llmthu-key\n"
-        "LLMTHU_BASE_URL=https://llmapi.example/v1\n",
+        "LLMTHU_BASE_URL=https://llmapi.paratera.com/v1\n",
         encoding="utf-8",
     )
     adb = tmp_path / "adb"
@@ -198,7 +208,7 @@ def test_development_run_routes_through_the_only_script_without_repeated_setup(
             "OMNIFLOW_ENV_FILE": str(env_file),
             "OMNIFLOW_SINGLE_TASK_STORE_PATH": str(store),
             "OMNIFLOW_DEVELOPMENT_OUTPUT_PATH": str(output),
-            "OMNIFLOW_DEVELOPMENT_MODEL": "GLM-4.6V",
+            "OMNIFLOW_DEVELOPMENT_MODEL": "GLM-5.1",
             "OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP": "0",
         },
         check=False,
@@ -209,12 +219,114 @@ def test_development_run_routes_through_the_only_script_without_repeated_setup(
     assert completed.returncode == 0, completed.stderr
     assert "src.integrations.android_world.launch" in completed.stdout
     assert "ExpenseAddMultipleFromGallery" in completed.stdout
-    assert "GLM-4.6V" in completed.stdout
+    assert "GLM-5.1" in completed.stdout
     assert "model_endpoint_profile=llmthu" in completed.stdout
-    assert "model_endpoint=https://llmapi.example/v1" in completed.stdout
+    assert "model_endpoint=https://llmapi.paratera.com/v1" in completed.stdout
     assert "dashscope.example" not in completed.stdout
     assert "--perform-emulator-setup" not in completed.stdout
     assert not output.exists()
+
+
+def test_development_run_rejects_qwen3_vl_plus_before_device_start(
+    tmp_path: Path,
+) -> None:
+    android_world = tmp_path / "android-world"
+    (android_world / "android_world").mkdir(parents=True)
+    store = tmp_path / "store.json"
+    store.write_text("{}", encoding="utf-8")
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "LLMTHU_KEY=llmthu-key\n"
+        "LLMTHU_BASE_URL=https://llmapi.paratera.com/v1\n",
+        encoding="utf-8",
+    )
+    adb = tmp_path / "adb"
+    adb.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    adb.chmod(0o755)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT),
+            "--development-run",
+            "--dry-run",
+            "--tasks",
+            "ExpenseAddMultipleFromGallery",
+        ],
+        cwd=REPO,
+        env={
+            **os.environ,
+            "PYTHON_BIN": sys.executable,
+            "OMNIFLOW_ANDROID_WORLD_ROOT": str(android_world),
+            "OMNIFLOW_ADB_PATH": str(adb),
+            "OMNIFLOW_ENV_FILE": str(env_file),
+            "OMNIFLOW_SINGLE_TASK_STORE_PATH": str(store),
+            "OMNIFLOW_DEVELOPMENT_OUTPUT_PATH": str(tmp_path / "attempt"),
+            "OMNIFLOW_DEVELOPMENT_MODEL": "qwen3-vl-plus",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert "qwen3-vl-plus is prohibited" in completed.stderr
+
+
+def test_development_run_rejects_incomplete_code_release_before_device_start(
+    tmp_path: Path,
+) -> None:
+    release = tmp_path / "release"
+    release_script = release / "scripts" / "exp" / "run_androidworld.sh"
+    release_script.parent.mkdir(parents=True)
+    release_script.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    android_world = tmp_path / "android-world"
+    (android_world / "android_world").mkdir(parents=True)
+    store = tmp_path / "store.json"
+    store.write_text("{}", encoding="utf-8")
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "LLMTHU_KEY=test-key\nLLMTHU_BASE_URL=https://llmapi.paratera.com/v1\n",
+        encoding="utf-8",
+    )
+    adb = tmp_path / "adb"
+    emulator = tmp_path / "emulator"
+    for executable in (adb, emulator):
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o755)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(release_script),
+            "--development-run",
+            "--dry-run",
+            "--tasks",
+            "MarkorCreateNote",
+        ],
+        cwd=release,
+        env={
+            **os.environ,
+            "PYTHONPATH": str(REPO),
+            "PYTHON_BIN": sys.executable,
+            "OMNIFLOW_ANDROID_WORLD_ROOT": str(android_world),
+            "OMNIFLOW_ADB_PATH": str(adb),
+            "OMNIFLOW_EMULATOR_BIN": str(emulator),
+            "OMNIFLOW_ENV_FILE": str(env_file),
+            "OMNIFLOW_SINGLE_TASK_STORE_PATH": str(store),
+            "OMNIFLOW_DEVELOPMENT_OUTPUT_PATH": str(tmp_path / "attempt"),
+            "OMNIFLOW_DEVELOPMENT_MODEL": "GLM-5.1",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 1
+    assert "Development runtime deployment incomplete before device startup" in (
+        completed.stderr
+    )
+    assert "src/experiment/development_emulator.py" in completed.stderr
 
 
 def test_experiment_script_prefers_existing_miniconda_base_python(
@@ -939,8 +1051,8 @@ def test_one_task_run_adapts_all_methods_then_replays(
         (store_path, "{}"),
         (
             env_file,
-            "OPENAI_API_KEY=test-only\n"
-            "OPENAI_BASE_URL=https://openai.example/v1\n",
+            "LLMTHU_KEY=test-only\n"
+            "LLMTHU_BASE_URL=https://llmapi.paratera.com/v1\n",
         ),
         (authoring_manifest, "{}"),
         (
@@ -966,6 +1078,10 @@ def test_one_task_run_adapts_all_methods_then_replays(
     fake_python.write_text(
         """#!/bin/sh
 printf '%s\n' "$*" >> "$CALL_LOG"
+if [ "$1" = "-" ] && [ "$2" = "llmthu" ]; then
+  printf '%s\n' 'https://llmapi.paratera.com/v1'
+  exit 0
+fi
 if [ "$1" = "-m" ] && [ "$2" = "src.experiment.function_assets" ]; then
   : > "$CONVERTED_MARKER"
   exit 0
@@ -1007,7 +1123,7 @@ if [ "$1" = "-" ] && [ "$2" = "$STORE_INDEX" ]; then
   exit 3
 fi
 if [ "$1" = "-" ] && [ "$2" = "$CONFIG_PATH" ]; then
-  printf '%s\n' 'qwen3-vl-plus'
+  printf '%s\n' 'GLM-5.1'
   exit 0
 fi
 exit 0
@@ -1056,8 +1172,6 @@ exit 0
     fake_jq.chmod(0o755)
     mobilegpt_root = assets / "mobilegpt"
     appagent_root = assets / "appagent"
-    appagent_evidence_root = assets / "appagent-evidence"
-    appagent_evidence_root.mkdir()
     for path in (
         mobilegpt_root / "Server" / "main.py",
         mobilegpt_root / "App" / "app" / "build" / "outputs" / "apk" / "debug"
@@ -1106,9 +1220,6 @@ exit 0
             assets / "mobilegpt-source" / "memory"
         ),
         "OMNIFLOW_APPAGENT_ROOT": str(appagent_root),
-        "OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS": str(
-            appagent_evidence_root
-        ),
         "OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT": str(
             assets / "appagent-source"
         ),
@@ -1350,6 +1461,10 @@ def test_task_major_missing_function_asset_does_not_block_later_tasks(
     fake_python = tmp_path / "python"
     fake_python.write_text(
         """#!/bin/sh
+if [ "$1" = "-" ] && [ "$2" = "llmthu" ]; then
+  printf '%s\n' 'https://llmapi.paratera.com/v1'
+  exit 0
+fi
 if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ] && [ "$3" = "$MEMORY_INDEX" ]; then
   printf '%s\t%s\n' "$SOURCE_INDEX" "$STORE_INDEX"
   exit 0
@@ -1440,8 +1555,8 @@ def test_task_major_terminal_source_failure_continues_later_cells(
         (store_index, "{}"),
         (
             env_file,
-            "OPENAI_API_KEY=test-only\n"
-            "OPENAI_BASE_URL=https://openai.example/v1\n",
+            "LLMTHU_KEY=test-only\n"
+            "LLMTHU_BASE_URL=https://llmapi.paratera.com/v1\n",
         ),
         (
             android_world
@@ -1472,6 +1587,10 @@ def test_task_major_terminal_source_failure_continues_later_cells(
     fake_python = tmp_path / "python"
     fake_python.write_text(
         """#!/bin/sh
+if [ "$1" = "-" ] && [ "$2" = "llmthu" ]; then
+  printf '%s\n' 'https://llmapi.paratera.com/v1'
+  exit 0
+fi
 if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ] && [ "$3" = "$MEMORY_INDEX" ]; then
   printf '%s\t%s\n' "$SOURCE_INDEX" "$STORE_INDEX"
   exit 0
@@ -1528,7 +1647,7 @@ if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ]; then
   exit 0
 fi
 if [ "$1" = "-" ] && [ "$2" = "$CONFIG_PATH" ]; then
-  printf '%s\n' 'qwen3-vl-plus'
+  printf '%s\n' 'GLM-5.1'
   exit 0
 fi
 if [ "$1" = "-m" ] && [ "$2" = "src.experiment.androidworld" ] && [ "$3" = "one-task" ]; then

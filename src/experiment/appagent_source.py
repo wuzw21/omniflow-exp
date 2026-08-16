@@ -11,12 +11,14 @@ import json
 import os
 from pathlib import Path
 import runpy
-import shutil
 import sys
 import tempfile
 import time
 from typing import Any
 
+from PIL import Image
+
+from omniflow.core.trajectory import require_complete_source_run_log
 from omniflow.core.trajectory import observation_xml
 from src.experiment import androidworld as pipeline
 from src.experiment.mobilegpt_source import (
@@ -30,6 +32,8 @@ from src.integrations.appagent_adapter import (
     APPAGENT_DEMO_MANIFEST,
     APPAGENT_OFFICIAL_REVISION,
     OfficialAppAgentRuntime,
+    appagent_elements_from_xml,
+    appagent_record_line,
     build_appagent_teacher_source,
     ground_appagent_teacher_action,
     seal_appagent_demo_memory,
@@ -433,6 +437,292 @@ def _write_teacher_trace(
     )
 
 
+def _appagent_source_observation(
+    source: dict[str, Any],
+    *,
+    step_index: int,
+    after: bool,
+) -> dict[str, Any]:
+    steps = list(source["steps"])
+    step = steps[step_index]
+    if not after:
+        return dict(step["observation"])
+    if isinstance(step.get("next_observation"), dict):
+        return dict(step["next_observation"])
+    if step_index + 1 < len(steps):
+        return dict(steps[step_index + 1]["observation"])
+    if isinstance(source.get("final_observation"), dict):
+        return dict(source["final_observation"])
+    raise ValueError(f"appagent_source_after_observation_missing:{step_index}")
+
+
+def _write_appagent_demo_state(
+    *,
+    observation: dict[str, Any],
+    demo_root: Path,
+    demo_name: str,
+    state_index: int,
+    source_step_index: int,
+    phase: str,
+    runtime: OfficialAppAgentRuntime,
+) -> tuple[str, list[Any]]:
+    pixels = observation.get("pixels")
+    screenshot = (
+        Path(str(pixels.get("path") or "")).expanduser().resolve()
+        if isinstance(pixels, dict)
+        else Path()
+    )
+    if not isinstance(pixels, dict) or not screenshot.is_file():
+        raise ValueError(
+            f"appagent_source_screenshot_missing:{source_step_index}:{phase}"
+        )
+    expected_sha256 = str(pixels.get("sha256") or "").strip()
+    if not expected_sha256 or pipeline._file_sha256(screenshot) != expected_sha256:
+        raise ValueError(
+            f"appagent_source_screenshot_hash_mismatch:{source_step_index}:{phase}"
+        )
+    xml_text = observation_xml(observation).strip()
+    if not xml_text:
+        raise ValueError(f"appagent_source_xml_missing:{source_step_index}:{phase}")
+    base_name = f"{demo_name}_{state_index}"
+    (demo_root / "xml" / f"{base_name}.xml").write_text(
+        xml_text,
+        encoding="utf-8",
+    )
+    raw_path = demo_root / "raw_screenshots" / f"{base_name}.png"
+    with Image.open(screenshot) as image:
+        image.convert("RGB").save(raw_path)
+    elements = appagent_elements_from_xml(xml_text, min_dist=runtime.min_dist)
+    runtime.draw_elements(
+        raw_path,
+        demo_root / "labeled_screenshots" / f"{base_name}.png",
+        elements,
+        record_mode=True,
+    )
+    return xml_text, elements
+
+
+def _require_appagent_observation_evidence(
+    observation: dict[str, Any],
+    *,
+    source_step_index: int,
+    phase: str,
+) -> None:
+    pixels = observation.get("pixels")
+    screenshot = (
+        Path(str(pixels.get("path") or "")).expanduser().resolve()
+        if isinstance(pixels, dict)
+        else Path()
+    )
+    if not isinstance(pixels, dict) or not screenshot.is_file():
+        raise ValueError(
+            f"appagent_source_screenshot_missing:{source_step_index}:{phase}"
+        )
+    expected_sha256 = str(pixels.get("sha256") or "").strip()
+    if not expected_sha256 or pipeline._file_sha256(screenshot) != expected_sha256:
+        raise ValueError(
+            f"appagent_source_screenshot_hash_mismatch:{source_step_index}:{phase}"
+        )
+    if not observation_xml(observation).strip():
+        raise ValueError(
+            f"appagent_source_xml_missing:{source_step_index}:{phase}"
+        )
+
+
+def convert_runlog_to_appagent_memory(
+    *,
+    source_run_log: str | Path,
+    appagent_root: str | Path,
+    memory_root: str | Path,
+    model: str,
+    source_method: str = "runlog_direct",
+) -> dict[str, Any]:
+    """Convert one successful RunLog into AppAgent's official demo layout."""
+
+    normalized_model = str(model or "").strip()
+    if not normalized_model:
+        raise ValueError("appagent_source_model_required")
+    source_path = Path(source_run_log).expanduser().resolve()
+    source = require_complete_source_run_log(
+        json.loads(source_path.read_text(encoding="utf-8"))
+    )
+    if source.get("seed") != SOURCE_SEED:
+        raise ValueError(f"appagent_source_seed_must_be_{SOURCE_SEED}")
+    root = Path(memory_root).expanduser().resolve()
+    if root.exists():
+        raise FileExistsError(f"immutable_appagent_memory_exists:{root}")
+    teacher_source = build_appagent_teacher_source(
+        source_path,
+        task_name=str(source["task_name"]),
+        source_seed=SOURCE_SEED,
+    )
+    demo_records = [
+        record
+        for record in teacher_source["actions"]
+        if str(record["action"].get("type") or "") in APPAGENT_DEMO_ACTION_TYPES
+    ]
+    if not demo_records:
+        raise ValueError("appagent_official_demo_actions_required")
+    for record in demo_records:
+        step_index = int(record["source_step_index"])
+        _require_appagent_observation_evidence(
+            _appagent_source_observation(
+                source,
+                step_index=step_index,
+                after=False,
+            ),
+            source_step_index=step_index,
+            phase="before",
+        )
+    final_step_index = int(demo_records[-1]["source_step_index"])
+    _require_appagent_observation_evidence(
+        _appagent_source_observation(
+            source,
+            step_index=final_step_index,
+            after=True,
+        ),
+        source_step_index=final_step_index,
+        phase="after",
+    )
+    runtime = OfficialAppAgentRuntime(appagent_root)
+    packages = []
+    for record in demo_records:
+        observation = _appagent_source_observation(
+            source,
+            step_index=int(record["source_step_index"]),
+            after=False,
+        )
+        package_name = str(
+            (observation.get("auxiliaries") or {}).get("package_name") or ""
+        ).strip()
+        if package_name and package_name not in packages:
+            packages.append(package_name)
+    if len(packages) > 1:
+        raise ValueError("appagent_multi_app_demonstration_unsupported")
+    package_name = next((value for value in packages if value), "")
+    if not package_name:
+        raise ValueError("appagent_source_package_missing")
+    app_name = package_name.rsplit(".", 1)[-1]
+    demo_name = f"demo_{source['task_name']}_seed{SOURCE_SEED}"
+    demo_root = root / "apps" / app_name / "demos" / demo_name
+    for directory in (
+        demo_root / "raw_screenshots",
+        demo_root / "xml",
+        demo_root / "labeled_screenshots",
+    ):
+        directory.mkdir(parents=True, exist_ok=False)
+    (demo_root / "task_desc.txt").write_text(str(source["goal"]), encoding="utf-8")
+    teacher_source_path = root / "teacher_source.json"
+    teacher_source_path.write_text(
+        json.dumps(teacher_source, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    record_lines: list[str] = []
+    trace_rows: list[dict[str, Any]] = []
+    for cursor, record in enumerate(teacher_source["actions"], 1):
+        action = dict(record["action"])
+        action_type = str(action.get("type") or "")
+        trace = {
+            "teacher_cursor": cursor,
+            "source_step_index": int(record["source_step_index"]),
+            "source_action_index": int(record["source_action_index"]),
+            "action_type": action_type,
+            "source_coordinates_used": False,
+            "conversion_mode": "canonical_runlog_offline",
+        }
+        if action_type in APPAGENT_DEMO_ACTION_TYPES:
+            state_index = len(record_lines) + 1
+            xml_text, _ = _write_appagent_demo_state(
+                observation=_appagent_source_observation(
+                    source,
+                    step_index=int(record["source_step_index"]),
+                    after=False,
+                ),
+                demo_root=demo_root,
+                demo_name=demo_name,
+                state_index=state_index,
+                source_step_index=int(record["source_step_index"]),
+                phase="before",
+                runtime=runtime,
+            )
+            grounded = ground_appagent_teacher_action(
+                xml_text,
+                action,
+                min_dist=runtime.min_dist,
+            )
+            record_lines.append(appagent_record_line(action, grounded))
+            trace.update(
+                {
+                    "tag": grounded.tag,
+                    "uid": grounded.uid,
+                    "match_reason": grounded.match_reason,
+                }
+            )
+        trace_rows.append(trace)
+    final_record = demo_records[-1]
+    _write_appagent_demo_state(
+        observation=_appagent_source_observation(
+            source,
+            step_index=int(final_record["source_step_index"]),
+            after=True,
+        ),
+        demo_root=demo_root,
+        demo_name=demo_name,
+        state_index=len(record_lines) + 1,
+        source_step_index=int(final_record["source_step_index"]),
+        phase="after",
+        runtime=runtime,
+    )
+    (demo_root / "record.txt").write_text(
+        "\n".join([*record_lines, "stop"]) + "\n",
+        encoding="utf-8",
+    )
+    (demo_root / "teacher_trace.jsonl").write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in trace_rows),
+        encoding="utf-8",
+    )
+    document_root = root / "_document_generation"
+    document_root.mkdir()
+    document_log = document_root / "document_generation.log"
+    document_usage = document_root / "document_generation_usage.jsonl"
+    prep_started = time.monotonic()
+    document_result = run_official_document_generation(
+        appagent_root=appagent_root,
+        workspace_root=root,
+        app_name=app_name,
+        demo_name=demo_name,
+        log_path=document_log,
+        usage_path=document_usage,
+        model=normalized_model,
+    )
+    prep_wall_sec = max(round(time.monotonic() - prep_started, 6), 0.000001)
+    manifest = seal_appagent_demo_memory(
+        memory_root=root,
+        app_name=app_name,
+        demo_name=demo_name,
+        teacher_source=teacher_source_path,
+        source_result=None,
+        document_generation_log=document_log,
+        document_generation_usage=document_usage,
+        task_name=str(source["task_name"]),
+        source_episode_wall_sec=0.0,
+        document_generation_wall_sec=float(document_result.get("wall_sec") or 0.0),
+        prep_wall_sec=prep_wall_sec,
+        source_method=source_method,
+        document_generation_model=normalized_model,
+        conversion_mode="canonical_runlog_offline",
+        native_memory_evidence=None,
+    )
+    return {
+        "schema_version": "omniflow.runlog-memory-conversion.v1",
+        "method": "appagent_demo",
+        "task_name": str(source["task_name"]),
+        "source_run_log": str(source_path),
+        "memory_root": str(root),
+        "manifest": manifest,
+    }
+
+
 def validate_appagent_source_memory(
     *,
     index_path: str | Path,
@@ -526,6 +816,32 @@ def _preflight_appagent_teacher(
         groundable_action_count += 1
     if groundable_action_count != int(teacher_source["demo_action_count"]):
         raise ValueError("appagent_teacher_source_has_ungroundable_actions")
+    demo_records = [
+        record
+        for record in teacher_source["actions"]
+        if str(record["action"].get("type") or "") in APPAGENT_DEMO_ACTION_TYPES
+    ]
+    for record in demo_records:
+        step_index = int(record["source_step_index"])
+        _require_appagent_observation_evidence(
+            _appagent_source_observation(
+                grounded,
+                step_index=step_index,
+                after=False,
+            ),
+            source_step_index=step_index,
+            phase="before",
+        )
+    final_step_index = int(demo_records[-1]["source_step_index"])
+    _require_appagent_observation_evidence(
+        _appagent_source_observation(
+            grounded,
+            step_index=final_step_index,
+            after=True,
+        ),
+        source_step_index=final_step_index,
+        phase="after",
+    )
     grounding_audit["appagent_groundable_action_count"] = (
         groundable_action_count
     )
@@ -590,126 +906,40 @@ def prepare_appagent_demo_memory(
     normalized_model = str(model or "").strip()
     if not normalized_model:
         raise ValueError("appagent_source_model_required")
-    source_environment_repair_reason = str(
-        os.environ.get("OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON")
-        or ""
-    ).strip()
+    del (
+        android_world_root,
+        evidence_roots,
+        serial,
+        console_port,
+        adb_path,
+        timeout_sec,
+        request_timeout_sec,
+        perform_emulator_setup,
+    )
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_method = _appagent_source_method_label(item)
-    root = Path(memory_root).expanduser().resolve()
-    if root.exists():
-        raise FileExistsError(f"immutable_appagent_memory_exists:{root}")
-    grounded_payload, grounding_audit, teacher_source = (
-        _preflight_appagent_teacher(
-            item=item,
-        )
-    )
-    source_run_log = Path(grounding_audit["source_run_log"]).resolve()
-    evidence = _native_memory_evidence(
-        item=item,
-        teacher_source=teacher_source,
-        evidence_roots=evidence_roots,
-        model=normalized_model,
-    )
+    from src.experiment.source_assets import convert_runlog_memory
 
-    root.mkdir(parents=True)
-    prep_started = time.monotonic()
-    grounded_source_path = root / "grounded_teacher_run_log.json"
-    grounded_source_path.write_text(
-        json.dumps(grounded_payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    teacher_source_path = root / "teacher_source.json"
-    teacher_source_path.write_text(
-        json.dumps(teacher_source, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    app_name = str(evidence["app_name"])
-    demo_name = str(evidence["demo_name"])
-    target_demo = root / "apps" / app_name / "demos" / demo_name
-    target_docs = root / "apps" / app_name / "demo_docs"
-    shutil.copytree(evidence["demo_root"], target_demo)
-    shutil.copytree(evidence["docs_root"], target_docs)
-    _write_teacher_trace(
-        demo_root=target_demo,
-        teacher_source=teacher_source,
-    )
-    document_root = root / "_document_generation"
-    document_root.mkdir()
-    document_log = document_root / "document_generation.log"
-    document_usage = document_root / "document_generation_usage.jsonl"
-    shutil.copyfile(evidence["document_log"], document_log)
-    shutil.copyfile(evidence["document_usage"], document_usage)
-    conversion_audit = root / "conversion_audit.json"
-    conversion_audit.write_text(
-        json.dumps(
-            {
-                "schema_version": "omniflow.appagent-runlog-conversion.v1",
-                "task_name": item.task,
-                "task_params": item.params,
-                "source_seed": SOURCE_SEED,
-                "source_method": source_method,
-                "source_run_log": str(source_run_log),
-                "source_run_log_sha256": pipeline._file_sha256(
-                    source_run_log
-                ),
-                "grounded_teacher_run_log": str(grounded_source_path),
-                "grounded_teacher_run_log_sha256": pipeline._file_sha256(
-                    grounded_source_path
-                ),
-                "grounding_audit": grounding_audit,
-                "model": normalized_model,
-                "conversion_mode": "canonical_runlog_offline",
-                "native_memory_evidence": str(evidence["manifest"]),
-                "source_emulator_used": False,
-                "source_environment_repair_reason": (
-                    source_environment_repair_reason
-                ),
-                "target_inputs_read": False,
-                "target_observations_read": False,
-                "validator_state_read_for_memory": False,
-                "coordinate_replay": False,
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    prep_wall_sec = round(time.monotonic() - prep_started, 6)
-    manifest = seal_appagent_demo_memory(
-        memory_root=root,
-        app_name=app_name,
-        demo_name=demo_name,
-        teacher_source=teacher_source_path,
-        source_result=None,
-        document_generation_log=document_log,
-        document_generation_usage=document_usage,
-        task_name=item.task,
-        source_episode_wall_sec=0.0,
-        document_generation_wall_sec=0.0,
-        prep_wall_sec=prep_wall_sec,
+    result = convert_runlog_memory(
+        "appagent_demo",
+        source_run_log=item.source_run_log,
+        output_root=memory_root,
+        upstream_root=appagent_root,
+        model=normalized_model,
         source_method=source_method,
-        document_generation_model=str(evidence["document_model"]),
-        source_environment_repair_reason=source_environment_repair_reason,
-        conversion_mode="canonical_runlog_offline",
-        native_memory_evidence=evidence["manifest"],
     )
-    return {
-        "schema_version": "omniflow.appagent-source-prepare.v3",
-        "task_name": item.task,
-        "source_seed": SOURCE_SEED,
-        "source_method": source_method,
-        "source_run_log": str(source_run_log),
-        "model": normalized_model,
-        "memory_root": str(root),
-        "conversion_mode": "canonical_runlog_offline",
-        "native_memory_evidence": str(evidence["manifest"]),
-        "source_emulator_used": False,
-        "source_environment_repair_reason": source_environment_repair_reason,
-        "prep_wall_sec": prep_wall_sec,
-        "manifest": manifest,
-    }
+    result.update(
+        {
+            "schema_version": "omniflow.appagent-source-prepare.v3",
+            "source_seed": SOURCE_SEED,
+            "source_method": source_method,
+            "model": normalized_model,
+            "conversion_mode": "canonical_runlog_offline",
+            "native_memory_evidence": None,
+            "source_emulator_used": False,
+        }
+    )
+    return result
 
 
 def _write_failure_marker(memory_root: str | Path, error: BaseException) -> None:
@@ -749,7 +979,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--android-world-root")
     prepare.add_argument("--memory-root", required=True)
     prepare.add_argument("--model", required=True)
-    prepare.add_argument("--evidence-root", action="append", required=True)
+    prepare.add_argument("--evidence-root", action="append", default=[])
     prepare.add_argument("--serial", default="emulator-5560")
     prepare.add_argument("--console-port", type=int, default=5560)
     prepare.add_argument("--adb-path", default="")

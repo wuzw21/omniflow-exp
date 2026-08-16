@@ -270,6 +270,84 @@ def prepare_mobilegpt_source_memory(
         raise ValueError("mobilegpt_source_model_required")
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_run_log, _, source_audit, target_info = _source_preflight(item)
+    result = convert_runlog_to_mobilegpt_bundle(
+        source_run_log=source_run_log,
+        mobilegpt_root=mobilegpt_root,
+        output_root=output_root,
+        model=normalized_model,
+        target_package=str(target_info.get("target_package") or ""),
+        target_app=str(target_info.get("target_app") or ""),
+        preflight_audit=source_audit,
+    )
+    result.update(
+        {
+            "schema_version": "omniflow.mobilegpt-source-prepare.v7",
+            "source_method": MOBILEGPT_SOURCE_METHOD,
+            "learning_mode": MOBILEGPT_LEARNING_MODE,
+            "teacher_forcing": False,
+            "synthetic_subtasks": True,
+            "semantic_subtasks": False,
+            "original_mobilegpt_prompts": False,
+            "actions_supplied_to_mobilegpt": True,
+            "source_transitions_supplied": True,
+            "source_success_boundary_supplied": True,
+            "function_store_used": False,
+            "source_emulator_used": False,
+        }
+    )
+    bundle_root = Path(output_root).expanduser().resolve()
+    if memory_index is not None:
+        result["memory_registration"] = _register_mobilegpt_memory(
+            memory_index=memory_index,
+            bundle_root=bundle_root,
+            task_name=item.task,
+        )
+    return result
+
+
+def convert_runlog_to_mobilegpt_bundle(
+    *,
+    source_run_log: str | Path,
+    mobilegpt_root: str | Path,
+    output_root: str | Path,
+    model: str,
+    target_package: str = "",
+    target_app: str = "",
+    preflight_audit: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Convert one valid RunLog and seal one native MobileGPT bundle."""
+
+    normalized_model = str(model or "").strip()
+    if not normalized_model:
+        raise ValueError("mobilegpt_source_model_required")
+    source_path = Path(source_run_log).expanduser().resolve()
+    source = import_run_log(json.loads(source_path.read_text(encoding="utf-8")))
+    if (
+        source.get("status") != "succeeded"
+        or source.get("success") is not True
+        or (source.get("validator") or {}).get("official") is not True
+        or (source.get("validator") or {}).get("success") is not True
+    ):
+        raise ValueError("mobilegpt_source_runlog_not_successful")
+    report = preflight_runlog_conversion(
+        source_path,
+        target_package=target_package,
+        target_app=target_app,
+    )
+    if report.get("ready") is not True:
+        raise MobileGPTConversionError(
+            str(report.get("failure_code") or "mobilegpt_conversion_preflight_failed"),
+            **dict(report.get("failure_details") or {}),
+        )
+    source_audit = preflight_audit or {
+        "schema_version": "omniflow.mobilegpt-conversion-preflight.v1",
+        "grounding_source": "canonical_androidworld_run_log",
+        "source_run_log": str(source_path),
+        "source_run_log_sha256": pipeline._file_sha256(source_path),
+        "actions_supplied_to_mobilegpt": True,
+        "function_store_used": False,
+        "report": report,
+    }
     bundle_root = Path(output_root).expanduser().resolve()
     if bundle_root.exists():
         raise FileExistsError(
@@ -288,24 +366,24 @@ def prepare_mobilegpt_source_memory(
     started = time.monotonic()
     try:
         generated = convert_runlog_to_mobilegpt_memory(
-            source_run_log=source_run_log,
+            source_run_log=source_path,
             mobilegpt_root=mobilegpt_root,
             memory_root=memory_root,
             stats_path=stats_path,
             audit_path=audit_path,
             model=normalized_model,
-            target_package=str(target_info.get("target_package") or ""),
-            target_app=str(target_info.get("target_app") or ""),
+            target_package=str(target_package or ""),
+            target_app=str(target_app or ""),
         )
     except BaseException as error:
         write_conversion_failure_audit(
-            source_run_log=source_run_log,
+            source_run_log=source_path,
             stats_path=stats_path,
             audit_path=audit_path,
             error=error,
             wall_sec=time.monotonic() - started,
-            target_package=str(target_info.get("target_package") or ""),
-            target_app=str(target_info.get("target_app") or ""),
+            target_package=str(target_package or ""),
+            target_app=str(target_app or ""),
         )
         raise
     wall_sec = round(time.monotonic() - started, 6)
@@ -316,49 +394,33 @@ def prepare_mobilegpt_source_memory(
     )
     sealed = pipeline.seal_mobilegpt_source_memory(
         memory_root=memory_root,
-        source_run_log=source_run_log,
+        source_run_log=source_path,
         source_stats=stats_path,
         trajectory_audit=audit_path,
-        task_name=item.task,
+        task_name=str(source["task_name"]),
         source_seed=SOURCE_SEED,
-        target_package=str(target_info.get("target_package") or ""),
-        target_app=str(target_info.get("target_app") or ""),
+        target_package=str(target_package or generated.get("target_package") or ""),
+        target_app=str(target_app or generated.get("target_app") or ""),
         source_wall_sec=wall_sec,
         source_model=normalized_model,
         memory_schema=MOBILEGPT_MEMORY_SCHEMA,
     )
-    result = {
-        "schema_version": "omniflow.mobilegpt-source-prepare.v7",
-        "task_name": item.task,
+    return {
+        "schema_version": "omniflow.runlog-memory-conversion.v1",
+        "method": "mobilegpt_offline_retrieval",
+        "task_name": str(source["task_name"]),
         "source_seed": SOURCE_SEED,
-        "source_method": MOBILEGPT_SOURCE_METHOD,
-        "source_run_log": str(source_run_log),
+        "source_run_log": str(source_path),
         "model": normalized_model,
         "memory_root": str(memory_root),
-        "learning_mode": MOBILEGPT_LEARNING_MODE,
-        "teacher_forcing": False,
-        "synthetic_subtasks": True,
-        "semantic_subtasks": False,
-        "original_mobilegpt_prompts": False,
-        "actions_supplied_to_mobilegpt": True,
-        "source_transitions_supplied": True,
-        "source_success_boundary_supplied": True,
-        "function_store_used": False,
-        "source_emulator_used": False,
         "source_stats": str(stats_path),
         "source_stats_summary": str(stats_summary_path),
         "trajectory_audit": str(audit_path),
         "source_wall_sec": wall_sec,
         "generated": generated,
         "sealed": sealed,
+        "manifest": sealed,
     }
-    if memory_index is not None:
-        result["memory_registration"] = _register_mobilegpt_memory(
-            memory_index=memory_index,
-            bundle_root=bundle_root,
-            task_name=item.task,
-        )
-    return result
 
 
 def _write_failure_marker(output_root: str | Path, error: BaseException) -> None:

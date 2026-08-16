@@ -369,6 +369,27 @@ def test_experiment_agent_adapter_checks_androidworld_before_each_step() -> None
     ]
 
 
+def test_experiment_agent_adapter_enforces_step_budget_without_extra_model_call() -> None:
+    calls: list[str] = []
+    recording_session = SimpleNamespace(
+        env=SimpleNamespace(ensure_accessibility_forwarder_ready=lambda: None),
+        start_episode=lambda: None,
+    )
+    result = SimpleNamespace(done=False, data={})
+    agent = SimpleNamespace(step=lambda goal: calls.append(goal) or result)
+    adapted = _ExperimentAgentAdapter(
+        agent,
+        recording_session=recording_session,
+        max_steps=1,
+    )
+
+    first = adapted.step("Complete task")
+
+    assert calls == ["Complete task"]
+    assert first.done is True
+    assert first.data["experiment_step_budget_reached"] is True
+
+
 def test_observe_derives_internal_xml_from_official_forest() -> None:
     def node(unique_id, bounds, *, child_ids=(), text=""):
         return SimpleNamespace(

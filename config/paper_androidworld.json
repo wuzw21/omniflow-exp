@@ -22,7 +22,7 @@
     "no_fixed_task_params": false,
     "task_params_json": "{\"on_or_off\":\"on\"}",
     "planner_provider": "openai",
-    "model": "qwen3-vl-plus",
+    "model": "GLM-5.1",
     "planner_timeout_sec": 60.0,
     "perform_emulator_setup": true,
     "mobilegpt_root": "runtime/external/mobilegpt",
