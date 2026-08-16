@@ -677,6 +677,42 @@ def _load_verified_registered_result(summary_path: Path) -> dict[str, Any]:
     return summary
 
 
+def formal_result_environment_failure_reasons(
+    row: dict[str, Any],
+) -> tuple[str, ...]:
+    """Return explicit runtime/environment failures that forbid registration."""
+
+    reasons: list[str] = []
+    runtime_integrity_error = row.get("runtime_integrity_error")
+    if (
+        isinstance(runtime_integrity_error, str)
+        and runtime_integrity_error.strip()
+    ) or (
+        runtime_integrity_error is not None
+        and not isinstance(runtime_integrity_error, str)
+        and bool(runtime_integrity_error)
+    ):
+        reasons.append("runtime_integrity_error")
+
+    environment_failure = row.get("environment_failure")
+    if environment_failure is True or (
+        isinstance(environment_failure, str)
+        and environment_failure.strip().lower()
+        not in {"", "0", "false", "no", "none", "null"}
+    ):
+        reasons.append("environment_failure")
+
+    for field in (
+        "classification",
+        "failure_classification",
+        "result_classification",
+        "status",
+    ):
+        if str(row.get(field) or "").strip().lower() == "environment_failure":
+            reasons.append(field)
+    return tuple(dict.fromkeys(reasons))
+
+
 def validate_formal_result_protocol(
     row: dict[str, Any],
     *,
@@ -814,6 +850,8 @@ def registered_cell_plan(
                 or summary.get("evaluation_seed") != evaluation_seed
             ):
                 continue
+            if formal_result_environment_failure_reasons(row):
+                continue
             try:
                 validator_task_count = float(
                     row.get("official_validator_task_count") or 0
@@ -870,6 +908,8 @@ def load_summary_rows(
             if not isinstance(source_row, dict):
                 continue
             if not source_row.get("method") or not source_row.get("device"):
+                continue
+            if formal_result_environment_failure_reasons(source_row):
                 continue
             rows.append(
                 _row_from_summary(
@@ -1277,6 +1317,13 @@ def register_attempt_summary(
     rows = [row for row in summary.get("rows") or [] if isinstance(row, dict)]
     if not rows:
         raise ValueError(f"summary contains no result rows: {summary_path}")
+    for row in rows:
+        reasons = formal_result_environment_failure_reasons(row)
+        if reasons:
+            raise ValueError(
+                "formal_result_environment_failure:"
+                f"{task_name}:{','.join(reasons)}"
+            )
 
     ledger_records: list[dict[str, Any]] = []
     registered_paths: list[str] = []

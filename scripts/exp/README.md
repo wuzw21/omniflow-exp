@@ -327,6 +327,11 @@ pass over every selected task. A cell with an existing official-validator
 conclusion in long-term memory is skipped; it is never rerun merely because a
 later attempt might succeed or be cheaper.
 
+Only runtime-integrity-clean conclusions enter formal registration and the
+completed-cell index. Attempts marked with `runtime_integrity_error` or
+`environment_failure` remain immutable evidence, but memory refresh excludes
+them from canonical results so the cell remains pending.
+
 ## Refresh long-term memory
 
 Use the same script to ingest immutable RunLogs, Function catalogs, and result

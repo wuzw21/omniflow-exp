@@ -81,6 +81,8 @@ def _write_registered_cell(
     include_uses_source_xml: bool = True,
     fixed_replay_backend: str = "recorded_coordinate_replay_v1",
     error: str = "",
+    runtime_integrity_error: str = "",
+    environment_failure: bool = False,
 ) -> None:
     cell = runs_root / task / method / device / attempt
     result_path = cell / "registered_result.json"
@@ -112,6 +114,8 @@ def _write_registered_cell(
                     validator_task_count > 0
                 ),
                 "error": error,
+                "runtime_integrity_error": runtime_integrity_error,
+                "environment_failure": environment_failure,
                 "task_random_seed": evaluation_seed,
                 "max_steps": max_steps,
                 "task_params": task_params,
@@ -476,6 +480,41 @@ def test_registered_cell_plan_accepts_per_episode_validator_conclusion(
     assert plan["pending"] == []
 
 
+@pytest.mark.parametrize(
+    ("runtime_integrity_error", "environment_failure"),
+    (("mobilegpt_app_ui_not_ready", False), ("", True)),
+)
+def test_registered_cell_plan_retries_environment_failures_even_with_validator(
+    tmp_path: Path,
+    runtime_integrity_error: str,
+    environment_failure: bool,
+) -> None:
+    runs_root = tmp_path / "runs"
+    task = "ContactsNewContactDraft"
+    _write_registered_cell(
+        runs_root,
+        task=task,
+        method="mobilegpt_offline_retrieval",
+        device="small5554",
+        success=False,
+        runtime_integrity_error=runtime_integrity_error,
+        environment_failure=environment_failure,
+    )
+
+    plan = registered_cell_plan(
+        runs_root=runs_root,
+        task_name=task,
+        methods=("mobilegpt_offline_retrieval",),
+        devices=("small5554",),
+        source_seed=111,
+        evaluation_seed=113,
+    )
+
+    assert plan["completed"] == []
+    assert plan["pending"] == [("mobilegpt_offline_retrieval", "small5554")]
+    assert load_summary_rows(runs_root, {}, []) == []
+
+
 def test_registered_cell_plan_rejects_incompatible_formal_protocol(
     tmp_path: Path,
 ) -> None:
@@ -621,3 +660,46 @@ def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
         "TaskOne|ours|small5554|111|113"
     ]
     assert cell["official_validator_success"] is False
+
+
+def test_result_registration_rejects_runtime_integrity_failure(
+    tmp_path: Path,
+) -> None:
+    summary = tmp_path / "attempt" / "one_task_summary.json"
+    _write_json(
+        summary,
+        {
+            "task_name": "ContactsNewContactDraft",
+            "rows": [
+                {
+                    "method": "mobilegpt_offline_retrieval",
+                    "device": "small5554",
+                    "official_validator_used": True,
+                    "official_validator_success": False,
+                    "runtime_integrity_error": "mobilegpt_app_ui_not_ready",
+                }
+            ],
+        },
+    )
+    attempt_manifest = summary.with_name("attempt_manifest.json")
+    _write_json(
+        attempt_manifest,
+        {
+            "immutable": True,
+            "attempt_id": "iteration_01",
+            "source_seed": 111,
+            "evaluation_seed": 113,
+        },
+    )
+    runs_root = tmp_path / "runs"
+
+    with pytest.raises(ValueError, match="formal_result_environment_failure"):
+        register_attempt_summary(
+            summary_path=summary,
+            attempt_manifest_path=attempt_manifest,
+            runs_root=runs_root,
+            master_root=tmp_path / "master",
+            source_index_path=tmp_path / "source_index.json",
+        )
+
+    assert not runs_root.exists()

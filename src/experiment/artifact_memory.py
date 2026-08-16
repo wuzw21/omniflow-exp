@@ -1050,6 +1050,7 @@ def _formal_result_protocol_error(
         FORMAL_MAX_STEPS,
         FORMAL_METHODS,
         FORMAL_SOURCE_SEED,
+        formal_result_environment_failure_reasons,
         validate_formal_result_protocol,
     )
 
@@ -1068,6 +1069,12 @@ def _formal_result_protocol_error(
         return (
             "formal_result_protocol_mismatch:"
             f"{task}:{method}:{device}:{','.join(violations)}"
+        )
+    environment_reasons = formal_result_environment_failure_reasons(row)
+    if environment_reasons:
+        return (
+            "formal_result_environment_failure:"
+            f"{task}:{method}:{device}:{','.join(environment_reasons)}"
         )
     try:
         validate_formal_result_protocol(

@@ -138,6 +138,8 @@ def _write_registered_result(
     method: str = "ours",
     source_run_log: Path | None = None,
     mobilegpt_manifest: Path | None = None,
+    runtime_integrity_error: str = "",
+    environment_failure: bool = False,
 ) -> Path:
     cell_root = root / "RecordWithName" / method / device / attempt
     result_path = cell_root / "registered_result.json"
@@ -180,6 +182,8 @@ def _write_registered_result(
                 "official_validator_success": success,
                 "official_validator_task_count": 1,
                 "error": error,
+                "runtime_integrity_error": runtime_integrity_error,
+                "environment_failure": environment_failure,
                 **(
                     {"episode_task_started_count": task_started_count}
                     if task_started_count is not None
@@ -2100,6 +2104,52 @@ def test_refresh_preserves_but_does_not_select_environment_error_result(
     assert report["artifacts"]["results"][_sha256(invalid)][
         "verified_registration"
     ] is True
+
+
+@pytest.mark.parametrize(
+    ("runtime_integrity_error", "environment_failure"),
+    (("mobilegpt_app_ui_not_ready", False), ("", True)),
+)
+def test_refresh_preserves_but_excludes_runtime_environment_failures(
+    tmp_path: Path,
+    runtime_integrity_error: str,
+    environment_failure: bool,
+) -> None:
+    source = _write_source_run_log(tmp_path)
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    invalid = _write_registered_result(
+        tmp_path / "runs",
+        attempt="attempt_001",
+        registered_at="2026-07-20T00:00:00+00:00",
+        success=False,
+        task_started_count=1,
+        runtime_integrity_error=runtime_integrity_error,
+        environment_failure=environment_failure,
+    )
+
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "evidence",),
+        result_roots=(tmp_path / "runs",),
+    )
+
+    assert report["canonical"]["result_cells"] == {}
+    record = report["artifacts"]["results"][_sha256(invalid)]
+    assert record["verified_registration"] is True
+    assert any(
+        "formal_result_environment_failure" in error
+        for error in record["canonical_exclusion_errors"]
+    )
 
 
 def test_refresh_normalizes_legacy_target_device_labels(
