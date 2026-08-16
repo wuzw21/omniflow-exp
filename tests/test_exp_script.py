@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 import pytest
+from PIL import Image
 from runlog_fixtures import androidworld_run_log
 
 from src.experiment.artifact_memory import refresh_artifact_memory
@@ -199,6 +200,47 @@ def test_selected_model_profile_is_exported_for_native_openai_clients() -> None:
 
     assert 'export OPENAI_API_KEY="$selected_model_api_key"' in script_text
     assert 'export OPENAI_BASE_URL="$selected_model_base_url"' in script_text
+
+
+def test_appagent_runlog_conversion_uses_offline_visual_document_model() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+
+    assert (
+        'appagent_document_model="${OMNIFLOW_APPAGENT_DOCUMENT_MODEL:-$formal_model}"'
+        in script_text
+    )
+    assert 'runlog_memory_model="$appagent_document_model"' in script_text
+    assert (
+        'if [[ "$convert_runlog_memory_method" == "mobilegpt_offline_retrieval" ]]'
+        in script_text
+    )
+
+
+def test_mobilegpt_runlog_conversion_uses_independent_embedding_model() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+
+    assert (
+        'mobilegpt_embedding_model="${OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL:-text-embedding-v4}"'
+        in script_text
+    )
+    assert 'runlog_memory_embedding_model="$mobilegpt_embedding_model"' in script_text
+    assert 'runlog_memory_model="$formal_model"' in script_text
+
+
+def test_mobilegpt_runtime_uses_sealed_embedding_contract_and_split_endpoints() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+    runtime_text = (
+        REPO / "src" / "integrations" / "mobilegpt_runtime.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'mobilegpt_embedding_api_key="${OPENAI_API_KEY:-}"' in script_text
+    assert 'export MOBILEGPT_CHAT_API_KEY="$selected_model_api_key"' in script_text
+    assert (
+        'export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"'
+        in script_text
+    )
+    assert "preflight-endpoints" in script_text
+    assert "mobilegpt_embedding_dimension_mismatch" in runtime_text
 
 
 def test_unified_script_discovers_android_studio_jbr_on_macos() -> None:
@@ -783,17 +825,24 @@ def test_check_only_is_read_only_before_any_runtime_output(
     assets.mkdir()
     env_file = assets / ".env"
     env_file.write_text("", encoding="utf-8")
+    screenshot = assets / "state-0.png"
+    Image.new("RGB", (8, 6), color="blue").save(screenshot)
+    run_log = androidworld_run_log(
+        [{"action_type": "click", "x": 500, "y": 500}],
+        task_name="SystemBluetoothTurnOn",
+        run_id="source",
+        goal="Turn Bluetooth on.",
+    )
+    run_log["steps"][0]["observation"]["pixels"] = {
+        "path": str(screenshot.resolve()),
+        "sha256": hashlib.sha256(screenshot.read_bytes()).hexdigest(),
+        "width": 8,
+        "height": 6,
+        "mime_type": "image/png",
+    }
     source_run_log = assets / "source.run_log.json"
     source_run_log.write_text(
-        json.dumps(
-            androidworld_run_log(
-                [{"action_type": "click", "x": 500, "y": 500}],
-                task_name="SystemBluetoothTurnOn",
-                run_id="source",
-                goal="Turn Bluetooth on.",
-                with_pixels=True,
-            )
-        ),
+        json.dumps(run_log),
         encoding="utf-8",
     )
     source_index = assets / "index.json"
@@ -1086,10 +1135,12 @@ def test_one_task_run_adapts_all_methods_then_replays(
         (source_index, "{}"),
         (store_index, "{}"),
         (store_path, "{}"),
-        (
-            env_file,
-            "LLMTHU_KEY=test-only\n"
-            "LLMTHU_BASE_URL=https://llmapi.paratera.com/v1\n",
+            (
+                env_file,
+                "LLMTHU_KEY=test-only\n"
+                "LLMTHU_BASE_URL=https://llmapi.paratera.com/v1\n"
+                "OPENAI_API_KEY=embedding-test-only\n"
+                "OPENAI_BASE_URL=https://embedding.example/v1\n",
         ),
         (authoring_manifest, "{}"),
         (
@@ -1590,10 +1641,12 @@ def test_task_major_terminal_source_failure_continues_later_cells(
         (memory_index, "{}"),
         (source_index, "{}"),
         (store_index, "{}"),
-        (
-            env_file,
-            "LLMTHU_KEY=test-only\n"
-            "LLMTHU_BASE_URL=https://llmapi.paratera.com/v1\n",
+            (
+                env_file,
+                "LLMTHU_KEY=test-only\n"
+                "LLMTHU_BASE_URL=https://llmapi.paratera.com/v1\n"
+                "OPENAI_API_KEY=embedding-test-only\n"
+                "OPENAI_BASE_URL=https://embedding.example/v1\n",
         ),
         (
             android_world

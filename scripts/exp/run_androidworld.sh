@@ -31,6 +31,8 @@ formal_fold_size="2208x1840"
 formal_model="GLM-5.1"
 formal_model_endpoint_profile="llmthu"
 formal_model_base_url="https://llmapi.paratera.com/v1"
+appagent_document_model="${OMNIFLOW_APPAGENT_DOCUMENT_MODEL:-$formal_model}"
+mobilegpt_embedding_model="${OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL:-text-embedding-v4}"
 mobilegpt_source_schema="omniflow.mobilegpt-runlog-direct-memory.v1"
 mobilegpt_source_method="mobilegpt_runlog_direct_memory"
 mobilegpt_source_manifest_name="mobilegpt_memory_manifest.json"
@@ -276,6 +278,8 @@ Optional runtime overrides:
   OMNIFLOW_ANDROID_SDK_ROOT, OMNIFLOW_JAVA_HOME,
   OMNIFLOW_MOBILEGPT_SOURCE_ENVIRONMENT_REPAIR_REASON,
   OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON,
+  OMNIFLOW_APPAGENT_DOCUMENT_MODEL (default: GLM-5.1; offline docs only),
+  OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL (default: text-embedding-v4; offline memory only),
   OMNIFLOW_DEVELOPMENT_OUTPUT_PATH, OMNIFLOW_DEVELOPMENT_MODEL,
   OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE (default: llmthu),
   OMNIFLOW_DEVELOPMENT_STEP_GUIDANCE_PATH,
@@ -512,9 +516,13 @@ if [[ -n "$convert_runlog_memory_method" ]]; then
   case "$convert_runlog_memory_method" in
     mobilegpt_offline_retrieval)
       runlog_memory_upstream_root="$mobilegpt_root"
+      runlog_memory_model="$formal_model"
+      runlog_memory_embedding_model="$mobilegpt_embedding_model"
       ;;
     appagent_demo)
       runlog_memory_upstream_root="$appagent_root"
+      runlog_memory_model="$appagent_document_model"
+      runlog_memory_embedding_model=""
       ;;
   esac
   if [[ "$runlog_memory_upstream_root" != /* || ! -d "$runlog_memory_upstream_root" ]]; then
@@ -524,15 +532,27 @@ if [[ -n "$convert_runlog_memory_method" ]]; then
   set -a
   source "$env_file"
   set +a
-  select_model_endpoint "$formal_model_endpoint_profile"
-  validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
+  if [[ "$convert_runlog_memory_method" == "mobilegpt_offline_retrieval" ]]; then
+    if [[ -z "${OPENAI_API_KEY:-}" || -z "${OPENAI_BASE_URL:-}" ]]; then
+      echo "MobileGPT conversion requires OPENAI_API_KEY/OPENAI_BASE_URL for its embedding model." >&2
+      exit 2
+    fi
+    export MOBILEGPT_EMBEDDING_MODEL="$runlog_memory_embedding_model"
+  elif [[ -z "$runlog_memory_model" ]]; then
+    echo "AppAgent document model is required." >&2
+    exit 2
+  else
+    select_model_endpoint "$formal_model_endpoint_profile"
+    validate_experiment_model "$runlog_memory_model" "$formal_model_endpoint_profile"
+  fi
   cd "$repo"
   "$python_bin" - \
     "$convert_runlog_memory_method" \
     "$e2e_source_runlog" \
     "$runlog_memory_output_root" \
     "$runlog_memory_upstream_root" \
-    "$formal_model" <<'PY'
+    "$runlog_memory_model" \
+    "$runlog_memory_embedding_model" <<'PY'
 import json
 import sys
 
@@ -544,6 +564,7 @@ result = convert_runlog_memory(
     output_root=sys.argv[3],
     upstream_root=sys.argv[4],
     model=sys.argv[5],
+    embedding_model=sys.argv[6],
 )
 print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
 PY
@@ -2923,6 +2944,8 @@ fi
 set -a
 source "$env_file"
 set +a
+mobilegpt_embedding_api_key="${OPENAI_API_KEY:-}"
+mobilegpt_embedding_base_url="${OPENAI_BASE_URL:-}"
 formal_model_endpoint_profile="${OMNIFLOW_FORMAL_MODEL_ENDPOINT_PROFILE:-$formal_model_endpoint_profile}"
 paper_model="$("$python_bin" - "$config" <<'PY'
 import json
@@ -3061,6 +3084,24 @@ if [[ "$check_only" -eq 1 ]]; then
 fi
 select_model_endpoint "$formal_model_endpoint_profile"
 validate_experiment_model "$paper_model" "$formal_model_endpoint_profile"
+export MOBILEGPT_CHAT_API_KEY="$selected_model_api_key"
+export MOBILEGPT_CHAT_BASE_URL="$selected_model_base_url"
+if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
+  if [[ -z "$mobilegpt_embedding_api_key" || -z "$mobilegpt_embedding_base_url" ]]; then
+    echo "MobileGPT embedding endpoint is missing from OPENAI_API_KEY/OPENAI_BASE_URL in OMNIFLOW_ENV_FILE." >&2
+    exit 2
+  fi
+  export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"
+  export MOBILEGPT_EMBEDDING_BASE_URL="$mobilegpt_embedding_base_url"
+  mobilegpt_embedding_contract="$($python_bin -m src.integrations.mobilegpt_runtime \
+    preflight-endpoints \
+    --manifest "$mobilegpt_source_manifest" \
+    --memory-root "$mobilegpt_source_memory_root" \
+    --chat-model "$paper_model")"
+  IFS=$'\t' read -r mobilegpt_runtime_embedding_model mobilegpt_runtime_embedding_dimension <<< "$mobilegpt_embedding_contract"
+  export MOBILEGPT_EMBEDDING_MODEL="$mobilegpt_runtime_embedding_model"
+  echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=$mobilegpt_runtime_embedding_model embedding_dimension=$mobilegpt_runtime_embedding_dimension"
+fi
 echo "[model] model=$paper_model model_endpoint_profile=$formal_model_endpoint_profile model_endpoint=$selected_model_base_url"
 
 avd_for_serial() {

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+from PIL import Image
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment import androidworld as pipeline
@@ -33,25 +34,32 @@ def _write_source_index(
     recorded_seed: int = 111,
 ) -> tuple[Path, Path]:
     root.mkdir(parents=True, exist_ok=True)
+    screenshot = root / "state-0.png"
+    Image.new("RGB", (100, 100), color="blue").save(screenshot)
+    observation = androidworld_state(
+        "state-0",
+        package_name="com.android.settings",
+        width=100,
+        height=100,
+        forest=(
+            forest
+            or '<hierarchy><node index="0" text="Bluetooth" '
+            'clickable="true" bounds="[0,0][100,100]" /></hierarchy>'
+        ),
+    )
+    observation["pixels"] = {
+        "path": str(screenshot.resolve()),
+        "sha256": hashlib.sha256(screenshot.read_bytes()).hexdigest(),
+        "width": 100,
+        "height": 100,
+        "mime_type": "image/png",
+    }
     source_run_log = root / "source.run_log.json"
     source_run_log.write_text(
         json.dumps(
             androidworld_run_log(
                 [action or {"action_type": "click", "x": 50, "y": 50}],
-                observations=[
-                    androidworld_state(
-                        "state-0",
-                        package_name="com.android.settings",
-                        width=100,
-                        height=100,
-                        with_pixels=True,
-                        forest=(
-                            forest
-                            or '<hierarchy><node index="0" text="Bluetooth" '
-                            'clickable="true" bounds="[0,0][100,100]" /></hierarchy>'
-                        ),
-                    )
-                ],
+                observations=[observation],
                 task_name="SystemBluetoothTurnOn",
                 goal="Turn Bluetooth on.",
                 seed=recorded_seed,
@@ -452,9 +460,11 @@ def test_convert_runlog_memory_dispatches_to_mobilegpt_native_converter(
         output_root=tmp_path / "bundle",
         upstream_root=tmp_path / "mobilegpt",
         model="qwen3-vl-plus",
+        embedding_model="GLM-Embedding-3",
     )
 
     assert captured["source_run_log"] == source.resolve()
+    assert captured["embedding_model"] == "GLM-Embedding-3"
     assert result["manifest"]["native_format"] == "mobilegpt.memory"
 
 

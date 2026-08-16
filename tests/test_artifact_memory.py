@@ -7,6 +7,7 @@ import re
 import stat
 
 import pytest
+from PIL import Image
 from runlog_fixtures import androidworld_run_log
 
 from src.experiment.artifact_memory import (
@@ -94,14 +95,24 @@ def test_multiple_direct_mobilegpt_memories_remain_ambiguous() -> None:
 
 
 def _write_source_run_log(tmp_path: Path) -> Path:
+    screenshot = tmp_path / "evidence" / "RecordWithName" / "state-0.png"
+    screenshot.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (8, 6), color="blue").save(screenshot)
+    payload = androidworld_run_log(
+        [{"action_type": "wait"}],
+        task_name="RecordWithName",
+        goal="Record audio and save it.",
+    )
+    payload["steps"][0]["observation"]["pixels"] = {
+        "path": str(screenshot.resolve()),
+        "sha256": _sha256(screenshot),
+        "width": 8,
+        "height": 6,
+        "mime_type": "image/png",
+    }
     return _write_json(
         tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
-        androidworld_run_log(
-            [{"action_type": "wait"}],
-            task_name="RecordWithName",
-            goal="Record audio and save it.",
-            with_pixels=True,
-        ),
+        payload,
     )
 
 
@@ -420,6 +431,104 @@ def test_refresh_deduplicates_runlogs_and_keeps_indexed_source_as_canonical(
     assert Path(current["by_task_root"], "RecordWithName.json").is_file()
 
 
+def test_refresh_materializes_runlog_screenshot_dependencies(tmp_path: Path) -> None:
+    screenshot = tmp_path / "evidence" / "screenshots" / "before.png"
+    screenshot.parent.mkdir(parents=True)
+    Image.new("RGB", (8, 6), color="blue").save(screenshot)
+    screenshot_sha256 = _sha256(screenshot)
+    payload = androidworld_run_log(
+        [{"action_type": "wait"}],
+        task_name="RecordWithName",
+        goal="Record audio and save it.",
+    )
+    payload["steps"][0]["observation"]["pixels"] = {
+        "path": str(screenshot.resolve()),
+        "sha256": screenshot_sha256,
+        "width": 8,
+        "height": 6,
+        "mime_type": "image/png",
+    }
+    source = _write_json(
+        tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
+        payload,
+    )
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+
+    report = refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(source.parent,),
+        result_roots=(),
+    )
+
+    canonical = report["canonical"]["source_run_logs"]["RecordWithName"]
+    dependency = canonical["dependencies"]["screenshots"][0]
+    object_path = Path(dependency["object_path"])
+    assert dependency["sha256"] == screenshot_sha256
+    assert object_path.is_file()
+    assert object_path.suffix == ".png"
+    assert _sha256(object_path) == screenshot_sha256
+    assert not object_path.stat().st_mode & stat.S_IWUSR
+
+    screenshot.unlink()
+    second = refresh_artifact_memory_from_pointer(
+        memory_index=tmp_path / "memory" / "current.json",
+    )
+    assert (
+        second["canonical"]["source_run_logs"]["RecordWithName"]
+        ["dependencies"]["screenshots"][0]["object_path"]
+        == str(object_path)
+    )
+
+
+def test_refresh_rejects_runlog_screenshot_hash_mismatch(tmp_path: Path) -> None:
+    screenshot = tmp_path / "evidence" / "screenshots" / "before.png"
+    screenshot.parent.mkdir(parents=True)
+    Image.new("RGB", (8, 6), color="blue").save(screenshot)
+    payload = androidworld_run_log(
+        [{"action_type": "wait"}],
+        task_name="RecordWithName",
+    )
+    payload["steps"][0]["observation"]["pixels"] = {
+        "path": str(screenshot.resolve()),
+        "sha256": "0" * 64,
+        "width": 8,
+        "height": 6,
+        "mime_type": "image/png",
+    }
+    source = _write_json(
+        tmp_path / "evidence" / "RecordWithName" / "source.run_log.json",
+        payload,
+    )
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+
+    with pytest.raises(ValueError, match="run_log_screenshot_hash_mismatch"):
+        refresh_artifact_memory(
+            memory_root=tmp_path / "memory",
+            source_index=source_index,
+            function_catalogs=(),
+            runlog_roots=(source.parent,),
+            result_roots=(),
+        )
+
+
 def test_refresh_applies_explicit_sha256_source_selection(
     tmp_path: Path,
 ) -> None:
@@ -434,7 +543,6 @@ def test_refresh_applies_explicit_sha256_source_selection(
             task_name="RecordWithName",
             goal="Record selected audio.",
             seed=113,
-            with_pixels=True,
         ),
     )
     source_index = _write_json(

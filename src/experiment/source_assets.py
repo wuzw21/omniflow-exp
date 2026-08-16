@@ -1256,6 +1256,7 @@ def convert_runlog_memory(
     output_root: str | Path,
     upstream_root: str | Path,
     model: str,
+    embedding_model: str = "text-embedding-v4",
     source_method: str = "runlog_direct",
 ) -> dict[str, Any]:
     """Convert one successful RunLog into a baseline's native memory format."""
@@ -1274,6 +1275,7 @@ def convert_runlog_memory(
             mobilegpt_root=upstream,
             output_root=output,
             model=model,
+            embedding_model=embedding_model,
         )
     if selector == "appagent_demo":
         from src.experiment.appagent_source import (

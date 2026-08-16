@@ -132,6 +132,8 @@ the resulting contract here.
 | `OMNIFLOW_SINGLE_TASK_EVALUATION_SEED` | Target evaluation seed; formal value is `113` |
 | `OMNIFLOW_OURS_CONVERTED_ASSET_ROOT` | A new, empty conversion version directory |
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
+| `OMNIFLOW_APPAGENT_DOCUMENT_MODEL` | AppAgent offline documentation VLM; defaults to the paper model `GLM-5.1` |
+| `OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL` | MobileGPT offline embedding model; defaults to its native `text-embedding-v4` |
 | `OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE` | Development endpoint profile; defaults to `llmthu` |
 | `OMNIFLOW_FORMAL_MODEL_ENDPOINT_PROFILE` | Formal endpoint profile; fixed to `llmthu` for `GLM-5.1` |
 | `OMNIFLOW_OURS_AUTHORING_MANIFEST` | Immutable bundle manifest produced by `androidworld-runlog-harvester` using `omniflow.function-agent-skill-manifest.v1` |
@@ -152,6 +154,16 @@ AppAgent writes the official demo directory and runs its pinned official
 document generator. AppAgent additionally requires immutable before/after
 screenshot references and XML in the RunLog; missing evidence is an explicit
 conversion failure and never triggers source-coordinate replay or an emulator.
+Its offline document generator uses `OMNIFLOW_APPAGENT_DOCUMENT_MODEL`; this is
+separate from the fixed `GLM-5.1` online AndroidWorld planner model.
+MobileGPT's offline encoder uses `OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL`; the
+default remains its native `text-embedding-v4`, and an endpoint-compatible
+override does not change the online planner or AppAgent document model.
+At runtime, MobileGPT chat is routed to the selected LLMTHU `GLM-5.1` endpoint,
+while query embeddings are routed to the original `OPENAI_*` endpoint from the
+environment file. The sealed memory manifest supplies the only accepted
+embedding model, and the script verifies the live embedding dimension against
+the stored hierarchy before starting a device.
 
 ## Run one RunLog through all methods
 

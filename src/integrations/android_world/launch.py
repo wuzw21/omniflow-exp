@@ -1631,6 +1631,9 @@ def _prepare_androidworld_snapshot_restore(
 
 
 def _wait_for_androidworld_a11y(env: Any, *, attempts: int = 6) -> None:
+    refresh_env = getattr(env, "refresh_env", None)
+    if callable(refresh_env):
+        refresh_env()
     last_error: RuntimeError | None = None
     for attempt in range(max(1, int(attempts))):
         try:

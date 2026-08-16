@@ -263,11 +263,15 @@ def prepare_mobilegpt_source_memory(
     mobilegpt_root: str | Path,
     output_root: str | Path,
     model: str,
+    embedding_model: str = "text-embedding-v4",
     memory_index: str | Path | None = None,
 ) -> dict[str, Any]:
     normalized_model = str(model or "").strip()
     if not normalized_model:
         raise ValueError("mobilegpt_source_model_required")
+    normalized_embedding_model = (
+        str(embedding_model or "").strip() or "text-embedding-v4"
+    )
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_run_log, _, source_audit, target_info = _source_preflight(item)
     result = convert_runlog_to_mobilegpt_bundle(
@@ -275,6 +279,7 @@ def prepare_mobilegpt_source_memory(
         mobilegpt_root=mobilegpt_root,
         output_root=output_root,
         model=normalized_model,
+        embedding_model=normalized_embedding_model,
         target_package=str(target_info.get("target_package") or ""),
         target_app=str(target_info.get("target_app") or ""),
         preflight_audit=source_audit,
@@ -311,6 +316,7 @@ def convert_runlog_to_mobilegpt_bundle(
     mobilegpt_root: str | Path,
     output_root: str | Path,
     model: str,
+    embedding_model: str = "text-embedding-v4",
     target_package: str = "",
     target_app: str = "",
     preflight_audit: dict[str, Any] | None = None,
@@ -320,6 +326,9 @@ def convert_runlog_to_mobilegpt_bundle(
     normalized_model = str(model or "").strip()
     if not normalized_model:
         raise ValueError("mobilegpt_source_model_required")
+    normalized_embedding_model = (
+        str(embedding_model or "").strip() or "text-embedding-v4"
+    )
     source_path = Path(source_run_log).expanduser().resolve()
     source = import_run_log(json.loads(source_path.read_text(encoding="utf-8")))
     if (
@@ -372,6 +381,7 @@ def convert_runlog_to_mobilegpt_bundle(
             stats_path=stats_path,
             audit_path=audit_path,
             model=normalized_model,
+            embedding_model=normalized_embedding_model,
             target_package=str(target_package or ""),
             target_app=str(target_app or ""),
         )
@@ -412,6 +422,7 @@ def convert_runlog_to_mobilegpt_bundle(
         "source_seed": SOURCE_SEED,
         "source_run_log": str(source_path),
         "model": normalized_model,
+        "embedding_model": normalized_embedding_model,
         "memory_root": str(memory_root),
         "source_stats": str(stats_path),
         "source_stats_summary": str(stats_summary_path),

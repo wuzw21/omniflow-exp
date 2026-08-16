@@ -27,7 +27,7 @@ def _read(value: Any, name: str, default: Any = None) -> Any:
 
 def _xml_escape(value: Any) -> str:
     return (
-        str(value or "")
+        str("" if value is None else value)
         .replace("&", "&amp;")
         .replace('"', "&quot;")
         .replace("<", "&lt;")
@@ -63,11 +63,21 @@ def _elements_xml(elements: list[Any]) -> str:
             "class": _read(element, "class_name", ""),
             "text": _read(element, "text", ""),
             "content-desc": _read(element, "content_description", ""),
-            "resource-id": _read(element, "resource_name", ""),
+            "resource-id": _read(element, "resource_name", "")
+            or _read(element, "resource_id", ""),
             "package": _read(element, "package_name", ""),
             "bounds": f"[{bounds[0]},{bounds[1]}][{bounds[2]},{bounds[3]}]",
             "clickable": str(bool(_read(element, "is_clickable", False))).lower(),
-            "editable": str(bool(_read(element, "is_editable", False))).lower(),
+            "editable": str(
+                bool(_read(element, "is_editable", False))
+                or str(_read(element, "class_name", "")).endswith("EditText")
+            ).lower(),
+            "focusable": str(bool(_read(element, "is_focusable", False))).lower(),
+            "focused": str(bool(_read(element, "is_focused", False))).lower(),
+            "long-clickable": str(
+                bool(_read(element, "is_long_clickable", False))
+            ).lower(),
+            "enabled": str(bool(_read(element, "is_enabled", True))).lower(),
             "scrollable": str(bool(_read(element, "is_scrollable", False))).lower(),
         }
         rendered = " ".join(
@@ -87,6 +97,36 @@ def _elements_xml(elements: list[Any]) -> str:
 
 def androidworld_elements_xml(elements: list[Any]) -> str:
     return _elements_xml(elements)
+
+
+def androidworld_observation_xml(observation: dict[str, Any]) -> str:
+    forest = observation.get("forest")
+    if isinstance(forest, str) and forest.strip():
+        return forest.strip()
+    elements = observation.get("ui_elements")
+    if isinstance(elements, list) and elements:
+        return androidworld_elements_xml(elements).strip()
+    return ""
+
+
+def androidworld_observation_package(observation: dict[str, Any]) -> str:
+    auxiliaries = observation.get("auxiliaries")
+    for value in (
+        observation.get("package_name"),
+        observation.get("packageName"),
+        auxiliaries.get("package_name") if isinstance(auxiliaries, dict) else None,
+        auxiliaries.get("packageName") if isinstance(auxiliaries, dict) else None,
+    ):
+        package = str(value or "").strip()
+        if package:
+            return package
+    packages = [
+        str(_read(element, "package_name", "") or "").strip()
+        for element in observation.get("ui_elements") or ()
+    ]
+    packages = [package for package in packages if package]
+    non_system = [package for package in packages if package != "com.android.systemui"]
+    return (non_system or packages or [""])[-1]
 
 
 def _xml_semantic_score(xml_text: str) -> tuple[int, int, int, int]:
@@ -396,5 +436,7 @@ def _official_swipe_direction(params: dict[str, Any]) -> str:
 __all__ = [
     "AndroidWorldHost",
     "androidworld_elements_xml",
+    "androidworld_observation_xml",
+    "androidworld_observation_package",
     "make_agent_result",
 ]

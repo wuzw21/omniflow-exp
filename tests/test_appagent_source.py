@@ -947,6 +947,92 @@ def test_convert_runlog_memory_reports_missing_appagent_screenshot(
         )
 
 
+def test_appagent_resolves_materialized_screenshot_by_exact_sha256(
+    tmp_path: Path,
+) -> None:
+    image = tmp_path / "before.png"
+    Image.new("RGB", (8, 6), "blue").save(image)
+    digest = hashlib.sha256(image.read_bytes()).hexdigest()
+    source = (
+        tmp_path
+        / "memory"
+        / "objects"
+        / "sha256"
+        / "aa"
+        / f"{'a' * 64}.json"
+    )
+    source.parent.mkdir(parents=True)
+    source.write_text("{}", encoding="utf-8")
+    materialized = (
+        source.parent.parent / digest[:2] / f"{digest}.png"
+    )
+    materialized.parent.mkdir(parents=True)
+    materialized.write_bytes(image.read_bytes())
+    image.unlink()
+
+    resolved = appagent_source._resolve_appagent_screenshot(
+        {
+            "path": str(image),
+            "sha256": digest,
+            "width": 8,
+            "height": 6,
+            "mime_type": "image/png",
+        },
+        source_run_log=source,
+    )
+
+    assert resolved == materialized.resolve()
+
+
+def test_appagent_projects_androidworld_ui_elements_to_xml() -> None:
+    xml_text = appagent_source._appagent_observation_xml(
+        {
+            "pixels": None,
+            "forest": None,
+            "ui_elements": [
+                {
+                    "class_name": "android.widget.Button",
+                    "text": "Save",
+                    "content_description": "Save contact",
+                    "resource_name": "com.example:id/save",
+                    "package_name": "com.example",
+                    "bbox_pixels": {
+                        "x_min": 10,
+                        "y_min": 20,
+                        "x_max": 90,
+                        "y_max": 60,
+                    },
+                    "is_clickable": True,
+                    "is_editable": False,
+                    "is_focusable": True,
+                    "is_focused": True,
+                    "is_scrollable": False,
+                }
+            ],
+            "auxiliaries": None,
+        }
+    )
+
+    assert 'text="Save"' in xml_text
+    assert 'content-desc="Save contact"' in xml_text
+    assert 'bounds="[10,20][90,60]"' in xml_text
+    assert 'focused="true"' in xml_text
+
+
+def test_androidworld_ui_elements_supply_appagent_package() -> None:
+    assert appagent_source.androidworld_observation_package(
+        {
+            "pixels": None,
+            "forest": None,
+            "ui_elements": [
+                {"package_name": "com.android.systemui"},
+                {"package_name": "com.google.android.contacts"},
+            ],
+            "auxiliaries": {},
+        }
+    ) == "com.google.android.contacts"
+
+
 def test_appagent_source_failure_marker_forbids_retry(tmp_path: Path) -> None:
     bundle = tmp_path / "bundle"
     bundle.mkdir()

@@ -123,6 +123,38 @@ def test_open_app_only_conversion_uses_final_observation_as_finish_page(
     assert result["official_reader_validation"]["launch_finish_validated"] is True
 
 
+def test_conversion_scopes_official_embedding_model_to_offline_memory(
+    tmp_path: Path,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "click", "x": 50, "y": 50}],
+        forests=[
+            '<hierarchy><node text="Draw" clickable="true" '
+            'bounds="[0,0][100,100]" /></hierarchy>'
+        ],
+    )
+    observed: list[str | None] = []
+
+    def embedding_provider(_screen: str) -> list[float]:
+        observed.append(os.environ.get("MOBILEGPT_EMBEDDING_MODEL"))
+        return [0.25, 0.75]
+
+    convert_runlog_to_mobilegpt_memory(
+        source_run_log=source,
+        mobilegpt_root=MOBILEGPT_ROOT,
+        memory_root=tmp_path / "memory",
+        stats_path=tmp_path / "stats.jsonl",
+        audit_path=tmp_path / "audit.json",
+        model="GLM-5.1",
+        embedding_model="GLM-Embedding-3",
+        embedding_provider=embedding_provider,
+    )
+
+    assert observed == ["GLM-Embedding-3"]
+    assert os.environ.get("MOBILEGPT_EMBEDDING_MODEL") != "GLM-Embedding-3"
+
+
 def test_conversion_explicit_target_overrides_runlog_inference(tmp_path: Path) -> None:
     path = _write_runlog(
         tmp_path / "source.json",

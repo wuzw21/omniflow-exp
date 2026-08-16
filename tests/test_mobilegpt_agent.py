@@ -27,7 +27,9 @@ from src.integrations.mobilegpt_runtime import (
     install_mobilegpt_memory_only_guard,
     install_mobilegpt_select_schema_repair,
     install_mobilegpt_upstream_accounting,
+    mobilegpt_embedding_contract,
     mobilegpt_compatible_xml,
+    preflight_mobilegpt_endpoints,
 )
 
 
@@ -76,6 +78,153 @@ def test_mobilegpt_upstream_accounting_preserves_original_query(monkeypatch) -> 
     install_mobilegpt_upstream_accounting()
 
     assert utils_module.query is original_query
+
+
+def test_mobilegpt_upstream_accounting_routes_chat_and_embeddings_separately(
+    monkeypatch,
+) -> None:
+    created_clients: list[tuple[str, str]] = []
+
+    class NativeOpenAI:
+        def __init__(self, *args, **kwargs) -> None:
+            del args
+            api_key = str(kwargs.get("api_key") or "")
+            base_url = str(kwargs.get("base_url") or "")
+            created_clients.append((api_key, base_url))
+            self.chat = SimpleNamespace(
+                completions=SimpleNamespace(create=lambda **_: "chat-response")
+            )
+            self.embeddings = SimpleNamespace(
+                create=lambda **_: "embedding-response"
+            )
+
+    utils_package = ModuleType("utils")
+    utils_module = ModuleType("utils.utils")
+    utils_module.OpenAI = NativeOpenAI
+    utils_module.query = lambda messages: messages
+    monkeypatch.setitem(sys.modules, "utils", utils_package)
+    monkeypatch.setitem(sys.modules, "utils.utils", utils_module)
+    monkeypatch.setenv("MOBILEGPT_CHAT_API_KEY", "chat-key")
+    monkeypatch.setenv("MOBILEGPT_CHAT_BASE_URL", "https://chat.example/v1")
+    monkeypatch.setenv("MOBILEGPT_EMBEDDING_API_KEY", "embedding-key")
+    monkeypatch.setenv(
+        "MOBILEGPT_EMBEDDING_BASE_URL", "https://embedding.example/v1"
+    )
+
+    install_mobilegpt_upstream_accounting()
+    client = utils_module.OpenAI(api_key="upstream-key")
+
+    assert client.chat.completions.create(model="GLM-5.1") == "chat-response"
+    assert client.embeddings.create(model="text-embedding-v4") == (
+        "embedding-response"
+    )
+    assert created_clients == [
+        ("chat-key", "https://chat.example/v1"),
+        ("embedding-key", "https://embedding.example/v1"),
+    ]
+
+
+def test_mobilegpt_upstream_accounting_does_not_duplicate_native_events(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class NativeOpenAI:
+        def __init__(self, *args, **kwargs) -> None:
+            del args, kwargs
+            self.chat = SimpleNamespace(
+                completions=SimpleNamespace(
+                    create=lambda **_: SimpleNamespace(
+                        usage=SimpleNamespace(
+                            prompt_tokens=3,
+                            completion_tokens=1,
+                            total_tokens=4,
+                        ),
+                        choices=[
+                            SimpleNamespace(
+                                message=SimpleNamespace(content="{}")
+                            )
+                        ],
+                    )
+                )
+            )
+            self.embeddings = SimpleNamespace(
+                create=lambda **_: SimpleNamespace(
+                    usage=SimpleNamespace(prompt_tokens=2, total_tokens=2),
+                    data=[SimpleNamespace(embedding=[0.1, 0.2])],
+                )
+            )
+
+    utils_package = ModuleType("utils")
+    utils_module = ModuleType("utils.utils")
+    utils_module.OpenAI = NativeOpenAI
+    utils_module.query = lambda messages: messages
+    utils_module.write_omniflow_mobilegpt_event = lambda event: event
+    monkeypatch.setitem(sys.modules, "utils", utils_package)
+    monkeypatch.setitem(sys.modules, "utils.utils", utils_module)
+    stats_path = tmp_path / "stats.jsonl"
+    monkeypatch.setenv("MOBILEGPT_STATS_JSONL", str(stats_path))
+
+    install_mobilegpt_upstream_accounting()
+    client = utils_module.OpenAI()
+    client.chat.completions.create(model="GLM-5.1")
+    client.embeddings.create(model="text-embedding-v4")
+
+    assert not stats_path.exists()
+
+
+def test_mobilegpt_endpoint_preflight_uses_sealed_model_and_dimension(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    memory = tmp_path / "memory"
+    app_memory = memory / "example"
+    app_memory.mkdir(parents=True)
+    (app_memory / "hierarchy.csv").write_text(
+        'name,embedding\npage,"[0.1, 0.2, 0.3]"\n',
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "mobilegpt_memory_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {"source_stats": {"embedding_models": ["text-embedding-v4"]}}
+        ),
+        encoding="utf-8",
+    )
+    clients: list[tuple[str, str]] = []
+
+    class Client:
+        def __init__(self, **kwargs) -> None:
+            clients.append((kwargs["api_key"], kwargs["base_url"]))
+            self.chat = SimpleNamespace(
+                completions=SimpleNamespace(create=lambda **_: object())
+            )
+            self.embeddings = SimpleNamespace(
+                create=lambda **_: SimpleNamespace(
+                    data=[SimpleNamespace(embedding=[0.4, 0.5, 0.6])]
+                )
+            )
+
+    monkeypatch.setenv("MOBILEGPT_CHAT_API_KEY", "chat-key")
+    monkeypatch.setenv("MOBILEGPT_CHAT_BASE_URL", "https://chat.example/v1")
+    monkeypatch.setenv("MOBILEGPT_EMBEDDING_API_KEY", "embedding-key")
+    monkeypatch.setenv(
+        "MOBILEGPT_EMBEDDING_BASE_URL", "https://embedding.example/v1"
+    )
+
+    assert mobilegpt_embedding_contract(manifest, memory) == (
+        "text-embedding-v4",
+        3,
+    )
+    assert preflight_mobilegpt_endpoints(
+        manifest_path=manifest,
+        memory_root=memory,
+        chat_model="GLM-5.1",
+        client_factory=Client,
+    ) == ("text-embedding-v4", 3)
+    assert clients == [
+        ("chat-key", "https://chat.example/v1"),
+        ("embedding-key", "https://embedding.example/v1"),
+    ]
 
 
 def test_mobilegpt_runtime_integrity_errors_exclude_method_terminals() -> None:

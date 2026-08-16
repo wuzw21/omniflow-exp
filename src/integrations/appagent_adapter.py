@@ -28,6 +28,7 @@ from src.integrations.android_world.host import (
     make_agent_result,
 )
 from src.integrations.runlog import import_run_log, project_androidworld_step_actions
+from src.integrations.android_world.host import androidworld_elements_xml
 
 APPAGENT_OFFICIAL_REVISION = "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
 APPAGENT_SOURCE_SEED = 111
@@ -1113,7 +1114,7 @@ def build_appagent_teacher_source(
                         f"{step_index}:{action_index}:{key or 'missing'}"
                     )
                 params["key"] = "back"
-            params = _source_semantic_params(step, params)
+            params = _source_semantic_params(step, params, action_type=action_type)
             actions.append(
                 {
                     "source_step_index": step_index,
@@ -1616,6 +1617,18 @@ def ground_appagent_teacher_action(
         matching_nodes = [
             node
             for node in root.iter()
+            if str(node.attrib.get("focused") or "").lower() == "true"
+            and (
+                str(node.attrib.get("editable") or "").lower() == "true"
+                or str(node.attrib.get("class") or "")
+                == "android.widget.EditText"
+            )
+        ]
+        match_reason = "current_focused_editable"
+    if not matching_nodes and action_type == "input_text":
+        matching_nodes = [
+            node
+            for node in root.iter()
             if str(node.attrib.get("editable") or "").lower() == "true"
             or str(node.attrib.get("class") or "") == "android.widget.EditText"
         ]
@@ -1936,6 +1949,8 @@ def _adapter_params(action_type: str, params: dict[str, Any]) -> dict[str, Any]:
 def _source_semantic_params(
     step: dict[str, Any],
     params: dict[str, Any],
+    *,
+    action_type: str,
 ) -> dict[str, Any]:
     enriched = dict(params)
     metadata = step.get("metadata")
@@ -1959,7 +1974,28 @@ def _source_semantic_params(
         if isinstance(observation, dict)
         else ""
     )
+    if not xml_text and isinstance(observation, dict):
+        elements = observation.get("ui_elements")
+        if isinstance(elements, list) and elements:
+            xml_text = androidworld_elements_xml(elements).strip()
     if not xml_text:
+        return enriched
+    if action_type == "input_text":
+        root = ET.fromstring(xml_text)
+        focused = [
+            node
+            for node in root.iter()
+            if str(node.attrib.get("focused") or "").lower() == "true"
+            and (
+                str(node.attrib.get("editable") or "").lower() == "true"
+                or str(node.attrib.get("class") or "")
+                == "android.widget.EditText"
+            )
+        ]
+        if len(focused) == 1:
+            identity = _source_node_identity(focused[0])
+            if identity:
+                enriched["source_context"] = {"element": identity}
         return enriched
     display = observation_display(observation)
     if display is None:

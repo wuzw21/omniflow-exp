@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import csv
 from datetime import datetime, timezone
 import importlib
 import json
@@ -662,6 +664,9 @@ def install_mobilegpt_upstream_accounting() -> None:
     if bool(getattr(utils_module, "_omniflow_upstream_accounting_installed", False)):
         return
     original_openai = utils_module.OpenAI
+    native_success_accounting = callable(
+        getattr(utils_module, "write_omniflow_mobilegpt_event", None)
+    )
 
     class _Completions:
         def __init__(self, inner: Any) -> None:
@@ -688,21 +693,26 @@ def install_mobilegpt_upstream_accounting() -> None:
             content = ""
             if choices:
                 content = str(getattr(getattr(choices[0], "message", None), "content", "") or "")
-            _write_stats_event(
-                {
-                    "event": "chat_call",
-                    "agent_name": "upstream",
-                    "model": str(kwargs.get("model") or ""),
-                    "attempt": 1,
-                    "latency_sec": round(time.monotonic() - started, 6),
-                    "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
-                    "completion_tokens": int(
-                        getattr(usage, "completion_tokens", 0) or 0
-                    ),
-                    "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
-                    "response_content": content,
-                }
-            )
+            if not native_success_accounting:
+                _write_stats_event(
+                    {
+                        "event": "chat_call",
+                        "agent_name": "upstream",
+                        "model": str(kwargs.get("model") or ""),
+                        "attempt": 1,
+                        "latency_sec": round(time.monotonic() - started, 6),
+                        "prompt_tokens": int(
+                            getattr(usage, "prompt_tokens", 0) or 0
+                        ),
+                        "completion_tokens": int(
+                            getattr(usage, "completion_tokens", 0) or 0
+                        ),
+                        "total_tokens": int(
+                            getattr(usage, "total_tokens", 0) or 0
+                        ),
+                        "response_content": content,
+                    }
+                )
             return response
 
     class _Embeddings:
@@ -726,15 +736,16 @@ def install_mobilegpt_upstream_accounting() -> None:
             usage = getattr(response, "usage", None)
             prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
             total_tokens = int(getattr(usage, "total_tokens", 0) or prompt_tokens)
-            _write_stats_event(
-                {
-                    "event": "embedding_call",
-                    "model": str(kwargs.get("model") or ""),
-                    "latency_sec": round(time.monotonic() - started, 6),
-                    "prompt_tokens": prompt_tokens,
-                    "total_tokens": total_tokens,
-                }
-            )
+            if not native_success_accounting:
+                _write_stats_event(
+                    {
+                        "event": "embedding_call",
+                        "model": str(kwargs.get("model") or ""),
+                        "latency_sec": round(time.monotonic() - started, 6),
+                        "prompt_tokens": prompt_tokens,
+                        "total_tokens": total_tokens,
+                    }
+                )
             return response
 
     class _Chat:
@@ -747,15 +758,130 @@ def install_mobilegpt_upstream_accounting() -> None:
 
     class _OpenAI:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
-            self._inner = original_openai(*args, **kwargs)
-            self.chat = _Chat(self._inner.chat)
-            self.embeddings = _Embeddings(self._inner.embeddings)
+            chat_kwargs = dict(kwargs)
+            embedding_kwargs = dict(kwargs)
+            chat_api_key = str(os.getenv("MOBILEGPT_CHAT_API_KEY") or "").strip()
+            chat_base_url = str(
+                os.getenv("MOBILEGPT_CHAT_BASE_URL") or ""
+            ).strip()
+            embedding_api_key = str(
+                os.getenv("MOBILEGPT_EMBEDDING_API_KEY") or ""
+            ).strip()
+            embedding_base_url = str(
+                os.getenv("MOBILEGPT_EMBEDDING_BASE_URL") or ""
+            ).strip()
+            if chat_api_key:
+                chat_kwargs["api_key"] = chat_api_key
+            if chat_base_url:
+                chat_kwargs["base_url"] = chat_base_url
+            if embedding_api_key:
+                embedding_kwargs["api_key"] = embedding_api_key
+            if embedding_base_url:
+                embedding_kwargs["base_url"] = embedding_base_url
+            self._chat_inner = original_openai(*args, **chat_kwargs)
+            self._embedding_inner = original_openai(*args, **embedding_kwargs)
+            self.chat = _Chat(self._chat_inner.chat)
+            self.embeddings = _Embeddings(self._embedding_inner.embeddings)
 
         def __getattr__(self, name: str) -> Any:
-            return getattr(self._inner, name)
+            return getattr(self._chat_inner, name)
 
     utils_module.OpenAI = _OpenAI
     utils_module._omniflow_upstream_accounting_installed = True
+
+
+def mobilegpt_embedding_contract(
+    manifest_path: str | Path,
+    memory_root: str | Path,
+) -> tuple[str, int]:
+    manifest = json.loads(
+        Path(manifest_path).expanduser().resolve().read_text(encoding="utf-8")
+    )
+    models = {
+        str(model).strip()
+        for model in ((manifest.get("source_stats") or {}).get("embedding_models") or [])
+        if str(model).strip()
+    }
+    if len(models) != 1:
+        raise ValueError(
+            "mobilegpt_embedding_model_contract_invalid:"
+            f"expected_one:actual={sorted(models)}"
+        )
+    hierarchy_files = sorted(
+        Path(memory_root).expanduser().resolve().glob("*/hierarchy.csv")
+    )
+    for hierarchy_path in hierarchy_files:
+        with hierarchy_path.open(encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                value = row.get("embedding")
+                if not value:
+                    continue
+                vector = ast.literal_eval(value)
+                if isinstance(vector, (list, tuple)) and vector:
+                    return next(iter(models)), len(vector)
+    raise ValueError("mobilegpt_embedding_dimension_contract_missing")
+
+
+def preflight_mobilegpt_endpoints(
+    *,
+    manifest_path: str | Path,
+    memory_root: str | Path,
+    chat_model: str,
+    client_factory: Any = None,
+) -> tuple[str, int]:
+    if client_factory is None:
+        from openai import OpenAI
+
+        client_factory = OpenAI
+    embedding_model, expected_dimension = mobilegpt_embedding_contract(
+        manifest_path,
+        memory_root,
+    )
+    chat_client = client_factory(
+        api_key=os.environ["MOBILEGPT_CHAT_API_KEY"],
+        base_url=os.environ["MOBILEGPT_CHAT_BASE_URL"],
+        max_retries=0,
+        timeout=60,
+    )
+    chat_client.chat.completions.create(
+        model=str(chat_model),
+        messages=[{"role": "user", "content": "Reply OK."}],
+        max_tokens=4,
+        temperature=0,
+    )
+    embedding_client = client_factory(
+        api_key=os.environ["MOBILEGPT_EMBEDDING_API_KEY"],
+        base_url=os.environ["MOBILEGPT_EMBEDDING_BASE_URL"],
+        max_retries=0,
+        timeout=60,
+    )
+    response = embedding_client.embeddings.create(
+        model=embedding_model,
+        input=["MobileGPT endpoint capability probe."],
+    )
+    actual_dimension = len(response.data[0].embedding)
+    if actual_dimension != expected_dimension:
+        raise ValueError(
+            "mobilegpt_embedding_dimension_mismatch:"
+            f"model={embedding_model}:expected={expected_dimension}:"
+            f"actual={actual_dimension}"
+        )
+    return embedding_model, actual_dimension
+
+
+def _run_mobilegpt_endpoint_preflight(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--manifest", required=True)
+    parser.add_argument("--memory-root", required=True)
+    parser.add_argument("--chat-model", required=True)
+    args = parser.parse_args(argv)
+    embedding_model, dimension = preflight_mobilegpt_endpoints(
+        manifest_path=args.manifest,
+        memory_root=args.memory_root,
+        chat_model=args.chat_model,
+    )
+    print(f"{embedding_model}\t{dimension}")
+    return 0
 
 
 def install_mobilegpt_android_action_prompt(derive_prompt_module: Any) -> None:
@@ -1037,4 +1163,7 @@ def run_mobilegpt_server(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(run_mobilegpt_server())
+    arguments = sys.argv[1:]
+    if arguments[:1] == ["preflight-endpoints"]:
+        raise SystemExit(_run_mobilegpt_endpoint_preflight(arguments[1:]))
+    raise SystemExit(run_mobilegpt_server(arguments))

@@ -78,6 +78,23 @@ def test_androidworld_a11y_readiness_allows_cold_boot_recovery(monkeypatch) -> N
     assert calls == 4
 
 
+def test_androidworld_a11y_readiness_refreshes_official_controller_first() -> None:
+    calls: list[str] = []
+
+    class Env:
+        def refresh_env(self) -> None:
+            calls.append("refresh")
+
+        def get_state(self, *, wait_to_stabilize: bool = False):
+            assert wait_to_stabilize is False
+            calls.append("state")
+            return SimpleNamespace(forest=object())
+
+    _wait_for_androidworld_a11y(Env())
+
+    assert calls == ["refresh", "state"]
+
+
 def test_androidworld_reuses_installed_a11y_forwarder(monkeypatch) -> None:
     calls = []
 

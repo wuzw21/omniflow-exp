@@ -27,6 +27,11 @@ from src.experiment.mobilegpt_source import (
 from src.experiment.source_assets import (
     build_grounded_teacher_run_log_from_canonical_item,
 )
+from src.integrations.android_world.host import (
+    androidworld_elements_xml,
+    androidworld_observation_xml,
+    androidworld_observation_package,
+)
 from src.integrations.appagent_adapter import (
     APPAGENT_DEMO_ACTION_TYPES,
     APPAGENT_DEMO_MANIFEST,
@@ -41,6 +46,10 @@ from src.integrations.appagent_adapter import (
 )
 
 SOURCE_SEED = 111
+
+
+def _appagent_observation_xml(observation: dict[str, Any]) -> str:
+    return androidworld_observation_xml(observation)
 
 
 def _appagent_source_method_label(item: pipeline.ArchivedRunLog) -> str:
@@ -465,23 +474,23 @@ def _write_appagent_demo_state(
     source_step_index: int,
     phase: str,
     runtime: OfficialAppAgentRuntime,
+    source_run_log: Path,
 ) -> tuple[str, list[Any]]:
     pixels = observation.get("pixels")
-    screenshot = (
-        Path(str(pixels.get("path") or "")).expanduser().resolve()
-        if isinstance(pixels, dict)
-        else Path()
-    )
-    if not isinstance(pixels, dict) or not screenshot.is_file():
+    if not isinstance(pixels, dict):
         raise ValueError(
             f"appagent_source_screenshot_missing:{source_step_index}:{phase}"
         )
+    screenshot = _resolve_appagent_screenshot(
+        pixels,
+        source_run_log=source_run_log,
+    )
     expected_sha256 = str(pixels.get("sha256") or "").strip()
     if not expected_sha256 or pipeline._file_sha256(screenshot) != expected_sha256:
         raise ValueError(
             f"appagent_source_screenshot_hash_mismatch:{source_step_index}:{phase}"
         )
-    xml_text = observation_xml(observation).strip()
+    xml_text = _appagent_observation_xml(observation)
     if not xml_text:
         raise ValueError(f"appagent_source_xml_missing:{source_step_index}:{phase}")
     base_name = f"{demo_name}_{state_index}"
@@ -507,26 +516,54 @@ def _require_appagent_observation_evidence(
     *,
     source_step_index: int,
     phase: str,
+    source_run_log: Path,
 ) -> None:
     pixels = observation.get("pixels")
-    screenshot = (
-        Path(str(pixels.get("path") or "")).expanduser().resolve()
-        if isinstance(pixels, dict)
-        else Path()
-    )
-    if not isinstance(pixels, dict) or not screenshot.is_file():
+    if not isinstance(pixels, dict):
         raise ValueError(
             f"appagent_source_screenshot_missing:{source_step_index}:{phase}"
         )
+    screenshot = _resolve_appagent_screenshot(
+        pixels,
+        source_run_log=source_run_log,
+    )
     expected_sha256 = str(pixels.get("sha256") or "").strip()
     if not expected_sha256 or pipeline._file_sha256(screenshot) != expected_sha256:
         raise ValueError(
             f"appagent_source_screenshot_hash_mismatch:{source_step_index}:{phase}"
         )
-    if not observation_xml(observation).strip():
+    if not _appagent_observation_xml(observation):
         raise ValueError(
             f"appagent_source_xml_missing:{source_step_index}:{phase}"
         )
+
+
+def _resolve_appagent_screenshot(
+    pixels: dict[str, Any],
+    *,
+    source_run_log: Path,
+) -> Path:
+    screenshot = Path(str(pixels.get("path") or "")).expanduser().resolve()
+    expected_sha256 = str(pixels.get("sha256") or "").strip().lower()
+    if screenshot.is_file():
+        return screenshot
+    source_object = source_run_log.expanduser().resolve()
+    sha256_root = source_object.parent.parent
+    if (
+        sha256_root.name != "sha256"
+        or sha256_root.parent.name != "objects"
+        or len(expected_sha256) != 64
+    ):
+        return screenshot
+    suffix = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+    }.get(str(pixels.get("mime_type") or "").strip())
+    if suffix is None:
+        return screenshot
+    candidate = sha256_root / expected_sha256[:2] / f"{expected_sha256}{suffix}"
+    return candidate.resolve() if candidate.is_file() else screenshot
 
 
 def convert_runlog_to_appagent_memory(
@@ -573,6 +610,7 @@ def convert_runlog_to_appagent_memory(
             ),
             source_step_index=step_index,
             phase="before",
+            source_run_log=source_path,
         )
     final_step_index = int(demo_records[-1]["source_step_index"])
     _require_appagent_observation_evidence(
@@ -583,6 +621,7 @@ def convert_runlog_to_appagent_memory(
         ),
         source_step_index=final_step_index,
         phase="after",
+        source_run_log=source_path,
     )
     runtime = OfficialAppAgentRuntime(appagent_root)
     packages = []
@@ -592,9 +631,7 @@ def convert_runlog_to_appagent_memory(
             step_index=int(record["source_step_index"]),
             after=False,
         )
-        package_name = str(
-            (observation.get("auxiliaries") or {}).get("package_name") or ""
-        ).strip()
+        package_name = androidworld_observation_package(observation)
         if package_name and package_name not in packages:
             packages.append(package_name)
     if len(packages) > 1:
@@ -644,6 +681,7 @@ def convert_runlog_to_appagent_memory(
                 source_step_index=int(record["source_step_index"]),
                 phase="before",
                 runtime=runtime,
+                source_run_log=source_path,
             )
             grounded = ground_appagent_teacher_action(
                 xml_text,
@@ -672,6 +710,7 @@ def convert_runlog_to_appagent_memory(
         source_step_index=int(final_record["source_step_index"]),
         phase="after",
         runtime=runtime,
+        source_run_log=source_path,
     )
     (demo_root / "record.txt").write_text(
         "\n".join([*record_lines, "stop"]) + "\n",
@@ -802,7 +841,11 @@ def _preflight_appagent_teacher(
                 if isinstance(source_context, dict)
                 else ""
             )
-            or (observation_xml(observation) if isinstance(observation, dict) else "")
+            or (
+                _appagent_observation_xml(observation)
+                if isinstance(observation, dict)
+                else ""
+            )
         ).strip()
         if not xml_text:
             raise ValueError(
@@ -831,6 +874,7 @@ def _preflight_appagent_teacher(
             ),
             source_step_index=step_index,
             phase="before",
+            source_run_log=Path(item.source_run_log).expanduser().resolve(),
         )
     final_step_index = int(demo_records[-1]["source_step_index"])
     _require_appagent_observation_evidence(
@@ -841,6 +885,7 @@ def _preflight_appagent_teacher(
         ),
         source_step_index=final_step_index,
         phase="after",
+        source_run_log=Path(item.source_run_log).expanduser().resolve(),
     )
     grounding_audit["appagent_groundable_action_count"] = (
         groundable_action_count

@@ -17,6 +17,10 @@ from typing import Any, Callable, Iterator, Sequence
 import xml.etree.ElementTree as ET
 
 from omniflow.core.trajectory import observation_xml
+from src.integrations.android_world.host import (
+    androidworld_observation_package,
+    androidworld_observation_xml,
+)
 from src.experiment.mobilegpt_contract import MOBILEGPT_AUDIT_SCHEMA
 from src.integrations.mobilegpt_runtime import mobilegpt_compatible_xml
 from src.integrations.runlog import infer_input_text_target, import_run_log
@@ -288,14 +292,7 @@ def _action_type(action: dict[str, Any]) -> str:
 
 
 def _package_from_observation(observation: dict[str, Any]) -> str:
-    auxiliaries = observation.get("auxiliaries")
-    candidates = [
-        observation.get("package_name"),
-        observation.get("packageName"),
-        auxiliaries.get("package_name") if isinstance(auxiliaries, dict) else None,
-        auxiliaries.get("packageName") if isinstance(auxiliaries, dict) else None,
-    ]
-    return next((str(value).strip() for value in candidates if str(value or "").strip()), "")
+    return androidworld_observation_package(observation)
 
 
 def _load_runlog_trajectory(
@@ -345,7 +342,7 @@ def _load_runlog_trajectory(
                 step_index=step_index,
                 action_type=action_type or "missing",
             )
-        forest = observation_xml(observation).strip()
+        forest = androidworld_observation_xml(observation)
         if not forest:
             raise MobileGPTConversionError(
                 "source_observation_missing",
@@ -367,7 +364,9 @@ def _load_runlog_trajectory(
                 observation=observation,
                 forest=forest,
                 next_forest=(
-                    observation_xml(_observation_for_step(raw_steps[ordinal + 1])).strip()
+                    androidworld_observation_xml(
+                        _observation_for_step(raw_steps[ordinal + 1])
+                    )
                     if ordinal + 1 < len(raw_steps)
                     and isinstance(raw_steps[ordinal + 1], dict)
                     else ""
@@ -414,7 +413,7 @@ def _load_runlog_trajectory(
         candidate = raw_steps[-1].get("next_observation")
         terminal_observation = candidate if isinstance(candidate, dict) else None
     terminal_forest = (
-        observation_xml(terminal_observation).strip()
+        androidworld_observation_xml(terminal_observation)
         if isinstance(terminal_observation, dict)
         else ""
     )
@@ -1072,6 +1071,7 @@ def convert_runlog_to_mobilegpt_memory(
     stats_path: str | Path,
     audit_path: str | Path,
     model: str,
+    embedding_model: str = "text-embedding-v4",
     target_package: str = "",
     target_app: str = "",
     embedding_provider: Callable[[str], Sequence[float]] | None = None,
@@ -1082,6 +1082,9 @@ def convert_runlog_to_mobilegpt_memory(
 
     if conversion_mode != CONVERSION_MODE_DIRECT:
         raise ValueError(f"mobilegpt_conversion_mode_invalid:{conversion_mode}")
+    normalized_embedding_model = (
+        str(embedding_model or "").strip() or "text-embedding-v4"
+    )
 
     trajectory = _load_runlog_trajectory(
         source_run_log,
@@ -1117,6 +1120,7 @@ def convert_runlog_to_mobilegpt_memory(
         "MOBILEGPT_MEMORY_ROOT": str(memory),
         "MOBILEGPT_STATS_JSONL": str(stats),
         "MOBILEGPT_CHAT_MODEL": str(model),
+        "MOBILEGPT_EMBEDDING_MODEL": normalized_embedding_model,
         "MOBILEGPT_CHAT_MAX_ATTEMPTS": "1",
         "MOBILEGPT_TARGET_APP": str(trajectory["target_app"]),
         "MOBILEGPT_TARGET_PACKAGE": str(trajectory["target_package"]),
@@ -1458,6 +1462,7 @@ def convert_runlog_to_mobilegpt_memory(
         "task_name": trajectory["task_name"],
         "source_run_log": trajectory["source_run_log"],
         "target_package": trajectory["target_package"],
+        "embedding_model": normalized_embedding_model,
         "original_mobilegpt_prompts": False,
         "explore_agent_used": False,
         "select_agent_used": False,
@@ -1502,6 +1507,7 @@ def convert_runlog_to_mobilegpt_memory(
         "validated_transition_count": audit_payload["validated_transition_count"],
         "target_package": trajectory["target_package"],
         "target_app": trajectory["target_app"],
+        "embedding_model": normalized_embedding_model,
         "source_success_boundary": trajectory["source_success_boundary"],
         "official_reader_validation": audit_payload["official_reader_validation"],
         "wall_sec": audit_payload["wall_sec"],

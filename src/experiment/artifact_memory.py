@@ -185,6 +185,96 @@ def _materialize_object(memory_root: Path, source: Path, digest: str) -> Path:
     return target.resolve()
 
 
+def _materialize_binary_object(
+    memory_root: Path,
+    source: Path,
+    digest: str,
+    *,
+    suffix: str,
+) -> Path:
+    target = memory_root / "objects" / "sha256" / digest[:2] / f"{digest}{suffix}"
+    if target.exists():
+        if not target.is_file() or _sha256(target) != digest:
+            raise ValueError(f"memory_object_hash_mismatch:{target}")
+        return target.resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    try:
+        shutil.copyfile(source, temporary)
+        if _sha256(temporary) != digest:
+            raise ValueError(f"memory_object_copy_hash_mismatch:{source}")
+        temporary.chmod(0o444)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return target.resolve()
+
+
+def _materialize_run_log_dependencies(
+    memory_root: Path,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    if payload.get("schema_version") != "omniflow.run_log.v1":
+        return {"screenshots": []}
+    references: list[dict[str, Any]] = []
+    for step in payload.get("steps") or ():
+        if not isinstance(step, dict):
+            continue
+        for phase in ("observation", "next_observation"):
+            observation = step.get(phase)
+            if isinstance(observation, dict):
+                references.append(observation)
+    final_observation = payload.get("final_observation")
+    if isinstance(final_observation, dict):
+        references.append(final_observation)
+
+    screenshots: dict[str, dict[str, str]] = {}
+    suffixes = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+    }
+    for observation in references:
+        pixels = observation.get("pixels")
+        if not isinstance(pixels, dict):
+            continue
+        digest = str(pixels.get("sha256") or "").strip().lower()
+        mime_type = str(pixels.get("mime_type") or "").strip()
+        suffix = suffixes.get(mime_type)
+        if suffix is None:
+            raise ValueError(f"run_log_screenshot_mime_type_invalid:{mime_type}")
+        source = Path(str(pixels.get("path") or "")).expanduser().resolve()
+        stored = (
+            memory_root
+            / "objects"
+            / "sha256"
+            / digest[:2]
+            / f"{digest}{suffix}"
+        )
+        if not source.is_file() and stored.is_file():
+            source = stored
+        if not source.is_file():
+            raise FileNotFoundError(f"run_log_screenshot_missing:{source}")
+        actual = _sha256(source)
+        if actual != digest:
+            raise ValueError(
+                "run_log_screenshot_hash_mismatch:"
+                f"expected={digest or 'missing'}:actual={actual}:path={source}"
+            )
+        object_path = _materialize_binary_object(
+            memory_root,
+            source,
+            digest,
+            suffix=suffix,
+        )
+        screenshots[digest] = {
+            "sha256": digest,
+            "mime_type": mime_type,
+            "object_path": str(object_path),
+        }
+    return {"screenshots": [screenshots[key] for key in sorted(screenshots)]}
+
+
 def _materialize_content(memory_root: Path, content: bytes, digest: str) -> Path:
     target = memory_root / "objects" / "sha256" / digest[:2] / f"{digest}.json"
     if hashlib.sha256(content).hexdigest() != digest:
@@ -317,11 +407,13 @@ def _function_source_seed(item: dict[str, Any]) -> int | None:
 def _register_run_log_record(
     records: dict[str, dict[str, Any]],
     *,
+    memory_root: Path,
     path: Path,
     digest: str,
     payload: dict[str, Any],
     task: str,
     alias: str = "",
+    materialize_dependencies: bool = False,
 ) -> dict[str, Any]:
     record = records.setdefault(
         digest,
@@ -336,6 +428,11 @@ def _register_run_log_record(
             if isinstance(payload.get("success"), bool)
             else None,
             "step_count": len(payload.get("steps") or []),
+            "dependencies": (
+                _materialize_run_log_dependencies(memory_root, payload)
+                if materialize_dependencies
+                else {"screenshots": []}
+            ),
         },
     )
     if alias:
@@ -364,11 +461,13 @@ def _canonicalize_function_source_run_log(
     )
     _register_run_log_record(
         records,
+        memory_root=memory_root,
         path=source_object,
         digest=source_sha256,
         payload=source_payload,
         task=task,
         alias=str(source_run_log),
+        materialize_dependencies=True,
     )
     try:
         canonical = require_complete_source_run_log(source_payload)
@@ -441,10 +540,12 @@ def _canonicalize_function_source_run_log(
         )
     _register_run_log_record(
         records,
+        memory_root=memory_root,
         path=canonical_object,
         digest=canonical_sha256,
         payload=canonical,
         task=task,
+        materialize_dependencies=True,
     )
     lineage = {
         "schema_version": FUNCTION_SOURCE_LINEAGE_SCHEMA,
@@ -632,6 +733,7 @@ def _load_source_selections(
                     "run_id": str(selected_run_log["run_id"]),
                     "success": selected_run_log["success"],
                     "step_count": len(selected_run_log["steps"]),
+                    "dependencies": {"screenshots": []},
                 },
             )
             record["tasks"] = sorted(set(record["tasks"]) | {task})
@@ -1923,29 +2025,21 @@ def _refresh_artifact_memory_unlocked(
                     f"{indexed_task}:{source_run_log['task_name']}:{path}"
                 )
         task = indexed_paths.get(path) or _task_from_path(path, task_names)
-        record = records.setdefault(
-            digest,
-            {
-                "sha256": digest,
-                "object_path": str(_materialize_object(root, path, digest)),
-                "aliases": [],
-                "tasks": [],
-                "schema_version": str(payload.get("schema_version") or ""),
-                "run_id": str(payload.get("run_id") or ""),
-                "success": payload.get("success")
-                if isinstance(payload.get("success"), bool)
-                else None,
-                "step_count": len(payload.get("steps") or []),
-            },
+        record = _register_run_log_record(
+            records,
+            memory_root=root,
+            path=_materialize_object(root, path, digest),
+            digest=digest,
+            payload=payload,
+            task=task,
+            alias=str(path),
         )
-        record["aliases"].append(str(path))
-        if task:
-            record["tasks"].append(task)
         if indexed_task:
             indexed_canonical_digests[indexed_task] = migrated_digest or digest
         if migrated_source is not None and migrated_object is not None:
             migrated_record = _register_run_log_record(
                 records,
+                memory_root=root,
                 path=migrated_object,
                 digest=migrated_digest,
                 payload=migrated_source,
@@ -2003,6 +2097,12 @@ def _refresh_artifact_memory_unlocked(
             if "conversion" in selection:
                 canonical_selection["conversion"] = selection["conversion"]
             canonical_sources[task]["selection"] = canonical_selection
+        canonical_payload = _load_object(
+            Path(canonical_sources[task]["object_path"])
+        )
+        canonical_sources[task]["dependencies"] = (
+            _materialize_run_log_dependencies(root, canonical_payload)
+        )
 
     catalog_paths = sorted(
         {Path(value).expanduser().resolve() for value in function_catalogs}
