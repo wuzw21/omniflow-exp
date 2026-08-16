@@ -3107,6 +3107,15 @@ if [[ "$check_only" -eq 1 ]]; then
   echo "[static] ready task=$task methods=$methods; no persistent output created"
   exit 0
 fi
+if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
+  "$python_bin" -m src.experiment.mobilegpt_source prepare \
+    --index "$source_index" \
+    --task "$task" \
+    --mobilegpt-root "$mobilegpt_root" \
+    --output-root "$mobilegpt_source_attempt_root" \
+    --model "$paper_model" \
+    --memory-index "$memory_index"
+fi
 select_model_endpoint "$formal_model_endpoint_profile"
 validate_experiment_model "$paper_model" "$formal_model_endpoint_profile"
 export MOBILEGPT_CHAT_API_KEY="$selected_model_api_key"
@@ -3432,15 +3441,6 @@ if [[ -z "$preflight_serials" ]]; then
 fi
 
 mkdir -p "$preflight_output_root"
-if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
-  "$python_bin" -m src.experiment.mobilegpt_source prepare \
-    --index "$source_index" \
-    --task "$task" \
-    --mobilegpt-root "$mobilegpt_root" \
-    --output-root "$mobilegpt_source_attempt_root" \
-    --model "$paper_model" \
-    --memory-index "$memory_index"
-fi
 if [[ "$appagent_source_generation_required" -eq 1 ]]; then
   "$python_bin" -m src.experiment.appagent_source prepare \
     --index "$source_index" \

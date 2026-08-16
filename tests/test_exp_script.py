@@ -1389,6 +1389,11 @@ exit 0
         "--store-index" not in line
         for line in mobilegpt_source_calls
     )
+    assert calls.index(
+        "src.experiment.mobilegpt_source prepare"
+    ) < calls.index(
+        "src.integrations.mobilegpt_runtime preflight-endpoints"
+    )
 
     repeated = subprocess.run(
         ["bash", str(SCRIPT)],
