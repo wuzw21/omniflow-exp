@@ -142,6 +142,11 @@ to the next task, preserve the failed attempt, add a deterministic regression
 test, encode the stable repair in the shared script/core harness, and document
 the resulting contract here.
 
+The shared AndroidWorld setup seam first uses the pinned official APK install
+call. If the connected emulator rejects the legacy
+`--bypass-low-target-sdk-block` option, it retries the same install without that
+option and preserves all other setup behavior.
+
 | Variable | Meaning |
 | --- | --- |
 | `OMNIFLOW_EXP_ASSET_ROOT` | External immutable experiment assets |
