@@ -1107,16 +1107,23 @@ def _enhancement_prompt_step(
     step: dict[str, Any],
     state_loader: Callable[[str], Any] | None,
 ) -> dict[str, Any]:
+    source_state_id, projected_actions = _enhancement_step_actions(step)
+    next_observation = step.get("next_observation")
     value = {
-        key: step.get(key)
-        for key in (
-            "step_index",
-            "before_state_id",
-            "action",
-            "result",
-            "after_state_id",
-            "metadata",
-        )
+        "step_index": step.get("step_index"),
+        "before_state_id": source_state_id,
+        "action": (
+            projected_actions[0]
+            if len(projected_actions) == 1
+            else step.get("action")
+        ),
+        "result": step.get("result"),
+        "after_state_id": (
+            state_id(next_observation)
+            if isinstance(next_observation, dict)
+            else step.get("after_state_id")
+        ),
+        "metadata": step.get("metadata"),
     }
     semantics = _compact_source_page_semantics(step, state_loader)
     if semantics is not None:
@@ -1128,16 +1135,23 @@ def _compact_source_page_semantics(
     step: dict[str, Any],
     state_loader: Callable[[str], Any] | None,
 ) -> dict[str, Any] | None:
-    if state_loader is None:
-        return None
-    source_state_id = str(step.get("before_state_id") or "").strip()
-    if not source_state_id:
-        return None
-    state = state_loader(source_state_id)
+    state = step.get("observation")
+    if not isinstance(state, dict):
+        if state_loader is None:
+            return None
+        source_state_id = str(step.get("before_state_id") or "").strip()
+        if not source_state_id:
+            return None
+        state = state_loader(source_state_id)
     if hasattr(state, "to_dict"):
         state = state.to_dict()
     if not isinstance(state, dict):
         return None
+    auxiliaries = (
+        state.get("auxiliaries")
+        if isinstance(state.get("auxiliaries"), dict)
+        else {}
+    )
     labels: list[str] = []
     xml = str(state.get("xml") or state.get("forest") or "")
     if xml:
@@ -1156,8 +1170,18 @@ def _compact_source_page_semantics(
                 if len(labels) == 16:
                     break
     return {
-        "package": str(state.get("package_name") or state.get("package") or ""),
-        "activity": str(state.get("activity_name") or state.get("activity") or ""),
+        "package": str(
+            state.get("package_name")
+            or state.get("package")
+            or auxiliaries.get("package_name")
+            or ""
+        ),
+        "activity": str(
+            state.get("activity_name")
+            or state.get("activity")
+            or auxiliaries.get("activity_name")
+            or ""
+        ),
         "visible_labels": labels,
     }
 
@@ -1198,15 +1222,18 @@ def _apply_step_roles(
     ]
     roles: dict[tuple[str, str], str] = {}
     for raw_step, decision in zip(raw_steps, decisions, strict=True):
-        try:
-            action = canonicalize_action(raw_step.get("action"), replayable_only=True)
-        except (TypeError, ValueError):
-            continue
-        key = (
-            str(raw_step.get("before_state_id") or ""),
-            json.dumps(action, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
-        )
-        roles[key] = str(decision["role"])
+        source_state_id, actions = _enhancement_step_actions(raw_step)
+        for action in actions:
+            key = (
+                source_state_id,
+                json.dumps(
+                    action,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            )
+            roles[key] = str(decision["role"])
 
     changed = False
     for step in function["steps"]:
@@ -1227,6 +1254,22 @@ def _apply_step_roles(
         elif step.pop("role", None) is not None:
             changed = True
     return changed
+
+
+def _enhancement_step_actions(
+    step: dict[str, Any],
+) -> tuple[str, list[dict[str, Any]]]:
+    observation = step.get("observation")
+    if isinstance(observation, dict):
+        return state_id(observation), project_androidworld_step_actions(step)
+    action = step.get("action")
+    if not isinstance(action, dict):
+        return "", []
+    try:
+        canonical = canonicalize_action(action, replayable_only=True)
+    except (TypeError, ValueError):
+        return "", []
+    return str(step.get("before_state_id") or "").strip(), [canonical]
 
 
 def _grounded_replacement_steps(

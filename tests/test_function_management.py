@@ -165,6 +165,37 @@ def test_enhancement_persists_semantic_checker_as_step_role() -> None:
     assert status == "enhanced"
 
 
+def test_enhancement_persists_androidworld_checker_as_step_role() -> None:
+    run_log = androidworld_run_log(
+        [{"action_type": "open_app", "app_name": "com.android.settings"}],
+        observations=[androidworld_state("launcher")],
+        goal="Open Settings.",
+    )
+    function = {
+        **_function(),
+        "steps": [
+            {
+                "step_index": 0,
+                "source_state_id": "launcher",
+                "action": {
+                    "tool": "open_app",
+                    "args": {"package_name": "com.android.settings"},
+                },
+            }
+        ],
+    }
+
+    enhanced, changes, status = enhance_function(
+        function,
+        run_log,
+        lambda _prompt: _proposal(run_log, roles=["checker"]),
+    )
+
+    assert enhanced["steps"][0]["role"] == "checker"
+    assert {"part": "function", "field": "step_roles"} in changes
+    assert status == "enhanced"
+
+
 def test_enhancement_prompt_projects_androidworld_actions_with_state_ids() -> None:
     prompts: list[str] = []
     run_log = androidworld_run_log(
@@ -182,6 +213,34 @@ def test_enhancement_prompt_projects_androidworld_actions_with_state_ids() -> No
     assert '"source_state_id":"source-state"' in prompts[0]
     assert '"tool":"open_app"' in prompts[0]
     assert '"package_name":"com.android.settings"' in prompts[0]
+
+
+def test_enhancement_prompt_uses_inline_androidworld_page_semantics() -> None:
+    prompts: list[str] = []
+    run_log = androidworld_run_log(
+        [{"action_type": "click", "x": 500, "y": 500}],
+        observations=[
+            androidworld_state(
+                "chrome-setup",
+                forest=(
+                    '<hierarchy><node text="Choose your search engine" />'
+                    '<node text="Keep Google" clickable="true" '
+                    'bounds="[400,400][600,600]" /></hierarchy>'
+                ),
+                package_name="com.android.chrome",
+            )
+        ],
+        goal="Open Chrome History.",
+    )
+
+    enhance_function(
+        _function(),
+        run_log,
+        lambda prompt: prompts.append(prompt) or _proposal(run_log),
+    )
+
+    assert '"page_semantics":{"package":"com.android.chrome"' in prompts[0]
+    assert '"visible_labels":["Choose your search engine","Keep Google"]' in prompts[0]
 
 
 def test_enhancement_prompt_uses_compact_source_page_semantics() -> None:
