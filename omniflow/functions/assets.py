@@ -1243,7 +1243,7 @@ def _author_functions(
     bundle: dict[str, Any] | None = None
     for stage in ("split", "parameters", "checkers"):
         previous_bundle = bundle
-        prompt = _authoring_prompt(
+        stage_prompt = _authoring_prompt(
             facts,
             stage=stage,
             current_bundle=bundle,
@@ -1254,28 +1254,62 @@ def _author_functions(
             stage=stage,
             current_bundle=bundle,
         )
-        try:
-            raw_proposal = complete_json(prompt, tool)
-        except Exception as error:
-            raise ValueError(
-                f"function_enhancement_{stage}_model_failed:"
-                f"{type(error).__name__}:{error}"
-            ) from error
-        try:
-            proposal = _json_object(raw_proposal)
-        except ValueError as error:
-            raise ValueError(
-                f"function_enhancement_{stage}_output_invalid:{error}"
-            ) from error
-        bundle = _validate_agent_bundle(proposal, stage=stage)
-        _validate_agent_stage_contract(
-            bundle,
-            previous_bundle=previous_bundle,
-            stage=stage,
-        )
-        _validate_agent_trajectory(bundle, facts, stage=stage)
+        validation_error: Exception | None = None
+        for output_attempt in range(2):
+            prompt = stage_prompt
+            if output_attempt:
+                assert validation_error is not None
+                prompt = _authoring_correction_prompt(
+                    stage_prompt,
+                    validation_error,
+                )
+            try:
+                raw_proposal = complete_json(prompt, tool)
+            except Exception as error:
+                raise ValueError(
+                    f"function_enhancement_{stage}_model_failed:"
+                    f"{type(error).__name__}:{error}"
+                ) from error
+            try:
+                proposal = _json_object(raw_proposal)
+            except ValueError as error:
+                validation_error = ValueError(
+                    f"function_enhancement_{stage}_output_invalid:{error}"
+                )
+            else:
+                try:
+                    candidate = _validate_agent_bundle(proposal, stage=stage)
+                    _validate_agent_stage_contract(
+                        candidate,
+                        previous_bundle=previous_bundle,
+                        stage=stage,
+                    )
+                    _validate_agent_trajectory(candidate, facts, stage=stage)
+                except (TypeError, ValueError) as error:
+                    validation_error = error
+                else:
+                    bundle = candidate
+                    break
+            assert validation_error is not None
+            if output_attempt == 0:
+                continue
+            raise validation_error
     assert bundle is not None
     return bundle["functions"], bundle["arguments"]
+
+
+def _authoring_correction_prompt(
+    stage_prompt: str,
+    error: Exception,
+) -> str:
+    return (
+        f"{stage_prompt}\n\n"
+        "The previous full bundle was rejected by the authoritative validator: "
+        f"{type(error).__name__}: {error}. Correct that exact violation and return "
+        "the complete functions and arguments bundle again. Preserve every field "
+        "owned by earlier stages. This is the only correction opportunity for this "
+        "stage."
+    )
 
 
 def _validate_agent_bundle(value: Any, *, stage: str) -> dict[str, Any]:

@@ -67,6 +67,11 @@ Function's checker list. It cannot rewrite Function meaning, parameters,
 arguments, or unselected actions, duplicate formal actions, or replace the
 complete Function with one-click fragments.
 
+A deterministically rejected stage output receives one explicit correction
+opportunity with the validator error. Model transport failures fail immediately;
+no partial Function is saved, and corrected output passes through the same
+validation and Store writer.
+
 The retained bridge tools are:
 
 - `save_function`

@@ -252,6 +252,35 @@ def test_each_enhancement_stage_has_one_narrow_responsibility(
         )
 
 
+def test_stage_validation_error_gets_one_bounded_correction(tmp_path) -> None:
+    prompts: list[str] = []
+    parameter_calls = 0
+
+    def complete_json(prompt: str, _tool: dict) -> str:
+        nonlocal parameter_calls
+        prompts.append(prompt)
+        stage = _stage_from_prompt(prompt)
+        plan = json.loads(_semantic_plan(stage))
+        if stage == "parameters":
+            parameter_calls += 1
+            if parameter_calls == 1:
+                plan["functions"][0]["description"] = "Invalid rewrite."
+        return json.dumps(plan)
+
+    result = save_function(
+        _authoring_run_log(),
+        tmp_path / "store.json",
+        enhance=True,
+        complete_json=complete_json,
+    )
+
+    assert result["function_ids"] == ["enter_note"]
+    assert parameter_calls == 2
+    assert len(prompts) == 4
+    assert "previous full bundle was rejected" in prompts[2]
+    assert "parameters_stage_changed_function_logic" in prompts[2]
+
+
 def test_checker_stage_cannot_register_another_functions_action(tmp_path) -> None:
     def complete_json(prompt: str, _tool: dict) -> str:
         stage = _stage_from_prompt(prompt)
@@ -493,7 +522,11 @@ def test_function_authoring_tool_locks_each_stage_to_its_responsibility() -> Non
 
 
 def test_save_function_reports_the_failed_agent_stage(tmp_path) -> None:
+    calls = 0
+
     def timeout(_prompt: str, _tool: dict) -> str:
+        nonlocal calls
+        calls += 1
         raise TimeoutError("endpoint did not answer")
 
     with pytest.raises(
@@ -509,6 +542,7 @@ def test_save_function_reports_the_failed_agent_stage(tmp_path) -> None:
             enhance=True,
             complete_json=timeout,
         )
+    assert calls == 1
 
 
 def test_save_function_rejects_model_commentary_around_the_bundle(

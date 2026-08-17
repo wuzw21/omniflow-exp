@@ -56,6 +56,9 @@ Checker review only selects existing actions from each Function and moves them
 into that same Function's `checker_rules`; it cannot rewrite the Function or
 register another Function's action. The same model tool is narrowed at each
 stage so fields owned by earlier stages are structurally immutable.
+One deterministically invalid stage bundle gets one correction opportunity with
+the exact validator error. A timeout or transport failure is not retried, and
+nothing is persisted until all three stages pass the same validator.
 
 The explicit B-MoCA campaign is the only launcher-owned preparation path: for
 each corpus task it calls that same `save_function(enhance=true)` writer once,

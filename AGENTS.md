@@ -48,6 +48,12 @@ actions reproduce the split output; checker review may only move selected
 formal actions into `checker_rules` on that same Function. Checker review may
 not rewrite Function meaning, parameters, arguments, or unselected actions.
 
+If a stage returns a syntactically valid bundle that deterministic validation
+rejects, that same stage gets exactly one correction opportunity containing the
+validation error and the unchanged stage schema. Transport failures, timeouts,
+and missing source evidence fail immediately. No partial bundle is saved, and
+the correction still enters the same validator and sole Store writer.
+
 Every enhancement stage must retain at least one large semantic Function whose
 formal steps plus Function-local checker rules cover the complete successful
 RunLog action trajectory. The split stage must also return every reusable
