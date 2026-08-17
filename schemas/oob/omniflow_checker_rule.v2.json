@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://omniflow.local/schemas/oob/omniflow_checker_rule.v2.json",
   "title": "OmniFlow Checker Rule",
-  "description": "One Function-local RunLog source state and source action target-mapped before each pending Function action.",
+  "description": "One Function-local RunLog source state and source action page-matched and target-mapped before each pending Function action.",
   "type": "object",
   "additionalProperties": false,
   "required": ["source_state_id", "action"],

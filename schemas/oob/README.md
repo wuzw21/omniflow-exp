@@ -16,11 +16,12 @@ accepted only as OmniTransfer source-target evidence and never execute directly
 on a target device.
 
 A checker is registered only on the Function containing it. Before each pending
-formal action, OmniTransfer maps each unexecuted rule's source action onto the
-current observation. Only a high-confidence action mapping executes.
-Nonmatching rules remain eligible before later formal actions. Page similarity
-is not a checker trigger. There is no per-rule condition, trigger DSL,
-step-index trigger, global checker list, or default recovery rule.
+formal action, the latest OmniTransfer page embedding first matches each
+unexecuted rule's source state to the current observation, then OmniTransfer
+maps its source action. Only a high-confidence page and action match executes.
+Nonmatching rules remain eligible before later formal actions. There is no
+per-rule condition, trigger DSL, step-index trigger, global checker list, or
+default recovery rule.
 
 The offline Agent may author complete semantic Functions through the internal
 split, parameter-binding, and checker-review stages. Every stage returns one

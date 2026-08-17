@@ -22,6 +22,18 @@ class RecordingHost:
         return self.after
 
 
+class FixedPageEncoder:
+    def __init__(self, *similarities: float) -> None:
+        self.similarities = list(similarities or (1.0,))
+        self.calls: list[tuple[Observation, Observation]] = []
+
+    def similarity(self, source: Observation, current: Observation) -> float:
+        self.calls.append((source, current))
+        if len(self.similarities) > 1:
+            return self.similarities.pop(0)
+        return self.similarities[0]
+
+
 def test_core_executes_one_transferred_action_and_observes_once(monkeypatch) -> None:
     settle_calls: list[float] = []
 
@@ -267,6 +279,7 @@ def test_checker_step_executes_when_omnitransfer_target_is_present(monkeypatch) 
             plugins=PluginSet(transfer=transfer),
             observation=before,
             state_loader=lambda _state_id: source,
+            page_encoder=FixedPageEncoder(0.99),
         )
     )
 
@@ -324,6 +337,7 @@ def test_checker_uses_the_configured_transfer_confidence_threshold(monkeypatch) 
             plugins=PluginSet(transfer=transfer),
             observation=current,
             state_loader=lambda _state_id: source,
+            page_encoder=FixedPageEncoder(0.99),
             checker_action_confidence=0.96,
         )
     )
@@ -372,6 +386,7 @@ def test_checker_step_skips_when_omnitransfer_target_is_not_present(monkeypatch)
             plugins=PluginSet(transfer=transfer),
             observation=before,
             state_loader=lambda _state_id: source,
+            page_encoder=FixedPageEncoder(0.99),
         )
     )
 
@@ -417,6 +432,7 @@ def test_checker_does_not_execute_a_low_confidence_mapping(monkeypatch) -> None:
             plugins=PluginSet(transfer=transfer),
             observation=current,
             state_loader=lambda _state_id: source,
+            page_encoder=FixedPageEncoder(0.99),
         )
     )
 
@@ -430,7 +446,7 @@ def test_checker_does_not_execute_a_low_confidence_mapping(monkeypatch) -> None:
     )
 
 
-def test_low_confidence_checker_is_checked_again_before_the_next_action(
+def test_page_mismatched_checker_is_checked_again_before_the_next_action(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
@@ -447,7 +463,7 @@ def test_low_confidence_checker_is_checked_again_before_the_next_action(
             checker_calls += 1
             return TransferResult(
                 mapped_checker_action,
-                detail={"score": 0.2 if checker_calls == 1 else 0.99},
+                detail={"score": 0.99},
             )
         return TransferResult(action)
 
@@ -471,6 +487,7 @@ def test_low_confidence_checker_is_checked_again_before_the_next_action(
             plugins=PluginSet(transfer=transfer),
             observation=checker_page,
             state_loader=lambda _state_id: source,
+            page_encoder=FixedPageEncoder(0.2, 0.99),
         )
     )
 
@@ -479,11 +496,11 @@ def test_low_confidence_checker_is_checked_again_before_the_next_action(
         "skipped",
         "executed",
     ]
-    assert checker_calls == 2
+    assert checker_calls == 1
     assert host.actions.count(mapped_checker_action) == 1
 
 
-def test_checker_does_not_use_page_similarity_before_action_transfer(monkeypatch) -> None:
+def test_checker_requires_matching_source_page_before_action_transfer(monkeypatch) -> None:
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     current = Observation(xml="<unrelated/>", package_name="com.example")
     source = Observation(xml="<dialog/>", package_name="com.example")
@@ -495,9 +512,9 @@ def test_checker_does_not_use_page_similarity_before_action_transfer(monkeypatch
         return TransferResult(action, detail={"score": 0.99})
 
     function = Function(
-        function_id="action_scoped_checker",
-        name="Action-scoped checker",
-        description="Use only high-confidence action transfer evidence.",
+        function_id="page_scoped_checker",
+        name="Page-scoped checker",
+        description="Run the registered checker only on its source page.",
         steps=(FunctionStep(0, Action("wait", {"duration_ms": 0}), "main"),),
         checker_rules=(
             {
@@ -514,16 +531,21 @@ def test_checker_does_not_use_page_similarity_before_action_transfer(monkeypatch
             plugins=PluginSet(transfer=transfer),
             observation=current,
             state_loader=lambda _state_id: source,
+            page_encoder=FixedPageEncoder(0.75),
+            checker_page_similarity=0.9,
         )
     )
 
     assert result.success is True
-    assert transfer_calls == [
-        Action("click", {"x": 100, "y": 200}),
-        Action("wait", {"duration_ms": 0}),
-    ]
-    assert result.detail["checker_decisions"][0]["status"] == "executed"
-    assert "page" not in result.detail["checker_decisions"][0]
+    assert transfer_calls == [Action("wait", {"duration_ms": 0})]
+    assert result.detail["checker_decisions"][0]["status"] == "skipped"
+    assert result.detail["checker_decisions"][0]["reason"] == (
+        "checker_page_similarity_too_low"
+    )
+    assert result.detail["checker_decisions"][0]["page"] == {
+        "score": 0.75,
+        "minimum_score": 0.9,
+    }
 
 
 def test_function_without_registered_checker_executes_no_checker(monkeypatch) -> None:

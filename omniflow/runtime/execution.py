@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 
 from omniflow.core.config import (
     DEFAULT_CHECKER_ACTION_CONFIDENCE,
+    DEFAULT_CHECKER_PAGE_SIMILARITY,
     PluginSet,
 )
 from omniflow.core.model import (
@@ -34,6 +35,7 @@ from omniflow.runtime.core import (
     prepare_action as prepare_core_action,
 )
 from omniflow.runtime.semantic_grounding import resolve_semantic_action
+from omniflow.transfer.page_embedding import OmniTransferPageEncoder
 from omniflow.transfer.runtime import transfer_action
 
 _OPEN_APP_READY_POLL_SECONDS = 0.5
@@ -59,10 +61,17 @@ async def execute_function(
     resume_metadata: dict[str, Any] | None = None,
     installed_packages: frozenset[str] | None = None,
     state_loader: StateLoader | None = None,
+    checker_page_similarity: float = DEFAULT_CHECKER_PAGE_SIMILARITY,
     checker_action_confidence: float = DEFAULT_CHECKER_ACTION_CONFIDENCE,
+    page_encoder: Any | None = None,
 ) -> RunResult:
+    if not 0.0 <= float(checker_page_similarity) <= 1.0:
+        raise ValueError("checker_page_similarity_invalid")
     if not 0.0 <= float(checker_action_confidence) <= 1.0:
         raise ValueError("checker_action_confidence_invalid")
+    checker_page_encoder = page_encoder
+    if function.checker_rules and checker_page_encoder is None:
+        checker_page_encoder = OmniTransferPageEncoder()
     current = observation or Observation.from_value(
         await _await(host.observe(xml=True, app_info=True))
     )
@@ -92,6 +101,8 @@ async def execute_function(
                     plugins=plugins,
                     function=function,
                     source_state=checker_source,
+                    page_encoder=checker_page_encoder,
+                    minimum_page_similarity=float(checker_page_similarity),
                     minimum_action_confidence=float(checker_action_confidence),
                     installed_packages=installed_packages,
                 )
@@ -208,10 +219,12 @@ async def execute_checker_step(
     plugins: PluginSet,
     function: Function,
     source_state: Observation | None,
+    page_encoder: Any,
+    minimum_page_similarity: float,
     minimum_action_confidence: float,
     installed_packages: frozenset[str] | None = None,
 ) -> tuple[StepResult, dict[str, Any]]:
-    """Execute a checker only when OmniTransfer maps its target confidently."""
+    """Execute a checker only when its source page and action target both match."""
 
     if source_state is None:
         return (
@@ -224,6 +237,43 @@ async def execute_checker_step(
                 function_id=function.id,
             ),
             {"status": "skipped", "reason": "checker_source_state_missing"},
+        )
+    try:
+        page_similarity = float(page_encoder.similarity(source_state, observation))
+    except Exception as error:  # noqa: BLE001
+        return (
+            StepResult(
+                True,
+                action=action,
+                before=observation,
+                after=observation,
+                origin="checker",
+                function_id=function.id,
+            ),
+            {
+                "status": "skipped",
+                "reason": f"checker_page_embedding_failed:{error}",
+            },
+        )
+    page_evidence = {
+        "score": page_similarity,
+        "minimum_score": float(minimum_page_similarity),
+    }
+    if not math.isfinite(page_similarity) or page_similarity < minimum_page_similarity:
+        return (
+            StepResult(
+                True,
+                action=action,
+                before=observation,
+                after=observation,
+                origin="checker",
+                function_id=function.id,
+            ),
+            {
+                "status": "skipped",
+                "reason": "checker_page_similarity_too_low",
+                "page": page_evidence,
+            },
         )
     decision = await prepare_action(
         action,
@@ -245,6 +295,7 @@ async def execute_checker_step(
             {
                 "status": "skipped",
                 "reason": decision.reason or "transfer_not_applicable",
+                "page": page_evidence,
                 "transfer": dict(decision.detail or {}),
             },
         )
@@ -272,6 +323,7 @@ async def execute_checker_step(
             {
                 "status": "skipped",
                 "reason": reason,
+                "page": page_evidence,
                 "transfer": dict(decision.detail or {}),
                 "action": confidence_evidence,
             },
@@ -292,6 +344,7 @@ async def execute_checker_step(
         {
             "status": "executed" if step.success else "failed",
             "reason": decision.reason or "omnitransfer_mapped",
+            "page": page_evidence,
             "transfer": dict(decision.detail or {}),
             "action": confidence_evidence,
         },
