@@ -110,9 +110,7 @@ async def execute_function(
             checker_decisions.append(
                 {
                     "function_id": function.id,
-                    "checker_rule_index": rule_index,
                     "source_state_id": str(raw_rule.get("source_state_id") or ""),
-                    "before_function_step": function_step.step_index,
                     **decision,
                 }
             )
@@ -124,10 +122,6 @@ async def execute_function(
                         host,
                         checker_step,
                         trace_start_index=int(trace_start_index) + len(trace),
-                        metadata={
-                            "checker_rule_index": rule_index,
-                            "before_function_step": function_step.step_index,
-                        },
                     )
                 )
                 current = checker_step.after or checker_step.before or current

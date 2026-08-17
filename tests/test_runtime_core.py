@@ -280,7 +280,8 @@ def test_checker_step_executes_when_omnitransfer_target_is_present(monkeypatch) 
     assert result.detail["checker_decisions"][0]["source_state_id"] == (
         "checker-source"
     )
-    assert result.detail["checker_decisions"][0]["before_function_step"] == 0
+    assert "before_function_step" not in result.detail["checker_decisions"][0]
+    assert "checker_rule_index" not in result.detail["checker_decisions"][0]
     assert result.detail["trace"][0]["metadata"]["origin"] == "checker"
 
 
