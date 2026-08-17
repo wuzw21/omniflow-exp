@@ -20,6 +20,13 @@ environment IDs (100 through 109 by default), runs the normal
 reports the official reward for each episode. GLM-5.1 is used only by the front
 Planner; Function fallback is fixed at zero.
 
+The B-MoCA source is the pinned maintained revision under
+`$workspace_root/releases/b-moca-$formal_bmoca_revision` unless
+`OMNIFLOW_BMOCA_ROOT` supplies another exact-revision checkout. Its device
+builder dismisses Gboard's first-run prompt and verifies keyboard readiness
+before saving the base AVD snapshot; initialization failure prevents the
+snapshot from being created.
+
 `--collect-source` resolves the canonical successful seed-111 RunLog from
 `current.json`, replays its recorded coordinates through the official
 AndroidWorld task loop on the source AVD, and records native screenshots/XML
@@ -175,6 +182,7 @@ option and preserves all other setup behavior.
 | `OMNIFLOW_OURS_CONVERTED_ASSET_ROOT` | A new, empty conversion version directory |
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
 | `OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT` | Optional immutable AndroidWorld checkout root containing the `android_world` package; defaults to the pinned `632ac95` release beside the asset root |
+| `OMNIFLOW_BMOCA_ROOT` | Exact maintained B-MoCA checkout; defaults to the pinned revision-named release beside `OmniFlow-exp` |
 | `OMNIFLOW_BMOCA_ANDROID_ENV_ROOT` | Clean checkout of the pinned B-MoCA AndroidEnv fork; defaults to the revision-named release beside `OmniFlow-exp` |
 | `OMNIFLOW_SQLITE_FTS4_LIBRARY` | Optional absolute compatible `libsqlite3` path; the unified entry automatically selects a system library when the experiment Python lacks AndroidWorld's required FTS4 support |
 | `OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC` | Positive timeout for each official AndroidWorld adb file push/copy; defaults to 300 seconds and never permits the upstream `None`/`0` unbounded wait |

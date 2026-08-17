@@ -144,6 +144,14 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
         in script_text
     )
     assert (
+        'formal_bmoca_revision="7f9188d59d3cc05ab2f0ebb622f96f396b92aff2"'
+        in script_text
+    )
+    assert (
+        'bmoca_root="${OMNIFLOW_BMOCA_ROOT:-$workspace_root/releases/'
+        'b-moca-$formal_bmoca_revision}"' in script_text
+    )
+    assert (
         'export PYTHONPATH="$bmoca_android_env_root${PYTHONPATH:+:$PYTHONPATH}"'
         in script_text
     )
