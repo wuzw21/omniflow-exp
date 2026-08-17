@@ -3949,6 +3949,7 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
     from omniflow.core.config import Experiment
     from omniflow.transfer.runtime import load_transfer_state_catalog
     from omniflow.vlm.planner import VLMPlanner
+    from src.experiment.observation_evidence import persist_target_run_evidence
     from src.integrations.bmoca import (
         BMocaEnvironmentConfig,
         discover_bmoca_episodes,
@@ -4010,11 +4011,15 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
     rows: list[dict[str, Any]] = []
     for episode in episodes:
         started = perf_counter()
+        run_evidence: dict[str, Any] = {}
+        observation_evidence: list[dict[str, Any]] = []
         try:
+            episode_root = output_dir / f"env_{episode.environment_id}"
             with open_bmoca_episode(
                 episode,
                 config=config,
                 source_states=source_states,
+                evidence_root=episode_root,
             ) as host:
                 planner = VLMPlanner(
                     provider="openai_compatible",
@@ -4039,10 +4044,33 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                         )
                     ),
                 )
-                result = flow.run(
-                    episode.goal,
-                    experiment=Experiment(name="bmoca"),
+                result = None
+                run_error: Exception | None = None
+                try:
+                    result = flow.run(
+                        episode.goal,
+                        experiment=Experiment(name="bmoca"),
+                    )
+                except Exception as error:  # noqa: BLE001 - seal failed episodes too
+                    run_error = error
+                run_log = host.seal_run_log(
+                    task_name=episode.task_id,
+                    goal=episode.goal,
+                    diagnostics=(
+                        {"runtime_error": str(run_error)} if run_error is not None else None
+                    ),
                 )
+                observation_evidence = list(host.persist_observations() or [])
+                if run_log is not None:
+                    run_evidence = persist_target_run_evidence(
+                        episode_root,
+                        run_log=run_log,
+                        captured_transfer_states=host.get_captured_transfer_states(),
+                    )
+                if run_error is not None:
+                    raise run_error
+                if result is None:
+                    raise RuntimeError("bmoca_result_missing")
                 row = {
                     "task_id": episode.task_id,
                     "environment_id": episode.environment_id,
@@ -4060,6 +4088,8 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                         result.detail.get("checker_decisions") or []
                     ),
                     "trace": list(result.detail.get("trace") or []),
+                    "run_log_evidence": run_evidence,
+                    "observation_evidence": observation_evidence,
                     "wall_seconds": round(perf_counter() - started, 6),
                 }
                 if row["fallback_steps"] != 0:
@@ -4076,6 +4106,8 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                 "actions_executed": 0,
                 "model_calls": 0,
                 "fallback_steps": 0,
+                "run_log_evidence": run_evidence,
+                "observation_evidence": observation_evidence,
                 "wall_seconds": round(perf_counter() - started, 6),
             }
         rows.append(row)
