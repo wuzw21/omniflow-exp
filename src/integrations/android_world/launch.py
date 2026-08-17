@@ -4059,6 +4059,7 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                     "checker_decisions": list(
                         result.detail.get("checker_decisions") or []
                     ),
+                    "trace": list(result.detail.get("trace") or []),
                     "wall_seconds": round(perf_counter() - started, 6),
                 }
                 if row["fallback_steps"] != 0:
