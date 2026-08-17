@@ -311,8 +311,8 @@ validate_stock_capture_model() {
     echo "qwen3-vl-plus is prohibited for AndroidWorld stock capture." >&2
     exit 2
   fi
-  if [[ "$normalized_model" != "glm-5.1" ]]; then
-    echo "AndroidWorld stock capture requires GLM-5.1, got: $model" >&2
+  if [[ "$normalized_model" != "glm-5.1" && "$normalized_model" != "gpt-5.6-luna" ]]; then
+    echo "AndroidWorld stock capture requires GLM-5.1 or gpt-5.6-luna, got: $model" >&2
     exit 2
   fi
   if [[ -z "${selected_model_api_key:-}" || -z "${selected_model_base_url:-}" ]]; then
