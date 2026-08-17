@@ -88,6 +88,11 @@ subsegments may be added, but they never replace that complete Function. Keep
 source action order and continuity. Put task-varying values in `input_schema`,
 `bindings`, and `arguments`.
 
+The split stage must return every reusable contiguous semantic subsegment that
+the successful RunLog supports. Do not emit a subsegment that is only one click
+or has no independently reusable meaning. The complete trajectory Function is
+still mandatory even when several subsegments are returned.
+
 The split stage chooses the complete Function and reusable subsegments. The
 parameter stage binds task-varying values without losing trajectory coverage.
 The checker stage may move optional setup, interruption, or recovery actions
@@ -103,11 +108,10 @@ Do not return a step number, `when`, threshold, package switch, trigger DSL, or
 global checker list.
 
 Runtime checks an unexecuted registered rule before every pending Function
-action. The latest OmniTransfer page embedding must first match the current
-observation to the rule's source state, and OmniTransfer must then find the
-source action's target above the configured high-confidence threshold. Both
-global thresholds must pass. A matching checker executes once, while a
-nonmatching checker remains eligible before a later action.
+action. OmniTransfer must find the source action's target on the current
+observation above the configured high-confidence threshold. Page similarity is
+not a checker trigger. A matching checker executes once, while a nonmatching
+checker remains eligible before a later action.
 
 ## Evidence and failure rules
 

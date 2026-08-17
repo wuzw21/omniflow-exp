@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -10,10 +11,12 @@ from types import SimpleNamespace
 import pytest
 from runlog_fixtures import androidworld_run_log
 
+from omniflow.functions.assets import function_authoring_tool
 from src.experiment.batch_outcomes import record_result_outcome
 from src.experiment.e2e_task_pipeline import (
     Deadline,
     PipelinePhaseError,
+    _canonical_bmoca_enhancement_transport,
     _fixed_replay_source_step_width,
     _function_replay_success,
     _max_live_bmoca_cells,
@@ -253,6 +256,116 @@ def test_bmoca_offline_enhancement_calls_only_canonical_save_once(
     assert calls[0]["enhance"] is True
     assert callable(calls[0]["complete_json"])
     assert report["save_function_calls"] == 1
+
+
+def test_bmoca_enhancement_failure_preserves_stage_and_usage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.run_log.json"
+    source.write_text("{}", encoding="utf-8")
+
+    def transport(**kwargs: object):
+        usage = kwargs["usage"]
+
+        def fail(_prompt: str) -> str:
+            usage["model_calls"] += 1
+            raise TimeoutError("endpoint did not answer")
+
+        return fail
+
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._canonical_bmoca_enhancement_transport",
+        transport,
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.save_function",
+        lambda *_args, **kwargs: kwargs["complete_json"]("split prompt"),
+    )
+    args = SimpleNamespace(formal_model="GLM-5.1", enhancement_timeout_sec=180)
+    task_root = tmp_path / "task"
+
+    with pytest.raises(TimeoutError, match="endpoint did not answer"):
+        _save_bmoca_function_once(
+            args=args,
+            task="clock/create_alarm_at_06:30_am",
+            source_run_log=source,
+            task_root=task_root,
+        )
+
+    failure = json.loads(
+        (task_root / "enhancement_failure.json").read_text(encoding="utf-8")
+    )
+    assert failure["status"] == "failed"
+    assert failure["save_function_calls"] == 1
+    assert failure["model_calls"] == 1
+    assert failure["error"] == "TimeoutError: endpoint did not answer"
+
+
+def test_bmoca_enhancement_uses_the_shared_complete_bundle_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Completions:
+        def create(self, **kwargs: object) -> SimpleNamespace:
+            captured.update(kwargs)
+            return SimpleNamespace(
+                usage=SimpleNamespace(
+                    prompt_tokens=10,
+                    completion_tokens=20,
+                    total_tokens=30,
+                ),
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            tool_calls=[
+                                SimpleNamespace(
+                                    function=SimpleNamespace(
+                                        name="submit_function_bundle",
+                                        arguments='{"functions":[],"arguments":{}}',
+                                    )
+                                )
+                            ]
+                        )
+                    )
+                ],
+            )
+
+    class OpenAI:
+        def __init__(self, **_: object) -> None:
+            self.chat = SimpleNamespace(completions=Completions())
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=OpenAI))
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.resolve_openai_compatible_config",
+        lambda **_: ("key", "https://example.invalid/v1"),
+    )
+    usage = {
+        "model_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+
+    complete = _canonical_bmoca_enhancement_transport(
+        model="GLM-5.1",
+        timeout_sec=180,
+        usage=usage,
+    )
+
+    assert complete("Return the bundle") == '{"functions":[],"arguments":{}}'
+    assert captured["tools"] == [function_authoring_tool()]
+    assert captured["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "submit_function_bundle"},
+    }
+    assert usage == {
+        "model_calls": 1,
+        "prompt_tokens": 10,
+        "completion_tokens": 20,
+        "total_tokens": 30,
+    }
 
 
 def test_resolve_args_preserves_symlinked_virtualenv_python(

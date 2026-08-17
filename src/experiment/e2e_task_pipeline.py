@@ -18,7 +18,7 @@ import time
 from typing import Any, Callable, Sequence
 
 from omniflow.core.trajectory import require_complete_source_run_log
-from omniflow.functions.assets import save_function
+from omniflow.functions.assets import function_authoring_tool, save_function
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from src.experiment.androidworld import ArchivedRunLog, build_fixed_replay_command
 from src.experiment.artifact_memory import (
@@ -2076,25 +2076,7 @@ def _canonical_bmoca_enhancement_transport(
         max_retries=0,
         timeout=float(timeout_sec),
     )
-    tool = {
-        "type": "function",
-        "function": {
-            "name": "submit_enhancement",
-            "description": (
-                "Return semantic Functions grounded only in the supplied RunLog actions."
-            ),
-            "strict": False,
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "functions": {"type": "array", "items": {"type": "object"}},
-                    "arguments": {"type": "object"},
-                },
-                "required": ["functions", "arguments"],
-                "additionalProperties": False,
-            },
-        },
-    }
+    tool = function_authoring_tool()
 
     def complete_json(prompt: str) -> str:
         usage["model_calls"] += 1
@@ -2105,7 +2087,7 @@ def _canonical_bmoca_enhancement_transport(
             tools=[tool],
             tool_choice={
                 "type": "function",
-                "function": {"name": "submit_enhancement"},
+                "function": {"name": "submit_function_bundle"},
             },
             parallel_tool_calls=False,
         )
@@ -2125,7 +2107,7 @@ def _canonical_bmoca_enhancement_transport(
         if len(calls) != 1:
             raise ValueError("function_enhancer_tool_call_invalid")
         function = getattr(calls[0], "function", None)
-        if str(getattr(function, "name", "") or "") != "submit_enhancement":
+        if str(getattr(function, "name", "") or "") != "submit_function_bundle":
             raise ValueError("function_enhancer_tool_name_invalid")
         arguments = getattr(function, "arguments", None)
         if not isinstance(arguments, str):
@@ -2152,16 +2134,33 @@ def _save_bmoca_function_once(
         "total_tokens": 0,
     }
     started = time.monotonic()
-    report = save_function(
-        source_run_log,
-        store_path,
-        enhance=True,
-        complete_json=_canonical_bmoca_enhancement_transport(
-            model=args.formal_model,
-            timeout_sec=float(args.enhancement_timeout_sec),
-            usage=usage,
-        ),
-    )
+    try:
+        report = save_function(
+            source_run_log,
+            store_path,
+            enhance=True,
+            complete_json=_canonical_bmoca_enhancement_transport(
+                model=args.formal_model,
+                timeout_sec=float(args.enhancement_timeout_sec),
+                usage=usage,
+            ),
+        )
+    except Exception as error:
+        _write_json(
+            task_root / "enhancement_failure.json",
+            {
+                "schema_version": "omniflow.bmoca-function-enhancement.v1",
+                "status": "failed",
+                "task": task,
+                "source_run_log": str(source_run_log),
+                "source_run_log_sha256": _sha256(source_run_log),
+                "save_function_calls": 1,
+                "wall_sec": round(time.monotonic() - started, 6),
+                "error": f"{type(error).__name__}: {error}",
+                **usage,
+            },
+        )
+        raise
     enhancement = {
         "schema_version": "omniflow.bmoca-function-enhancement.v1",
         "task": task,
@@ -2528,14 +2527,21 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             )
             enhancement_reports.append(enhancement)
         except Exception as error:  # noqa: BLE001 - advance to the next task
-            failure = {
-                "schema_version": "omniflow.bmoca-function-enhancement.v1",
-                "task": task,
-                "source_run_log": str(source_run_log),
-                "save_function_calls": 1,
-                "error": f"{type(error).__name__}: {error}",
-            }
-            _write_json(task_root / "enhancement_failure.json", failure)
+            failure_path = task_root / "enhancement_failure.json"
+            failure = (
+                _read_object(failure_path)
+                if failure_path.is_file()
+                else {
+                    "schema_version": "omniflow.bmoca-function-enhancement.v1",
+                    "status": "failed",
+                    "task": task,
+                    "source_run_log": str(source_run_log),
+                    "save_function_calls": 1,
+                    "error": f"{type(error).__name__}: {error}",
+                }
+            )
+            if not failure_path.is_file():
+                _write_json(failure_path, failure)
             enhancement_reports.append(failure)
             for method in _BMOCA_METHODS:
                 for environment_id in _BMOCA_ENVIRONMENT_IDS:

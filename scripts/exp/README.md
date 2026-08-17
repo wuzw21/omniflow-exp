@@ -12,7 +12,7 @@ modules are implementation seams and must not be invoked as alternate runners.
 | Read-only static gate | `run_androidworld.sh --check-only [--all-tasks]` |
 | Bounded `ours` development | `run_androidworld.sh --development-run --tasks TASK` |
 | Source refresh | `run_androidworld.sh --collect-source --tasks TASK` |
-| B-MoCA one method | `run_androidworld.sh --environment bmoca --method omniflow\|script-replay --tasks TASK` |
+| B-MoCA one method | `run_androidworld.sh --environment bmoca --method ours\|script_replay --tasks TASK` |
 | B-MoCA campaign | `run_androidworld.sh --environment bmoca --all-tasks [--tasks TASK1,TASK2]` |
 | Memory refresh | `run_androidworld.sh --refresh-memory` |
 
@@ -76,12 +76,12 @@ live emulator.
 ## Checker execution
 
 Only rules registered on the active Function are considered. Before each
-pending formal Function action, the latest OmniTransfer page embedding first
-matches each unexecuted rule's source state to the current observation, then
-OmniTransfer attempts to map that rule's source action. It executes only when
-both configured thresholds pass. A rule contains only `source_state_id` and
-`action`; a failed condition skips it and keeps it eligible for a later formal
-action. Source coordinates are evidence only and never execute on a target.
+pending formal Function action, OmniTransfer attempts to map each unexecuted
+rule's source action onto the current observation. It executes only when the
+configured high-confidence action threshold passes. A rule contains only
+`source_state_id` and `action`; a failed condition skips it and keeps it eligible
+for a later formal action. Page similarity is not a checker trigger. Source
+coordinates are evidence only and never execute on a target.
 
 ## Configuration ownership
 

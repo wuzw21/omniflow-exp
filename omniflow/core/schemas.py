@@ -16,6 +16,7 @@ PLANNER_SUMMARY_DESCRIPTION = (
 CANONICAL_ACTION_SCHEMA_FILENAME = "oob_canonical_actions.v1.json"
 OMNIFLOW_RUN_LOG_SCHEMA_FILENAME = "omniflow_run_log.v1.json"
 CHECKER_RULE_SCHEMA_FILENAME = "omniflow_checker_rule.v2.json"
+FUNCTION_SCHEMA_FILENAME = "omniflow_function.v2.json"
 VLM_ACTION_TOOL_NAMES = (
     "click",
     "input_text",
@@ -46,6 +47,10 @@ def checker_rule_schema_path() -> Path:
     return _schema_path(CHECKER_RULE_SCHEMA_FILENAME)
 
 
+def function_schema_path() -> Path:
+    return _schema_path(FUNCTION_SCHEMA_FILENAME)
+
+
 def _schema_path(filename: str) -> Path:
     source_path = Path(__file__).resolve()
     data_root = Path(sysconfig.get_path("data") or sys.prefix)
@@ -68,6 +73,10 @@ def load_omniflow_run_log_schema() -> dict[str, Any]:
 
 def load_checker_rule_schema() -> dict[str, Any]:
     return _load_schema(checker_rule_schema_path())
+
+
+def load_function_schema() -> dict[str, Any]:
+    return _load_schema(function_schema_path())
 
 
 def _load_schema(path: Path) -> dict[str, Any]:
@@ -269,14 +278,17 @@ __all__ = [
     "CANONICAL_ACTION_SCHEMA_FILENAME",
     "OMNIFLOW_RUN_LOG_SCHEMA_FILENAME",
     "CHECKER_RULE_SCHEMA_FILENAME",
+    "FUNCTION_SCHEMA_FILENAME",
     "VLM_ACTION_TOOL_NAMES",
     "canonical_action_schema_path",
     "omniflow_run_log_schema_path",
     "canonicalize_action",
     "checker_rule_schema_path",
+    "function_schema_path",
     "load_canonical_action_schema",
     "load_omniflow_run_log_schema",
     "load_checker_rule_schema",
+    "load_function_schema",
     "openai_action_tools",
     "vlm_action_tools",
 ]

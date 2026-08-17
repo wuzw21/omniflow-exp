@@ -23,7 +23,7 @@ from omniflow.core.model import (
     ToolCall,
 )
 from omniflow.core.trajectory import canonicalize_run_log
-from omniflow.functions.assets import save_function
+from omniflow.functions.assets import function_authoring_tool, save_function
 from omniflow.runtime.engine import InputRequired, OmniFlow
 from omniflow.vlm.planner import VLMPlanner
 
@@ -467,33 +467,9 @@ class JsonLineBridge:
                                 "temperature": 0,
                                 "tool_choice": {
                                     "type": "function",
-                                    "function": {"name": "submit_enhancement"},
+                                    "function": {"name": "submit_function_bundle"},
                                 },
-                                "tools": [
-                                    {
-                                        "type": "function",
-                                        "function": {
-                                            "name": "submit_enhancement",
-                                            "description": (
-                                                "Return semantic Functions grounded "
-                                                "only in the supplied RunLog actions."
-                                            ),
-                                            "strict": False,
-                                            "parameters": {
-                                                "type": "object",
-                                                "properties": {
-                                                    "functions": {
-                                                        "type": "array",
-                                                        "items": {"type": "object"},
-                                                    },
-                                                    "arguments": {"type": "object"},
-                                                },
-                                                "required": ["functions", "arguments"],
-                                                "additionalProperties": False,
-                                            },
-                                        },
-                                    }
-                                ],
+                                "tools": [function_authoring_tool()],
                             },
                         },
                     )
@@ -503,10 +479,14 @@ class JsonLineBridge:
                     if not isinstance(tool_calls, list) or len(tool_calls) != 1:
                         raise ValueError("function_enhancer_tool_call_invalid")
                     function = tool_calls[0].get("function")
+                    if (
+                        not isinstance(function, dict)
+                        or function.get("name") != "submit_function_bundle"
+                    ):
+                        raise ValueError("function_enhancer_tool_name_invalid")
                     arguments = (
                         function.get("arguments")
-                        if isinstance(function, dict)
-                        else None
+                        if isinstance(function, dict) else None
                     )
                     if not isinstance(arguments, str):
                         raise ValueError("function_enhancer_arguments_invalid")

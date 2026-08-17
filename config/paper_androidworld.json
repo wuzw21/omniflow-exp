@@ -23,7 +23,6 @@
     "source_max_steps": 30,
     "max_steps": 20,
     "max_fallback_steps": 5,
-    "checker_page_similarity": 0.9,
     "checker_action_confidence": 0.9,
     "task_deadline_sec": 1800,
     "step_timeout_sec": 60,

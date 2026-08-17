@@ -8,7 +8,12 @@ from typing import Any, Callable, Iterable
 import xml.etree.ElementTree as ET
 
 from omniflow.core.model import Action, Function, FunctionStep
-from omniflow.core.schemas import canonicalize_action, load_canonical_action_schema
+from omniflow.core.schemas import (
+    canonicalize_action,
+    load_canonical_action_schema,
+    load_checker_rule_schema,
+    load_function_schema,
+)
 from omniflow.core.trajectory import (
     observation_display,
     observation_xml,
@@ -40,6 +45,65 @@ _TARGET_PATH = re.compile(
     r"(?P<tail>(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])+)$"
 )
 _PATH_TOKEN = re.compile(r"\.([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)]")
+
+
+def function_authoring_tool() -> dict[str, Any]:
+    """Return the one model output contract used by save_function enhancement."""
+
+    function_schema = load_function_schema()
+    definitions = function_schema.pop("$defs")
+    action_schema = definitions["action"]
+    step_schema = definitions["step"]
+    step_schema["properties"]["action"] = action_schema
+    checker_schema = load_checker_rule_schema()
+    function_schema["properties"]["input_schema"] = definitions["input_schema"]
+    function_schema["properties"]["bindings"]["items"] = definitions["binding"]
+    function_schema["properties"]["steps"]["items"] = step_schema
+    function_schema["properties"]["checker_rules"]["items"] = checker_schema
+    for key in ("$schema", "$id", "title"):
+        function_schema.pop(key, None)
+        checker_schema.pop(key, None)
+    return {
+        "type": "function",
+        "function": {
+            "name": "submit_function_bundle",
+            "description": (
+                "Return the complete Function bundle for the current save_function "
+                "stage. Include one full-trajectory Function and any reusable "
+                "semantic subsegments, with source arguments for every Function."
+            ),
+            "strict": False,
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["functions", "arguments"],
+                "properties": {
+                    "functions": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": function_schema,
+                    },
+                    "arguments": {
+                        "type": "object",
+                        "description": (
+                            "Map every function_id to one source argument object or "
+                            "a non-empty list of source argument objects."
+                        ),
+                        "additionalProperties": {
+                            "oneOf": [
+                                {"type": "object"},
+                                {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "items": {"type": "object"},
+                                },
+                            ]
+                        },
+                    },
+                },
+            },
+        },
+    }
 
 
 def parse_function_artifact(value: dict[str, Any]) -> Function:
@@ -144,6 +208,14 @@ def validate_function_artifact(function: Function) -> None:
     schema = function.input_schema
     if not isinstance(schema, dict) or schema.get("type") != "object":
         raise ValueError("function_parameters_must_be_object_schema")
+    unknown_schema_fields = sorted(
+        set(schema) - {"type", "properties", "required", "additionalProperties"}
+    )
+    if unknown_schema_fields:
+        raise ValueError(
+            "function_parameter_schema_unknown_fields:"
+            + ",".join(unknown_schema_fields)
+        )
     if not isinstance(schema.get("properties"), dict):
         raise ValueError("function_parameter_properties_required")
     if schema.get("additionalProperties") is not False:
@@ -1005,17 +1077,26 @@ def _author_functions(
     bundle: dict[str, Any] | None = None
     for stage in ("split", "parameters", "checkers"):
         previous_bundle = bundle
-        proposal = _json_object(
-            complete_json(
-                _authoring_prompt(
-                    facts,
-                    stage=stage,
-                    current_bundle=bundle,
-                    existing_functions=existing_functions,
-                    instruction=instruction,
-                )
-            )
+        prompt = _authoring_prompt(
+            facts,
+            stage=stage,
+            current_bundle=bundle,
+            existing_functions=existing_functions,
+            instruction=instruction,
         )
+        try:
+            raw_proposal = complete_json(prompt)
+        except Exception as error:
+            raise ValueError(
+                f"function_enhancement_{stage}_model_failed:"
+                f"{type(error).__name__}:{error}"
+            ) from error
+        try:
+            proposal = _json_object(raw_proposal)
+        except ValueError as error:
+            raise ValueError(
+                f"function_enhancement_{stage}_output_invalid:{error}"
+            ) from error
         bundle = _validate_agent_bundle(proposal, stage=stage)
         _validate_agent_stage_contract(
             bundle,
@@ -1118,8 +1199,10 @@ def _authoring_prompt(
 ) -> str:
     stage_instruction = {
         "split": (
-            "Split the successful trajectory into one or more reusable semantic "
-            "operations and draft each complete Function. In this stage only, use "
+            "Split the successful trajectory into semantic operations. Keep one "
+            "Function covering the full trajectory, and identify every reusable "
+            "contiguous semantic subsegment without creating one-click fragments. "
+            "Draft each complete Function. In this stage only, use "
             "an empty object input_schema, bindings=[], and empty arguments for every "
             "Function; parameterization belongs exclusively to the next stage."
         ),
@@ -1186,6 +1269,20 @@ def _authoring_prompt(
                 "action": optional_step["action"],
             }
         ]
+    subsegment_steps = json.loads(json.dumps(example_steps[-2:]))
+    for index, step in enumerate(subsegment_steps):
+        step["step_index"] = index
+    subsegment_bindings = (
+        []
+        if stage == "split"
+        else [
+            {
+                "source": "$.arguments.query",
+                "target": "$.steps[0].action.args.text",
+            }
+        ]
+    )
+    subsegment_arguments = {} if stage == "split" else {"query": "museum"}
     example = {
         "functions": [
             {
@@ -1205,9 +1302,28 @@ def _authoring_prompt(
                 "steps": example_steps,
                 "checker_rules": example_checkers,
                 "agent_visible": True,
-            }
+            },
+            {
+                "schema_version": FUNCTION_ARTIFACT_VERSION,
+                "function_id": "submit_web_search",
+                "name": "Submit web search",
+                "description": "Enter a task-provided query and submit the search.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": example_properties,
+                    "required": example_required,
+                    "additionalProperties": False,
+                },
+                "bindings": subsegment_bindings,
+                "steps": subsegment_steps,
+                "checker_rules": [],
+                "agent_visible": True,
+            },
         ],
-        "arguments": {"search_the_web": example_arguments},
+        "arguments": {
+            "search_the_web": example_arguments,
+            "submit_web_search": subsegment_arguments,
+        },
     }
     evidence = {
         "goal": facts["goal"],
@@ -1226,7 +1342,8 @@ bindings, ordered steps, checker_rules, and agent_visible. You may write actions
 but every source_state_id and action must be supported by the supplied successful RunLog.
 At every stage, include at least one large semantic Function that covers the complete
 successful trajectory. Do not replace the complete Function with one Function per click.
-You may additionally return reusable semantic subsegments. Preserve source action order
+Identify every reusable contiguous semantic subsegment and return it alongside the required
+full-trajectory Function; do not create meaningless single-click fragments. Preserve source action order
 and never invent target-device state, target coordinates,
 validator logic, task-specific gates, or source-coordinate fallback. One Function is a
 reusable semantic operation, not one click. A checker belongs only to its Function and
@@ -1347,11 +1464,12 @@ def _projected_semantic_target(
 
 
 def _json_object(raw: str) -> dict[str, Any]:
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start < 0 or end <= start:
+    if not isinstance(raw, str) or not raw.strip():
         raise ValueError("function_enhancement_json_missing")
-    value = json.loads(raw[start : end + 1])
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ValueError("function_enhancement_json_invalid") from error
     if not isinstance(value, dict):
         raise ValueError("function_enhancement_json_invalid")
     return value

@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from omniflow.bridge import JsonLineBridge
-from omniflow.functions.assets import FunctionStore, save_function
+from omniflow.functions.assets import (
+    FunctionStore,
+    function_authoring_tool,
+    save_function,
+)
 
 
 def _function(function_id: str = "open_settings") -> dict:
@@ -179,6 +184,8 @@ def test_enhance_creates_semantics_parameters_and_checker(tmp_path) -> None:
     assert "stage parameters" in prompts[1]
     assert "stage checkers" in prompts[2]
     assert "Prefer one reusable text-entry operation." in prompts[0]
+    assert '"function_id":"submit_web_search"' in prompts[0]
+    assert "Identify every reusable contiguous semantic subsegment" in prompts[0]
 
 
 def test_enhance_rejects_extra_function_fields(tmp_path) -> None:
@@ -195,6 +202,26 @@ def test_enhance_rejects_extra_function_fields(tmp_path) -> None:
         assert str(error) == "function_artifact_unknown_fields:actions"
     else:
         raise AssertionError("Unknown Agent output must be rejected")
+
+
+def test_enhance_rejects_extra_parameter_schema_fields(tmp_path) -> None:
+    def complete_json(prompt: str) -> str:
+        stage = _stage_from_prompt(prompt)
+        plan = json.loads(_semantic_plan(stage))
+        if stage == "parameters":
+            plan["functions"][0]["input_schema"]["title"] = "Uncontrolled schema"
+        return json.dumps(plan)
+
+    with pytest.raises(
+        ValueError,
+        match="function_parameter_schema_unknown_fields:title",
+    ):
+        save_function(
+            _authoring_run_log(),
+            tmp_path / "store.json",
+            enhance=True,
+            complete_json=complete_json,
+        )
 
 
 def test_checker_registration_is_function_local(tmp_path) -> None:
@@ -288,16 +315,12 @@ def test_bridge_enhance_requires_a_complete_bundle_at_every_stage(tmp_path) -> N
         def host_call(self, request_id, method, payload):
             assert method == "model_turn"
             function_schema = payload["request"]["tools"][0]["function"]
-            assert function_schema["strict"] is False
-            assert function_schema["parameters"]["required"] == [
-                "functions",
-                "arguments",
-            ]
+            assert function_schema == function_authoring_tool()["function"]
             return {
                 "tool_calls": [
                     {
                         "function": {
-                            "name": "submit_enhancement",
+                            "name": "submit_function_bundle",
                                 "arguments": _semantic_plan(
                                     _stage_from_prompt(
                                         payload["request"]["messages"][0]["content"]
@@ -316,3 +339,66 @@ def test_bridge_enhance_requires_a_complete_bundle_at_every_stage(tmp_path) -> N
 
     assert result["success"] is True
     assert result["function_ids"] == ["enter_note"]
+
+
+def test_function_authoring_tool_requires_the_complete_function_contract() -> None:
+    tool = function_authoring_tool()
+    function = tool["function"]
+    parameters = function["parameters"]
+    function_schema = parameters["properties"]["functions"]["items"]
+
+    assert function["name"] == "submit_function_bundle"
+    assert parameters["required"] == ["functions", "arguments"]
+    assert parameters["additionalProperties"] is False
+    assert function_schema["required"] == [
+        "schema_version",
+        "function_id",
+        "name",
+        "description",
+        "input_schema",
+        "bindings",
+        "steps",
+        "checker_rules",
+        "agent_visible",
+    ]
+    assert function_schema["properties"]["steps"]["items"]["required"] == [
+        "step_index",
+        "source_state_id",
+        "action",
+    ]
+    assert function_schema["properties"]["checker_rules"]["items"][
+        "required"
+    ] == ["source_state_id", "action"]
+
+
+def test_save_function_reports_the_failed_agent_stage(tmp_path) -> None:
+    def timeout(_prompt: str) -> str:
+        raise TimeoutError("endpoint did not answer")
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "function_enhancement_split_model_failed:"
+            "TimeoutError:endpoint did not answer"
+        ),
+    ):
+        save_function(
+            _authoring_run_log(),
+            tmp_path / "store.json",
+            enhance=True,
+            complete_json=timeout,
+        )
+
+
+def test_save_function_rejects_model_commentary_around_the_bundle(
+    tmp_path,
+) -> None:
+    valid = _semantic_plan("split")
+
+    with pytest.raises(ValueError, match="function_enhancement_json_invalid"):
+        save_function(
+            _authoring_run_log(),
+            tmp_path / "store.json",
+            enhance=True,
+            complete_json=lambda _prompt: f"Here is the result: {valid}",
+        )
