@@ -139,6 +139,33 @@ def test_prepare_script_replay_store_from_canonical_runlog(tmp_path: Path) -> No
             "action": {"tool": "click", "args": {"x": 500, "y": 500}},
         }
     ]
+    enhance_prepared_function_store(
+        store_path=Path(report["store_path"]),
+        runlog_path=runlog_path,
+        source_states_path=states_path,
+        complete_json=lambda _: json.dumps(
+            {
+                "step_decisions": [
+                    {"step": 0, "role": "function", "reason": "Open the app"}
+                ],
+                "steps": [
+                    {
+                        "source_state_id": "launcher",
+                        "action": {
+                            "tool": "click",
+                            "args": {"x": 695, "y": 619},
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+    enhanced_store = json.loads(Path(report["store_path"]).read_text(encoding="utf-8"))
+    enhanced = next(iter(enhanced_store["functions"].values()))
+    assert enhanced["steps"][0]["action"] == {
+        "tool": "open_app",
+        "args": {"package_name": "com.google.android.deskclock"},
+    }
     assert function["checker_rules"] == []
     assert report["model_calls"] == 0
     assert report["step_count"] == 1

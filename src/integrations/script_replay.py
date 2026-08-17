@@ -223,6 +223,9 @@ def enhance_prepared_function_store(
         complete_json,
         state_loader=lambda state_id: states.get(str(state_id)),
     )
+    normalized_steps = _normalize_enhanced_launcher_steps(enhanced, runlog, states)
+    if normalized_steps:
+        changes.append({"part": "function", "field": "launcher_open_app"})
     FunctionStore(resolved_store).put_function(enhanced)
     role_counts = {"function": 0, "checker": 0}
     for step in enhanced.get("steps") or ():
@@ -244,6 +247,39 @@ def enhance_prepared_function_store(
         encoding="utf-8",
     )
     return {**report, "report_path": str(report_path)}
+
+
+def _normalize_enhanced_launcher_steps(
+    function: dict[str, Any],
+    runlog: Mapping[str, Any],
+    states: Mapping[str, Any],
+) -> bool:
+    raw_by_state = {
+        str(step.get("before_state_id") or ""): step
+        for step in runlog.get("steps") or ()
+        if isinstance(step, Mapping)
+    }
+    changed = False
+    for step in function.get("steps") or ():
+        if not isinstance(step, dict):
+            continue
+        source_state_id = str(step.get("source_state_id") or "")
+        raw_step = raw_by_state.get(source_state_id)
+        if not isinstance(raw_step, Mapping):
+            continue
+        normalized = _normalize_launcher_click(
+            step.get("action") if isinstance(step.get("action"), Mapping) else {},
+            before_state=(
+                states.get(source_state_id)
+                if isinstance(states.get(source_state_id), Mapping)
+                else {}
+            ),
+            after_state=states.get(str(raw_step.get("after_state_id") or "")),
+        )
+        if normalized != step.get("action"):
+            step["action"] = normalized
+            changed = True
+    return changed
 
 
 class _OpenAIJsonCompleter:
