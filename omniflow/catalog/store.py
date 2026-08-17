@@ -24,14 +24,6 @@ class CatalogSnapshot:
     states: dict[str, Observation]
     manifest: dict[str, Any]
 
-    def function_store_payload(self) -> dict[str, Any]:
-        return {
-            "schema_version": FUNCTION_STORE_SCHEMA,
-            "functions": {
-                key: value.to_dict() for key, value in sorted(self.functions.items())
-            },
-        }
-
     def get_state(self, state_id: str) -> Observation | None:
         return self.states.get(str(state_id or "").strip())
 

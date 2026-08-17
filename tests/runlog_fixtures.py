@@ -1,8 +1,32 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any, Sequence
 
+from omniflow.core.model import Function
 from omniflow.core.trajectory import OMNIFLOW_RUN_LOG_SCHEMA_VERSION
+from omniflow.functions.assets import STORE_VERSION
+
+
+def write_function_store(
+    path: str | Path,
+    functions: Sequence[Function],
+) -> Path:
+    store_path = Path(path)
+    store_path.write_text(
+        json.dumps(
+            {
+                "schema_version": STORE_VERSION,
+                "functions": {
+                    function.id: function.to_dict() for function in functions
+                },
+                "source_calls": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return store_path
 
 
 def androidworld_state(

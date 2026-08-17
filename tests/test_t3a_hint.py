@@ -1,9 +1,10 @@
 from pathlib import Path
 
 import pytest
+from runlog_fixtures import write_function_store
 
 from omniflow.core.model import Action, Function, FunctionStep
-from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION, FunctionStore
+from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION
 from src.experiment.androidworld import (
     ArchivedRunLog,
     _promote_result_metadata_to_row,
@@ -347,9 +348,9 @@ def test_t3a_hint_selects_unique_function_containing_all_subtraces(
     tmp_path: Path,
 ) -> None:
     store_path = tmp_path / "store.json"
-    FunctionStore(
+    write_function_store(
         store_path,
-        seed_functions=(
+        (
             _function("partial_wait", ("wait",)),
             _function("complete_run_settings", ("open_app", "wait")),
         ),

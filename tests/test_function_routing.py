@@ -5,7 +5,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from runlog_fixtures import androidworld_state
+from runlog_fixtures import androidworld_state, write_function_store
 
 from omniflow import (
     Action,
@@ -18,7 +18,7 @@ from omniflow import (
 from omniflow.core.config import OmniFlowConfig, PluginSet, RuntimeSettings
 from omniflow.core.model import FunctionStep, TransferResult
 from omniflow.core.trajectory import state_id
-from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION, FunctionStore
+from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.planner import (
     SYSTEM_PROMPT,
@@ -257,7 +257,7 @@ def _store_with_open_settings_function(path: object) -> str:
         },
         agent_visible=True,
     )
-    FunctionStore(path, seed_functions=(function,))
+    write_function_store(path, (function,))
     return function.id
 
 
@@ -319,7 +319,7 @@ def _store_with_long_function(path: object) -> str:
         },
         agent_visible=True,
     )
-    FunctionStore(path, seed_functions=(function,))
+    write_function_store(path, (function,))
     return function.id
 
 
@@ -344,7 +344,7 @@ def _store_with_untransferable_click_function(path: object) -> str:
         },
         agent_visible=True,
     )
-    FunctionStore(path, seed_functions=(function,))
+    write_function_store(path, (function,))
     return function.id
 
 
@@ -377,7 +377,7 @@ def _store_with_resumable_click_function(path: object) -> str:
         },
         agent_visible=True,
     )
-    FunctionStore(path, seed_functions=(function,))
+    write_function_store(path, (function,))
     return function.id
 
 

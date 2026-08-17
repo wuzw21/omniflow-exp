@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from omniflow import OmniFlow
 from omniflow.catalog import load_catalog, load_default_catalog
 from omniflow.functions.assets import FunctionStore
 
@@ -60,35 +61,16 @@ def test_catalog_manifest_hashes_are_lowercase_sha256() -> None:
         assert hashlib.sha256((catalog.root / name).read_bytes()).hexdigest() == expected
 
 
-def test_function_store_seeds_catalog_without_overwriting_user_copy(
-    tmp_path: Path,
-) -> None:
+def test_catalog_is_read_only_and_never_seeds_a_runtime_store(tmp_path: Path) -> None:
     catalog = load_default_catalog()
     store_path = tmp_path / "store.json"
-    store = FunctionStore(
-        store_path,
-        seed_functions=catalog.functions.values(),
-    )
-    assert set(store.functions) == {
+    flow = OmniFlow(store_path, catalog=catalog)
+
+    assert not store_path.exists()
+    assert flow.store.functions == {}
+
+    packaged_store = FunctionStore(catalog.root / "function_store.json")
+    assert set(packaged_store.functions) == {
         "manual_americano_checkout_20260806",
         "order_beverage_meituan",
     }
-
-    payload = json.loads(store_path.read_text())
-    payload["functions"]["order_beverage_meituan"]["description"] = "user copy"
-    store_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    reloaded = FunctionStore(
-        store_path,
-        seed_functions=catalog.functions.values(),
-    )
-    assert reloaded.functions["order_beverage_meituan"].description == "user copy"
-
-    upgraded = FunctionStore(
-        store_path,
-        seed_functions=catalog.functions.values(),
-        replace_seeded=True,
-    )
-    assert upgraded.functions["order_beverage_meituan"] == catalog.functions[
-        "order_beverage_meituan"
-    ]

@@ -68,7 +68,8 @@ The retained bridge tools are:
 - `run_gui`
 
 The shell never auto-builds a missing Function Store. Save the Functions first,
-refresh external memory, then run the experiment.
+refresh external memory, then run the experiment. Catalog snapshots are
+read-only source evidence and never seed or rewrite the Store at runtime.
 
 ## Checker model
 

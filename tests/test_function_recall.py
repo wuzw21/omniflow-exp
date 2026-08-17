@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from runlog_fixtures import write_function_store
+
 from omniflow import Action, ActionResult, Function, Observation, OmniFlow, ToolCall
 from omniflow.core.model import FunctionStep
-from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION, FunctionStore
+from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION
 from omniflow.functions.recall import (
     GOAL_LEXICAL_WEIGHT,
     PAGE_SIMILARITY_WEIGHT,
@@ -242,9 +244,9 @@ class _ChangingPagePlanner:
 
 
 def test_runtime_recalls_again_after_page_changes(tmp_path) -> None:
-    store = FunctionStore(
+    store_path = write_function_store(
         tmp_path / "store.json",
-        seed_functions=(
+        (
             _function(
             "first_page_action",
             "Use first page control",
@@ -260,7 +262,7 @@ def test_runtime_recalls_again_after_page_changes(tmp_path) -> None:
         ),
     )
     planner = _ChangingPagePlanner()
-    flow = OmniFlow(store.path, host=_PageChangingHost(), planner=planner)
+    flow = OmniFlow(store_path, host=_PageChangingHost(), planner=planner)
 
     result = flow.run("Complete the multi-page task")
 

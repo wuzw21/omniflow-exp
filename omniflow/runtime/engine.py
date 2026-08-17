@@ -74,11 +74,7 @@ class OmniFlow:
     ):
         self.config = config or OmniFlowConfig()
         self.catalog = catalog
-        self.store = FunctionStore(
-            store_path,
-            seed_functions=(catalog.functions.values() if catalog is not None else ()),
-            replace_seeded=catalog is not None,
-        )
+        self.store = FunctionStore(store_path)
         self.host = host
         self.planner = planner
         self.installed_apps = (
