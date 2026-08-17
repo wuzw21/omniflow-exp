@@ -115,6 +115,11 @@ def prepare_script_replay_store(
         action = raw_step.get("action")
         if not isinstance(action, dict):
             raise ValueError("script_replay_source_action_invalid")
+        action = _normalize_launcher_click(
+            action,
+            before_state=states[source_state_id],
+            after_state=states.get(str(raw_step.get("after_state_id") or "")),
+        )
         function_steps.append(
             {
                 "step_index": len(function_steps),
@@ -161,6 +166,31 @@ def prepare_script_replay_store(
         "source_states_path": str(root / "transfer_states.json"),
         "source_runlog_path": str(root / "source.runlog.json"),
         "model_calls": 0,
+    }
+
+
+def _normalize_launcher_click(
+    action: Mapping[str, Any],
+    *,
+    before_state: Mapping[str, Any],
+    after_state: Any,
+) -> dict[str, Any]:
+    """Represent a successful Launcher icon click as the native app launch action."""
+
+    copied = json.loads(json.dumps(dict(action), ensure_ascii=False))
+    if str(copied.get("tool") or "").strip() != "click":
+        return copied
+    if not isinstance(after_state, Mapping):
+        return copied
+    before_package = str(before_state.get("package_name") or "").strip()
+    before_activity = str(before_state.get("activity_name") or "").strip()
+    after_package = str(after_state.get("package_name") or "").strip()
+    launcher_evidence = "launcher" in f"{before_package} {before_activity}".lower()
+    if not launcher_evidence or not after_package or after_package == before_package:
+        return copied
+    return {
+        "tool": "open_app",
+        "args": {"package_name": after_package},
     }
 
 

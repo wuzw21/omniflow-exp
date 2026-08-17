@@ -135,6 +135,82 @@ def test_prepare_script_replay_store_from_canonical_runlog(tmp_path: Path) -> No
     assert (tmp_path / "prepared" / "transfer_states.json").is_file()
 
 
+def test_prepare_script_replay_normalizes_launcher_click_to_open_app(
+    tmp_path: Path,
+) -> None:
+    runlog_path = tmp_path / "runlog.json"
+    states_path = tmp_path / "transfer_states.json"
+    runlog_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.canonical_run_log.v1",
+                "run_id": "source-run",
+                "goal": "create an alarm",
+                "status": "succeeded",
+                "success": True,
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "before_state_id": "launcher",
+                        "action": {
+                            "tool": "click",
+                            "args": {"x": 695, "y": 619},
+                        },
+                        "result": {"success": True},
+                        "after_state_id": "clock",
+                    }
+                ],
+                "diagnostics": {"task_id": "clock/create_alarm"},
+                "final_state_id": "clock",
+            }
+        ),
+        encoding="utf-8",
+    )
+    states_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.transfer-state-catalog.v1",
+                "run_id": "source-run",
+                "states": {
+                    "launcher": {
+                        "state_id": "launcher",
+                        "package_name": "com.google.android.apps.nexuslauncher",
+                        "activity_name": ".NexusLauncherActivity",
+                        "xml": '<hierarchy width="1080" height="1920" />',
+                    },
+                    "clock": {
+                        "state_id": "clock",
+                        "package_name": "com.google.android.deskclock",
+                        "activity_name": ".DeskClock",
+                        "xml": '<hierarchy width="1080" height="1920" />',
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = prepare_script_replay_store(
+        runlog_path=runlog_path,
+        source_states_path=states_path,
+        output_root=tmp_path / "prepared",
+        expected_task_id="clock/create_alarm",
+    )
+
+    store = json.loads(Path(report["store_path"]).read_text(encoding="utf-8"))
+    function = next(iter(store["functions"].values()))
+    assert function["steps"] == [
+        {
+            "step_index": 0,
+            "source_state_id": "launcher",
+            "action": {
+                "tool": "open_app",
+                "args": {"package_name": "com.google.android.deskclock"},
+            },
+        }
+    ]
+
+
 def test_script_replay_never_uses_resource_id(tmp_path: Path) -> None:
     store_path = _write_store(tmp_path / "store.json")
     source_states = {

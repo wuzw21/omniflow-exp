@@ -46,6 +46,9 @@ exception to the default method above. It replays the sole visible Function,
 ignores Checker steps, and adapts each pointer action using MobileGPT's locator
 order: direct text/content-description, semantic children at matching depth and
 rank, then a semantic parent plus child rank. Resource IDs are never used.
+During source preparation, a successful click that moves from a system Launcher
+into another application is normalized to native `open_app(package_name)`;
+home-screen icon placement is therefore not treated as an in-app selector.
 Missing or ambiguous matches fail closed; it never uses source coordinates,
 OmniTransfer, DP, Planner, or VLM. Before clicking it requires two identical
 semantic page observations and rejects visible progress indicators. All requested
