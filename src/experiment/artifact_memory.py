@@ -2666,18 +2666,27 @@ def refresh_artifact_memory_from_pointer(
                     *resolved_result_roots,
                 }
             )
-        mobilegpt_memory_roots = sorted(
-            {
-                *(
-                    str(value)
-                    for value in inputs.get("mobilegpt_memory_roots") or []
-                ),
-                *(
-                    str(Path(value).expanduser().resolve())
-                    for value in additional_mobilegpt_memory_roots
-                ),
-            }
-        )
+        resolved_mobilegpt_memory_roots = {
+            str(Path(value).expanduser().resolve())
+            for value in additional_mobilegpt_memory_roots
+        }
+        if replace_recorded_roots:
+            # An explicit refresh may replace stale task-local MobileGPT
+            # bundles just like run-log and result roots.  Keeping the old
+            # roots in the scan would validate them against the newly
+            # selected canonical source and fail lineage checks before the
+            # replacement bundles can be selected.
+            mobilegpt_memory_roots = sorted(resolved_mobilegpt_memory_roots)
+        else:
+            mobilegpt_memory_roots = sorted(
+                {
+                    *(
+                        str(value)
+                        for value in inputs.get("mobilegpt_memory_roots") or []
+                    ),
+                    *resolved_mobilegpt_memory_roots,
+                }
+            )
         baseline_batch_reports = sorted(
             {
                 *(str(value) for value in inputs.get("baseline_batch_reports") or []),

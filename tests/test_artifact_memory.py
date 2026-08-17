@@ -9,6 +9,7 @@ import stat
 import pytest
 from PIL import Image
 from runlog_fixtures import androidworld_run_log
+import src.experiment.artifact_memory as artifact_memory_module
 
 from src.experiment.artifact_memory import (
     _runlog_paths,
@@ -1731,6 +1732,52 @@ def test_explicit_refresh_replaces_stale_recorded_roots(tmp_path: Path) -> None:
 
     assert report["inputs"]["runlog_roots"] == [str(tmp_path / "evidence")]
     assert report["inputs"]["result_roots"] == []
+
+
+def test_explicit_refresh_replaces_recorded_mobilegpt_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _write_source_run_log(tmp_path)
+    source_index = _write_json(
+        tmp_path / "source_index.json",
+        {
+            "RecordWithName": {
+                "task": "RecordWithName",
+                "retained_source_run_log": str(source),
+            }
+        },
+    )
+    old_root = tmp_path / "old-mobilegpt"
+    old_root.mkdir()
+    refresh_artifact_memory(
+        memory_root=tmp_path / "memory",
+        source_index=source_index,
+        function_catalogs=(),
+        runlog_roots=(tmp_path / "evidence",),
+        result_roots=(),
+        mobilegpt_memory_roots=(old_root,),
+    )
+
+    replacement = tmp_path / "replacement-mobilegpt"
+    replacement.mkdir()
+    captured: dict[str, object] = {}
+
+    def fake_refresh(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"inputs": {}, "counts": {}}
+
+    monkeypatch.setattr(
+        artifact_memory_module,
+        "_refresh_artifact_memory_unlocked",
+        fake_refresh,
+    )
+    refresh_artifact_memory_from_pointer(
+        memory_index=tmp_path / "memory" / "current.json",
+        additional_mobilegpt_memory_roots=(replacement,),
+        replace_recorded_roots=True,
+    )
+
+    assert captured["mobilegpt_memory_roots"] == [str(replacement.resolve())]
 
 
 def test_refresh_keeps_validator_conclusion_with_method_error(
