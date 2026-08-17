@@ -12,7 +12,6 @@ import argparse
 from collections import Counter, defaultdict
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import asdict, dataclass
-import hashlib
 import json
 import math
 from pathlib import Path
@@ -26,11 +25,8 @@ import xml.etree.ElementTree as ET
 import numpy as np
 
 from omniflow.core.model import Observation
-from omniflow.functions.assets import FunctionStore, parse_function_artifact
-from omniflow.transfer.runtime import TRANSFER_STATE_CATALOG_VERSION
 from omniflow.transfer.embedding import ElementEmbedding, PageEncoder, TreeEmbedding
 from omniflow.transfer.runtime import load_omnitransfer
-from omniflow.vlm.model_config import resolve_openai_compatible_config
 from src.experiment.transfer_replay import (
     ReplayToken,
     TransferMatchScore,
@@ -104,12 +100,6 @@ class _SelectorResult:
 
 
 PairScorer = Callable[[BmocaStep, BmocaStep], TransferMatchScore]
-
-
-@dataclass(frozen=True)
-class _AuthorResult:
-    proposal: dict[str, Any]
-    usage: dict[str, int]
 
 
 def evaluate_trace_pair(
@@ -270,474 +260,6 @@ def load_bmoca_traces(corpus_root: str | Path) -> tuple[BmocaTrace, ...]:
         catalog = _read_object(_asset_path(root, state_entry))
         traces.append(_load_trace(record, runlog, catalog))
     return tuple(traces)
-
-
-def build_bmoca_function_registry(
-    corpus_root: str | Path,
-    output_root: str | Path,
-    *,
-    author: Callable[[str], dict[str, Any] | _AuthorResult] | None = None,
-    model: str = "GLM-5.1",
-    endpoint_profile: str = "llmthu",
-    timeout_seconds: float = 120.0,
-    source_environment: str = "100",
-    limit_tasks: int | None = None,
-) -> dict[str, Any]:
-    """Author one global Function Store from official-success B-MoCA RunLogs."""
-
-    corpus = Path(corpus_root).expanduser().resolve()
-    destination = Path(output_root).expanduser().resolve()
-    if destination.exists() and any(destination.iterdir()):
-        raise FileExistsError(f"immutable_bmoca_registry_exists:{destination}")
-    manifest = _read_object(corpus / "manifest.json")
-    if manifest.get("schema_version") != _CORPUS_VERSION:
-        raise ValueError("unsupported_bmoca_corpus_version")
-    records = manifest.get("traces")
-    if not isinstance(records, list):
-        raise ValueError("bmoca_corpus_traces_invalid")
-    selected: dict[str, dict[str, Any]] = {}
-    for record in records:
-        if not isinstance(record, dict):
-            raise ValueError("bmoca_trace_record_invalid")
-        if str(record.get("environment_id") or "") != str(source_environment):
-            continue
-        evidence = record.get("success_evidence")
-        if not isinstance(evidence, dict) or evidence.get("official_success") is not True:
-            continue
-        task_id = str(record.get("task_id") or "").strip()
-        if not task_id:
-            raise ValueError("bmoca_trace_task_id_required")
-        if task_id in selected:
-            raise ValueError(f"bmoca_source_trace_duplicate:{task_id}")
-        selected[task_id] = record
-    task_ids = sorted(selected)
-    if limit_tasks is not None:
-        if limit_tasks <= 0:
-            raise ValueError("bmoca_registry_limit_tasks_positive")
-        task_ids = task_ids[:limit_tasks]
-    if not task_ids:
-        raise ValueError("bmoca_registry_source_traces_required")
-
-    resolved_author = author or _openai_bmoca_author(
-        model=model,
-        endpoint_profile=endpoint_profile,
-        timeout_seconds=timeout_seconds,
-    )
-    functions = []
-    merged_states: dict[str, dict[str, Any]] = {}
-    task_reports: list[dict[str, Any]] = []
-    usage = {
-        "model_calls": 0,
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-        "total_tokens": 0,
-    }
-    checker_step_count = 0
-    function_step_count = 0
-    for task_id in task_ids:
-        record = selected[task_id]
-        runlog_entry = record.get("runlog")
-        state_entry = record.get("state_catalog")
-        if not isinstance(runlog_entry, dict) or not isinstance(state_entry, dict):
-            raise ValueError("bmoca_trace_assets_missing")
-        runlog = _read_object(_asset_path(corpus, runlog_entry))
-        catalog = _read_object(_asset_path(corpus, state_entry))
-        steps = _bmoca_success_steps(runlog)
-        states = _bmoca_registry_states(catalog, runlog=runlog)
-        prompt = _bmoca_authoring_prompt(task_id, str(runlog.get("goal") or ""), steps, states)
-        raw_authored = resolved_author(prompt)
-        if isinstance(raw_authored, _AuthorResult):
-            proposal = raw_authored.proposal
-            for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
-                usage[key] += int(raw_authored.usage.get(key, 0) or 0)
-        elif isinstance(raw_authored, dict):
-            proposal = raw_authored
-        else:
-            raise ValueError("bmoca_function_author_response_invalid")
-        usage["model_calls"] += 1
-        authored_functions = _bmoca_functions_from_proposal(
-            task_id=task_id,
-            steps=steps,
-            proposal=proposal,
-        )
-        for function in authored_functions:
-            for step in function.steps:
-                if step.source_state_id not in states:
-                    raise ValueError(
-                        f"bmoca_function_source_state_missing:{task_id}:"
-                        f"{step.source_state_id}"
-                    )
-                existing = merged_states.get(step.source_state_id)
-                current = states[step.source_state_id]
-                if existing is not None and existing != current:
-                    raise ValueError(
-                        f"bmoca_function_source_state_collision:{step.source_state_id}"
-                    )
-                merged_states[step.source_state_id] = current
-                if step.role == "checker":
-                    checker_step_count += 1
-                else:
-                    function_step_count += 1
-        functions.extend(authored_functions)
-        task_reports.append(
-            {
-                "task_id": task_id,
-                "trace_id": str(record.get("trace_id") or ""),
-                "run_id": str(runlog.get("run_id") or ""),
-                "function_ids": [item.id for item in authored_functions],
-                "step_count": len(steps),
-            }
-        )
-
-    destination.mkdir(parents=True, exist_ok=True)
-    store = FunctionStore(destination / "store.json")
-    for function in functions:
-        if function.id in store.functions:
-            raise ValueError(f"bmoca_function_id_duplicate:{function.id}")
-        store.put_function(function)
-    catalog_payload = {
-        "schema_version": TRANSFER_STATE_CATALOG_VERSION,
-        "run_id": "bmoca-global-" + hashlib.sha256(
-            "\n".join(task_ids).encode("utf-8")
-        ).hexdigest()[:20],
-        "states": dict(sorted(merged_states.items())),
-    }
-    _write_report(destination / "transfer_states.json", catalog_payload)
-    report = {
-        "schema_version": "omniflow.bmoca-function-registry.v1",
-        "model": str(model),
-        "source_environment": str(source_environment),
-        "store_path": str((destination / "store.json").resolve()),
-        "transfer_states_path": str(
-            (destination / "transfer_states.json").resolve()
-        ),
-        "tasks": task_reports,
-        "usage": usage,
-        "summary": {
-            "source_environment": str(source_environment),
-            "task_count": len(task_reports),
-            "function_count": len(functions),
-            "checker_step_count": checker_step_count,
-            "function_step_count": function_step_count,
-            "model_calls": usage["model_calls"],
-        },
-    }
-    _write_report(destination / "build_report.json", report)
-    return report
-
-
-def _bmoca_success_steps(runlog: dict[str, Any]) -> list[dict[str, Any]]:
-    if runlog.get("success") is not True or runlog.get("status") != "succeeded":
-        raise ValueError("bmoca_registry_successful_runlog_required")
-    raw_steps = runlog.get("steps")
-    if not isinstance(raw_steps, list) or not raw_steps:
-        raise ValueError("bmoca_runlog_steps_invalid")
-    steps: list[dict[str, Any]] = []
-    for index, step in enumerate(raw_steps):
-        if not isinstance(step, dict) or step.get("step_index") != index:
-            raise ValueError("bmoca_runlog_step_invalid")
-        action = step.get("action")
-        result = step.get("result")
-        if (
-            not isinstance(action, dict)
-            or set(action) != {"tool", "args"}
-            or not isinstance(action.get("args"), dict)
-            or not isinstance(result, dict)
-            or result.get("success") is not True
-            or not str(step.get("before_state_id") or "").strip()
-        ):
-            raise ValueError("bmoca_registry_successful_step_required")
-        steps.append(step)
-    return steps
-
-
-def _bmoca_registry_states(
-    catalog: dict[str, Any],
-    *,
-    runlog: dict[str, Any],
-) -> dict[str, dict[str, Any]]:
-    if catalog.get("schema_version") != TRANSFER_STATE_CATALOG_VERSION:
-        raise ValueError("unsupported_bmoca_state_catalog_version")
-    if str(catalog.get("run_id") or "") != str(runlog.get("run_id") or ""):
-        raise ValueError("bmoca_registry_state_catalog_run_id_mismatch")
-    raw_states = catalog.get("states")
-    if not isinstance(raw_states, dict):
-        raise ValueError("bmoca_states_invalid")
-    return {
-        str(state_id): dict(value)
-        for state_id, value in raw_states.items()
-        if isinstance(value, dict)
-    }
-
-
-def _bmoca_authoring_prompt(
-    task_id: str,
-    goal: str,
-    steps: list[dict[str, Any]],
-    states: dict[str, dict[str, Any]],
-) -> str:
-    brief_steps = []
-    for index, step in enumerate(steps):
-        state_id = str(step["before_state_id"])
-        state = states.get(state_id, {})
-        brief_steps.append(
-            {
-                "step": index,
-                "action": step["action"],
-                "page": _bmoca_page_semantics(state),
-            }
-        )
-    facts = {
-        "task_id": task_id,
-        "goal": goal,
-        "steps": brief_steps,
-    }
-    return (
-        "Split this successful mobile trace into the smallest reusable semantic "
-        "Functions. Review the trace in order and return one decision object per Step; "
-        "never encode Step indices as a compact string or grouped index array. Each "
-        "Step must appear exactly once, in order, inside one Function. role is checker "
-        "only for optional onboarding/setup/recovery and function when it directly "
-        "advances the user goal. Every Function must contain at least one function Step, "
-        "and a checker must precede a required Step in the same Function. Do not invent, "
-        "rewrite, remove, or reorder actions. Give each Function a stable snake_case id, "
-        "concise name, and recall description. Submit the result with the provided tool.\n"
-        + json.dumps(facts, ensure_ascii=False, separators=(",", ":"))
-    )
-
-
-def _bmoca_page_semantics(state: dict[str, Any]) -> dict[str, Any]:
-    labels: list[str] = []
-    xml = str(state.get("xml") or "")
-    if xml:
-        try:
-            root = ET.fromstring(xml)
-        except ET.ParseError:
-            root = None
-        if root is not None:
-            for node in root.iter():
-                for field in ("text", "content-desc", "content_description"):
-                    label = " ".join(str(node.attrib.get(field) or "").split())
-                    if label and label not in labels:
-                        labels.append(label[:120])
-                        if len(labels) == 12:
-                            break
-                if len(labels) == 12:
-                    break
-    return {
-        "package": str(state.get("package_name") or ""),
-        "activity": str(state.get("activity_name") or ""),
-        "visible_labels": labels,
-    }
-
-
-def _bmoca_functions_from_proposal(
-    *,
-    task_id: str,
-    steps: list[dict[str, Any]],
-    proposal: dict[str, Any],
-) -> list[Any]:
-    if set(proposal) != {"functions"} or not isinstance(proposal["functions"], list):
-        raise ValueError("bmoca_function_author_contract_invalid")
-    authored = proposal["functions"]
-    if not authored:
-        raise ValueError("bmoca_function_author_functions_required")
-    flattened: list[int] = []
-    functions = []
-    task_hash = hashlib.sha256(task_id.encode("utf-8")).hexdigest()[:12]
-    for function_index, raw_function in enumerate(authored):
-        if not isinstance(raw_function, dict) or set(raw_function) != {
-            "function_id",
-            "name",
-            "description",
-            "steps",
-        }:
-            raise ValueError("bmoca_function_author_function_invalid")
-        decisions = raw_function["steps"]
-        if not isinstance(decisions, list) or not decisions:
-            raise ValueError("bmoca_function_author_steps_required")
-        built_steps = []
-        seen_required = False
-        for local_index, decision in enumerate(decisions):
-            if not isinstance(decision, dict) or set(decision) != {
-                "step",
-                "role",
-                "reason",
-            }:
-                raise ValueError("bmoca_function_author_step_invalid")
-            source_index = decision.get("step")
-            role = decision.get("role")
-            if not isinstance(source_index, int) or isinstance(source_index, bool):
-                raise ValueError("bmoca_function_author_step_index_invalid")
-            if source_index not in range(len(steps)):
-                raise ValueError("bmoca_function_author_step_index_invalid")
-            if role not in {"function", "checker"}:
-                raise ValueError("bmoca_function_author_step_role_invalid")
-            if not str(decision.get("reason") or "").strip():
-                raise ValueError("bmoca_function_author_step_reason_required")
-            source = steps[source_index]
-            built_steps.append(
-                {
-                    "step_index": local_index,
-                    "source_state_id": str(source["before_state_id"]),
-                    "action": source["action"],
-                    **({"role": "checker"} if role == "checker" else {}),
-                }
-            )
-            flattened.append(source_index)
-            seen_required = seen_required or role == "function"
-        if not seen_required:
-            raise ValueError("bmoca_function_required_step_missing")
-        for index, decision in enumerate(decisions):
-            if decision["role"] == "checker" and not any(
-                later["role"] == "function" for later in decisions[index + 1 :]
-            ):
-                raise ValueError("bmoca_checker_required_step_missing")
-        raw_id = re.sub(
-            r"[^a-z0-9_]+",
-            "_",
-            str(raw_function["function_id"] or "").strip().lower(),
-        ).strip("_")
-        if not raw_id:
-            raise ValueError("bmoca_function_author_function_id_required")
-        function = parse_function_artifact(
-            {
-                "schema_version": "omniflow.function.v2",
-                "function_id": f"bmoca_{task_hash}_{function_index}_{raw_id[:48]}",
-                "name": str(raw_function["name"] or "").strip(),
-                "description": str(raw_function["description"] or "").strip(),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": [],
-                    "additionalProperties": False,
-                },
-                "bindings": [],
-                "steps": built_steps,
-                "checker_rules": [],
-                "agent_visible": True,
-            }
-        )
-        functions.append(function)
-    if flattened != list(range(len(steps))):
-        raise ValueError("bmoca_function_author_step_coverage_invalid")
-    return functions
-
-
-def _openai_bmoca_author(
-    *,
-    model: str,
-    endpoint_profile: str,
-    timeout_seconds: float,
-) -> Callable[[str], _AuthorResult]:
-    api_key, base_url = resolve_openai_compatible_config(profile=endpoint_profile)
-    try:
-        from openai import OpenAI
-    except ImportError as error:
-        raise RuntimeError("Install omniflow[llm] to author B-MoCA Functions") from error
-    client = OpenAI(
-        api_key=api_key,
-        base_url=base_url,
-        max_retries=0,
-    )
-    tool = {
-        "type": "function",
-        "function": {
-            "name": "submit_function_bundle",
-            "description": "Submit the ordered semantic Functions for one trace.",
-            "strict": True,
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "functions": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "function_id": {"type": "string"},
-                                "name": {"type": "string"},
-                                "description": {"type": "string"},
-                                "steps": {
-                                    "type": "array",
-                                    "minItems": 1,
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "step": {"type": "integer"},
-                                            "role": {
-                                                "type": "string",
-                                                "enum": ["function", "checker"],
-                                            },
-                                            "reason": {"type": "string"},
-                                        },
-                                        "required": ["step", "role", "reason"],
-                                        "additionalProperties": False,
-                                    },
-                                },
-                            },
-                            "required": [
-                                "function_id",
-                                "name",
-                                "description",
-                                "steps",
-                            ],
-                            "additionalProperties": False,
-                        },
-                    }
-                },
-                "required": ["functions"],
-                "additionalProperties": False,
-            },
-        },
-    }
-
-    def author(prompt: str) -> _AuthorResult:
-        response = client.chat.completions.create(
-            model=str(model),
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You author grounded reusable mobile automation Functions.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            tools=[tool],
-            tool_choice={
-                "type": "function",
-                "function": {"name": "submit_function_bundle"},
-            },
-            stream=False,
-            timeout=float(timeout_seconds),
-        )
-        choices = getattr(response, "choices", None) or ()
-        message = getattr(choices[0], "message", None) if choices else None
-        calls = getattr(message, "tool_calls", None) or ()
-        if len(calls) != 1:
-            raise ValueError("bmoca_function_author_tool_call_required")
-        call = calls[0]
-        if str(getattr(call.function, "name", "") or "") != "submit_function_bundle":
-            raise ValueError("bmoca_function_author_tool_call_invalid")
-        proposal = json.loads(str(getattr(call.function, "arguments", "") or ""))
-        if not isinstance(proposal, dict):
-            raise ValueError("bmoca_function_author_response_invalid")
-        response_usage = getattr(response, "usage", None)
-        return _AuthorResult(
-            proposal=proposal,
-            usage={
-                "prompt_tokens": int(
-                    getattr(response_usage, "prompt_tokens", 0) or 0
-                ),
-                "completion_tokens": int(
-                    getattr(response_usage, "completion_tokens", 0) or 0
-                ),
-                "total_tokens": int(
-                    getattr(response_usage, "total_tokens", 0) or 0
-                ),
-            },
-        )
-
-    return author
 
 
 def evaluate_bmoca_corpus(
@@ -3288,7 +2810,6 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--suite",
         choices=(
-            "build-function-registry",
             "transfer-dp",
             "replay-baselines",
             "mock-e2e",
@@ -3324,31 +2845,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="openai_compatible",
     )
     parser.add_argument("--planner-timeout-sec", type=float, default=60.0)
-    parser.add_argument("--author-model", default="GLM-5.1")
-    parser.add_argument(
-        "--author-endpoint-profile",
-        choices=("openai", "llmthu"),
-        default="llmthu",
-    )
-    parser.add_argument("--author-timeout-sec", type=float, default=120.0)
-    parser.add_argument("--source-env", default="100")
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
-    if args.suite == "build-function-registry":
-        report = build_bmoca_function_registry(
-            args.corpus,
-            args.output,
-            model=str(args.author_model),
-            endpoint_profile=str(args.author_endpoint_profile),
-            timeout_seconds=float(args.author_timeout_sec),
-            source_environment=str(args.source_env),
-            limit_tasks=args.limit_tasks,
-        )
-        print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
-        return 0
     environments = tuple(args.target_environments or ("101", "105"))
     if args.suite in {"device-e2e", "omniflow-e2e"}:
         required = {
@@ -3464,7 +2965,6 @@ if __name__ == "__main__":
 __all__ = [
     "BmocaStep",
     "BmocaTrace",
-    "build_bmoca_function_registry",
     "evaluate_bmoca_corpus",
     "evaluate_function_replay",
     "evaluate_mock_e2e",
