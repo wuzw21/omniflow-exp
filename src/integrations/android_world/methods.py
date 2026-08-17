@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from omniflow.vlm.model_config import resolve_openai_compatible_config
+from src.experiment.protocol import MAX_STEPS
 
 _UNSUPPORTED_SELECTOR_ERROR = (
     "Unsupported AndroidWorld agent selector. Use `omniflow`, `fixed_replay`, "
@@ -217,7 +218,7 @@ class MethodAdapterContext:
     planner_model: str = ""
     model_endpoint_profile: str = ""
     planner_timeout_sec: float | None = None
-    max_steps: int = 20
+    max_steps: int = MAX_STEPS
     raw_replay_run_log: str = ""
     appagent_root: str = ""
     appagent_workspace_root: str = ""

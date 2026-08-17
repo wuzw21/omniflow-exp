@@ -444,10 +444,10 @@ def _record_id(
     if attempt_id or registration_id:
         identity = registration_id or attempt_id
         return (
-            f"one_task.{task}.{method}.{device}."
+            f"result.{task}.{method}.{device}."
             f"{_safe_component(identity, fallback=_sha256(summary_path)[:16])}"
         )
-    return f"one_task.{task}.{method}.{device}.{summary_path.stat().st_mtime_ns}"
+    return f"result.{task}.{method}.{device}.{summary_path.stat().st_mtime_ns}"
 
 
 def _task_sort_key(task_name: str, source_index: dict[str, Any]) -> tuple[int, str]:
@@ -542,7 +542,7 @@ def _row_from_summary(
         "prep_type": _cell(row.get("prep_type")),
         "prep_status": _cell(row.get("prep_status")),
         "prep_stats_summary": _as_repo_relative(row.get("prep_stats_summary")),
-        "run_label": "one_task_summary",
+        "run_label": "result_summary",
         "run_record_id": _record_id(
             task_name,
             method,
@@ -615,7 +615,7 @@ def _row_from_summary(
             summary.get("registration_manifest")
         ),
         "source_summary_sha256": _cell(summary.get("source_summary_sha256")),
-        "notes": "Synced from task-local one_task_summary.json.",
+        "notes": "Synced from task-local result summary (legacy one_task_summary.json).",
     }
     return {column: out.get(column, "") for column in METHOD_MATRIX_COLUMNS}
 
@@ -1012,7 +1012,7 @@ def normalize_latest_flags(rows: list[dict[str, str]]) -> dict[str, int]:
 def method_rows_to_run_records(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     for row in rows:
-        if not row.get("run_record_id", "").startswith("one_task."):
+        if not str(row.get("run_record_id", "")).startswith(("result.", "one_task.")):
             continue
         record = {column: row.get(column, "") for column in RUN_RECORD_COLUMNS}
         record["run_granularity"] = "device"
@@ -1589,7 +1589,7 @@ def sync(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Sync AndroidWorld one-task summaries into master progress tables."
+        description="Sync AndroidWorld result summaries into master progress tables."
     )
     parser.add_argument("--runs-root", default=str(DEFAULT_RUNS_ROOT))
     parser.add_argument("--master-root", default=str(DEFAULT_MASTER_ROOT))
@@ -1602,7 +1602,7 @@ def main() -> int:
     parser.add_argument(
         "--register-summary",
         default="",
-        help="Register one completed one_task_summary.json before syncing.",
+        help="Register one completed result summary (legacy one_task_summary.json) before syncing.",
     )
     parser.add_argument(
         "--attempt-manifest",

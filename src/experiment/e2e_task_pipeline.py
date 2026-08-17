@@ -769,7 +769,7 @@ def qualify_source_function(
     environment.update(
         {
             "ANDROID_SERIAL": args.source_device[1],
-            "OMNIFLOW_MAX_FALLBACK_STEPS": "0",
+            "OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS": "0",
             "OMNITRANSFER_ROOT": str(args.omnitransfer_root),
             "PYTHONPATH": f"{args.repo}:{args.repo / 'src'}:{args.android_world_root}",
         }
@@ -872,7 +872,7 @@ def qualify_source_functions(
     environment.update(
         {
             "ANDROID_SERIAL": args.source_device[1],
-            "OMNIFLOW_MAX_FALLBACK_STEPS": "0",
+            "OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS": "0",
             "OMNITRANSFER_ROOT": str(args.omnitransfer_root),
             "PYTHONPATH": f"{args.repo}:{args.repo / 'src'}:{args.android_world_root}",
         }

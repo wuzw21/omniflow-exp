@@ -75,6 +75,14 @@ opens a new execution phase.
   observation/action bridging, accounting, validation, registration, and
   fallback boundaries. Do not repair a baseline by adding another planner or
   changing its prompt/memory/action contract.
+- `src/integrations/android_world/luna_agent.py` and its MCP bridge are retained
+  only as recorded non-formal Luna reference code. They are not a paper method,
+  are not a public execution entry, and must not produce or register formal
+  AndroidWorld results. Their separate prompt/step-guidance path must not be
+  copied into the OmniFlow experiment kernel.
+- `tools/manual_androidworld_harness.py` is retained for human-only interactive
+  diagnosis. It may not be used to create formal results, refresh canonical
+  memory, or replace the shell entry point for experiment execution.
 
 ## Mandatory per-task testing memory
 

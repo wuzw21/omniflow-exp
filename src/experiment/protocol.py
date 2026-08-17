@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from omniflow.core.config import DEFAULT_MAX_STEPS
+
 METHODS = (
     "fixed_replay",
     "ours",
@@ -23,7 +25,7 @@ SOURCE_DEVICE = ("source5560", "emulator-5560", 5560)
 SOURCE_SEED = 111
 TASK_SEED = 113
 SOURCE_MAX_STEPS = 30
-MAX_STEPS = 20
+MAX_STEPS = DEFAULT_MAX_STEPS
 MAX_FALLBACK_STEPS = 5
 TASK_DEADLINE_SEC = 1800
 STEP_TIMEOUT_SEC = 60

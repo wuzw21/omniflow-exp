@@ -19,6 +19,8 @@ GUI_AGENT_RULES = (
     "Use finished only when current evidence or a previous tool result proves the full task is complete; report one factual outcome and never claim RunLog or Function registration that the host has not confirmed.",
 )
 
+DEFAULT_MAX_STEPS = 20
+
 DEFAULT_PLANNER_SYSTEM_PROMPT = (
     "You are a GUI agent. You are given a task and your action history, with screenshots. "
     + " ".join(GUI_AGENT_RULES)
@@ -42,7 +44,7 @@ class PluginSet:
 
 @dataclass(frozen=True)
 class RuntimeSettings:
-    max_steps: int = 20
+    max_steps: int = DEFAULT_MAX_STEPS
     max_fallback_steps: int | None = None
     max_function_tools: int = 8
 

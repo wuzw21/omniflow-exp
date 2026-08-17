@@ -13,6 +13,7 @@ from typing import Any, Callable
 import xml.etree.ElementTree as ET
 
 from src.integrations.android_world.host import AndroidWorldHost, make_agent_result
+from src.experiment.protocol import MAX_STEPS
 from src.integrations.mobilegpt_runtime import (
     mobilegpt_compatible_xml,
     normalize_mobilegpt_action,
@@ -160,7 +161,7 @@ def build_mobilegpt_agent(
 
         def __init__(self) -> None:
             self.env = env
-            self.max_steps = 20
+            self.max_steps = MAX_STEPS
             self.attempted = False
             self.last_result_data: dict[str, Any] = {}
 

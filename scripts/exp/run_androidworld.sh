@@ -650,7 +650,7 @@ if [[ "$execution_environment" == "bmoca" ]]; then
   set +a
   select_model_endpoint "$formal_model_endpoint_profile"
   validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
-  export OMNIFLOW_MAX_FALLBACK_STEPS=0
+  export OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS=0
   bmoca_command=(
     "$python_bin" -m src.integrations.android_world.launch
     --environment bmoca
@@ -2138,7 +2138,7 @@ import sys
 from pathlib import Path
 
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-model = str((payload.get("one_task") or {}).get("model") or "").strip()
+model = str((payload.get("result") or {}).get("model") or "").strip()
 if not model:
     raise SystemExit("paper_model_missing")
 print(model)

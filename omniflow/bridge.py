@@ -10,7 +10,11 @@ import time
 from typing import Any, TextIO
 
 from omniflow.catalog import CatalogSnapshot, load_catalog, load_default_catalog
-from omniflow.core.config import OmniFlowConfig, RuntimeSettings
+from omniflow.core.config import (
+    DEFAULT_MAX_STEPS,
+    OmniFlowConfig,
+    RuntimeSettings,
+)
 from omniflow.core.model import (
     Action,
     ActionResult,
@@ -25,7 +29,7 @@ from omniflow.runtime.engine import InputRequired, OmniFlow
 from omniflow.vlm.planner import VLMPlanner
 
 PROTOCOL_VERSION = "2025-11-25"
-_DEFAULT_GUI_MAX_STEPS = 20
+_DEFAULT_GUI_MAX_STEPS = DEFAULT_MAX_STEPS
 _MAX_GUI_MAX_STEPS = 64
 
 _FUNCTION_CATALOG_ACTIONS = {

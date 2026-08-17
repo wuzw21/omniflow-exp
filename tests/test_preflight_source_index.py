@@ -313,7 +313,7 @@ def test_source_index_rejects_registered_historical_runlog(
         )
 
 
-def test_source_index_validates_only_selected_task_for_one_task_run(
+def test_source_index_validates_only_selected_task_for_result_run(
     tmp_path: Path,
 ) -> None:
     index = _write_index(tmp_path / "selected")

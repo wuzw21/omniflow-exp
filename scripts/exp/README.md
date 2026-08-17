@@ -61,7 +61,7 @@ Function asset.
 
 ## Pipeline
 
-One normal single-task invocation performs the complete workflow:
+One normal single-result invocation performs the complete workflow:
 
 1. Read the task's successful seed-111 source RunLog from the authoritative
    source index.
@@ -192,6 +192,15 @@ option and preserves all other setup behavior.
 | `OMNIFLOW_OURS_AUTHORING_MANIFEST` | Immutable bundle manifest produced by `androidworld-runlog-harvester` using `omniflow.function-agent-skill-manifest.v1` |
 | `OMNIFLOW_OURS_REVISION_REASON` | Explicit reason for selecting one newly converted immutable Function revision over the existing canonical Store; requires one `--tasks` value |
 | `OMNIFLOW_MEMORY_MOBILEGPT_ROOTS` | Optional colon-separated roots containing sealed MobileGPT semantic memory |
+
+Configuration ownership is intentionally scoped. The experiment axes are only
+task, method, and device; their protocol values and result budget are resolved
+by the shell and `src/experiment/protocol.py`. `OMNIFLOW_ANDROIDWORLD_*` belongs
+to the single-result runner, `OMNIFLOW_E2E_*` belongs to the outer matrix
+scheduler, `OMNIFLOW_OURS_*` and baseline-specific variables belong to source
+asset preparation, and `OMNIFLOW_MEMORY_*` belongs to memory maintenance. Do
+not add a second variable name for an existing setting; add a scoped setting
+only when it controls a distinct boundary.
 
 The source RunLog index defaults to
 `$OMNIFLOW_EXP_ASSET_ROOT/runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json`.

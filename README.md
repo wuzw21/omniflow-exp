@@ -113,7 +113,7 @@ is retained as evaluation evidence rather than retried with changed rules.
 | direct source qualification | 300 s | forbidden | `ours` results |
 | MobileGPT memory preparation | 300 s | frozen baseline implementation | MobileGPT results |
 | AppAgent memory preparation | 360 s | frozen baseline implementation | AppAgent results |
-| each target result | 240 s | frozen method implementation | that result |
+| each target result | 1500 s (`EPISODE_TIMEOUT_SEC`) | frozen method implementation | that result |
 
 These are local caps, not additive reservations. Every child receives only the
 remaining part of the 1800-second global deadline. When no time remains, the
@@ -169,7 +169,7 @@ outside this repository.
 
 ## One source RunLog to method-native replay
 
-The normal single-task command is the complete workflow. It reads one canonical
+The normal single-result command is the complete workflow. It reads one canonical
 human-recorded source RunLog, resolves or creates each selected method's native
 source asset, then continues to target replay and the AndroidWorld official
 validator. It does not stop after Function validation.

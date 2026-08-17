@@ -760,7 +760,7 @@ def test_default_topology_uses_three_distinct_device_instances(
     config = json.loads(
         (REPO / "config" / "paper_androidworld.json").read_text(encoding="utf-8")
     )
-    assert config["one_task"]["source_device"] == completed.stdout.splitlines()[0]
+    assert config["result"]["source_device"] == completed.stdout.splitlines()[0]
 
 
 @pytest.mark.parametrize(

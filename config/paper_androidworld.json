@@ -1,7 +1,7 @@
 {
   "schema_version": "omniflow.androidworld.experiment_config.v1",
   "description": "One AndroidWorld result: one task, one method, and one target device.",
-  "one_task": {
+  "result": {
     "index": "runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json",
     "android_world_root": "runtime/external/droidrun-android-world/android_world",
     "output_path": "runtime/evals/androidworld_single_task_attempt_override_required",

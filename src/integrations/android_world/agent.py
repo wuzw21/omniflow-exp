@@ -13,7 +13,7 @@ from omniflow import (
     RunResult,
     RuntimeSettings,
 )
-from omniflow.core.config import Experiment
+from omniflow.core.config import DEFAULT_MAX_STEPS, Experiment
 from omniflow.core.trajectory import state_id
 from omniflow.transfer.runtime import (
     TRANSFER_STATE_CATALOG_FILENAME,
@@ -26,7 +26,6 @@ from omniflow.transfer.runtime import (
 from src.integrations.android_world.host import AndroidWorldHost, make_agent_result
 
 MODE_OMNIFLOW = "omniflow"
-DEFAULT_RUN_MAX_STEPS = 8
 
 
 class _TaskHost:
@@ -82,7 +81,7 @@ def build_agent(
     store_path: str | None = None,
     runtime: Any | None = None,
     planner: Any | None = None,
-    max_steps: int = DEFAULT_RUN_MAX_STEPS,
+    max_steps: int = DEFAULT_MAX_STEPS,
     adb_serial: str = "",
     adb_path: str = "",
     post_action_wait_seconds: float = 0.0,
@@ -118,7 +117,7 @@ def build_agent(
     transfer_states = load_transfer_state_catalog(transfer_state_path)
     host = _TaskHost(raw_host, state, transfer_states)
     fallback_limit_text = str(
-        os.environ.get("OMNIFLOW_MAX_FALLBACK_STEPS") or ""
+        os.environ.get("OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS") or ""
     ).strip()
     max_fallback_steps = (
         max(0, int(fallback_limit_text)) if fallback_limit_text else None

@@ -570,7 +570,7 @@ def _source_seed_output_root(output_root: str | Path, source_seed: int) -> Path:
     return _repo_path(output_root) / f"source_seed_{int(source_seed)}"
 
 
-def _claim_one_task_attempt(
+def _claim_result_attempt(
     output_root: str | Path,
     *,
     task: str,
@@ -1922,7 +1922,9 @@ def build_e2e_command(
     if serial.strip():
         env["ANDROID_SERIAL"] = serial.strip()
     if resolved_agent == "omniflow" and max_fallback_steps is not None:
-        env["OMNIFLOW_MAX_FALLBACK_STEPS"] = str(max(0, int(max_fallback_steps)))
+        env["OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS"] = str(
+            max(0, int(max_fallback_steps))
+        )
     resolved_omnitransfer_root = (
         _repo_path(omnitransfer_root, repo_root=repo_root)
         if omnitransfer_root
@@ -4919,7 +4921,7 @@ def _profile_summary(profiles: Sequence[SourceRunLogProfile]) -> dict[str, Any]:
 
 MOBILEGPT_METHODS = frozenset({"mobilegpt_offline_retrieval"})
 APPAGENT_METHODS = frozenset({"appagent_demo"})
-_ONE_TASK_NON_EXECUTED_STATUSES = {
+_RESULT_NON_EXECUTED_STATUSES = {
     "INVALID_MEMORY_LEAKAGE",
     "env_failed",
     "init_failed",
@@ -4936,16 +4938,16 @@ def _is_mobilegpt_method(method: str) -> bool:
     return str(method or "").strip() in MOBILEGPT_METHODS
 
 
-def _one_task_record_has_formal_result(record: dict[str, Any]) -> bool:
+def _result_record_has_formal_result(record: dict[str, Any]) -> bool:
     if bool(record.get("summary_exclude")):
         return False
-    if str(record.get("status") or "").strip() in _ONE_TASK_NON_EXECUTED_STATUSES:
+    if str(record.get("status") or "").strip() in _RESULT_NON_EXECUTED_STATUSES:
         return False
     return bool(str(record.get("output_path") or "").strip())
 
 
-def _one_task_formal_result_paths(record: dict[str, Any]) -> list[Path]:
-    if not _one_task_record_has_formal_result(record):
+def _formal_result_paths(record: dict[str, Any]) -> list[Path]:
+    if not _result_record_has_formal_result(record):
         return []
     output_path = _repo_path(str(record.get("output_path") or ""))
     if output_path.is_dir():
@@ -6196,7 +6198,7 @@ def _stop_background_command(process: subprocess.Popen[Any] | None) -> None:
         process.wait(timeout=5)
 
 
-def _normalize_one_task_result_row(row: dict[str, Any]) -> dict[str, Any]:
+def _normalize_result_row(row: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(row)
 
     episode_model_calls = _coerce_int(
@@ -6294,7 +6296,7 @@ def _normalize_one_task_result_row(row: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def _one_task_row_value(row: dict[str, Any], key: str) -> str:
+def _result_row_value(row: dict[str, Any], key: str) -> str:
     if key == "success":
         if row.get("success") is True:
             return "1"
@@ -6316,7 +6318,7 @@ def _one_task_row_value(row: dict[str, Any], key: str) -> str:
     return str(value)
 
 
-_ONE_TASK_METADATA_ROW_KEYS = (
+_RESULT_METADATA_ROW_KEYS = (
     "source_run_log",
     "memory_root",
     "replay_run_log",
@@ -6350,7 +6352,7 @@ _ONE_TASK_METADATA_ROW_KEYS = (
 )
 
 
-def _promote_one_task_metadata_to_row(
+def _promote_result_metadata_to_row(
     row: dict[str, Any],
     records: Sequence[dict[str, Any]],
 ) -> None:
@@ -6358,7 +6360,7 @@ def _promote_one_task_metadata_to_row(
         metadata = (
             record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
         )
-        for key in _ONE_TASK_METADATA_ROW_KEYS:
+        for key in _RESULT_METADATA_ROW_KEYS:
             if key in row and row.get(key) not in (None, "", {}, []):
                 continue
             value = metadata.get(key)
@@ -6386,7 +6388,7 @@ def _record_wall_sec(record: dict[str, Any]) -> float:
     return _coerce_float(value)
 
 
-def _one_task_summary_rows(
+def _result_summary_rows(
     *,
     task: str,
     command_records: Sequence[dict[str, Any]],
@@ -6507,7 +6509,7 @@ def _one_task_summary_rows(
             if str(record.get("status") or "").strip()
         ]
         has_non_executed_status = any(
-            status in _ONE_TASK_NON_EXECUTED_STATUSES for status in explicit_statuses
+            status in _RESULT_NON_EXECUTED_STATUSES for status in explicit_statuses
         )
         row = {} if has_non_executed_status else dict(by_method_device.get(key) or {})
         returncodes = [int(record.get("returncode") or 0) for record in records]
@@ -6540,7 +6542,7 @@ def _one_task_summary_rows(
                 "error": row.get("error") or "; ".join(errors),
             }
         )
-        _promote_one_task_metadata_to_row(row, records)
+        _promote_result_metadata_to_row(row, records)
         if wall_sec > 0:
             row["wall_sec"] = round(wall_sec, 3)
         if _is_mobilegpt_method(method):
@@ -6754,14 +6756,14 @@ def _one_task_summary_rows(
         if key in seen:
             continue
         rows.append({**row, "status": "completed", "returncode": 0})
-    return [_normalize_one_task_result_row(row) for row in rows]
+    return [_normalize_result_row(row) for row in rows]
 
 
-def _aggregate_normalized_one_task_rows(
+def _aggregate_normalized_result_rows(
     aggregate_summary: dict[str, Any],
     rows: Sequence[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Recompute the one-task aggregate from its final canonical rows."""
+    """Recompute the result aggregate from its final canonical rows."""
     aggregate = dict(aggregate_summary)
     for detailed_usage_field in (
         "model_calls",
@@ -6865,7 +6867,7 @@ def _aggregate_normalized_one_task_rows(
     return aggregate
 
 
-def _write_one_task_summary(
+def _write_result_summary(
     *,
     output_root: str | Path,
     task: str,
@@ -6874,12 +6876,12 @@ def _write_one_task_summary(
 ) -> dict[str, Any]:
     task_root = _repo_path(output_root) / _safe_stem(task)
     task_root.mkdir(parents=True, exist_ok=True)
-    rows = _one_task_summary_rows(
+    rows = _result_summary_rows(
         task=task,
         command_records=command_records,
         aggregate_summary=aggregate_summary,
     )
-    canonical_aggregate = _aggregate_normalized_one_task_rows(
+    canonical_aggregate = _aggregate_normalized_result_rows(
         aggregate_summary,
         rows,
     )
@@ -6921,7 +6923,7 @@ def _write_one_task_summary(
     for row in rows:
         md_lines.append(
             "| "
-            + " | ".join(_one_task_row_value(row, key) for key, _ in visible_columns)
+            + " | ".join(_result_row_value(row, key) for key, _ in visible_columns)
             + " |"
         )
     (task_root / "one_task_summary.md").write_text(
@@ -6931,7 +6933,7 @@ def _write_one_task_summary(
     return summary
 
 
-def _print_one_task_summary(summary: dict[str, Any]) -> None:
+def _print_result_summary(summary: dict[str, Any]) -> None:
     visible_columns = [
         ("method", "method"),
         ("device", "device"),
@@ -6950,7 +6952,7 @@ def _print_one_task_summary(summary: dict[str, Any]) -> None:
     for row in summary.get("rows") or []:
         print(
             "| "
-            + " | ".join(_one_task_row_value(row, key) for key, _ in visible_columns)
+            + " | ".join(_result_row_value(row, key) for key, _ in visible_columns)
             + " |",
             flush=True,
         )
@@ -7174,7 +7176,7 @@ def _configure_mobilegpt_formal_server(
     )
 
 
-def _run_one_task_mobilegpt(
+def _run_result_mobilegpt(
     *,
     args: argparse.Namespace,
     item: ArchivedRunLog,
@@ -7623,7 +7625,7 @@ def cmd_result(args: argparse.Namespace) -> int:
         if bool(args.random_task_seed)
         else args.task_random_seed
     )
-    attempt_manifest_path = _claim_one_task_attempt(
+    attempt_manifest_path = _claim_result_attempt(
         attempt_root,
         task=item.task,
         methods=methods,
@@ -7644,7 +7646,7 @@ def cmd_result(args: argparse.Namespace) -> int:
         appagent_docs_root: Path | None = None
         appagent_prep: dict[str, Any] = {}
         if _is_mobilegpt_method(method):
-            mobilegpt_records, mobilegpt_failed = _run_one_task_mobilegpt(
+            mobilegpt_records, mobilegpt_failed = _run_result_mobilegpt(
                 args=args,
                 item=item,
                 targets=targets,
@@ -7666,7 +7668,7 @@ def cmd_result(args: argparse.Namespace) -> int:
             store_text = str(args.store_path or "").strip()
             if not store_text:
                 raise ValueError(
-                    f"--store-path is required when one-task includes {method}"
+                    f"--store-path is required when result includes {method}"
                 )
             store_path = _repo_path(store_text)
         else:
@@ -7989,7 +7991,7 @@ def cmd_result(args: argparse.Namespace) -> int:
     aggregate_paths = [
         path
         for record in command_records
-        for path in _one_task_formal_result_paths(record)
+        for path in _formal_result_paths(record)
     ]
     aggregate_summary = aggregate_task_results([] if args.dry_run else aggregate_paths)
     source_runlog_summary: dict[str, Any] = {}
@@ -8001,7 +8003,7 @@ def cmd_result(args: argparse.Namespace) -> int:
             output_root=output_root,
         )
         aggregate_summary["success_source_runlogs"] = source_runlog_summary
-    summary = _write_one_task_summary(
+    summary = _write_result_summary(
         output_root=output_root,
         task=item.task,
         command_records=command_records,
@@ -8028,14 +8030,14 @@ def cmd_result(args: argparse.Namespace) -> int:
             if os.environ.get("OMNIFLOW_EXP_MEMORY_INDEX")
             else None,
         )
-    _print_one_task_summary(summary)
+    _print_result_summary(summary)
     print(
-        f"[one-task] summary={summary_path}",
+        f"[result] summary={summary_path}",
         flush=True,
     )
     if result_registration:
         print(
-            "[one-task] registered="
+            "[result] registered="
             f"{result_registration.get('registered_cells', 0)} "
             f"ledger_appended={result_registration.get('ledger_records_appended', 0)} "
             f"master={master_progress_root}",
@@ -8043,7 +8045,7 @@ def cmd_result(args: argparse.Namespace) -> int:
         )
     if source_runlog_summary:
         print(
-            "[one-task] success_source_runlogs="
+            "[result] success_source_runlogs="
             f"{source_runlog_summary.get('saved_count', 0)} "
             f"index={source_runlog_summary.get('global_index_by_task') or ''}",
             flush=True,
@@ -8059,15 +8061,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    one_task_parser = subparsers.add_parser(
+    result_parser = subparsers.add_parser(
         "result",
         help=(
             "Run exactly one AndroidWorld method on one device for one archived "
             "task"
         ),
     )
-    one_task_parser.add_argument("--index", default=str(DEFAULT_ARCHIVE_INDEX))
-    one_task_parser.add_argument(
+    result_parser.add_argument("--index", default=str(DEFAULT_ARCHIVE_INDEX))
+    result_parser.add_argument(
         "--master-source-index",
         default="",
         help=(
@@ -8075,10 +8077,10 @@ def build_parser() -> argparse.ArgumentParser:
             "Defaults to --index; task-limited execution indexes must override it."
         ),
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--android-world-root", default=str(DEFAULT_ANDROID_WORLD_ROOT)
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--output-path",
         dest="output_path",
         default=str(DEFAULT_OUTPUT_ROOT),
@@ -8087,7 +8089,7 @@ def build_parser() -> argparse.ArgumentParser:
             "runtime/evals/androidworld_validator/runs root is rejected."
         ),
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--result-registry-root",
         default=os.environ.get("ANDROIDWORLD_RESULT_REGISTRY_ROOT", ""),
         help=(
@@ -8095,7 +8097,7 @@ def build_parser() -> argparse.ArgumentParser:
             "to the androidworld_validator root containing --index."
         ),
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--master-progress-root",
         default=os.environ.get("ANDROIDWORLD_MASTER_PROGRESS_ROOT", ""),
         help=(
@@ -8103,7 +8105,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Defaults beside --result-registry-root."
         ),
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--experiment-config",
         default="",
         help=(
@@ -8111,9 +8113,9 @@ def build_parser() -> argparse.ArgumentParser:
             "arguments override config values."
         ),
     )
-    one_task_parser.add_argument("--task", required=True)
-    one_task_parser.add_argument("--source-seed", type=int, default=SOURCE_SEED)
-    one_task_parser.add_argument(
+    result_parser.add_argument("--task", required=True)
+    result_parser.add_argument("--source-seed", type=int, default=SOURCE_SEED)
+    result_parser.add_argument(
         "--task-iteration",
         type=int,
         choices=range(1, 4),
@@ -8123,7 +8125,7 @@ def build_parser() -> argparse.ArgumentParser:
             "revisions are capped at three; setup/preflight is recorded separately."
         ),
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--baseline-environment-repair",
         default="",
         help=(
@@ -8131,23 +8133,23 @@ def build_parser() -> argparse.ArgumentParser:
             "failure. This never authorizes changing baseline method details."
         ),
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--method",
         choices=METHODS,
         default=DEFAULT_SOURCE_METHOD,
         help="One paper method for this AndroidWorld result.",
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--store-path",
         default="",
         help=("Validated omniflow.store.v2 required by the OmniFlow methods."),
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--store-index",
         default="",
         help="Canonical task-to-Store index used by frozen source assets.",
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--omnitransfer-root",
         default="",
         help=(
@@ -8155,26 +8157,26 @@ def build_parser() -> argparse.ArgumentParser:
             "root is authoritative over installed Python packages."
         ),
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--device",
         default=DEFAULT_DEVICE,
         help="One LABEL:SERIAL:PORT AndroidWorld target device.",
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--source-device",
         default="",
         help=argparse.SUPPRESS,
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--source-format",
         choices=["all", "ready", "canonical", "payload"],
         default="all",
     )
-    one_task_parser.add_argument("--accepted-first30", action="store_true")
-    one_task_parser.add_argument("--limit", type=int, default=None)
-    one_task_parser.add_argument("--adb-path", default="")
-    one_task_parser.add_argument("--max-steps", type=int, default=MAX_STEPS)
-    one_task_parser.add_argument(
+    result_parser.add_argument("--accepted-first30", action="store_true")
+    result_parser.add_argument("--limit", type=int, default=None)
+    result_parser.add_argument("--adb-path", default="")
+    result_parser.add_argument("--max-steps", type=int, default=MAX_STEPS)
+    result_parser.add_argument(
         "--max-fallback-steps",
         type=int,
         default=None,
@@ -8183,47 +8185,47 @@ def build_parser() -> argparse.ArgumentParser:
             "consume this budget; omitted means the normal max-step behavior."
         ),
     )
-    one_task_parser.add_argument("--timeout-sec", type=int, default=EPISODE_TIMEOUT_SEC)
-    one_task_parser.add_argument(
+    result_parser.add_argument("--timeout-sec", type=int, default=EPISODE_TIMEOUT_SEC)
+    result_parser.add_argument(
         "--task-random-seed",
         type=int,
         default=DEFAULT_TASK_RANDOM_SEED,
         help="AndroidWorld warm/target seed. Formal experiments use 113.",
     )
-    one_task_parser.add_argument("--random-task-seed", action="store_true")
-    one_task_parser.add_argument("--no-fixed-task-seed", action="store_true")
-    one_task_parser.add_argument("--no-fixed-task-params", action="store_true")
-    one_task_parser.add_argument(
+    result_parser.add_argument("--random-task-seed", action="store_true")
+    result_parser.add_argument("--no-fixed-task-seed", action="store_true")
+    result_parser.add_argument("--no-fixed-task-params", action="store_true")
+    result_parser.add_argument(
         "--task-params-json",
         default="",
         help="Override archived task params with this JSON object.",
     )
-    one_task_parser.add_argument("--planner-provider", default="")
-    one_task_parser.add_argument("--model", default="")
-    one_task_parser.add_argument(
+    result_parser.add_argument("--planner-provider", default="")
+    result_parser.add_argument("--model", default="")
+    result_parser.add_argument(
         "--planner-timeout-sec", type=float, default=STEP_TIMEOUT_SEC
     )
-    _add_androidworld_setup_args(one_task_parser)
-    one_task_parser.add_argument(
+    _add_androidworld_setup_args(result_parser)
+    result_parser.add_argument(
         "--mobilegpt-root", default=str(DEFAULT_MOBILEGPT_ROOT)
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--appagent-root",
         default=str(REPO_ROOT / "runtime" / "external" / "appagent"),
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--appagent-demo-memory-root",
         default="",
         help=(
             "Sealed source-111 AppAgent human-demo workspace required by appagent_demo."
         ),
     )
-    one_task_parser.add_argument("--mobilegpt-server-host", default="0.0.0.0")
-    one_task_parser.add_argument("--mobilegpt-port", type=int, default=12345)
-    one_task_parser.add_argument(
+    result_parser.add_argument("--mobilegpt-server-host", default="0.0.0.0")
+    result_parser.add_argument("--mobilegpt-port", type=int, default=12345)
+    result_parser.add_argument(
         "--mobilegpt-server-warmup-sec", type=float, default=5.0
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--mobilegpt-wait-start-timeout-sec",
         type=float,
         default=DEFAULT_MOBILEGPT_WAIT_START_TIMEOUT_SEC,
@@ -8232,7 +8234,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Use -1 to wait indefinitely."
         ),
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--mobilegpt-episode-wait-timeout-sec",
         type=float,
         default=DEFAULT_MOBILEGPT_EPISODE_WAIT_TIMEOUT_SEC,
@@ -8241,20 +8243,20 @@ def build_parser() -> argparse.ArgumentParser:
             "AndroidWorld validation. Use -1 to wait indefinitely."
         ),
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--mobilegpt-app-ready-timeout-sec",
         type=float,
         default=DEFAULT_MOBILEGPT_APP_READY_TIMEOUT_SEC,
         help="Seconds to wait for indexed target-app UI after each app launch.",
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--mobilegpt-app-ready-poll-sec",
         type=float,
         default=DEFAULT_MOBILEGPT_APP_READY_POLL_SEC,
         help="Polling interval for target-app UI readiness.",
     )
-    one_task_parser.add_argument("--mobilegpt-open-target-app", default="")
-    one_task_parser.add_argument(
+    result_parser.add_argument("--mobilegpt-open-target-app", default="")
+    result_parser.add_argument(
         "--mobilegpt-source-memory-root",
         default="",
         help=(
@@ -8263,7 +8265,7 @@ def build_parser() -> argparse.ArgumentParser:
             "it starts warm from an immutable snapshot."
         ),
     )
-    one_task_parser.add_argument(
+    result_parser.add_argument(
         "--save-success-source-runlog",
         action="store_true",
         help=(
@@ -8272,9 +8274,9 @@ def build_parser() -> argparse.ArgumentParser:
             "by default so target evaluation remains read-only with respect to memory."
         ),
     )
-    one_task_parser.add_argument("--dry-run", action="store_true")
-    one_task_parser.add_argument("--fail-fast", action="store_true")
-    one_task_parser.set_defaults(func=cmd_result)
+    result_parser.add_argument("--dry-run", action="store_true")
+    result_parser.add_argument("--fail-fast", action="store_true")
+    result_parser.set_defaults(func=cmd_result)
     return parser
 
 

@@ -36,6 +36,7 @@ from src.experiment.observation_evidence import (
     persist_target_run_evidence,
     transfer_state_coverage_audit,
 )
+from src.experiment.protocol import MAX_STEPS
 from src.experiment.result_registry import (
     mobilegpt_runtime_integrity_error as _mobilegpt_runtime_integrity_error,
 )
@@ -3548,7 +3549,7 @@ def _build_launch_agent(
     planner_model: str = "",
     model_endpoint_profile: str = "",
     planner_timeout_sec: float | None = None,
-    max_steps: int = 20,
+    max_steps: int = MAX_STEPS,
     raw_replay_run_log: str = "",
     appagent_root: str = "",
     appagent_workspace_root: str = "",
@@ -3637,7 +3638,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--show-emulator", action="store_true")
     parser.add_argument("--suite-family", default="android_world")
     parser.add_argument("--tasks", default="ContactsAddContact")
-    parser.add_argument("--max-steps", type=int, default=20)
+    parser.add_argument("--max-steps", type=int, default=MAX_STEPS)
     parser.add_argument("--task-random-seed", type=int, default=30)
     parser.add_argument("--n-task-combinations", type=int, default=1)
     parser.add_argument("--console-port", type=int, default=5554)

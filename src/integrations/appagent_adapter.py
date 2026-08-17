@@ -29,7 +29,10 @@ from src.integrations.android_world.host import (
 )
 from src.integrations.runlog import import_run_log, project_androidworld_step_actions
 from src.integrations.android_world.host import androidworld_elements_xml
-from src.experiment.protocol import SOURCE_SEED as APPAGENT_SOURCE_SEED
+from src.experiment.protocol import (
+    MAX_STEPS,
+    SOURCE_SEED as APPAGENT_SOURCE_SEED,
+)
 
 APPAGENT_OFFICIAL_REVISION = "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
 APPAGENT_TEACHER_SOURCE_SCHEMA = "omniflow.appagent-teacher-source.v2"
@@ -415,7 +418,7 @@ class AppAgentAndroidWorldAgent:
         self.grid_columns = 0
         self._app_prepared = False
         self._startup_action_count = 0
-        self._max_steps = 20
+        self._max_steps = MAX_STEPS
         self._log_path = self.output_root / "appagent_task_log.jsonl"
 
     def set_max_steps(self, max_steps: int) -> None:

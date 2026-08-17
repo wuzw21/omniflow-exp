@@ -25,7 +25,7 @@ def _load_gui_max_steps():
         or isinstance(node, ast.FunctionDef)
         and node.name == "_gui_max_steps"
     ]
-    namespace: dict[str, Any] = {"Any": Any}
+    namespace: dict[str, Any] = {"Any": Any, "DEFAULT_MAX_STEPS": 20}
     exec(compile(ast.Module(body=selected, type_ignores=[]), bridge_path, "exec"), namespace)
     return namespace["_gui_max_steps"]
 

@@ -6,7 +6,7 @@ from omniflow.core.model import Action, Function, FunctionStep
 from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION, FunctionStore
 from src.experiment.androidworld import (
     ArchivedRunLog,
-    _promote_one_task_metadata_to_row,
+    _promote_result_metadata_to_row,
     _select_complete_function,
     _t3a_hint_action_identity,
     _t3a_hint_step_action,
@@ -17,7 +17,7 @@ from src.experiment.protocol import METHODS
 from src.integrations.android_world.launch import _render_official_reference_prompt
 
 
-def test_formal_one_task_method_set_is_exact() -> None:
+def test_formal_result_method_set_is_exact() -> None:
     assert list(METHODS) == [
         "fixed_replay",
         "ours",
@@ -292,7 +292,7 @@ def test_t3a_hint_alignment_normalizes_androidworld_key_aliases(
 def test_fixed_replay_coordinate_metadata_is_promoted() -> None:
     row: dict[str, object] = {}
 
-    _promote_one_task_metadata_to_row(
+    _promote_result_metadata_to_row(
         row,
         [
             {

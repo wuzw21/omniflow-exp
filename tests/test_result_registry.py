@@ -178,7 +178,7 @@ def _write_registered_result(
     )
 
 
-def test_unregistered_one_task_summary_is_not_loaded(tmp_path: Path) -> None:
+def test_unregistered_result_summary_is_not_loaded(tmp_path: Path) -> None:
     _write_json(
         tmp_path / "attempt" / "one_task_summary.json",
         {
