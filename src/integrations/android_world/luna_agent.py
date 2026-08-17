@@ -148,6 +148,10 @@ class LunaAndroidWorldHarness:
         params = getattr(task, "params", {})
         return {"task_parameters": dict(params) if isinstance(params, dict) else {}}
 
+    def set_max_steps(self, step_budget: int) -> None:
+        self.max_steps = max(1, int(step_budget))
+        self._planner.max_steps = self.max_steps
+
     def luna_diagnostics(self) -> dict[str, Any]:
         if self._last_result is None:
             return {
