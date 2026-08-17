@@ -98,7 +98,9 @@ def _score_function(
     entry_step = function_entry_step(function)
     source_state_id = entry_step.source_state_id if entry_step is not None else ""
     source_observation = source_states.get(source_state_id)
-    source_page = encoder.embed(source_observation) if source_observation is not None else None
+    source_page = (
+        encoder.embed(source_observation) if source_observation is not None else None
+    )
     page_similarity = (
         _cosine(current_page.vector, source_page.vector)
         if source_page is not None
@@ -108,10 +110,7 @@ def _score_function(
         _tokens(goal),
         _tokens(f"{function.name} {function.description}"),
     )
-    score = (
-        PAGE_SIMILARITY_WEIGHT * page_similarity
-        + GOAL_LEXICAL_WEIGHT * goal_score
-    )
+    score = PAGE_SIMILARITY_WEIGHT * page_similarity + GOAL_LEXICAL_WEIGHT * goal_score
 
     return {
         "function_id": function.id,

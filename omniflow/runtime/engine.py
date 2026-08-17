@@ -138,7 +138,9 @@ class OmniFlow:
         function_resolution: dict[str, Any] = {
             "candidate_count": 0,
             "candidate_function_ids": [],
-            "status": "direct" if direct_tool_call is not None else "planner_tool_space",
+            "status": "direct"
+            if direct_tool_call is not None
+            else "planner_tool_space",
         }
 
         def finish(success: bool, **kwargs: Any) -> RunResult:
@@ -249,9 +251,7 @@ class OmniFlow:
                     llm_usage=llm_usage,
                     error=None,
                     final_state=observation,
-                    terminal_detail={
-                        "done_reason": "function_completed"
-                    },
+                    terminal_detail={"done_reason": "function_completed"},
                 )
 
         if direct_tool_call is not None and selected_function is None:
@@ -348,15 +348,14 @@ class OmniFlow:
             if (
                 fallback_this_turn
                 and max_fallback_steps is not None
-                and fallback_steps >= max(
-                    0, int(max_fallback_steps)
-                )
+                and fallback_steps >= max(0, int(max_fallback_steps))
             ):
                 return finish(
                     False,
                     profile=profile,
                     trace=trace,
-                    function_id=function_session.selected_id or function_session.failed_id,
+                    function_id=function_session.selected_id
+                    or function_session.failed_id,
                     actions_executed=actions_executed,
                     model_calls=model_calls,
                     llm_usage=llm_usage,
@@ -378,11 +377,7 @@ class OmniFlow:
                 if evidence_function is not None
                 else None
             )
-            if (
-                previous_action_error
-                or pending_user_input
-                or function_execution
-            ):
+            if previous_action_error or pending_user_input or function_execution:
                 observation = Observation(
                     xml=observation.xml,
                     package_name=observation.package_name,
@@ -447,7 +442,8 @@ class OmniFlow:
                     False,
                     profile=profile,
                     trace=trace,
-                    function_id=function_session.selected_id or function_session.failed_id,
+                    function_id=function_session.selected_id
+                    or function_session.failed_id,
                     actions_executed=actions_executed,
                     model_calls=model_calls,
                     llm_usage=llm_usage,
@@ -548,9 +544,7 @@ class OmniFlow:
                 actions_executed += replay.actions_executed
                 replay_trace = list(replay.detail.get("trace") or ())
                 trace.extend(replay_trace)
-                checker_decisions.extend(
-                    replay.detail.get("checker_decisions") or ()
-                )
+                checker_decisions.extend(replay.detail.get("checker_decisions") or ())
                 observation = replay.final_state or observation
                 if replay.success:
                     if resume_event is not None:
@@ -600,7 +594,8 @@ class OmniFlow:
                         False,
                         profile=profile,
                         trace=trace,
-                        function_id=function_session.selected_id or function_session.failed_id,
+                        function_id=function_session.selected_id
+                        or function_session.failed_id,
                         actions_executed=actions_executed,
                         model_calls=model_calls,
                         llm_usage=llm_usage,
@@ -616,7 +611,8 @@ class OmniFlow:
                     True,
                     profile=profile,
                     trace=trace,
-                    function_id=function_session.selected_id or function_session.failed_id,
+                    function_id=function_session.selected_id
+                    or function_session.failed_id,
                     actions_executed=actions_executed,
                     model_calls=model_calls,
                     llm_usage=llm_usage,
@@ -634,7 +630,8 @@ class OmniFlow:
                     False,
                     profile=profile,
                     trace=trace,
-                    function_id=function_session.selected_id or function_session.failed_id,
+                    function_id=function_session.selected_id
+                    or function_session.failed_id,
                     actions_executed=actions_executed,
                     model_calls=model_calls,
                     llm_usage=llm_usage,
@@ -659,7 +656,8 @@ class OmniFlow:
                         False,
                         profile=profile,
                         trace=trace,
-                        function_id=function_session.selected_id or function_session.failed_id,
+                        function_id=function_session.selected_id
+                        or function_session.failed_id,
                         actions_executed=actions_executed,
                         model_calls=model_calls,
                         llm_usage=llm_usage,
@@ -677,7 +675,8 @@ class OmniFlow:
                         False,
                         profile=profile,
                         trace=trace,
-                        function_id=function_session.selected_id or function_session.failed_id,
+                        function_id=function_session.selected_id
+                        or function_session.failed_id,
                         actions_executed=actions_executed,
                         model_calls=model_calls,
                         llm_usage=llm_usage,
@@ -707,7 +706,8 @@ class OmniFlow:
                         False,
                         profile=profile,
                         trace=trace,
-                        function_id=function_session.selected_id or function_session.failed_id,
+                        function_id=function_session.selected_id
+                        or function_session.failed_id,
                         actions_executed=actions_executed,
                         model_calls=model_calls,
                         llm_usage=llm_usage,
@@ -744,7 +744,8 @@ class OmniFlow:
                     False,
                     profile=profile,
                     trace=trace,
-                    function_id=function_session.selected_id or function_session.failed_id,
+                    function_id=function_session.selected_id
+                    or function_session.failed_id,
                     actions_executed=actions_executed,
                     model_calls=model_calls,
                     llm_usage=llm_usage,
@@ -859,9 +860,7 @@ class OmniFlow:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(
-                self.acall_tool(tool_call, experiment=experiment)
-            )
+            return asyncio.run(self.acall_tool(tool_call, experiment=experiment))
         raise RuntimeError(
             "OmniFlow.call_tool cannot run inside an event loop; await acall_tool"
         )
@@ -980,9 +979,10 @@ def _function_execution_evidence(
         if not isinstance(raw_step, dict):
             continue
         metadata = raw_step.get("metadata")
-        if not isinstance(metadata, dict) or str(
-            metadata.get("function_id") or ""
-        ).strip() != function.id:
+        if (
+            not isinstance(metadata, dict)
+            or str(metadata.get("function_id") or "").strip() != function.id
+        ):
             continue
         try:
             action = Action.from_value(raw_step.get("action"))
@@ -997,9 +997,11 @@ def _function_execution_evidence(
             "tool": action.tool,
             "success": success,
         }
-        if not success and isinstance(result, dict) and str(
-            result.get("error") or ""
-        ).strip():
+        if (
+            not success
+            and isinstance(result, dict)
+            and str(result.get("error") or "").strip()
+        ):
             step["error"] = str(result["error"])
         steps.append(step)
     final_state_id = str(final_observation.extra.get("state_id") or "").strip()
@@ -1058,12 +1060,16 @@ def _record_planner_action_result(planner: Planner, step: Any) -> None:
             },
             "state_transition": {
                 "before_state_id": (
-                    str(before.extra.get("state_id") or "") if before is not None else ""
+                    str(before.extra.get("state_id") or "")
+                    if before is not None
+                    else ""
                 ),
                 "after_state_id": (
                     str(after.extra.get("state_id") or "") if after is not None else ""
                 ),
-                "changed": bool(after is not None and not _same_observation(before, after)),
+                "changed": bool(
+                    after is not None and not _same_observation(before, after)
+                ),
                 "before_package": (
                     str(before.package_name or "") if before is not None else ""
                 ),

@@ -27,9 +27,8 @@ import numpy as np
 
 from omniflow.core.model import Observation
 from omniflow.functions.assets import FunctionStore, parse_function_artifact
-from omniflow.transfer.runtime import TRANSFER_STATE_CATALOG_VERSION
 from omniflow.transfer.embedding import ElementEmbedding, PageEncoder, TreeEmbedding
-from omniflow.transfer.runtime import load_omnitransfer
+from omniflow.transfer.runtime import TRANSFER_STATE_CATALOG_VERSION, load_omnitransfer
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from src.experiment.transfer_replay import (
     ReplayToken,
@@ -168,14 +167,15 @@ def evaluate_trace_pair(
     alignment = align_transfer_replay(
         tuple(ReplayToken(step.index, step.action_kind) for step in source.steps),
         tuple(ReplayToken(step.index, step.action_kind) for step in target.steps),
-        tuple(
-            tuple(item.probability for item in row)
-            for row in evidence
-        ),
+        tuple(tuple(item.probability for item in row) for row in evidence),
     )
     dp_seconds = time.perf_counter() - dp_started
-    source_positions = {step.index: position for position, step in enumerate(source.steps)}
-    target_positions = {step.index: position for position, step in enumerate(target.steps)}
+    source_positions = {
+        step.index: position for position, step in enumerate(source.steps)
+    }
+    target_positions = {
+        step.index: position for position, step in enumerate(target.steps)
+    }
     selector_positions = [
         position
         for position, step in enumerate(source.steps)
@@ -189,11 +189,15 @@ def evaluate_trace_pair(
     for source_position in selector_positions:
         source_step = source.steps[source_position]
         if source_position >= len(target.steps):
-            fixed_matches.append(_missing_match(source_step, reason="target_step_missing"))
+            fixed_matches.append(
+                _missing_match(source_step, reason="target_step_missing")
+            )
             continue
         target_step = target.steps[source_position]
         fixed_matches.append(
-            _match_record(source_step, target_step, evidence[source_position][source_position])
+            _match_record(
+                source_step, target_step, evidence[source_position][source_position]
+            )
         )
 
     dp_by_source = {pair.source_index: pair for pair in alignment.pairs}
@@ -202,7 +206,9 @@ def evaluate_trace_pair(
         source_step = source.steps[source_position]
         pair = dp_by_source.get(source_step.index)
         if pair is None:
-            dp_matches.append(_missing_match(source_step, reason="dp_correspondence_missing"))
+            dp_matches.append(
+                _missing_match(source_step, reason="dp_correspondence_missing")
+            )
             continue
         target_position = target_positions[pair.target_index]
         target_step = target.steps[target_position]
@@ -260,7 +266,10 @@ def load_bmoca_traces(corpus_root: str | Path) -> tuple[BmocaTrace, ...]:
         if not isinstance(record, dict):
             raise ValueError("bmoca_trace_record_invalid")
         evidence = record.get("success_evidence")
-        if not isinstance(evidence, dict) or evidence.get("official_success") is not True:
+        if (
+            not isinstance(evidence, dict)
+            or evidence.get("official_success") is not True
+        ):
             continue
         runlog_entry = record.get("runlog")
         state_entry = record.get("state_catalog")
@@ -302,7 +311,10 @@ def build_bmoca_function_registry(
         if str(record.get("environment_id") or "") != str(source_environment):
             continue
         evidence = record.get("success_evidence")
-        if not isinstance(evidence, dict) or evidence.get("official_success") is not True:
+        if (
+            not isinstance(evidence, dict)
+            or evidence.get("official_success") is not True
+        ):
             continue
         task_id = str(record.get("task_id") or "").strip()
         if not task_id:
@@ -344,7 +356,9 @@ def build_bmoca_function_registry(
         catalog = _read_object(_asset_path(corpus, state_entry))
         steps = _bmoca_success_steps(runlog)
         states = _bmoca_registry_states(catalog, runlog=runlog)
-        prompt = _bmoca_authoring_prompt(task_id, str(runlog.get("goal") or ""), steps, states)
+        prompt = _bmoca_authoring_prompt(
+            task_id, str(runlog.get("goal") or ""), steps, states
+        )
         raw_authored = resolved_author(prompt)
         if isinstance(raw_authored, _AuthorResult):
             proposal = raw_authored.proposal
@@ -397,9 +411,8 @@ def build_bmoca_function_registry(
         store.put_function(function)
     catalog_payload = {
         "schema_version": TRANSFER_STATE_CATALOG_VERSION,
-        "run_id": "bmoca-global-" + hashlib.sha256(
-            "\n".join(task_ids).encode("utf-8")
-        ).hexdigest()[:20],
+        "run_id": "bmoca-global-"
+        + hashlib.sha256("\n".join(task_ids).encode("utf-8")).hexdigest()[:20],
         "states": dict(sorted(merged_states.items())),
     }
     _write_report(destination / "transfer_states.json", catalog_payload)
@@ -408,9 +421,7 @@ def build_bmoca_function_registry(
         "model": str(model),
         "source_environment": str(source_environment),
         "store_path": str((destination / "store.json").resolve()),
-        "transfer_states_path": str(
-            (destination / "transfer_states.json").resolve()
-        ),
+        "transfer_states_path": str((destination / "transfer_states.json").resolve()),
         "tasks": task_reports,
         "usage": usage,
         "summary": {
@@ -634,7 +645,9 @@ def _openai_bmoca_author(
     try:
         from openai import OpenAI
     except ImportError as error:
-        raise RuntimeError("Install omniflow[llm] to author B-MoCA Functions") from error
+        raise RuntimeError(
+            "Install omniflow[llm] to author B-MoCA Functions"
+        ) from error
     client = OpenAI(
         api_key=api_key,
         base_url=base_url,
@@ -725,15 +738,11 @@ def _openai_bmoca_author(
         return _AuthorResult(
             proposal=proposal,
             usage={
-                "prompt_tokens": int(
-                    getattr(response_usage, "prompt_tokens", 0) or 0
-                ),
+                "prompt_tokens": int(getattr(response_usage, "prompt_tokens", 0) or 0),
                 "completion_tokens": int(
                     getattr(response_usage, "completion_tokens", 0) or 0
                 ),
-                "total_tokens": int(
-                    getattr(response_usage, "total_tokens", 0) or 0
-                ),
+                "total_tokens": int(getattr(response_usage, "total_tokens", 0) or 0),
             },
         )
 
@@ -857,7 +866,9 @@ def evaluate_bmoca_corpus(
                     )
                     continue
                 for source in sorted(sources, key=lambda trace: trace.trace_id):
-                    for target in sorted(target_traces, key=lambda trace: trace.trace_id):
+                    for target in sorted(
+                        target_traces, key=lambda trace: trace.trace_id
+                    ):
                         if accelerated:
                             candidate_started = time.perf_counter()
                             candidate_cells = _transfer_candidate_cells(
@@ -908,12 +919,10 @@ def evaluate_bmoca_corpus(
                 "wall_seconds": time.perf_counter() - evaluation_started,
                 "candidate_search_seconds": candidate_search_seconds,
                 "transfer_scoring_seconds": sum(
-                    result["timing"]["transfer_scoring_seconds"]
-                    for result in results
+                    result["timing"]["transfer_scoring_seconds"] for result in results
                 ),
                 "dp_decode_seconds": sum(
-                    result["timing"]["dp_decode_seconds"]
-                    for result in results
+                    result["timing"]["dp_decode_seconds"] for result in results
                 ),
             },
             "transfer_score_cache": {
@@ -1106,8 +1115,7 @@ def evaluate_mock_e2e(
     invalid_methods = sorted(set(resolved_methods) - set(_MOCK_E2E_METHODS))
     if not resolved_methods or invalid_methods:
         raise ValueError(
-            "mock_methods_invalid:"
-            + ",".join(invalid_methods or ["empty"])
+            "mock_methods_invalid:" + ",".join(invalid_methods or ["empty"])
         )
     started = time.perf_counter()
     matcher_preflight = None
@@ -1141,9 +1149,7 @@ def evaluate_mock_e2e(
     encoder = PageEncoder()
     artifact_cache: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
     page_cache: dict[tuple[str, str], TreeEmbedding] = {}
-    transfer_cache: dict[
-        tuple[str, int, str, int], TransferMatchScore
-    ] = {}
+    transfer_cache: dict[tuple[str, int, str, int], TransferMatchScore] = {}
     episodes = []
     for source, target, action_map, page_map in pairs:
         source_runlog, source_states = _baseline_trace_artifacts(
@@ -1197,9 +1203,7 @@ def evaluate_mock_e2e(
             )
         episodes.append(
             {
-                "episode_id": (
-                    f"{source.task_id}:env100-env{target.environment_id}"
-                ),
+                "episode_id": (f"{source.task_id}:env100-env{target.environment_id}"),
                 "task_id": source.task_id,
                 "source_trace_id": source.trace_id,
                 "target_trace_id": target.trace_id,
@@ -1284,12 +1288,10 @@ def evaluate_function_replay(
     }
     for episode in raw["episodes"]:
         episode["methods"] = {
-            method_names[name]: value
-            for name, value in episode["methods"].items()
+            method_names[name]: value for name, value in episode["methods"].items()
         }
     raw["summary"]["methods"] = {
-        method_names[name]: value
-        for name, value in raw["summary"]["methods"].items()
+        method_names[name]: value for name, value in raw["summary"]["methods"].items()
     }
     raw["schema_version"] = "omniflow.bmoca-function-replay.v1"
     raw["configuration"].update(
@@ -1301,7 +1303,12 @@ def evaluate_function_replay(
             "vlm_model_calls": 0,
             "fallback_steps": 0,
             "grounding": "current_target_page_only",
-            "selector_controls": ["text", "content_description", "resource_id", "class"],
+            "selector_controls": [
+                "text",
+                "content_description",
+                "resource_id",
+                "class",
+            ],
             "vlm_fallback": "disabled",
             "source_coordinate_fallback": "disabled",
         }
@@ -1327,7 +1334,11 @@ def _load_baseline_traces(
         trace_id = str(raw.get("trace_id") or "").strip()
         runlog = raw.get("runlog")
         catalog = raw.get("state_catalog")
-        if not trace_id or not isinstance(runlog, dict) or not isinstance(catalog, dict):
+        if (
+            not trace_id
+            or not isinstance(runlog, dict)
+            or not isinstance(catalog, dict)
+        ):
             raise ValueError("bmoca_trace_assets_missing")
         traces[trace_id] = _BaselineTrace(
             trace_id=trace_id,
@@ -1976,12 +1987,15 @@ def _normalize_baseline_alignment(
     *,
     traces: dict[str, _BaselineTrace],
     target_environments: frozenset[str],
-) -> tuple[
-    _BaselineTrace,
-    _BaselineTrace,
-    dict[int, int],
-    dict[int, int],
-] | None:
+) -> (
+    tuple[
+        _BaselineTrace,
+        _BaselineTrace,
+        dict[int, int],
+        dict[int, int],
+    ]
+    | None
+):
     left = traces.get(str(alignment.get("left_trace_id") or ""))
     right = traces.get(str(alignment.get("right_trace_id") or ""))
     if left is None or right is None or left.task_id != right.task_id:
@@ -2062,7 +2076,10 @@ def _baseline_selector_steps(runlog: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(raw, dict):
             raise ValueError("bmoca_runlog_step_invalid")
         action = raw.get("action")
-        if isinstance(action, dict) and str(action.get("tool") or "") in _SELECTOR_ACTIONS:
+        if (
+            isinstance(action, dict)
+            and str(action.get("tool") or "") in _SELECTOR_ACTIONS
+        ):
             step = dict(raw)
             step["step_index"] = int(raw.get("step_index", position))
             step["_sequence_index"] = position
@@ -2076,7 +2093,10 @@ def _baseline_step_by_index(
 ) -> dict[str, Any]:
     steps = runlog.get("steps")
     for position, step in enumerate(steps if isinstance(steps, list) else ()):
-        if isinstance(step, dict) and int(step.get("step_index", position)) == step_index:
+        if (
+            isinstance(step, dict)
+            and int(step.get("step_index", position)) == step_index
+        ):
             return step
     raise ValueError(f"bmoca_target_step_missing:{step_index}")
 
@@ -2152,9 +2172,7 @@ def _evaluate_baseline_step(
         return {
             **base,
             "gold_alignment_available": False,
-            "predictions": {
-                method: dict(prediction) for method in _REPLAY_BASELINES
-            },
+            "predictions": {method: dict(prediction) for method in _REPLAY_BASELINES},
         }
 
     source_page = _baseline_page(
@@ -2185,9 +2203,7 @@ def _evaluate_baseline_step(
         return {
             **base,
             "gold_alignment_available": gold_available,
-            "predictions": {
-                method: dict(prediction) for method in _REPLAY_BASELINES
-            },
+            "predictions": {method: dict(prediction) for method in _REPLAY_BASELINES},
         }
 
     predictions: dict[str, dict[str, Any]] = {}
@@ -2690,7 +2706,8 @@ def _baseline_episode(
             "executed_step_count": executed,
             "step_hit_count": hits,
             "gold_aligned_executed_step_count": sum(
-                step["gold_alignment_available"] and step["predictions"][method]["execute"]
+                step["gold_alignment_available"]
+                and step["predictions"][method]["execute"]
                 for step in steps
             ),
             "wrong_execution_count": sum(
@@ -2704,7 +2721,9 @@ def _baseline_episode(
                 steps and gold_count == len(steps) and hits == len(steps)
             ),
             "prediction_reasons": dict(
-                sorted(Counter(prediction["reason"] for prediction in predictions).items())
+                sorted(
+                    Counter(prediction["reason"] for prediction in predictions).items()
+                )
             ),
         }
     return {
@@ -2731,8 +2750,7 @@ def _aggregate_baseline_method(
     executed = sum(item["methods"][method]["executed_step_count"] for item in episodes)
     hits = sum(item["methods"][method]["step_hit_count"] for item in episodes)
     gold_executed = sum(
-        item["methods"][method]["gold_aligned_executed_step_count"]
-        for item in episodes
+        item["methods"][method]["gold_aligned_executed_step_count"] for item in episodes
     )
     wrong = sum(item["methods"][method]["wrong_execution_count"] for item in episodes)
     complete_resolution = sum(
@@ -2803,23 +2821,27 @@ def _aggregate_baseline_method(
         "prediction_reasons": dict(sorted(reasons.items())),
         "by_target_environment": {},
     }
-    result["by_target_environment"] = {
-        environment: {
-            key: value
-            for key, value in _aggregate_baseline_method(
-                [
-                    item
-                    for item in episodes
-                    if item["target_environment_id"] == environment
-                ],
-                method=method,
-            ).items()
-            if key != "by_target_environment"
+    result["by_target_environment"] = (
+        {
+            environment: {
+                key: value
+                for key, value in _aggregate_baseline_method(
+                    [
+                        item
+                        for item in episodes
+                        if item["target_environment_id"] == environment
+                    ],
+                    method=method,
+                ).items()
+                if key != "by_target_environment"
+            }
+            for environment in sorted(
+                {item["target_environment_id"] for item in episodes}
+            )
         }
-        for environment in sorted(
-            {item["target_environment_id"] for item in episodes}
-        )
-    } if len({item["target_environment_id"] for item in episodes}) > 1 else {}
+        if len({item["target_environment_id"] for item in episodes}) > 1
+        else {}
+    )
     return result
 
 
@@ -2860,10 +2882,7 @@ def _baseline_stable_identity(
         if use_resource_id
         else ("text", "content_description")
     )
-    return any(
-        _baseline_normalized(element.attributes.get(key))
-        for key in keys
-    )
+    return any(_baseline_normalized(element.attributes.get(key)) for key in keys)
 
 
 def _baseline_class_tail(element: ElementEmbedding) -> str:
@@ -2892,7 +2911,9 @@ def _baseline_rate(numerator: int, denominator: int) -> float:
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     values = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), 1
+    ):
         if not line.strip():
             continue
         value = json.loads(line)
@@ -2954,7 +2975,12 @@ def _load_trace(
 
 
 def _score_step_pair(source: BmocaStep, target: BmocaStep) -> TransferMatchScore:
-    if not source.xml or not target.xml or source.point is None or target.bounds is None:
+    if (
+        not source.xml
+        or not target.xml
+        or source.point is None
+        or target.bounds is None
+    ):
         return TransferMatchScore(reason="selector_endpoint_missing")
     return retarget_transfer_score(
         _score_step_pair_base(source, target),
@@ -3082,6 +3108,7 @@ def _actionable(attributes: dict[str, str], action_kind: str) -> bool:
         return False
     if str(attributes.get("displayed") or "true").lower() == "false":
         return False
+
     def truthy(key: str) -> bool:
         return str(attributes.get(key) or "").lower() == "true"
 
@@ -3176,20 +3203,24 @@ def _method_result(matches: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _aggregate(results: list[dict[str, Any]], missing: list[dict[str, Any]]) -> dict[str, Any]:
+def _aggregate(
+    results: list[dict[str, Any]], missing: list[dict[str, Any]]
+) -> dict[str, Any]:
     environments: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for result in results:
         environments[str(result["target_environment_id"])].append(result)
-    candidate_cells = sum(
-        result["transfer_candidate_cell_count"] for result in results
-    )
+    candidate_cells = sum(result["transfer_candidate_cell_count"] for result in results)
     full_cells = sum(result["transfer_full_cell_count"] for result in results)
     return {
         "task_count": len({result["task_id"] for result in results}),
         "trace_pair_count": len(results),
         "missing_pair_count": len(missing),
-        "selector_action_count": sum(result["selector_action_count"] for result in results),
-        "replayed_action_count": sum(result["replayed_action_count"] for result in results),
+        "selector_action_count": sum(
+            result["selector_action_count"] for result in results
+        ),
+        "replayed_action_count": sum(
+            result["replayed_action_count"] for result in results
+        ),
         "direct_action_count": sum(result["direct_action_count"] for result in results),
         "transfer_candidate_cell_count": candidate_cells,
         "transfer_full_cell_count": full_cells,
@@ -3373,9 +3404,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "bmoca_root": args.bmoca_root,
             "store_path": args.store_path,
             "task_id": args.task_id,
-            "environment_ids": tuple(
-                args.target_environments or ("100", "101", "105")
-            ),
+            "environment_ids": tuple(args.target_environments or ("100", "101", "105")),
             "android_sdk_root": args.android_sdk_root,
             "android_avd_home": args.android_avd_home,
             "avd_template_home": args.avd_template_home,
