@@ -1491,6 +1491,12 @@ def test_actions_dispatch_only_through_official_androidworld_api(monkeypatch) ->
 
     module = SimpleNamespace(JSONAction=JSONAction)
     monkeypatch.setattr(
+        "src.integrations.android_world.host.resolve_androidworld_app_name",
+        lambda package_name, controller: (
+            "settings" if package_name == "com.android.settings" else package_name
+        ),
+    )
+    monkeypatch.setattr(
         "src.integrations.android_world.host.importlib.import_module",
         lambda name: module if name == "android_world.env.json_action" else None,
     )
@@ -1510,5 +1516,5 @@ def test_actions_dispatch_only_through_official_androidworld_api(monkeypatch) ->
     assert open_result.success is True
     assert [(action.action_type, action.x, action.y, action.app_name) for action in actions] == [
         ("click", 360.0, 320.0, None),
-        ("open_app", None, None, "com.android.settings"),
+        ("open_app", None, None, "settings"),
     ]
