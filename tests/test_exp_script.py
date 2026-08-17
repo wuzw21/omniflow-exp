@@ -144,7 +144,7 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
         in script_text
     )
     assert (
-        'formal_bmoca_revision="ae07361fbfe3cd6b83cbfb66bc3ea221fe4ce44e"'
+        'formal_bmoca_revision="8c199bfc67ad4ff1555906d128179116b0fcf301"'
         in script_text
     )
     assert (

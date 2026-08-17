@@ -23,6 +23,9 @@ Planner; Function fallback is fixed at zero.
 The maintained B-MoCA coordinator exposes every display size as screenshot
 `[height, width]`, including tablets. The Host therefore preserves canonical
 normalized UI coordinates without a tablet-specific axis swap or rescaling.
+Its Chrome History validator accepts either the original Activity log event or
+the stable on-screen History title plus History content container, so the same
+goal contract covers phone and tablet Chrome presentations for every method.
 
 The B-MoCA source is the pinned maintained revision under
 `$workspace_root/releases/b-moca-$formal_bmoca_revision` unless
