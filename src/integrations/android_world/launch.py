@@ -4344,7 +4344,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         official_goal_hint_text = ""
         official_goal_hint_meta: dict[str, Any] | None = None
-        if selected_agent.startswith("official:"):
+        if selected_agent.startswith("official:") or selected_agent == "luna":
             official_goal_hint_text, official_goal_hint_meta = (
                 _load_official_agent_goal_hint(args.source_action_hint_path)
             )
@@ -4354,7 +4354,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         official_llm_usage_before = (
             _get_agent_llm_usage(agent)
             if selected_agent.startswith("official:")
-            or selected_agent == "external:appagent"
+            or selected_agent in {"luna", "external:appagent"}
             else {}
         )
         started_at = utc_now_iso()
@@ -4452,6 +4452,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                             else "validator_failure"
                         ),
                     }
+                    custom_diagnostics = getattr(agent, "luna_diagnostics", None)
+                    if callable(custom_diagnostics):
+                        diagnostics["luna_harness"] = dict(custom_diagnostics() or {})
                     runtime_function_id = str(
                         getattr(runtime_result, "function_id", "") or ""
                     ).strip()
@@ -4638,36 +4641,38 @@ def main(argv: Sequence[str] | None = None) -> int:
                         _, model_base_url = resolve_openai_compatible_config(
                             profile=str(args.model_endpoint_profile or "auto"),
                         )
-                if selected_agent.startswith("official:") or selected_agent == (
-                    "external:appagent"
-                ):
-                    official_agent_usage = _diff_llm_usage(
-                        _get_agent_llm_usage(agent),
-                        official_llm_usage_before,
-                    )
-                    llm_usage = official_agent_usage
-                    model_calls = _coerce_int(llm_usage.get("model_calls"))
-                    prompt_tokens = _coerce_int(llm_usage.get("prompt_tokens"))
-                    completion_tokens = _coerce_int(
-                        llm_usage.get("completion_tokens")
-                    )
-                    total_tokens = _coerce_int(llm_usage.get("total_tokens"))
-                    token_usage_state = str(
-                        llm_usage.get("token_usage_status")
-                        or token_usage_status(llm_usage)
-                    )
-                    model_name = str(llm_usage.get("model") or "").strip() or None
-                    model_base_url = (
-                        str(llm_usage.get("base_url") or "").strip() or None
-                    )
+                    if selected_agent.startswith("official:") or selected_agent in {
+                        "luna",
+                        "external:appagent",
+                    }:
+                        official_agent_usage = _diff_llm_usage(
+                            _get_agent_llm_usage(agent),
+                            official_llm_usage_before,
+                        )
+                        llm_usage = official_agent_usage
+                        model_calls = _coerce_int(llm_usage.get("model_calls"))
+                        prompt_tokens = _coerce_int(llm_usage.get("prompt_tokens"))
+                        completion_tokens = _coerce_int(
+                            llm_usage.get("completion_tokens")
+                        )
+                        total_tokens = _coerce_int(llm_usage.get("total_tokens"))
+                        token_usage_state = str(
+                            llm_usage.get("token_usage_status")
+                            or token_usage_status(llm_usage)
+                        )
+                        model_name = str(llm_usage.get("model") or "").strip() or None
+                        model_base_url = (
+                            str(llm_usage.get("base_url") or "").strip() or None
+                        )
                 artifact_kind = "none"
                 artifact_ref = None
                 if canonical_run_id:
                     artifact_kind = "canonical_run"
                     artifact_ref = canonical_run_id
-                elif selected_agent.startswith("official:") or selected_agent.startswith(
-                    "external:appagent"
-                ):
+                elif selected_agent.startswith("official:") or selected_agent in {
+                    "luna",
+                    "external:appagent",
+                }:
                     artifact_kind = "checkpoint"
                     artifact_ref = checkpoint_dir
                 evaluation_task_params, evaluation_task_params_sha256 = (

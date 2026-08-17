@@ -12,6 +12,7 @@ from omniflow.vlm.model_config import resolve_openai_compatible_config
 
 _UNSUPPORTED_SELECTOR_ERROR = (
     "Unsupported AndroidWorld agent selector. Use `omniflow`, `fixed_replay`, "
+    "`luna`, "
     "`external:mobilegpt`, `external:appagent`, "
     "`external:appagent_teacher`, or `official:<name>`."
 )
@@ -275,6 +276,11 @@ def default_method_adapter_registry() -> MethodAdapterRegistry:
                 build=_build_omniflow_replay,
             ),
             MethodAdapter(
+                name="luna_direct_harness",
+                accepts=lambda selector: selector == "luna",
+                build=_build_luna_direct_harness,
+            ),
+            MethodAdapter(
                 name="mobilegpt",
                 accepts=lambda selector: selector == "external:mobilegpt",
                 build=_build_mobilegpt,
@@ -354,6 +360,19 @@ def _build_omniflow_replay(context: MethodAdapterContext) -> Any:
         run_log_json_path=str(context.raw_replay_run_log).strip(),
         adb_path=context.adb_path,
     )
+
+
+def _build_luna_direct_harness(context: MethodAdapterContext) -> Any:
+    """Build Luna's direct AndroidWorld observe/act harness.
+
+    This intentionally does not resolve a Function Store or instantiate the
+    shared OmniFlow runtime.  The harness owns one model decision per launcher
+    step and delegates every state/action operation to AndroidWorldHost.
+    """
+
+    from src.integrations.android_world.luna_agent import build_luna_agent
+
+    return build_luna_agent(context)
 
 
 def _build_mobilegpt(context: MethodAdapterContext) -> Any:

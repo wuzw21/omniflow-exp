@@ -333,8 +333,9 @@ Options:
                             assets, attempts, result directories, or emulators.
   --development-run         Run one unregistered `ours` episode through this
                             script for bounded method debugging.
-  --stock-capture AGENT     Run one unregistered immutable stock `t3a` or `m3a`
-                            episode and persist its step requests. The default
+  --stock-capture AGENT     Run one unregistered immutable capture. `luna` uses
+                            the direct Luna observe/act harness; `t3a`/`m3a` are
+                            retained only for historical compatibility. The default
                             diagnostic limit is seven; set
                             OMNIFLOW_STOCK_CAPTURE_MAX_STEPS=20 for a bounded
                             full episode with the official validator.
@@ -495,8 +496,8 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --stock-capture)
       shift
-      if [[ "$#" -eq 0 || ( "$1" != "t3a" && "$1" != "m3a" ) ]]; then
-        echo "--stock-capture requires t3a or m3a." >&2
+      if [[ "$#" -eq 0 || ( "$1" != "t3a" && "$1" != "m3a" && "$1" != "luna" ) ]]; then
+        echo "--stock-capture requires luna, t3a, or m3a." >&2
         exit 2
       fi
       stock_capture="$1"
@@ -844,7 +845,7 @@ if [[ "$stock_capture" != 0 ]]; then
     --task-random-seed "$evaluation_seed"
     --n-task-combinations 1
     --console-port "$stock_capture_console_port"
-    --agent "official:$stock_capture"
+    --agent "$([[ "$stock_capture" == "luna" ]] && printf '%s' "luna" || printf '%s' "official:$stock_capture")"
     --max-steps "$stock_capture_max_steps"
     --output-path "$stock_capture_output_path"
     --fixed-task-seed
