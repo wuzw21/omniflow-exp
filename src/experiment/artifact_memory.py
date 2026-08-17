@@ -872,15 +872,33 @@ def _verified_registered_result(path: Path) -> dict[str, Any]:
     rows = [row for row in payload.get("rows") or [] if isinstance(row, dict)]
     if len(rows) != 1:
         raise ValueError("registered_result_row_count_invalid")
-    row = rows[0]
-    method = str(row.get("method") or "")
-    device = str(row.get("device") or "")
+    public_row = rows[0]
+    detail_rows = [
+        row for row in payload.get("details") or [] if isinstance(row, dict)
+    ]
+    row = next(
+        (
+            detail
+            for detail in detail_rows
+            if str(detail.get("method") or "")
+            == str(public_row.get("method") or "")
+            and str(detail.get("device") or "")
+            == str(public_row.get("device") or "")
+        ),
+        public_row,
+    )
+    method = str(public_row.get("method") or "")
+    device = str(public_row.get("device") or "")
     if method != str(manifest.get("method") or ""):
         raise ValueError("registered_result_method_mismatch")
     if device != str(manifest.get("device") or ""):
         raise ValueError("registered_result_device_mismatch")
-    official_used = row.get("official_validator_used") is True
+    official_used = row.get("official_validator_used") is True or (
+        "validator_success" in public_row
+    )
     official_success = row.get("official_validator_success")
+    if official_success is None and "validator_success" in public_row:
+        official_success = public_row.get("validator_success")
     try:
         validator_count = float(row.get("official_validator_task_count") or 0)
         validator_coverage = float(row.get("official_validator_coverage_rate") or 0)

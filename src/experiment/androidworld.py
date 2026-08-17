@@ -49,6 +49,7 @@ from src.experiment.protocol import (
     METHODS,
     RESULT_COMMANDS_FILE,
     RESULT_MARKDOWN_FILE,
+    RESULT_FIELDS,
     RESULT_SCHEMA,
     RESULT_SUMMARY_FILE,
     SOURCE_SEED,
@@ -6084,7 +6085,68 @@ def _result_row_value(row: dict[str, Any], key: str) -> str:
         return ""
     if isinstance(value, bool):
         return "1" if value else "0"
+    if isinstance(value, (list, tuple)):
+        return "; ".join(str(item) for item in value)
     return str(value)
+
+
+def _compact_result_row(
+    row: dict[str, Any],
+    *,
+    source_seed: int,
+    evaluation_seed: int,
+) -> dict[str, Any]:
+    """Return the small public result row; details stay in one evidence block."""
+
+    evidence_paths: list[str] = []
+    for key in (
+        "source_run_log",
+        "run_dir",
+        "output_path",
+        "task_results_jsonl",
+        "target_run_log_path",
+        "target_transfer_states_path",
+        "prep_stats_summary",
+        "stats_summary",
+        "artifact_ref",
+    ):
+        value = str(row.get(key) or "").strip()
+        if value and value not in evidence_paths:
+            evidence_paths.append(value)
+
+    validator_success = None
+    if row.get("official_validator_used") is True:
+        validator_success = row.get("official_validator_success")
+    episode_duration_sec = _coerce_float(
+        row.get("episode_duration_sec") or row.get("duration_sec")
+    )
+    if episode_duration_sec <= 0:
+        episode_duration_sec = _coerce_float(row.get("duration_ms")) / 1000.0
+    outer_wall_sec = _coerce_float(
+        row.get("outer_wall_sec") or row.get("wall_sec")
+    )
+    return {
+        "task": str(row.get("task") or row.get("task_name") or ""),
+        "method": str(row.get("method") or ""),
+        "device": str(row.get("device") or ""),
+        "source_seed": int(row.get("source_seed") or source_seed),
+        "evaluation_seed": int(
+            row.get("evaluation_seed")
+            or row.get("task_random_seed")
+            or evaluation_seed
+        ),
+        "status": str(row.get("status") or ""),
+        "validator_success": validator_success,
+        "model_calls": _coerce_int(row.get("model_calls")),
+        "prompt_tokens": _coerce_int(row.get("prompt_tokens")),
+        "completion_tokens": _coerce_int(row.get("completion_tokens")),
+        "total_tokens": _coerce_int(row.get("total_tokens") or row.get("tokens")),
+        "actions_executed": _coerce_int(row.get("actions_executed")),
+        "episode_duration_sec": round(episode_duration_sec, 6),
+        "outer_wall_sec": round(outer_wall_sec, 6),
+        "error": str(row.get("error") or ""),
+        "evidence_paths": evidence_paths,
+    }
 
 
 _RESULT_METADATA_ROW_KEYS = (
@@ -6647,6 +6709,14 @@ def _write_result_summary(
         command_records=command_records,
         aggregate_summary=aggregate_summary,
     )
+    compact_rows = [
+        _compact_result_row(
+            row,
+            source_seed=SOURCE_SEED,
+            evaluation_seed=TASK_SEED,
+        )
+        for row in rows
+    ]
     canonical_aggregate = _aggregate_normalized_result_rows(
         aggregate_summary,
         rows,
@@ -6655,7 +6725,8 @@ def _write_result_summary(
         "schema_version": RESULT_SCHEMA,
         "task_name": task,
         "task_root": str(task_root),
-        "rows": rows,
+        "rows": compact_rows,
+        "details": rows,
         "aggregate": canonical_aggregate,
     }
     summary_path = task_root / RESULT_SUMMARY_FILE
@@ -6670,23 +6741,14 @@ def _write_result_summary(
         encoding="utf-8",
     )
 
-    visible_columns = [
-        ("method", "method"),
-        ("device", "device"),
-        ("status", "status"),
-        ("official_validator_success", "validator"),
-        ("model_calls", "model_calls"),
-        ("total_tokens", "total_tokens"),
-        ("wall_sec", "wall_sec"),
-        ("error", "error"),
-    ]
+    visible_columns = [(field, field) for field in RESULT_FIELDS]
     md_lines = [
         f"# AndroidWorld Result Summary: {task}",
         "",
         "| " + " | ".join(label for _, label in visible_columns) + " |",
         "|" + "|".join("---" for _ in visible_columns) + "|",
     ]
-    for row in rows:
+    for row in compact_rows:
         md_lines.append(
             "| "
             + " | ".join(_result_row_value(row, key) for key, _ in visible_columns)
@@ -6700,16 +6762,7 @@ def _write_result_summary(
 
 
 def _print_result_summary(summary: dict[str, Any]) -> None:
-    visible_columns = [
-        ("method", "method"),
-        ("device", "device"),
-        ("status", "status"),
-        ("official_validator_success", "validator"),
-        ("model_calls", "model_calls"),
-        ("total_tokens", "total_tokens"),
-        ("wall_sec", "wall_sec"),
-        ("error", "error"),
-    ]
+    visible_columns = [(field, field) for field in RESULT_FIELDS]
     print(
         "| " + " | ".join(label for _, label in visible_columns) + " |",
         flush=True,

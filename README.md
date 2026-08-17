@@ -107,19 +107,9 @@ is retained as evaluation evidence rather than retried with changed rules.
    external memory. Reuse already registered results and never rerun them merely
    to improve success or cost.
 
-| phase | per-phase cap | model use | failure scope |
-|---|---:|---|---|
-| source device and preflight | 240 s | none | selected results |
-| semantic Function compilation | 180 s | `glm-5.1`, only when needed | `ours` results |
-| direct source qualification | 300 s | forbidden | `ours` results |
-| MobileGPT memory preparation | 300 s | frozen baseline implementation | MobileGPT results |
-| AppAgent memory preparation | 360 s | frozen baseline implementation | AppAgent results |
-| each target result | 1500 s (`EPISODE_TIMEOUT_SEC`) | frozen method implementation | that result |
-
-These are local caps, not additive reservations. Every child receives only the
-remaining part of the 1800-second global deadline. When no time remains, the
-coordinator does not launch another process and writes `deadline_exceeded` for
-every unfinished result.
+Every phase shares the single 1800-second task deadline. The coordinator passes
+only the remaining budget to a child; when no time remains, it does not launch
+another process and writes `deadline_exceeded` for every unfinished result.
 
 The five target methods retain their frozen models and policies.
 `OMNIFLOW_E2E_OUTPUT_ROOT` changes the external attempt root, and
@@ -162,11 +152,13 @@ Each immutable attempt contains:
     summary.json
 ```
 
-The top-level summaries expose only aggregate `model_calls` and `total_tokens`.
-Detailed prompt/completion accounting, actions, validator result, episode
-duration, outer wall time, error, and evidence path remain in each result row or
-phase record. RunLogs, screenshots, memories, results, and attempts stay
-outside this repository.
+The public `result_summary.json` and `registered_result.json` rows contain only
+the compact 16-field result record: task, method, device, source/evaluation
+seeds, status, validator success, model calls, prompt/completion/total tokens,
+actions, episode duration, outer wall time, error, and evidence paths. Detailed
+preparation, reuse, and component-level diagnostics are kept once in the
+`details` evidence block; they are not repeated in every table. RunLogs,
+screenshots, memories, results, and attempts stay outside this repository.
 
 ## One source RunLog to method-native replay
 

@@ -213,6 +213,12 @@ than fabricating experience or changing the baseline.
 - Use AndroidWorld native observation/action and its official validator. Do not use OOB.
 - Record validator result, model calls, prompt/completion/total tokens, actions,
   episode duration, and outer wall time for every result.
+- New public result rows contain only `task`, `method`, `device`, `source_seed`,
+  `evaluation_seed`, `status`, `validator_success`, `model_calls`,
+  `prompt_tokens`, `completion_tokens`, `total_tokens`, `actions_executed`,
+  `episode_duration_sec`, `outer_wall_sec`, `error`, and `evidence_paths`.
+  Preparation, reuse, and component-level diagnostics belong in one `details`
+  evidence block and must not be copied into each result row or summary table.
 - Results and attempts are immutable and live outside this repository.
 
 ## Method boundary

@@ -105,15 +105,10 @@ online retrieval and execution behavior. The required AndroidWorld adapters for
 both baselines translate lifecycle, observations, actions, and accounting only;
 they do not introduce a second planner or alter the baseline policy.
 
-Every result records `reuse_numerator`, `reuse_denominator`, `reuse_rate`,
-`reuse_unit`, and `reuse_evidence_status`. The rate is the fraction of native
-reuse opportunities actually served by the method's converted source asset:
-replayed GUI actions for `fixed_replay`, Function-origin GUI actions for
-`ours`, direct memory hits for MobileGPT, AppAgent decision rounds with native
-demo documentation, and T3A executed actions planned with the source hint.
-Rates with different `reuse_unit` values are reported separately and are not
-silently pooled. Missing evidence produces an unavailable rate rather than an
-assumed zero or one.
+The public result row is deliberately compact and contains only the 16 fields
+listed above. Detailed preparation, reuse, and component-level diagnostics are
+kept once in the result's `details` evidence block and are not copied into
+every summary table.
 
 Function schema and transfer-state checks are internal validation for `ours`;
 they are not the experiment conclusion. Conversion never observes a target

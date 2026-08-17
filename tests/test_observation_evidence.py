@@ -8,12 +8,46 @@ from types import SimpleNamespace
 from PIL import Image
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from src.experiment.androidworld import aggregate_task_results, write_metrics_summary
+from src.experiment.androidworld import (
+    _compact_result_row,
+    aggregate_task_results,
+    write_metrics_summary,
+)
+from src.experiment.protocol import RESULT_FIELDS
 from src.experiment.observation_evidence import (
     AndroidWorldEpisodeRecorder,
     androidworld_json_action_dict,
     persist_target_run_evidence,
 )
+
+
+def test_public_result_row_is_compact_and_keeps_details_out_of_the_row() -> None:
+    row = _compact_result_row(
+        {
+            "task_name": "Task",
+            "method": "ours",
+            "device": "small5554",
+            "official_validator_used": True,
+            "official_validator_success": True,
+            "model_calls": 2,
+            "prompt_tokens": 10,
+            "completion_tokens": 3,
+            "total_tokens": 13,
+            "actions_executed": 4,
+            "duration_ms": 2500,
+            "run_dir": "/evidence/task",
+            "reuse_rate": 1.0,
+            "prep_model_calls": 3,
+        },
+        source_seed=111,
+        evaluation_seed=113,
+    )
+
+    assert tuple(row) == RESULT_FIELDS
+    assert row["episode_duration_sec"] == 2.5
+    assert row["evidence_paths"] == ["/evidence/task"]
+    assert "reuse_rate" not in row
+    assert "prep_model_calls" not in row
 
 
 def test_episode_recorder_preserves_every_observation_and_deduplicates_images(

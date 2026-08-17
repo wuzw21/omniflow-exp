@@ -321,7 +321,9 @@ def _registered_result_rows(memory_index: Path) -> dict[str, dict[str, Any]]:
         ).expanduser()
         registered = _json_object(object_path)
         candidates = [
-            row for row in registered.get("rows") or [] if isinstance(row, dict)
+            row
+            for row in registered.get("details") or registered.get("rows") or []
+            if isinstance(row, dict)
         ]
         if len(candidates) == 1:
             rows[str(key)] = candidates[0]

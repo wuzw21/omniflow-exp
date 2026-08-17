@@ -495,10 +495,17 @@ def _row_from_summary(
     method = str(row.get("method") or "").strip()
     device = str(row.get("device") or "").strip()
     record_root = _as_repo_relative(row.get("run_dir") or row.get("output_path"))
-    success = _bool_success(row.get("official_validator_success"))
+    success_value = row.get("official_validator_success")
+    if success_value is None and "validator_success" in row:
+        success_value = row.get("validator_success")
+    success = _bool_success(success_value)
     source_meta = source_index.get(task_name, {})
     recorded_at = _summary_mtime(summary_path)
-    duration_sec = _number(row.get("duration_sec") or row.get("wall_sec"))
+    duration_sec = _number(
+        row.get("episode_duration_sec")
+        or row.get("duration_sec")
+        or row.get("wall_sec")
+    )
     duration_ms = _number(row.get("duration_ms"))
     if not duration_ms and duration_sec:
         duration_ms = _number(float(duration_sec) * 1000)
@@ -506,7 +513,7 @@ def _row_from_summary(
     task_count = _number(
         raw_task_count
         if raw_task_count is not None
-        else int(row.get("official_validator_used") is True)
+        else int("validator_success" in row or row.get("official_validator_used") is True)
     )
     success_count = _number(
         row.get("official_validator_success_count")
@@ -516,7 +523,11 @@ def _row_from_summary(
     task_params = row.get("task_params")
     if task_params in (None, "", {}, []):
         task_params = source_meta.get("params")
-    task_seed = row.get("task_random_seed") or row.get("task_seed")
+    task_seed = (
+        row.get("evaluation_seed")
+        or row.get("task_random_seed")
+        or row.get("task_seed")
+    )
     reuse = reuse_metrics_from_result_row(row, method=method)
 
     out = {
@@ -868,11 +879,23 @@ def registered_result_plan(
         cell_completed = False
         for path in paths:
             summary = _load_verified_registered_result(path)
-            row = summary["rows"][0]
+            public_row = summary["rows"][0]
+            row = next(
+                (
+                    detail
+                    for detail in summary.get("details") or []
+                    if isinstance(detail, dict)
+                    and str(detail.get("method") or "")
+                    == str(public_row.get("method") or "")
+                    and str(detail.get("device") or "")
+                    == str(public_row.get("device") or "")
+                ),
+                public_row,
+            )
             if (
                 str(summary.get("task_name") or "") != task_name
-                or str(row.get("method") or "") != method
-                or str(row.get("device") or "") != device
+                or str(public_row.get("method") or "") != method
+                or str(public_row.get("device") or "") != device
             ):
                 raise ValueError(
                     f"registered result does not match expected result: {path}"
@@ -1326,7 +1349,21 @@ def register_attempt_summary(
     rows = [row for row in summary.get("rows") or [] if isinstance(row, dict)]
     if not rows:
         raise ValueError(f"summary contains no result rows: {summary_path}")
-    for row in rows:
+    detail_rows = [
+        row for row in summary.get("details") or [] if isinstance(row, dict)
+    ]
+    details_by_key = {
+        (str(row.get("method") or ""), str(row.get("device") or "")): row
+        for row in detail_rows
+    }
+    validation_rows = [
+        details_by_key.get(
+            (str(row.get("method") or ""), str(row.get("device") or "")),
+            row,
+        )
+        for row in rows
+    ]
+    for row in validation_rows:
         reasons = formal_result_environment_failure_reasons(row)
         if reasons:
             raise ValueError(
@@ -1342,7 +1379,7 @@ def register_attempt_summary(
     ledger_records: list[dict[str, Any]] = []
     registered_paths: list[str] = []
     with _master_lock(master_root):
-        for row in rows:
+        for row, validation_row in zip(rows, validation_rows):
             method = str(row.get("method") or "").strip()
             device = str(row.get("device") or "").strip()
             if not method or not device:
@@ -1405,6 +1442,7 @@ def register_attempt_summary(
                 "source_summary_sha256": source_summary_sha256,
                 "registration_manifest": str(registration_manifest_path),
                 "rows": [row],
+                "details": [validation_row],
             }
             registered_summary_text = (
                 json.dumps(registered_summary, indent=2, ensure_ascii=False) + "\n"
