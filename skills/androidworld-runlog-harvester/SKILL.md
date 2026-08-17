@@ -23,8 +23,11 @@ write, or second enhancement interface.
 
 ## Required Agent output
 
-Every internal enhancement stage must return exactly one JSON object with the
-two top-level keys below and no commentary:
+Every internal enhancement stage returns exactly one JSON object with the two
+top-level keys below and no commentary. `save_function` supplies a stage-specific
+schema to the model and rejects extra keys, missing Functions, invalid bindings,
+invented evidence, changed Function identity, or incomplete trajectory coverage.
+The example below is the final checker-stage shape:
 
 ```json
 {
@@ -85,8 +88,22 @@ even when that stage makes no changes. One Function is a reusable semantic
 operation, not a single click. Every stage must include at least one large
 Function covering the complete successful trajectory; reusable semantic
 subsegments may be added, but they never replace that complete Function. Keep
-source action order and continuity. Put task-varying values in `input_schema`,
-`bindings`, and `arguments`.
+source action order and continuity.
+
+The three internal stages have different permissions:
+
+1. `split`: choose the full-trajectory Function and every independently useful
+   contiguous subsegment. Return an empty object `input_schema`, empty
+   `bindings`, empty per-Function `arguments`, and empty `checker_rules`.
+2. `parameters`: keep the Function set, identities, descriptions, actions, and
+   order unchanged. Put only caller-varying values in `input_schema`, `bindings`,
+   and source `arguments`; binding those arguments must reproduce the original
+   RunLog actions exactly. Keep `checker_rules` empty.
+3. `checkers`: keep Function identities, meanings, parameters, and arguments
+   unchanged. Move only genuinely optional setup, interruption-dismissal, or
+   recovery source actions from `steps` into `checker_rules` on that same
+   Function. Reindex remaining formal steps and their binding targets. If no
+   action is optional, return the unchanged Function with an empty checker list.
 
 The split stage must return every reusable contiguous semantic subsegment that
 the successful RunLog supports. Do not emit a subsegment that is only one click
@@ -107,11 +124,13 @@ A checker is registered only by being present in its Function's
 Do not return a step number, `when`, threshold, package switch, trigger DSL, or
 global checker list.
 
-Runtime checks an unexecuted registered rule before every pending Function
-action. OmniTransfer must find the source action's target on the current
-observation above the configured high-confidence threshold. Page similarity is
-not a checker trigger. A matching checker executes once, while a nonmatching
-checker remains eligible before a later action.
+Runtime checks every unexecuted registered rule before every pending Function
+action. The latest canonical OmniTransfer page embedding must match the rule's
+source state above the one configured page threshold, then OmniTransfer must
+map the source action to a target candidate above the one configured target
+probability threshold. Both gates must pass. A matching checker executes once
+per Function invocation; a nonmatching checker remains eligible before a later
+action. Rules do not define private thresholds or custom trigger logic.
 
 ## Evidence and failure rules
 
