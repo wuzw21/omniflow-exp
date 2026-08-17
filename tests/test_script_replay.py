@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from src.integrations.script_replay import run_script_replay
 
 
@@ -147,3 +149,51 @@ def test_script_replay_rejects_ambiguous_semantics(tmp_path: Path) -> None:
     assert result.success is False
     assert "script_replay_semantic_locator_ambiguous" in str(result.error)
     assert host.actions == []
+
+
+def test_script_replay_selects_unique_complete_trajectory_function(
+    tmp_path: Path,
+) -> None:
+    store_path = _store(tmp_path / "store.json")
+    payload = json.loads(store_path.read_text(encoding="utf-8"))
+    subsegment = dict(payload["functions"]["demo"])
+    subsegment.update(function_id="subsegment", name="Subsegment", checker_rules=[])
+    payload["functions"]["subsegment"] = subsegment
+    store_path.write_text(json.dumps(payload), encoding="utf-8")
+    xml = (
+        '<hierarchy width="1000" height="1000">'
+        '<node package="com.example" text="Open" clickable="true" '
+        'bounds="[400,400][600,600]" /></hierarchy>'
+    )
+
+    result = run_script_replay(
+        store_path=store_path,
+        source_states={"source": {"xml": xml}},
+        host=_Host(xml),
+        stability_wait_seconds=0,
+    )
+
+    assert result.success is True
+    assert result.function_id == "demo"
+
+
+def test_script_replay_rejects_ambiguous_complete_trajectory_function(
+    tmp_path: Path,
+) -> None:
+    store_path = _store(tmp_path / "store.json")
+    payload = json.loads(store_path.read_text(encoding="utf-8"))
+    duplicate = dict(payload["functions"]["demo"])
+    duplicate.update(function_id="duplicate", name="Duplicate")
+    payload["functions"]["duplicate"] = duplicate
+    store_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="script_replay_full_trajectory_function_ambiguous",
+    ):
+        run_script_replay(
+            store_path=store_path,
+            source_states={},
+            host=_Host("<hierarchy />"),
+            stability_wait_seconds=0,
+        )

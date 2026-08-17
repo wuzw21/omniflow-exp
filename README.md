@@ -33,8 +33,9 @@ bash scripts/exp/run_androidworld.sh --tasks AudioRecorderRecordAudio
 
 Run all indexed tasks with `--all-tasks`; validate existing assets without
 starting emulators with `--check-only --all-tasks`. B-MoCA uses the same public
-launcher with `--environment bmoca --tasks TASK` for one method, or
-`--environment bmoca --all-tasks` for the two-method corpus campaign. See
+launcher with `--environment bmoca --tasks TASK` for a one-task two-method
+campaign, or `--environment bmoca --all-tasks` for the complete corpus. Its
+public method labels are `ours` and `script_replay`. See
 [`scripts/exp/README.md`](scripts/exp/README.md) for the command contract.
 
 ## One Function lifecycle

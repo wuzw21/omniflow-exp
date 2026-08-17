@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import csv
 import datetime as dt
 import hashlib
 import json
@@ -17,6 +18,8 @@ import time
 from typing import Any, Callable, Sequence
 
 from omniflow.core.trajectory import require_complete_source_run_log
+from omniflow.functions.assets import save_function
+from omniflow.vlm.model_config import resolve_openai_compatible_config
 from src.experiment.androidworld import ArchivedRunLog, build_fixed_replay_command
 from src.experiment.artifact_memory import (
     canonical_mobilegpt_memory_from_memory,
@@ -122,6 +125,7 @@ def run_logged_command(
             "log_path": str(log_path),
         }
     started = time.monotonic()
+    started_at = dt.datetime.now(dt.timezone.utc).isoformat()
     timed_out = False
     with log_path.open("x", encoding="utf-8") as log_file:
         process = subprocess.Popen(
@@ -154,6 +158,9 @@ def run_logged_command(
         "timed_out": timed_out,
         "wall_sec": round(time.monotonic() - started, 6),
         "log_path": str(log_path),
+        "process_pid": int(process.pid),
+        "started_at": started_at,
+        "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     }
 
 
@@ -1899,6 +1906,703 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
+_BMOCA_ENVIRONMENT_IDS = tuple(str(value) for value in range(100, 110))
+_BMOCA_METHODS = ("ours", "script_replay")
+_BMOCA_PROGRESS_FIELDS = (
+    "task",
+    "method",
+    "environment_id",
+    "status",
+    "official_success",
+    "method_success",
+    "actions_executed",
+    "model_calls",
+    "fallback_steps",
+    "error",
+    "started_at",
+    "finished_at",
+    "wall_sec",
+    "process_pid",
+    "emulator_serial",
+    "appium_port",
+    "appium_system_port",
+    "emulator_console_port",
+    "emulator_adb_port",
+    "emulator_grpc_port",
+    "avd_home",
+    "store_path",
+    "summary_path",
+    "run_log_path",
+    "log_path",
+)
+_MODEL_ENVIRONMENT_KEYS = (
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "LLMTHU_KEY",
+    "LLMTHU_BASE_URL",
+    "ANTHROPIC_API_KEY",
+    "GOOGLE_API_KEY",
+    "OPENAI_MODEL",
+    "OMNIFLOW_MODEL_ENDPOINT_PROFILE",
+    "OMNIFLOW_PLANNER_MODEL",
+    "OMNIFLOW_PLANNER_PROVIDER",
+)
+
+
+def _bmoca_manifest_tasks(
+    manifest_path: Path,
+    selection: str,
+) -> tuple[list[str], dict[str, Path]]:
+    manifest = _read_object(manifest_path)
+    raw_tasks = manifest.get("tasks")
+    raw_traces = manifest.get("traces")
+    if not isinstance(raw_tasks, list) or not isinstance(raw_traces, list):
+        raise ValueError("bmoca_corpus_manifest_invalid")
+    available = [str(task).strip() for task in raw_tasks if str(task).strip()]
+    requested = (
+        available
+        if selection.strip() == "*"
+        else [item.strip() for item in selection.split(",") if item.strip()]
+    )
+    if not requested:
+        raise ValueError("bmoca_campaign_tasks_required")
+    unknown = [task for task in requested if task not in available]
+    if unknown:
+        raise ValueError("bmoca_campaign_unknown_tasks:" + ",".join(unknown))
+    if len(requested) != len(set(requested)):
+        raise ValueError("bmoca_campaign_duplicate_tasks")
+    source_run_logs: dict[str, Path] = {}
+    for trace in raw_traces:
+        if not isinstance(trace, dict):
+            continue
+        task = str(trace.get("task_id") or "").strip()
+        if (
+            task not in requested
+            or str(trace.get("environment_id") or "") != "100"
+            or str(trace.get("role") or "") != "source"
+        ):
+            continue
+        runlog = trace.get("runlog")
+        relative = str(runlog.get("path") or "") if isinstance(runlog, dict) else ""
+        expected_sha = (
+            str(runlog.get("sha256") or "") if isinstance(runlog, dict) else ""
+        )
+        path = (manifest_path.parent / relative).resolve()
+        if not relative or not path.is_file():
+            raise FileNotFoundError(f"bmoca_source_runlog_missing:{task}:{path}")
+        if expected_sha and _sha256(path) != expected_sha:
+            raise ValueError(f"bmoca_source_runlog_sha256_mismatch:{task}")
+        if task in source_run_logs:
+            raise ValueError(f"bmoca_source_runlog_ambiguous:{task}")
+        source_run_logs[task] = path
+    return requested, source_run_logs
+
+
+def _bmoca_avd_names(bmoca_root: Path) -> dict[str, str]:
+    catalog = bmoca_root / "asset/environments/config/environments_test.csv"
+    with catalog.open(newline="", encoding="utf-8") as stream:
+        rows = {
+            str(row["idx"]): f"{row['device_id']}_test_00"
+            for row in csv.DictReader(stream)
+        }
+    missing = [item for item in _BMOCA_ENVIRONMENT_IDS if item not in rows]
+    if missing:
+        raise ValueError("bmoca_environment_catalog_incomplete:" + ",".join(missing))
+    return rows
+
+
+def _clone_bmoca_avd_home(
+    *,
+    source_home: Path,
+    target_home: Path,
+    avd_name: str,
+) -> Path:
+    """Clone one AVD into an isolated home; Linux reflinks keep this cheap."""
+
+    source_avd = source_home / f"{avd_name}.avd"
+    source_ini = source_home / f"{avd_name}.ini"
+    if not source_avd.is_dir() or not source_ini.is_file():
+        raise FileNotFoundError(f"bmoca_source_avd_missing:{source_avd}")
+    target_home.mkdir(parents=True, exist_ok=False)
+    target_avd = target_home / source_avd.name
+    copy_command = ["cp", "-a"]
+    if os.uname().sysname == "Linux":
+        copy_command.append("--reflink=auto")
+    subprocess.run(
+        [*copy_command, str(source_avd), str(target_avd)],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    target_ini = target_home / source_ini.name
+    subprocess.run(
+        ["cp", "-a", str(source_ini), str(target_ini)],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    lines = []
+    for line in target_ini.read_text(encoding="utf-8").splitlines():
+        if line.startswith("path="):
+            lines.append(f"path={target_avd}")
+        elif line.startswith("path.rel="):
+            lines.append(f"path.rel=avd/{avd_name}.avd")
+        else:
+            lines.append(line)
+    if not any(line.startswith("path=") for line in lines):
+        lines.append(f"path={target_avd}")
+    target_ini.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return target_home
+
+
+def _canonical_bmoca_enhancement_transport(
+    *,
+    model: str,
+    timeout_sec: float,
+    usage: dict[str, int],
+) -> Callable[[str], str]:
+    """Return only the model transport required by canonical save_function."""
+
+    try:
+        from openai import OpenAI
+    except ImportError as error:
+        raise RuntimeError("Install omniflow[llm] for Function enhancement") from error
+    api_key, base_url = resolve_openai_compatible_config(profile="llmthu")
+    client = OpenAI(
+        api_key=api_key or "not-required",
+        base_url=base_url,
+        max_retries=0,
+        timeout=float(timeout_sec),
+    )
+    tool = {
+        "type": "function",
+        "function": {
+            "name": "submit_enhancement",
+            "description": (
+                "Return semantic Functions grounded only in the supplied RunLog actions."
+            ),
+            "strict": False,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "functions": {"type": "array", "items": {"type": "object"}},
+                    "arguments": {"type": "object"},
+                },
+                "required": ["functions", "arguments"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+    def complete_json(prompt: str) -> str:
+        usage["model_calls"] += 1
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            tools=[tool],
+            tool_choice={
+                "type": "function",
+                "function": {"name": "submit_enhancement"},
+            },
+            parallel_tool_calls=False,
+        )
+        response_usage = getattr(response, "usage", None)
+        usage["prompt_tokens"] += int(
+            getattr(response_usage, "prompt_tokens", 0) or 0
+        )
+        usage["completion_tokens"] += int(
+            getattr(response_usage, "completion_tokens", 0) or 0
+        )
+        usage["total_tokens"] += int(
+            getattr(response_usage, "total_tokens", 0) or 0
+        )
+        choices = getattr(response, "choices", None) or ()
+        message = getattr(choices[0], "message", None) if choices else None
+        calls = getattr(message, "tool_calls", None) or ()
+        if len(calls) != 1:
+            raise ValueError("function_enhancer_tool_call_invalid")
+        function = getattr(calls[0], "function", None)
+        if str(getattr(function, "name", "") or "") != "submit_enhancement":
+            raise ValueError("function_enhancer_tool_name_invalid")
+        arguments = getattr(function, "arguments", None)
+        if not isinstance(arguments, str):
+            raise ValueError("function_enhancer_arguments_invalid")
+        return arguments
+
+    return complete_json
+
+
+def _save_bmoca_function_once(
+    *,
+    args: argparse.Namespace,
+    task: str,
+    source_run_log: Path,
+    task_root: Path,
+) -> tuple[Path, dict[str, Any]]:
+    store_path = task_root / "function" / "store.json"
+    if store_path.exists():
+        raise FileExistsError(f"bmoca_function_store_already_exists:{store_path}")
+    usage = {
+        "model_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+    started = time.monotonic()
+    report = save_function(
+        source_run_log,
+        store_path,
+        enhance=True,
+        complete_json=_canonical_bmoca_enhancement_transport(
+            model=args.formal_model,
+            timeout_sec=float(args.enhancement_timeout_sec),
+            usage=usage,
+        ),
+    )
+    enhancement = {
+        "schema_version": "omniflow.bmoca-function-enhancement.v1",
+        "task": task,
+        "source_run_log": str(source_run_log),
+        "source_run_log_sha256": _sha256(source_run_log),
+        "save_function_calls": 1,
+        "enhanced": report.get("enhanced") is True,
+        "function_ids": list(report.get("function_ids") or ()),
+        "store_path": str(store_path),
+        "store_sha256": _sha256(store_path),
+        "transfer_state_catalog": str(report.get("transfer_state_catalog") or ""),
+        "wall_sec": round(time.monotonic() - started, 6),
+        **usage,
+    }
+    _write_json(task_root / "enhancement.json", enhancement)
+    return store_path, enhancement
+
+
+def _write_bmoca_progress(
+    path: Path,
+    rows: dict[tuple[str, str, str], dict[str, Any]],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    with temporary.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=_BMOCA_PROGRESS_FIELDS)
+        writer.writeheader()
+        for key in sorted(rows):
+            writer.writerow(
+                {field: rows[key].get(field, "") for field in _BMOCA_PROGRESS_FIELDS}
+            )
+    temporary.replace(path)
+
+
+def _append_bmoca_progress_event(path: Path, row: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _bmoca_cell_environment(
+    *,
+    args: argparse.Namespace,
+    task: str,
+    method: str,
+    environment_id: str,
+    store_path: Path,
+    output_path: Path,
+    avd_home: Path,
+    appium_port: int,
+    appium_system_port: int,
+    emulator_console_port: int,
+    emulator_adb_port: int,
+    emulator_grpc_port: int,
+) -> dict[str, str]:
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "PYTHON_BIN": str(args.python_bin),
+            "PYTHONPATH": ":".join(
+                str(path)
+                for path in (
+                    args.repo,
+                    args.repo / "src",
+                    args.bmoca_root,
+                    args.bmoca_android_env_root,
+                )
+            ),
+            "OMNITRANSFER_ROOT": str(args.omnitransfer_root),
+            "OMNIFLOW_BMOCA_ROOT": str(args.bmoca_root),
+            "OMNIFLOW_BMOCA_ANDROID_ENV_ROOT": str(args.bmoca_android_env_root),
+            "OMNIFLOW_BMOCA_AVD_HOME": str(avd_home),
+            "OMNIFLOW_BMOCA_OUTPUT_PATH": str(output_path),
+            "OMNIFLOW_BMOCA_SINGLE_ENVIRONMENT_ID": environment_id,
+            "OMNIFLOW_BMOCA_APPIUM_PORT": str(appium_port),
+            "OMNIFLOW_BMOCA_APPIUM_SYSTEM_PORT": str(appium_system_port),
+            "OMNIFLOW_BMOCA_EMULATOR_CONSOLE_PORT": str(emulator_console_port),
+            "OMNIFLOW_BMOCA_EMULATOR_ADB_PORT": str(emulator_adb_port),
+            "OMNIFLOW_BMOCA_EMULATOR_GRPC_PORT": str(emulator_grpc_port),
+            "OMNIFLOW_ANDROIDWORLD_STORE_PATH": str(store_path),
+            "OMNIFLOW_ANDROID_SDK_ROOT": str(args.android_sdk_root),
+            "OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS": "0",
+        }
+    )
+    if method == "script_replay":
+        for key in (*_MODEL_ENVIRONMENT_KEYS, "OMNIFLOW_ENV_FILE"):
+            environment.pop(key, None)
+    return environment
+
+
+def _bmoca_environment_failure(error: str) -> bool:
+    normalized = str(error or "").lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "appium",
+            "adb",
+            "avd",
+            "emulator",
+            "simulator",
+            "snapshot",
+            "connection",
+            "timed out",
+            "timeout",
+            "environment",
+        )
+    )
+
+
+def _run_bmoca_cell(
+    *,
+    args: argparse.Namespace,
+    task: str,
+    method: str,
+    environment_id: str,
+    store_path: Path,
+    task_root: Path,
+    avd_home: Path,
+    appium_port: int,
+    appium_system_port: int,
+    emulator_console_port: int,
+    emulator_adb_port: int,
+    emulator_grpc_port: int,
+    timeout_sec: float,
+    command_runner: Callable[..., dict[str, Any]] = run_logged_command,
+) -> dict[str, Any]:
+    cell_root = task_root / "attempts" / method / f"env_{environment_id}"
+    summary_path = cell_root / "summary.json"
+    log_path = task_root / "logs" / method / f"env_{environment_id}.log"
+    live_started = time.monotonic()
+    result = command_runner(
+        [
+            "bash",
+            str(args.script),
+            "--environment",
+            "bmoca",
+            "--method",
+            method,
+            "--tasks",
+            task,
+        ],
+        cwd=args.repo,
+        environment=_bmoca_cell_environment(
+            args=args,
+            task=task,
+            method=method,
+            environment_id=environment_id,
+            store_path=store_path,
+            output_path=cell_root,
+            avd_home=avd_home,
+            appium_port=appium_port,
+            appium_system_port=appium_system_port,
+            emulator_console_port=emulator_console_port,
+            emulator_adb_port=emulator_adb_port,
+            emulator_grpc_port=emulator_grpc_port,
+        ),
+        log_path=log_path,
+        timeout_sec=timeout_sec,
+    )
+    live_finished = time.monotonic()
+    summary = _read_object(summary_path) if summary_path.is_file() else {}
+    results = summary.get("results") if isinstance(summary.get("results"), list) else []
+    episode = results[0] if len(results) == 1 and isinstance(results[0], dict) else {}
+    official_success = episode.get("official_success") is True
+    error = str(episode.get("error") or "").strip()
+    if not summary:
+        error = error or f"bmoca_child_exit_{result.get('returncode')}"
+        status = "environment_failure"
+    elif _bmoca_environment_failure(error):
+        status = "environment_failure"
+    else:
+        status = "success" if official_success else "method_failure"
+    evidence = episode.get("run_log_evidence")
+    evidence = evidence if isinstance(evidence, dict) else {}
+    return {
+        "task": task,
+        "method": method,
+        "environment_id": environment_id,
+        "status": status,
+        "official_success": official_success,
+        "method_success": episode.get("method_success") is True,
+        "actions_executed": int(episode.get("actions_executed") or 0),
+        "model_calls": int(episode.get("model_calls") or 0),
+        "fallback_steps": int(episode.get("fallback_steps") or 0),
+        "error": error,
+        "started_at": str(result.get("started_at") or ""),
+        "finished_at": str(result.get("finished_at") or ""),
+        "wall_sec": float(result.get("wall_sec") or 0),
+        "process_pid": int(result.get("process_pid") or 0),
+        "emulator_serial": str(episode.get("emulator_serial") or ""),
+        "appium_port": appium_port,
+        "appium_system_port": appium_system_port,
+        "emulator_console_port": emulator_console_port,
+        "emulator_adb_port": emulator_adb_port,
+        "emulator_grpc_port": emulator_grpc_port,
+        "avd_home": str(avd_home),
+        "store_path": str(store_path),
+        "summary_path": str(summary_path) if summary_path.is_file() else "",
+        "run_log_path": str(evidence.get("target_run_log_path") or ""),
+        "log_path": str(log_path),
+        "_live_started": live_started,
+        "_live_finished": live_finished,
+    }
+
+
+def _max_live_bmoca_cells(rows: Sequence[dict[str, Any]]) -> int:
+    events: list[tuple[float, int]] = []
+    for row in rows:
+        started = row.get("_live_started")
+        finished = row.get("_live_finished")
+        if isinstance(started, (int, float)) and isinstance(finished, (int, float)):
+            events.extend(((float(started), 1), (float(finished), -1)))
+    active = maximum = 0
+    for _, delta in sorted(events, key=lambda item: (item[0], -item[1])):
+        active += delta
+        maximum = max(maximum, active)
+    return maximum
+
+
+def _run_bmoca_method_cells(
+    *,
+    args: argparse.Namespace,
+    task: str,
+    method: str,
+    store_path: Path,
+    task_root: Path,
+    avd_homes: dict[str, Path],
+    command_runner: Callable[..., dict[str, Any]] = run_logged_command,
+) -> list[dict[str, Any]]:
+    def worker(environment_id: str) -> dict[str, Any]:
+        offset = int(environment_id) - 100
+        ports = {
+            "appium_port": 4723 + offset,
+            "appium_system_port": 8200 + offset,
+            "emulator_console_port": 5554 + 2 * offset,
+            "emulator_adb_port": 5555 + 2 * offset,
+            "emulator_grpc_port": 8554 + offset,
+        }
+        try:
+            return _run_bmoca_cell(
+                args=args,
+                task=task,
+                method=method,
+                environment_id=environment_id,
+                store_path=store_path,
+                task_root=task_root,
+                avd_home=avd_homes[environment_id],
+                timeout_sec=float(args.bmoca_cell_timeout_sec),
+                command_runner=command_runner,
+                **ports,
+            )
+        except Exception as error:  # noqa: BLE001 - conclude this immutable cell
+            return {
+                "task": task,
+                "method": method,
+                "environment_id": environment_id,
+                "status": "environment_failure",
+                "official_success": False,
+                "method_success": False,
+                "actions_executed": 0,
+                "model_calls": 0,
+                "fallback_steps": 0,
+                "error": f"{type(error).__name__}: {error}",
+                "avd_home": str(avd_homes[environment_id]),
+                "store_path": str(store_path),
+                "log_path": str(
+                    task_root / "logs" / method / f"env_{environment_id}.log"
+                ),
+                **ports,
+            }
+
+    rows: list[dict[str, Any]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {
+            executor.submit(worker, environment_id): environment_id
+            for environment_id in _BMOCA_ENVIRONMENT_IDS
+            if environment_id in avd_homes
+        }
+        for future in concurrent.futures.as_completed(futures):
+            rows.append(future.result())
+    return sorted(rows, key=lambda row: str(row["environment_id"]))
+
+
+def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
+    """Task-major B-MoCA campaign owned by the existing E2E scheduler."""
+
+    tasks, source_run_logs = _bmoca_manifest_tasks(
+        args.bmoca_corpus_manifest,
+        args.task,
+    )
+    campaign_root = args.output_root
+    campaign_root.mkdir(parents=True, exist_ok=False)
+    progress_csv = campaign_root / "progress.csv"
+    progress_jsonl = campaign_root / "progress.jsonl"
+    started_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    _write_json(
+        campaign_root / "campaign_manifest.json",
+        {
+            "schema_version": "omniflow.bmoca-e2e-campaign.v1",
+            "tasks": tasks,
+            "methods": list(_BMOCA_METHODS),
+            "environment_ids": list(_BMOCA_ENVIRONMENT_IDS),
+            "concurrency_per_method": 10,
+            "corpus_manifest": str(args.bmoca_corpus_manifest),
+            "bmoca_root": str(args.bmoca_root),
+            "source_avd_home": str(args.bmoca_avd_home),
+            "started_at": started_at,
+        },
+    )
+    rows: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for task in tasks:
+        for method in _BMOCA_METHODS:
+            for environment_id in _BMOCA_ENVIRONMENT_IDS:
+                key = (task, method, environment_id)
+                rows[key] = {
+                    "task": task,
+                    "method": method,
+                    "environment_id": environment_id,
+                    "status": "pending",
+                    "official_success": "",
+                    "method_success": "",
+                    "actions_executed": 0,
+                    "model_calls": 0,
+                    "fallback_steps": 0,
+                    "error": "",
+                }
+    _write_bmoca_progress(progress_csv, rows)
+
+    avd_names = _bmoca_avd_names(args.bmoca_root)
+    avd_homes: dict[str, Path] = {}
+    avd_failures: dict[str, str] = {}
+    for environment_id in _BMOCA_ENVIRONMENT_IDS:
+        try:
+            avd_homes[environment_id] = _clone_bmoca_avd_home(
+                source_home=args.bmoca_avd_home,
+                target_home=campaign_root / "runtime" / "avd" / f"env_{environment_id}",
+                avd_name=avd_names[environment_id],
+            )
+        except Exception as error:  # noqa: BLE001 - preserve the campaign table
+            avd_failures[environment_id] = f"{type(error).__name__}: {error}"
+
+    observed_max_concurrency = 0
+    enhancement_reports: list[dict[str, Any]] = []
+    for task in tasks:
+        task_root = campaign_root / "tasks" / _safe_component(task)
+        source_run_log = source_run_logs.get(task)
+        if source_run_log is None:
+            for method in _BMOCA_METHODS:
+                for environment_id in _BMOCA_ENVIRONMENT_IDS:
+                    key = (task, method, environment_id)
+                    rows[key].update(
+                        status="prep_failed",
+                        error="bmoca_env100_success_source_missing",
+                    )
+                    _append_bmoca_progress_event(progress_jsonl, rows[key])
+            _write_bmoca_progress(progress_csv, rows)
+            continue
+        try:
+            store_path, enhancement = _save_bmoca_function_once(
+                args=args,
+                task=task,
+                source_run_log=source_run_log,
+                task_root=task_root,
+            )
+            enhancement_reports.append(enhancement)
+        except Exception as error:  # noqa: BLE001 - advance to the next task
+            failure = {
+                "schema_version": "omniflow.bmoca-function-enhancement.v1",
+                "task": task,
+                "source_run_log": str(source_run_log),
+                "save_function_calls": 1,
+                "error": f"{type(error).__name__}: {error}",
+            }
+            _write_json(task_root / "enhancement_failure.json", failure)
+            enhancement_reports.append(failure)
+            for method in _BMOCA_METHODS:
+                for environment_id in _BMOCA_ENVIRONMENT_IDS:
+                    key = (task, method, environment_id)
+                    rows[key].update(status="prep_failed", error=failure["error"])
+                    _append_bmoca_progress_event(progress_jsonl, rows[key])
+            _write_bmoca_progress(progress_csv, rows)
+            continue
+        for method in _BMOCA_METHODS:
+            runnable_homes = dict(avd_homes)
+            for environment_id, error in avd_failures.items():
+                key = (task, method, environment_id)
+                rows[key].update(status="environment_failure", error=error)
+                _append_bmoca_progress_event(progress_jsonl, rows[key])
+            for environment_id in runnable_homes:
+                key = (task, method, environment_id)
+                rows[key].update(status="running", store_path=str(store_path))
+                _append_bmoca_progress_event(progress_jsonl, rows[key])
+            _write_bmoca_progress(progress_csv, rows)
+            method_rows = _run_bmoca_method_cells(
+                args=args,
+                task=task,
+                method=method,
+                store_path=store_path,
+                task_root=task_root,
+                avd_homes=runnable_homes,
+            )
+            observed_max_concurrency = max(
+                observed_max_concurrency,
+                _max_live_bmoca_cells(method_rows),
+            )
+            for row in method_rows:
+                key = (task, method, str(row["environment_id"]))
+                rows[key] = {key: value for key, value in row.items() if not key.startswith("_")}
+                _append_bmoca_progress_event(progress_jsonl, rows[key])
+            _write_bmoca_progress(progress_csv, rows)
+
+    status_counts: dict[str, int] = {}
+    for row in rows.values():
+        status = str(row.get("status") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+    summary = {
+        "schema_version": "omniflow.bmoca-e2e-campaign-summary.v1",
+        "status": "complete",
+        "started_at": started_at,
+        "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "task_count": len(tasks),
+        "method_count": len(_BMOCA_METHODS),
+        "environment_count": len(_BMOCA_ENVIRONMENT_IDS),
+        "cell_count": len(rows),
+        "status_counts": status_counts,
+        "official_success_count": sum(
+            row.get("official_success") is True for row in rows.values()
+        ),
+        "observed_max_live_cells": observed_max_concurrency,
+        "process_overlap_proven": observed_max_concurrency > 1,
+        "enhancement_count": len(enhancement_reports),
+        "enhancement_success_count": sum(
+            report.get("enhanced") is True for report in enhancement_reports
+        ),
+        "progress_csv": str(progress_csv),
+        "progress_jsonl": str(progress_jsonl),
+    }
+    _write_json(campaign_root / "campaign_summary.json", summary)
+    return summary
+
+
 def _parse_source_device(value: str) -> tuple[str, str, int]:
     parts = value.split(":")
     if len(parts) != 3 or not parts[0] or not parts[2].isdigit():
@@ -1911,6 +2615,11 @@ def _parse_source_device(value: str) -> tuple[str, str, int]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--environment",
+        choices=("androidworld", "bmoca"),
+        default="androidworld",
+    )
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--script", type=Path, required=True)
     parser.add_argument("--task", required=True)
@@ -1919,18 +2628,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-fallback-steps", type=int, default=MAX_FALLBACK_STEPS
     )
-    parser.add_argument("--memory-index", type=Path, required=True)
-    parser.add_argument("--asset-root", type=Path, required=True)
-    parser.add_argument("--results-root", type=Path, required=True)
+    parser.add_argument("--memory-index", type=Path)
+    parser.add_argument("--asset-root", type=Path)
+    parser.add_argument("--results-root", type=Path)
     parser.add_argument("--output-root", type=Path, required=True)
-    parser.add_argument("--android-world-root", type=Path, required=True)
+    parser.add_argument("--android-world-root", type=Path)
     parser.add_argument("--omnitransfer-root", type=Path, required=True)
-    parser.add_argument("--mobilegpt-root", type=Path, required=True)
-    parser.add_argument("--appagent-root", type=Path, required=True)
+    parser.add_argument("--mobilegpt-root", type=Path)
+    parser.add_argument("--appagent-root", type=Path)
     parser.add_argument("--appagent-memory-root", type=Path)
     parser.add_argument("--python-bin", type=Path, required=True)
-    parser.add_argument("--adb-path", type=Path, required=True)
-    parser.add_argument("--emulator-bin", type=Path, required=True)
+    parser.add_argument("--adb-path", type=Path)
+    parser.add_argument("--emulator-bin", type=Path)
     parser.add_argument(
         "--source-device",
         type=_parse_source_device,
@@ -1938,8 +2647,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--source-avd", default="SmallPhone")
     parser.add_argument("--emulator-gpu", default="swiftshader_indirect")
-    parser.add_argument("--runtime-preflight", type=Path, required=True)
+    parser.add_argument("--runtime-preflight", type=Path)
     parser.add_argument("--formal-model", default=FORMAL_MODEL)
+    parser.add_argument("--bmoca-root", type=Path)
+    parser.add_argument("--bmoca-corpus-manifest", type=Path)
+    parser.add_argument("--bmoca-avd-home", type=Path)
+    parser.add_argument("--bmoca-android-env-root", type=Path)
+    parser.add_argument("--android-sdk-root", type=Path)
+    parser.add_argument("--bmoca-cell-timeout-sec", type=int, default=600)
+    parser.add_argument("--enhancement-timeout-sec", type=float, default=180.0)
     parser.add_argument("--attempt-id", default="")
     parser.add_argument("--source-qualification-only", action="store_true")
     parser.add_argument("--source-only", action="store_true")
@@ -1948,21 +2664,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
-    for field in (
-        "repo",
-        "script",
-        "memory_index",
-        "asset_root",
-        "results_root",
-        "output_root",
-        "android_world_root",
-        "omnitransfer_root",
-        "mobilegpt_root",
-        "appagent_root",
-        "adb_path",
-        "emulator_bin",
-        "runtime_preflight",
-    ):
+    for field in ("repo", "script", "output_root", "omnitransfer_root"):
         setattr(args, field, getattr(args, field).expanduser().resolve())
     args.python_bin = args.python_bin.expanduser().absolute()
     if args.appagent_memory_root is not None:
@@ -1975,12 +2677,65 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
         raise ValueError("max_steps_must_be_positive")
     if not 0 <= args.max_fallback_steps <= MAX_FALLBACK_STEPS:
         raise ValueError("max_fallback_steps_out_of_range")
+    if not args.script.is_file() or not args.python_bin.is_file():
+        raise FileNotFoundError("required_script_or_python_missing")
+    if args.omnitransfer_root != (Path.home() / "Projects/Omni/OmniTransfer").resolve():
+        raise ValueError("canonical_omnitransfer_root_required")
+    if args.output_root == args.repo or args.repo in args.output_root.parents:
+        raise ValueError("external_output_root_required")
+    if getattr(args, "environment", "androidworld") == "bmoca":
+        for field in (
+            "bmoca_root",
+            "bmoca_corpus_manifest",
+            "bmoca_avd_home",
+            "bmoca_android_env_root",
+            "android_sdk_root",
+        ):
+            value = getattr(args, field)
+            if value is None:
+                raise ValueError(f"bmoca_required_path_missing:{field}")
+            setattr(args, field, value.expanduser().resolve())
+        if not args.bmoca_corpus_manifest.is_file():
+            raise FileNotFoundError(
+                f"bmoca_corpus_manifest_missing:{args.bmoca_corpus_manifest}"
+            )
+        for field in (
+            "bmoca_root",
+            "bmoca_avd_home",
+            "bmoca_android_env_root",
+            "android_sdk_root",
+        ):
+            if not getattr(args, field).is_dir():
+                raise FileNotFoundError(
+                    f"bmoca_required_directory_missing:{field}:{getattr(args, field)}"
+                )
+        if args.formal_model != "GLM-5.1":
+            raise ValueError("bmoca_campaign_requires_GLM-5.1")
+        if args.max_fallback_steps != 0:
+            raise ValueError("bmoca_campaign_fallback_must_be_zero")
+        if args.bmoca_cell_timeout_sec <= 0 or args.enhancement_timeout_sec <= 0:
+            raise ValueError("bmoca_timeouts_must_be_positive")
+        return args
+    for field in (
+        "memory_index",
+        "asset_root",
+        "results_root",
+        "android_world_root",
+        "mobilegpt_root",
+        "appagent_root",
+        "adb_path",
+        "emulator_bin",
+        "runtime_preflight",
+    ):
+        value = getattr(args, field)
+        if value is None:
+            raise ValueError(f"androidworld_required_path_missing:{field}")
+        setattr(args, field, value.expanduser().resolve())
     if not args.task.isalnum():
         raise ValueError("androidworld_task_name_invalid")
     if not args.source_avd.strip():
         raise ValueError("source_avd_required")
     for field in (
-        "script",
         "memory_index",
         "python_bin",
         "adb_path",
@@ -1989,8 +2744,6 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
     ):
         if not getattr(args, field).is_file():
             raise FileNotFoundError(f"required_file_missing:{field}:{getattr(args, field)}")
-    if args.omnitransfer_root != (Path.home() / "Projects/Omni/OmniTransfer").resolve():
-        raise ValueError("canonical_omnitransfer_root_required")
     for field in ("asset_root", "results_root", "output_root"):
         path = getattr(args, field)
         if path == args.repo or args.repo in path.parents:
@@ -2002,8 +2755,10 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _resolve_args(build_parser().parse_args(argv))
-    result = run_pipeline(args)
+    result = run_bmoca_pipeline(args) if args.environment == "bmoca" else run_pipeline(args)
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    if args.environment == "bmoca":
+        return 0 if result.get("status") == "complete" else 1
     if args.dry_run:
         return 0
     counts = result.get("counts") if isinstance(result, dict) else None

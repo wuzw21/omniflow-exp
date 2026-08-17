@@ -99,7 +99,9 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert completed.returncode == 0
     assert "--check-only" in completed.stdout
     assert "--environment" in completed.stdout
-    assert "OMNIFLOW_BMOCA_ENVIRONMENT_IDS" in completed.stdout
+    assert "OMNIFLOW_BMOCA_CORPUS_MANIFEST" in completed.stdout
+    assert "OMNIFLOW_BMOCA_WORKERS" not in completed.stdout
+    assert "OMNIFLOW_BMOCA_ENVIRONMENT_RETRIES" not in completed.stdout
     assert "--development-run" in completed.stdout
     assert "--all-tasks" in completed.stdout
     assert "--method" in completed.stdout
