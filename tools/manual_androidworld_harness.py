@@ -129,7 +129,22 @@ class ManualAndroidWorld:
     def act(self, action_payload: dict[str, Any]) -> dict[str, Any]:
         if self._last_observation is None:
             self.observe()
-        action = self._json_action.JSONAction(**action_payload)
+        # AndroidWorld's actuation layer already implements drag-and-drop, but
+        # this release's JSONAction parser omits that action from its public
+        # enum.  Keep the interactive protocol explicit and construct the
+        # official action object through the same env.execute_action seam.
+        if action_payload.get("action_type") == "drag_and_drop":
+            touch = action_payload.get("touch_xy")
+            lift = action_payload.get("lift_xy")
+            if not (isinstance(touch, (list, tuple)) and len(touch) == 2
+                    and isinstance(lift, (list, tuple)) and len(lift) == 2):
+                raise ValueError("drag_and_drop requires touch_xy and lift_xy")
+            action = self._json_action.JSONAction(action_type="click")
+            action.action_type = "drag_and_drop"
+            action.touch_xy = tuple(int(v) for v in touch)
+            action.lift_xy = tuple(int(v) for v in lift)
+        else:
+            action = self._json_action.JSONAction(**action_payload)
         before = self._last_observation
         self._env.execute_action(action)
         after = self.observe()["observation"]
