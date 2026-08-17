@@ -253,6 +253,24 @@ class LunaAndroidWorldHarness:
         prompt = self._cli_prompt(observation)
         with tempfile.TemporaryDirectory(prefix="luna-cli-") as temp_dir:
             output_path = Path(temp_dir) / "last_message.txt"
+            codex_home = Path(temp_dir) / "codex-home"
+            codex_home.mkdir(parents=True, exist_ok=True)
+            (codex_home / "config.toml").write_text(
+                "\n".join(
+                    (
+                        f'model = "{self._planner.model}"',
+                        'model_provider = "omnimind"',
+                        "[model_providers.omnimind]",
+                        'name = "omnimind"',
+                        f'base_url = "{os.environ.get("OMNIFLOW_LUNA_CODEX_BASE_URL", "http://cloud.omnimind.com.cn/v1")}"',
+                        'wire_api = "responses"',
+                        "requires_openai_auth = true",
+                        'env_key = "OMNIMIND_API_KEY"',
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             command = [
                 "codex",
                 "exec",
@@ -277,7 +295,7 @@ class LunaAndroidWorldHarness:
                 capture_output=True,
                 timeout=float(self._planner.timeout),
                 check=False,
-                env=os.environ.copy(),
+                env={**os.environ, "CODEX_HOME": str(codex_home)},
             )
             raw_response = output_path.read_text(encoding="utf-8", errors="replace") if output_path.is_file() else ""
             usage = self._cli_usage(completed.stdout)
