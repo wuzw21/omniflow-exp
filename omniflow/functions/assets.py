@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 import re
 from typing import Any, Callable, Iterable
+import xml.etree.ElementTree as ET
 
 from omniflow.core.model import Action, Function, FunctionStep
 from omniflow.core.schemas import canonicalize_action, load_canonical_action_schema
@@ -957,10 +958,18 @@ def enhance_function(
     complete_json: Callable[[str], str],
     *,
     instruction: str = "",
+    state_loader: Callable[[str], Any] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], str]:
     original = parse_function_artifact(value).to_dict()
     proposal = _json_object(
-        complete_json(_enhancement_prompt(original, run_log, instruction=instruction))
+        complete_json(
+            _enhancement_prompt(
+                original,
+                run_log,
+                instruction=instruction,
+                state_loader=state_loader,
+            )
+        )
     )
     _validate_step_decisions(proposal, run_log)
     _require_checker_evidence(proposal, run_log)
@@ -1005,6 +1014,7 @@ def _enhancement_prompt(
     run_log: dict[str, Any],
     *,
     instruction: str = "",
+    state_loader: Callable[[str], Any] | None = None,
 ) -> str:
     steps = [
         {
@@ -1019,17 +1029,7 @@ def _enhancement_prompt(
         "goal": str(run_log.get("goal") or ""),
         "successful_function_segments": _successful_source_segments(run_log),
         "raw_steps": [
-            {
-                key: step.get(key)
-                for key in (
-                    "step_index",
-                    "before_state_id",
-                    "action",
-                    "result",
-                    "after_state_id",
-                    "metadata",
-                )
-            }
+            _enhancement_prompt_step(step, state_loader)
             for step in run_log.get("steps") or ()
             if isinstance(step, dict)
         ],
@@ -1053,6 +1053,9 @@ role must be function, checker, or ignore. function directly advances the user's
 checker is optional environment setup or recovery; ignore is redundant or unrelated.
 Do not encode the decisions as one compact string or as grouped index arrays. The final
 step_decisions array must contain one object per raw Step in the original order.
+Role classification is semantic and does not depend on metadata.origin. A Step recorded
+as origin=action can still be checker when page_semantics shows optional onboarding,
+setup, or interruption.
 Use those decisions consistently: replacement steps come from function Steps, while
 checker_rules come only from checker Steps with the required RunLog recovery evidence.
 Describe when to reuse the Function, visible operations, inputs, success signal, and avoid cases.
@@ -1085,6 +1088,65 @@ When metadata.checker_trigger exists, copy it exactly. Otherwise return checker_
 Function:
 {json.dumps(brief, ensure_ascii=False, separators=(",", ":"))}
 """.strip()
+
+
+def _enhancement_prompt_step(
+    step: dict[str, Any],
+    state_loader: Callable[[str], Any] | None,
+) -> dict[str, Any]:
+    value = {
+        key: step.get(key)
+        for key in (
+            "step_index",
+            "before_state_id",
+            "action",
+            "result",
+            "after_state_id",
+            "metadata",
+        )
+    }
+    semantics = _compact_source_page_semantics(step, state_loader)
+    if semantics is not None:
+        value["page_semantics"] = semantics
+    return value
+
+
+def _compact_source_page_semantics(
+    step: dict[str, Any],
+    state_loader: Callable[[str], Any] | None,
+) -> dict[str, Any] | None:
+    if state_loader is None:
+        return None
+    source_state_id = str(step.get("before_state_id") or "").strip()
+    if not source_state_id:
+        return None
+    state = state_loader(source_state_id)
+    if hasattr(state, "to_dict"):
+        state = state.to_dict()
+    if not isinstance(state, dict):
+        return None
+    labels: list[str] = []
+    xml = str(state.get("xml") or state.get("forest") or "")
+    if xml:
+        try:
+            root = ET.fromstring(xml)
+        except ET.ParseError:
+            root = None
+        if root is not None:
+            for node in root.iter():
+                for field in ("text", "content-desc", "content_description"):
+                    label = " ".join(str(node.attrib.get(field) or "").split())
+                    if label and label not in labels:
+                        labels.append(label[:160])
+                        if len(labels) == 16:
+                            break
+                if len(labels) == 16:
+                    break
+    return {
+        "package": str(state.get("package_name") or state.get("package") or ""),
+        "activity": str(state.get("activity_name") or state.get("activity") or ""),
+        "visible_labels": labels,
+    }
 
 
 def _validate_step_decisions(

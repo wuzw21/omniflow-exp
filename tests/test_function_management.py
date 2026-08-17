@@ -161,6 +161,43 @@ def test_enhancement_prompt_projects_androidworld_actions_with_state_ids() -> No
     assert '"package_name":"com.android.settings"' in prompts[0]
 
 
+def test_enhancement_prompt_uses_compact_source_page_semantics() -> None:
+    prompts: list[str] = []
+    run_log = {
+        "goal": "open a new tab in Chrome",
+        "steps": [
+            {
+                **_source_step("chrome-promo", "click", {"x": 806, "y": 695}),
+                "step_index": 0,
+                "after_state_id": "chrome-home",
+                "metadata": {"origin": "action"},
+            }
+        ],
+    }
+    states = {
+        "chrome-promo": {
+            "package_name": "com.android.chrome",
+            "activity_name": "com.google.android.apps.chrome.Main",
+            "xml": (
+                '<hierarchy><node text="Search with Sogou"/>'
+                '<node text="OK" content-desc="Confirm search engine"/></hierarchy>'
+            ),
+        }
+    }
+
+    enhance_function(
+        _function(),
+        run_log,
+        lambda prompt: prompts.append(prompt) or _proposal(run_log),
+        state_loader=states.get,
+    )
+
+    assert '"page_semantics":{"package":"com.android.chrome"' in prompts[0]
+    assert '"visible_labels":["Search with Sogou","OK","Confirm search engine"]' in prompts[0]
+    assert "<hierarchy>" not in prompts[0]
+    assert "does not depend on metadata.origin" in prompts[0]
+
+
 def test_enhancement_parameterizes_projected_androidworld_input_text() -> None:
     run_log = androidworld_run_log(
         [{"action_type": "input_text", "text": "Paid by card"}],
