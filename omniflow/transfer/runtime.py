@@ -494,15 +494,41 @@ def _require_raw_source_target(
     return "named_element" if named else "workflow_actionable_element"
 
 
-def transfer_action(**kwargs: Any) -> dict[str, Any]:
+def transfer_action(
+    *,
+    source_xml: str,
+    target_xml: str,
+    source_point: tuple[float, float] | None = None,
+    source_element_id: str | None = None,
+    source_offset: tuple[float, float] | None = None,
+    source_screenshot_path: str | None = None,
+    target_screenshot_path: str | None = None,
+    source_visual_rgb: dict[str, Any] | None = None,
+    target_visual_rgb: dict[str, Any] | None = None,
+    action_type: str = "click",
+    top_k: int = 1,
+) -> dict[str, Any]:
+    request = {
+        "source_xml": source_xml,
+        "target_xml": target_xml,
+        "source_point": source_point,
+        "source_element_id": source_element_id,
+        "source_offset": source_offset,
+        "source_screenshot_path": source_screenshot_path,
+        "target_screenshot_path": target_screenshot_path,
+        "source_visual_rgb": source_visual_rgb,
+        "target_visual_rgb": target_visual_rgb,
+        "action_type": action_type,
+        "top_k": top_k,
+    }
     module = load_omnitransfer()
     rank_candidates = getattr(module, "rank_action_candidates", None)
     if not callable(rank_candidates):
         raise RuntimeError("omnitransfer_candidate_ranking_unavailable")
-    ranking = rank_candidates(**kwargs)
+    ranking = rank_candidates(**request)
     if not isinstance(ranking, dict):
         raise RuntimeError("omnitransfer_result_invalid")
-    return _select_transfer_candidate(ranking, kwargs)
+    return _select_transfer_candidate(ranking, request)
 
 
 def preflight_omnitransfer() -> dict[str, Any]:

@@ -8,7 +8,6 @@ import json
 import math
 import re
 from typing import Any, Callable
-import unicodedata
 import xml.etree.ElementTree as ET
 
 from omniflow.core.config import (
@@ -605,10 +604,6 @@ def default_transfer(
     request: dict[str, Any] = {
         "source_xml": source_xml,
         "target_xml": target_xml,
-        "source_package_name": source_state.package_name,
-        "target_package_name": observation.package_name,
-        "source_activity_name": source_state.activity_name,
-        "target_activity_name": observation.activity_name,
         "action_type": action.tool,
         "top_k": 3,
     }
@@ -622,9 +617,6 @@ def default_transfer(
         request["source_point"] = source_point
     except (KeyError, TypeError, ValueError):
         return TransferResult(None, reason="omnitransfer_invalid_source_point")
-    source_title = _source_semantic_title(source_xml, source_point)
-    if source_title:
-        request["source_element"] = {"text": source_title}
     try:
         result = transfer_action(**request)
     except Exception as exc:
@@ -707,10 +699,6 @@ def _transfer_swipe(
             request: dict[str, Any] = {
                 "target_xml": target_xml,
                 "source_xml": source_xml,
-                "source_package_name": source_state.package_name,
-                "target_package_name": observation.package_name,
-                "source_activity_name": source_state.activity_name,
-                "target_activity_name": observation.activity_name,
                 "action_type": action.tool,
                 "top_k": 3,
             }
@@ -1034,118 +1022,6 @@ def _bounds(value: Any) -> tuple[int, int, int, int] | None:
     if len(numbers) != 4 or numbers[2] <= numbers[0] or numbers[3] <= numbers[1]:
         return None
     return numbers[0], numbers[1], numbers[2], numbers[3]
-
-
-def _source_semantic_title(
-    source_xml: str,
-    source_point: tuple[float, float],
-) -> str:
-    root = _xml_root(source_xml)
-    if root is None:
-        return ""
-    source = _actionable_element_at_point(root, source_point)
-    if source is None:
-        return ""
-    direct_label = _text(
-        source.attrib.get("text") or source.attrib.get("content-desc")
-    )
-    if _is_semantic_label(direct_label):
-        return direct_label
-    title = _element_title(source)
-    if _is_semantic_label(title):
-        return title
-    return next(
-        (
-            label
-            for descendant in source.iter()
-            if (
-                label := _text(
-                    descendant.attrib.get("text")
-                    or descendant.attrib.get("content-desc")
-                )
-            )
-            if _is_semantic_label(label)
-        ),
-        "",
-    )
-
-
-def _is_semantic_label(value: str) -> bool:
-    normalized = _text(value)
-    return bool(normalized) and any(
-        unicodedata.category(character) != "Co"
-        for character in normalized
-        if not character.isspace()
-    )
-
-
-def _xml_root(xml_text: str) -> ET.Element | None:
-    try:
-        return ET.fromstring(xml_text)
-    except ET.ParseError:
-        return None
-
-
-def _actionable_element_at_point(
-    root: ET.Element,
-    point: tuple[float, float],
-) -> ET.Element | None:
-    x, y = point
-    containing: list[tuple[ET.Element, tuple[int, int, int, int], int]] = []
-
-    def visit(element: ET.Element, depth: int) -> None:
-        bounds = _bounds(element.attrib.get("bounds"))
-        if (
-            bounds is not None
-            and bounds[0] <= x <= bounds[2]
-            and bounds[1] <= y <= bounds[3]
-        ):
-            containing.append((element, bounds, depth))
-        for child in list(element):
-            visit(child, depth + 1)
-
-    visit(root, 0)
-    actionable = [
-        item
-        for item in containing
-        if str(item[0].attrib.get("enabled") or "true").lower() != "false"
-        and any(
-            str(item[0].attrib.get(attribute) or "").lower() == "true"
-            for attribute in ("clickable", "editable", "scrollable")
-        )
-    ]
-    candidates = actionable or containing
-    if not candidates:
-        return None
-    return min(
-        candidates,
-        key=lambda item: (
-            (item[1][2] - item[1][0]) * (item[1][3] - item[1][1]),
-            not _element_has_stable_identity(item[0]),
-            -item[2],
-        ),
-    )[0]
-
-
-def _element_has_stable_identity(element: ET.Element) -> bool:
-    return any(
-        str(element.attrib.get(attribute) or "").strip()
-        for attribute in ("resource-id", "text", "content-desc")
-    )
-
-
-def _element_title(element: ET.Element | None) -> str:
-    if element is None:
-        return ""
-    titles = {
-        _text(descendant.attrib.get("text") or descendant.attrib.get("content-desc"))
-        for descendant in element.iter()
-        if str(descendant.attrib.get("resource-id") or "").rsplit("/", 1)[-1] == "title"
-        and _text(
-            descendant.attrib.get("text") or descendant.attrib.get("content-desc")
-        )
-    }
-    return next(iter(titles)) if len(titles) == 1 else ""
 
 
 def _numeric_bounds(value: Any) -> tuple[float, float, float, float] | None:

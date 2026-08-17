@@ -262,7 +262,9 @@ def test_explicit_display_controls_grounding_when_xml_bounds_overflow(
     )
 
     assert requests[1]["source_point"] == (681.0, 304.0)
-    assert requests[1]["source_element"] == {"text": "submit"}
+    assert "source_element" not in requests[1]
+    assert "source_package_name" not in requests[1]
+    assert "target_package_name" not in requests[1]
     assert result.action == Action(
         "click",
         {
@@ -345,7 +347,7 @@ def test_transfer_keeps_semantically_consistent_row_match(monkeypatch) -> None:
     assert result.action.tool == "click"
     assert result.action.args["x"] == 681.6123188405797
     assert abs(result.action.args["y"] - 337.77173913043475) < 1e-9
-    assert request["source_element"] == {"text": "bluetooth"}
+    assert "source_element" not in request
 
 
 def test_transfer_treats_private_use_toolbar_glyph_as_structural_not_semantic(
@@ -389,7 +391,7 @@ def test_transfer_treats_private_use_toolbar_glyph_as_structural_not_semantic(
     assert "source_element" not in request
 
 
-def test_transfer_indexes_generic_target_text_outside_android_title_nodes(
+def test_transfer_passes_generic_xml_to_candidate_api(
     monkeypatch,
 ) -> None:
     request = {}
@@ -423,7 +425,7 @@ def test_transfer_indexes_generic_target_text_outside_android_title_nodes(
     )
 
     assert result.action is not None
-    assert request["source_element"] == {"text": "搜索商家、品类或商圈"}
+    assert "source_element" not in request
 
 
 def test_transfer_delegates_missing_source_label_to_omnitransfer(
@@ -463,7 +465,7 @@ def test_transfer_delegates_missing_source_label_to_omnitransfer(
         "click",
         {"x": 900.0 / 1080.0 * 1000.0, "y": 200.0 / 2376.0 * 1000.0},
     )
-    assert request["source_element"] == {"text": "团购套餐抢购按钮区域"}
+    assert "source_element" not in request
 
 
 def test_transfer_executes_any_mapped_result_without_a_confidence_abstain(monkeypatch) -> None:
@@ -501,7 +503,7 @@ def test_transfer_executes_any_mapped_result_without_a_confidence_abstain(monkey
     assert result.detail["score"] == 0.002186
 
 
-def test_transfer_passes_generic_source_row_title_without_post_mapping_gate(
+def test_transfer_passes_generic_source_xml_without_post_mapping_gate(
     monkeypatch,
 ) -> None:
     request = {}
@@ -545,7 +547,7 @@ def test_transfer_passes_generic_source_row_title_without_post_mapping_gate(
         {"x": 1505.0 / 2208.0 * 1000.0, "y": 853.0 / 1840.0 * 1000.0},
     )
     assert result.reason == "mutual_graph_matcher_no_null_v3"
-    assert request["source_element"] == {"text": "internet"}
+    assert "source_element" not in request
 
 
 def test_transfer_rejects_incomplete_fold_graph_before_matching(monkeypatch) -> None:
@@ -624,7 +626,7 @@ def test_transfer_rejects_full_screen_root_candidate(monkeypatch) -> None:
     assert result.reason == "omnitransfer_invalid_root_candidate"
 
 
-def test_transfer_calls_omnitransfer_when_source_title_is_missing_from_target(
+def test_transfer_calls_candidate_api_when_source_title_is_missing_from_target(
     monkeypatch,
 ) -> None:
     request = {}
@@ -679,4 +681,4 @@ def test_transfer_calls_omnitransfer_when_source_title_is_missing_from_target(
         "click",
         {"x": 1505.0 / 2208.0 * 1000.0, "y": 853.0 / 1840.0 * 1000.0},
     )
-    assert request["source_element"] == {"text": "internet"}
+    assert "source_element" not in request

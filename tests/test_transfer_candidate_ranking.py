@@ -1,6 +1,23 @@
+import inspect
 from types import SimpleNamespace
 
 import omniflow.transfer.runtime as transfer_runtime
+
+
+def test_transfer_adapter_matches_the_candidate_api() -> None:
+    assert tuple(inspect.signature(transfer_runtime.transfer_action).parameters) == (
+        "source_xml",
+        "target_xml",
+        "source_point",
+        "source_element_id",
+        "source_offset",
+        "source_screenshot_path",
+        "target_screenshot_path",
+        "source_visual_rgb",
+        "target_visual_rgb",
+        "action_type",
+        "top_k",
+    )
 
 
 def _ranking(*, candidates, reason="learned_low_confidence"):
@@ -81,8 +98,6 @@ def test_omniflow_selects_rank_one_without_a_confidence_gate(monkeypatch) -> Non
         source_xml="<hierarchy />",
         target_xml="<hierarchy />",
         source_point=(1.0, 2.0),
-        source_package_name="com.example",
-        target_package_name="com.example",
     )
 
     assert len(calls) == 1
@@ -113,8 +128,6 @@ def test_omniflow_does_not_gate_candidates_by_page_identity(monkeypatch) -> None
         source_xml="<hierarchy />",
         target_xml="<hierarchy />",
         source_point=(1.0, 2.0),
-        source_package_name="com.source",
-        target_package_name="com.target",
     )
 
     assert result["mapped"] is True
