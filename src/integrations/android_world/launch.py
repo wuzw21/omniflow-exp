@@ -1802,6 +1802,7 @@ def _run_androidworld_setup_apps(
     setup_env = SetupEnvironment(env)
     if file_utils is not None:
         file_utils.copy_file_to_device = copy_file_to_device
+    original_install_apk = _patch_androidworld_apk_install_compat(setup_module)
     previous_handler = signal.getsignal(signal.SIGALRM)
     previous_timer = signal.setitimer(signal.ITIMER_REAL, 0)
     setup_started_at = time.monotonic()
@@ -1843,6 +1844,49 @@ def _run_androidworld_setup_apps(
             )
         if file_utils is not None:
             file_utils.copy_file_to_device = original_copy_file_to_device
+        if original_install_apk is not None:
+            setup_module.adb_utils.install_apk = original_install_apk
+
+
+def _patch_androidworld_apk_install_compat(setup_module: Any) -> Any | None:
+    """Retry legacy APK installation without an unsupported adb flag.
+
+    The pinned AndroidWorld setup always passes ``--bypass-low-target-sdk-block``.
+    Some otherwise valid Android emulator images reject that option.  Keep the
+    official call as the first attempt and retry only that precise compatibility
+    failure through AndroidWorld's own adb request helper.
+    """
+
+    adb_utils = getattr(setup_module, "adb_utils", None)
+    original = getattr(adb_utils, "install_apk", None)
+    issue_generic_request = getattr(adb_utils, "issue_generic_request", None)
+    if not callable(original) or not callable(issue_generic_request):
+        return None
+
+    def install_apk(apk_location: str, raw_env: Any) -> Any:
+        try:
+            return original(apk_location, raw_env)
+        except Exception as exc:
+            if "Unknown option --bypass-low-target-sdk-block" not in str(exc):
+                raise
+            response = issue_generic_request(
+                ["install", apk_location],
+                raw_env,
+                timeout_sec=30.0,
+            )
+            status = getattr(response, "status", None)
+            ok_status = getattr(
+                getattr(getattr(setup_module, "adb_pb2", None), "AdbResponse", None),
+                "Status",
+                None,
+            )
+            ok_value = getattr(ok_status, "OK", 1)
+            if status != ok_value:
+                raise
+            return response
+
+    adb_utils.install_apk = install_apk
+    return original
 
 
 def _bounded_androidworld_adb_file_transfer_timeout(

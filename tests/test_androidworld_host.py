@@ -21,12 +21,42 @@ from src.integrations.android_world.launch import (
     _ensure_androidworld_a11y_forwarder,
     _ExperimentAgentAdapter,
     _prepare_androidworld_episode_apps,
+    _patch_androidworld_apk_install_compat,
     _repair_androidworld_chrome_first_run,
     _result_has_official_validator_conclusion,
     _run_androidworld_setup_apps,
     _runtime_execution_trace,
     _wait_for_androidworld_a11y,
 )
+
+
+def test_androidworld_apk_install_retries_without_unsupported_flag() -> None:
+    calls: list[tuple[object, ...]] = []
+
+    class AdbUtils:
+        def install_apk(self, apk, _env):
+            calls.append(("official", apk))
+            raise RuntimeError(
+                "Failed to install: Unknown option --bypass-low-target-sdk-block"
+            )
+
+        def issue_generic_request(self, args, _env, *, timeout_sec):
+            calls.append(("compat", tuple(args), timeout_sec))
+            return SimpleNamespace(status=1)
+
+    setup_module = SimpleNamespace(adb_utils=AdbUtils())
+    original = _patch_androidworld_apk_install_compat(setup_module)
+    assert original is not None
+    try:
+        response = setup_module.adb_utils.install_apk("/tmp/app.apk", object())
+    finally:
+        setup_module.adb_utils.install_apk = original
+
+    assert response.status == 1
+    assert calls == [
+        ("official", "/tmp/app.apk"),
+        ("compat", ("install", "/tmp/app.apk"), 30.0),
+    ]
 
 
 def test_androidworld_file_transfer_timeout_bounds_unset_and_zero(
