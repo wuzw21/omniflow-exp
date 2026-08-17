@@ -249,7 +249,13 @@ def _section_from_experiment_config(
     defaults = config.get("defaults")
     if isinstance(defaults, dict):
         sections.append(defaults)
-    for key in (command, command_key):
+    section_keys = (command, command_key)
+    # Older paper configs name the single-cell section ``one_task`` while the
+    # current CLI command is ``cell``. Treat that name as a compatibility alias
+    # during config resolution instead of merging the section wrapper itself.
+    if command_key == "cell":
+        section_keys = (*section_keys, "one_task")
+    for key in section_keys:
         value = config.get(key)
         if isinstance(value, dict):
             sections.append(value)
