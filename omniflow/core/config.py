@@ -27,9 +27,6 @@ GUI_AGENT_RULES = (
 )
 
 DEFAULT_MAX_STEPS = int(ANDROIDWORLD_PROTOCOL["max_steps"])
-DEFAULT_CHECKER_PAGE_SIMILARITY = float(
-    ANDROIDWORLD_PROTOCOL["checker_page_similarity"]
-)
 DEFAULT_CHECKER_ACTION_CONFIDENCE = float(
     ANDROIDWORLD_PROTOCOL["checker_action_confidence"]
 )
@@ -59,7 +56,6 @@ class RuntimeSettings:
     max_steps: int = DEFAULT_MAX_STEPS
     max_fallback_steps: int | None = None
     max_function_tools: int = 8
-    checker_page_similarity: float = DEFAULT_CHECKER_PAGE_SIMILARITY
     checker_action_confidence: float = DEFAULT_CHECKER_ACTION_CONFIDENCE
 
 

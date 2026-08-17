@@ -206,9 +206,6 @@ class OmniFlow:
                     state_loader=(
                         self.catalog.get_state if self.catalog is not None else None
                     ),
-                    checker_page_similarity=(
-                        self.config.runtime.checker_page_similarity
-                    ),
                     checker_action_confidence=(
                         self.config.runtime.checker_action_confidence
                     ),
@@ -532,9 +529,6 @@ class OmniFlow:
                     installed_packages=self.installed_packages,
                     state_loader=(
                         self.catalog.get_state if self.catalog is not None else None
-                    ),
-                    checker_page_similarity=(
-                        self.config.runtime.checker_page_similarity
                     ),
                     checker_action_confidence=(
                         self.config.runtime.checker_action_confidence

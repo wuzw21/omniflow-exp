@@ -79,20 +79,19 @@ Before every pending formal Function action, OmniFlow checks every unexecuted
 rule registered on that Function. It executes the checker once only when all of
 the following hold:
 
-1. the latest OmniTransfer page embedding matches the current observation to
-   the rule's RunLog source state;
-2. OmniTransfer finds a valid target for the source action on the current
+1. OmniTransfer finds a valid target for the source action on the current
    observation;
-3. the action mapping reaches the configured high-confidence threshold; and
-4. the rule has not already executed in this Function call.
+2. the action mapping reaches the configured high-confidence threshold; and
+3. the rule has not already executed in this Function call.
 
 Each rule contains exactly `source_state_id` and `action`; registration on the
 Function is the rule-to-Function relationship. Otherwise the rule is skipped
-and may be checked again before a later formal action. The page and action
-thresholds are configured once in `config/paper_androidworld.json`; there are
-no per-rule thresholds, step-number triggers, trigger DSLs, global defaults, or
-source-coordinate passthrough. Checker actions are limited to transferable
-`click`, `input_text`, and `long_press` actions.
+and may be checked again before a later formal action. The action threshold is
+configured once in `config/paper_androidworld.json`; page similarity is not a
+checker trigger, and there are no per-rule thresholds, step-number triggers,
+trigger DSLs, global defaults, or source-coordinate passthrough. Checker
+actions are limited to transferable `click`, `input_text`, and `long_press`
+actions.
 
 ## OmniTransfer
 

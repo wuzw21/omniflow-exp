@@ -103,11 +103,10 @@ Do not return a step number, `when`, threshold, package switch, trigger DSL, or
 global checker list.
 
 Runtime checks an unexecuted registered rule before every pending Function
-action. The latest OmniTransfer page embedding must first match the current
-observation to the rule's source state, then OmniTransfer must find the source
-action's target above the configured high-confidence threshold. A matching
-checker executes once, while a nonmatching checker remains eligible before a
-later action.
+action. OmniTransfer must find the source action's target on the current
+observation above the configured high-confidence threshold. Page similarity is
+not a checker trigger. A matching checker executes once, while a nonmatching
+checker remains eligible before a later action.
 
 ## Evidence and failure rules
 
