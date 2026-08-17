@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import time
 from typing import Any, Sequence
@@ -390,6 +391,7 @@ def _evaluate_episode(
                 "adb_path": str(sdk / "platform-tools/adb"),
             }
             env = environment_class(**kwargs)
+            _wait_for_emulator_ready(env, adb_path=sdk / "platform-tools/adb")
             host = _BMocaHost(env, snapshot_id=episode.snapshot_id)
             host.reset()
         except Exception as error:  # noqa: BLE001 - environment boundary
@@ -514,6 +516,52 @@ def _configure_runtime(root: Path, *, sdk: Path, avd_home: Path) -> None:
         sys.path.remove(root_text)
     sys.path.insert(0, root_text)
     importlib.invalidate_caches()
+
+
+def _wait_for_emulator_ready(
+    env: Any,
+    *,
+    adb_path: Path,
+    timeout_seconds: float = 120.0,
+) -> str:
+    simulator = getattr(env, "_simulator", None)
+    adb_port = int(getattr(simulator, "_adb_port", 0) or 0)
+    if adb_port <= 1:
+        raise RuntimeError("bmoca_emulator_adb_port_unavailable")
+    serial = f"emulator-{adb_port - 1}"
+    deadline = time.monotonic() + float(timeout_seconds)
+    last_state = "unknown"
+    while time.monotonic() < deadline:
+        try:
+            state = subprocess.run(
+                [str(adb_path), "-s", serial, "get-state"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            last_state = state.stdout.strip() or state.stderr.strip() or "unknown"
+            if state.returncode == 0 and state.stdout.strip() == "device":
+                boot = subprocess.run(
+                    [
+                        str(adb_path),
+                        "-s",
+                        serial,
+                        "shell",
+                        "getprop",
+                        "sys.boot_completed",
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if boot.returncode == 0 and boot.stdout.strip() == "1":
+                    return serial
+        except (OSError, subprocess.TimeoutExpired) as error:
+            last_state = str(error) or type(error).__name__
+        time.sleep(1.0)
+    raise RuntimeError(f"bmoca_emulator_not_ready:{serial}:{last_state}")
 
 
 def _restore_writable_avd_disks(

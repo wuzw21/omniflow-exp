@@ -327,3 +327,58 @@ def test_checker_step_skips_when_omnitransfer_target_is_not_present(monkeypatch)
     assert result.detail["checker_decisions"][0]["reason"] == (
         "source_target_not_present"
     )
+
+
+def test_navigation_checker_runs_only_when_next_required_target_is_absent(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    before = Observation(xml="<launcher/>", package_name="com.launcher")
+    source = Observation(xml="<source/>", package_name="com.launcher")
+    host = RecordingHost(before)
+    swipe = Action("swipe", {"direction": "up"})
+    chrome = Action("click", {"x": 700, "y": 700})
+    mapped_chrome = Action("click", {"x": 600, "y": 600})
+    function = Function(
+        function_id="open_with_optional_drawer",
+        name="Open with optional drawer",
+        description="Open an app, revealing the drawer only when needed.",
+        steps=(
+            FunctionStep(0, swipe, "drawer-source", role="checker"),
+            FunctionStep(1, chrome, "chrome-source"),
+        ),
+    )
+    transfer_calls = 0
+
+    async def transfer(_action, _observation, _source_state):
+        nonlocal transfer_calls
+        transfer_calls += 1
+        resource_id = "voice-search" if transfer_calls == 1 else "chrome"
+        return TransferResult(
+            mapped_chrome,
+            reason="omnitransfer_mapped",
+            detail={
+                "score": 0.99,
+                "margin": 0.99,
+                "source": {"resource_id": "chrome"},
+                "candidates": [{"resource_id": resource_id, "score": 0.99}],
+            },
+        )
+
+    result = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=before,
+            state_loader=lambda _state_id: source,
+        )
+    )
+
+    assert result.success is True
+    assert result.actions_executed == 2
+    assert host.actions == [swipe, mapped_chrome]
+    assert result.detail["checker_decisions"][0]["status"] == "executed"
+    assert result.detail["checker_decisions"][0]["reason"] == (
+        "required_target_absent"
+    )

@@ -7,6 +7,7 @@ from omniflow.vlm.planner import (
     build_model_turn_request,
     resolve_step_guidance,
 )
+from src.experiment import bmoca_device_replay
 
 
 def _function() -> Function:
@@ -111,3 +112,38 @@ def test_recalled_run_is_not_registered_again() -> None:
     assert payload["recall_hit"] is True
     assert payload["recalled_function_id"] == "order_beverage"
     assert "post_run_actions" not in payload
+
+
+def test_bmoca_waits_for_online_booted_emulator(monkeypatch) -> None:
+    class Simulator:
+        _adb_port = 5555
+
+    class Environment:
+        _simulator = Simulator()
+
+    outputs = iter(
+        [
+            (1, "offline\n", ""),
+            (0, "device\n", ""),
+            (0, "1\n", ""),
+        ]
+    )
+
+    def run(*_args, **_kwargs):
+        returncode, stdout, stderr = next(outputs)
+        return type(
+            "Completed",
+            (),
+            {"returncode": returncode, "stdout": stdout, "stderr": stderr},
+        )()
+
+    monkeypatch.setattr(bmoca_device_replay.subprocess, "run", run)
+    monkeypatch.setattr(bmoca_device_replay.time, "sleep", lambda _seconds: None)
+
+    serial = bmoca_device_replay._wait_for_emulator_ready(
+        Environment(),
+        adb_path=bmoca_device_replay.Path("/sdk/adb"),
+        timeout_seconds=5,
+    )
+
+    assert serial == "emulator-5554"

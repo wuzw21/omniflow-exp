@@ -77,6 +77,24 @@ async def execute_function(
             state_loader=state_loader,
         )
         if function_step.role == "checker":
+            required_step = next(
+                (
+                    candidate
+                    for candidate in steps
+                    if candidate.step_index > function_step.step_index
+                    and candidate.role == "function"
+                ),
+                None,
+            )
+            required_source_state = (
+                await _load_state(
+                    host,
+                    required_step.source_state_id,
+                    state_loader=state_loader,
+                )
+                if required_step is not None
+                else None
+            )
             step, checker_decision = await execute_checker_step(
                 action,
                 observation=current,
@@ -85,6 +103,10 @@ async def execute_function(
                 function=function,
                 source_state=source_state,
                 installed_packages=installed_packages,
+                required_action=(
+                    required_step.action if required_step is not None else None
+                ),
+                required_source_state=required_source_state,
             )
             checker_decisions.append(
                 {
@@ -163,6 +185,8 @@ async def execute_checker_step(
     function: Function,
     source_state: Observation | None,
     installed_packages: frozenset[str] | None = None,
+    required_action: Action | None = None,
+    required_source_state: Observation | None = None,
 ) -> tuple[StepResult, dict[str, Any]]:
     """Execute one optional checker Step only when its source target is present."""
 
@@ -189,7 +213,21 @@ async def execute_checker_step(
                 "transfer": dict(decision.detail or {}),
             },
         )
-    if not _checker_transfer_applicable(decision.detail):
+    applies = _checker_transfer_applicable(decision.detail)
+    applicability_reason = "source_target_not_present"
+    applicability_evidence: dict[str, Any] = dict(decision.detail or {})
+    if not _action_uses_transfer_target(action):
+        applies, applicability_reason, applicability_evidence = (
+            await _navigation_checker_applicable(
+                action,
+                observation=observation,
+                plugins=plugins,
+                source_state=source_state,
+                required_action=required_action,
+                required_source_state=required_source_state,
+            )
+        )
+    if not applies:
         return (
             StepResult(
                 True,
@@ -198,12 +236,12 @@ async def execute_checker_step(
                 after=observation,
                 origin="checker",
                 function_id=function.id,
-                detail=dict(decision.detail or {}),
+                detail=applicability_evidence,
             ),
             {
                 "status": "skipped",
-                "reason": "source_target_not_present",
-                "transfer": dict(decision.detail or {}),
+                "reason": applicability_reason,
+                "transfer": applicability_evidence,
             },
         )
     step = replace(
@@ -221,10 +259,45 @@ async def execute_checker_step(
         step,
         {
             "status": "executed" if step.success else "failed",
-            "reason": decision.reason or "omnitransfer_mapped",
+            "reason": decision.reason or applicability_reason,
             "transfer": dict(decision.detail or {}),
         },
     )
+
+
+async def _navigation_checker_applicable(
+    action: Action,
+    *,
+    observation: Observation,
+    plugins: PluginSet,
+    source_state: Observation | None,
+    required_action: Action | None,
+    required_source_state: Observation | None,
+) -> tuple[bool, str, dict[str, Any]]:
+    if not (
+        action.tool == "swipe"
+        and action.args.get("direction") is not None
+        and required_action is not None
+        and required_source_state is not None
+    ):
+        return False, "checker_navigation_context_missing", {}
+    source_package = str(source_state.package_name or "") if source_state else ""
+    target_package = str(observation.package_name or "")
+    if source_package and target_package and source_package != target_package:
+        return False, "checker_page_package_mismatch", {}
+    required = await prepare_action(
+        required_action,
+        observation=observation,
+        plugins=plugins,
+        source_state=required_source_state,
+    )
+    evidence = {
+        "required_action_reason": required.reason,
+        "required_action_transfer": dict(required.detail or {}),
+    }
+    if required.action is not None and _checker_transfer_applicable(required.detail):
+        return False, "required_target_present", evidence
+    return True, "required_target_absent", evidence
 
 
 def _checker_transfer_applicable(detail: dict[str, Any] | None) -> bool:
