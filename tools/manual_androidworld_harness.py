@@ -182,7 +182,7 @@ class ManualAndroidWorld:
             }
         )
         self._write_run_log(status="running", success=False, reward=0.0)
-        return {"ok": True, "action": action.as_dict(), "observation": after}
+        return {"ok": True, "action": action_record, "observation": after}
 
     def validate(self) -> dict[str, Any]:
         reward = float(self._task.is_successful(self._env))
