@@ -41,6 +41,9 @@ bmoca_avd_home="${OMNIFLOW_BMOCA_AVD_HOME:-${ANDROID_AVD_HOME:-}}"
 bmoca_avd_template_home="${OMNIFLOW_BMOCA_AVD_TEMPLATE_HOME:-}"
 bmoca_output_path="${OMNIFLOW_BMOCA_OUTPUT_PATH:-}"
 bmoca_show_emulator="${OMNIFLOW_BMOCA_SHOW_EMULATOR:-0}"
+bmoca_workers="${OMNIFLOW_BMOCA_WORKERS:-10}"
+bmoca_environment_retries="${OMNIFLOW_BMOCA_ENVIRONMENT_RETRIES:-1}"
+bmoca_corpus_manifest="${OMNIFLOW_BMOCA_CORPUS_MANIFEST:-$repo/data/bmoca/corpus/bmoca-three-env-success-aligned-dataset-v5/manifest.json}"
 android_world_revision="$(PYTHONPATH="$repo:$repo/src${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'
 from src.experiment.protocol import ANDROIDWORLD_REVISION
 
@@ -365,15 +368,16 @@ Usage:
   bash scripts/exp/run_androidworld.sh [OPTIONS]
 
 Options:
-  --environment NAME        Select androidworld (default) or bmoca. This changes
-                            only the official environment, never the method.
+  --environment NAME        Select androidworld (default) or bmoca.
   --check-only              Validate the complete selected run without creating
                             assets, attempts, result directories, or emulators.
   --development-run         Run one unregistered `ours` episode through this
                             script for bounded method debugging.
   --dry-run                 Build one task command without executing it.
-  --all-tasks               Run the selected task set in task-major order.
-  --method METHOD           Run one method in the single-result runner.
+  --all-tasks               Run the selected task set in task-major order. With
+                            B-MoCA, enhance each source once and run both methods.
+  --method METHOD           Run one method in the single-result runner. B-MoCA
+                            accepts omniflow or script-replay.
   --device LABEL:SERIAL:PORT
                             Run one target in the single-result runner.
   --tasks TASK1,TASK2,...   Select an ordered task-major subset. Implies
@@ -447,7 +451,9 @@ Source RunLog conversion inputs:
   --source-runlog PATH              Input RunLog for --convert-runlog-memory.
   OMNIFLOW_BMOCA_ROOT, OMNIFLOW_BMOCA_ENVIRONMENT_IDS (default: 100..109),
   OMNIFLOW_BMOCA_AVD_HOME, OMNIFLOW_BMOCA_AVD_TEMPLATE_HOME,
-  OMNIFLOW_BMOCA_OUTPUT_PATH, OMNIFLOW_BMOCA_SHOW_EMULATOR.
+  OMNIFLOW_BMOCA_OUTPUT_PATH, OMNIFLOW_BMOCA_SHOW_EMULATOR,
+  OMNIFLOW_BMOCA_CORPUS_MANIFEST, OMNIFLOW_BMOCA_WORKERS,
+  OMNIFLOW_BMOCA_ENVIRONMENT_RETRIES.
 
 Examples:
   bash scripts/exp/run_androidworld.sh --tasks AudioRecorderRecordAudio
@@ -464,6 +470,7 @@ Examples:
   bash scripts/exp/run_androidworld.sh --check-only --all-tasks
   bash scripts/exp/run_androidworld.sh --all-tasks \
     --tasks AudioRecorderRecordAudioWithFileName,SystemCopyToClipboard
+  bash scripts/exp/run_androidworld.sh --environment bmoca --all-tasks
   bash scripts/exp/run_androidworld.sh \
     --e2e-task AudioRecorderRecordAudioWithFileName \
     --task-deadline-sec 1800
@@ -574,7 +581,7 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
-if [[ -n "$selected_method_arg" || -n "$selected_device_arg" ]] && {
+if [[ "$execution_environment" != "bmoca" ]] && [[ -n "$selected_method_arg" || -n "$selected_device_arg" ]] && {
   [[ "$development_run" -eq 1 || "$source_collection" -eq 1 ||
     "$all_tasks" -eq 1 || -n "$e2e_task" || -n "$batch_task_filter" ||
     "$refresh_memory" -eq 1 ||
@@ -594,16 +601,34 @@ if [[ "$execution_environment" != "bmoca" && "$source_collection" -eq 1 ]]; then
   source_qualification_only=0
 fi
 if [[ "$execution_environment" == "bmoca" ]]; then
-  if [[ "$source_collection" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || -n "$e2e_task" || -n "$selected_method_arg" || -n "$selected_device_arg" ]]; then
-    echo "--environment bmoca is one native OmniFlow E2E run and cannot be combined with AndroidWorld experiment modes." >&2
+  if [[ "$source_collection" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || -n "$e2e_task" || -n "$selected_device_arg" ]]; then
+    echo "--environment bmoca cannot be combined with AndroidWorld-only modes." >&2
     exit 2
   fi
-  if [[ -z "$batch_task_filter" || "$batch_task_filter" == *,* ]]; then
-    echo "--environment bmoca requires exactly one task through --tasks." >&2
+  bmoca_campaign="$all_tasks"
+  bmoca_method="${selected_method_arg:-omniflow}"
+  if [[ "$bmoca_campaign" -eq 1 && -n "$selected_method_arg" ]]; then
+    echo "B-MoCA --all-tasks runs both methods; omit --method." >&2
     exit 2
   fi
-  if [[ -z "$store_path" || "$store_path" != /* || ! -f "$store_path" ]]; then
-    echo "--environment bmoca requires an existing absolute OMNIFLOW_ANDROIDWORLD_STORE_PATH." >&2
+  if [[ "$bmoca_method" != "omniflow" && "$bmoca_method" != "script-replay" ]]; then
+    echo "B-MoCA --method must be omniflow or script-replay." >&2
+    exit 2
+  fi
+  if [[ ! "$bmoca_workers" =~ ^[1-9][0-9]*$ || ! "$bmoca_environment_retries" =~ ^[0-9]+$ ]]; then
+    echo "B-MoCA workers/retries must be positive/non-negative integers." >&2
+    exit 2
+  fi
+  if [[ "$bmoca_campaign" -eq 0 && ( -z "$batch_task_filter" || "$batch_task_filter" == *,* ) ]]; then
+    echo "A direct B-MoCA run requires exactly one task through --tasks." >&2
+    exit 2
+  fi
+  if [[ "$bmoca_campaign" -eq 1 && ( "$bmoca_corpus_manifest" != /* || ! -f "$bmoca_corpus_manifest" ) ]]; then
+    echo "B-MoCA --all-tasks requires an absolute corpus manifest." >&2
+    exit 2
+  fi
+  if [[ "$bmoca_campaign" -eq 0 && ( -z "$store_path" || "$store_path" != /* || ! -f "$store_path" ) ]]; then
+    echo "A direct B-MoCA run requires an existing absolute Function Store." >&2
     exit 2
   fi
   if [[ -z "$bmoca_root" || "$bmoca_root" != /* || ! -d "$bmoca_root/asset" ]]; then
@@ -631,10 +656,6 @@ if [[ "$execution_environment" == "bmoca" ]]; then
     echo "OMNIFLOW_BMOCA_SHOW_EMULATOR must be 0 or 1." >&2
     exit 2
   fi
-  if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
-    echo "--environment bmoca requires an existing absolute OMNIFLOW_ENV_FILE." >&2
-    exit 2
-  fi
   if ! python_bin="$(command -v "$python_bin")"; then
     echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
     exit 1
@@ -644,11 +665,17 @@ if [[ "$execution_environment" == "bmoca" ]]; then
     echo "--environment bmoca requires a complete absolute Android SDK root: $bmoca_android_sdk_root" >&2
     exit 2
   fi
-  set -a
-  source "$env_file"
-  set +a
-  select_model_endpoint "$formal_model_endpoint_profile"
-  validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
+  if [[ "$bmoca_method" == "omniflow" || "$bmoca_campaign" -eq 1 ]]; then
+    if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
+      echo "B-MoCA OmniFlow/enhancement requires an absolute OMNIFLOW_ENV_FILE." >&2
+      exit 2
+    fi
+    set -a
+    source "$env_file"
+    set +a
+    select_model_endpoint "$formal_model_endpoint_profile"
+    validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
+  fi
   export OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS=0
   bmoca_command=(
     "$python_bin" -m src.integrations.android_world.launch
@@ -657,20 +684,29 @@ if [[ "$execution_environment" == "bmoca" ]]; then
     --environment-ids "$bmoca_environment_ids"
     --android-sdk-root "$bmoca_android_sdk_root"
     --android-avd-home "$bmoca_avd_home"
-    --tasks "$batch_task_filter"
-    --agent omniflow
-    --store-path "$store_path"
+    --tasks "${batch_task_filter:-*}"
+    --agent "$bmoca_method"
+    --bmoca-workers "$bmoca_workers"
+    --bmoca-environment-retries "$bmoca_environment_retries"
+    --store-path "${store_path:-$bmoca_output_path/source_function/store.json}"
     --output-path "$bmoca_output_path"
-    --model "$formal_model"
-    --model-endpoint-profile "$formal_model_endpoint_profile"
-    --planner-provider openai_compatible
-    --planner-timeout-sec "${OMNIFLOW_BMOCA_PLANNER_TIMEOUT_SEC:-60}"
   )
+  if [[ "$bmoca_method" == "omniflow" || "$bmoca_campaign" -eq 1 ]]; then
+    bmoca_command+=(
+      --model "$formal_model"
+      --model-endpoint-profile "$formal_model_endpoint_profile"
+      --planner-provider openai_compatible
+      --planner-timeout-sec "${OMNIFLOW_BMOCA_PLANNER_TIMEOUT_SEC:-60}"
+    )
+  fi
   if [[ -n "$bmoca_avd_template_home" ]]; then
     bmoca_command+=(--bmoca-avd-template-home "$bmoca_avd_template_home")
   fi
   if [[ "$bmoca_show_emulator" == "1" ]]; then
     bmoca_command+=(--show-emulator)
+  fi
+  if [[ "$bmoca_campaign" -eq 1 ]]; then
+    bmoca_command+=(--bmoca-campaign --bmoca-corpus-manifest "$bmoca_corpus_manifest")
   fi
   cd "$repo"
   exec "${bmoca_command[@]}"

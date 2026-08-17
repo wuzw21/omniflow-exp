@@ -12,7 +12,8 @@ modules are implementation seams and must not be invoked as alternate runners.
 | Read-only static gate | `run_androidworld.sh --check-only [--all-tasks]` |
 | Bounded `ours` development | `run_androidworld.sh --development-run --tasks TASK` |
 | Source refresh | `run_androidworld.sh --collect-source --tasks TASK` |
-| B-MoCA | `run_androidworld.sh --environment bmoca --tasks TASK` |
+| B-MoCA one method | `run_androidworld.sh --environment bmoca --method omniflow\|script-replay --tasks TASK` |
+| B-MoCA campaign | `run_androidworld.sh --environment bmoca --all-tasks [--tasks TASK1,TASK2]` |
 | Memory refresh | `run_androidworld.sh --refresh-memory` |
 
 One formal result is one task, one method, and one device. The E2E pipeline is
@@ -42,6 +43,12 @@ Function authoring does not run through a shell conversion mode. Use the bridge
 Functions, or set `enhance=true` so the internal split, parameter-binding, and
 checker-review stages each return a complete Function bundle. Normal and
 enhanced saves share one validation and Store writer.
+
+The explicit B-MoCA campaign is the only launcher-owned preparation path: for
+each corpus task it calls that same `save_function(enhance=true)` writer once,
+then executes OmniFlow and the zero-model semantic script-replay baseline on
+env100--109. It writes `progress.csv`, `progress.jsonl`, per-attempt RunLogs,
+and the terminal `campaign_summary.json` under the new output root.
 
 After saving, ingest the external Function catalog with `--refresh-memory`.
 Experiment execution resolves the task's Store from `current.json`. If no Store
