@@ -172,7 +172,7 @@ def test_save_function_optionally_derives_checker_rules_with_agent(tmp_path: Pat
         store_path,
         functions=[function],
         enhance=True,
-        complete_json=lambda prompt: json.dumps(
+        complete_json=lambda prompt, _tool: json.dumps(
             {
                 "functions": [
                     authored if "stage checkers" in prompt else function
@@ -231,7 +231,7 @@ def test_enhance_requires_one_function_covering_the_complete_runlog(
             run_log,
             tmp_path / "store.json",
             enhance=True,
-            complete_json=lambda _prompt: json.dumps(
+            complete_json=lambda _prompt, _tool: json.dumps(
                 {"functions": [partial], "arguments": {"open_menu": {}}}
             ),
         )
@@ -278,7 +278,7 @@ def test_checker_action_cannot_duplicate_a_formal_action_in_the_same_function(
             run_log,
             tmp_path / "store.json",
             enhance=True,
-            complete_json=lambda prompt: json.dumps(
+            complete_json=lambda prompt, _tool: json.dumps(
                 {
                     "functions": [
                         duplicated

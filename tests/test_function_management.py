@@ -159,7 +159,7 @@ def test_enhance_creates_semantics_parameters_and_checker(tmp_path) -> None:
         _authoring_run_log(),
         store_path,
         enhance=True,
-        complete_json=lambda prompt: prompts.append(prompt)
+        complete_json=lambda prompt, _tool: prompts.append(prompt)
         or _semantic_plan(_stage_from_prompt(prompt)),
         instruction="Prefer one reusable text-entry operation.",
     )
@@ -196,7 +196,7 @@ def test_enhance_rejects_extra_function_fields(tmp_path) -> None:
             _authoring_run_log(),
             tmp_path / "store.json",
             enhance=True,
-            complete_json=lambda _prompt: json.dumps(plan),
+            complete_json=lambda _prompt, _tool: json.dumps(plan),
         )
     except ValueError as error:
         assert str(error) == "function_artifact_unknown_fields:actions"
@@ -205,7 +205,7 @@ def test_enhance_rejects_extra_function_fields(tmp_path) -> None:
 
 
 def test_enhance_rejects_extra_parameter_schema_fields(tmp_path) -> None:
-    def complete_json(prompt: str) -> str:
+    def complete_json(prompt: str, _tool: dict) -> str:
         stage = _stage_from_prompt(prompt)
         plan = json.loads(_semantic_plan(stage))
         if stage == "parameters":
@@ -236,7 +236,7 @@ def test_each_enhancement_stage_has_one_narrow_responsibility(
     stage_to_corrupt,
     expected_error,
 ) -> None:
-    def complete_json(prompt: str) -> str:
+    def complete_json(prompt: str, _tool: dict) -> str:
         stage = _stage_from_prompt(prompt)
         plan = json.loads(_semantic_plan(stage))
         if stage == stage_to_corrupt:
@@ -253,7 +253,7 @@ def test_each_enhancement_stage_has_one_narrow_responsibility(
 
 
 def test_checker_stage_cannot_register_another_functions_action(tmp_path) -> None:
-    def complete_json(prompt: str) -> str:
+    def complete_json(prompt: str, _tool: dict) -> str:
         stage = _stage_from_prompt(prompt)
         plan = json.loads(_semantic_plan(stage))
         wait_function = _function("wait_for_note")
@@ -289,7 +289,7 @@ def test_checker_stage_cannot_register_another_functions_action(tmp_path) -> Non
 def test_checker_registration_is_function_local(tmp_path) -> None:
     store_path = tmp_path / "store.json"
 
-    def complete_json(prompt: str) -> str:
+    def complete_json(prompt: str, _tool: dict) -> str:
         plan = json.loads(_semantic_plan(_stage_from_prompt(prompt)))
         wait_function = _function("wait_for_note")
         wait_function["name"] = "Wait for note"
@@ -376,8 +376,21 @@ def test_bridge_enhance_requires_a_complete_bundle_at_every_stage(tmp_path) -> N
     class Bridge(JsonLineBridge):
         def host_call(self, request_id, method, payload):
             assert method == "model_turn"
+            prompt = payload["request"]["messages"][0]["content"]
+            stage = _stage_from_prompt(prompt)
+            previous_stage = {"parameters": "split", "checkers": "parameters"}.get(
+                stage
+            )
+            previous_bundle = (
+                json.loads(_semantic_plan(previous_stage))
+                if previous_stage is not None
+                else None
+            )
             function_schema = payload["request"]["tools"][0]["function"]
-            assert function_schema == function_authoring_tool()["function"]
+            assert function_schema == function_authoring_tool(
+                stage=stage,
+                current_bundle=previous_bundle,
+            )["function"]
             return {
                 "tool_calls": [
                     {
@@ -385,7 +398,7 @@ def test_bridge_enhance_requires_a_complete_bundle_at_every_stage(tmp_path) -> N
                             "name": "submit_function_bundle",
                                 "arguments": _semantic_plan(
                                     _stage_from_prompt(
-                                        payload["request"]["messages"][0]["content"]
+                                        prompt
                                     )
                                 ),
                         }
@@ -404,7 +417,7 @@ def test_bridge_enhance_requires_a_complete_bundle_at_every_stage(tmp_path) -> N
 
 
 def test_function_authoring_tool_requires_the_complete_function_contract() -> None:
-    tool = function_authoring_tool()
+    tool = function_authoring_tool(stage="split", current_bundle=None)
     function = tool["function"]
     parameters = function["parameters"]
     function_schema = parameters["properties"]["functions"]["items"]
@@ -428,13 +441,59 @@ def test_function_authoring_tool_requires_the_complete_function_contract() -> No
         "source_state_id",
         "action",
     ]
-    assert function_schema["properties"]["checker_rules"]["items"][
-        "required"
-    ] == ["source_state_id", "action"]
+    assert function_schema["properties"]["checker_rules"] == {"const": []}
+
+
+def test_function_authoring_tool_locks_each_stage_to_its_responsibility() -> None:
+    split_tool = function_authoring_tool(stage="split", current_bundle=None)
+    split_function = split_tool["function"]["parameters"]["properties"][
+        "functions"
+    ]["items"]
+    assert split_function["properties"]["checker_rules"] == {"const": []}
+    assert split_function["properties"]["bindings"] == {"const": []}
+
+    split_bundle = json.loads(_semantic_plan("split"))
+    parameter_tool = function_authoring_tool(
+        stage="parameters",
+        current_bundle=split_bundle,
+    )
+    parameter_functions = parameter_tool["function"]["parameters"]["properties"][
+        "functions"
+    ]
+    parameter_function = parameter_functions["items"]["oneOf"][0]
+    assert parameter_functions["minItems"] == 1
+    assert parameter_functions["maxItems"] == 1
+    assert parameter_function["properties"]["function_id"] == {
+        "const": "enter_note"
+    }
+    assert parameter_function["properties"]["name"] == {"const": "Enter a note"}
+    assert parameter_function["properties"]["checker_rules"] == {"const": []}
+    assert parameter_function["properties"]["steps"]["minItems"] == 3
+    assert parameter_function["properties"]["steps"]["maxItems"] == 3
+
+    parameter_bundle = json.loads(_semantic_plan("parameters"))
+    checker_tool = function_authoring_tool(
+        stage="checkers",
+        current_bundle=parameter_bundle,
+    )
+    checker_parameters = checker_tool["function"]["parameters"]
+    checker_function = checker_parameters["properties"]["functions"]["items"][
+        "oneOf"
+    ][0]
+    assert checker_parameters["properties"]["arguments"] == {
+        "const": parameter_bundle["arguments"]
+    }
+    assert checker_function["properties"]["checker_rules"]["items"]["enum"] == [
+        {
+            "source_state_id": step["source_state_id"],
+            "action": step["action"],
+        }
+        for step in parameter_bundle["functions"][0]["steps"]
+    ]
 
 
 def test_save_function_reports_the_failed_agent_stage(tmp_path) -> None:
-    def timeout(_prompt: str) -> str:
+    def timeout(_prompt: str, _tool: dict) -> str:
         raise TimeoutError("endpoint did not answer")
 
     with pytest.raises(
@@ -462,5 +521,5 @@ def test_save_function_rejects_model_commentary_around_the_bundle(
             _authoring_run_log(),
             tmp_path / "store.json",
             enhance=True,
-            complete_json=lambda _prompt: f"Here is the result: {valid}",
+            complete_json=lambda _prompt, _tool: f"Here is the result: {valid}",
         )

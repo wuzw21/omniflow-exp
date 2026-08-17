@@ -23,7 +23,7 @@ from omniflow.core.model import (
     ToolCall,
 )
 from omniflow.core.trajectory import canonicalize_run_log
-from omniflow.functions.assets import function_authoring_tool, save_function
+from omniflow.functions.assets import save_function
 from omniflow.runtime.engine import InputRequired, OmniFlow
 from omniflow.vlm.planner import VLMPlanner
 
@@ -454,7 +454,7 @@ class JsonLineBridge:
             if enhance:
                 model = str(ANDROIDWORLD_PROTOCOL["model"])
 
-                def complete_json(prompt: str) -> str:
+                def complete_json(prompt: str, tool: dict[str, Any]) -> str:
                     response = self.host_call(
                         request_id,
                         "model_turn",
@@ -469,7 +469,7 @@ class JsonLineBridge:
                                     "type": "function",
                                     "function": {"name": "submit_function_bundle"},
                                 },
-                                "tools": [function_authoring_tool()],
+                                "tools": [tool],
                             },
                         },
                     )

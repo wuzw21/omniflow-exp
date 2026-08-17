@@ -241,7 +241,7 @@ def test_bmoca_offline_enhancement_calls_only_canonical_save_once(
     monkeypatch.setattr("src.experiment.e2e_task_pipeline.save_function", writer)
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline._canonical_bmoca_enhancement_transport",
-        lambda **_: (lambda _prompt: "{}"),
+        lambda **_: (lambda _prompt, _tool: "{}"),
     )
     args = SimpleNamespace(formal_model="GLM-5.1", enhancement_timeout_sec=180)
 
@@ -268,7 +268,7 @@ def test_bmoca_enhancement_failure_preserves_stage_and_usage(
     def transport(**kwargs: object):
         usage = kwargs["usage"]
 
-        def fail(_prompt: str) -> str:
+        def fail(_prompt: str, _tool: dict[str, object]) -> str:
             usage["model_calls"] += 1
             raise TimeoutError("endpoint did not answer")
 
@@ -280,7 +280,10 @@ def test_bmoca_enhancement_failure_preserves_stage_and_usage(
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.save_function",
-        lambda *_args, **kwargs: kwargs["complete_json"]("split prompt"),
+        lambda *_args, **kwargs: kwargs["complete_json"](
+            "split prompt",
+            function_authoring_tool(stage="split", current_bundle=None),
+        ),
     )
     args = SimpleNamespace(formal_model="GLM-5.1", enhancement_timeout_sec=180)
     task_root = tmp_path / "task"
@@ -353,9 +356,10 @@ def test_bmoca_enhancement_uses_the_shared_complete_bundle_tool(
         timeout_sec=180,
         usage=usage,
     )
+    tool = function_authoring_tool(stage="split", current_bundle=None)
 
-    assert complete("Return the bundle") == '{"functions":[],"arguments":{}}'
-    assert captured["tools"] == [function_authoring_tool()]
+    assert complete("Return the bundle", tool) == '{"functions":[],"arguments":{}}'
+    assert captured["tools"] == [tool]
     assert captured["tool_choice"] == {
         "type": "function",
         "function": {"name": "submit_function_bundle"},

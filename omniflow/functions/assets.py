@@ -47,8 +47,19 @@ _TARGET_PATH = re.compile(
 _PATH_TOKEN = re.compile(r"\.([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)]")
 
 
-def function_authoring_tool() -> dict[str, Any]:
-    """Return the one model output contract used by save_function enhancement."""
+def function_authoring_tool(
+    *,
+    stage: str,
+    current_bundle: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Return the complete bundle contract narrowed to one authoring stage."""
+
+    if stage not in {"split", "parameters", "checkers"}:
+        raise ValueError(f"function_authoring_stage_invalid:{stage}")
+    if stage == "split" and current_bundle is not None:
+        raise ValueError("function_authoring_split_bundle_forbidden")
+    if stage != "split" and not isinstance(current_bundle, dict):
+        raise ValueError(f"function_authoring_{stage}_bundle_required")
 
     function_schema = load_function_schema()
     definitions = function_schema.pop("$defs")
@@ -63,14 +74,85 @@ def function_authoring_tool() -> dict[str, Any]:
     for key in ("$schema", "$id", "title"):
         function_schema.pop(key, None)
         checker_schema.pop(key, None)
+    functions_schema: dict[str, Any] = {
+        "type": "array",
+        "minItems": 1,
+        "items": function_schema,
+    }
+    arguments_schema: dict[str, Any] = {
+        "type": "object",
+        "description": (
+            "Map every function_id to one source argument object or a non-empty "
+            "list of source argument objects."
+        ),
+        "additionalProperties": {
+            "oneOf": [
+                {"type": "object"},
+                {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "object"},
+                },
+            ]
+        },
+    }
+    if stage == "split":
+        function_schema["properties"]["input_schema"] = {
+            "const": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": False,
+            }
+        }
+        function_schema["properties"]["bindings"] = {"const": []}
+        function_schema["properties"]["checker_rules"] = {"const": []}
+    else:
+        assert current_bundle is not None
+        current_functions = list(current_bundle.get("functions") or ())
+        if not current_functions:
+            raise ValueError(f"function_authoring_{stage}_functions_required")
+        functions_schema = {
+            "type": "array",
+            "minItems": len(current_functions),
+            "maxItems": len(current_functions),
+            "items": {
+                "oneOf": [
+                    _stage_function_schema(function_schema, value, stage=stage)
+                    for value in current_functions
+                ]
+            },
+        }
+        function_ids = [str(value["function_id"]) for value in current_functions]
+        if stage == "checkers":
+            arguments_schema = {"const": current_bundle.get("arguments") or {}}
+        else:
+            arguments_schema = {
+                "type": "object",
+                "additionalProperties": False,
+                "required": function_ids,
+                "properties": {
+                    function_id: {
+                        "oneOf": [
+                            {"type": "object"},
+                            {
+                                "type": "array",
+                                "minItems": 1,
+                                "items": {"type": "object"},
+                            },
+                        ]
+                    }
+                    for function_id in function_ids
+                },
+            }
     return {
         "type": "function",
         "function": {
             "name": "submit_function_bundle",
             "description": (
-                "Return the complete Function bundle for the current save_function "
-                "stage. Include one full-trajectory Function and any reusable "
-                "semantic subsegments, with source arguments for every Function."
+                f"Return the complete Function bundle for save_function stage {stage}. "
+                "Include one full-trajectory Function and every reusable semantic "
+                "subsegment, with source arguments for every Function."
             ),
             "strict": False,
             "parameters": {
@@ -79,29 +161,119 @@ def function_authoring_tool() -> dict[str, Any]:
                 "required": ["functions", "arguments"],
                 "properties": {
                     "functions": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": function_schema,
+                        **functions_schema,
                     },
-                    "arguments": {
+                    "arguments": arguments_schema,
+                },
+            },
+        },
+    }
+
+
+def _stage_function_schema(
+    base_schema: dict[str, Any],
+    previous: dict[str, Any],
+    *,
+    stage: str,
+) -> dict[str, Any]:
+    schema = json.loads(json.dumps(base_schema, ensure_ascii=False))
+    properties = schema["properties"]
+    immutable_fields = {
+        "schema_version",
+        "function_id",
+        "name",
+        "description",
+        "agent_visible",
+    }
+    if stage == "checkers":
+        immutable_fields.add("input_schema")
+    for field in immutable_fields:
+        properties[field] = {"const": previous[field]}
+    previous_steps = list(previous["steps"])
+    if stage == "parameters":
+        properties["checker_rules"] = {"const": []}
+        step_schemas = [
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["step_index", "source_state_id", "action"],
+                "properties": {
+                    "step_index": {"const": step["step_index"]},
+                    "source_state_id": {"const": step["source_state_id"]},
+                    "action": {
                         "type": "object",
-                        "description": (
-                            "Map every function_id to one source argument object or "
-                            "a non-empty list of source argument objects."
-                        ),
-                        "additionalProperties": {
-                            "oneOf": [
-                                {"type": "object"},
-                                {
-                                    "type": "array",
-                                    "minItems": 1,
-                                    "items": {"type": "object"},
-                                },
-                            ]
+                        "additionalProperties": False,
+                        "required": ["tool", "args"],
+                        "properties": {
+                            "tool": {"const": step["action"]["tool"]},
+                            "args": _parameter_arguments_schema(
+                                step["action"]["args"]
+                            ),
                         },
                     },
                 },
-            },
+            }
+            for step in previous_steps
+        ]
+        properties["steps"] = {
+            "type": "array",
+            "minItems": len(previous_steps),
+            "maxItems": len(previous_steps),
+            "items": {"oneOf": step_schemas},
+        }
+        return schema
+    properties["steps"] = {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": len(previous_steps),
+        "items": {
+            "oneOf": [
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["step_index", "source_state_id", "action"],
+                    "properties": {
+                        "step_index": {"type": "integer", "minimum": 0},
+                        "source_state_id": {"const": step["source_state_id"]},
+                        "action": {"const": step["action"]},
+                    },
+                }
+                for step in previous_steps
+            ]
+        },
+    }
+    properties["checker_rules"] = {
+        "type": "array",
+        "items": {
+            "enum": [
+                {
+                    "source_state_id": step["source_state_id"],
+                    "action": step["action"],
+                }
+                for step in previous_steps
+            ]
+        },
+    }
+    return schema
+
+
+def _parameter_arguments_schema(arguments: dict[str, Any]) -> dict[str, Any]:
+    json_types = {
+        str: "string",
+        bool: "boolean",
+        int: "integer",
+        float: "number",
+        list: "array",
+        dict: "object",
+        type(None): "null",
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": list(arguments),
+        "properties": {
+            key: {"type": json_types[type(value)]}
+            for key, value in arguments.items()
         },
     }
 
@@ -529,7 +701,7 @@ def save_function(
     functions: list[dict[str, Any]] | None = None,
     arguments: dict[str, Any] | None = None,
     enhance: bool = False,
-    complete_json: Callable[[str], str] | None = None,
+    complete_json: Callable[[str, dict[str, Any]], str] | None = None,
     instruction: str = "",
 ) -> dict[str, Any]:
     """Create or replace RunLog-grounded Functions through the only writer."""
@@ -1061,15 +1233,9 @@ def _validate_checker_evidence(
             )
             if (source_state_id, action) not in evidence:
                 raise ValueError("function_checker_rule_missing_recovery_evidence")
-
-
-
-
-
-
 def _author_functions(
     facts: dict[str, Any],
-    complete_json: Callable[[str], str],
+    complete_json: Callable[[str, dict[str, Any]], str],
     *,
     instruction: str,
     existing_functions: list[dict[str, Any]],
@@ -1084,8 +1250,12 @@ def _author_functions(
             existing_functions=existing_functions,
             instruction=instruction,
         )
+        tool = function_authoring_tool(
+            stage=stage,
+            current_bundle=bundle,
+        )
         try:
-            raw_proposal = complete_json(prompt)
+            raw_proposal = complete_json(prompt, tool)
         except Exception as error:
             raise ValueError(
                 f"function_enhancement_{stage}_model_failed:"
@@ -1307,13 +1477,17 @@ def _authoring_prompt(
         "parameters": (
             "Review the draft and expose only caller-varying text, numbers, dates, "
             "and choices through input_schema, bindings, and source arguments. "
-            "Keep stable app packages and fixed navigation controls inside the Function."
+            "Keep stable app packages and fixed navigation controls inside the Function. "
+            "Return the same Functions in the same order with the same identity, "
+            "description, visibility, source states, action tools, and step order."
         ),
         "checkers": (
             "Select only which existing formal actions are optional setup, "
             "interruption dismissal, or recovery checkers. Move each selected action "
             "to checker_rules on that same Function. Do not change Function meaning, "
-            "parameters, arguments, or any unselected action."
+            "identity, order, parameters, arguments, or any unselected action. Copy "
+            "the complete Function set; checker_rules may contain only exact "
+            "source-state/action pairs moved from that same Function."
         ),
     }[stage]
     example_steps = [

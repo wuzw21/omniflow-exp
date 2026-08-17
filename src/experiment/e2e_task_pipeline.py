@@ -18,7 +18,7 @@ import time
 from typing import Any, Callable, Sequence
 
 from omniflow.core.trajectory import require_complete_source_run_log
-from omniflow.functions.assets import function_authoring_tool, save_function
+from omniflow.functions.assets import save_function
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from src.experiment.androidworld import ArchivedRunLog, build_fixed_replay_command
 from src.experiment.artifact_memory import (
@@ -2062,7 +2062,7 @@ def _canonical_bmoca_enhancement_transport(
     model: str,
     timeout_sec: float,
     usage: dict[str, int],
-) -> Callable[[str], str]:
+) -> Callable[[str, dict[str, Any]], str]:
     """Return only the model transport required by canonical save_function."""
 
     try:
@@ -2076,9 +2076,7 @@ def _canonical_bmoca_enhancement_transport(
         max_retries=0,
         timeout=float(timeout_sec),
     )
-    tool = function_authoring_tool()
-
-    def complete_json(prompt: str) -> str:
+    def complete_json(prompt: str, tool: dict[str, Any]) -> str:
         usage["model_calls"] += 1
         response = client.chat.completions.create(
             model=model,
