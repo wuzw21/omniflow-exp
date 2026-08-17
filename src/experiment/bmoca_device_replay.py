@@ -190,7 +190,7 @@ class _BMocaHost:
 
     def _touch_point(self, x: float, y: float) -> tuple[float, float]:
         if self._is_tablet():
-            return 1.0 - x, y
+            return x, 1.0 - y
         return y, x
 
     def _is_tablet(self) -> bool:
