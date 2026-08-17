@@ -13,6 +13,9 @@ import importlib
 import json
 import os
 import re
+import socket
+import sys
+import threading
 import xml.etree.ElementTree as ET
 from pathlib import Path
 import subprocess
@@ -48,6 +51,93 @@ class _UsageSummaryProxy:
 
     def get_usage_summary(self) -> dict[str, Any]:
         return self.owner._usage_summary()
+
+
+class _AndroidWorldBridgeServer:
+    """Forward MCP observe/act calls into the live AndroidWorld host."""
+
+    def __init__(self, owner: "LunaAndroidWorldHarness", socket_path: Path) -> None:
+        self.owner = owner
+        self.socket_path = socket_path
+        self._server: socket.socket | None = None
+        self._thread: threading.Thread | None = None
+        self._stopped = threading.Event()
+
+    def start(self) -> None:
+        self.socket_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.socket_path.unlink()
+        except FileNotFoundError:
+            pass
+        self._server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._server.bind(str(self.socket_path))
+        self._server.listen(1)
+        self._server.settimeout(0.5)
+        self._thread = threading.Thread(target=self._serve, name="androidworld-bridge", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stopped.set()
+        if self._server is not None:
+            try:
+                self._server.close()
+            except OSError:
+                pass
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        try:
+            self.socket_path.unlink()
+        except FileNotFoundError:
+            pass
+
+    def _serve(self) -> None:
+        assert self._server is not None
+        while not self._stopped.is_set():
+            try:
+                connection, _ = self._server.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            with connection:
+                try:
+                    raw = b""
+                    while b"\n" not in raw:
+                        chunk = connection.recv(65536)
+                        if not chunk:
+                            break
+                        raw += chunk
+                    request = json.loads(raw.split(b"\n", 1)[0].decode("utf-8"))
+                    response = self._handle(request if isinstance(request, dict) else {})
+                except Exception as error:  # noqa: BLE001
+                    response = {"error": f"androidworld_bridge:{error}"}
+                connection.sendall((json.dumps(response, ensure_ascii=False) + "\n").encode("utf-8"))
+
+    def _handle(self, request: dict[str, Any]) -> dict[str, Any]:
+        operation = str(request.get("op") or "")
+        if operation == "observe":
+            observation = self.owner.host.observe(xml=True, screenshot=True, app_info=True)
+            value = {
+                "xml": str(observation.xml or ""),
+                "package_name": observation.package_name,
+                "activity_name": observation.activity_name,
+                "state": _json_copy(observation.extra.get("androidworld_state")),
+                "display": _json_copy(observation.extra.get("display")),
+            }
+            self.owner._record_bridge_observation(value)
+            return value
+        if operation == "act":
+            action = request.get("action")
+            if not isinstance(action, dict):
+                raise ValueError("action_object_required")
+            result = self.owner.host.act(Action.from_value(action))
+            value = {"action": _json_copy(action), "action_result": _json_copy(result.to_dict())}
+            self.owner.actions_executed += 1
+            self.owner._record_bridge_action(value)
+            if str(action.get("tool") or "") == "finished":
+                self.owner.done = True
+            return value
+        raise ValueError(f"unknown_operation:{operation}")
 
 
 class LunaAndroidWorldHarness:
@@ -115,6 +205,8 @@ class LunaAndroidWorldHarness:
         # stateless and caused repeated actions without recovery.
         self._cli_temp_dir: tempfile.TemporaryDirectory[str] | None = None
         self._codex_session_id: str | None = None
+        self._whole_task_started = False
+        self._bridge: _AndroidWorldBridgeServer | None = None
         self._planner = VLMPlanner(
             model=str(model).strip() or "gpt-5.6-luna",
             provider=provider or "openai",
@@ -135,6 +227,7 @@ class LunaAndroidWorldHarness:
         self.step_index = 0
         self.actions_executed = 0
         self.done = False
+        self._whole_task_started = False
         self.trace = []
         self._last_result = None
         self.state["last_result"] = None
@@ -183,65 +276,33 @@ class LunaAndroidWorldHarness:
 
     def step(self, goal: str):
         self.goal = str(goal or self.goal or self.task_name).strip()
-        if self.done or self.step_index >= self.max_steps:
+        if self.done or self._whole_task_started:
             return make_agent_result(
                 True,
-                {"summary": "luna_step_budget_reached", "step_index": self.step_index},
+                {"summary": "luna_whole_task_already_finished", "step_index": self.step_index},
             )
-        observation = self.host.observe(xml=True, screenshot=True, app_info=True)
-        started = self.step_index
-        record: dict[str, Any] = {
-            "step_index": started,
-            "task_name": self.task_name,
-            "goal": self.goal,
-            "observation": {
-                "package_name": observation.package_name,
-                "activity_name": observation.activity_name,
-                "extra": _json_copy(observation.extra),
-            },
-            "observation_state": _json_copy(observation.extra.get("androidworld_state")),
-        }
+        self._whole_task_started = True
         try:
-            call, metadata, step_usage = self._decide_with_codex(observation)
-            self._merge_usage(step_usage)
-            metadata["token_usage"] = _json_copy(step_usage)
-            record["decision"] = {
-                "tool": call.name,
-                "arguments": _json_copy(call.arguments),
-                "metadata": _json_copy(metadata),
-            }
-            action = Action(call.name, dict(call.arguments))
-            if call.name == "finished":
-                self._execute_answer(str(call.arguments.get("content") or ""))
-                action_result = {"success": True}
-                self.done = True
-            else:
-                result = self.host.act(action)
-                action_result = _json_copy(result.to_dict())
-                self.actions_executed += 1
-            self._planner.record_action_result(action_result)
-            record["action"] = action.to_dict()
-            record["action_result"] = action_result
+            usage, metadata = self._run_complete_codex()
+            self._merge_usage(usage)
+            self.done = True
         except Exception as error:  # noqa: BLE001
-            record["error"] = str(error) or type(error).__name__
-            self.trace.append(record)
-            self.step_index += 1
             self._last_result = _LunaRuntimeResult(
                 detail=self._detail("planner_failed"),
-                error=f"luna_harness_failed:{record['error']}",
+                error=f"luna_harness_failed:{error}",
                 actions_executed=self.actions_executed,
                 model_calls=1,
             )
             self.state["last_result"] = self._last_result
+            self.step_index += 1
             return make_agent_result(False, {"summary": self._last_result.error, "step_index": self.step_index})
 
-        self.trace.append(record)
         self.step_index += 1
-        reason = "finished" if self.done else "step_completed"
+        reason = "whole_task_codex_finished"
         self._last_result = _LunaRuntimeResult(
             detail=self._detail(reason),
             actions_executed=self.actions_executed,
-            model_calls=self.step_index,
+            model_calls=int(self._usage_total.get("model_calls") or 1),
         )
         self.state["last_result"] = self._last_result
         return make_agent_result(
@@ -251,7 +312,99 @@ class LunaAndroidWorldHarness:
                 "step_index": self.step_index,
                 "actions_executed": self.actions_executed,
                 "done_reason": reason,
+                "transport": metadata.get("transport"),
             },
+        )
+
+    def _record_bridge_observation(self, value: dict[str, Any]) -> None:
+        self.trace.append({
+            "event": "observe",
+            "step_index": len(self.trace),
+            "task_name": self.task_name,
+            "goal": self.goal,
+            "observation": value,
+        })
+
+    def _record_bridge_action(self, value: dict[str, Any]) -> None:
+        self.trace.append({
+            "event": "act",
+            "step_index": len(self.trace),
+            "task_name": self.task_name,
+            "action": value.get("action"),
+            "action_result": value.get("action_result"),
+        })
+
+    def _run_complete_codex(self) -> tuple[dict[str, int], dict[str, Any]]:
+        temp_dir = self._ensure_cli_session()
+        bridge = _AndroidWorldBridgeServer(self, temp_dir / "androidworld-bridge.sock")
+        self._bridge = bridge
+        bridge.start()
+        output_path = temp_dir / "whole_task_message.txt"
+        codex_home = temp_dir / "codex-home"
+        codex_home.mkdir(parents=True, exist_ok=True)
+        repo_root = Path(__file__).resolve().parents[3]
+        codex_home.joinpath("config.toml").write_text(
+            "\n".join((
+                f'model = "{self._planner.model}"',
+                'model_provider = "omnimind"',
+                '[features]', 'plugins = false',
+                '[model_providers.omnimind]', 'name = "omnimind"',
+                f'base_url = "{os.environ.get("OMNIFLOW_LUNA_CODEX_BASE_URL", "http://cloud.omnimind.com.cn/v1")}"',
+                'wire_api = "responses"', 'requires_openai_auth = true', 'env_key = "OMNIMIND_API_KEY"',
+                '[mcp_servers.androidworld]',
+                f'command = "{sys.executable}"',
+                'args = ["-m", "src.integrations.android_world.luna_mcp_bridge"]',
+                '[mcp_servers.androidworld.env]',
+                f'OMNIFLOW_ANDROIDWORLD_BRIDGE_SOCKET = "{bridge.socket_path}"',
+            )) + "\n", encoding="utf-8"
+        )
+        command = [
+            "codex", "exec", "--skip-git-repo-check", "--sandbox", "danger-full-access",
+            "--color", "never", "--model", self._planner.model, "-C", str(repo_root),
+            "-o", str(output_path), "--json",
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                input=self._whole_task_prompt(),
+                text=True,
+                capture_output=True,
+                timeout=max(float(self._planner.timeout), float(os.environ.get("OMNIFLOW_LUNA_TASK_TIMEOUT", "1800"))),
+                check=False,
+                env={**os.environ, "HOME": str(codex_home), "CODEX_HOME": str(codex_home)},
+                cwd=str(repo_root),
+            )
+            raw_response = output_path.read_text(encoding="utf-8", errors="replace") if output_path.is_file() else ""
+            usage = self._cli_usage(completed.stdout)
+            if completed.returncode != 0 or not raw_response.strip():
+                detail = (completed.stderr or completed.stdout or "codex_cli_failed").strip()
+                raise RuntimeError(f"luna_codex_whole_task_failed:{detail[-4000:]}")
+            return usage, {
+                "transport": "codex_cli_whole_task_mcp",
+                "raw_response": raw_response,
+                "cli_returncode": completed.returncode,
+                "bridge_tools": ["androidworld_observe", "androidworld_act"],
+            }
+        finally:
+            bridge.stop()
+            self._bridge = None
+
+    def _whole_task_prompt(self) -> str:
+        params = json.dumps(self.task_parameters, ensure_ascii=False, sort_keys=True, default=str)
+        return (
+            "You are the sole autonomous agent for one complete AndroidWorld task. "
+            "Execute the task all the way to its requested end state yourself. "
+            "Use androidworld_observe and androidworld_act continuously: observe "
+            "first, reason over the screenshot and native accessibility state, act "
+            "once, observe again, and recover whenever the screen differs. Do not "
+            "merely describe actions to the parent and do not stop after a partial "
+            "plan. There is no outer per-step decision loop or fixed action-count "
+            "limit; continue until the task is actually complete. Use only the current "
+            "device state and current task parameters; never replay source coordinates, "
+            "stale node IDs, or old input values. Call the tools rather than using ADB "
+            "or a fixed script. Only finish after the final requested state is visible.\n\n"
+            f"Task: {self.goal}\nTask parameters: {params}\n\n{self.source_reference}\n"
+            "Begin by calling androidworld_observe now, then continue until completion."
         )
 
     def _decide_with_codex(
