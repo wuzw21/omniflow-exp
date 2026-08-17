@@ -1945,12 +1945,14 @@ PY
         echo "Unknown formal task in --tasks: $requested_task" >&2
         exit 2
       fi
-      for selected_task in "${batch_tasks[@]}"; do
-        if [[ "$selected_task" == "$requested_task" ]]; then
-          echo "Duplicate task in --tasks: $requested_task" >&2
-          exit 2
-        fi
-      done
+      if ((${#batch_tasks[@]} > 0)); then
+        for selected_task in "${batch_tasks[@]}"; do
+          if [[ "$selected_task" == "$requested_task" ]]; then
+            echo "Duplicate task in --tasks: $requested_task" >&2
+            exit 2
+          fi
+        done
+      fi
       batch_tasks+=("$requested_task")
     done
   else

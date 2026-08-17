@@ -258,6 +258,15 @@ def test_formal_dry_run_exits_before_output_and_emulator_management() -> None:
     assert 'command+=(--dry-run)' not in script_text
 
 
+def test_task_filter_handles_empty_batch_before_first_task() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+
+    assert (
+        'if ((${#batch_tasks[@]} > 0)); then\n'
+        '        for selected_task in "${batch_tasks[@]}"; do'
+    ) in script_text
+
+
 def test_androidworld_defaults_to_pinned_immutable_release_without_fallback(
     tmp_path: Path,
 ) -> None:
