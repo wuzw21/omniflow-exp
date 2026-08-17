@@ -223,6 +223,8 @@ def test_bmoca_native_e2e_uses_planner_mode_and_preserves_accounting(
             actions_executed=2,
             model_calls=3,
             planner_steps=3,
+            function_invoked=True,
+            function_actions_executed=2,
             llm_usage={
                 "prompt_tokens": 100,
                 "completion_tokens": 20,
@@ -248,3 +250,5 @@ def test_bmoca_native_e2e_uses_planner_mode_and_preserves_accounting(
     assert report["summary"]["official_success_count"] == 1
     assert report["summary"]["model_calls"] == 3
     assert report["summary"]["total_tokens"] == 120
+    assert report["summary"]["function_invocation_rate"] == 1.0
+    assert report["summary"]["function_action_reuse_rate"] == 1.0

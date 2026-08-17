@@ -376,6 +376,9 @@ def _evaluate_device(
             )
         )
     successes = sum(item["official_success"] for item in results)
+    function_invocations = sum(item["function_invoked"] for item in results)
+    function_actions = sum(item["function_actions_executed"] for item in results)
+    native_actions = sum(item["native_actions_executed"] for item in results)
     return {
         "schema_version": "omniflow.bmoca-device-function-replay.v1",
         "configuration": {
@@ -428,6 +431,17 @@ def _evaluate_device(
                 for item in results
             ),
             "fallback_steps": sum(item["fallback_steps"] for item in results),
+            "function_invocation_count": function_invocations,
+            "function_invocation_rate": (
+                function_invocations / len(results) if results else 0.0
+            ),
+            "function_actions_executed": function_actions,
+            "native_actions_executed": native_actions,
+            "function_action_reuse_rate": (
+                function_actions / (function_actions + native_actions)
+                if function_actions + native_actions
+                else 0.0
+            ),
             "checker_steps_executed": sum(
                 decision.get("status") == "executed"
                 for item in results
@@ -552,6 +566,15 @@ def _evaluate_episode(
             if host.environment_error
             else "method_failure"
         )
+        trace = list(result.detail.get("trace") or [])
+        function_resolution = dict(
+            result.detail.get("function_resolution") or {}
+        )
+        function_actions = sum(
+            bool(item.get("metadata", {}).get("function_id"))
+            for item in trace
+            if isinstance(item, dict)
+        )
         return _episode_result(
             episode,
             official_success=official_success,
@@ -561,14 +584,19 @@ def _evaluate_episode(
             actions_executed=result.actions_executed,
             model_calls=result.model_calls,
             fallback_steps=result.fallback_steps,
-            trace=list(result.detail.get("trace") or []),
+            trace=trace,
             checker_decisions=list(result.detail.get("checker_decisions") or []),
             planner_steps=int(result.detail.get("planner_steps") or 0),
             llm_usage=dict(result.detail.get("llm_usage") or {}),
-            function_resolution=dict(
-                result.detail.get("function_resolution") or {}
-            ),
+            function_resolution=function_resolution,
             done_reason=str(result.detail.get("done_reason") or "") or None,
+            function_invoked=bool(
+                function_resolution.get("selected_function_id")
+            ),
+            function_actions_executed=function_actions,
+            native_actions_executed=max(
+                0, int(result.actions_executed) - function_actions
+            ),
         )
     except Exception as error:  # noqa: BLE001 - result boundary
         return _episode_result(
@@ -607,6 +635,9 @@ def _episode_result(
     llm_usage: dict[str, Any] | None = None,
     function_resolution: dict[str, Any] | None = None,
     done_reason: str | None = None,
+    function_invoked: bool = False,
+    function_actions_executed: int = 0,
+    native_actions_executed: int = 0,
 ) -> dict[str, Any]:
     return {
         "task_id": episode.task_id,
@@ -626,6 +657,9 @@ def _episode_result(
         "llm_usage": dict(llm_usage or {}),
         "function_resolution": dict(function_resolution or {}),
         "done_reason": done_reason,
+        "function_invoked": bool(function_invoked),
+        "function_actions_executed": int(function_actions_executed),
+        "native_actions_executed": int(native_actions_executed),
     }
 
 
