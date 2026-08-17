@@ -67,6 +67,7 @@ async def execute_function(
     )
     executed = 0
     trace: list[dict[str, Any]] = []
+    checker_decisions: list[dict[str, Any]] = []
     resume_metadata_pending = dict(resume_metadata or {})
     for function_step in steps:
         action = function_step.action
@@ -75,23 +76,45 @@ async def execute_function(
             function_step.source_state_id,
             state_loader=state_loader,
         )
-        step = await execute_robust_action(
-            action,
-            observation=current,
-            host=host,
-            plugins=plugins,
-            function=function,
-            source_state=source_state,
-            installed_packages=installed_packages,
-            state_loader=state_loader,
-        )
+        if function_step.role == "checker":
+            step, checker_decision = await execute_checker_step(
+                action,
+                observation=current,
+                host=host,
+                plugins=plugins,
+                function=function,
+                source_state=source_state,
+                installed_packages=installed_packages,
+            )
+            checker_decisions.append(
+                {
+                    "function_step_index": function_step.step_index,
+                    **checker_decision,
+                }
+            )
+            if step.actions_executed == 0 and step.success:
+                continue
+        else:
+            step = await execute_robust_action(
+                action,
+                observation=current,
+                host=host,
+                plugins=plugins,
+                function=function,
+                source_state=source_state,
+                installed_packages=installed_packages,
+                state_loader=state_loader,
+            )
         executed += step.actions_executed
         trace.extend(
             await record_execution(
                 host,
                 step,
                 trace_start_index=int(trace_start_index) + len(trace),
-                metadata={"function_step_index": function_step.step_index},
+                metadata={
+                    "function_step_index": function_step.step_index,
+                    "function_step_role": function_step.role,
+                },
                 first_metadata=(
                     {"function_alignment": dict(resume_metadata_pending)}
                     if resume_metadata_pending
@@ -110,6 +133,7 @@ async def execute_function(
                 final_state=current,
                 detail={
                     "trace": trace,
+                    "checker_decisions": checker_decisions,
                     "failed_step_index": function_step.step_index,
                     "next_step_index": function_step.step_index,
                 },
@@ -121,12 +145,118 @@ async def execute_function(
         final_state=current,
         detail={
             "trace": trace,
+            "checker_decisions": checker_decisions,
             "next_step_index": (
                 max((step.step_index for step in steps), default=start_step_index - 1)
                 + 1
             ),
         },
     )
+
+
+async def execute_checker_step(
+    action: Action,
+    *,
+    observation: Observation,
+    host: Host,
+    plugins: PluginSet,
+    function: Function,
+    source_state: Observation | None,
+    installed_packages: frozenset[str] | None = None,
+) -> tuple[StepResult, dict[str, Any]]:
+    """Execute one optional checker Step only when its source target is present."""
+
+    decision = await prepare_action(
+        action,
+        observation=observation,
+        plugins=plugins,
+        source_state=source_state,
+    )
+    if decision.kind == "block" or decision.action is None:
+        return (
+            StepResult(
+                True,
+                action=action,
+                before=observation,
+                after=observation,
+                origin="checker",
+                function_id=function.id,
+                detail=dict(decision.detail or {}),
+            ),
+            {
+                "status": "skipped",
+                "reason": decision.reason or "transfer_not_applicable",
+                "transfer": dict(decision.detail or {}),
+            },
+        )
+    if not _checker_transfer_applicable(decision.detail):
+        return (
+            StepResult(
+                True,
+                action=action,
+                before=observation,
+                after=observation,
+                origin="checker",
+                function_id=function.id,
+                detail=dict(decision.detail or {}),
+            ),
+            {
+                "status": "skipped",
+                "reason": "source_target_not_present",
+                "transfer": dict(decision.detail or {}),
+            },
+        )
+    step = replace(
+        await _dispatch_prepared(
+            decision.action,
+            observation=observation,
+            host=host,
+            installed_packages=installed_packages,
+        ),
+        origin="checker",
+        function_id=function.id,
+        detail=dict(decision.detail or {}),
+    )
+    return (
+        step,
+        {
+            "status": "executed" if step.success else "failed",
+            "reason": decision.reason or "omnitransfer_mapped",
+            "transfer": dict(decision.detail or {}),
+        },
+    )
+
+
+def _checker_transfer_applicable(detail: dict[str, Any] | None) -> bool:
+    """Use mapped target evidence instead of a handwritten page-trigger DSL."""
+
+    evidence = detail if isinstance(detail, dict) else {}
+    source = evidence.get("source")
+    candidates = evidence.get("candidates")
+    if not isinstance(source, dict) or not isinstance(candidates, list) or not candidates:
+        return False
+    target = candidates[0]
+    if not isinstance(target, dict):
+        return False
+    source_resource_id = _normalized_semantic_value(source.get("resource_id"))
+    if source_resource_id:
+        return source_resource_id == _normalized_semantic_value(
+            target.get("resource_id")
+        )
+    for field in ("text", "content_desc"):
+        source_value = _normalized_semantic_value(source.get(field))
+        if source_value:
+            return source_value == _normalized_semantic_value(target.get(field))
+    try:
+        score = float(evidence.get("score"))
+        margin = float(evidence.get("margin"))
+    except (TypeError, ValueError):
+        return False
+    return score >= 0.75 and margin >= 0.50
+
+
+def _normalized_semantic_value(value: Any) -> str:
+    return " ".join(str(value or "").casefold().split())
 
 
 async def execute_robust_action(

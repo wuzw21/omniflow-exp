@@ -142,6 +142,29 @@ def test_enhancement_rejects_out_of_order_step_decisions() -> None:
         raise AssertionError("out-of-order Step decisions must be rejected")
 
 
+def test_enhancement_persists_semantic_checker_as_step_role() -> None:
+    run_log = {
+        "steps": [
+            _source_step(
+                "state-1",
+                "open_app",
+                {"package_name": "com.android.settings"},
+            )
+        ]
+    }
+
+    enhanced, changes, status = enhance_function(
+        _function(),
+        run_log,
+        lambda _prompt: _proposal(run_log, roles=["checker"]),
+    )
+
+    assert enhanced["steps"][0]["role"] == "checker"
+    assert enhanced["checker_rules"] == []
+    assert {"part": "function", "field": "step_roles"} in changes
+    assert status == "enhanced"
+
+
 def test_enhancement_prompt_projects_androidworld_actions_with_state_ids() -> None:
     prompts: list[str] = []
     run_log = androidworld_run_log(

@@ -222,3 +222,108 @@ def test_function_execution_counts_all_auxiliary_actions(monkeypatch) -> None:
         1,
         1,
     ]
+
+
+def test_checker_step_executes_when_omnitransfer_target_is_present(monkeypatch) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    before = Observation(xml="<target/>", package_name="com.example")
+    source = Observation(xml="<source/>", package_name="com.example")
+    host = RecordingHost(before)
+    checker_action = Action("click", {"x": 100, "y": 200})
+    mapped_action = Action("click", {"x": 300, "y": 400})
+    function = Function(
+        function_id="optional_checker",
+        name="Optional checker",
+        description="Dismiss an optional page before continuing.",
+        steps=(
+            FunctionStep(0, checker_action, "checker-source", role="checker"),
+            FunctionStep(1, Action("wait", {"duration_ms": 0}), "after-checker"),
+        ),
+    )
+
+    async def transfer(_action, _observation, _source_state):
+        if _action.tool == "wait":
+            return TransferResult(_action)
+        return TransferResult(
+            mapped_action,
+            reason="omnitransfer_mapped",
+            detail={
+                "score": 0.4,
+                "margin": 0.1,
+                "source": {"resource_id": "com.example:id/optional"},
+                "candidates": [
+                    {"resource_id": "com.example:id/optional", "score": 0.9}
+                ],
+            },
+        )
+
+    result = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=before,
+            state_loader=lambda _state_id: source,
+        )
+    )
+
+    assert result.success is True
+    assert result.actions_executed == 2
+    assert host.actions[0] == mapped_action
+    assert result.detail["checker_decisions"][0]["status"] == "executed"
+    assert result.detail["trace"][0]["metadata"]["function_step_role"] == "checker"
+
+
+def test_checker_step_skips_when_omnitransfer_target_is_not_present(monkeypatch) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    before = Observation(xml="<target/>", package_name="com.example")
+    source = Observation(xml="<source/>", package_name="com.example")
+    host = RecordingHost(before)
+    function = Function(
+        function_id="optional_checker",
+        name="Optional checker",
+        description="Dismiss an optional page before continuing.",
+        steps=(
+            FunctionStep(
+                0,
+                Action("click", {"x": 100, "y": 200}),
+                "checker-source",
+                role="checker",
+            ),
+            FunctionStep(1, Action("wait", {"duration_ms": 0}), "after-checker"),
+        ),
+    )
+
+    async def transfer(_action, _observation, _source_state):
+        if _action.tool == "wait":
+            return TransferResult(_action)
+        return TransferResult(
+            Action("click", {"x": 300, "y": 400}),
+            reason="omnitransfer_mapped",
+            detail={
+                "score": 0.99,
+                "margin": 0.99,
+                "source": {"resource_id": "com.example:id/optional"},
+                "candidates": [
+                    {"resource_id": "com.example:id/unrelated", "score": 0.99}
+                ],
+            },
+        )
+
+    result = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=before,
+            state_loader=lambda _state_id: source,
+        )
+    )
+
+    assert result.success is True
+    assert result.actions_executed == 1
+    assert host.actions == [Action("wait", {"duration_ms": 0})]
+    assert result.detail["checker_decisions"][0]["status"] == "skipped"
+    assert result.detail["checker_decisions"][0]["reason"] == (
+        "source_target_not_present"
+    )

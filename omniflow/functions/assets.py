@@ -67,6 +67,7 @@ def parse_function_artifact(value: dict[str, Any]) -> Function:
             "step_index",
             "source_state_id",
             "action",
+            "role",
         }:
             raise ValueError("function_step_contract_invalid")
         if step.get("step_index") != index:
@@ -82,11 +83,15 @@ def parse_function_artifact(value: dict[str, Any]) -> Function:
             raise ValueError("function_action_args_must_be_object")
         if "target" in action["args"]:
             raise ValueError(f"function_action_target_forbidden:{index}")
+        role = str(step.get("role") or "function")
+        if role not in {"function", "checker"}:
+            raise ValueError("function_step_role_invalid")
         canonical_steps.append(
             {
                 "step_index": index,
                 "source_state_id": str(step["source_state_id"]),
                 "action": canonicalize_action(action, replayable_only=True),
+                **({"role": role} if role != "function" else {}),
             }
         )
     canonical_value = dict(value)
@@ -118,6 +123,8 @@ def validate_function_artifact(function: Function) -> None:
     if not function.steps:
         raise ValueError("function_steps_required")
     for step in function.steps:
+        if step.role not in {"function", "checker"}:
+            raise ValueError("function_step_role_invalid")
         if (
             canonicalize_action(step.action.to_dict(), replayable_only=True)
             != step.action.to_dict()
@@ -151,6 +158,7 @@ def bind_function(function: Function, arguments: dict[str, Any]) -> Function:
             step_index=step.step_index,
             source_state_id=step.source_state_id,
             action=Action(step.action.tool, _copy_value(step.action.args)),
+            role=step.role,
         )
         for step in function.steps
     ]
@@ -998,6 +1006,8 @@ def enhance_function(
         run_log,
     ):
         changes.append({"part": "function", "field": "parameters"})
+    if _apply_step_roles(updated, proposal, run_log):
+        changes.append({"part": "function", "field": "step_roles"})
     if "checker_rules" in proposal:
         candidate = dict(updated)
         candidate["checker_rules"] = proposal["checker_rules"]
@@ -1056,8 +1066,11 @@ step_decisions array must contain one object per raw Step in the original order.
 Role classification is semantic and does not depend on metadata.origin. A Step recorded
 as origin=action can still be checker when page_semantics shows optional onboarding,
 setup, or interruption.
-Use those decisions consistently: replacement steps come from function Steps, while
-checker_rules come only from checker Steps with the required RunLog recovery evidence.
+The runtime persists each checker decision directly on that canonical Step. Checker Steps
+are optional: OmniTransfer executes them only when their recorded target is present on the
+current page. Do not encode semantic checker decisions as trigger strings or checker_rules.
+Legacy checker_rules remain allowed only for RunLog Steps already recorded as an actual
+checker recovery with an exact captured trigger.
 Describe when to reuse the Function, visible operations, inputs, success signal, and avoid cases.
 You may add, remove, modify, or reorder actions when needed to recover the complete reusable
 semantic operation. The final steps must be one exact contiguous sequence within one supplied
@@ -1172,6 +1185,48 @@ def _validate_step_decisions(
             raise ValueError("function_enhancement_step_role_invalid")
         if not str(decision.get("reason") or "").strip():
             raise ValueError("function_enhancement_step_reason_required")
+
+
+def _apply_step_roles(
+    function: dict[str, Any],
+    proposal: dict[str, Any],
+    run_log: dict[str, Any],
+) -> bool:
+    decisions = proposal["step_decisions"]
+    raw_steps = [
+        step for step in run_log.get("steps") or () if isinstance(step, dict)
+    ]
+    roles: dict[tuple[str, str], str] = {}
+    for raw_step, decision in zip(raw_steps, decisions, strict=True):
+        try:
+            action = canonicalize_action(raw_step.get("action"), replayable_only=True)
+        except (TypeError, ValueError):
+            continue
+        key = (
+            str(raw_step.get("before_state_id") or ""),
+            json.dumps(action, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        )
+        roles[key] = str(decision["role"])
+
+    changed = False
+    for step in function["steps"]:
+        key = (
+            str(step.get("source_state_id") or ""),
+            json.dumps(
+                canonicalize_action(step.get("action"), replayable_only=True),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+        role = roles.get(key)
+        if role == "checker":
+            if step.get("role") != "checker":
+                step["role"] = "checker"
+                changed = True
+        elif step.pop("role", None) is not None:
+            changed = True
+    return changed
 
 
 def _grounded_replacement_steps(

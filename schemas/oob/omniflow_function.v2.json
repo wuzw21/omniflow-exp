@@ -68,6 +68,7 @@
       "properties": {
         "step_index": {"type": "integer", "minimum": 0},
         "source_state_id": {"type": "string", "minLength": 1},
+        "role": {"type": "string", "enum": ["function", "checker"]},
         "action": {"$ref": "#/$defs/action"}
       }
     },

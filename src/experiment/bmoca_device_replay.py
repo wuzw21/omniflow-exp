@@ -8,7 +8,6 @@ import csv
 from dataclasses import dataclass, replace
 import importlib
 import io
-import json
 import math
 import os
 from pathlib import Path
@@ -32,7 +31,6 @@ from omniflow import (
     ToolCall,
 )
 from omniflow.transfer.runtime import load_transfer_state_catalog
-
 
 _NAVIGATION_GESTURES = {
     "BACK": (252 / 256, 43 / 128, 252 / 256, 43 / 128),
@@ -316,6 +314,7 @@ def evaluate_device_function_replay(
             "environment_ids": list(environment_ids),
             "execution": "official_bmoca_device",
             "function_replay": "direct_single_function",
+            "checker": "optional_function_step_via_omnitransfer",
             "dp": "disabled",
             "vlm_model_calls": 0,
             "fallback_steps_allowed": 0,
@@ -336,6 +335,21 @@ def evaluate_device_function_replay(
             ),
             "model_calls": sum(item["model_calls"] for item in results),
             "fallback_steps": sum(item["fallback_steps"] for item in results),
+            "checker_steps_executed": sum(
+                decision.get("status") == "executed"
+                for item in results
+                for decision in item["checker_decisions"]
+            ),
+            "checker_steps_skipped": sum(
+                decision.get("status") == "skipped"
+                for item in results
+                for decision in item["checker_decisions"]
+            ),
+            "checker_steps_failed": sum(
+                decision.get("status") == "failed"
+                for item in results
+                for decision in item["checker_decisions"]
+            ),
             "wall_seconds": time.monotonic() - started,
         },
         "results": results,
@@ -433,6 +447,7 @@ def _evaluate_episode(
             model_calls=result.model_calls,
             fallback_steps=result.fallback_steps,
             trace=list(result.detail.get("trace") or []),
+            checker_decisions=list(result.detail.get("checker_decisions") or []),
         )
     except Exception as error:  # noqa: BLE001 - result boundary
         return _episode_result(
@@ -466,6 +481,7 @@ def _episode_result(
     model_calls: int = 0,
     fallback_steps: int = 0,
     trace: list[dict[str, Any]] | None = None,
+    checker_decisions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "task_id": episode.task_id,
@@ -480,6 +496,7 @@ def _episode_result(
         "fallback_steps": int(fallback_steps),
         "duration_seconds": duration,
         "trace": list(trace or []),
+        "checker_decisions": list(checker_decisions or []),
     }
 
 
