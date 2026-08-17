@@ -33,7 +33,6 @@ from src.experiment.protocol import (
     DEVICES,
     EPISODE_TIMEOUT_SEC,
     FORMAL_MODEL,
-    FORMAL_MODEL_ENDPOINT_PROFILE,
     MAX_FALLBACK_STEPS,
     MAX_STEPS,
     METHODS,
@@ -1123,19 +1122,11 @@ def _result_environment(
             "OMNIFLOW_ANDROIDWORLD_STORE_PATH": str(store_path),
             "OMNIFLOW_ANDROIDWORLD_SOURCE_SEED": str(SOURCE_SEED),
             "OMNIFLOW_ANDROIDWORLD_TASK_SEED": str(TASK_SEED),
-            "OMNIFLOW_ANDROIDWORLD_FIXED_TASK_PARAMS": "0",
             "OMNIFLOW_ANDROIDWORLD_MAX_STEPS": str(args.max_steps),
             "OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS": str(
                 args.max_fallback_steps
             ),
-            "OMNIFLOW_ANDROIDWORLD_TIMEOUT_SEC": str(
-                PHASE_TIMEOUTS_SEC["target_episode"]
-            ),
             "OMNIFLOW_ANDROIDWORLD_OUTPUT_PATH": str(result_attempt_root),
-            "OMNIFLOW_ANDROIDWORLD_PREFLIGHT_OUTPUT_ROOT": str(
-                attempt_root / "preflight" / label / method
-            ),
-            "OMNIFLOW_FORMAL_MODEL_ENDPOINT_PROFILE": FORMAL_MODEL_ENDPOINT_PROFILE,
         }
     )
     if mobilegpt_memory is not None:

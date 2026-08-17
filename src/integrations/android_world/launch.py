@@ -1184,15 +1184,9 @@ def _append_unique_source_pool_record(
             ]
         ),
         "params_hash": _stable_hash(params if isinstance(params, dict) else {}),
-        "accepted_first30": False,
-        "accepted_case_id": None,
         "latest_official_success_source": True,
-        "latest_result_refs": [],
-        "path_was_excluded_by_default": False,
         "local_source_run_log": local_ref,
         "local_canonical_run_log": local_ref,
-        "local_function_path": None,
-        "local_artifact_dir": None,
     }
 
     pool_dir.mkdir(parents=True, exist_ok=True)

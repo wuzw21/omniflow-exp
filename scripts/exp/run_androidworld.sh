@@ -20,14 +20,13 @@ python_bin="${PYTHON_BIN:-$unified_python}"
 env_file="${OMNIFLOW_ENV_FILE:-${asset_root:+$asset_root/.env}}"
 master_source_index="${OMNIFLOW_MASTER_SOURCE_INDEX:-${asset_root:+$asset_root/runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json}}"
 source_index="${OMNIFLOW_ANDROIDWORLD_SOURCE_INDEX:-$master_source_index}"
-source_index_expected_tasks="${OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS:-116}"
+source_index_expected_tasks=""
 formal_source_seed=""
 formal_task_seed=""
 formal_max_steps=""
 formal_max_fallback_steps=""
 formal_step_timeout_sec=""
 official_validator_flush_grace_sec=""
-formal_episode_timeout_sec=""
 formal_fixed_task_params=0
 formal_fold_state=2
 formal_fold_size="2208x1840"
@@ -43,8 +42,6 @@ bmoca_avd_template_home="${OMNIFLOW_BMOCA_AVD_TEMPLATE_HOME:-}"
 bmoca_output_path="${OMNIFLOW_BMOCA_OUTPUT_PATH:-}"
 bmoca_show_emulator="${OMNIFLOW_BMOCA_SHOW_EMULATOR:-0}"
 android_world_revision="632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"
-appagent_document_model=""
-mobilegpt_embedding_model="${OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL:-text-embedding-v4}"
 mobilegpt_source_schema="omniflow.mobilegpt-runlog-direct-memory.v1"
 mobilegpt_source_method="mobilegpt_runlog_direct_memory"
 mobilegpt_source_manifest_name="mobilegpt_memory_manifest.json"
@@ -63,7 +60,6 @@ from src.experiment.protocol import (
     MAX_FALLBACK_STEPS,
     MAX_STEPS,
     METHODS,
-    EPISODE_TIMEOUT_SEC,
     SOURCE_DEVICE,
     SOURCE_SEED,
     STEP_TIMEOUT_SEC,
@@ -79,7 +75,6 @@ print(
     MAX_FALLBACK_STEPS,
     STEP_TIMEOUT_SEC,
     VALIDATOR_FLUSH_GRACE_SEC,
-    EPISODE_TIMEOUT_SEC,
     TASK_DEADLINE_SEC,
     FORMAL_MODEL,
     FORMAL_MODEL_ENDPOINT_PROFILE,
@@ -92,11 +87,10 @@ PY
 )"
 read -r formal_source_seed formal_task_seed formal_max_steps \
   formal_max_fallback_steps formal_step_timeout_sec \
-  official_validator_flush_grace_sec formal_episode_timeout_sec \
+  official_validator_flush_grace_sec \
   formal_task_deadline_sec formal_model formal_model_endpoint_profile \
   formal_default_method all_methods \
   source_device default_device <<< "$protocol_values"
-appagent_document_model="${OMNIFLOW_APPAGENT_DOCUMENT_MODEL:-$formal_model}"
 expected_source_seed="${OMNIFLOW_ANDROIDWORLD_SOURCE_SEED:-$formal_source_seed}"
 task_seed="${OMNIFLOW_ANDROIDWORLD_TASK_SEED:-$formal_task_seed}"
 config="$repo/config/paper_androidworld.json"
@@ -110,8 +104,8 @@ mobilegpt_source_environment_repair="${OMNIFLOW_MOBILEGPT_SOURCE_ENVIRONMENT_REP
 appagent_source_environment_repair="${OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON:-}"
 batch_attempt_id="${OMNIFLOW_BATCH_ATTEMPT_ID:-}"
 device_target="${OMNIFLOW_ANDROIDWORLD_DEVICE:-$default_device}"
-fixed_task_params="${OMNIFLOW_ANDROIDWORLD_FIXED_TASK_PARAMS:-$formal_fixed_task_params}"
-timeout_sec="${OMNIFLOW_ANDROIDWORLD_TIMEOUT_SEC:-$formal_episode_timeout_sec}"
+fixed_task_params="$formal_fixed_task_params"
+timeout_sec=""
 preflight_minimum_free_gb="${OMNIFLOW_PREFLIGHT_MINIMUM_FREE_GB:-20}"
 max_steps="${OMNIFLOW_ANDROIDWORLD_MAX_STEPS:-$formal_max_steps}"
 max_fallback_steps="${OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS:-$formal_max_fallback_steps}"
@@ -137,11 +131,10 @@ mobilegpt_root="${OMNIFLOW_MOBILEGPT_ROOT:-${asset_root:+$asset_root/runtime/ext
 mobilegpt_source_memory_root="${OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT:-}"
 appagent_root="${OMNIFLOW_APPAGENT_ROOT:-${asset_root:+$asset_root/runtime/external/appagent}}"
 appagent_demo_memory_root="${OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT:-}"
-source_device="${OMNIFLOW_ANDROIDWORLD_SOURCE_DEVICE:-$source_device}"
-preflight_profile="${OMNIFLOW_ANDROIDWORLD_PREFLIGHT_PROFILE:-}"
-preflight_serials="${OMNIFLOW_ANDROIDWORLD_PREFLIGHT_SERIALS:-}"
+preflight_profile=""
+preflight_serials=""
 manage_emulators="${OMNIFLOW_ANDROIDWORLD_MANAGE_EMULATORS:-1}"
-emulator_avds="${OMNIFLOW_ANDROIDWORLD_EMULATOR_AVDS:-emulator-5554=OmniFlowTargetSmall,emulator-5560=SmallPhone,emulator-5564=OmniFlowTargetFold}"
+emulator_avds="emulator-5554=OmniFlowTargetSmall,emulator-5560=SmallPhone,emulator-5564=OmniFlowTargetFold"
 host_machine="$(uname -m)"
 case "$host_machine" in
   x86_64|amd64)
@@ -217,18 +210,18 @@ PY
   return 1
 }
 default_emulator_avd_specs="SmallPhone|system-images;android-33;google_apis;$default_emulator_system_image_abi|small_phone,OmniFlowTargetSmall|system-images;android-33;google_apis;$default_emulator_system_image_abi|small_phone,OmniFlowTargetFold|system-images;android-34;google_apis;$default_emulator_system_image_abi|pixel_fold"
-emulator_avd_specs="${OMNIFLOW_ANDROIDWORLD_EMULATOR_AVD_SPECS:-$default_emulator_avd_specs}"
-emulator_gpu="${OMNIFLOW_ANDROIDWORLD_EMULATOR_GPU:-swiftshader_indirect}"
-emulator_boot_timeout_sec="${OMNIFLOW_ANDROIDWORLD_EMULATOR_BOOT_TIMEOUT_SEC:-240}"
-emulator_graceful_shutdown_timeout_sec="${OMNIFLOW_ANDROIDWORLD_EMULATOR_GRACEFUL_SHUTDOWN_TIMEOUT_SEC:-30}"
-emulator_forced_shutdown_timeout_sec="${OMNIFLOW_ANDROIDWORLD_EMULATOR_FORCED_SHUTDOWN_TIMEOUT_SEC:-10}"
-androidworld_adb_file_transfer_timeout_sec="${OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC:-300}"
+emulator_avd_specs="$default_emulator_avd_specs"
+emulator_gpu="swiftshader_indirect"
+emulator_boot_timeout_sec="240"
+emulator_graceful_shutdown_timeout_sec="30"
+emulator_forced_shutdown_timeout_sec="10"
+androidworld_adb_file_transfer_timeout_sec="300"
 export OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC="$androidworld_adb_file_transfer_timeout_sec"
-androidworld_setup_timeout_sec="${OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC:-300}"
+androidworld_setup_timeout_sec="300"
 export OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC="$androidworld_setup_timeout_sec"
-fold_serial="${OMNIFLOW_ANDROIDWORLD_FOLD_SERIAL:-emulator-5564}"
-fold_state="${OMNIFLOW_ANDROIDWORLD_FOLD_STATE:-$formal_fold_state}"
-fold_size="${OMNIFLOW_ANDROIDWORLD_FOLD_SIZE:-$formal_fold_size}"
+fold_serial="emulator-5564"
+fold_state="$formal_fold_state"
+fold_size="$formal_fold_size"
 dry_run=0
 check_only=0
 development_run=0
@@ -357,7 +350,7 @@ Options:
   --method METHOD           Run one method in the single-result runner.
   --device LABEL:SERIAL:PORT
                             Run one target in the single-result runner.
-  --tasks TASK1,TASK2,...   Run an ordered task-major subset, or limit
+  --tasks TASK1,TASK2,...   Select an ordered task-major subset, or scope
                             --convert-ours-assets. Implies --all-tasks during
                             experiment execution.
   --convert-ours-assets     Validate and freeze Function bundles from an
@@ -397,8 +390,6 @@ Optional runtime overrides:
   OMNIFLOW_ANDROID_SDK_ROOT, OMNIFLOW_JAVA_HOME,
   OMNIFLOW_MOBILEGPT_SOURCE_ENVIRONMENT_REPAIR_REASON,
   OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON,
-  OMNIFLOW_APPAGENT_DOCUMENT_MODEL (default: GLM-5.1; offline docs only),
-  OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL (default: text-embedding-v4; offline memory only),
   OMNIFLOW_DEVELOPMENT_OUTPUT_PATH, OMNIFLOW_DEVELOPMENT_MODEL,
   OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE (default: llmthu),
   OMNIFLOW_DEVELOPMENT_CONSOLE_PORT,
@@ -705,11 +696,11 @@ if [[ -n "$convert_runlog_memory_method" ]]; then
     mobilegpt_offline_retrieval)
       runlog_memory_upstream_root="$mobilegpt_root"
       runlog_memory_model="$formal_model"
-      runlog_memory_embedding_model="$mobilegpt_embedding_model"
+      runlog_memory_embedding_model="text-embedding-v4"
       ;;
     appagent_demo)
       runlog_memory_upstream_root="$appagent_root"
-      runlog_memory_model="$appagent_document_model"
+      runlog_memory_model="$formal_model"
       runlog_memory_embedding_model=""
       ;;
   esac
@@ -973,8 +964,8 @@ if [[ -n "$e2e_task" ]]; then
     --adb-path "$e2e_adb_path"
     --emulator-bin "$e2e_emulator_bin"
     --source-device "$source_device"
-    --source-avd "${OMNIFLOW_ANDROIDWORLD_SOURCE_AVD:-SmallPhone}"
-    --emulator-gpu "${OMNIFLOW_ANDROIDWORLD_EMULATOR_GPU:-swiftshader_indirect}"
+    --source-avd "SmallPhone"
+    --emulator-gpu "$emulator_gpu"
     --runtime-preflight "$repo/src/experiment/preflight.py"
     --formal-model "$formal_model"
   )
@@ -1538,10 +1529,7 @@ if [[ ! "$max_steps" =~ ^[1-9][0-9]*$ ]]; then
   echo "OMNIFLOW_ANDROIDWORLD_MAX_STEPS must be a positive integer." >&2
   exit 2
 fi
-if [[ ! "$source_index_expected_tasks" =~ ^[1-9][0-9]*$ ]]; then
-  echo "OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS must be a positive integer." >&2
-  exit 2
-fi
+timeout_sec="$((max_steps * formal_step_timeout_sec + official_validator_flush_grace_sec))"
 if [[ ! "$expected_source_seed" =~ ^[0-9]+$ ]]; then
   echo "OMNIFLOW_ANDROIDWORLD_SOURCE_SEED must be a non-negative integer." >&2
   exit 2
@@ -1552,26 +1540,6 @@ if [[ ! "$task_seed" =~ ^[0-9]+$ ]]; then
 fi
 if [[ ! "$manage_emulators" =~ ^[01]$ ]]; then
   echo "OMNIFLOW_ANDROIDWORLD_MANAGE_EMULATORS must be 0 or 1." >&2
-  exit 2
-fi
-if [[ ! "$emulator_boot_timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
-  echo "OMNIFLOW_ANDROIDWORLD_EMULATOR_BOOT_TIMEOUT_SEC must be a positive integer." >&2
-  exit 2
-fi
-if [[ ! "$emulator_graceful_shutdown_timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
-  echo "OMNIFLOW_ANDROIDWORLD_EMULATOR_GRACEFUL_SHUTDOWN_TIMEOUT_SEC must be a positive integer." >&2
-  exit 2
-fi
-if [[ ! "$emulator_forced_shutdown_timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
-  echo "OMNIFLOW_ANDROIDWORLD_EMULATOR_FORCED_SHUTDOWN_TIMEOUT_SEC must be a positive integer." >&2
-  exit 2
-fi
-if [[ ! "$androidworld_adb_file_transfer_timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
-  echo "OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC must be a positive integer." >&2
-  exit 2
-fi
-if [[ ! "$androidworld_setup_timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
-  echo "OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC must be a positive integer." >&2
   exit 2
 fi
 printf -v iteration_label '%02d' "$task_iteration"
@@ -1586,7 +1554,7 @@ else
 fi
 attempt_series_root="${results_root:+$results_root/androidworld_single_task_attempts/$task}"
 output_root="${OMNIFLOW_ANDROIDWORLD_OUTPUT_PATH:-$attempt_series_root/$attempt_id}"
-preflight_output_root="${OMNIFLOW_ANDROIDWORLD_PREFLIGHT_OUTPUT_ROOT:-${results_root:+$results_root/preflight/$task/$attempt_id}}"
+preflight_output_root="${results_root:+$results_root/preflight/$task/$attempt_id}"
 requires_mobilegpt_source_memory=0
 requires_appagent_source_memory=0
 requires_omnitransfer=0
@@ -2131,23 +2099,7 @@ source "$env_file"
 set +a
 mobilegpt_embedding_api_key="${OPENAI_API_KEY:-}"
 mobilegpt_embedding_base_url="${OPENAI_BASE_URL:-}"
-formal_model_endpoint_profile="${OMNIFLOW_FORMAL_MODEL_ENDPOINT_PROFILE:-$formal_model_endpoint_profile}"
-paper_model="$("$python_bin" - "$config" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-model = str((payload.get("result") or {}).get("model") or "").strip()
-if not model:
-    raise SystemExit("paper_model_missing")
-print(model)
-PY
-)"
-if [[ "$paper_model" != "$formal_model" ]]; then
-  echo "Formal model must remain $formal_model, got: $paper_model" >&2
-  exit 1
-fi
+paper_model="$formal_model"
 export OPENAI_MODEL="$paper_model"
 export OMNIFLOW_PLANNER_MODEL="$paper_model"
 export MOBILEGPT_CHAT_MODEL="$paper_model"
@@ -2298,8 +2250,8 @@ if [[ "$need_mobilegpt_preflight" -eq 1 ]]; then
     export MOBILEGPT_EMBEDDING_MODEL="$mobilegpt_runtime_embedding_model"
     echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=$mobilegpt_runtime_embedding_model embedding_dimension=$mobilegpt_runtime_embedding_dimension"
   else
-    export MOBILEGPT_EMBEDDING_MODEL="$mobilegpt_embedding_model"
-    echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=$mobilegpt_embedding_model"
+    export MOBILEGPT_EMBEDDING_MODEL="text-embedding-v4"
+    echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=text-embedding-v4"
   fi
 fi
 echo "[model] model=$paper_model model_endpoint_profile=$formal_model_endpoint_profile model_endpoint=$selected_model_base_url"
@@ -2533,7 +2485,7 @@ ensure_emulator() {
     stop_emulator "$serial" "cold-restart"
   fi
   if ! avd="$(avd_for_serial "$serial")"; then
-    echo "No AVD mapping configured for $serial in OMNIFLOW_ANDROIDWORLD_EMULATOR_AVDS." >&2
+    echo "No managed AVD mapping exists for $serial in the canonical emulator topology." >&2
     return 1
   fi
   if ! ensure_avd_installed "$avd"; then
@@ -2606,6 +2558,17 @@ fi
 if [[ -z "$preflight_serials" ]]; then
   preflight_serials="${target_serials[*]}"
 fi
+source_index_expected_tasks="$($python_bin - "$source_index" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if not isinstance(payload, dict) or not payload:
+    raise SystemExit("source_index_empty")
+print(len(payload))
+PY
+)"
 
 mkdir -p "$preflight_output_root"
 if [[ "$appagent_source_generation_required" -eq 1 ]]; then
@@ -2691,6 +2654,7 @@ command=(
   --max-fallback-steps "$max_fallback_steps"
   --task-random-seed "$task_seed"
   --model "$paper_model"
+  --planner-provider openai
 )
 if [[ -n "$baseline_environment_repair" ]]; then
   command+=(--baseline-environment-repair "$baseline_environment_repair")

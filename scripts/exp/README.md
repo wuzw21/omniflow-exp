@@ -153,10 +153,11 @@ The unified script has one persistent workspace profile: for a checkout at
 sibling `<workspace>/OmniFlow`, long-term memory from
 `<workspace>/assets/androidworld-experiment-memory-v1`, OmniTransfer from
 `<workspace>/OmniTransfer`, and AndroidWorld/MobileGPT/AppAgent from the
-corresponding `OmniFlow/runtime/external` directories. Environment variables
-remain explicit overrides. Model credentials are never copied into this
-profile and continue to load only from `OMNIFLOW_ENV_FILE` or the sibling
-`OmniFlow/.env`.
+corresponding `OmniFlow/runtime/external` directories. Only the documented
+roots, credentials, development inputs, and maintenance inputs are override
+points; formal topology and baseline model choices are fixed by the protocol.
+Model credentials are never copied into this profile and continue to load only
+from `OMNIFLOW_ENV_FILE` or the sibling `OmniFlow/.env`.
 
 Configuration and environment repairs belong to this entry point or the
 narrow shared AndroidWorld harness seam. A manual export, ad-hoc emulator
@@ -183,24 +184,18 @@ option and preserves all other setup behavior.
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
 | `OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT` | Optional immutable AndroidWorld checkout root containing the `android_world` package; defaults to the pinned `632ac95` release beside the asset root |
 | `OMNIFLOW_SQLITE_FTS4_LIBRARY` | Optional absolute compatible `libsqlite3` path; the unified entry automatically selects a system library when the experiment Python lacks AndroidWorld's required FTS4 support |
-| `OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC` | Positive timeout for each official AndroidWorld adb file push/copy; defaults to 300 seconds and never permits the upstream `None`/`0` unbounded wait |
-| `OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC` | Positive hard deadline for the complete official per-result app setup; defaults to 300 seconds so an AndroidEnv/adb coordinator stall cannot consume the full episode budget |
-| `OMNIFLOW_APPAGENT_DOCUMENT_MODEL` | AppAgent offline documentation VLM; defaults to the paper model `GLM-5.1` |
-| `OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL` | MobileGPT offline embedding model; defaults to its native `text-embedding-v4` |
 | `OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE` | Development endpoint profile; defaults to `llmthu` |
-| `OMNIFLOW_FORMAL_MODEL_ENDPOINT_PROFILE` | Formal endpoint profile; fixed to `llmthu` for `GLM-5.1` |
 | `OMNIFLOW_OURS_AUTHORING_MANIFEST` | Immutable bundle manifest produced by `androidworld-runlog-harvester` using `omniflow.function-agent-skill-manifest.v1` |
 | `OMNIFLOW_OURS_REVISION_REASON` | Explicit reason for selecting one newly converted immutable Function revision over the existing canonical Store; requires one `--tasks` value |
 | `OMNIFLOW_MEMORY_MOBILEGPT_ROOTS` | Optional colon-separated roots containing sealed MobileGPT semantic memory |
 
-Configuration ownership is intentionally scoped. The experiment axes are only
-task, method, and device; their protocol values and result budget are resolved
-by the shell and `src/experiment/protocol.py`. `OMNIFLOW_ANDROIDWORLD_*` belongs
-to the single-result runner, `OMNIFLOW_E2E_*` belongs to the outer matrix
-scheduler, `OMNIFLOW_OURS_*` and baseline-specific variables belong to source
-asset preparation, and `OMNIFLOW_MEMORY_*` belongs to memory maintenance. Do
-not add a second variable name for an existing setting; add a scoped setting
-only when it controls a distinct boundary.
+Configuration ownership is intentionally small. A formal result is exactly one
+task, one method, and one device. Its kernel budget and seeds come from
+`src/experiment/protocol.py` and the six-value
+`config/paper_androidworld.json` result block. The shell owns the outer task
+matrix; the Python runner owns one result. Environment variables are limited to
+external roots, credentials, development/maintenance inputs, and the internal
+child-process contract. Do not expose a second alias for an existing setting.
 
 The source RunLog index defaults to
 `$OMNIFLOW_EXP_ASSET_ROOT/runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json`.
@@ -219,11 +214,6 @@ AppAgent writes the official demo directory and runs its pinned official
 document generator. AppAgent additionally requires immutable before/after
 screenshot references and XML in the RunLog; missing evidence is an explicit
 conversion failure and never triggers source-coordinate replay or an emulator.
-Its offline document generator uses `OMNIFLOW_APPAGENT_DOCUMENT_MODEL`; this is
-separate from the fixed `GLM-5.1` online AndroidWorld planner model.
-MobileGPT's offline encoder uses `OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL`; the
-default remains its native `text-embedding-v4`, and an endpoint-compatible
-override does not change the online planner or AppAgent document model.
 At runtime, MobileGPT chat is routed to the selected LLMTHU `GLM-5.1` endpoint,
 while query embeddings are routed to the original `OPENAI_*` endpoint from the
 environment file. The sealed memory manifest supplies the only accepted

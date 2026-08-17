@@ -58,6 +58,13 @@ opens a new execution phase.
   grace timeout must be configurable through the canonical config/CLI/env
   path. They may not be independently hard-coded in the shell, scheduler,
   runner, registry, or report layer.
+- The formal config surface is deliberately small: task, method, device,
+  kernel budgets/seeds, and external roots. `source_format`,
+  `accepted_first30`, `first30`, `first60`, `limit`, and source-backend
+  selectors are retired history filters, not active configuration. Historical
+  result readers may recognize their old schema columns, but new commands and
+  metadata must not emit them. Setup/export names that exist only to bridge
+  the pinned AndroidWorld runtime are internal contracts, not user overrides.
 - Existing prompts are frozen. Do not edit prompt text, add task-specific
   prompts, reintroduce `PromptSet`/step guidance plumbing, or send accumulated
   planner history that changes the established prompt contract. Prompt

@@ -243,7 +243,6 @@ MASTER_PROGRESS_COLUMNS = [
     "source_params_json",
     "source_step_count",
     "latest_official_success_source",
-    "accepted_first30",
     *[
         f"{method}_{field}"
         for method in MASTER_PROGRESS_METHODS
@@ -1087,7 +1086,6 @@ def build_master_progress(
                 "latest_official_success_source": _cell(
                     source_meta.get("latest_official_success_source")
                 ),
-                "accepted_first30": _cell(source_meta.get("accepted_first30")),
             }
         )
         for method in MASTER_PROGRESS_METHODS:

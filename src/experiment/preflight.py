@@ -697,7 +697,9 @@ def main(argv: list[str] | None = None) -> int:
     if appagent_mode:
         appagent_root = Path(
             args.appagent_root
-            or os.getenv("APPAGENT_ROOT", str(repo / "runtime/external/appagent"))
+            or os.getenv(
+                "OMNIFLOW_APPAGENT_ROOT", str(repo / "runtime/external/appagent")
+            )
         ).expanduser().resolve()
         add(
             "appagent_root",
@@ -717,7 +719,8 @@ def main(argv: list[str] | None = None) -> int:
             actual_revision or "unavailable",
         )
     source_memory_value = str(
-        args.source_memory_root or os.getenv("MOBILEGPT_SOURCE_MEMORY_ROOT", "")
+        args.source_memory_root
+        or os.getenv("OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT", "")
     ).strip()
     memory_root = (
         Path(source_memory_value).expanduser().resolve()
@@ -730,7 +733,7 @@ def main(argv: list[str] | None = None) -> int:
         memory_root = None
         demo_memory_value = str(
             args.appagent_demo_memory_root
-            or os.getenv("APPAGENT_DEMO_MEMORY_ROOT", "")
+            or os.getenv("OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT", "")
         ).strip()
         if not demo_memory_value:
             add("appagent_demo_memory", True, "not supplied for source preparation")

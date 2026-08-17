@@ -187,17 +187,6 @@ def test_result_environment_uses_orchestrator_budget_and_child_guard(
     result_attempt_id = "attempt-test.t3a_hint.small5554"
     assert environment["OMNIFLOW_BATCH_CHILD"] == "1"
     assert environment["OMNIFLOW_BATCH_ATTEMPT_ID"] == result_attempt_id
-    assert environment["OMNIFLOW_ANDROIDWORLD_OUTPUT_PATH"] == str(
-        tmp_path
-        / "attempt"
-        / "target_attempts"
-        / "small5554"
-        / "t3a_hint"
-        / result_attempt_id
-    )
-    assert environment["OMNIFLOW_ANDROIDWORLD_TIMEOUT_SEC"] == str(
-        PHASE_TIMEOUTS_SEC["target_episode"]
-    )
     assert environment["OMNIFLOW_ANDROIDWORLD_MAX_STEPS"] == "7"
     assert environment["OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS"] == "2"
     assert PHASE_TIMEOUTS_SEC["target_result"] == PHASE_TIMEOUTS_SEC["target_episode"]

@@ -170,24 +170,8 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "No emulator process found while device remained visible" in script_text
     assert "src.experiment.protocol" in script_text
     assert "protocol_values=" in script_text
-    assert 'timeout_sec="${OMNIFLOW_ANDROIDWORLD_TIMEOUT_SEC:-$formal_episode_timeout_sec}"' in script_text
+    assert 'timeout_sec="$((max_steps * formal_step_timeout_sec + official_validator_flush_grace_sec))"' in script_text
     assert "formal_cell_timeout_sec" not in script_text
-    assert (
-        'androidworld_adb_file_transfer_timeout_sec="${OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC:-300}"'
-        in script_text
-    )
-    assert (
-        'export OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC="$androidworld_adb_file_transfer_timeout_sec"'
-        in script_text
-    )
-    assert (
-        'androidworld_setup_timeout_sec="${OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC:-300}"'
-        in script_text
-    )
-    assert (
-        'export OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC="$androidworld_setup_timeout_sec"'
-        in script_text
-    )
 
 
 def test_runlog_memory_mode_does_not_treat_disabled_diagnostic_mode_as_active(
@@ -230,11 +214,7 @@ def test_selected_model_profile_is_exported_for_native_openai_clients() -> None:
 def test_appagent_runlog_conversion_uses_offline_visual_document_model() -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
 
-    assert (
-        'appagent_document_model="${OMNIFLOW_APPAGENT_DOCUMENT_MODEL:-$formal_model}"'
-        in script_text
-    )
-    assert 'runlog_memory_model="$appagent_document_model"' in script_text
+    assert 'runlog_memory_model="$formal_model"' in script_text
     assert (
         'if [[ "$convert_runlog_memory_method" == "mobilegpt_offline_retrieval" ]]'
         in script_text
@@ -244,11 +224,7 @@ def test_appagent_runlog_conversion_uses_offline_visual_document_model() -> None
 def test_mobilegpt_runlog_conversion_uses_independent_embedding_model() -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
 
-    assert (
-        'mobilegpt_embedding_model="${OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL:-text-embedding-v4}"'
-        in script_text
-    )
-    assert 'runlog_memory_embedding_model="$mobilegpt_embedding_model"' in script_text
+    assert 'runlog_memory_embedding_model="text-embedding-v4"' in script_text
     assert 'runlog_memory_model="$formal_model"' in script_text
 
 
@@ -608,7 +584,6 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
             "OMNIFLOW_MOBILEGPT_ROOT": str(mobilegpt),
             "OMNIFLOW_APPAGENT_ROOT": str(appagent),
             "OMNITRANSFER_ROOT": str(omnitransfer),
-            "OMNIFLOW_ANDROIDWORLD_SOURCE_DEVICE": "source5570:emulator-5570:5570",
         },
         check=False,
         capture_output=True,
@@ -622,7 +597,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
     assert "--source-backend" not in invocation
     assert invocation[invocation.index("--task-deadline-sec") + 1] == "1800"
     assert invocation[invocation.index("--source-device") + 1] == (
-        "source5570:emulator-5570:5570"
+        "source5560:emulator-5560:5560"
     )
     assert invocation[-1] == "--dry-run"
 
@@ -757,19 +732,11 @@ def test_default_topology_uses_three_distinct_device_instances(
         for mapping in completed.stdout.splitlines()[2].split(",")
     ]
     assert len(avd_names) == len(set(avd_names)) == 3
-    config = json.loads(
-        (REPO / "config" / "paper_androidworld.json").read_text(encoding="utf-8")
-    )
-    assert config["result"]["source_device"] == completed.stdout.splitlines()[0]
 
 
 @pytest.mark.parametrize(
     ("environment_override", "message"),
     [
-        (
-            {"OMNIFLOW_ANDROIDWORLD_SOURCE_DEVICE": "source5560:emulator-5554:5554"},
-            "Source serial must be separate from target serials",
-        ),
         (
             {
                 "OMNIFLOW_ANDROIDWORLD_DEVICE": (
@@ -919,7 +886,6 @@ def test_check_only_is_read_only_before_any_runtime_output(
         "OMNIFLOW_ENV_FILE": str(env_file),
         "OMNIFLOW_ANDROIDWORLD_SOURCE_INDEX": str(source_index),
         "OMNIFLOW_MASTER_SOURCE_INDEX": str(source_index),
-        "OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS": "1",
         "OMNIFLOW_ANDROID_WORLD_ROOT": str(android_world),
         "OMNIFLOW_ADB_PATH": str(fake_adb),
         "OMNIFLOW_ANDROIDWORLD_MANAGE_EMULATORS": "0",

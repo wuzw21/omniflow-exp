@@ -127,7 +127,6 @@ class SourceRunLogProfile:
     replay_format: str
     step_count: int
     card_count: int
-    accepted_first30: bool
     latest_official_success_source: bool
     direct_replay_ready: bool
     notes: tuple[str, ...] = ()
@@ -139,7 +138,6 @@ class SourceRunLogProfile:
             "replay_format": self.replay_format,
             "step_count": self.step_count,
             "card_count": self.card_count,
-            "accepted_first30": self.accepted_first30,
             "latest_official_success_source": self.latest_official_success_source,
             "direct_replay_ready": self.direct_replay_ready,
             "notes": list(self.notes),
@@ -152,7 +150,6 @@ class AndroidWorldAppSpec:
     package_name: str
     apk_names: tuple[str, ...]
     tasks: tuple[str, ...]
-    source_formats: tuple[str, ...]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -160,7 +157,6 @@ class AndroidWorldAppSpec:
             "package_name": self.package_name,
             "apk_names": list(self.apk_names),
             "tasks": list(self.tasks),
-            "source_formats": list(self.source_formats),
         }
 
 
@@ -947,36 +943,6 @@ def load_archive_index(
     return archive
 
 
-def select_archive_items(
-    archive: Sequence[ArchivedRunLog],
-    *,
-    tasks: str = "",
-    first60: bool = False,
-    limit: int | None = None,
-) -> list[ArchivedRunLog]:
-    if tasks.strip():
-        by_name = {item.task: item for item in archive}
-        selected: list[ArchivedRunLog] = []
-        missing: list[str] = []
-        for raw_name in tasks.split(","):
-            name = raw_name.strip()
-            if not name:
-                continue
-            item = by_name.get(name)
-            if item is None:
-                missing.append(name)
-            else:
-                selected.append(item)
-        if missing:
-            raise KeyError(f"Tasks not found in archive index: {', '.join(missing)}")
-    else:
-        selected = list(archive[:60] if first60 else archive)
-
-    if limit is not None:
-        selected = selected[: max(0, int(limit))]
-    return selected
-
-
 def profile_source_run_log(item: ArchivedRunLog) -> SourceRunLogProfile:
     data = _read_json(item.source_run_log)
     notes: list[str] = []
@@ -988,7 +954,6 @@ def profile_source_run_log(item: ArchivedRunLog) -> SourceRunLogProfile:
             replay_format="missing_or_invalid",
             step_count=0,
             card_count=0,
-            accepted_first30=bool(item.meta.get("accepted_first30")),
             latest_official_success_source=bool(
                 item.meta.get("latest_official_success_source")
             ),
@@ -1004,7 +969,6 @@ def profile_source_run_log(item: ArchivedRunLog) -> SourceRunLogProfile:
             replay_format="canonical_steps",
             step_count=len(steps),
             card_count=0,
-            accepted_first30=bool(item.meta.get("accepted_first30")),
             latest_official_success_source=bool(
                 item.meta.get("latest_official_success_source")
             ),
@@ -1022,7 +986,6 @@ def profile_source_run_log(item: ArchivedRunLog) -> SourceRunLogProfile:
             replay_format="payload_cards",
             step_count=_coerce_int(payload.get("step_count"), len(cards)),
             card_count=len(cards),
-            accepted_first30=bool(item.meta.get("accepted_first30")),
             latest_official_success_source=bool(
                 item.meta.get("latest_official_success_source")
             ),
@@ -1036,36 +999,12 @@ def profile_source_run_log(item: ArchivedRunLog) -> SourceRunLogProfile:
         replay_format="unsupported",
         step_count=0,
         card_count=0,
-        accepted_first30=bool(item.meta.get("accepted_first30")),
         latest_official_success_source=bool(
             item.meta.get("latest_official_success_source")
         ),
         direct_replay_ready=False,
         notes=("no canonical steps or payload cards found",),
     )
-
-
-def filter_archive_items(
-    items: Sequence[ArchivedRunLog],
-    *,
-    source_format: str = "all",
-    accepted_first30: bool = False,
-) -> list[ArchivedRunLog]:
-    selected: list[ArchivedRunLog] = []
-    for item in items:
-        if accepted_first30 and not bool(item.meta.get("accepted_first30")):
-            continue
-        if source_format == "all":
-            selected.append(item)
-            continue
-        profile = profile_source_run_log(item)
-        if source_format == "canonical" and profile.replay_format == "canonical_steps":
-            selected.append(item)
-        elif source_format == "payload" and profile.replay_format == "payload_cards":
-            selected.append(item)
-        elif source_format == "ready" and profile.direct_replay_ready:
-            selected.append(item)
-    return selected
 
 
 def _package_from_activity(activity: object) -> str:
@@ -1121,7 +1060,6 @@ def collect_androidworld_app_specs(
     )
     task_types = registry.TaskRegistry().get_registry(family=suite_family)
     app_to_tasks: dict[str, list[str]] = {}
-    app_to_formats: dict[str, set[str]] = {}
     app_setups: dict[str, object] = {}
 
     for item in items:
@@ -1137,10 +1075,8 @@ def collect_androidworld_app_specs(
                 app_names.append(name)
                 app_setups[name] = app_setup
 
-        profile = profile_source_run_log(item)
         for app_name in app_names:
             app_to_tasks.setdefault(app_name, []).append(item.task)
-            app_to_formats.setdefault(app_name, set()).add(profile.replay_format)
             app_setup = aw_setup.get_app_mapping(app_name)
             if app_setup is not None:
                 app_setups[app_name] = app_setup
@@ -1156,7 +1092,6 @@ def collect_androidworld_app_specs(
                 package_name=package_name,
                 apk_names=_apk_names(app_setup) if app_setup is not None else (),
                 tasks=tuple(app_to_tasks[app_name]),
-                source_formats=tuple(sorted(app_to_formats.get(app_name, set()))),
             )
         )
     return specs
@@ -1683,7 +1618,6 @@ def build_fixed_replay_command(
             if replay_memory_root
             else "",
             "source_materialization": source_materialization,
-            "source_format": profile.replay_format,
             "direct_replay_ready": profile.direct_replay_ready,
             "method": resolved_method,
             "device": resolved_device,
@@ -4374,7 +4308,6 @@ def _success_source_archive_entry(
         "action_signature_hash": record.get("action_signature_hash") or "",
         "params_hash": record.get("params_hash") or "",
         "latest_official_success_source": True,
-        "accepted_first30": False,
     }
 
 
@@ -4621,7 +4554,6 @@ def save_success_source_runlogs_from_results(
                 or source_pool_record.get("local_source_run_log")
                 or "",
                 "latest_official_success_source": True,
-                "accepted_first30": False,
                 "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             }
 
@@ -4882,39 +4814,21 @@ def _add_androidworld_setup_args(parser: argparse.ArgumentParser) -> None:
 
 def _select_from_args(args: argparse.Namespace) -> list[ArchivedRunLog]:
     archive = load_archive_index(args.index)
-    selected = select_archive_items(
-        archive,
-        tasks=args.task,
-        first60=bool(getattr(args, "first60", False)),
-        limit=None,
-    )
-    selected = filter_archive_items(
-        selected,
-        source_format=str(getattr(args, "source_format", "all") or "all"),
-        accepted_first30=bool(getattr(args, "accepted_first30", False)),
-    )
-    limit = getattr(args, "limit", None)
-    if limit is not None:
-        selected = selected[: max(0, int(limit))]
+    by_name = {item.task: item for item in archive}
+    selected: list[ArchivedRunLog] = []
+    missing: list[str] = []
+    for raw_name in str(args.task or "").split(","):
+        name = raw_name.strip()
+        if not name:
+            continue
+        item = by_name.get(name)
+        if item is None:
+            missing.append(name)
+        else:
+            selected.append(item)
+    if missing:
+        raise KeyError(f"Tasks not found in archive index: {', '.join(missing)}")
     return selected
-
-
-def _profile_summary(profiles: Sequence[SourceRunLogProfile]) -> dict[str, Any]:
-    by_format: dict[str, int] = {}
-    ready_count = 0
-    accepted_first30_count = 0
-    for profile in profiles:
-        by_format[profile.replay_format] = by_format.get(profile.replay_format, 0) + 1
-        ready_count += int(profile.direct_replay_ready)
-        accepted_first30_count += int(profile.accepted_first30)
-    return {
-        "schema_version": "omniflow.androidworld_replay_archive_inspect.v1",
-        "task_count": len(profiles),
-        "direct_replay_ready_count": ready_count,
-        "accepted_first30_count": accepted_first30_count,
-        "by_format": by_format,
-        "tasks": [profile.to_dict() for profile in profiles],
-    }
 
 
 
@@ -5611,7 +5525,6 @@ def _source_action_hint_path_for_item(
     hint_payload = {
         "schema_version": "omniflow.t3a_semantic_hint.v2",
         "task": item.task,
-        "source_format": profile.replay_format,
         "semantic_source": semantic_source,
         "store_alignment_mode": store_alignment_mode,
         "source_step_count": len(source_steps),
@@ -5855,7 +5768,6 @@ def _infer_mobilegpt_target_from_source_run_log(
                     "target_app": package_name,
                     "target_source": "source_runlog_open_app",
                     "source_materialization": materialization,
-                    "source_format": profile.replay_format,
                 }
         tool_call = step.get("tool_call")
         if isinstance(tool_call, dict):
@@ -5872,7 +5784,6 @@ def _infer_mobilegpt_target_from_source_run_log(
                     "target_app": package_name,
                     "target_source": "source_runlog_tool_call_open_app",
                     "source_materialization": materialization,
-                    "source_format": profile.replay_format,
                 }
 
     for step in steps:
@@ -5886,7 +5797,6 @@ def _infer_mobilegpt_target_from_source_run_log(
                     "target_app": package_name,
                     "target_source": f"source_runlog_{key}",
                     "source_materialization": materialization,
-                    "source_format": profile.replay_format,
                 }
 
     package_name = _mobilegpt_observation_package(canonical.get("final_state"))
@@ -5896,7 +5806,6 @@ def _infer_mobilegpt_target_from_source_run_log(
             "target_app": package_name,
             "target_source": "source_runlog_final_state",
             "source_materialization": materialization,
-            "source_format": profile.replay_format,
         }
 
     return {
@@ -5904,7 +5813,6 @@ def _infer_mobilegpt_target_from_source_run_log(
         "target_app": "",
         "target_source": "unresolved",
         "source_materialization": materialization,
-        "source_format": profile.replay_format,
     }
 
 
@@ -7827,7 +7735,6 @@ def cmd_result(args: argparse.Namespace) -> int:
                     "replay_run_log": str(replay_run_log),
                     "replay_run_log_sha256": _file_sha256(replay_run_log),
                     "source_materialization": replay_materialization,
-                    "source_format": replay_profile.replay_format,
                     "replay_memory_root": str(memory_root),
                 },
             )
@@ -8162,18 +8069,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_DEVICE,
         help="One LABEL:SERIAL:PORT AndroidWorld target device.",
     )
-    result_parser.add_argument(
-        "--source-device",
-        default="",
-        help=argparse.SUPPRESS,
-    )
-    result_parser.add_argument(
-        "--source-format",
-        choices=["all", "ready", "canonical", "payload"],
-        default="all",
-    )
-    result_parser.add_argument("--accepted-first30", action="store_true")
-    result_parser.add_argument("--limit", type=int, default=None)
     result_parser.add_argument("--adb-path", default="")
     result_parser.add_argument("--max-steps", type=int, default=MAX_STEPS)
     result_parser.add_argument(
