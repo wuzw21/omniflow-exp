@@ -41,7 +41,7 @@ class _Environment:
         self.gestures: list[np.ndarray] = []
         self._coordinator = SimpleNamespace(
             _driver=_Driver(),
-            _screen_size=(1280, 800) if tablet else (1920, 1080),
+            _screen_size=(800, 1280) if tablet else (1920, 1080),
             _is_tablet=tablet,
         )
         self._simulator = SimpleNamespace(_adb_port=5555)
@@ -82,7 +82,7 @@ def test_bmoca_tablet_keeps_ui_coordinates_canonical_at_host_boundary() -> None:
     assert observation.extra["display"] == {"width": 1280, "height": 800}
     assert result.success is True
     assert environment.gestures[0].tolist() == pytest.approx(
-        [0.5015625, 1.0909088, 0.5015625, 1.0909088]
+        [0.8025, 0.681818, 0.8025, 0.681818]
     )
 
 
