@@ -2221,6 +2221,7 @@ def _build_official_androidworld_agent(
     *,
     env: Any,
     official_agent_name: str,
+    model_name: str | None = None,
 ) -> Any:
     """Build one upstream AndroidWorld agent for direct benchmark execution.
 
@@ -2236,7 +2237,7 @@ def _build_official_androidworld_agent(
     resolved_name = str(official_agent_name or "").strip() or "t3a_gpt4"
     if resolved_name not in {"t3a", "t3a_gpt4", "m3a"}:
         raise ValueError(f"Unknown AndroidWorld official agent: {resolved_name}")
-    llm = _OpenAICompatibleMultimodalWrapper()
+    llm = _OpenAICompatibleMultimodalWrapper(model_name=model_name)
     if resolved_name == "m3a":
         from android_world.agents import m3a
 

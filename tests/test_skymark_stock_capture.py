@@ -122,14 +122,20 @@ def test_official_builder_dispatches_stock_t3a_and_m3a(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "android_world.agents.m3a", agents_module.m3a)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
-    t3a_agent = _build_official_androidworld_agent(env="env", official_agent_name="t3a")
-    m3a_agent = _build_official_androidworld_agent(env="env", official_agent_name="m3a")
+    t3a_agent = _build_official_androidworld_agent(
+        env="env", official_agent_name="t3a", model_name="GLM-5.1"
+    )
+    m3a_agent = _build_official_androidworld_agent(
+        env="env", official_agent_name="m3a", model_name="GLM-5.1"
+    )
 
     assert isinstance(t3a_agent, FakeT3A)
     assert not isinstance(t3a_agent, FakeM3A)
     assert isinstance(m3a_agent, FakeM3A)
     assert t3a_agent.name == "t3a"
     assert m3a_agent.name == "m3a"
+    assert t3a_agent.llm.model == "GLM-5.1"
+    assert m3a_agent.llm.model == "GLM-5.1"
 
 
 def test_candidate_harness_wrapper_applies_only_generic_append_guidance(

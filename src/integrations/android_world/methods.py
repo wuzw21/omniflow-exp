@@ -428,6 +428,7 @@ def _build_official(context: MethodAdapterContext) -> Any:
     return build_official_agent(
         env=context.env,
         official_agent_name=official_agent_name,
+        model_name=context.planner_model,
     )
 
 
