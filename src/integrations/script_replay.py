@@ -217,12 +217,27 @@ def enhance_prepared_function_store(
         raise ValueError("function_enhancement_runlog_invalid")
     if not isinstance(states, dict):
         raise ValueError("function_enhancement_source_states_invalid")
-    enhanced, changes, status = enhance_function(
-        function,
-        runlog,
-        complete_json,
-        state_loader=lambda state_id: states.get(str(state_id)),
-    )
+    report_path = resolved_store.with_name("enhancement.json")
+    try:
+        enhanced, changes, status = enhance_function(
+            function,
+            runlog,
+            complete_json,
+            state_loader=lambda state_id: states.get(str(state_id)),
+        )
+    except Exception as error:
+        failure = {
+            "schema_version": "omniflow.function-checker-enhancement.v1",
+            "function_id": str(function.get("function_id") or ""),
+            "status": "failed",
+            "model_calls": 1,
+            "error": str(error),
+        }
+        report_path.write_text(
+            json.dumps(failure, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        raise
     normalized_steps = _normalize_enhanced_launcher_steps(enhanced, runlog, states)
     if normalized_steps:
         changes.append({"part": "function", "field": "launcher_open_app"})
@@ -241,7 +256,6 @@ def enhance_prepared_function_store(
         "changes": changes,
         "role_counts": role_counts,
     }
-    report_path = resolved_store.with_name("enhancement.json")
     report_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -302,6 +316,8 @@ class _OpenAIJsonCompleter:
             temperature=0,
             max_completion_tokens=4096,
             stream=False,
+            response_format={"type": "json_object"},
+            timeout=60.0,
         )
         choices = getattr(response, "choices", None) or ()
         message = getattr(choices[0], "message", None) if choices else None
