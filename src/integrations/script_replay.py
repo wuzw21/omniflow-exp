@@ -58,7 +58,7 @@ def run_script_replay(
 ) -> ScriptReplayResult:
     """Replay the only visible Function using fail-closed semantic selectors."""
 
-    function = _only_visible_function(store_path)
+    function = _unique_full_trajectory_function(store_path)
     function_id = str(function.get("function_id") or "").strip()
     steps = list(function.get("steps") or ())
     trace: list[dict[str, Any]] = []
@@ -126,7 +126,7 @@ def run_script_replay(
     return ScriptReplayResult(True, function_id, actions_executed, None, tuple(trace))
 
 
-def _only_visible_function(path: str | Path) -> dict[str, Any]:
+def _unique_full_trajectory_function(path: str | Path) -> dict[str, Any]:
     store = FunctionStore(Path(path).expanduser().resolve())
     if store.load_errors:
         raise ValueError(
@@ -134,9 +134,24 @@ def _only_visible_function(path: str | Path) -> dict[str, Any]:
             + json.dumps(store.load_errors, ensure_ascii=False, sort_keys=True)
         )
     visible = store.list_functions(include_hidden=False, limit=500)
-    if len(visible) != 1:
-        raise ValueError(f"script_replay_requires_one_function:{len(visible)}")
-    return visible[0].to_dict()
+    if not visible:
+        raise ValueError("script_replay_full_trajectory_function_missing")
+    trajectory_sizes = {
+        function.id: len(function.steps) + len(function.checker_rules)
+        for function in visible
+    }
+    maximum_steps = max(trajectory_sizes.values())
+    candidates = [
+        function
+        for function in visible
+        if trajectory_sizes[function.id] == maximum_steps
+    ]
+    if len(candidates) != 1:
+        raise ValueError(
+            "script_replay_full_trajectory_function_ambiguous:"
+            f"steps={maximum_steps}:candidates={','.join(item.id for item in candidates)}"
+        )
+    return candidates[0].to_dict()
 
 
 def _source_target_node(

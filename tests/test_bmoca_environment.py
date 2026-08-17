@@ -161,26 +161,42 @@ def test_unified_e2e_parser_selects_bmoca_as_an_environment() -> None:
     assert args.bmoca_root == "/opt/bmoca"
 
 
-def test_bmoca_cli_registers_campaign_and_script_replay() -> None:
+def test_bmoca_cli_is_one_isolated_public_method_environment_result() -> None:
     args = build_parser().parse_args(
         [
             "--environment",
             "bmoca",
-            "--bmoca-campaign",
-            "--bmoca-corpus-manifest",
-            "/data/manifest.json",
             "--tasks",
-            "*",
+            "open_settings",
             "--agent",
-            "script-replay",
-            "--bmoca-workers",
-            "10",
-            "--bmoca-environment-retries",
-            "1",
+            "script_replay",
+            "--environment-ids",
+            "104",
+            "--appium-port",
+            "4727",
+            "--appium-system-port",
+            "8204",
+            "--emulator-console-port",
+            "5562",
+            "--emulator-adb-port",
+            "5563",
+            "--emulator-grpc-port",
+            "8558",
         ]
     )
 
-    assert args.bmoca_campaign is True
-    assert args.agent == "script-replay"
-    assert args.bmoca_workers == 10
-    assert args.bmoca_environment_retries == 1
+    assert args.agent == "script_replay"
+    assert args.environment_ids == "104"
+    assert args.appium_port == 4727
+    assert args.emulator_console_port == 5562
+
+
+def test_bmoca_single_result_runner_has_no_campaign_scheduler_or_retry() -> None:
+    launch = Path("src/integrations/android_world/launch.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "_run_bmoca_campaign" not in launch
+    assert "bmoca-environment-retries" not in launch
+    assert "bmoca-workers" not in launch
+    assert "ThreadPoolExecutor" not in launch

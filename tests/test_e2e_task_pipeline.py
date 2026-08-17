@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import threading
 import time
 from types import SimpleNamespace
 
@@ -15,9 +16,12 @@ from src.experiment.e2e_task_pipeline import (
     PipelinePhaseError,
     _fixed_replay_source_step_width,
     _function_replay_success,
+    _max_live_bmoca_cells,
     _parse_source_device,
     _report,
     _resolve_args,
+    _run_bmoca_method_cells,
+    _save_bmoca_function_once,
     _source_device_ready,
     build_parser,
     collect_replayed_source,
@@ -120,6 +124,135 @@ def test_source_device_accepts_an_isolated_console_port() -> None:
         "emulator-5570",
         5570,
     )
+
+
+def test_bmoca_method_launches_ten_isolated_overlapping_subprocess_cells(
+    tmp_path: Path,
+) -> None:
+    lock = threading.Lock()
+    active = 0
+    maximum = 0
+    environments: list[dict[str, str]] = []
+    commands: list[list[str]] = []
+
+    def runner(command: list[str], **kwargs: object) -> dict[str, object]:
+        nonlocal active, maximum
+        environment = dict(kwargs["environment"])
+        output = Path(environment["OMNIFLOW_BMOCA_OUTPUT_PATH"])
+        with lock:
+            active += 1
+            maximum = max(maximum, active)
+            environments.append(environment)
+            commands.append(command)
+        time.sleep(0.05)
+        output.mkdir(parents=True)
+        environment_id = environment["OMNIFLOW_BMOCA_SINGLE_ENVIRONMENT_ID"]
+        (output / "summary.json").write_text(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "environment_id": environment_id,
+                            "emulator_serial": (
+                                "emulator-"
+                                + environment["OMNIFLOW_BMOCA_EMULATOR_CONSOLE_PORT"]
+                            ),
+                            "official_success": True,
+                            "method_success": True,
+                            "actions_executed": 1,
+                            "model_calls": 0,
+                            "fallback_steps": 0,
+                            "run_log_evidence": {
+                                "target_run_log_path": str(output / "target.run_log.json")
+                            },
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        with lock:
+            active -= 1
+        return {
+            "returncode": 0,
+            "wall_sec": 0.05,
+            "process_pid": 10000 + int(environment_id),
+            "started_at": "2026-08-18T00:00:00+00:00",
+            "finished_at": "2026-08-18T00:00:01+00:00",
+        }
+
+    args = SimpleNamespace(
+        repo=tmp_path / "repo",
+        script=tmp_path / "repo/scripts/exp/run_androidworld.sh",
+        python_bin=tmp_path / "python",
+        omnitransfer_root=tmp_path / "OmniTransfer",
+        bmoca_root=tmp_path / "BMoCA",
+        bmoca_android_env_root=tmp_path / "AndroidEnv",
+        android_sdk_root=tmp_path / "sdk",
+        bmoca_cell_timeout_sec=600,
+    )
+    rows = _run_bmoca_method_cells(
+        args=args,
+        task="clock/create_alarm_at_06:30_am",
+        method="script_replay",
+        store_path=tmp_path / "store.json",
+        task_root=tmp_path / "task",
+        avd_homes={
+            str(value): tmp_path / f"avd/env_{value}" for value in range(100, 110)
+        },
+        command_runner=runner,
+    )
+
+    assert len(rows) == 10
+    assert maximum == 10
+    assert _max_live_bmoca_cells(rows) == 10
+    assert len({row["process_pid"] for row in rows}) == 10
+    assert len({env["OMNIFLOW_BMOCA_AVD_HOME"] for env in environments}) == 10
+    assert len({env["OMNIFLOW_BMOCA_APPIUM_PORT"] for env in environments}) == 10
+    assert len({env["OMNIFLOW_BMOCA_EMULATOR_CONSOLE_PORT"] for env in environments}) == 10
+    assert all(command[:2] == ["bash", str(args.script)] for command in commands)
+    assert all("OPENAI_API_KEY" not in env for env in environments)
+    assert all("OMNIFLOW_ENV_FILE" not in env for env in environments)
+
+
+def test_bmoca_offline_enhancement_calls_only_canonical_save_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.run_log.json"
+    source.write_text("{}", encoding="utf-8")
+    calls: list[dict[str, object]] = []
+
+    def writer(run_log: Path, store_path: Path, **kwargs: object) -> dict[str, object]:
+        calls.append({"run_log": run_log, "store_path": store_path, **kwargs})
+        store_path.parent.mkdir(parents=True)
+        store_path.write_text("{}", encoding="utf-8")
+        transfer = store_path.with_name("transfer_states.json")
+        transfer.write_text("{}", encoding="utf-8")
+        return {
+            "enhanced": True,
+            "function_ids": ["complete"],
+            "transfer_state_catalog": str(transfer),
+        }
+
+    monkeypatch.setattr("src.experiment.e2e_task_pipeline.save_function", writer)
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._canonical_bmoca_enhancement_transport",
+        lambda **_: (lambda _prompt: "{}"),
+    )
+    args = SimpleNamespace(formal_model="GLM-5.1", enhancement_timeout_sec=180)
+
+    _, report = _save_bmoca_function_once(
+        args=args,
+        task="clock/create_alarm_at_06:30_am",
+        source_run_log=source,
+        task_root=tmp_path / "task",
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["enhance"] is True
+    assert callable(calls[0]["complete_json"])
+    assert report["save_function_calls"] == 1
 
 
 def test_resolve_args_preserves_symlinked_virtualenv_python(

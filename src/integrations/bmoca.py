@@ -56,6 +56,11 @@ class BMocaEnvironmentConfig:
     android_avd_home: Path
     avd_template_home: Path | None = None
     run_headless: bool = True
+    appium_port: int = 4723
+    appium_system_port: int = 8200
+    emulator_console_port: int = 5554
+    emulator_adb_port: int = 5555
+    emulator_grpc_port: int = 8554
 
     @classmethod
     def resolve(
@@ -66,6 +71,11 @@ class BMocaEnvironmentConfig:
         android_avd_home: str | Path,
         avd_template_home: str | Path | None = None,
         run_headless: bool = True,
+        appium_port: int = 4723,
+        appium_system_port: int = 8200,
+        emulator_console_port: int = 5554,
+        emulator_adb_port: int = 5555,
+        emulator_grpc_port: int = 8554,
     ) -> "BMocaEnvironmentConfig":
         return cls(
             bmoca_root=Path(bmoca_root).expanduser().resolve(),
@@ -77,6 +87,11 @@ class BMocaEnvironmentConfig:
                 else None
             ),
             run_headless=bool(run_headless),
+            appium_port=int(appium_port),
+            appium_system_port=int(appium_system_port),
+            emulator_console_port=int(emulator_console_port),
+            emulator_adb_port=int(emulator_adb_port),
+            emulator_grpc_port=int(emulator_grpc_port),
         )
 
 
@@ -119,6 +134,12 @@ class BMocaHost:
     def episode_done(self) -> bool:
         last = getattr(self.timestep, "last", None)
         return bool(last()) if callable(last) else False
+
+    @property
+    def emulator_serial(self) -> str:
+        simulator = getattr(self.environment, "_simulator", None)
+        adb_port = int(getattr(simulator, "_adb_port", 0) or 0)
+        return f"emulator-{adb_port - 1}" if adb_port > 1 else ""
 
     def reset(self) -> None:
         self.timestep = self.environment.reset(target_env_id=self.snapshot_id)
@@ -179,6 +200,7 @@ class BMocaHost:
                 "snapshot_id": self.snapshot_id,
                 "official_success": self.official_success,
                 "episode_done": self.episode_done,
+                "emulator_serial": self.emulator_serial,
                 "display": {"width": width, "height": height},
             },
         )
@@ -390,6 +412,7 @@ class BMocaHost:
                 "snapshot_id": self.snapshot_id,
                 "package_name": package_name,
                 "activity_name": activity_name,
+                "emulator_serial": self.emulator_serial,
                 "display": {"width": width, "height": height},
                 "official_success": self.official_success,
                 "episode_done": self.episode_done,
@@ -452,18 +475,21 @@ def open_bmoca_episode(
     module = importlib.import_module("bmoca.environment.environment")
     environment_class = getattr(module, "BMocaEnv")
     sdk = config.android_sdk_root
-    environment = environment_class(
-        task_path=str(episode.task_path),
-        avd_name=episode.avd_name,
-        state_type="text",
-        action_tanh=False,
-        adjusting_freq=1.0 / 3.0,
-        run_headless=config.run_headless,
-        android_avd_home=str(config.android_avd_home),
-        android_sdk_root=str(sdk),
-        emulator_path=str(sdk / "emulator/emulator"),
-        adb_path=str(sdk / "platform-tools/adb"),
-    )
+    with _explicit_emulator_ports(config):
+        environment = environment_class(
+            task_path=str(episode.task_path),
+            avd_name=episode.avd_name,
+            state_type="text",
+            action_tanh=False,
+            adjusting_freq=1.0 / 3.0,
+            run_headless=config.run_headless,
+            android_avd_home=str(config.android_avd_home),
+            android_sdk_root=str(sdk),
+            emulator_path=str(sdk / "emulator/emulator"),
+            adb_path=str(sdk / "platform-tools/adb"),
+            appium_port=int(config.appium_port),
+            appium_system_port=int(config.appium_system_port),
+        )
     host: BMocaHost | None = None
     try:
         _wait_for_emulator_ready(environment, adb_path=sdk / "platform-tools/adb")
@@ -549,6 +575,29 @@ def _configure_runtime(config: BMocaEnvironmentConfig) -> None:
         sys.path.remove(root_text)
     sys.path.insert(0, root_text)
     importlib.invalidate_caches()
+
+
+@contextmanager
+def _explicit_emulator_ports(
+    config: BMocaEnvironmentConfig,
+) -> Iterator[None]:
+    """Bind AndroidEnv's private port pickers to this isolated subprocess."""
+
+    module = importlib.import_module(
+        "android_env.components.simulators.emulator.emulator_simulator"
+    )
+    original_adb = module._pick_adb_port
+    original_grpc = module._pick_emulator_grpc_port
+    original_unused = module.portpicker.pick_unused_port
+    module._pick_adb_port = lambda: int(config.emulator_adb_port)
+    module._pick_emulator_grpc_port = lambda: int(config.emulator_grpc_port)
+    module.portpicker.pick_unused_port = lambda: int(config.emulator_console_port)
+    try:
+        yield
+    finally:
+        module._pick_adb_port = original_adb
+        module._pick_emulator_grpc_port = original_grpc
+        module.portpicker.pick_unused_port = original_unused
 
 
 def _wait_for_emulator_ready(
