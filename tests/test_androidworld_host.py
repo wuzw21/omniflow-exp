@@ -21,6 +21,7 @@ from src.integrations.android_world.launch import (
     _ensure_androidworld_a11y_forwarder,
     _ExperimentAgentAdapter,
     _prepare_androidworld_episode_apps,
+    _patch_androidworld_optional_permission_click,
     _patch_androidworld_apk_install_compat,
     _patch_androidworld_chcon_compat,
     _repair_androidworld_chrome_first_run,
@@ -29,6 +30,49 @@ from src.integrations.android_world.launch import (
     _runtime_execution_trace,
     _wait_for_androidworld_a11y,
 )
+
+
+def test_androidworld_setup_skips_only_already_settled_notification_permission(
+    monkeypatch,
+) -> None:
+    class AndroidToolController:
+        def __init__(self, env) -> None:
+            self._env = env
+
+        def click_element(self, element_text: str) -> None:
+            raise ValueError(f'Target text "{element_text}" not found.')
+
+    tools_module = SimpleNamespace(AndroidToolController=AndroidToolController)
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.importlib.import_module",
+        lambda name: tools_module
+        if name == "android_world.env.tools"
+        else pytest.fail(f"unexpected import: {name}"),
+    )
+    controller = AndroidToolController(
+        SimpleNamespace(
+            get_ui_elements=lambda: [
+                SimpleNamespace(package_name="com.google.android.contacts")
+            ]
+        )
+    )
+
+    patch = _patch_androidworld_optional_permission_click()
+    assert patch is not None
+    controller_type, original = patch
+    try:
+        controller.click_element("Don't allow")
+        with pytest.raises(ValueError, match="Skip"):
+            controller.click_element("Skip")
+        controller._env.get_ui_elements = lambda: [
+            SimpleNamespace(
+                package_name="com.google.android.permissioncontroller"
+            )
+        ]
+        with pytest.raises(ValueError, match="Don't allow"):
+            controller.click_element("Don't allow")
+    finally:
+        controller_type.click_element = original
 
 
 def test_androidworld_apk_install_retries_without_unsupported_flag() -> None:

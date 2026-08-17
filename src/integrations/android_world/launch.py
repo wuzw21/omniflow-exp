@@ -79,6 +79,72 @@ DEFAULT_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC = 300.0
 DEFAULT_ANDROIDWORLD_SETUP_TIMEOUT_SEC = 300.0
 
 
+def _normalize_androidworld_setup_label(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    return unicodedata.normalize("NFKC", value).translate(
+        str.maketrans(
+            {
+                "\u2018": "'",
+                "\u2019": "'",
+                "\u201a": "'",
+                "\u201b": "'",
+                "\u201c": '"',
+                "\u201d": '"',
+                "\u201e": '"',
+                "\u201f": '"',
+            }
+        )
+    )
+
+
+def _patch_androidworld_optional_permission_click() -> tuple[Any, Any] | None:
+    try:
+        tools_module = importlib.import_module("android_world.env.tools")
+    except ModuleNotFoundError:
+        return None
+    controller_type = getattr(tools_module, "AndroidToolController", None)
+    original = getattr(controller_type, "click_element", None)
+    if controller_type is None or not callable(original):
+        return None
+
+    def click_element(controller: Any, element_text: str) -> Any:
+        try:
+            return original(controller, element_text)
+        except ValueError as error:
+            if _normalize_androidworld_setup_label(element_text) != "Don't allow":
+                raise
+            message = str(error)
+            if "Target text" not in message or "not found" not in message:
+                raise
+            elements = controller._env.get_ui_elements() or []
+            packages = {
+                str(getattr(element, "package_name", "") or "").strip()
+                for element in elements
+            }
+            if any(package.endswith(".permissioncontroller") for package in packages):
+                raise
+            app_packages = {
+                package
+                for package in packages
+                if package
+                and package not in {"android", "com.android.systemui"}
+                and not package.endswith(".permissioncontroller")
+            }
+            if not app_packages:
+                raise
+            logger.info(
+                "AndroidWorld setup notification permission is already settled; "
+                "skipping absent %s button on packages=%s",
+                element_text,
+                ",".join(sorted(app_packages)),
+            )
+            return None
+
+    controller_type.click_element = click_element
+    return controller_type, original
+
+
 def utc_now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -1808,6 +1874,7 @@ def _run_androidworld_setup_apps(
         file_utils.copy_file_to_device = copy_file_to_device
     original_install_apk = _patch_androidworld_apk_install_compat(setup_module)
     original_issue_generic_request = _patch_androidworld_chcon_compat(setup_module)
+    optional_permission_patch = _patch_androidworld_optional_permission_click()
     previous_handler = signal.getsignal(signal.SIGALRM)
     previous_timer = signal.setitimer(signal.ITIMER_REAL, 0)
     setup_started_at = time.monotonic()
@@ -1855,6 +1922,9 @@ def _run_androidworld_setup_apps(
             setup_module.adb_utils.issue_generic_request = (
                 original_issue_generic_request
             )
+        if optional_permission_patch is not None:
+            controller_type, original_click_element = optional_permission_patch
+            controller_type.click_element = original_click_element
 
 
 def _patch_androidworld_apk_install_compat(setup_module: Any) -> Any | None:

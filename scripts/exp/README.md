@@ -454,6 +454,10 @@ The pinned AndroidWorld setup retries an app once with UIAutomator when its
 native accessibility-backed setup raises `ValueError`. It saves the app snapshot
 only after setup succeeds; a failed retry propagates and cannot persist an
 onboarding or permission-dialog snapshot.
+If an app's optional notification permission has already been settled, the setup
+seam treats the missing `Don't allow` button as success only when no permission
+controller is visible and a real app package remains visible. Other missing setup
+targets and all visible permission dialogs still fail normally.
 Legacy-app setup clears package permissions marked `REVIEW_REQUIRED` before
 launch, so Android 14 cannot divert setup into a compatibility-review activity.
 
