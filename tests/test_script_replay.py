@@ -2,63 +2,61 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
-import pytest
-
+from omniflow.core.model import Action, Observation, TransferResult
 from src.integrations.script_replay import run_script_replay
 
 
 class _Host:
-    def __init__(self, xml: str) -> None:
-        self.xml = xml
-        self.actions: list[dict[str, object]] = []
+    def __init__(self, source_states: dict[str, Observation]) -> None:
+        self.source_states = source_states
+        self.actions: list[Action] = []
 
-    def observe(self, **_: object) -> SimpleNamespace:
-        return SimpleNamespace(
-            xml=self.xml,
-            package_name="com.example",
-            extra={"display": {"width": 1000, "height": 1000}},
-        )
+    def observe(self, **_: object) -> Observation:
+        return Observation(package_name="com.example")
 
-    def act(self, action: dict[str, object]) -> SimpleNamespace:
+    def get_state(self, state_id: str) -> Observation | None:
+        return self.source_states.get(state_id)
+
+    def act(self, action: Action) -> dict[str, object]:
         self.actions.append(action)
-        return SimpleNamespace(success=True, error=None)
+        return {"success": True}
 
 
-def _store(path: Path) -> Path:
+def _function(*, function_id: str, steps: int) -> dict[str, object]:
+    return {
+        "schema_version": "omniflow.function.v2",
+        "function_id": function_id,
+        "name": function_id.replace("_", " ").title(),
+        "description": f"Execute {steps} reusable actions.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+        "bindings": [],
+        "agent_visible": True,
+        "steps": [
+            {
+                "step_index": index,
+                "source_state_id": f"source-{index}",
+                "action": {"tool": "click", "args": {"x": 500, "y": 500}},
+            }
+            for index in range(steps)
+        ],
+        "checker_rules": [],
+    }
+
+
+def _store(path: Path, *functions: dict[str, object]) -> Path:
     path.write_text(
         json.dumps(
             {
                 "schema_version": "omniflow.store.v2",
                 "functions": {
-                    "demo": {
-                        "schema_version": "omniflow.function.v2",
-                        "function_id": "demo",
-                        "name": "Demo",
-                        "description": "Replay one demo action.",
-                        "input_schema": {
-                            "type": "object",
-                            "properties": {},
-                            "required": [],
-                            "additionalProperties": False,
-                        },
-                        "bindings": [],
-                        "agent_visible": True,
-                        "steps": [
-                            {
-                                "step_index": 0,
-                                "source_state_id": "source",
-                                "action": {"tool": "click", "args": {"x": 500, "y": 500}},
-                            }
-                        ],
-                        "checker_rules": [
-                            {
-                                "source_state_id": "checker",
-                                "action": {"tool": "click", "args": {"x": 1, "y": 1}},
-                            }
-                        ],
-                    }
+                    str(function["function_id"]): function
+                    for function in functions
                 },
             }
         ),
@@ -67,133 +65,68 @@ def _store(path: Path) -> Path:
     return path
 
 
-def test_script_replay_uses_formal_steps_and_unique_child_semantics(tmp_path: Path) -> None:
-    source = (
-        '<hierarchy width="1000" height="1000">'
-        '<node package="com.example" class="android.widget.LinearLayout" '
-        'resource-id="unstable:id/source" clickable="true" bounds="[400,400][600,600]">'
-        '<node package="com.example" class="android.widget.TextView" text="Sound" '
-        'bounds="[400,400][600,450]" /></node></hierarchy>'
-    )
-    target = (
-        '<hierarchy width="1000" height="1000">'
-        '<node package="com.example" class="android.widget.LinearLayout" '
-        'resource-id="changed:id/target" clickable="true" bounds="[100,200][300,400]">'
-        '<node package="com.example" class="android.widget.TextView" text="Sound" '
-        'bounds="[100,200][300,250]" /></node></hierarchy>'
-    )
-    host = _Host(target)
-
-    result = run_script_replay(
-        store_path=_store(tmp_path / "store.json"),
-        source_states={"source": {"xml": source}},
-        host=host,
-        stability_wait_seconds=0,
-    )
-
-    assert result.success is True
-    assert result.actions_executed == 1
-    assert result.execution_summary["model_calls"] == 0
-    assert result.execution_summary["fallback_steps"] == 0
-    assert result.trace[0]["selector"]["kind"] == "children"
-    assert host.actions == [{"tool": "click", "args": {"x": 200.0, "y": 300.0}}]
-
-
-def test_script_replay_does_not_use_resource_id_or_source_coordinate(tmp_path: Path) -> None:
-    source = (
-        '<hierarchy width="1000" height="1000">'
-        '<node package="com.example" resource-id="stable:id/target" text="Source" '
-        'clickable="true" bounds="[400,400][600,600]" /></hierarchy>'
-    )
-    target = (
-        '<hierarchy width="1000" height="1000">'
-        '<node package="com.example" resource-id="stable:id/target" text="Changed" '
-        'clickable="true" bounds="[100,200][300,400]" /></hierarchy>'
-    )
-    host = _Host(target)
-
-    result = run_script_replay(
-        store_path=_store(tmp_path / "store.json"),
-        source_states={"source": {"xml": source}},
-        host=host,
-        stability_wait_seconds=0,
-    )
-
-    assert result.success is False
-    assert result.actions_executed == 0
-    assert "script_replay_semantic_locator_absent" in str(result.error)
-    assert host.actions == []
-
-
-def test_script_replay_rejects_ambiguous_semantics(tmp_path: Path) -> None:
-    source = (
-        '<hierarchy width="1000" height="1000">'
-        '<node package="com.example" text="Open" clickable="true" '
-        'bounds="[400,400][600,600]" /></hierarchy>'
-    )
-    target = (
-        '<hierarchy width="1000" height="1000">'
-        '<node package="com.example" text="Open" bounds="[100,200][300,400]" />'
-        '<node package="com.example" text="Open" bounds="[500,200][700,400]" />'
-        '</hierarchy>'
-    )
-    host = _Host(target)
-
-    result = run_script_replay(
-        store_path=_store(tmp_path / "store.json"),
-        source_states={"source": {"xml": source}},
-        host=host,
-        stability_wait_seconds=0,
-    )
-
-    assert result.success is False
-    assert "script_replay_semantic_locator_ambiguous" in str(result.error)
-    assert host.actions == []
-
-
-def test_script_replay_selects_unique_complete_trajectory_function(
-    tmp_path: Path,
+def test_script_replay_selects_full_function_and_uses_core_transfer(
+    tmp_path: Path, monkeypatch
 ) -> None:
-    store_path = _store(tmp_path / "store.json")
-    payload = json.loads(store_path.read_text(encoding="utf-8"))
-    subsegment = dict(payload["functions"]["demo"])
-    subsegment.update(function_id="subsegment", name="Subsegment", checker_rules=[])
-    payload["functions"]["subsegment"] = subsegment
-    store_path.write_text(json.dumps(payload), encoding="utf-8")
-    xml = (
-        '<hierarchy width="1000" height="1000">'
-        '<node package="com.example" text="Open" clickable="true" '
-        'bounds="[400,400][600,600]" /></hierarchy>'
+    store_path = _store(
+        tmp_path / "store.json",
+        _function(function_id="complete_task", steps=2),
+        _function(function_id="reusable_part", steps=1),
     )
+    source_states = {
+        f"source-{index}": Observation(package_name="com.example")
+        for index in range(2)
+    }
+    host = _Host(source_states)
+    transferred_sources: list[Observation | None] = []
 
-    result = run_script_replay(
-        store_path=store_path,
-        source_states={"source": {"xml": xml}},
-        host=_Host(xml),
-        stability_wait_seconds=0,
-    )
-
-    assert result.success is True
-    assert result.function_id == "demo"
-
-
-def test_script_replay_rejects_ambiguous_complete_trajectory_function(
-    tmp_path: Path,
-) -> None:
-    store_path = _store(tmp_path / "store.json")
-    payload = json.loads(store_path.read_text(encoding="utf-8"))
-    duplicate = dict(payload["functions"]["demo"])
-    duplicate.update(function_id="duplicate", name="Duplicate")
-    payload["functions"]["duplicate"] = duplicate
-    store_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    with pytest.raises(
-        ValueError,
-        match="script_replay_full_trajectory_function_ambiguous",
-    ):
-        run_script_replay(
-            store_path=store_path,
-            source_states={},
-            host=_Host("<hierarchy />"),
-            stability_wait_seconds=0,
+    async def transfer(action, observation, source_state):
+        transferred_sources.append(source_state)
+        return TransferResult(
+            Action("click", {"x": 100 + len(transferred_sources), "y": 200}),
+            reason="omnitransfer_mapped",
         )
+
+    monkeypatch.setattr(
+        "omniflow.runtime.execution.default_transfer",
+        transfer,
+    )
+
+    result = run_script_replay(store_path=store_path, host=host)
+
+    assert result.success is True
+    assert result.function_id == "complete_task"
+    assert result.model_calls == 0
+    assert result.fallback_steps == 0
+    assert transferred_sources == [source_states["source-0"], source_states["source-1"]]
+    assert host.actions == [
+        Action("click", {"x": 101, "y": 200}),
+        Action("click", {"x": 102, "y": 200}),
+    ]
+
+
+def test_script_replay_rejects_ambiguous_complete_function(tmp_path: Path) -> None:
+    store_path = _store(
+        tmp_path / "store.json",
+        _function(function_id="complete_a", steps=2),
+        _function(function_id="complete_b", steps=2),
+    )
+
+    try:
+        run_script_replay(store_path=store_path, host=_Host({}))
+    except ValueError as error:
+        assert str(error) == (
+            "script_replay_full_function_ambiguous:complete_a,complete_b"
+        )
+    else:
+        raise AssertionError("ambiguous complete Functions must fail closed")
+
+
+def test_script_replay_contains_no_private_action_mapping_implementation() -> None:
+    source = Path("src/integrations/script_replay.py").read_text(encoding="utf-8")
+
+    assert "ElementTree" not in source
+    assert "resource-id" not in source
+    assert "content-desc" not in source
+    assert "source_states" not in source
+    assert ".call_tool(" in source

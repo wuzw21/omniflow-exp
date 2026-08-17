@@ -153,8 +153,10 @@ RunLogs with screenshots, native observations, and decision records; it must
 not invoke experiment methods or register formal results.
 
 Use AndroidWorld native state/action and its official validator. B-MoCA is an
-environment adapter using the same `OmniFlow.run()` Function/checker/OmniTransfer
-runtime and official B-MoCA reward. It is not another method.
+environment adapter using the same OmniFlow Function/checker/OmniTransfer
+runtime and official B-MoCA reward. `ours` lets the Planner select Functions;
+`script_replay` selects the one complete Function directly, but may not own a
+second action mapper or executor.
 
 Local and host `9207` active checkouts are
 `~/Projects/Omni/OmniFlow-exp` on `main`. Before remote execution, both full

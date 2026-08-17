@@ -16,6 +16,10 @@ modules are implementation seams and must not be invoked as alternate runners.
 | B-MoCA campaign | `run_androidworld.sh --environment bmoca --all-tasks [--tasks TASK1,TASK2]` |
 | Memory refresh | `run_androidworld.sh --refresh-memory` |
 
+Both B-MoCA methods use the same Function/checker/OmniTransfer executor. `ours`
+uses the Planner to select a Function; `script_replay` directly selects the
+single complete Function and makes no model call.
+
 One formal result is one task, one method, and one device. The E2E pipeline is
 the only method/device scheduler. Direct `--method` and `--device` options are
 internal single-result controls and cannot be combined with matrix modes.

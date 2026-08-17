@@ -17,12 +17,11 @@ import argparse
 import dataclasses
 import hashlib
 import json
-import os
 from pathlib import Path
 import sys
 import time
-import uuid
 from typing import Any
+import uuid
 
 
 def _jsonable(value: Any) -> Any:

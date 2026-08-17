@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import ast
+import inspect
 from pathlib import Path
+import textwrap
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from omniflow import Action
-from src.integrations.android_world.launch import build_parser
+from src.integrations.android_world.launch import _run_bmoca_e2e, build_parser
 from src.integrations.bmoca import (
     BMocaHost,
     discover_bmoca_episodes,
@@ -53,6 +56,22 @@ class _Environment:
     def step(self, gesture: np.ndarray) -> _TimeStep:
         self.gestures.append(gesture)
         return _TimeStep(reward=1.0, done=True)
+
+
+def test_bmoca_planner_budget_belongs_only_to_runtime_settings() -> None:
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_run_bmoca_e2e)))
+    planner_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "VLMPlanner"
+    ]
+
+    assert len(planner_calls) == 1
+    assert "max_steps" not in {
+        keyword.arg for keyword in planner_calls[0].keywords
+    }
 
 
 def test_bmoca_host_is_only_an_omniflow_host_adapter() -> None:

@@ -3752,12 +3752,11 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
     method = str(args.agent or "").strip()
     if method not in {"ours", "script_replay"}:
         raise ValueError(f"bmoca_method_unsupported:{method}")
-    runtime_method = MODE_OMNIFLOW if method == "ours" else "script_replay"
     selected_tasks = [item.strip() for item in str(args.tasks).split(",") if item.strip()]
     if len(selected_tasks) != 1:
         raise ValueError("bmoca_e2e_requires_exactly_one_task")
     model = str(args.model or "").strip()
-    if runtime_method == MODE_OMNIFLOW:
+    if method == "ours":
         if model != "GLM-5.1":
             raise ValueError("bmoca_e2e_requires_GLM-5.1")
         if str(args.model_endpoint_profile or "").strip() != "llmthu":
@@ -3812,7 +3811,7 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
     )
     source_states = load_transfer_state_catalog(transfer_state_path)
     planner_api_key = planner_base_url = ""
-    if runtime_method == MODE_OMNIFLOW:
+    if method == "ours":
         planner_api_key, planner_base_url = resolve_openai_compatible_config(
             profile="llmthu"
         )
@@ -3840,14 +3839,12 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                 result = None
                 run_error: Exception | None = None
                 try:
-                    if runtime_method == "script_replay":
+                    if method == "script_replay":
                         from src.integrations.script_replay import run_script_replay
 
                         result = run_script_replay(
                             store_path=store_path,
-                            source_states=source_states,
                             host=host,
-                            post_action_wait_seconds=1.0,
                         )
                     else:
                         planner = VLMPlanner(
@@ -3856,7 +3853,6 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                             api_key=planner_api_key,
                             base_url=planner_base_url,
                             timeout=float(args.planner_timeout_sec or 60.0),
-                            max_steps=episode.max_steps,
                         )
                         flow = OmniFlow(
                             store_path,
@@ -3887,8 +3883,13 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                             if run_error is not None else {}
                         ),
                         **(
-                            {"script_replay_trace": list(result.trace)}
-                            if runtime_method == "script_replay" and result is not None else {}
+                            {
+                                "script_replay_trace": list(
+                                    result.detail.get("trace") or []
+                                )
+                            }
+                            if method == "script_replay" and result is not None
+                            else {}
                         ),
                     },
                 )
@@ -3915,18 +3916,13 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                     "error": result.error,
                     **result.execution_summary,
                     "function_id": result.function_id,
-                    "function_resolution": (
-                        dict(result.detail.get("function_resolution") or {})
-                        if runtime_method == MODE_OMNIFLOW else {}
+                    "function_resolution": dict(
+                        result.detail.get("function_resolution") or {}
                     ),
-                    "checker_decisions": (
-                        list(result.detail.get("checker_decisions") or [])
-                        if runtime_method == MODE_OMNIFLOW else []
+                    "checker_decisions": list(
+                        result.detail.get("checker_decisions") or []
                     ),
-                    "trace": (
-                        list(result.detail.get("trace") or [])
-                        if runtime_method == MODE_OMNIFLOW else list(result.trace)
-                    ),
+                    "trace": list(result.detail.get("trace") or []),
                     "run_log_evidence": run_evidence,
                     "observation_evidence": observation_evidence,
                     "wall_seconds": round(perf_counter() - started, 6),
