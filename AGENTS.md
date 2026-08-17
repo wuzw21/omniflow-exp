@@ -1,296 +1,170 @@
 # OmniFlow-exp Rules
 
-This repository exists only for the paper's AndroidWorld experiment and the
-B-MoCA cross-environment validation of the same OmniFlow method. Do not add
-product code, historical campaigns, ablations, exploratory methods, raw data,
-or compatibility layers.
+This repository contains only the paper's AndroidWorld experiment and the
+B-MoCA validation of the same OmniFlow method. Do not add product features,
+historical campaigns, ablations, raw assets, compatibility layers, or alternate
+runners.
 
-Before changing this repository, read `README.md` and
-`scripts/exp/README.md`. They are the user-facing description of the same
-paper-only workflow and must stay consistent with this file.
+Before changing or running this repository, read this file, `README.md`, and
+`scripts/exp/README.md`. Keep them consistent.
 
-## OmniFlow / OmniTransfer boundary
+## One path only
 
-- OmniTransfer is responsible only for producing complete ranked target
-  candidates and their evidence. It owns no harness, accept/reject decision,
-  page gate, selected action, or fallback policy.
-- OmniFlow owns OmniTransfer preflight, page checks, candidate selection,
-  execution, failure classification, and fallback.
-- OmniFlow-exp owns the experiment's core logic, but page identity is owned by
-  the latest canonical OmniTransfer page embedding. The only page encoder in
-  the active code path is `omniflow/transfer/page_embedding.py`; do not add a
-  local legacy page encoder, learned pooling head, or comparison baseline.
-- The canonical implementation is loaded from the real
-  `~/Projects/Omni/OmniTransfer` checkout. Its frozen checkpoint provenance is
-  recorded in every page embedding; a missing or mismatched canonical
-  checkout/checkpoint is an explicit failure.
-- The current page-embedding checkpoint is
-  `src/omnitransfer/checkpoints/omnitransfer_spatial_xml_alignment_v9_20260805/v9_spatial_xml_alignment_seed29.pt`.
-  This page embedding is separate from OmniTransfer's candidate-ranking
-  release; do not silently substitute the candidate matcher or a local pooler.
+- `scripts/exp/run_androidworld.sh` is the only public experiment entry.
+- `src/experiment/e2e_task_pipeline.py` is the only method/device scheduler.
+- `src/experiment/androidworld.py` runs exactly one `task + method + device`.
+- `save_function` is the only Function write API and the only path from a
+  successful RunLog to Function Store persistence.
+- Do not add an authoring manifest converter, automatic missing-Store builder,
+  second compiler, second writer, checker plugin, diagnostic runner, or alias
+  for a retired interface.
 
-## Current phase
+The retained management tools are `list_functions`, `get_function`,
+`save_function`, `delete_function`, `clear_functions`, `list_run_logs`,
+`get_run_log`, and `get_run_log_state`. `run_gui` is the execution tool.
 
-The current phase is code migration and script maintenance only. Do not launch
-formal experiments or revise method implementations unless the user explicitly
-opens a new execution phase.
+## Function and checker contract
 
-## Scenario rules and naming invariants
+One successful `omniflow.run_log.v1` may save one or more semantic Functions in
+one `save_function` call. Enhancement is optional (`enhance=true`) and uses the
+same validation and Store writer as a normal save.
 
-- The atomic experiment unit is exactly one `task + method + device` result.
-  Do not introduce 8-result, 10-result, or other “cell” protocols, flags,
-  summaries, or report names. The word `cell` is not an active scheduling
-  concept; immutable historical schema keys may retain their original names
-  only when changing them would rewrite or invalidate stored evidence.
-- `scripts/exp/run_androidworld.sh` is the only public entry point. The E2E
-  pipeline is the only matrix scheduler. `src/experiment/androidworld.py`
-  exposes only the single-result runner: one task, one method, one device.
-  Never add a second scheduler, nested method/device expansion, or a diagnostic
-  runner that can produce formal results.
-- The canonical formal method names are exactly `fixed_replay`, `ours`,
-  `mobilegpt_offline_retrieval`, `appagent_demo`, and `t3a_hint`. The canonical
-  device labels and all shared seeds, budgets, timeouts, model defaults, and
-  endpoint defaults are defined in the `protocol` block of
-  `config/paper_androidworld.json`; `src/experiment/protocol.py` is only its
-  typed runtime view. New code must import those values instead of defining
-  another copy. Formal execution must
-  keep the frozen protocol values; development overrides must remain explicit
-  configuration, never hidden constants.
-- `max_steps`, `max_fallback_steps`, task deadline, step timeout, and validator
-  grace timeout must be configurable through the canonical config/CLI/env
-  path. They may not be independently hard-coded in the shell, scheduler,
-  runner, registry, or report layer.
-- The formal config surface has exactly one source:
-  `config/paper_androidworld.json`. Its `protocol` block is authoritative for
-  methods, devices, seeds, budgets, timeouts, model endpoint, fold state, and
-  the pinned AndroidWorld revision. `src/experiment/protocol.py`, core
-  defaults, and the shell are derived views and must not define duplicate
-  formal values. The formal surface is deliberately small: task, method,
-  device, kernel budgets/seeds, and external roots. `source_format`,
-  `accepted_first30`, `first30`, `first60`, `limit`, and source-backend
-  selectors are retired history filters, not active configuration. Historical
-  result readers may recognize their old schema columns, but new commands and
-  metadata must not emit them. Setup/export names that exist only to bridge
-  the pinned AndroidWorld runtime are internal contracts, not user overrides.
-- Existing prompts are frozen. Do not edit prompt text, add task-specific
-  prompts, reintroduce `PromptSet`/step guidance plumbing, or send accumulated
-  planner history that changes the established prompt contract. Prompt
-  configuration means selecting the existing prompt contract, not rewriting it.
-- The active page representation is only the latest canonical OmniTransfer
-  page embedding. Do not restore native 512D, `page-word`, 1024D, local pooling,
-  stock-capture T3A/M3A diagnostics, or another page-encoder branch.
-- Remove dead interfaces rather than preserving aliases for retired behavior:
-  no `list`, `inspect`, `metrics`, or `doctor` experiment CLI; no fake source
-  backend modes; no `FunctionRouter`; no completion-review telemetry that is
-  always zero; and no native MobileGPT cold/warm diagnostic path in the formal
-  runner.
-- A method implementation owns its native prompt, parser, policy, retry
-  behavior, and step budget. The experiment harness owns only lifecycle,
-  observation/action bridging, accounting, validation, registration, and
-  fallback boundaries. Do not repair a baseline by adding another planner or
-  changing its prompt/memory/action contract.
-- `tools/manual_androidworld_harness.py` is retained for human-only interactive
-  diagnosis. It may not be used to create formal results, refresh canonical
-  memory, or replace the shell entry point for experiment execution.
+Enhanced authoring is one internal three-stage pipeline: split the successful
+trajectory into semantic Functions, bind task-varying parameters, then select
+and review Function-local checker actions. Each stage must return one complete
+bundle with exactly `functions` and `arguments`; every Function in the bundle
+must be a complete `omniflow.function.v2`. The Agent may author semantic
+Functions, parameters, bindings, and RunLog-grounded actions. It may not invent
+source evidence, target observations or coordinates, validator logic, source
+coordinate fallback, a trigger DSL, or a second save path. The core validates
+every stage and grounds the final actions and source states in the same
+successful RunLog before the only Store writer runs.
 
-## Mandatory per-task testing memory
+Every enhancement stage must retain at least one large semantic Function whose
+formal steps plus Function-local checker rules cover the complete successful
+RunLog action trajectory. Reusable semantic subsegments may be added, but they
+never replace that complete Function. A checker action may be moved out of the
+formal path; it may not also remain a formal action in the same Function.
 
-Before every AndroidWorld check, conversion, development run, formal result, or
-failure diagnosis, re-read this file and `scripts/exp/README.md`. This section
-is the persistent testing protocol; do not replace it with task-local notes.
+Checker rules are registered on one Function through that Function's
+`checker_rules`; there is no global checker pool. A rule belongs only to the
+Function that saved it. Each rule contains a RunLog source state, its source
+action, and no other fields. There is no step number trigger and no trigger DSL.
 
-Run one task to a terminal conclusion before advancing to the next task. The
-only task order is the persistent external difficulty-ordered experiment table.
-For each task, resolve `current.json` first and skip every formal result that
-already has an official-validator conclusion.
+Before every pending formal Function action, runtime checks each unexecuted rule
+registered on that Function. A checker executes once only when all conditions
+hold:
 
-Use this order for each unfinished task:
+1. the rule is registered on the active Function;
+2. the latest canonical OmniTransfer page embedding matches the current page
+   to the rule's RunLog source state;
+3. OmniTransfer maps the source action onto a target on the current observation;
+   and
+4. that action mapping reaches the configured high-confidence threshold.
 
-1. Run the unified static gate and validate the canonical seed-111 RunLog,
-   exact SHA-256 lineage, Function Store provenance, and transfer states.
-2. Check Function recall, one-step Planner tool choice, and Function replay
-   offline before starting an emulator.
-3. Qualify the Function directly on the seed-111 source contract. Require full
-   replay, official validator success, `model_calls=0`, and `fallback_steps=0`.
-4. Run bounded unregistered `ours` development episodes on SmallPhone and then
-   Pixel Fold. A task gets at most three development iterations; preserve the
-   failure and advance after the third unsuccessful iteration.
-5. Freeze the development version, then fill only missing formal results for the
-   task. Formal results remain immutable and are never replaced by a retry.
+A failed condition skips the checker and leaves it eligible before a later
+formal action. Allowed checker actions are `click`, `input_text`, and
+`long_press` with source target coordinates used only as OmniTransfer evidence.
+Never execute source-device coordinates on the target.
 
-Harness and script repairs are allowed only for reproducible task-independent
-defects in environment resolution, dependency installation, official emulator
-lifecycle, AndroidWorld setup, a11y/gRPC readiness, native `get_state()`, the
-single `observe -> plan -> act` step boundary, schema-only adapter conversion,
-coordinate-contract normalization, immutable accounting, result registration,
-and completed-result skipping. Add a deterministic regression test before the
-repair whenever practical.
+`checker_page_similarity` and `checker_action_confidence` are defined only in
+the `protocol` block of `config/paper_androidworld.json`. Per-rule thresholds
+and condition switches are forbidden because they recreate a trigger language.
 
-Every reproducible configuration, environment, setup, or runtime failure must
-be converted into a permanent repair before advancing: put configuration
-resolution in the canonical core configuration or `scripts/exp/run_androidworld.sh`,
-put runtime recovery at the narrow shared harness seam, add a regression test,
-and document the stable behavior here or in `scripts/exp/README.md`. Shell
-history, manually exported variables, one-off remote commands, task-local
-workarounds, and undocumented operator knowledge are not fixes. Preserve the
-original immutable failed attempt and classify its exact failed stage.
+Function success is an ordinary Planner tool result, not AndroidWorld task
+completion. The Planner may call more Functions or GUI actions before it
+explicitly finishes.
 
-During bounded `ours` development, the only method-level revisions allowed are
-short task-independent Planner rules and offline Agent-authored Function
-semantic improvements. Function improvements may clarify descriptions,
-parameters, and reusable stable action segments or split a RunLog into multiple
-semantic Functions. They may not contain target-device or task-instance
-special cases. A Function success returns control to the Planner and never
-terminates the AndroidWorld task by itself.
+## OmniTransfer boundary
 
-Never add task-specific prompts, coordinates, state gates, page thresholds,
-evaluator-aware completion, source-coordinate fallback, screenshot cropping,
-OOB observation, a second AndroidWorld runner, or hidden retries. Do not change
-the formal model, parser, retry policy, step budget, action policy, or output
-contract. A failure after `task_started` and an official validator conclusion
-is a method result, not an environment failure.
+The canonical checkout is always `~/Projects/Omni/OmniTransfer`. Use its real
+candidate mapper and latest page embedding. OmniTransfer returns ranked target
+candidates and evidence; OmniFlow owns page checks, candidate selection,
+execution, failure classification, and VLM fallback.
 
-`appagent_demo` and `mobilegpt_offline_retrieval` are native external baselines.
-Keep their upstream online prompts, planners, parsers, policies, retries, step
-budgets, models, and execution flow unchanged. Give each baseline only source
-experience derived from an official-validator-successful seed-111 RunLog and
-converted into that baseline's standard native memory or demonstration schema.
-The AndroidWorld adapter is required, but its scope is limited to LiveTask
-lifecycle, native observation/action bridging, setup, accounting, RunLog capture,
-and official validation. Schema conversion and this adapter may be maintained to
-preserve the native contract; they must not repair, reinterpret, or replace the
-baseline method. If a successful source experience cannot be represented by the
-native schema, record the exact conversion failure or unavailable status rather
-than fabricating experience or changing the baseline.
+The only active page encoder is `omniflow/transfer/page_embedding.py`, backed by:
 
-## Mandatory execution entry
+`src/omnitransfer/checkpoints/omnitransfer_spatial_xml_alignment_v9_20260805/v9_spatial_xml_alignment_seed29.pt`
 
-- Every AndroidWorld or B-MoCA check, development episode, formal result, conversion, and
-  memory refresh must enter through `scripts/exp/run_androidworld.sh`. Do not
-  invoke `src.integrations.android_world.launch`, `src.experiment.androidworld`,
-  or a skill-owned runner directly; they are implementation seams.
-- Use `--development-run` for an unregistered bounded `ours` episode. A first
-  run uses AndroidWorld setup. A repeated development run may set
-  `OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP=0` only when the same live
-  emulator already has the required AndroidWorld app snapshots.
-- Formal experiment execution keeps the default cold restart and setup. Never
-  use the development reuse override to create or register a formal result.
-- Treat `mobilegpt_offline_retrieval` and `appagent_demo` as frozen external
-  baselines under the absolute no-repair rule above.
-- B-MoCA is an environment adapter, never a replay method. Its E2E path must use
-  the same `OmniFlow.run()` Function/checker/OmniTransfer runtime, GLM-5.1 only
-  for Planner tool selection, zero Function fallback steps, and the official
-  B-MoCA reward as the success authority.
+Do not add native 512D, page-word, 1024D, local pooling, node/resource-id lookup,
+coordinate passthrough, or another page encoder. Missing or invalid transfer
+evidence is an explicit failure and returns to normal VLM fallback.
 
-## Local and 9207 synchronization
+## Formal experiment contract
 
-- The only active OmniFlow-exp checkout on both the local machine and host
-  `9207` is `~/Projects/Omni/OmniFlow-exp` on branch `main`.
-- Before every 9207 check, conversion, development episode, or formal result,
-  compare `git rev-parse HEAD` in both active checkouts. The two full commit
-  SHAs must be identical and both worktrees must contain no uncommitted tracked
-  changes. A mismatch is a preflight failure; do not run an experiment.
-- Synchronize source only through Git: commit and push local `main`, then
-  fast-forward the 9207 `main` checkout to the same commit. Do not copy a source
-  tree, run from an unversioned snapshot, or use a release directory as the
-  active development checkout.
-- Immutable commit-SHA releases may archive a formal checkpoint, but they must
-  be created from the already synchronized `main` commit and never replace the
-  two active checkouts.
+The atomic result is exactly one `task + method + device`. Do not reintroduce
+cell protocols or names. Formal methods are exactly `fixed_replay`, `ours`,
+`mobilegpt_offline_retrieval`, `appagent_demo`, and `t3a_hint`.
 
-## Formal protocol
+The only formal configuration is the `protocol` block of
+`config/paper_androidworld.json`. `src/experiment/protocol.py`, shell, runners,
+and reports are derived views. Methods, devices, seeds, budgets, timeouts,
+model endpoint, fold state, and pinned revisions must not be copied elsewhere.
+Development overrides must be explicit. Retired source/format/accept/first/limit
+selectors are historical reader fields, not active options.
 
-- Run task-major: one task across every method and both devices before the next task.
-- The exact method set is `fixed_replay`, `ours`,
-  `mobilegpt_offline_retrieval`, `appagent_demo`, and `t3a_hint`.
-- Source seed is `111`; target seed is `113`.
-- Targets are SmallPhone and Pixel Fold in unfolded state `2`.
-- Use AndroidWorld native observation/action and its official validator. Do not use OOB.
-- Record validator result, model calls, prompt/completion/total tokens, actions,
-  episode duration, and outer wall time for every result.
-- New public result rows contain only `task`, `method`, `device`, `source_seed`,
-  `evaluation_seed`, `status`, `validator_success`, `model_calls`,
-  `prompt_tokens`, `completion_tokens`, `total_tokens`, `actions_executed`,
-  `episode_duration_sec`, `outer_wall_sec`, `error`, and `evidence_paths`.
-  Preparation, reuse, and component-level diagnostics belong in one `details`
-  evidence block and must not be copied into each result row or summary table.
-- Results and attempts are immutable and live outside this repository.
+Existing prompts and external baseline contracts are frozen. Do not add
+task-specific prompts, accumulated planner history, guidance plumbing, hidden
+retries, evaluator-aware completion, or baseline repairs.
 
-## Method boundary
+New public result rows contain only: `task`, `method`, `device`, `source_seed`,
+`evaluation_seed`, `status`, `validator_success`, `model_calls`,
+`prompt_tokens`, `completion_tokens`, `total_tokens`, `actions_executed`,
+`episode_duration_sec`, `outer_wall_sec`, `error`, and `evidence_paths`.
+Preparation and component diagnostics belong once in a `details` evidence block.
 
-The migrated method implementations are frozen during this phase. Script,
-environment, installation, preflight, accounting, and registration repairs may
-not change a method's prompt, memory, demonstration, action policy, parser,
-retry policy, step budget, model, or output.
+## Execution and memory
 
-OmniFlow is a general VLM-task runtime, not an AndroidWorld task terminator.
-A successful Function execution returns a normal tool result to the task
-planner; it does not imply that the task is done. The planner may call the same
-or another recalled Function multiple times before it explicitly finishes the
-task. Function resume is permitted only after a real Function execution
-failure, never merely because a successful Function returned control to the
-planner. Evaluation adapters must not convert Function success into task
-completion or add evaluator-specific completion logic to the OmniFlow core.
+Run task-major and complete one task before advancing. Resolve
+`OMNIFLOW_EXP_MEMORY_ROOT/current.json` first and skip every formal result with
+an existing official-validator conclusion. Formal results and original attempts
+are immutable.
 
-## Code layout
+For each unfinished task:
 
-- Put contracts and shared data types in `omniflow/core/`.
-- Put Function lifecycle code in `omniflow/functions/`.
-- Put replay orchestration and execution in `omniflow/runtime/`.
-- Put transfer orchestration and evidence tooling in `omniflow/transfer/`.
-- Put VLM-specific planning and adaptation in `omniflow/vlm/`.
-- Keep `omniflow/bridge.py` as the external bridge entry point.
-- Keep `omniflow/vlm_coordinates.py` at its shared-contract path.
-- Do not recreate the retired flat module layout.
-- Keep `scripts/exp/run_androidworld.sh` as the only repository script.
-- Put experiment implementation in `src/experiment/` or `src/integrations/`.
+1. run the static gate and verify the source-seed-111 RunLog, exact hashes,
+   Function Store, transfer states, and canonical OmniTransfer checkout;
+2. check Function recall, Planner selection, and offline replay;
+3. qualify the Function on the source contract with official validator success,
+   `model_calls=0`, and `fallback_steps=0`;
+4. run at most three unregistered `ours` development iterations on SmallPhone,
+   then Pixel Fold;
+5. freeze the version and fill only missing formal results.
 
-## Data boundary
+Every AndroidWorld/B-MoCA check, conversion, development episode, formal result,
+or memory refresh enters through `scripts/exp/run_androidworld.sh`. Function
+authoring itself enters through `save_function`; a missing Store blocks an
+experiment and is never generated by the shell.
 
-Never commit RunLogs, screenshots, XML dumps, model weights, APKs, emulator
-images, baseline memory, credentials, runtime attempts, or result tables. All
-such assets must be supplied through explicit absolute paths.
+For explicitly authorized source-data collection only, a one-task direct
+AndroidWorld collector may use the pinned checkout's native emulator,
+`env_launcher`, `TaskRegistry`, `get_state()`, `execute_action()`, and the
+official task validator. This mode is limited to immutable successful seed-111
+RunLogs with screenshots, native observations, and decision records; it must
+not invoke experiment methods or register formal results.
 
-The only RunLog contract is `omniflow.run_log.v1`. Its observation fields are
-the AndroidWorld `State` fields `pixels`, `forest`, `ui_elements`, and
-`auxiliaries`; its actions use only fields and action types accepted by
-AndroidWorld `JSONAction`. OmniFlow persists `pixels` as an immutable screenshot
-reference instead of embedding the array. Never encode an OmniFlow action alias
-or a private device command as an AndroidWorld action.
-This contract is defined by OmniFlow source and the checked-in schema, never by
-`current.json`; experiment memory only indexes immutable assets and results.
+Use AndroidWorld native state/action and its official validator. B-MoCA is an
+environment adapter using the same `OmniFlow.run()` Function/checker/OmniTransfer
+runtime and official B-MoCA reward. It is not another method.
 
-An empty or unusable OmniTransfer candidate ranking must return to the normal
-OmniFlow fallback path. Low confidence alone is not a transfer failure when a
-ranked target candidate with valid bounds exists. Never replay source-device
-coordinates directly on a target device.
+Local and host `9207` active checkouts are
+`~/Projects/Omni/OmniFlow-exp` on `main`. Before remote execution, both full
+commit SHAs must match and both tracked worktrees must be clean. Synchronize only
+through Git.
 
-## Long-term experiment memory
+## Code and data boundaries
 
-- `OMNIFLOW_EXP_MEMORY_ROOT/current.json` is the only canonical entry point for
-  existing AndroidWorld RunLogs, converted Function assets, and registered
-  results. The experiment script must resolve source and Store indexes from it
-  before preflight or execution.
-- Maintain the memory only through
-  `scripts/exp/run_androidworld.sh --refresh-memory`. Function conversion must
-  update the same memory before reporting success, and result registration must
-  update it immediately after writing an immutable formal result.
-- Store immutable evidence by exact SHA-256. Identical content has one object
-  and any additional locations are aliases; never copy it into another
-  logical version or regenerate it.
-- Keep every original attempt immutable. Deduplication changes only canonical
-  indexes and content-addressed storage; it never deletes or rewrites evidence.
-- Classify memory by AndroidWorld task. Preserve unclassified evidence in the
-  registry instead of dropping it or guessing a task.
-- The master source index is authoritative for the canonical source RunLog.
-  A converted Function Store is canonical only when the v2 Store, transfer
-  states, provenance hashes, and no-target-input audit all verify. Equal-quality
-  conflicting Stores are an error and must not be selected silently.
-- For a task/method/device result, use the earliest immutable registered
-  result with an official-validator conclusion. Never rank or replace results
-  by success, token count, duration, or a later retry.
-- If `current.json` already contains a canonical asset or formal result, reuse
-  it or skip the completed result. Do not call a model, rebuild an asset, rerun a
-  completed result, or reason about which historical directory to use.
-- A missing, corrupt, or ambiguous memory entry is a preflight failure. Report
-  it explicitly; do not fall back to path guessing or automatic generation.
+- contracts and data types: `omniflow/core/`
+- Function lifecycle: `omniflow/functions/`
+- execution: `omniflow/runtime/`
+- transfer: `omniflow/transfer/`
+- VLM planning: `omniflow/vlm/`
+- experiment code: `src/experiment/` and `src/integrations/`
+- external bridge: `omniflow/bridge.py`
+
+Do not commit RunLogs, screenshots, XML dumps, weights, APKs, emulator images,
+baseline memories, credentials, attempts, or result tables. Assets are supplied
+through explicit absolute paths and indexed by exact SHA-256 outside the repo.
+
+`tools/manual_androidworld_harness.py` is human-only diagnosis. It cannot create
+formal results, refresh canonical memory, or replace the unified shell entry.

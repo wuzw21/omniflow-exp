@@ -174,6 +174,49 @@ def test_production_import_keeps_androidworld_state_and_action() -> None:
     }
 
 
+def test_runlog_import_prefers_action_source_screenshot_over_transition_alias() -> None:
+    source = androidworld_state("source", with_pixels=True)
+    source["pixels"]["path"] = "/evidence/source.jpg"
+    before = androidworld_state("same-page", with_pixels=True)
+    before["pixels"]["path"] = "/evidence/step_02_before.jpg"
+    after = androidworld_state("same-page", with_pixels=True)
+    after["pixels"]["path"] = "/evidence/step_01_after.jpg"
+    payload = androidworld_run_log(
+        [
+            {"action_type": "click", "x": 500, "y": 500},
+            {"action_type": "click", "x": 500, "y": 500},
+        ],
+        observations=[source, before],
+    )
+    payload["steps"][0]["next_observation"] = after
+
+    _run_log, source_states = import_run_log_evidence(payload)
+
+    assert source_states["states"]["same-page"]["screenshot_path"] == (
+        "/evidence/step_02_before.jpg"
+    )
+
+
+def test_runlog_import_keeps_one_screenshot_for_repeated_structural_state() -> None:
+    first = androidworld_state("same-page", with_pixels=True)
+    first["pixels"]["path"] = "/evidence/first.jpg"
+    second = androidworld_state("same-page", with_pixels=True)
+    second["pixels"]["path"] = "/evidence/second.jpg"
+    payload = androidworld_run_log(
+        [
+            {"action_type": "click", "x": 500, "y": 500},
+            {"action_type": "click", "x": 500, "y": 500},
+        ],
+        observations=[first, second],
+    )
+
+    _run_log, source_states = import_run_log_evidence(payload)
+
+    assert source_states["states"]["same-page"]["screenshot_path"] == (
+        "/evidence/first.jpg"
+    )
+
+
 def test_production_import_rejects_legacy_schema() -> None:
     with pytest.raises(ValueError, match="run_log_schema_invalid"):
         import_run_log(

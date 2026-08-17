@@ -19,16 +19,16 @@ from omniflow.core.config import OmniFlowConfig, PluginSet, RuntimeSettings
 from omniflow.core.model import FunctionStep, TransferResult
 from omniflow.core.trajectory import state_id
 from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION, FunctionStore
+from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.planner import (
-    ModelToolCallError,
     SYSTEM_PROMPT,
+    ModelToolCallError,
     VLMPlanner,
     adapt_tool_arguments,
     build_model_turn_request,
     function_tools,
     parse_model_turn_response,
 )
-from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm_coordinates import canonical_action_to_screen_pixels
 from src.integrations.android_world import launch as androidworld_launch
 from src.integrations.android_world.agent import (
@@ -257,8 +257,7 @@ def _store_with_open_settings_function(path: object) -> str:
         },
         agent_visible=True,
     )
-    store = FunctionStore(path)
-    store.put_function(function)
+    FunctionStore(path, seed_functions=(function,))
     return function.id
 
 
@@ -320,8 +319,7 @@ def _store_with_long_function(path: object) -> str:
         },
         agent_visible=True,
     )
-    store = FunctionStore(path)
-    store.put_function(function)
+    FunctionStore(path, seed_functions=(function,))
     return function.id
 
 
@@ -346,8 +344,7 @@ def _store_with_untransferable_click_function(path: object) -> str:
         },
         agent_visible=True,
     )
-    store = FunctionStore(path)
-    store.put_function(function)
+    FunctionStore(path, seed_functions=(function,))
     return function.id
 
 
@@ -380,8 +377,7 @@ def _store_with_resumable_click_function(path: object) -> str:
         },
         agent_visible=True,
     )
-    store = FunctionStore(path)
-    store.put_function(function)
+    FunctionStore(path, seed_functions=(function,))
     return function.id
 
 

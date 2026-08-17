@@ -15,8 +15,8 @@ import tempfile
 from typing import Any, Iterable
 
 from src.experiment.mobilegpt_contract import MOBILEGPT_SUPPORTED_SOURCE_METHODS
-from src.integrations.android_world.methods import reuse_metrics_from_result_row
 from src.experiment.result_schema import RESULT_FIELDS, compact_result_row
+from src.integrations.android_world.methods import reuse_metrics_from_result_row
 
 SCHEMA_VERSION = "omniflow.androidworld.result_outcome.v2"
 LEGACY_SCHEMA_VERSION = "omniflow.androidworld.cell_outcome.v1"
@@ -533,10 +533,6 @@ def _write_markdown_report(
         "|" + "|".join("---" for _ in RESULT_FIELDS) + "|",
     ]
     for row in rows:
-        official_success = row.get("validator_success")
-        success = (
-            "1" if official_success is True else "0" if official_success is False else ""
-        )
         lines.append(
             "| "
             + " | ".join(

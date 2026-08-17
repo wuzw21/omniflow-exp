@@ -66,6 +66,13 @@
             "maximum": 64
           }
         },
+        "save_function_arguments": {
+          "required": ["functions"],
+          "one_of_required": ["run_id", "run_log"],
+          "optional": ["arguments", "enhance", "instruction"],
+          "functions_semantics": "One or more complete Functions grounded in the same successful RunLog.",
+          "enhance_semantics": "The Agent selects checker steps only; core validation and persistence use the normal save path."
+        },
         "tools": [
           "run_gui",
           "list_functions",
@@ -90,8 +97,7 @@
       ],
       "response": {
         "semantics": "The selected Function tool returns its canonical payload without Kotlin reshaping.",
-        "function_identifier": "function_id",
-        "post_run_actions": "Harness-owned requests executed by Android only after RunLog sealing and host allowlist validation."
+        "function_identifier": "function_id"
       }
     },
     "tools/list": {

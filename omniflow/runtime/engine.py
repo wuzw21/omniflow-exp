@@ -206,6 +206,12 @@ class OmniFlow:
                     state_loader=(
                         self.catalog.get_state if self.catalog is not None else None
                     ),
+                    checker_page_similarity=(
+                        self.config.runtime.checker_page_similarity
+                    ),
+                    checker_action_confidence=(
+                        self.config.runtime.checker_action_confidence
+                    ),
                 )
             actions_executed += replay.actions_executed
             trace.extend(replay.detail.get("trace") or ())
@@ -526,6 +532,12 @@ class OmniFlow:
                     installed_packages=self.installed_packages,
                     state_loader=(
                         self.catalog.get_state if self.catalog is not None else None
+                    ),
+                    checker_page_similarity=(
+                        self.config.runtime.checker_page_similarity
+                    ),
+                    checker_action_confidence=(
+                        self.config.runtime.checker_action_confidence
                     ),
                 )
                 actions_executed += replay.actions_executed

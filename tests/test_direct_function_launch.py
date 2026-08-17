@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from omniflow import RunResult
-
 from src.experiment.direct_function_launch import _install_direct_runs
 
 

@@ -134,17 +134,13 @@ class FunctionStep:
     step_index: int
     action: Action
     source_state_id: str
-    role: str = "function"
 
     def to_dict(self) -> dict[str, Any]:
-        value = {
+        return {
             "step_index": self.step_index,
             "source_state_id": self.source_state_id,
             "action": self.action.to_dict(),
         }
-        if self.role != "function":
-            value["role"] = self.role
-        return value
 
 
 @dataclass(frozen=True)
@@ -170,7 +166,6 @@ class Function:
                     step_index=int(step.get("step_index") or 0),
                     source_state_id=str(step.get("source_state_id") or ""),
                     action=Action.from_value(step.get("action") or {}),
-                    role=str(step.get("role") or "function"),
                 )
                 for step in value.get("steps") or ()
                 if isinstance(step, dict)
@@ -270,15 +265,7 @@ class StepResult:
     origin: str = "action"
     executed_steps: tuple["StepResult", ...] = ()
     function_id: str | None = None
-    checker_trigger: str | None = None
     detail: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class CheckerContext:
-    source: Observation | None
-    current: Observation
-    action: Action
 
 
 @dataclass(frozen=True)
@@ -288,10 +275,6 @@ class TransferResult:
     detail: dict[str, Any] = field(default_factory=dict)
 
 
-Checker = Callable[
-    [CheckerContext],
-    Action | None | Awaitable[Action | None],
-]
 Transfer = Callable[
     [Action, Observation, Observation | None],
     TransferResult | Awaitable[TransferResult],

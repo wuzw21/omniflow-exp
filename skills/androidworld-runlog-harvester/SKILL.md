@@ -1,87 +1,118 @@
 ---
 name: androidworld-runlog-harvester
-description: "Author, revise, save, and source-qualify versioned semantic OmniFlow Functions from successful AndroidWorld RunLogs. Use for Function schema or binding failures, over-split workflows, MCP save_function calls, and immutable Function asset refresh or replay."
+description: "Create or revise reusable OmniFlow Functions from an official-successful AndroidWorld or B-MoCA RunLog through the single save_function authoring pipeline."
 ---
 
-# Semantic Function Authoring
+# Function authoring from a successful RunLog
 
-Author reusable semantic Functions from successful RunLogs. Leave compilation,
-storage, transfer, execution, and AndroidWorld adaptation to OmniFlow.
+Use one public write operation: `save_function`. One RunLog may produce several
+semantic Functions, but there is no converter, manifest writer, direct Store
+write, or second enhancement interface.
 
-## Fixed Interfaces
+## Workflow
 
-- Function write API: MCP `save_function` only.
-- Function schema: `omniflow.function.v2`.
-- Bundle schema: `omniflow.function-bundle.v2`.
-- Paper manifest: `omniflow.function-agent-skill-manifest.v1`.
-- RunLog schema: `omniflow.run_log.v1`.
-- AndroidWorld entry: `scripts/exp/run_androidworld.sh`.
+1. Call `tools/list` and use `get_run_log` plus `get_run_log_state` only when
+   more source evidence is needed.
+2. Confirm the RunLog is successful and preserves ordered source actions,
+   source states, and screenshot references.
+3. Call `save_function` once. Submit complete Functions directly, or use
+   `enhance=true` for the internal split, parameter-binding, and checker-review
+   stages.
+4. Return the saved Function IDs and save result. Function success is only a
+   Planner tool result; it is not task completion.
 
-Discover the current request with MCP `tools/list`. Submit one complete Function;
-include `run_id` or `run_log`, source `arguments`, and `agent_visible` when
-authoring from evidence. Do not create another API, compiler, Store, runner, or
-adapter.
+## Required Agent output
 
-## Semantic Rule
+Every internal enhancement stage must return exactly one JSON object with the
+two top-level keys below and no commentary:
 
-One Function represents one reusable operation, even when it expands to many
-GUI actions. Split only independently meaningful, reusable operations; never
-split because an argument changes a visible choice or coordinate.
+```json
+{
+  "functions": [
+    {
+      "schema_version": "omniflow.function.v2",
+      "function_id": "search_the_web",
+      "name": "Search the web",
+      "description": "Open the browser, enter provided text, and submit it.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {"type": "string"}
+        },
+        "required": ["query"],
+        "additionalProperties": false
+      },
+      "bindings": [
+        {
+          "source": "$.arguments.query",
+          "target": "$.steps[1].action.args.text"
+        }
+      ],
+      "steps": [
+        {
+          "step_index": 0,
+          "source_state_id": "source-home",
+          "action": {"tool": "click", "args": {"x": 700, "y": 800}}
+        },
+        {
+          "step_index": 1,
+          "source_state_id": "source-search-page",
+          "action": {"tool": "input_text", "args": {"text": ""}}
+        },
+        {
+          "step_index": 2,
+          "source_state_id": "source-search-filled",
+          "action": {"tool": "click", "args": {"x": 900, "y": 900}}
+        }
+      ],
+      "checker_rules": [
+        {
+          "source_state_id": "source-promo-dialog",
+          "action": {"tool": "click", "args": {"x": 800, "y": 700}}
+        }
+      ],
+      "agent_visible": true
+    }
+  ],
+  "arguments": {
+    "search_the_web": {"query": "museum"}
+  }
+}
+```
 
-A full task may call the same Function repeatedly, call several Functions, and
-continue planning afterward. Function success is a normal tool result, not task
-completion.
+Return a complete `omniflow.function.v2` for every Function at every stage,
+even when that stage makes no changes. One Function is a reusable semantic
+operation, not a single click. Every stage must include at least one large
+Function covering the complete successful trajectory; reusable semantic
+subsegments may be added, but they never replace that complete Function. Keep
+source action order and continuity. Put task-varying values in `input_schema`,
+`bindings`, and `arguments`.
 
-## Authoring Rule
+The split stage chooses the complete Function and reusable subsegments. The
+parameter stage binds task-varying values without losing trajectory coverage.
+The checker stage may move optional setup, interruption, or recovery actions
+from formal steps into the checker list of the Function that needs them. It may
+not duplicate a formal action as a checker, mark ordinary navigation/final-task
+actions as checkers, or create a one-click Function merely to hold a checker.
 
-1. Use only the goal, contiguous successful source actions, action metadata,
-   and source states. Preserve action order and canonical `source_state_id`.
-2. Expose task-varying values in `input_schema` and bind them directly:
-   - entered text -> `$.steps[n].action.args.text`;
-   - app -> `$.steps[n].action.args.package_name`;
-   - visible choice -> `$.steps[n].action.args.target_description`.
-3. Persist the intended visible label in `target_description`. Keep recorded
-   coordinates only as immutable source evidence and source-layout fallback.
-4. Require every source call to match a contiguous successful RunLog sequence.
-   Multiple calls may prove one Function at different coordinates.
-5. Require at least one source call to prove stored fallback coordinates;
-   every other semantic value must be visible in its corresponding source state.
+## Checker rules
 
-At runtime OmniFlow grounds `target_description` on the current page, then uses
-canonical OmniTransfer when needed. Never pass source coordinates through to a
-target device.
+A checker is registered only by being present in its Function's
+`checker_rules`. A checker rule contains exactly `source_state_id` and `action`.
+Do not return a step number, `when`, threshold, package switch, trigger DSL, or
+global checker list.
 
-## Enhancement Rule
+Runtime checks an unexecuted registered rule before every pending Function
+action. The latest OmniTransfer page embedding must first match the current
+observation to the rule's source state, then OmniTransfer must find the source
+action's target above the configured high-confidence threshold. A matching
+checker executes once, while a nonmatching checker remains eligible before a
+later action.
 
-Revise a Function by submitting its complete new version with the same stable
-`function_id` to `save_function`. Actions and bindings may change only when the
-new version remains grounded in contiguous successful source evidence. Do not
-use task-specific planner rules, validator knowledge, templates, coordinate
-scaling, or target observations.
+## Evidence and failure rules
 
-A schema/compiler error means the authored Function violates the shared
-contract. Correct the Function or the generic contract; do not special-case the
-task.
-
-## Versioned Workflow
-
-`save_function` compiles, validates, and persists the submitted version. For
-paper assets, emit one immutable authoring manifest with exact source-index and
-RunLog SHA-256 values, a short rationale, the Function bundle, and ordered
-source calls. Exclude target input, target state, validator secrets, and repaired
-model output.
-
-Before AndroidWorld work, read `AGENTS.md` and `scripts/exp/README.md`. Run every
-conversion, memory refresh, check, and qualification through
-`scripts/exp/run_androidworld.sh`; never add or invoke a Skill-owned runner.
-
-## Acceptance
-
-Accept a version only when ordered seed-111 source calls succeed, the official
-validator passes, `model_calls=0`, and `fallback_steps=0`. Record immutable
-RunLog, Store, transfer-state, provenance, runtime, and result hashes.
-
-On failure, preserve the attempt, report the first failed boundary, author a new
-version from source evidence, and repeat. Report Function IDs/count, source
-calls, hashes, canonical memory identity, validator result, actions, model calls,
-fallback steps, and duration.
+Every state and action must be supported by the successful source RunLog.
+Never invent target-device observations, target coordinates, validator logic,
+task-specific gates, or source-coordinate fallback. Report the first validation
+or save error. Do not retry through another interface or write the Store
+directly.

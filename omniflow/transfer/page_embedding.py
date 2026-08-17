@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import importlib
-import importlib.util
 import os
 from pathlib import Path
 import sys
@@ -111,14 +110,7 @@ class OmniTransferPageEncoder:
                 module_path = Path(str(getattr(module, "__file__", ""))).resolve()
                 if package_root not in module_path.parents:
                     del sys.modules[module_name]
-        script_path = root / "scripts" / "export_oob_runlogs.py"
-        spec = importlib.util.spec_from_file_location(
-            "omnitransfer_page_embedding", script_path
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError(f"omnitransfer_page_embedder_missing:{script_path}")
-        embedder_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(embedder_module)
+        embedder_module = importlib.import_module("omnitransfer.page_embedding")
         self._embedder = embedder_module.OmniTransferPageEmbedder(
             selected_checkpoint,
             device=device,
@@ -128,6 +120,10 @@ class OmniTransferPageEncoder:
         self.encoder_version = (
             f"{self._embedder.architecture}:{self._embedder.text_encoder}"
         )
+
+    @property
+    def dimension(self) -> int:
+        return int(self._embedder.embedding_dim)
 
     def embed(self, value: Observation | dict[str, Any] | str) -> PageEmbedding:
         observation = (
@@ -162,6 +158,23 @@ class OmniTransferPageEncoder:
             encoder_version=self.encoder_version,
             checkpoint_path=str(self.checkpoint_path),
             checkpoint_sha256=self.checkpoint_sha256,
+        )
+
+    def similarity(
+        self,
+        source: Observation | dict[str, Any] | str,
+        current: Observation | dict[str, Any] | str,
+    ) -> float:
+        source_page = self.embed(source)
+        current_page = self.embed(current)
+        denominator = float(
+            np.linalg.norm(source_page.vector) * np.linalg.norm(current_page.vector)
+        )
+        if denominator <= 0.0:
+            return 0.0
+        return max(
+            0.0,
+            min(1.0, float(np.dot(source_page.vector, current_page.vector) / denominator)),
         )
 
 

@@ -127,9 +127,6 @@ max_fallback_steps="${OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS:-$formal_max_fall
 store_path="${OMNIFLOW_ANDROIDWORLD_STORE_PATH:-}"
 ours_store_index="${OMNIFLOW_OURS_STORE_INDEX:-}"
 ours_source_asset_index="${OMNIFLOW_OURS_SOURCE_ASSET_INDEX:-$master_source_index}"
-ours_converted_asset_root="${OMNIFLOW_OURS_CONVERTED_ASSET_ROOT:-}"
-ours_authoring_manifest="${OMNIFLOW_OURS_AUTHORING_MANIFEST:-}"
-ours_revision_reason="${OMNIFLOW_OURS_REVISION_REASON:-}"
 memory_root="${OMNIFLOW_EXP_MEMORY_ROOT:-$default_memory_root}"
 memory_index="${OMNIFLOW_EXP_MEMORY_INDEX:-${memory_root:+$memory_root/current.json}}"
 memory_function_catalogs="${OMNIFLOW_MEMORY_FUNCTION_CATALOGS:-}"
@@ -203,19 +200,35 @@ PY
       "/usr/lib/aarch64-linux-gnu/libsqlite3.so.0"
       "/lib/aarch64-linux-gnu/libsqlite3.so.0"
     )
+  elif [[ "$(uname -s)" == "Darwin" ]]; then
+    candidates+=(
+      "/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib"
+      "/usr/local/opt/sqlite/lib/libsqlite3.dylib"
+      "/usr/lib/libsqlite3.dylib"
+    )
   fi
 
   for candidate in "${candidates[@]}"; do
     [[ "$candidate" == /* && -f "$candidate" ]] || continue
+    local loader_name="LD_PRELOAD"
     local candidate_preload="$candidate${LD_PRELOAD:+:$LD_PRELOAD}"
-    if LD_PRELOAD="$candidate_preload" "$python_bin" - <<'PY' >/dev/null 2>&1
+    local candidate_loader_value="$candidate_preload"
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      loader_name="DYLD_LIBRARY_PATH"
+      candidate_loader_value="$(dirname "$candidate")${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+    fi
+    if env "$loader_name=$candidate_loader_value" "$python_bin" - <<'PY' >/dev/null 2>&1
 import sqlite3
 
 connection = sqlite3.connect(":memory:")
 connection.execute("CREATE VIRTUAL TABLE androidworld_fts4_probe USING fts4(value)")
 PY
     then
-      export LD_PRELOAD="$candidate_preload"
+      if [[ "$loader_name" == "DYLD_LIBRARY_PATH" ]]; then
+        export DYLD_LIBRARY_PATH="$candidate_loader_value"
+      else
+        export LD_PRELOAD="$candidate_preload"
+      fi
       echo "[sqlite] AndroidWorld FTS4 enabled library=$candidate"
       return 0
     fi
@@ -243,7 +256,6 @@ source_qualification_only=0
 source_collection=0
 all_tasks=0
 batch_task_filter=""
-convert_ours_assets=0
 refresh_memory=0
 convert_source_runlogs=0
 prepare_mobilegpt_memory=0
@@ -364,12 +376,8 @@ Options:
   --method METHOD           Run one method in the single-result runner.
   --device LABEL:SERIAL:PORT
                             Run one target in the single-result runner.
-  --tasks TASK1,TASK2,...   Select an ordered task-major subset, or scope
-                            --convert-ours-assets. Implies --all-tasks during
-                            experiment execution.
-  --convert-ours-assets     Validate and freeze Function bundles from an
-                            immutable skill manifest, then
-                            freeze, and register the assets.
+  --tasks TASK1,TASK2,...   Select an ordered task-major subset. Implies
+                            --all-tasks during experiment execution.
   --convert-source-runlogs  Convert the indexed legacy source RunLogs once to
                             omniflow.run_log.v1.
   --prepare-mobilegpt-memory
@@ -415,15 +423,6 @@ Optional runtime overrides:
   OMNIFLOW_ADB_PATH.
   Managed emulators are cold-restarted before every pending result.
 
-Asset conversion inputs:
-  OMNIFLOW_OURS_SOURCE_ASSET_INDEX Source RunLog index; defaults to the master
-                                   source index.
-  OMNIFLOW_OURS_AUTHORING_MANIFEST Immutable Function bundle skill manifest.
-  OMNIFLOW_OURS_CONVERTED_ASSET_ROOT New immutable conversion output root.
-  OMNIFLOW_OURS_REVISION_REASON      Non-empty reason that replaces an existing
-                                     canonical Store using the supplied manifest.
-  OMNIFLOW_EXP_MEMORY_INDEX          Existing memory current.json.
-
 Long-term-memory refresh inputs:
   OMNIFLOW_MEMORY_RUNLOG_ROOTS       Colon-separated evidence roots.
   OMNIFLOW_MEMORY_RESULT_ROOTS       Colon-separated result roots.
@@ -452,8 +451,6 @@ Source RunLog conversion inputs:
 
 Examples:
   bash scripts/exp/run_androidworld.sh --tasks AudioRecorderRecordAudio
-  bash scripts/exp/run_androidworld.sh --convert-ours-assets \
-    --tasks AudioRecorderRecordAudio
   bash scripts/exp/run_androidworld.sh --refresh-memory
   bash scripts/exp/run_androidworld.sh --convert-source-runlogs
   bash scripts/exp/run_androidworld.sh --check-only \
@@ -514,9 +511,6 @@ while [[ "$#" -gt 0 ]]; do
         exit 2
       fi
       selected_device_arg="$1"
-      ;;
-    --convert-ours-assets)
-      convert_ours_assets=1
       ;;
     --refresh-memory)
       refresh_memory=1
@@ -583,7 +577,7 @@ done
 if [[ -n "$selected_method_arg" || -n "$selected_device_arg" ]] && {
   [[ "$development_run" -eq 1 || "$source_collection" -eq 1 ||
     "$all_tasks" -eq 1 || -n "$e2e_task" || -n "$batch_task_filter" ||
-    "$convert_ours_assets" -eq 1 || "$refresh_memory" -eq 1 ||
+    "$refresh_memory" -eq 1 ||
     "$convert_source_runlogs" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 ||
     -n "$convert_runlog_memory_method" ]];
 }; then
@@ -682,7 +676,7 @@ if [[ "$execution_environment" == "bmoca" ]]; then
   exec "${bmoca_command[@]}"
 fi
 if [[ -n "$convert_runlog_memory_method" ]]; then
-  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || -n "$e2e_task" || -n "$batch_task_filter" ]]; then
+  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || -n "$e2e_task" || -n "$batch_task_filter" ]]; then
     echo "--convert-runlog-memory cannot be combined with another experiment mode." >&2
     exit 2
   fi
@@ -764,7 +758,7 @@ PY
   exit 0
 fi
 if [[ "$development_run" -eq 1 ]]; then
-  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || -n "$e2e_task" ]]; then
+  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || -n "$e2e_task" ]]; then
     echo "--development-run cannot be combined with maintenance, formal matrix, or E2E options." >&2
     exit 2
   fi
@@ -888,7 +882,7 @@ if [[ "$development_run" -eq 1 ]]; then
   exec "${development_command[@]}"
 fi
 if [[ -n "$e2e_task" ]]; then
-  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || -n "$batch_task_filter" ]]; then
+  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || -n "$batch_task_filter" ]]; then
     echo "--e2e-task cannot be combined with maintenance or matrix-selection options." >&2
     exit 2
   fi
@@ -1006,7 +1000,7 @@ if [[ -n "$e2e_task" ]]; then
   exec "$python_bin" "${e2e_args[@]}"
 fi
 if [[ "$convert_source_runlogs" -eq 1 ]]; then
-  if [[ "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 ]]; then
+  if [[ "$refresh_memory" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 ]]; then
     echo "--convert-source-runlogs cannot be combined with experiment or other maintenance options." >&2
     exit 2
   fi
@@ -1047,7 +1041,7 @@ if [[ "$convert_source_runlogs" -eq 1 ]]; then
   exec "$python_bin" "${source_conversion_args[@]}"
 fi
 if [[ "$refresh_memory" -eq 1 ]]; then
-  if [[ "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || -n "$batch_task_filter" ]]; then
+  if [[ "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || -n "$batch_task_filter" ]]; then
     echo "--refresh-memory cannot be combined with conversion or experiment run options." >&2
     exit 2
   fi
@@ -1183,58 +1177,6 @@ print(
 )
 PY
 }
-if [[ "$convert_ours_assets" -eq 1 ]]; then
-  if [[ "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 ]]; then
-    echo "--convert-ours-assets cannot be combined with experiment run options." >&2
-    exit 2
-  fi
-  if [[ -z "$ours_source_asset_index" || -z "$ours_authoring_manifest" || -z "$ours_converted_asset_root" || -z "$memory_index" ]]; then
-    echo "Asset conversion requires a source index, authoring manifest, output root, and OMNIFLOW_EXP_MEMORY_INDEX." >&2
-    exit 2
-  fi
-  if [[ "$ours_source_asset_index" != /* || "$ours_authoring_manifest" != /* || "$ours_converted_asset_root" != /* ]]; then
-    echo "Asset conversion index, authoring manifest, and output root must be absolute paths." >&2
-    exit 2
-  fi
-  if [[ ! -f "$ours_source_asset_index" || ! -f "$ours_authoring_manifest" ]]; then
-    echo "Asset conversion index and authoring manifest must exist." >&2
-    exit 2
-  fi
-  if ! python_bin="$(command -v "$python_bin")"; then
-    echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
-    exit 1
-  fi
-  if [[ "$memory_index" != /* || ! -f "$memory_index" ]]; then
-    echo "Long-term-memory index must be an existing absolute file: $memory_index" >&2
-    exit 2
-  fi
-  if [[ -z "${OMNIFLOW_OURS_SOURCE_ASSET_INDEX:-}" ]]; then
-    memory_paths="$(load_memory_paths)"
-    IFS=$'\t' read -r ours_source_asset_index _ <<< "$memory_paths"
-  fi
-  conversion_args=(
-    -m src.experiment.function_assets
-    --source-asset-index "$ours_source_asset_index"
-    --authoring-manifest "$ours_authoring_manifest"
-    --output-root "$ours_converted_asset_root"
-    --memory-index "$memory_index"
-  )
-  if [[ -n "$ours_revision_reason" ]]; then
-    conversion_args+=(--revision-reason "$ours_revision_reason")
-  fi
-  if [[ -n "$batch_task_filter" ]]; then
-    IFS=',' read -r -a conversion_tasks <<< "$batch_task_filter"
-    for conversion_task in "${conversion_tasks[@]}"; do
-      if [[ -z "$conversion_task" ]]; then
-        echo "Conversion task list contains an empty task name." >&2
-        exit 2
-      fi
-      conversion_args+=(--task "$conversion_task")
-    done
-  fi
-  cd "$repo"
-  exec "$python_bin" "${conversion_args[@]}"
-fi
 if [[ -n "$batch_task_filter" && "$all_tasks" -eq 0 && "$prepare_mobilegpt_memory" -eq 0 ]]; then
   all_tasks=1
 fi
@@ -1464,63 +1406,13 @@ if [[ "$method" == "ours" ]]; then
 fi
 prepare_function_asset_for_task() {
   local requested_task="$1"
-  local conversion_root resolved_store_path store_status revision_reason
+  local resolved_store_path
   if resolved_store_path="$(indexed_store_path_for_task "$requested_task")"; then
-    if [[ -z "$ours_revision_reason" ]]; then
-      prepared_store_path="$resolved_store_path"
-      return 0
-    fi
-    store_status=0
-  else
-    store_status="$?"
+    prepared_store_path="$resolved_store_path"
+    return 0
   fi
-  if [[ "$check_only" -eq 1 || "$dry_run" -eq 1 ]]; then
-    echo "Canonical Function asset requires creation or revision for task=$requested_task; a read-only check cannot create it." >&2
-    return 1
-  fi
-  if [[ -z "$asset_root" || "$asset_root" != /* ]]; then
-    echo "Set OMNIFLOW_EXP_ASSET_ROOT to an absolute path before source adaptation." >&2
-    return 2
-  fi
-  if [[ -z "$ours_authoring_manifest" || "$ours_authoring_manifest" != /* || ! -f "$ours_authoring_manifest" ]]; then
-    echo "OMNIFLOW_OURS_AUTHORING_MANIFEST must be an existing absolute file before source adaptation." >&2
-    return 1
-  fi
-  conversion_root="$ours_converted_asset_root"
-  if [[ -z "$conversion_root" ]]; then
-    conversion_root="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${formal_source_seed}/$requested_task/ours/from_canonical_runlog"
-  elif [[ "$all_tasks" -eq 1 ]]; then
-    conversion_root="$conversion_root/$requested_task"
-  fi
-  if [[ "$conversion_root" != /* ]]; then
-    echo "OMNIFLOW_OURS_CONVERTED_ASSET_ROOT must be absolute." >&2
-    return 2
-  fi
-  echo "[source-adapter] create method=ours task=$requested_task"
-  conversion_args=(
-    -m src.experiment.function_assets
-    --source-asset-index "$source_index"
-    --authoring-manifest "$ours_authoring_manifest"
-    --output-root "$conversion_root"
-    --memory-index "$memory_index"
-    --task "$requested_task"
-  )
-  revision_reason="$ours_revision_reason"
-  if [[ -n "$revision_reason" ]]; then
-    conversion_args+=(--revision-reason "$revision_reason")
-  fi
-  "$python_bin" "${conversion_args[@]}"
-  memory_paths="$(load_memory_paths)"
-  IFS=$'\t' read -r memory_source_index memory_store_index <<< "$memory_paths"
-  master_source_index="$memory_source_index"
-  source_index="$memory_source_index"
-  ours_store_index="$memory_store_index"
-  if ! prepared_store_path="$(
-    indexed_store_path_for_task "$requested_task"
-  )"; then
-    echo "Function conversion completed without a registered Store: task=$requested_task" >&2
-    return 1
-  fi
+  echo "Canonical Function Store missing for task=$requested_task. Save it through save_function, refresh memory, then rerun." >&2
+  return 1
 }
 if [[ "$all_tasks" -eq 0 && "$requires_function_asset" -eq 1 && -z "$store_path" ]]; then
   prepared_store_path=""

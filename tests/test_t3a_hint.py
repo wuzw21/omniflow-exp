@@ -308,13 +308,11 @@ def test_fixed_replay_coordinate_metadata_is_promoted() -> None:
     assert row["uses_source_xml"] is False
 
 
-def _put_function(
-    store: FunctionStore,
+def _function(
     function_id: str,
     tools: tuple[str, ...],
-) -> None:
-    store.put_function(
-        Function(
+) -> Function:
+    return Function(
             function_id=function_id,
             name=function_id.replace("_", " "),
             description=f"Complete {function_id}.",
@@ -342,7 +340,6 @@ def _put_function(
             },
             checker_rules=(),
             agent_visible=True,
-        )
     )
 
 
@@ -350,9 +347,13 @@ def test_t3a_hint_selects_unique_function_containing_all_subtraces(
     tmp_path: Path,
 ) -> None:
     store_path = tmp_path / "store.json"
-    store = FunctionStore(store_path)
-    _put_function(store, "partial_wait", ("wait",))
-    _put_function(store, "complete_run_settings", ("open_app", "wait"))
+    FunctionStore(
+        store_path,
+        seed_functions=(
+            _function("partial_wait", ("wait",)),
+            _function("complete_run_settings", ("open_app", "wait")),
+        ),
+    )
 
     selected = _select_complete_function(store_path)
 

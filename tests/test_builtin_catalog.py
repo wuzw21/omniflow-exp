@@ -21,7 +21,7 @@ def test_default_catalog_contains_both_verified_beverage_functions() -> None:
     function = catalog.functions["order_beverage_meituan"]
     assert len(function.steps) == 8
     assert len(function.bindings) == 2
-    assert len(function.checker_rules) >= 10
+    assert function.checker_rules == ()
     assert "never submits or pays" in function.description
     assert all(catalog.get_state(step.source_state_id) for step in function.steps)
 

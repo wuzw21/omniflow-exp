@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
 import argparse
 from collections import Counter
 from contextlib import contextmanager
@@ -22,6 +23,7 @@ import tempfile
 import time
 from typing import Any, Iterable, Sequence
 import xml.etree.ElementTree as ET
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -40,11 +42,9 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_SOURCE_METHOD,
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
 )
-from src.experiment.result_registry import register_attempt_summary
-from src.experiment.result_schema import RESULT_FIELDS, compact_result_row
 from src.experiment.protocol import (
-    DEFAULT_METHOD,
     DEFAULT_DEVICE,
+    DEFAULT_METHOD,
     EPISODE_TIMEOUT_SEC,
     MAX_STEPS,
     METHODS,
@@ -56,6 +56,8 @@ from src.experiment.protocol import (
     STEP_TIMEOUT_SEC,
     TASK_SEED,
 )
+from src.experiment.result_registry import register_attempt_summary
+from src.experiment.result_schema import RESULT_FIELDS, compact_result_row
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
 from src.integrations.appagent_adapter import validate_appagent_demo_memory
 

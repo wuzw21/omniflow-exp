@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from omniflow import Action, ActionResult, Function, Observation, OmniFlow, ToolCall
-from omniflow.core.config import OmniFlowConfig, PluginSet
-from omniflow.core.model import FunctionStep, TransferResult
+from omniflow.core.model import FunctionStep
 from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION, FunctionStore
 from omniflow.functions.recall import (
     GOAL_LEXICAL_WEIGHT,
@@ -202,93 +201,6 @@ def test_top_k_includes_zero_score_functions_with_stable_id_tiebreak() -> None:
     assert [item.id for item in result.functions] == [function.id, first.id]
 
 
-class _CheckerRecoveryHost:
-    def __init__(self) -> None:
-        self.package_name = "com.android.launcher"
-        self.actions: list[Action] = []
-
-    def observe(self, **_kwargs: object) -> Observation:
-        if self.package_name == "com.android.settings":
-            return _page(
-                "Bluetooth",
-                "bluetooth_switch",
-                package=self.package_name,
-            )
-        return _page(
-            "Home",
-            "launcher",
-            package=self.package_name,
-            variant="camera",
-        )
-
-    def act(self, action: Action) -> ActionResult:
-        self.actions.append(action)
-        if action.tool == "open_app":
-            self.package_name = str(action.args["package_name"])
-        return ActionResult(True)
-
-    def get_state(self, source_state_id: str) -> Observation | None:
-        if source_state_id != "settings_page":
-            return None
-        return _page(
-            "Bluetooth",
-            "bluetooth_switch",
-            package="com.android.settings",
-        )
-
-
-class _SelectThenFinishPlanner:
-    def __init__(self, function_id: str) -> None:
-        self.function_id = function_id
-        self.calls = 0
-
-    def one_step_tool_call(
-        self,
-        _goal: str,
-        _observation: Observation,
-        functions: tuple[Function, ...],
-        _installed_apps: dict[str, str],
-    ) -> ToolCall:
-        self.calls += 1
-        if self.calls == 1:
-            assert self.function_id in {function.id for function in functions}
-            return ToolCall(self.function_id, {})
-        return ToolCall("finished", {"content": ""})
-
-
-def test_recalled_semantic_function_uses_checker_to_recover_from_other_app(
-    tmp_path,
-) -> None:
-    function = _function(
-        "tap_settings_control",
-        "Turn bluetooth on",
-        "Use the Settings control to turn bluetooth on.",
-        "settings_page",
-    )
-    store = FunctionStore(tmp_path / "store.json")
-    store.put_function(function)
-    host = _CheckerRecoveryHost()
-
-    def transfer(
-        action: Action,
-        _observation: Observation,
-        _source_state: Observation | None,
-    ) -> TransferResult:
-        return TransferResult(action, reason="test_target_match")
-
-    flow = OmniFlow(
-        store.path,
-        host=host,
-        planner=_SelectThenFinishPlanner(function.id),
-        installed_apps={"Settings": "com.android.settings"},
-        config=OmniFlowConfig(plugins=PluginSet(transfer=transfer)),
-    )
-
-    result = flow.run("Turn bluetooth on")
-
-    assert result.success is True
-    assert [action.tool for action in host.actions] == ["open_app", "click"]
-    assert host.actions[0].args == {"package_name": "com.android.settings"}
 
 
 class _PageChangingHost:
@@ -330,22 +242,22 @@ class _ChangingPagePlanner:
 
 
 def test_runtime_recalls_again_after_page_changes(tmp_path) -> None:
-    store = FunctionStore(tmp_path / "store.json")
-    store.put_function(
-        _function(
+    store = FunctionStore(
+        tmp_path / "store.json",
+        seed_functions=(
+            _function(
             "first_page_action",
             "Use first page control",
             "Operate the visible first-page control.",
             "source_first",
-        )
-    )
-    store.put_function(
-        _function(
+            ),
+            _function(
             "second_page_action",
             "Use second page control",
             "Operate the visible second-page control.",
             "source_second",
-        )
+            ),
+        ),
     )
     planner = _ChangingPagePlanner()
     flow = OmniFlow(store.path, host=_PageChangingHost(), planner=planner)

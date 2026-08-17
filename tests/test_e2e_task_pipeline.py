@@ -13,12 +13,12 @@ from src.experiment.batch_outcomes import record_result_outcome
 from src.experiment.e2e_task_pipeline import (
     Deadline,
     PipelinePhaseError,
+    _fixed_replay_source_step_width,
     _function_replay_success,
     _parse_source_device,
     _report,
     _resolve_args,
     _source_device_ready,
-    _fixed_replay_source_step_width,
     build_parser,
     collect_replayed_source,
     ensure_source_device,

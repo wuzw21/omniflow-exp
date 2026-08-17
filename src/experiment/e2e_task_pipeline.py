@@ -28,7 +28,6 @@ from src.experiment.batch_outcomes import (
     record_result_outcome,
     write_batch_report,
 )
-from src.integrations.runlog import project_androidworld_step_actions
 from src.experiment.protocol import (
     DEVICES,
     FORMAL_MODEL,
@@ -42,6 +41,8 @@ from src.experiment.protocol import (
     TASK_DEADLINE_SEC,
     TASK_SEED,
 )
+from src.integrations.runlog import project_androidworld_step_actions
+
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -679,9 +680,7 @@ def prepare_function_asset(
     if str(existing.get("source_run_log_sha256") or "") != _sha256(source_path):
         raise ValueError(f"canonical_function_source_mismatch:{args.task}")
     store_path = Path(str(existing["store_path"])).resolve()
-    provenance_path = Path(str(existing["provenance_path"])).resolve()
-    provenance = _read_object(provenance_path)
-    source_calls = provenance.get("source_calls")
+    source_calls = existing.get("source_calls")
     if (
         not isinstance(source_calls, list)
         or not source_calls

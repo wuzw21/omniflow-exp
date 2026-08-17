@@ -11,6 +11,8 @@ import sys
 from typing import Any
 import xml.etree.ElementTree as ET
 
+from omniflow.core.model import Action
+
 TRANSFER_STATE_CATALOG_FILENAME = "transfer_states.json"
 TRANSFER_STATE_CATALOG_VERSION = "omniflow.transfer-state-catalog.v1"
 _TRANSFER_STATE_FIELDS = {
@@ -192,11 +194,25 @@ def required_transfer_state_ids(functions: Any) -> tuple[str, ...]:
     required: list[str] = []
     values = functions.values() if isinstance(functions, dict) else functions
     for function in values or ():
-        for step in getattr(function, "steps", ()) or ():
-            action = getattr(step, "action", None)
+        entries = [
+            (
+                getattr(step, "source_state_id", ""),
+                getattr(step, "action", None),
+            )
+            for step in getattr(function, "steps", ()) or ()
+        ]
+        entries.extend(
+            (
+                rule.get("source_state_id", ""),
+                Action.from_value(rule.get("action")),
+            )
+            for rule in getattr(function, "checker_rules", ()) or ()
+            if isinstance(rule, dict)
+        )
+        for source_state_id, action in entries:
             if not _action_requires_transfer_state(action):
                 continue
-            state_id = str(getattr(step, "source_state_id", "") or "").strip()
+            state_id = str(source_state_id or "").strip()
             if state_id and state_id not in required:
                 required.append(state_id)
     return tuple(required)
@@ -260,10 +276,6 @@ def audit_transfer_action_sources(
                 source_xml=source_xml,
                 target_xml=source_xml,
                 source_point=source_point,
-                source_package_name=str(state.get("package_name") or ""),
-                target_package_name=str(state.get("package_name") or ""),
-                source_activity_name=str(state.get("activity_name") or ""),
-                target_activity_name=str(state.get("activity_name") or ""),
                 action_type=str(getattr(action, "tool", "") or ""),
                 top_k=3,
             )
@@ -485,18 +497,12 @@ def _require_raw_source_target(
 def transfer_action(**kwargs: Any) -> dict[str, Any]:
     module = load_omnitransfer()
     rank_candidates = getattr(module, "rank_action_candidates", None)
-    if callable(rank_candidates):
-        ranking = rank_candidates(**kwargs)
-        if not isinstance(ranking, dict):
-            raise RuntimeError("omnitransfer_result_invalid")
-        return _select_transfer_candidate(ranking, kwargs)
-    action_transfer = getattr(module, "action_transfer", None)
-    if not callable(action_transfer):
-        raise RuntimeError("omnitransfer_action_transfer_unavailable")
-    result = action_transfer(**kwargs)
-    if not isinstance(result, dict):
+    if not callable(rank_candidates):
+        raise RuntimeError("omnitransfer_candidate_ranking_unavailable")
+    ranking = rank_candidates(**kwargs)
+    if not isinstance(ranking, dict):
         raise RuntimeError("omnitransfer_result_invalid")
-    return result
+    return _select_transfer_candidate(ranking, kwargs)
 
 
 def preflight_omnitransfer() -> dict[str, Any]:

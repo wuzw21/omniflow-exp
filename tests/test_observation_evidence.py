@@ -12,12 +12,12 @@ from src.experiment.androidworld import (
     aggregate_task_results,
     write_metrics_summary,
 )
-from src.experiment.result_schema import RESULT_FIELDS, compact_result_row
 from src.experiment.observation_evidence import (
     AndroidWorldEpisodeRecorder,
     androidworld_json_action_dict,
     persist_target_run_evidence,
 )
+from src.experiment.result_schema import RESULT_FIELDS, compact_result_row
 
 
 def test_public_result_row_is_compact_and_keeps_details_out_of_the_row() -> None:

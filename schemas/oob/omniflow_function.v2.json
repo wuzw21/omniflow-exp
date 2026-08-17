@@ -33,7 +33,7 @@
     },
     "checker_rules": {
       "type": "array",
-      "items": {"$ref": "omniflow_checker_rule.v1.json"}
+      "items": {"$ref": "omniflow_checker_rule.v2.json"}
     },
     "agent_visible": {"type": "boolean"}
   },
@@ -68,7 +68,6 @@
       "properties": {
         "step_index": {"type": "integer", "minimum": 0},
         "source_state_id": {"type": "string", "minLength": 1},
-        "role": {"type": "string", "enum": ["function", "checker"]},
         "action": {"$ref": "#/$defs/action"}
       }
     },

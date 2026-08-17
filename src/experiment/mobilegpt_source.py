@@ -11,13 +11,13 @@ import time
 from typing import Any
 
 from src.experiment import androidworld as pipeline
-from src.experiment.protocol import SOURCE_SEED
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
 )
+from src.experiment.protocol import SOURCE_SEED
 from src.integrations.mobilegpt_converter import (
     MobileGPTConversionError,
     convert_runlog_to_mobilegpt_memory,

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
-from runlog_fixtures import androidworld_run_log
+from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment.artifact_memory import (
     load_artifact_memory,
@@ -649,13 +649,21 @@ def test_registered_result_plan_uses_earliest_validator_conclusion(
 
 def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
     source_run_log = tmp_path / "evidence" / "TaskOne" / "source.run_log.json"
+    screenshot = source_run_log.parent / "state-0.png"
+    screenshot.parent.mkdir(parents=True, exist_ok=True)
+    screenshot.write_bytes(b"test screenshot")
+    observation = androidworld_state("state-0", with_pixels=True)
+    observation["pixels"]["path"] = str(screenshot)
+    observation["pixels"]["sha256"] = hashlib.sha256(
+        screenshot.read_bytes()
+    ).hexdigest()
     _write_json(
         source_run_log,
         androidworld_run_log(
             [{"action_type": "wait"}],
+            observations=[observation],
             task_name="TaskOne",
             goal="Complete task one.",
-            with_pixels=True,
         ),
     )
     source_index = tmp_path / "source_index.json"

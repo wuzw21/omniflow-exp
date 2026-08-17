@@ -4,13 +4,12 @@ import hashlib
 import json
 from pathlib import Path
 
-import pytest
 from PIL import Image
+import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment import androidworld as pipeline
 from src.experiment import mobilegpt_source, preflight
-from src.experiment.source_assets import convert_runlog_memory
 from src.experiment.artifact_memory import (
     canonical_mobilegpt_memory_from_memory,
     refresh_artifact_memory,
@@ -20,10 +19,11 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
+    MOBILEGPT_SOURCE_METHOD,
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
     MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS,
-    MOBILEGPT_SOURCE_METHOD,
 )
+from src.experiment.source_assets import convert_runlog_memory
 
 
 def _write_source_index(

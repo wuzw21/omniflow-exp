@@ -18,16 +18,13 @@ import shutil
 import tempfile
 from typing import Any
 
-from src.integrations.android_world.methods import reuse_metrics_from_result_row
 from src.experiment.protocol import (
     DEVICES,
     METHODS,
-    MAX_STEPS,
     RESULT_COMMANDS_FILE,
     RESULT_SUMMARY_FILE,
-    SOURCE_SEED,
-    TASK_SEED,
 )
+from src.integrations.android_world.methods import reuse_metrics_from_result_row
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RUNS_ROOT = REPO_ROOT / "runtime/evals/androidworld_validator/runs"

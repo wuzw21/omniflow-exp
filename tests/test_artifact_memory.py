@@ -6,11 +6,11 @@ from pathlib import Path
 import re
 import stat
 
-import pytest
 from PIL import Image
+import pytest
 from runlog_fixtures import androidworld_run_log
-import src.experiment.artifact_memory as artifact_memory_module
 
+import src.experiment.artifact_memory as artifact_memory_module
 from src.experiment.artifact_memory import (
     _runlog_paths,
     _select_canonical_mobilegpt_memory,
@@ -24,7 +24,6 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
-    MOBILEGPT_PREP_TYPE,
     MOBILEGPT_PREP_TYPE_BY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
 )
@@ -1016,7 +1015,10 @@ def test_refresh_keeps_one_verified_runtime_store_from_duplicate_catalogs(
     assert Path(row["transfer_states_path"]) == Path(row["store_path"]).with_name(
         "transfer_states.json"
     )
-    assert Path(row["provenance_path"]).read_bytes() == provenance.read_bytes()
+    assert "provenance_path" not in row
+    assert row["source_calls"] == [
+        {"function_id": "record_with_name", "arguments": {}}
+    ]
     assert Path(row["source_run_log_path"]).read_bytes() == source.read_bytes()
     assert row["source_run_log_sha256"] == _sha256(source)
     assert row["source_run_log_lineage"]["conversion"] == "identity"
@@ -1131,7 +1133,6 @@ def test_refresh_requires_exact_sha_selection_for_conflicting_function_stores(
                         _sha256(source),
                         _sha256(store),
                         _sha256(transfer),
-                        _sha256(provenance),
                     )
                 ).encode("utf-8")
             ).hexdigest()

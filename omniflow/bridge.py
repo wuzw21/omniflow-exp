@@ -5,12 +5,12 @@ import hashlib
 import json
 from pathlib import Path
 import sys
-import tempfile
 import time
 from typing import Any, TextIO
 
 from omniflow.catalog import CatalogSnapshot, load_catalog, load_default_catalog
 from omniflow.core.config import (
+    ANDROIDWORLD_PROTOCOL,
     DEFAULT_MAX_STEPS,
     OmniFlowConfig,
     RuntimeSettings,
@@ -23,8 +23,7 @@ from omniflow.core.model import (
     ToolCall,
 )
 from omniflow.core.trajectory import canonicalize_run_log
-from omniflow.functions.assets import compile_runlog_to_store, parse_function_artifact
-from omniflow.runlog import import_run_log_evidence
+from omniflow.functions.assets import save_function
 from omniflow.runtime.engine import InputRequired, OmniFlow
 from omniflow.vlm.planner import VLMPlanner
 
@@ -396,18 +395,27 @@ class JsonLineBridge:
             body,
             set(),
             {
+                "functions",
                 "run_id",
                 "run_log",
-                "function",
                 "arguments",
-                "agent_visible",
+                "enhance",
+                "instruction",
             },
         )
-        supplied_function = body.get("function")
+        supplied_functions = body.get("functions")
         run_id = str(body.get("run_id") or "").strip()
         supplied_run_log = body.get("run_log")
-        if supplied_function is not None and not isinstance(supplied_function, dict):
-            return _save_error("FUNCTION_SCHEMA_INVALID", "function must be an object")
+        enhance = body.get("enhance") is True
+        if supplied_functions is not None and not isinstance(
+            supplied_functions, list
+        ):
+            return _save_error("FUNCTIONS_INVALID", "functions must be an array")
+        if not enhance and not supplied_functions:
+            return _save_error(
+                "FUNCTIONS_REQUIRED",
+                "functions are required unless enhance=true",
+            )
         supplied_arguments = body.get("arguments")
         if supplied_arguments is not None and not isinstance(supplied_arguments, dict):
             return _save_error("FUNCTION_ARGUMENTS_INVALID", "arguments must be an object")
@@ -423,17 +431,10 @@ class JsonLineBridge:
         else:
             run_log = None
         if not run_id and run_log is None:
-            if supplied_function is None:
-                return _save_error(
-                    "FUNCTION_SAVE_INPUT_REQUIRED",
-                    "run_id, run_log, or function is required",
-                )
-            try:
-                function = parse_function_artifact(supplied_function)
-                saved = self.flow.store.put_function(function)
-            except ValueError as error:
-                return _save_error("FUNCTION_SCHEMA_INVALID", str(error))
-            return _save_success(saved)
+            return _save_error(
+                "FUNCTION_SAVE_INPUT_REQUIRED",
+                "run_id or run_log is required",
+            )
 
         if run_log is None:
             run_log = self.host_call(request_id, "get_run_log", {"run_id": run_id})
@@ -449,54 +450,89 @@ class JsonLineBridge:
             )
 
         try:
-            with tempfile.TemporaryDirectory(prefix="omniflow-compile-") as output_root:
-                function_bundle = None
-                if supplied_function is not None:
-                    function_id = str(supplied_function.get("function_id") or "").strip()
-                    function_bundle = {
-                        "schema_version": "omniflow.function-bundle.v2",
-                        "run_id": run_id,
-                        "arguments": {
-                            function_id: dict(supplied_arguments or {})
-                        },
-                        "functions": [supplied_function],
-                    }
-                compile_options: dict[str, Any] = {}
-                if supplied_run_log is not None:
-                    _, source_states = import_run_log_evidence(run_log)
-                    compile_options["source_states"] = source_states
-                else:
-                    compile_options["state_loader"] = lambda state_id: self.host_call(
-                        request_id,
-                        "get_state",
-                        {"state_id": state_id},
-                    )
-                report = compile_runlog_to_store(
-                    run_log,
-                    output_root,
-                    function_bundle=function_bundle,
-                    **compile_options,
-                )
-                compiled = OmniFlow(Path(output_root) / "store.json")
-                function_id = next(iter(report["function_ids"]), "")
-                function = compiled.store.get_function(function_id)
-        except ValueError as error:
-            return _save_compile_error(error)
-        if function is None:
-            return _save_error(
-                "RUN_LOG_NO_REPLAYABLE_STEPS",
-                "RunLog has no replayable steps",
-            )
+            complete_json = None
+            if enhance:
+                model = str(ANDROIDWORLD_PROTOCOL["model"])
 
-        value = function.to_dict()
-        if "agent_visible" in body:
-            value["agent_visible"] = body.get("agent_visible") is True
-        try:
-            value = parse_function_artifact(value).to_dict()
+                def complete_json(prompt: str) -> str:
+                    response = self.host_call(
+                        request_id,
+                        "model_turn",
+                        {
+                            "goal": "Enhance RunLog-grounded Functions",
+                            "model": model,
+                            "request": {
+                                "model": model,
+                                "messages": [{"role": "user", "content": prompt}],
+                                "temperature": 0,
+                                "tool_choice": {
+                                    "type": "function",
+                                    "function": {"name": "submit_enhancement"},
+                                },
+                                "tools": [
+                                    {
+                                        "type": "function",
+                                        "function": {
+                                            "name": "submit_enhancement",
+                                            "description": (
+                                                "Return semantic Functions grounded "
+                                                "only in the supplied RunLog actions."
+                                            ),
+                                            "strict": False,
+                                            "parameters": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "functions": {
+                                                        "type": "array",
+                                                        "items": {"type": "object"},
+                                                    },
+                                                    "arguments": {"type": "object"},
+                                                },
+                                                "required": ["functions", "arguments"],
+                                                "additionalProperties": False,
+                                            },
+                                        },
+                                    }
+                                ],
+                            },
+                        },
+                    )
+                    if not isinstance(response, dict):
+                        raise ValueError("function_enhancer_response_invalid")
+                    tool_calls = response.get("tool_calls")
+                    if not isinstance(tool_calls, list) or len(tool_calls) != 1:
+                        raise ValueError("function_enhancer_tool_call_invalid")
+                    function = tool_calls[0].get("function")
+                    arguments = (
+                        function.get("arguments")
+                        if isinstance(function, dict)
+                        else None
+                    )
+                    if not isinstance(arguments, str):
+                        raise ValueError("function_enhancer_arguments_invalid")
+                    return arguments
+
+            report = save_function(
+                run_log,
+                self.flow.store.path,
+                functions=supplied_functions,
+                arguments=dict(supplied_arguments or {}),
+                enhance=enhance,
+                complete_json=complete_json,
+                instruction=str(body.get("instruction") or ""),
+            )
         except ValueError as error:
-            return _save_error("FUNCTION_SCHEMA_INVALID", str(error))
-        saved = self.flow.store.put_function(value)
-        return _save_success(saved)
+            return _save_validation_error(error)
+        self.flow.store.reload()
+        return {
+            "success": True,
+            "function_ids": list(report["function_ids"]),
+            "functions": [
+                self.flow.store.get_function(function_id).to_dict()
+                for function_id in report["function_ids"]
+            ],
+            "error": None,
+        }
 
     def host_call(self, request_id: str, method: str, payload: dict[str, Any]) -> Any:
         self._host_call_index += 1
@@ -694,12 +730,11 @@ def _management_tool_definition(name: str) -> dict[str, Any]:
     return {
         "name": name,
         "description": (
-            "Save one Agent-authored reusable Function. Analyze the RunLog goal, "
-            "ordered actions, and existing action metadata, then pass run_id or "
-            "run_log together with one complete Function and its exact source "
-            "arguments. The Function description must state its atomic effect, "
-            "parameter meanings, fixed choices, and excluded work. Preserve recorded "
-            "actions in order; do not invent actions, UI evidence, or checker rules."
+            "Save one or more reusable Functions grounded in one successful RunLog. "
+            "Submit complete Functions, or set enhance=true so the Agent returns a "
+            "complete Function bundle at each split, parameter-binding, and checker-review "
+            "stage. The core validates every stage and grounds all final states and actions "
+            "in the RunLog before using the same Store writer."
         ),
         "inputSchema": {
             "type": "object",
@@ -708,15 +743,19 @@ def _management_tool_definition(name: str) -> dict[str, Any]:
                 "run_log": {
                     "anyOf": [{"type": "object"}, {"type": "string"}]
                 },
-                "function": {"type": "object"},
+                "functions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "object"},
+                },
                 "arguments": {"type": "object"},
-                "agent_visible": {"type": "boolean"},
+                "enhance": {"type": "boolean"},
+                "instruction": {"type": "string"},
             },
             "additionalProperties": False,
             "anyOf": [
                 {"required": ["run_id"]},
                 {"required": ["run_log"]},
-                {"required": ["function"]},
             ],
         },
     }
@@ -743,31 +782,18 @@ def _int_arg(value: Any, default: int) -> int:
         return default
 
 
-def _save_compile_error(error: ValueError) -> dict[str, Any]:
+def _save_validation_error(error: ValueError) -> dict[str, Any]:
     message = str(error)
     code = {
         "successful_source_actions_required": "RUN_LOG_NO_REPLAYABLE_STEPS",
         "semantic_functions_required": "RUN_LOG_NO_REPLAYABLE_STEPS",
-        "function_bundle_required_from_authoring_skill": "FUNCTION_SKILL_BUNDLE_REQUIRED",
         "successful_source_goal_required": "RUN_LOG_GOAL_EMPTY",
     }.get(message, "RUN_LOG_COMPILE_FAILED")
     user_message = {
         "RUN_LOG_NO_REPLAYABLE_STEPS": "RunLog has no replayable steps",
         "RUN_LOG_GOAL_EMPTY": "RunLog goal is required",
-        "FUNCTION_SKILL_BUNDLE_REQUIRED": (
-            "A Function bundle produced by the authoring skill is required"
-        ),
     }.get(code, message)
     return _save_error(code, user_message)
-
-
-def _save_success(function: Function) -> dict[str, Any]:
-    return {
-        "success": True,
-        "function_id": function.function_id,
-        "function": function.to_dict(),
-        "error": None,
-    }
 
 
 def _save_error(code: str, message: str) -> dict[str, Any]:
@@ -852,25 +878,9 @@ def _run_result(
     function_resolution = result.detail.get("function_resolution") or None
     recalled_function_id = str(result.function_id or "").strip()
     recall_hit = bool(recalled_function_id)
-    post_run_actions: list[dict[str, Any]] = []
     done_reason = result.detail.get("done_reason") or (
         "finished" if result.success else "error"
     )
-    if (
-        result.success
-        and done_reason == "finished"
-        and not recall_hit
-        and int(result.actions_executed) > 0
-    ):
-        post_run_actions.append(
-            {
-                "name": "save_function",
-                "arguments": {
-                    "run_id": str(body.get("run_id") or ""),
-                    "agent_visible": True,
-                },
-            }
-        )
     payload: dict[str, Any] = {
         "success": result.success,
         "status": "succeeded" if result.success else "failed",
@@ -900,7 +910,6 @@ def _run_result(
         "function_resolution": function_resolution,
         "recall_hit": recall_hit,
         "recalled_function_id": recalled_function_id or None,
-        "post_run_actions": post_run_actions or None,
         "runtime_limits": result.detail.get("runtime_limits") or None,
         "missing_required_arguments": (
             [

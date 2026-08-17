@@ -7,8 +7,8 @@ from pathlib import Path
 import subprocess
 import sys
 
-import pytest
 from PIL import Image
+import pytest
 from runlog_fixtures import androidworld_run_log
 
 from src.experiment.artifact_memory import refresh_artifact_memory
@@ -107,7 +107,7 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "--methods" not in completed.stdout
     assert "--devices" not in completed.stdout
     assert "--tasks" in completed.stdout
-    assert "--convert-ours-assets" in completed.stdout
+    assert "--convert-ours-assets" not in completed.stdout
     assert "--convert-runlog-memory" in completed.stdout
     assert "--refresh-memory" in completed.stdout
     assert "--e2e-task" in completed.stdout
@@ -118,7 +118,7 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "--task-deadline-sec" in completed.stdout
     assert "OMNIFLOW_EXP_ASSET_ROOT" in completed.stdout
     assert "OMNIFLOW_EXP_MEMORY_ROOT" in completed.stdout
-    assert "OMNIFLOW_OURS_AUTHORING_MANIFEST" in completed.stdout
+    assert "OMNIFLOW_OURS_AUTHORING_MANIFEST" not in completed.stdout
     assert "OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT" in completed.stdout
     assert "OMNIFLOW_DEVELOPMENT_OUTPUT_PATH" in completed.stdout
     assert "OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP" in completed.stdout
@@ -934,177 +934,6 @@ def test_check_only_is_read_only_before_any_runtime_output(
     assert unsupported_java.returncode != 0
     assert "Java 17 or newer is required" in unsupported_java.stderr
     assert not results.exists()
-
-
-def test_asset_conversion_routes_through_the_only_script(
-    tmp_path: Path,
-) -> None:
-    source_index = tmp_path / "source-index.json"
-    source_index.write_text("{}", encoding="utf-8")
-    output_root = tmp_path / "converted"
-    memory_index = tmp_path / "current.json"
-    memory_index.write_text("{}", encoding="utf-8")
-    authoring_manifest = tmp_path / "authoring-manifest.json"
-    authoring_manifest.write_text("{}", encoding="utf-8")
-    captured = tmp_path / "python-args.txt"
-    fake_python = tmp_path / "python"
-    fake_python.write_text(
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\n",
-        encoding="utf-8",
-    )
-    fake_python.chmod(0o755)
-    environment = {
-        **os.environ,
-        "PYTHON_BIN": str(fake_python),
-        "CAPTURE_ARGS": str(captured),
-        "OMNIFLOW_OURS_SOURCE_ASSET_INDEX": str(source_index),
-        "OMNIFLOW_OURS_CONVERTED_ASSET_ROOT": str(output_root),
-        "OMNIFLOW_OURS_AUTHORING_MANIFEST": str(authoring_manifest),
-        "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_index),
-    }
-
-    completed = subprocess.run(
-        [
-            "bash",
-            str(SCRIPT),
-            "--convert-ours-assets",
-            "--tasks",
-            "RecordWithName",
-        ],
-        cwd=REPO,
-        env=environment,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    assert captured.read_text(encoding="utf-8").splitlines() == [
-        "-m",
-        "src.experiment.function_assets",
-        "--source-asset-index",
-        str(source_index),
-        "--authoring-manifest",
-        str(authoring_manifest),
-        "--output-root",
-        str(output_root),
-        "--memory-index",
-        str(memory_index),
-        "--task",
-        "RecordWithName",
-    ]
-
-
-def test_asset_revision_routes_reason_through_the_only_script(
-    tmp_path: Path,
-) -> None:
-    source_index = tmp_path / "source-index.json"
-    source_index.write_text("{}", encoding="utf-8")
-    output_root = tmp_path / "converted"
-    memory_index = tmp_path / "current.json"
-    memory_index.write_text("{}", encoding="utf-8")
-    authoring_manifest = tmp_path / "authoring-manifest.json"
-    authoring_manifest.write_text("{}", encoding="utf-8")
-    captured = tmp_path / "python-args.txt"
-    fake_python = tmp_path / "python"
-    fake_python.write_text(
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\n",
-        encoding="utf-8",
-    )
-    fake_python.chmod(0o755)
-
-    completed = subprocess.run(
-        [
-            "bash",
-            str(SCRIPT),
-            "--convert-ours-assets",
-            "--tasks",
-            "RecordWithName",
-        ],
-        cwd=REPO,
-        env={
-            **os.environ,
-            "PYTHON_BIN": str(fake_python),
-            "CAPTURE_ARGS": str(captured),
-            "OMNIFLOW_OURS_SOURCE_ASSET_INDEX": str(source_index),
-            "OMNIFLOW_OURS_CONVERTED_ASSET_ROOT": str(output_root),
-            "OMNIFLOW_OURS_AUTHORING_MANIFEST": str(authoring_manifest),
-            "OMNIFLOW_OURS_REVISION_REASON": "source qualification failed",
-            "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_index),
-        },
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    arguments = captured.read_text(encoding="utf-8").splitlines()
-    reason_index = arguments.index("--revision-reason") + 1
-    assert arguments[reason_index] == "source qualification failed"
-
-
-def test_asset_conversion_defaults_to_canonical_memory_source_index(
-    tmp_path: Path,
-) -> None:
-    archived_source_index = tmp_path / "archive" / "source-index.json"
-    canonical_source_index = tmp_path / "memory" / "source-index.json"
-    store_index = tmp_path / "memory" / "store-index.json"
-    memory_index = tmp_path / "memory" / "current.json"
-    output_root = tmp_path / "converted"
-    authoring_manifest = tmp_path / "authoring-manifest.json"
-    captured = tmp_path / "python-args.txt"
-    for path in (
-        archived_source_index,
-        canonical_source_index,
-        store_index,
-        memory_index,
-        authoring_manifest,
-    ):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("{}", encoding="utf-8")
-    fake_python = tmp_path / "python"
-    fake_python.write_text(
-        """#!/bin/sh
-if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ] && [ "$3" = "$MEMORY_INDEX" ]; then
-  printf '%s\t%s\n' "$CANONICAL_SOURCE_INDEX" "$STORE_INDEX"
-  exit 0
-fi
-printf '%s\n' "$@" > "$CAPTURE_ARGS"
-""",
-        encoding="utf-8",
-    )
-    fake_python.chmod(0o755)
-    completed = subprocess.run(
-        [
-            "bash",
-            str(SCRIPT),
-            "--convert-ours-assets",
-            "--tasks",
-            "RecordWithName",
-        ],
-        cwd=REPO,
-        env={
-            **os.environ,
-            "PYTHON_BIN": str(fake_python),
-            "REPO_PATH": str(REPO),
-            "MEMORY_INDEX": str(memory_index),
-            "CANONICAL_SOURCE_INDEX": str(canonical_source_index),
-            "STORE_INDEX": str(store_index),
-            "CAPTURE_ARGS": str(captured),
-            "OMNIFLOW_MASTER_SOURCE_INDEX": str(archived_source_index),
-            "OMNIFLOW_OURS_CONVERTED_ASSET_ROOT": str(output_root),
-            "OMNIFLOW_OURS_AUTHORING_MANIFEST": str(authoring_manifest),
-            "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_index),
-        },
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    arguments = captured.read_text(encoding="utf-8").splitlines()
-    source_index_argument = arguments.index("--source-asset-index") + 1
-    assert arguments[source_index_argument] == str(canonical_source_index)
 
 
 def test_memory_refresh_routes_all_evidence_through_the_only_script(

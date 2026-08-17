@@ -200,7 +200,7 @@ def test_grounding_rejects_changed_frozen_catalog(tmp_path: Path) -> None:
 def test_source_and_store_indexes_join_without_rewriting_frozen_assets(
     tmp_path: Path,
 ) -> None:
-    source, states, provenance = _write_source_bundle(tmp_path)
+    source, states, _provenance = _write_source_bundle(tmp_path)
     store_index = tmp_path / "store_index.json"
     store_index.write_text(
         json.dumps(
@@ -214,10 +214,6 @@ def test_source_and_store_indexes_join_without_rewriting_frozen_assets(
                     "transfer_states_sha256": hashlib.sha256(
                         states.read_bytes()
                     ).hexdigest(),
-                    "provenance_path": str(provenance),
-                    "provenance_sha256": hashlib.sha256(
-                        provenance.read_bytes()
-                    ).hexdigest(),
                 }
             }
         ),
@@ -228,10 +224,6 @@ def test_source_and_store_indexes_join_without_rewriting_frozen_assets(
         source_run_log=source,
         meta={
             "source_run_log_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-            "store_provenance": str(provenance),
-            "store_provenance_sha256": hashlib.sha256(
-                provenance.read_bytes()
-            ).hexdigest(),
         },
     )
 
@@ -244,8 +236,9 @@ def test_source_and_store_indexes_join_without_rewriting_frozen_assets(
     assert (
         grounded["steps"][0]["metadata"]["source_context"]["element"]["text"] == "Save"
     )
-    assert audit["source_state_catalog"] == str(source)
-    assert audit["source_state_catalog_source"] == "embedded_source_run_log"
+    assert audit["source_state_catalog"] == str(states)
+    assert audit["source_state_catalog_source"] == "frozen_catalog"
+    assert "provenance_manifest" not in audit
 
 
 def test_baseline_grounding_uses_complete_states_embedded_in_source_runlog(

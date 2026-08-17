@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import re
 from typing import Any
 import xml.etree.ElementTree as ET
@@ -16,23 +17,159 @@ from omniflow.core.trajectory import (
 
 def import_run_log_evidence(
     value: dict[str, Any],
+    *,
+    evidence_root: str | Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    if value.get("schema_version") == "omniflow.canonical_run_log.v1":
+        if evidence_root is None:
+            raise ValueError("canonical_run_log_evidence_root_required")
+        return _import_canonical_trace(
+            value,
+            Path(evidence_root).expanduser().resolve(),
+        )
     run_log = _hydrate_run_log_display(canonicalize_run_log(value))
     states: dict[str, dict[str, Any]] = {}
     for step in run_log["steps"]:
-        observations = [step["observation"]]
-        if isinstance(step.get("next_observation"), dict):
-            observations.append(step["next_observation"])
-        for observation in observations:
-            _store_transfer_state(states, observation)
-    final_observation = run_log.get("final_observation")
-    if isinstance(final_observation, dict):
-        _store_transfer_state(states, final_observation)
+        # Function actions transfer only from the observation immediately before
+        # that action. Transition/final observations may be byte-identical page
+        # aliases with a different screenshot path; keeping them would create a
+        # false state conflict without adding any executable source evidence.
+        _store_transfer_state(states, step["observation"])
     return run_log, {
         "schema_version": "omniflow.transfer-state-catalog.v1",
         "run_id": run_log["run_id"],
         "states": states,
     }
+
+
+def _import_canonical_trace(
+    value: dict[str, Any],
+    evidence_root: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if value.get("status") != "succeeded" or value.get("success") is not True:
+        raise ValueError("successful_source_run_log_required")
+    diagnostics = value.get("diagnostics")
+    if (
+        not isinstance(diagnostics, dict)
+        or diagnostics.get("official_success") is not True
+    ):
+        raise ValueError("official_source_success_required")
+    run_id = str(value.get("run_id") or "").strip()
+    goal = str(value.get("goal") or "").strip()
+    raw_steps = value.get("steps")
+    if not run_id or not goal or not isinstance(raw_steps, list) or not raw_steps:
+        raise ValueError("canonical_run_log_contract_invalid")
+
+    state_catalog_path = evidence_root / "transfer_states.json"
+    screenshot_manifest_path = evidence_root / "screenshot_manifest.json"
+    if not state_catalog_path.is_file():
+        raise FileNotFoundError(
+            f"canonical_run_log_state_catalog_missing:{state_catalog_path}"
+        )
+    if not screenshot_manifest_path.is_file():
+        raise FileNotFoundError(
+            f"canonical_run_log_screenshot_manifest_missing:{screenshot_manifest_path}"
+        )
+    state_catalog = json.loads(state_catalog_path.read_text(encoding="utf-8"))
+    screenshot_manifest = json.loads(
+        screenshot_manifest_path.read_text(encoding="utf-8")
+    )
+    if (
+        not isinstance(state_catalog, dict)
+        or state_catalog.get("schema_version")
+        != "omniflow.transfer-state-catalog.v1"
+        or state_catalog.get("run_id") != run_id
+        or not isinstance(state_catalog.get("states"), dict)
+    ):
+        raise ValueError("canonical_run_log_state_catalog_invalid")
+    if (
+        not isinstance(screenshot_manifest, dict)
+        or screenshot_manifest.get("run_id") != run_id
+        or screenshot_manifest.get("complete") is not True
+        or screenshot_manifest.get("missing_referenced_state_ids") not in ([], ())
+        or not isinstance(screenshot_manifest.get("screenshots"), dict)
+    ):
+        raise ValueError("canonical_run_log_screenshot_manifest_invalid")
+
+    states = json.loads(json.dumps(state_catalog["states"], ensure_ascii=False))
+    referenced_state_ids: list[str] = []
+    steps: list[dict[str, Any]] = []
+    for expected_index, raw_step in enumerate(raw_steps):
+        if not isinstance(raw_step, dict) or raw_step.get("step_index") != expected_index:
+            raise ValueError("canonical_run_log_step_index_invalid")
+        before_state_id = str(raw_step.get("before_state_id") or "").strip()
+        after_state_id = str(raw_step.get("after_state_id") or "").strip()
+        if not before_state_id or not after_state_id:
+            raise ValueError("canonical_run_log_state_id_required")
+        for state_identifier in (before_state_id, after_state_id):
+            if state_identifier not in referenced_state_ids:
+                referenced_state_ids.append(state_identifier)
+        result = raw_step.get("result")
+        if not isinstance(result, dict) or not isinstance(result.get("success"), bool):
+            raise ValueError("canonical_run_log_step_result_invalid")
+        action = canonicalize_action(
+            raw_step.get("action"),
+            replayable_only=False,
+            allow_non_action=True,
+        )
+        step = {
+            "step_index": expected_index,
+            "before_state_id": before_state_id,
+            "action": action,
+            "result": json.loads(json.dumps(result, ensure_ascii=False)),
+            "after_state_id": after_state_id,
+        }
+        if isinstance(raw_step.get("metadata"), dict):
+            step["metadata"] = json.loads(
+                json.dumps(raw_step["metadata"], ensure_ascii=False)
+            )
+        steps.append(step)
+    final_state_id = str(value.get("final_state_id") or "").strip()
+    if final_state_id and final_state_id not in referenced_state_ids:
+        referenced_state_ids.append(final_state_id)
+
+    screenshot_paths = screenshot_manifest["screenshots"]
+    for state_identifier in referenced_state_ids:
+        state = states.get(state_identifier)
+        if not isinstance(state, dict) or state.get("state_id") != state_identifier:
+            raise ValueError(f"canonical_run_log_state_missing:{state_identifier}")
+        screenshot_value = screenshot_paths.get(state_identifier)
+        screenshot_path = _resolve_evidence_path(evidence_root, screenshot_value)
+        state["screenshot_path"] = str(screenshot_path)
+
+    run_log = {
+        "schema_version": "omniflow.canonical_run_log.v1",
+        "run_id": run_id,
+        "goal": goal,
+        "status": "succeeded",
+        "success": True,
+        "steps": steps,
+        "diagnostics": json.loads(json.dumps(diagnostics, ensure_ascii=False)),
+    }
+    if final_state_id:
+        run_log["final_state_id"] = final_state_id
+    return run_log, {
+        "schema_version": "omniflow.transfer-state-catalog.v1",
+        "run_id": run_id,
+        "states": states,
+    }
+
+
+def _resolve_evidence_path(root: Path, value: Any) -> Path:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("canonical_run_log_screenshot_reference_required")
+    source = Path(text).expanduser()
+    candidates = (source,) if source.is_absolute() else tuple(
+        parent / source for parent in (root, *root.parents)
+    )
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved.is_file():
+            if not resolved.read_bytes():
+                raise ValueError(f"canonical_run_log_screenshot_empty:{resolved}")
+            return resolved
+    raise FileNotFoundError(f"canonical_run_log_screenshot_missing:{text}")
 
 
 def project_androidworld_step_actions(value: dict[str, Any]) -> list[dict[str, Any]]:
@@ -61,8 +198,18 @@ def _store_transfer_state(
 ) -> None:
     source_state = _transfer_state(observation)
     existing = states.get(source_state["state_id"])
-    if existing is not None and existing != source_state:
-        raise ValueError(f"source_state_conflict:{source_state['state_id']}")
+    if existing is not None:
+        existing_identity = {
+            key: value for key, value in existing.items() if key != "screenshot_path"
+        }
+        source_identity = {
+            key: value
+            for key, value in source_state.items()
+            if key != "screenshot_path"
+        }
+        if existing_identity != source_identity:
+            raise ValueError(f"source_state_conflict:{source_state['state_id']}")
+        return
     states[source_state["state_id"]] = source_state
 
 

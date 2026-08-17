@@ -23,7 +23,6 @@ import subprocess
 import sys
 import time
 from time import perf_counter
-import types
 from typing import Any, Callable, Sequence
 import unicodedata
 import urllib.error
@@ -594,7 +593,6 @@ class _OpenAICompatibleMultimodalWrapper:
 
     @staticmethod
     def _encode_image(image: Any) -> bytes:
-        import io
 
         from PIL import Image
 
@@ -3975,26 +3973,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         _add_android_world_path(android_world_root)
 
         from android_world import checkpointer as checkpointer_lib
-        try:
-            from android_world import constants
-        except ImportError:
-            class _EpisodeConstants:
-                GOAL = "goal"
-                TASK_TEMPLATE = "task_template"
-                EPISODE_DATA = "episode_data"
-                IS_SUCCESSFUL = "is_successful"
-                RUN_TIME = "run_time"
-                FINISH_DTIME = "finish_dtime"
-                EPISODE_LENGTH = "episode_length"
-                AUX_DATA = "aux_data"
-                SCREEN_CONFIG = "screen_config"
-                EXCEPTION_INFO = "exception_info"
-                SEED = "seed"
-
-            constants = types.SimpleNamespace(
-                STEP_NUMBER="step_number",
-                EpisodeConstants=_EpisodeConstants,
-            )
         from android_world import registry, suite_utils
         from android_world.env import env_launcher
         from android_world.env.setup_device import setup as aw_setup

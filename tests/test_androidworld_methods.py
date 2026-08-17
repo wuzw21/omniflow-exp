@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from omniflow import RunResult
-
+from src.integrations.android_world.agent import _accumulate_results
 from src.integrations.android_world.methods import (
     MethodAdapter,
     MethodAdapterContext,
@@ -13,7 +13,6 @@ from src.integrations.android_world.methods import (
     default_method_adapter_registry,
     reuse_metrics,
 )
-from src.integrations.android_world.agent import _accumulate_results
 
 
 def _context(selector: str) -> MethodAdapterContext:

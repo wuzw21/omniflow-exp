@@ -8,7 +8,7 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from omniflow.core.config import PluginSet
 from omniflow.core.model import Action, ActionResult, Observation, TransferResult
-from omniflow.functions.assets import compile_runlog_to_store
+from omniflow.functions.assets import save_function
 from omniflow.runtime import execution
 from omniflow.transfer.runtime import capture_transfer_state
 
@@ -71,11 +71,16 @@ def test_function_compiler_preserves_source_screenshot_reference(
         observations=[androidworld_state("state_0"), androidworld_state("state_1")],
         goal="Open the example and wait.",
     )
+    for step in run_log["steps"]:
+        step["observation"]["pixels"] = {
+            "path": str(screenshot),
+            "sha256": "0" * 64,
+            "width": 100,
+            "height": 200,
+            "mime_type": "image/jpeg",
+        }
 
-    result = compile_runlog_to_store(
-        run_log,
-        tmp_path / "output",
-        function_bundle={
+    bundle = {
             "schema_version": "omniflow.function-bundle.v2",
             "run_id": "source-run",
             "arguments": {"open_example_and_wait": {}},
@@ -117,17 +122,12 @@ def test_function_compiler_preserves_source_screenshot_reference(
                     "agent_visible": True,
                 }
             ],
-        },
-        source_states={
-            "state_0": {
-                "state_id": "state_0",
-                "screenshot_path": str(screenshot),
-            },
-            "state_1": {
-                "state_id": "state_1",
-                "screenshot_path": str(screenshot),
-            },
-        },
+        }
+    result = save_function(
+        run_log,
+        tmp_path / "output" / "store.json",
+        functions=bundle["functions"],
+        arguments=bundle["arguments"],
     )
 
     states = json.loads(

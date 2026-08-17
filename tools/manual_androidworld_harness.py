@@ -109,7 +109,7 @@ class ManualAndroidWorld:
             emulator_setup=False,
             adb_path=args.adb_path,
             grpc_port=args.grpc_port or args.console_port + 3000,
-            install_a11y_forwarding_app=True,
+            install_a11y_forwarding_app=args.install_a11y_forwarder,
         )
         task_types = registry.TaskRegistry().get_registry(family="android_world")
         if args.task not in task_types:
@@ -291,6 +291,11 @@ def main() -> int:
     parser.add_argument("--grpc-port", type=int, default=0)
     parser.add_argument("--adb-path", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--install-a11y-forwarder",
+        action="store_true",
+        help="Install the official forwarder APK during startup when absent.",
+    )
     args = parser.parse_args()
     harness = ManualAndroidWorld(args)
     try:

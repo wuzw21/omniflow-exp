@@ -19,19 +19,17 @@ from typing import Any
 from PIL import Image
 
 from omniflow.core.trajectory import require_complete_source_run_log
-from omniflow.core.trajectory import observation_xml
 from src.experiment import androidworld as pipeline
-from src.experiment.protocol import SOURCE_SEED
 from src.experiment.mobilegpt_source import (
     load_canonical_source_item,
 )
+from src.experiment.protocol import SOURCE_SEED
 from src.experiment.source_assets import (
     build_grounded_teacher_run_log_from_canonical_item,
 )
 from src.integrations.android_world.host import (
-    androidworld_elements_xml,
-    androidworld_observation_xml,
     androidworld_observation_package,
+    androidworld_observation_xml,
 )
 from src.integrations.appagent_adapter import (
     APPAGENT_DEMO_ACTION_TYPES,
@@ -45,6 +43,7 @@ from src.integrations.appagent_adapter import (
     seal_appagent_demo_memory,
     validate_appagent_demo_memory,
 )
+
 
 def _appagent_observation_xml(observation: dict[str, Any]) -> str:
     return androidworld_observation_xml(observation)

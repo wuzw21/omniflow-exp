@@ -32,7 +32,7 @@ def recall_functions(
     """Recall Planner tools using page and lexical evidence without page gating."""
 
     encoder = page_encoder or OmniTransferPageEncoder()
-    current_page = encoder.embed(observation)
+    current_page = _embed_if_available(encoder, observation)
     values = functions.values() if isinstance(functions, dict) else functions
     candidates: list[tuple[float, Function, dict[str, Any]]] = []
     decisions: list[dict[str, Any]] = []
@@ -63,12 +63,15 @@ def recall_functions(
             "encoder": {
                 "name": encoder.name,
                 "version": encoder.encoder_version,
-                "dimension": int(current_page.vector.shape[0]),
+                "dimension": encoder.dimension,
                 "checkpoint_path": str(encoder.checkpoint_path),
                 "checkpoint_sha256": encoder.checkpoint_sha256,
             },
             "current_page": {
-                "element_count": current_page.element_count,
+                "available": current_page is not None,
+                "element_count": (
+                    current_page.element_count if current_page is not None else 0
+                ),
             },
             "ranking_weights": {
                 "page_similarity": PAGE_SIMILARITY_WEIGHT,
@@ -86,16 +89,16 @@ def _score_function(
     goal: str,
     function: Function,
     *,
-    current_page: PageEmbedding,
+    current_page: PageEmbedding | None,
     source_states: Mapping[str, Observation | None],
     encoder: OmniTransferPageEncoder,
 ) -> dict[str, Any]:
     source_state_id = function.steps[0].source_state_id if function.steps else ""
     source_observation = source_states.get(source_state_id)
-    source_page = encoder.embed(source_observation) if source_observation is not None else None
+    source_page = _embed_if_available(encoder, source_observation)
     page_similarity = (
         _cosine(current_page.vector, source_page.vector)
-        if source_page is not None
+        if current_page is not None and source_page is not None
         else 0.0
     )
     goal_score = _jaccard(
@@ -116,6 +119,15 @@ def _score_function(
         "selected": False,
         "rejection_reason": None,
     }
+
+
+def _embed_if_available(
+    encoder: OmniTransferPageEncoder,
+    observation: Observation | None,
+) -> PageEmbedding | None:
+    if observation is None or not str(observation.xml or "").strip():
+        return None
+    return encoder.embed(observation)
 
 
 def _cosine(left: np.ndarray, right: np.ndarray) -> float:

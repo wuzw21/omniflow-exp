@@ -27,8 +27,8 @@ from src.integrations.mobilegpt_runtime import (
     install_mobilegpt_memory_only_guard,
     install_mobilegpt_select_schema_repair,
     install_mobilegpt_upstream_accounting,
-    mobilegpt_embedding_contract,
     mobilegpt_compatible_xml,
+    mobilegpt_embedding_contract,
     preflight_mobilegpt_endpoints,
 )
 

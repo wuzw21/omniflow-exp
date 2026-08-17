@@ -15,7 +15,7 @@ PLANNER_SUMMARY_DESCRIPTION = (
 
 CANONICAL_ACTION_SCHEMA_FILENAME = "oob_canonical_actions.v1.json"
 OMNIFLOW_RUN_LOG_SCHEMA_FILENAME = "omniflow_run_log.v1.json"
-CHECKER_RULE_SCHEMA_FILENAME = "omniflow_checker_rule.v1.json"
+CHECKER_RULE_SCHEMA_FILENAME = "omniflow_checker_rule.v2.json"
 VLM_ACTION_TOOL_NAMES = (
     "click",
     "input_text",

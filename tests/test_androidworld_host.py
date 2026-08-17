@@ -15,15 +15,15 @@ from src.integrations.android_world.launch import (
     ANDROID_PERMISSION_DENY_RESOURCE_IDS,
     _androidworld_a11y_forwarder_installed,
     _androidworld_adb_file_transfer_timeout_sec,
-    _androidworld_setup_timeout_sec,
     _androidworld_setup_apps_for_suite,
+    _androidworld_setup_timeout_sec,
     _bounded_androidworld_adb_file_transfer_timeout,
     _ensure_androidworld_a11y_forwarder,
     _ExperimentAgentAdapter,
-    _prepare_androidworld_episode_apps,
-    _patch_androidworld_optional_permission_click,
     _patch_androidworld_apk_install_compat,
     _patch_androidworld_chcon_compat,
+    _patch_androidworld_optional_permission_click,
+    _prepare_androidworld_episode_apps,
     _repair_androidworld_chrome_first_run,
     _result_has_official_validator_conclusion,
     _run_androidworld_setup_apps,
@@ -498,8 +498,7 @@ def test_androidworld_official_setup_entry_clears_late_permission_dialog(
         pytest.skip("requires the pinned AndroidWorld checkout")
     monkeypatch.syspath_prepend(str(android_world_root))
 
-    from android_world.env import actuation
-    from android_world.env import tools
+    from android_world.env import actuation, tools
     from android_world.env.setup_device import apps
     from android_world.env.setup_device import setup as aw_setup
 

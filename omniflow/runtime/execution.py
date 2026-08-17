@@ -11,12 +11,15 @@ from typing import Any, Callable
 import unicodedata
 import xml.etree.ElementTree as ET
 
-from omniflow.core.config import PluginSet
+from omniflow.core.config import (
+    DEFAULT_CHECKER_ACTION_CONFIDENCE,
+    DEFAULT_CHECKER_PAGE_SIMILARITY,
+    PluginSet,
+)
 from omniflow.core.model import (
     Action,
     ActionDecision,
     ActionResult,
-    CheckerContext,
     Function,
     Host,
     Observation,
@@ -24,7 +27,7 @@ from omniflow.core.model import (
     StepResult,
     TransferResult,
 )
-from omniflow.runtime.checker import default_checker_trigger, match_checker_rule
+from omniflow.runtime.checker import validate_checker_rule
 from omniflow.runtime.core import (
     execute_action as execute_core_action,
 )
@@ -32,13 +35,13 @@ from omniflow.runtime.core import (
     prepare_action as prepare_core_action,
 )
 from omniflow.runtime.semantic_grounding import resolve_semantic_action
+from omniflow.transfer.page_embedding import OmniTransferPageEncoder
 from omniflow.transfer.runtime import transfer_action
 
 _OPEN_APP_READY_POLL_SECONDS = 0.5
 _OPEN_APP_READY_MAX_ATTEMPTS = 30
 _OBSERVATION_READY_POLL_SECONDS = 0.25
 _OBSERVATION_READY_MAX_ATTEMPTS = 20
-_CHECKER_RECOVERY_MAX_ATTEMPTS = 8
 # OmniTransfer already applies the deployment acceptance floor.  Keep only a
 # minimal sanity floor here so OmniFlow does not reject a valid mapped target a
 # second time merely because its confidence is below a conservative benchmark
@@ -58,7 +61,17 @@ async def execute_function(
     resume_metadata: dict[str, Any] | None = None,
     installed_packages: frozenset[str] | None = None,
     state_loader: StateLoader | None = None,
+    checker_page_similarity: float = DEFAULT_CHECKER_PAGE_SIMILARITY,
+    checker_action_confidence: float = DEFAULT_CHECKER_ACTION_CONFIDENCE,
+    page_encoder: Any | None = None,
 ) -> RunResult:
+    if not 0.0 <= float(checker_page_similarity) <= 1.0:
+        raise ValueError("checker_page_similarity_invalid")
+    if not 0.0 <= float(checker_action_confidence) <= 1.0:
+        raise ValueError("checker_action_confidence_invalid")
+    checker_page_encoder = page_encoder
+    if function.checker_rules and checker_page_encoder is None:
+        checker_page_encoder = OmniTransferPageEncoder()
     current = observation or Observation.from_value(
         await _await(host.observe(xml=True, app_info=True))
     )
@@ -68,75 +81,103 @@ async def execute_function(
     executed = 0
     trace: list[dict[str, Any]] = []
     checker_decisions: list[dict[str, Any]] = []
+    completed_checker_rules: set[int] = set()
     resume_metadata_pending = dict(resume_metadata or {})
     for function_step in steps:
+        for rule_index, raw_rule in enumerate(function.checker_rules):
+            if rule_index in completed_checker_rules:
+                continue
+            try:
+                rule = validate_checker_rule(raw_rule)
+                checker_source = await _load_state(
+                    host,
+                    rule["source_state_id"],
+                    state_loader=state_loader,
+                )
+                checker_step, decision = await execute_checker_step(
+                    Action.from_value(rule["action"]),
+                    observation=current,
+                    host=host,
+                    plugins=plugins,
+                    function=function,
+                    source_state=checker_source,
+                    page_encoder=checker_page_encoder,
+                    minimum_page_similarity=float(checker_page_similarity),
+                    minimum_action_confidence=float(checker_action_confidence),
+                    installed_packages=installed_packages,
+                )
+            except Exception as error:  # noqa: BLE001
+                checker_step = StepResult(
+                    True,
+                    before=current,
+                    after=current,
+                    origin="checker",
+                    function_id=function.id,
+                )
+                decision = {
+                    "status": "skipped",
+                    "reason": f"checker_evaluation_failed:{error}",
+                }
+            checker_decisions.append(
+                {
+                    "function_id": function.id,
+                    "checker_rule_index": rule_index,
+                    "source_state_id": str(raw_rule.get("source_state_id") or ""),
+                    "before_function_step": function_step.step_index,
+                    **decision,
+                }
+            )
+            if checker_step.actions_executed:
+                completed_checker_rules.add(rule_index)
+                executed += checker_step.actions_executed
+                trace.extend(
+                    await record_execution(
+                        host,
+                        checker_step,
+                        trace_start_index=int(trace_start_index) + len(trace),
+                        metadata={
+                            "checker_rule_index": rule_index,
+                            "before_function_step": function_step.step_index,
+                        },
+                    )
+                )
+                current = checker_step.after or checker_step.before or current
+            if not checker_step.success:
+                return RunResult(
+                    False,
+                    function.id,
+                    executed,
+                    error=checker_step.error,
+                    final_state=current,
+                    detail={
+                        "trace": trace,
+                        "checker_decisions": checker_decisions,
+                        "failed_step_index": function_step.step_index,
+                        "next_step_index": function_step.step_index,
+                    },
+                )
         action = function_step.action
         source_state = await _load_state(
             host,
             function_step.source_state_id,
             state_loader=state_loader,
         )
-        if function_step.role == "checker":
-            required_step = next(
-                (
-                    candidate
-                    for candidate in steps
-                    if candidate.step_index > function_step.step_index
-                    and candidate.role == "function"
-                ),
-                None,
-            )
-            required_source_state = (
-                await _load_state(
-                    host,
-                    required_step.source_state_id,
-                    state_loader=state_loader,
-                )
-                if required_step is not None
-                else None
-            )
-            step, checker_decision = await execute_checker_step(
-                action,
-                observation=current,
-                host=host,
-                plugins=plugins,
-                function=function,
-                source_state=source_state,
-                installed_packages=installed_packages,
-                required_action=(
-                    required_step.action if required_step is not None else None
-                ),
-                required_source_state=required_source_state,
-            )
-            checker_decisions.append(
-                {
-                    "function_step_index": function_step.step_index,
-                    **checker_decision,
-                }
-            )
-            if step.actions_executed == 0 and step.success:
-                continue
-        else:
-            step = await execute_robust_action(
-                action,
-                observation=current,
-                host=host,
-                plugins=plugins,
-                function=function,
-                source_state=source_state,
-                installed_packages=installed_packages,
-                state_loader=state_loader,
-            )
+        step = await execute_robust_action(
+            action,
+            observation=current,
+            host=host,
+            plugins=plugins,
+            function=function,
+            source_state=source_state,
+            installed_packages=installed_packages,
+        )
         executed += step.actions_executed
         trace.extend(
             await record_execution(
                 host,
                 step,
                 trace_start_index=int(trace_start_index) + len(trace),
-                metadata={
-                    "function_step_index": function_step.step_index,
-                    "function_step_role": function_step.role,
-                },
+                metadata={"function_step_index": function_step.step_index},
                 first_metadata=(
                     {"function_alignment": dict(resume_metadata_pending)}
                     if resume_metadata_pending
@@ -184,11 +225,62 @@ async def execute_checker_step(
     plugins: PluginSet,
     function: Function,
     source_state: Observation | None,
+    page_encoder: Any,
+    minimum_page_similarity: float,
+    minimum_action_confidence: float,
     installed_packages: frozenset[str] | None = None,
-    required_action: Action | None = None,
-    required_source_state: Observation | None = None,
 ) -> tuple[StepResult, dict[str, Any]]:
-    """Execute one optional checker Step only when its source target is present."""
+    """Execute a checker only when its source page and target both match."""
+
+    if source_state is None:
+        return (
+            StepResult(
+                True,
+                action=action,
+                before=observation,
+                after=observation,
+                origin="checker",
+                function_id=function.id,
+            ),
+            {"status": "skipped", "reason": "checker_source_state_missing"},
+        )
+    try:
+        page_similarity = float(page_encoder.similarity(source_state, observation))
+    except Exception as error:  # noqa: BLE001
+        return (
+            StepResult(
+                True,
+                action=action,
+                before=observation,
+                after=observation,
+                origin="checker",
+                function_id=function.id,
+            ),
+            {
+                "status": "skipped",
+                "reason": f"checker_page_embedding_failed:{error}",
+            },
+        )
+    page_evidence = {
+        "score": page_similarity,
+        "minimum_score": float(minimum_page_similarity),
+    }
+    if not math.isfinite(page_similarity) or page_similarity < minimum_page_similarity:
+        return (
+            StepResult(
+                True,
+                action=action,
+                before=observation,
+                after=observation,
+                origin="checker",
+                function_id=function.id,
+            ),
+            {
+                "status": "skipped",
+                "reason": "checker_page_similarity_too_low",
+                "page": page_evidence,
+            },
+        )
 
     decision = await prepare_action(
         action,
@@ -210,27 +302,21 @@ async def execute_checker_step(
             {
                 "status": "skipped",
                 "reason": decision.reason or "transfer_not_applicable",
+                "page": page_evidence,
                 "transfer": dict(decision.detail or {}),
             },
         )
-    applies = _checker_transfer_applicable(decision.detail)
-    applicability_reason = "source_target_not_present"
-    applicability_evidence: dict[str, Any] = dict(decision.detail or {})
-    # Directional swipes are navigation checkers even when the recorded Action
-    # also preserves concrete endpoints.  The endpoints describe actuation;
-    # they must not turn the swipe into a point-target transfer decision.
-    if action.tool == "swipe" and action.args.get("direction") is not None:
-        applies, applicability_reason, applicability_evidence = (
-            await _navigation_checker_applicable(
-                action,
-                observation=observation,
-                plugins=plugins,
-                source_state=source_state,
-                required_action=required_action,
-                required_source_state=required_source_state,
-            )
+    transfer_confidence = _alignment_probability(dict(decision.detail or {}))
+    confidence_evidence = {
+        "score": transfer_confidence,
+        "minimum_score": float(minimum_action_confidence),
+    }
+    if transfer_confidence is None or transfer_confidence < minimum_action_confidence:
+        reason = (
+            "checker_action_confidence_missing"
+            if transfer_confidence is None
+            else "checker_action_confidence_too_low"
         )
-    if not applies:
         return (
             StepResult(
                 True,
@@ -239,12 +325,14 @@ async def execute_checker_step(
                 after=observation,
                 origin="checker",
                 function_id=function.id,
-                detail=applicability_evidence,
+                detail=dict(decision.detail or {}),
             ),
             {
                 "status": "skipped",
-                "reason": applicability_reason,
-                "transfer": applicability_evidence,
+                "reason": reason,
+                "page": page_evidence,
+                "transfer": dict(decision.detail or {}),
+                "action": confidence_evidence,
             },
         )
     step = replace(
@@ -262,77 +350,12 @@ async def execute_checker_step(
         step,
         {
             "status": "executed" if step.success else "failed",
-            "reason": decision.reason or applicability_reason,
+            "reason": decision.reason or "omnitransfer_mapped",
+            "page": page_evidence,
             "transfer": dict(decision.detail or {}),
+            "action": confidence_evidence,
         },
     )
-
-
-async def _navigation_checker_applicable(
-    action: Action,
-    *,
-    observation: Observation,
-    plugins: PluginSet,
-    source_state: Observation | None,
-    required_action: Action | None,
-    required_source_state: Observation | None,
-) -> tuple[bool, str, dict[str, Any]]:
-    if not (
-        action.tool == "swipe"
-        and action.args.get("direction") is not None
-        and required_action is not None
-        and required_source_state is not None
-    ):
-        return False, "checker_navigation_context_missing", {}
-    source_package = str(source_state.package_name or "") if source_state else ""
-    target_package = str(observation.package_name or "")
-    if source_package and target_package and source_package != target_package:
-        return False, "checker_page_package_mismatch", {}
-    required = await prepare_action(
-        required_action,
-        observation=observation,
-        plugins=plugins,
-        source_state=required_source_state,
-    )
-    evidence = {
-        "required_action_reason": required.reason,
-        "required_action_transfer": dict(required.detail or {}),
-    }
-    if required.action is not None and _checker_transfer_applicable(required.detail):
-        return False, "required_target_present", evidence
-    return True, "required_target_absent", evidence
-
-
-def _checker_transfer_applicable(detail: dict[str, Any] | None) -> bool:
-    """Use mapped target evidence instead of a handwritten page-trigger DSL."""
-
-    evidence = detail if isinstance(detail, dict) else {}
-    source = evidence.get("source")
-    candidates = evidence.get("candidates")
-    if not isinstance(source, dict) or not isinstance(candidates, list) or not candidates:
-        return False
-    target = candidates[0]
-    if not isinstance(target, dict):
-        return False
-    source_resource_id = _normalized_semantic_value(source.get("resource_id"))
-    if source_resource_id:
-        return source_resource_id == _normalized_semantic_value(
-            target.get("resource_id")
-        )
-    for field in ("text", "content_desc"):
-        source_value = _normalized_semantic_value(source.get(field))
-        if source_value:
-            return source_value == _normalized_semantic_value(target.get(field))
-    try:
-        score = float(evidence.get("score"))
-        margin = float(evidence.get("margin"))
-    except (TypeError, ValueError):
-        return False
-    return score >= 0.75 and margin >= 0.50
-
-
-def _normalized_semantic_value(value: Any) -> str:
-    return " ".join(str(value or "").casefold().split())
 
 
 async def execute_robust_action(
@@ -344,130 +367,8 @@ async def execute_robust_action(
     function: Function | None = None,
     source_state: Observation | None = None,
     installed_packages: frozenset[str] | None = None,
-    state_loader: StateLoader | None = None,
-    _checker_recovery_attempts_remaining: int = _CHECKER_RECOVERY_MAX_ATTEMPTS,
 ) -> StepResult:
     function_id = function.id if function is not None else None
-    executed_steps: list[StepResult] = []
-    recovery_action: Action | None = None
-    recovery_trigger: str | None = None
-    try:
-        recovery = match_checker_rule(
-            CheckerContext(source_state, observation, action),
-            function.checker_rules if function is not None else (),
-        )
-        if recovery is not None:
-            recovery_trigger = recovery.trigger
-            recovery_source_state = await _load_state(
-                host,
-                recovery.source_state_id,
-                state_loader=state_loader,
-            )
-            recovery_decision = await prepare_action(
-                recovery.action,
-                observation=observation,
-                plugins=plugins,
-                source_state=recovery_source_state,
-            )
-            if recovery_decision.kind == "block" or recovery_decision.action is None:
-                return StepResult(
-                    False,
-                    action=action,
-                    before=observation,
-                    error=f"checker_recovery_failed:{recovery_decision.reason or 'blocked'}",
-                    origin="blocked",
-                    function_id=function_id,
-                    detail=recovery_decision.detail,
-                )
-            recovery_action = recovery_decision.action
-    except Exception as error:  # noqa: BLE001
-        return StepResult(
-            False,
-            action=action,
-            before=observation,
-            error=f"checker_failed:{error}",
-            origin="blocked",
-            function_id=function_id,
-        )
-    checker = plugins.checker
-    if recovery_action is None and checker is not None:
-        try:
-            recovery_value = await _await(
-                checker(CheckerContext(source_state, observation, action))
-            )
-            recovery_action = (
-                Action.from_value(recovery_value)
-                if recovery_value is not None
-                else None
-            )
-            if recovery_action is not None:
-                recovery_trigger = default_checker_trigger(
-                    CheckerContext(source_state, observation, action),
-                    recovery_action,
-                )
-        except Exception as error:  # noqa: BLE001
-            return StepResult(
-                False,
-                action=action,
-                before=observation,
-                error=f"checker_failed:{error}",
-                origin="blocked",
-                function_id=function_id,
-            )
-    if recovery_action is not None and not _recovery_action_available(
-        recovery_action,
-        installed_packages,
-    ):
-        recovery_action = None
-        recovery_trigger = None
-    if recovery_action is not None:
-        if _checker_recovery_attempts_remaining <= 0:
-            return StepResult(
-                False,
-                action=action,
-                before=observation,
-                error="checker_recovery_limit_exceeded",
-                origin="blocked",
-                function_id=function_id,
-            )
-        recovery_step = replace(
-            await _dispatch_prepared(
-                recovery_action,
-                observation=observation,
-                host=host,
-                installed_packages=installed_packages,
-            ),
-            origin="checker",
-            function_id=function_id,
-            checker_trigger=recovery_trigger,
-        )
-        executed_steps.append(recovery_step)
-        if not recovery_step.success:
-            return replace(
-                recovery_step,
-                executed_steps=tuple(executed_steps),
-            )
-        observation = recovery_step.after or observation
-        retried = await execute_robust_action(
-            action,
-            observation=observation,
-            host=host,
-            plugins=plugins,
-            function=function,
-            source_state=source_state,
-            installed_packages=installed_packages,
-            state_loader=state_loader,
-            _checker_recovery_attempts_remaining=(
-                _checker_recovery_attempts_remaining - 1
-            ),
-        )
-        retried_steps = tuple(retried.executed_steps or (retried,))
-        all_steps = (recovery_step, *retried_steps)
-        return replace(
-            retried,
-            actions_executed=sum(item.actions_executed for item in all_steps),
-            executed_steps=all_steps,
-        )
     if (
         _action_uses_transfer_target(action)
         and _observation_screenshot_path(source_state)
@@ -496,14 +397,7 @@ async def execute_robust_action(
             function_id=function_id,
             detail=_merge_action_detail(decision.detail, semantic_detail),
         )
-        if not executed_steps:
-            return blocked
-        executed_steps.append(blocked)
-        return replace(
-            blocked,
-            actions_executed=sum(item.actions_executed for item in executed_steps),
-            executed_steps=tuple(executed_steps),
-        )
+        return blocked
     result = await _dispatch_prepared(
         decision.action,
         observation=observation,
@@ -515,14 +409,7 @@ async def execute_robust_action(
         function_id=function_id,
         detail=_merge_action_detail(decision.detail, semantic_detail),
     )
-    if not executed_steps:
-        return result
-    executed_steps.append(result)
-    return replace(
-        result,
-        actions_executed=sum(item.actions_executed for item in executed_steps),
-        executed_steps=tuple(executed_steps),
-    )
+    return result
 
 
 async def prepare_action(
@@ -550,16 +437,6 @@ def _merge_action_detail(
     if semantic_detail is not None:
         detail["semantic_grounding"] = dict(semantic_detail)
     return detail
-
-
-def _recovery_action_available(
-    action: Action,
-    installed_packages: frozenset[str] | None,
-) -> bool:
-    if action.tool != "open_app":
-        return True
-    package_name = str(action.args.get("package_name") or "").strip()
-    return bool(package_name)
 
 
 async def _dispatch_prepared(
@@ -676,8 +553,6 @@ def step_fact(step: StepResult) -> dict[str, Any]:
     metadata: dict[str, Any] = {"origin": step.origin}
     if step.function_id:
         metadata["function_id"] = step.function_id
-    if step.checker_trigger:
-        metadata["checker_trigger"] = step.checker_trigger
     action_result = step.result or ActionResult(step.success, step.error)
     if action_result.extra:
         metadata["action_result"] = dict(action_result.extra)

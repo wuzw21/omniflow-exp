@@ -4,10 +4,7 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 
-from omniflow.core.model import (
-    Checker,
-    Transfer,
-)
+from omniflow.core.model import Transfer
 
 _ANDROIDWORLD_CONFIG_PATH = (
     Path(__file__).resolve().parents[2] / "config" / "paper_androidworld.json"
@@ -30,6 +27,12 @@ GUI_AGENT_RULES = (
 )
 
 DEFAULT_MAX_STEPS = int(ANDROIDWORLD_PROTOCOL["max_steps"])
+DEFAULT_CHECKER_PAGE_SIMILARITY = float(
+    ANDROIDWORLD_PROTOCOL["checker_page_similarity"]
+)
+DEFAULT_CHECKER_ACTION_CONFIDENCE = float(
+    ANDROIDWORLD_PROTOCOL["checker_action_confidence"]
+)
 
 DEFAULT_PLANNER_SYSTEM_PROMPT = (
     "You are a GUI agent. You are given a task and your action history, with screenshots. "
@@ -48,7 +51,6 @@ class Experiment:
 
 @dataclass(frozen=True)
 class PluginSet:
-    checker: Checker | None = None
     transfer: Transfer | None = None
 
 
@@ -57,6 +59,8 @@ class RuntimeSettings:
     max_steps: int = DEFAULT_MAX_STEPS
     max_fallback_steps: int | None = None
     max_function_tools: int = 8
+    checker_page_similarity: float = DEFAULT_CHECKER_PAGE_SIMILARITY
+    checker_action_confidence: float = DEFAULT_CHECKER_ACTION_CONFIDENCE
 
 
 @dataclass(frozen=True)
@@ -65,11 +69,9 @@ class OmniFlowConfig:
     plugins: PluginSet = field(default_factory=PluginSet)
 
     def resolved_plugins(self) -> PluginSet:
-        from omniflow.runtime.checker import default_checker
         from omniflow.runtime.execution import default_transfer
 
         configured = self.plugins
         return PluginSet(
-            checker=configured.checker or default_checker,
             transfer=configured.transfer or default_transfer,
         )

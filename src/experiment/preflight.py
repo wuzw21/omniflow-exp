@@ -19,12 +19,12 @@ import time
 from typing import Any
 
 from omniflow.core.trajectory import canonicalize_run_log as import_run_log
-from src.experiment.protocol import SOURCE_SEED
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
 )
+from src.experiment.protocol import SOURCE_SEED
 
 APPAGENT_OFFICIAL_REVISION = "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
 APPAGENT_REQUIRED_MODULES = (

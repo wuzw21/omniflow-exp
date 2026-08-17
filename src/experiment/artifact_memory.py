@@ -17,6 +17,15 @@ from typing import Any, Iterable, Sequence
 
 from omniflow.core.trajectory import require_complete_source_run_log
 from omniflow.transfer.runtime import load_transfer_state_catalog
+from src.experiment.mobilegpt_contract import (
+    MOBILEGPT_LEARNING_MODE,
+    MOBILEGPT_MEMORY_MANIFEST,
+    MOBILEGPT_MEMORY_SCHEMA,
+    MOBILEGPT_PREP_TYPE,
+    MOBILEGPT_SOURCE_METHOD,
+    MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
+    MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS,
+)
 from src.experiment.protocol import (
     DEVICES,
     MAX_STEPS,
@@ -25,15 +34,6 @@ from src.experiment.protocol import (
     RESULT_SUMMARY_FILE,
     SOURCE_SEED,
     TASK_SEED,
-)
-from src.experiment.mobilegpt_contract import (
-    MOBILEGPT_MEMORY_MANIFEST,
-    MOBILEGPT_LEARNING_MODE,
-    MOBILEGPT_MEMORY_SCHEMA,
-    MOBILEGPT_PREP_TYPE,
-    MOBILEGPT_SOURCE_METHOD,
-    MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
-    MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS,
 )
 from src.integrations.runlog import adapt_source_run_log
 
@@ -127,38 +127,6 @@ def _atomic_write(path: Path, content: bytes) -> None:
 
 def _load_object(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def is_skill_authored_function_provenance(value: Any) -> bool:
-    if not isinstance(value, dict):
-        return False
-    collection = value.get("semantic_collection")
-    return bool(
-        isinstance(collection, dict)
-        and collection.get("function") == "androidworld_runlog_harvester_skill"
-        and isinstance(collection.get("producer"), dict)
-        and collection["producer"].get("kind")
-        == "androidworld_runlog_harvester_skill"
-    )
-
-
-def is_skill_authored_function_store_record(value: Any) -> bool:
-    if not isinstance(value, dict):
-        return False
-    provenance_path = Path(str(value.get("provenance_path") or "")).expanduser()
-    expected_hash = str(value.get("provenance_sha256") or "").strip()
-    if (
-        not provenance_path.is_absolute()
-        or not provenance_path.is_file()
-        or not expected_hash
-        or _sha256(provenance_path) != expected_hash
-    ):
-        return False
-    try:
-        provenance = _load_object(provenance_path)
-    except (OSError, ValueError, json.JSONDecodeError):
-        return False
-    return is_skill_authored_function_provenance(provenance)
 
 
 def _resolve_index_reference(index_path: Path, value: Any) -> Path:
@@ -353,27 +321,21 @@ def _materialize_function_store(
     store_sha256: str,
     transfer_object: Path,
     transfer_sha256: str,
-    provenance_object: Path,
-    provenance_sha256: str,
 ) -> dict[str, str]:
     identity = hashlib.sha256(
-        "\0".join((store_sha256, transfer_sha256, provenance_sha256)).encode("utf-8")
+        "\0".join((store_sha256, transfer_sha256)).encode("utf-8")
     ).hexdigest()
     runtime_root = memory_root / "runtime" / "function_stores" / identity
     store_path = runtime_root / "store.json"
     transfer_path = runtime_root / "transfer_states.json"
-    provenance_path = runtime_root / "provenance_manifest.json"
     _link_object(store_object, store_path, store_sha256)
     _link_object(transfer_object, transfer_path, transfer_sha256)
-    _link_object(provenance_object, provenance_path, provenance_sha256)
     runtime_root.chmod(0o555)
     return {
         "store_path": str(store_path.resolve()),
         "store_sha256": store_sha256,
         "transfer_states_path": str(transfer_path.resolve()),
         "transfer_states_sha256": transfer_sha256,
-        "provenance_path": str(provenance_path.resolve()),
-        "provenance_sha256": provenance_sha256,
     }
 
 
@@ -899,11 +861,6 @@ def _verified_registered_result(path: Path) -> dict[str, Any]:
     official_success = row.get("official_validator_success")
     if official_success is None and "validator_success" in public_row:
         official_success = public_row.get("validator_success")
-    try:
-        validator_count = float(row.get("official_validator_task_count") or 0)
-        validator_coverage = float(row.get("official_validator_coverage_rate") or 0)
-    except (TypeError, ValueError) as error:
-        raise ValueError("registered_result_validator_coverage_invalid") from error
     conclusion = official_used and isinstance(official_success, bool)
     return {
         "payload": payload,
@@ -1376,12 +1333,16 @@ def _load_function_stores(
                 raw_item.get("transfer_states_sha256"),
                 label=f"function_transfer_states:{task}",
             )
-            provenance = _require_hashed_file(
-                raw_item.get("provenance_path"),
-                raw_item.get("provenance_sha256"),
-                label=f"function_provenance:{task}",
-            )
-            provenance_payload = _load_object(provenance)
+            provenance_payload: dict[str, Any] = {}
+            if raw_item.get("provenance_path"):
+                provenance = _require_hashed_file(
+                    raw_item.get("provenance_path"),
+                    raw_item.get("provenance_sha256"),
+                    label=f"function_provenance:{task}",
+                )
+                loaded_provenance = _load_object(provenance)
+                if isinstance(loaded_provenance, dict):
+                    provenance_payload = loaded_provenance
             store_payload = _load_object(store)
             if (
                 not isinstance(store_payload, dict)
@@ -1391,7 +1352,6 @@ def _load_function_stores(
                 raise ValueError(f"function_store_invalid:{task}:{store}")
             store_hash = _sha256(store)
             transfer_hash = _sha256(transfer)
-            provenance_hash = _sha256(provenance)
             source_run_log_hash = _sha256(source_run_log)
             raw_source_payload = _load_object(source_run_log)
             if not isinstance(raw_source_payload, dict):
@@ -1459,7 +1419,6 @@ def _load_function_stores(
                         source_run_log_hash,
                         store_hash,
                         transfer_hash,
-                        provenance_hash,
                     )
                 ).encode("utf-8")
             ).hexdigest()
@@ -1469,11 +1428,14 @@ def _load_function_stores(
                 transfer,
                 transfer_hash,
             )
-            provenance_object = _materialize_object(
-                memory_root,
-                provenance,
-                provenance_hash,
-            )
+            source_calls = store_payload.get("source_calls")
+            if not isinstance(source_calls, list) or not source_calls:
+                source_calls = provenance_payload.get("source_calls")
+            if not isinstance(source_calls, list) or not source_calls:
+                source_calls = [
+                    {"function_id": function_id, "arguments": {}}
+                    for function_id in store_payload["functions"]
+                ]
             record = records.setdefault(
                 identity,
                 {
@@ -1481,6 +1443,7 @@ def _load_function_stores(
                     "tasks": [],
                     "catalog_aliases": [],
                     "function_count": len(store_payload["functions"]),
+                    "source_calls": source_calls,
                     "source_run_log_path": str(canonical_source_run_log),
                     "source_run_log_sha256": canonical_source_run_log_hash,
                     "source_run_log_lineage": source_run_log_lineage,
@@ -1490,16 +1453,12 @@ def _load_function_stores(
                         store_sha256=store_hash,
                         transfer_object=transfer_object,
                         transfer_sha256=transfer_hash,
-                        provenance_object=provenance_object,
-                        provenance_sha256=provenance_hash,
                     ),
                 },
             )
             record["tasks"].append(task)
             record["catalog_aliases"].append(str(catalog_path))
-            quality = (
-                1 if is_skill_authored_function_provenance(provenance_payload) else 0,
-            )
+            quality = (1 if store_payload.get("source_calls") else 0,)
             candidates.setdefault(task, []).append((quality, identity))
 
     for record in records.values():
@@ -2259,8 +2218,7 @@ def _refresh_artifact_memory_unlocked(
                 "source_run_log_lineage",
                 "transfer_states_path",
                 "transfer_states_sha256",
-                "provenance_path",
-                "provenance_sha256",
+                "source_calls",
             )
         }
         for task, record in canonical_function_stores.items()

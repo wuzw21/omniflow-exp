@@ -22,6 +22,18 @@ class RecordingHost:
         return self.after
 
 
+class FixedPageEncoder:
+    def __init__(self, *similarities: float) -> None:
+        self.similarities = list(similarities or (1.0,))
+        self.calls: list[tuple[Observation, Observation]] = []
+
+    def similarity(self, source: Observation, current: Observation) -> float:
+        self.calls.append((source, current))
+        if len(self.similarities) > 1:
+            return self.similarities.pop(0)
+        return self.similarities[0]
+
+
 def test_core_executes_one_transferred_action_and_observes_once(monkeypatch) -> None:
     settle_calls: list[float] = []
 
@@ -235,9 +247,12 @@ def test_checker_step_executes_when_omnitransfer_target_is_present(monkeypatch) 
         function_id="optional_checker",
         name="Optional checker",
         description="Dismiss an optional page before continuing.",
-        steps=(
-            FunctionStep(0, checker_action, "checker-source", role="checker"),
-            FunctionStep(1, Action("wait", {"duration_ms": 0}), "after-checker"),
+        steps=(FunctionStep(0, Action("wait", {"duration_ms": 0}), "main-source"),),
+        checker_rules=(
+            {
+                "source_state_id": "checker-source",
+                "action": checker_action.to_dict(),
+            },
         ),
     )
 
@@ -248,7 +263,7 @@ def test_checker_step_executes_when_omnitransfer_target_is_present(monkeypatch) 
             mapped_action,
             reason="omnitransfer_mapped",
             detail={
-                "score": 0.4,
+                "score": 0.99,
                 "margin": 0.1,
                 "source": {"resource_id": "com.example:id/optional"},
                 "candidates": [
@@ -264,6 +279,7 @@ def test_checker_step_executes_when_omnitransfer_target_is_present(monkeypatch) 
             plugins=PluginSet(transfer=transfer),
             observation=before,
             state_loader=lambda _state_id: source,
+            page_encoder=FixedPageEncoder(0.99),
         )
     )
 
@@ -271,7 +287,69 @@ def test_checker_step_executes_when_omnitransfer_target_is_present(monkeypatch) 
     assert result.actions_executed == 2
     assert host.actions[0] == mapped_action
     assert result.detail["checker_decisions"][0]["status"] == "executed"
-    assert result.detail["trace"][0]["metadata"]["function_step_role"] == "checker"
+    assert result.detail["checker_decisions"][0]["function_id"] == (
+        "optional_checker"
+    )
+    assert result.detail["checker_decisions"][0]["source_state_id"] == (
+        "checker-source"
+    )
+    assert result.detail["checker_decisions"][0]["before_function_step"] == 0
+    assert result.detail["trace"][0]["metadata"]["origin"] == "checker"
+
+
+def test_checker_uses_the_configured_transfer_confidence_threshold(monkeypatch) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    current = Observation(
+        xml="<target/>",
+        package_name="com.example",
+        activity_name="MainActivity",
+    )
+    source = Observation(
+        xml="<source/>",
+        package_name="com.example",
+        activity_name="MainActivity",
+    )
+    host = RecordingHost(current)
+    transfer_calls: list[Action] = []
+
+    async def transfer(action, _observation, _source_state):
+        transfer_calls.append(action)
+        return TransferResult(action, detail={"score": 0.95})
+
+    function = Function(
+        function_id="strict_checker",
+        name="Strict checker",
+        description="Use the configured page threshold.",
+        steps=(FunctionStep(0, Action("wait", {"duration_ms": 0}), "main"),),
+        checker_rules=(
+            {
+                "source_state_id": "checker",
+                "action": {"tool": "click", "args": {"x": 100, "y": 200}},
+            },
+        ),
+    )
+
+    result = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=current,
+            state_loader=lambda _state_id: source,
+            page_encoder=FixedPageEncoder(0.99),
+            checker_action_confidence=0.96,
+        )
+    )
+
+    assert result.success is True
+    assert transfer_calls == [
+        Action("click", {"x": 100, "y": 200}),
+        Action("wait", {"duration_ms": 0}),
+    ]
+    assert host.actions == [Action("wait", {"duration_ms": 0})]
+    assert result.detail["checker_decisions"][0]["reason"] == (
+        "checker_action_confidence_too_low"
+    )
 
 
 def test_checker_step_skips_when_omnitransfer_target_is_not_present(monkeypatch) -> None:
@@ -283,32 +361,22 @@ def test_checker_step_skips_when_omnitransfer_target_is_not_present(monkeypatch)
         function_id="optional_checker",
         name="Optional checker",
         description="Dismiss an optional page before continuing.",
-        steps=(
-            FunctionStep(
-                0,
-                Action("click", {"x": 100, "y": 200}),
-                "checker-source",
-                role="checker",
-            ),
-            FunctionStep(1, Action("wait", {"duration_ms": 0}), "after-checker"),
+        steps=(FunctionStep(0, Action("wait", {"duration_ms": 0}), "main-source"),),
+        checker_rules=(
+            {
+                "source_state_id": "checker-source",
+                "action": {
+                    "tool": "click",
+                    "args": {"x": 100, "y": 200},
+                },
+            },
         ),
     )
 
     async def transfer(_action, _observation, _source_state):
         if _action.tool == "wait":
             return TransferResult(_action)
-        return TransferResult(
-            Action("click", {"x": 300, "y": 400}),
-            reason="omnitransfer_mapped",
-            detail={
-                "score": 0.99,
-                "margin": 0.99,
-                "source": {"resource_id": "com.example:id/optional"},
-                "candidates": [
-                    {"resource_id": "com.example:id/unrelated", "score": 0.99}
-                ],
-            },
-        )
+        return TransferResult(None, reason="omnitransfer_failed")
 
     result = asyncio.run(
         execution.execute_function(
@@ -317,6 +385,7 @@ def test_checker_step_skips_when_omnitransfer_target_is_not_present(monkeypatch)
             plugins=PluginSet(transfer=transfer),
             observation=before,
             state_loader=lambda _state_id: source,
+            page_encoder=FixedPageEncoder(0.99),
         )
     )
 
@@ -325,69 +394,226 @@ def test_checker_step_skips_when_omnitransfer_target_is_not_present(monkeypatch)
     assert host.actions == [Action("wait", {"duration_ms": 0})]
     assert result.detail["checker_decisions"][0]["status"] == "skipped"
     assert result.detail["checker_decisions"][0]["reason"] == (
-        "source_target_not_present"
+        "omnitransfer_failed"
     )
 
 
-def test_navigation_checker_runs_only_when_next_required_target_is_absent(
-    monkeypatch,
-) -> None:
+def test_checker_does_not_execute_a_low_confidence_mapping(monkeypatch) -> None:
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
-    before = Observation(xml="<launcher/>", package_name="com.launcher")
-    source = Observation(xml="<source/>", package_name="com.launcher")
-    host = RecordingHost(before)
-    swipe = Action(
-        "swipe",
-        {
-            "direction": "up",
-            "x1": 540,
-            "y1": 1400,
-            "x2": 540,
-            "y2": 400,
-        },
-    )
-    chrome = Action("click", {"x": 700, "y": 700})
-    mapped_chrome = Action("click", {"x": 600, "y": 600})
+    current = Observation(xml="<wrong/>", package_name="com.other")
+    source = Observation(xml="<source/>", package_name="com.example")
+    host = RecordingHost(current)
+    transfer_calls: list[Action] = []
+
+    async def transfer(action, _observation, _source_state):
+        transfer_calls.append(action)
+        if action.tool == "wait":
+            return TransferResult(action)
+        return TransferResult(action, detail={"score": 0.2})
+
     function = Function(
-        function_id="open_with_optional_drawer",
-        name="Open with optional drawer",
-        description="Open an app, revealing the drawer only when needed.",
-        steps=(
-            FunctionStep(0, swipe, "drawer-source", role="checker"),
-            FunctionStep(1, chrome, "chrome-source"),
+        function_id="scoped_checker",
+        name="Scoped checker",
+        description="Run a checker only on its registered source page.",
+        steps=(FunctionStep(0, Action("wait", {"duration_ms": 0}), "main"),),
+        checker_rules=(
+            {
+                "source_state_id": "checker",
+                "action": {"tool": "click", "args": {"x": 100, "y": 200}},
+            },
         ),
     )
-    transfer_calls = 0
-
-    async def transfer(_action, _observation, _source_state):
-        nonlocal transfer_calls
-        transfer_calls += 1
-        resource_id = "voice-search" if transfer_calls == 1 else "chrome"
-        return TransferResult(
-            mapped_chrome,
-            reason="omnitransfer_mapped",
-            detail={
-                "score": 0.99,
-                "margin": 0.99,
-                "source": {"resource_id": "chrome"},
-                "candidates": [{"resource_id": resource_id, "score": 0.99}],
-            },
-        )
 
     result = asyncio.run(
         execution.execute_function(
             function,
             host=host,
             plugins=PluginSet(transfer=transfer),
-            observation=before,
+            observation=current,
             state_loader=lambda _state_id: source,
+            page_encoder=FixedPageEncoder(0.99),
         )
     )
 
     assert result.success is True
-    assert result.actions_executed == 2
-    assert host.actions == [swipe, mapped_chrome]
-    assert result.detail["checker_decisions"][0]["status"] == "executed"
+    assert transfer_calls == [
+        Action("click", {"x": 100, "y": 200}),
+        Action("wait", {"duration_ms": 0}),
+    ]
     assert result.detail["checker_decisions"][0]["reason"] == (
-        "required_target_absent"
+        "checker_action_confidence_too_low"
     )
+
+
+def test_page_mismatched_checker_is_checked_again_before_the_next_action(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    checker_page = Observation(xml="<checker/>", package_name="com.example")
+    source = Observation(xml="<source/>", package_name="com.example")
+    host = RecordingHost(checker_page)
+    checker_action = Action("click", {"x": 100, "y": 200})
+    mapped_checker_action = Action("click", {"x": 300, "y": 400})
+    checker_calls = 0
+
+    async def transfer(action, _observation, _source_state):
+        nonlocal checker_calls
+        if action == checker_action:
+            checker_calls += 1
+            return TransferResult(
+                mapped_checker_action,
+                detail={"score": 0.99},
+            )
+        return TransferResult(action)
+
+    function = Function(
+        function_id="rechecked_checker",
+        name="Rechecked checker",
+        description="Keep a skipped checker eligible for the next action.",
+        steps=(
+            FunctionStep(0, Action("wait", {"duration_ms": 0}), "main-0"),
+            FunctionStep(1, Action("wait", {"duration_ms": 0}), "main-1"),
+        ),
+        checker_rules=(
+            {"source_state_id": "checker", "action": checker_action.to_dict()},
+        ),
+    )
+
+    result = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=checker_page,
+            state_loader=lambda _state_id: source,
+            page_encoder=FixedPageEncoder(0.2, 0.99),
+        )
+    )
+
+    assert result.success is True
+    assert [item["status"] for item in result.detail["checker_decisions"]] == [
+        "skipped",
+        "executed",
+    ]
+    assert checker_calls == 1
+    assert host.actions.count(mapped_checker_action) == 1
+
+
+def test_checker_requires_matching_source_page_before_action_transfer(monkeypatch) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    current = Observation(xml="<unrelated/>", package_name="com.example")
+    source = Observation(xml="<dialog/>", package_name="com.example")
+    host = RecordingHost(current)
+    transfer_calls: list[Action] = []
+
+    async def transfer(action, _observation, _source_state):
+        transfer_calls.append(action)
+        return TransferResult(action, detail={"score": 0.99})
+
+    function = Function(
+        function_id="page_scoped_checker",
+        name="Page-scoped checker",
+        description="Run the registered checker only on its source page.",
+        steps=(FunctionStep(0, Action("wait", {"duration_ms": 0}), "main"),),
+        checker_rules=(
+            {
+                "source_state_id": "dialog",
+                "action": {"tool": "click", "args": {"x": 100, "y": 200}},
+            },
+        ),
+    )
+
+    result = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=current,
+            state_loader=lambda _state_id: source,
+            page_encoder=FixedPageEncoder(0.75),
+            checker_page_similarity=0.9,
+        )
+    )
+
+    assert result.success is True
+    assert transfer_calls == [Action("wait", {"duration_ms": 0})]
+    assert result.detail["checker_decisions"][0]["status"] == "skipped"
+    assert result.detail["checker_decisions"][0]["reason"] == (
+        "checker_page_similarity_too_low"
+    )
+    assert result.detail["checker_decisions"][0]["page"] == {
+        "score": 0.75,
+        "minimum_score": 0.9,
+    }
+
+
+def test_function_without_registered_checker_executes_no_checker(monkeypatch) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    current = Observation(xml="<page/>", package_name="com.example")
+    host = RecordingHost(current)
+    function = Function(
+        function_id="no_checker",
+        name="No checker",
+        description="A Function receives only its own registered checkers.",
+        steps=(FunctionStep(0, Action("wait", {"duration_ms": 0}), "main"),),
+        checker_rules=(),
+    )
+
+    async def transfer(action, _observation, _source_state):
+        return TransferResult(action)
+
+    result = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=current,
+        )
+    )
+
+    assert result.success is True
+    assert result.detail["checker_decisions"] == []
+    assert host.actions == [Action("wait", {"duration_ms": 0})]
+
+
+def test_checker_rules_reject_actions_without_transferable_targets() -> None:
+    from omniflow.runtime.checker import validate_checker_rule
+
+    try:
+        validate_checker_rule(
+            {
+                "source_state_id": "drawer-source",
+                "action": {
+                    "tool": "swipe",
+                    "args": {
+                        "direction": "up",
+                        "x1": 540,
+                        "y1": 900,
+                        "x2": 540,
+                        "y2": 400,
+                    },
+                },
+            }
+        )
+    except ValueError as error:
+        assert str(error) == "checker_action_requires_transfer_target:swipe"
+    else:
+        raise AssertionError("unanchored checker action must be rejected")
+
+
+def test_checker_rule_contains_only_source_state_and_source_action() -> None:
+    from omniflow.runtime.checker import validate_checker_rule
+
+    rule = {
+        "source_state_id": "dialog-source",
+        "action": {"tool": "click", "args": {"x": 100, "y": 200}},
+    }
+
+    assert validate_checker_rule(rule) == rule
+
+    try:
+        validate_checker_rule({**rule, "when": {"step": 3}})
+    except ValueError as error:
+        assert str(error) == "checker_rule_contract_invalid"
+    else:
+        raise AssertionError("checker rules must not contain trigger DSL")

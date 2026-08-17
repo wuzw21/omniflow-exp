@@ -50,7 +50,7 @@ def test_core_has_one_planner_implementation() -> None:
     assert VLMPlanner.__name__ == "VLMPlanner"
 
 
-def test_successful_online_run_requests_registration_after_run() -> None:
+def test_successful_online_run_does_not_create_a_second_save_path() -> None:
     payload = _run_result(
         RunResult(
             True,
@@ -66,12 +66,7 @@ def test_successful_online_run_requests_registration_after_run() -> None:
     )
 
     assert payload["recall_hit"] is False
-    assert payload["post_run_actions"] == [
-        {
-            "name": "save_function",
-            "arguments": {"run_id": "run-1", "agent_visible": True},
-        }
-    ]
+    assert "post_run_actions" not in payload
 
 
 def test_recalled_run_is_not_registered_again() -> None:

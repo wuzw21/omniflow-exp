@@ -17,14 +17,13 @@ import time
 from typing import Any, Callable, Iterator, Sequence
 import xml.etree.ElementTree as ET
 
-from omniflow.core.trajectory import observation_xml
+from src.experiment.mobilegpt_contract import MOBILEGPT_AUDIT_SCHEMA
 from src.integrations.android_world.host import (
     androidworld_observation_package,
     androidworld_observation_xml,
 )
-from src.experiment.mobilegpt_contract import MOBILEGPT_AUDIT_SCHEMA
 from src.integrations.mobilegpt_runtime import mobilegpt_compatible_xml
-from src.integrations.runlog import infer_input_text_target, import_run_log
+from src.integrations.runlog import import_run_log, infer_input_text_target
 
 CONVERSION_SOURCE_SCHEMA = "omniflow.mobilegpt-runlog-conversion-source.v1"
 CONVERSION_MODE_DIRECT = "runlog_direct"

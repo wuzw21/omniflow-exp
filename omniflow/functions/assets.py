@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
-import math
 from pathlib import Path
 import re
 from typing import Any, Callable, Iterable
@@ -11,12 +10,11 @@ import xml.etree.ElementTree as ET
 from omniflow.core.model import Action, Function, FunctionStep
 from omniflow.core.schemas import canonicalize_action, load_canonical_action_schema
 from omniflow.core.trajectory import (
-    canonicalize_run_log,
     observation_display,
     observation_xml,
     state_id,
 )
-from omniflow.runlog import project_androidworld_step_actions
+from omniflow.runlog import import_run_log_evidence, project_androidworld_step_actions
 from omniflow.runtime.checker import validate_checker_rule
 from omniflow.runtime.semantic_grounding import semantic_target_at_point
 
@@ -42,12 +40,6 @@ _TARGET_PATH = re.compile(
     r"(?P<tail>(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])+)$"
 )
 _PATH_TOKEN = re.compile(r"\.([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)]")
-_PARAMETER_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
-_PARAMETERIZABLE_ACTION_ARGS = {
-    "click": frozenset({"target_description"}),
-    "input_text": frozenset({"text"}),
-    "open_app": frozenset({"package_name"}),
-}
 
 
 def parse_function_artifact(value: dict[str, Any]) -> Function:
@@ -63,11 +55,10 @@ def parse_function_artifact(value: dict[str, Any]) -> Function:
         raise ValueError("function_steps_required")
     canonical_steps: list[dict[str, Any]] = []
     for index, step in enumerate(raw_steps):
-        if not isinstance(step, dict) or set(step) - {
+        if not isinstance(step, dict) or set(step) != {
             "step_index",
             "source_state_id",
             "action",
-            "role",
         }:
             raise ValueError("function_step_contract_invalid")
         if step.get("step_index") != index:
@@ -83,15 +74,11 @@ def parse_function_artifact(value: dict[str, Any]) -> Function:
             raise ValueError("function_action_args_must_be_object")
         if "target" in action["args"]:
             raise ValueError(f"function_action_target_forbidden:{index}")
-        role = str(step.get("role") or "function")
-        if role not in {"function", "checker"}:
-            raise ValueError("function_step_role_invalid")
         canonical_steps.append(
             {
                 "step_index": index,
                 "source_state_id": str(step["source_state_id"]),
                 "action": canonicalize_action(action, replayable_only=True),
-                **({"role": role} if role != "function" else {}),
             }
         )
     canonical_value = dict(value)
@@ -123,13 +110,37 @@ def validate_function_artifact(function: Function) -> None:
     if not function.steps:
         raise ValueError("function_steps_required")
     for step in function.steps:
-        if step.role not in {"function", "checker"}:
-            raise ValueError("function_step_role_invalid")
         if (
             canonicalize_action(step.action.to_dict(), replayable_only=True)
             != step.action.to_dict()
         ):
             raise ValueError("function_action_not_canonical")
+    formal_actions = {
+        (
+            step.source_state_id,
+            json.dumps(
+                step.action.to_dict(),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+        for step in function.steps
+    }
+    for rule in function.checker_rules:
+        checker = (
+            str(rule.get("source_state_id") or ""),
+            json.dumps(
+                canonicalize_action(rule.get("action"), replayable_only=True),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+        if checker in formal_actions:
+            raise ValueError(
+                f"function_checker_duplicates_formal_action:{function.id}"
+            )
     schema = function.input_schema
     if not isinstance(schema, dict) or schema.get("type") != "object":
         raise ValueError("function_parameters_must_be_object_schema")
@@ -158,7 +169,6 @@ def bind_function(function: Function, arguments: dict[str, Any]) -> Function:
             step_index=step.step_index,
             source_state_id=step.source_state_id,
             action=Action(step.action.tool, _copy_value(step.action.args)),
-            role=step.role,
         )
         for step in function.steps
     ]
@@ -334,6 +344,7 @@ class FunctionStore:
     ):
         self.path = Path(path)
         self.functions: dict[str, Function] = {}
+        self.source_calls: list[dict[str, Any]] = []
         self.load_errors: dict[str, str] = {}
         self._load()
         self._seed(seed_functions, replace=replace_seeded)
@@ -357,49 +368,33 @@ class FunctionStore:
     def get_function(self, function_id: str) -> Function | None:
         return self.functions.get(str(function_id or "").strip())
 
-    def put_function(self, value: Function | dict) -> Function:
-        function = value if isinstance(value, Function) else parse_function_artifact(value)
-        validate_function_artifact(function)
-        self.functions[function.id] = function
-        self.load_errors.clear()
-        self.save()
-        return function
-
     def delete_function(self, function_id: str) -> bool:
         normalized = str(function_id or "").strip()
         if normalized not in self.functions:
             return False
         del self.functions[normalized]
         self.load_errors.clear()
-        self.save()
+        self.source_calls = [
+            call
+            for call in self.source_calls
+            if call["function_id"] != normalized
+        ]
+        _write_store(self.path, self.functions, self.source_calls)
         return True
 
     def clear_functions(self) -> int:
         deleted = len(self.functions)
         self.functions.clear()
+        self.source_calls.clear()
         self.load_errors.clear()
-        self.save()
+        _write_store(self.path, self.functions, self.source_calls)
         return deleted
 
     def reload(self) -> None:
         self.functions = {}
+        self.source_calls = []
         self.load_errors = {}
         self._load()
-
-    def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "schema_version": STORE_VERSION,
-            "functions": {
-                key: value.to_dict() for key, value in sorted(self.functions.items())
-            },
-        }
-        temporary = self.path.with_suffix(f"{self.path.suffix}.tmp")
-        temporary.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        temporary.replace(self.path)
 
     def _load(self) -> None:
         if not self.path.exists():
@@ -410,6 +405,15 @@ class FunctionStore:
         raw_functions = payload.get("functions")
         if not isinstance(raw_functions, dict):
             raise ValueError("function_store_functions_must_be_object")
+        raw_source_calls = payload.get("source_calls") or []
+        if not isinstance(raw_source_calls, list) or any(
+            not isinstance(call, dict)
+            or set(call) != {"function_id", "arguments"}
+            or not str(call.get("function_id") or "").strip()
+            or not isinstance(call.get("arguments"), dict)
+            for call in raw_source_calls
+        ):
+            raise ValueError("function_store_source_calls_invalid")
         loaded: dict[str, Function] = {}
         load_errors: dict[str, str] = {}
         for key, value in raw_functions.items():
@@ -422,6 +426,14 @@ class FunctionStore:
                 continue
             loaded[function.id] = function
         self.functions = loaded
+        self.source_calls = [
+            {
+                "function_id": str(call["function_id"]),
+                "arguments": _copy_value(call["arguments"]),
+            }
+            for call in raw_source_calls
+            if str(call["function_id"]) in loaded
+        ]
         self.load_errors = load_errors
 
     def _seed(
@@ -440,46 +452,120 @@ class FunctionStore:
             self.functions[function.id] = function
             changed = True
         if changed:
-            self.save()
+            _write_store(self.path, self.functions, self.source_calls)
 
 
-def compile_runlog_to_store(
+def _write_store(
+    path: Path,
+    functions: dict[str, Function],
+    source_calls: Iterable[dict[str, Any]] = (),
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": STORE_VERSION,
+        "functions": {
+            key: value.to_dict() for key, value in sorted(functions.items())
+        },
+        "source_calls": list(source_calls),
+    }
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def save_function(
     run_log: str | Path | dict[str, Any],
-    output_root: str | Path,
+    store_path: str | Path,
     *,
-    function_bundle: dict[str, Any] | None = None,
-    model: str | None = None,
-    client: Any | None = None,
-    prompt: str | None = None,
-    timeout: float = 120.0,
-    source_states: str | Path | dict[str, Any] | None = None,
-    state_loader: Any | None = None,
+    functions: list[dict[str, Any]] | None = None,
+    arguments: dict[str, Any] | None = None,
+    enhance: bool = False,
+    complete_json: Callable[[str], str] | None = None,
+    instruction: str = "",
 ) -> dict[str, Any]:
-    """Register strict v2 Functions and their referenced source states."""
+    """Create or replace RunLog-grounded Functions through the only writer."""
     from omniflow.transfer.runtime import (
         TRANSFER_STATE_CATALOG_FILENAME,
         TRANSFER_STATE_CATALOG_VERSION,
         load_transfer_state_catalog,
     )
 
-    root = Path(output_root).expanduser().resolve()
-    if root.exists() and any(root.iterdir()):
-        raise FileExistsError(f"immutable output version already exists: {root}")
+    destination = Path(store_path).expanduser().resolve()
+    root = destination.parent
 
+    evidence_root: Path | None = None
     if isinstance(run_log, dict):
         raw = dict(run_log)
     else:
-        value = json.loads(Path(run_log).expanduser().resolve().read_text())
+        run_log_path = Path(run_log).expanduser().resolve()
+        value = json.loads(run_log_path.read_text())
         if not isinstance(value, dict):
             raise ValueError("source_runlog_must_be_object")
         raw = value
-    payload = canonicalize_run_log(raw)
+        evidence_root = run_log_path.parent
+    raw_steps = raw.get("steps")
+    compact_trace = (
+        raw.get("schema_version") == "omniflow.canonical_run_log.v1"
+        and isinstance(raw_steps, list)
+        and bool(raw_steps)
+        and all(
+            isinstance(step, dict)
+            and "before_state_id" in step
+            and isinstance(step.get("action"), dict)
+            and "tool" in step["action"]
+            for step in raw_steps
+        )
+    )
+    if raw.get("schema_version") != "omniflow.run_log.v1" and not compact_trace:
+        if evidence_root is None:
+            raise ValueError("legacy_run_log_path_required")
+        from src.integrations.runlog import adapt_source_run_log
+
+        legacy_payload = (
+            raw.get("payload")
+            if isinstance(raw.get("payload"), dict)
+            else raw
+        )
+        if isinstance(legacy_payload.get("run_log"), dict):
+            legacy_payload = legacy_payload["run_log"]
+        extra = raw.get("extra") if isinstance(raw.get("extra"), dict) else {}
+        raw = adapt_source_run_log(
+            raw,
+            task_name=str(
+                legacy_payload.get("androidworld_task")
+                or extra.get("androidworld_task")
+                or evidence_root.name
+            ),
+            task_parameters=(
+                dict(legacy_payload.get("androidworld_params"))
+                if isinstance(legacy_payload.get("androidworld_params"), dict)
+                else dict(extra.get("androidworld_params"))
+                if isinstance(extra.get("androidworld_params"), dict)
+                else {}
+            ),
+            seed=(
+                int(extra["seed"])
+                if isinstance(extra.get("seed"), int)
+                and not isinstance(extra.get("seed"), bool)
+                else None
+            ),
+            source_path=evidence_root / run_log_path.name,
+            screenshot_roots=(evidence_root, evidence_root.parent),
+            require_screenshots=True,
+        )
+        evidence_root = None
+    payload, source_catalog = import_run_log_evidence(
+        raw,
+        evidence_root=evidence_root,
+    )
     goal = str(payload.get("goal") or "").strip()
     if not goal:
         raise ValueError("successful_source_goal_required")
 
     steps: list[dict[str, Any]] = []
-    recovery_examples: list[dict[str, Any]] = []
     for step in payload["steps"]:
         if not isinstance(step, dict):
             continue
@@ -487,42 +573,51 @@ def compile_runlog_to_store(
         result = step.get("result") if isinstance(step.get("result"), dict) else {}
         if result.get("success") is not True:
             continue
-        observation = step["observation"]
-        before_state_id = state_id(observation)
-        next_observation = step.get("next_observation")
-        after_state_id = state_id(
-            next_observation
-            if isinstance(next_observation, dict)
-            else observation
-        )
-        action_type = str(step.get("action", {}).get("action_type") or "")
-        if action_type in {"answer", "status", "unknown"}:
-            continue
-        projected_actions = project_androidworld_step_actions(step)
-        if metadata.get("origin") == "checker":
-            for action in projected_actions:
-                example = {
-                    "source_state_id": before_state_id,
-                    "action": action,
-                    "metadata": {
-                        key: metadata[key]
-                        for key in ("thinking", "summary")
-                        if str(metadata.get(key) or "").strip()
-                    },
-                }
-                trigger = str(metadata.get("checker_trigger") or "").strip()
-                if trigger:
-                    example["trigger"] = trigger
-                recovery_examples.append(example)
-            continue
+        observation = step.get("observation")
+        if isinstance(observation, dict):
+            before_state_id = state_id(observation)
+            next_observation = step.get("next_observation")
+            after_state_id = state_id(
+                next_observation
+                if isinstance(next_observation, dict)
+                else observation
+            )
+            action_type = str(step.get("action", {}).get("action_type") or "")
+            if action_type in {"answer", "status", "unknown"}:
+                continue
+            projected_actions = project_androidworld_step_actions(step)
+            source_page = _source_page_summary(observation)
+        else:
+            before_state_id = str(step.get("before_state_id") or "").strip()
+            after_state_id = str(step.get("after_state_id") or "").strip()
+            try:
+                projected_actions = [
+                    canonicalize_action(
+                        step.get("action"),
+                        replayable_only=True,
+                        allow_non_action=True,
+                    )
+                ]
+            except ValueError as error:
+                if str(error).startswith("canonical_action_tool_not_replayable:"):
+                    continue
+                raise
+            source_page = _source_transfer_state_summary(
+                source_catalog["states"].get(before_state_id)
+            )
         action_metadata = {
             key: metadata[key]
             for key in ("summary", "thinking", "action_description")
             if str(metadata.get(key) or "").strip()
         }
+        action_metadata["source_page"] = source_page
         for action in projected_actions:
             step_metadata = dict(action_metadata)
-            semantic_target = _projected_semantic_target(action, observation)
+            semantic_target = (
+                _projected_semantic_target(action, observation)
+                if isinstance(observation, dict)
+                else ""
+            )
             if semantic_target:
                 step_metadata["semantic_target"] = semantic_target
             steps.append(
@@ -545,60 +640,42 @@ def compile_runlog_to_store(
         "success": True,
         "steps": steps,
     }
-    usage = {
-        "model_calls": 0,
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-        "total_tokens": 0,
-    }
-    if model is not None or client is not None or prompt is not None:
-        raise ValueError("runtime_function_authoring_removed_use_skill_bundle")
-    _ = timeout
-    if function_bundle is None:
-        raise ValueError("function_bundle_required_from_authoring_skill")
-    authored = {
-        "reason": "Registered Function bundle produced by the authoring skill.",
-        "bundle": json.loads(json.dumps(function_bundle, ensure_ascii=False)),
-    }
-    if not isinstance(authored, dict) or set(authored) != {"reason", "bundle"}:
-        raise ValueError("function_author_response_contract_invalid")
-    if not isinstance(authored["reason"], str):
-        raise ValueError("function_author_reason_must_be_string")
-
-    bundle = authored["bundle"]
-    if bundle is None:
-        raise ValueError("functions_required")
-    if not isinstance(bundle, dict):
-        raise ValueError("function_author_bundle_must_be_object_or_null")
-    if set(bundle) != {
-        "schema_version",
-        "run_id",
-        "arguments",
-        "functions",
-    }:
-        raise ValueError("function_bundle_contract_invalid")
-    if bundle.get("schema_version") != "omniflow.function-bundle.v2":
-        raise ValueError("unsupported_function_bundle_version")
-    if str(bundle.get("run_id") or "") != facts["run_id"]:
-        raise ValueError("function_bundle_run_id_mismatch")
-    raw_functions = bundle.get("functions")
-    arguments_by_function = bundle.get("arguments")
-    if not isinstance(raw_functions, list) or not raw_functions:
-        raise ValueError("function_bundle_functions_required")
-    if not isinstance(arguments_by_function, dict):
-        raise ValueError("function_bundle_source_arguments_invalid")
-    functions = [parse_function_artifact(value) for value in raw_functions]
-    _validate_checker_evidence(functions, recovery_examples)
-    function_ids = [function.id for function in functions]
+    if enhance and complete_json is None:
+        raise ValueError("function_enhancer_required")
+    if functions is not None and not isinstance(functions, list):
+        raise ValueError("functions_invalid")
+    if arguments is not None and not isinstance(arguments, dict):
+        raise ValueError("function_arguments_invalid")
+    if enhance:
+        raw_functions, generated_arguments = _author_functions(
+            facts,
+            complete_json,
+            instruction=instruction,
+            existing_functions=functions or [],
+        )
+        arguments_by_function = {
+            **generated_arguments,
+            **dict(arguments or {}),
+        }
+    else:
+        if not functions:
+            raise ValueError("functions_required")
+        raw_functions = json.loads(json.dumps(functions, ensure_ascii=False))
+        arguments_by_function = dict(arguments or {})
+    parsed_functions = [parse_function_artifact(value) for value in raw_functions]
+    _validate_checker_evidence(parsed_functions, payload)
+    function_ids = [function.id for function in parsed_functions]
     if len(function_ids) != len(set(function_ids)):
-        raise ValueError("function_bundle_duplicate_function_id")
+        raise ValueError("duplicate_function_id")
     if set(arguments_by_function) - set(function_ids):
-        raise ValueError("function_bundle_source_arguments_unknown_function")
-    for function in functions:
+        raise ValueError("function_arguments_unknown_function")
+    saved_source_calls: list[dict[str, Any]] = []
+    exact_source_coverages: list[tuple[int, ...]] = []
+    for function in parsed_functions:
         raw_arguments = arguments_by_function.get(function.id, {})
         calls = raw_arguments if isinstance(raw_arguments, list) else [raw_arguments]
         if not calls or any(not isinstance(arguments, dict) for arguments in calls):
-            raise ValueError("function_bundle_source_arguments_invalid")
+            raise ValueError("function_arguments_invalid")
         exact_fallback_grounding = False
         for arguments in calls:
             bound = bind_function(function, arguments)
@@ -612,53 +689,33 @@ def compile_runlog_to_store(
                 steps,
                 allow_semantic_relocation=False,
             )
+            exact_coverage = _function_source_indices(
+                bound,
+                steps,
+                allow_semantic_relocation=False,
+            )
+            if exact_coverage is not None:
+                exact_source_coverages.append(exact_coverage)
+            saved_source_calls.append(
+                {
+                    "function_id": function.id,
+                    "arguments": _copy_value(arguments),
+                }
+            )
         if not exact_fallback_grounding:
             raise ValueError(
                 "function_action_not_grounded:"
                 f"{function.id}:{function.steps[0].step_index}"
             )
+    if enhance and tuple(range(len(steps))) not in exact_source_coverages:
+        raise ValueError("function_enhancement_full_trajectory_required")
 
-    if source_states is not None and state_loader is not None:
-        raise ValueError("function_source_state_provider_ambiguous")
-    referenced_state_ids = _referenced_source_state_ids(functions)
-    states: dict[str, dict[str, Any]]
-    source_catalog_run_id = facts["run_id"]
-    if source_states is not None:
-        if isinstance(source_states, (str, Path)):
-            source_catalog_path = Path(source_states).expanduser().resolve()
-            raw_catalog = json.loads(source_catalog_path.read_text(encoding="utf-8"))
-            if not isinstance(raw_catalog, dict):
-                raise ValueError("function_source_state_catalog_invalid")
-            source_catalog_run_id = str(raw_catalog.get("run_id") or "").strip()
-            states = load_transfer_state_catalog(source_catalog_path)
-        elif isinstance(source_states, dict):
-            raw_states = source_states.get("states")
-            if raw_states is None:
-                raw_states = source_states
-            elif source_states.get("schema_version") != (
-                TRANSFER_STATE_CATALOG_VERSION
-            ):
-                raise ValueError("function_source_state_catalog_invalid")
-            if not isinstance(raw_states, dict):
-                raise ValueError("function_source_state_catalog_invalid")
-            source_catalog_run_id = str(
-                source_states.get("run_id") or facts["run_id"]
-            ).strip()
-            states = {
-                str(state_id): _normalize_source_state(value, str(state_id))
-                for state_id, value in raw_states.items()
-            }
-        else:
-            raise ValueError("function_source_state_catalog_invalid")
-    elif callable(state_loader):
-        states = {
-            state_id: _normalize_source_state(state_loader(state_id), state_id)
-            for state_id in referenced_state_ids
-        }
-    else:
-        raise ValueError("function_source_states_required")
-    if source_catalog_run_id != facts["run_id"]:
-        raise ValueError("function_source_state_run_id_mismatch")
+    referenced_state_ids = _referenced_source_state_ids(parsed_functions)
+    raw_states = source_catalog["states"]
+    states = {
+        str(source_state_id): _normalize_source_state(value, str(source_state_id))
+        for source_state_id, value in raw_states.items()
+    }
     missing_state_ids = [
         state_id for state_id in referenced_state_ids if state_id not in states
     ]
@@ -670,17 +727,24 @@ def compile_runlog_to_store(
         state_id: states[state_id] for state_id in referenced_state_ids
     }
     root.mkdir(parents=True, exist_ok=True)
-    store_path = root / "store.json"
-    store = FunctionStore(store_path)
-    for function in functions:
-        store.put_function(function)
     transfer_state_catalog_path = root / TRANSFER_STATE_CATALOG_FILENAME
-    transfer_state_catalog_path.write_text(
+    existing_states = load_transfer_state_catalog(transfer_state_catalog_path)
+    merged_states = {**existing_states, **frozen_states}
+    state_run_id = facts["run_id"]
+    if transfer_state_catalog_path.is_file():
+        existing_catalog = json.loads(
+            transfer_state_catalog_path.read_text(encoding="utf-8")
+        )
+        existing_run_id = str(existing_catalog.get("run_id") or "").strip()
+        if existing_run_id and existing_run_id != state_run_id:
+            state_run_id = "multiple-runlogs"
+    temporary_states = transfer_state_catalog_path.with_suffix(".json.tmp")
+    temporary_states.write_text(
         json.dumps(
             {
                 "schema_version": TRANSFER_STATE_CATALOG_VERSION,
-                "run_id": facts["run_id"],
-                "states": frozen_states,
+                "run_id": state_run_id,
+                "states": merged_states,
             },
             ensure_ascii=False,
             indent=2,
@@ -688,27 +752,30 @@ def compile_runlog_to_store(
         + "\n",
         encoding="utf-8",
     )
+    store = FunctionStore(destination)
+    for function in parsed_functions:
+        store.functions[function.id] = function
+    replaced_ids = set(function_ids)
+    store.source_calls = [
+        call
+        for call in store.source_calls
+        if call["function_id"] not in replaced_ids
+    ] + saved_source_calls
+    _write_store(destination, store.functions, store.source_calls)
+    temporary_states.replace(transfer_state_catalog_path)
     report = {
-        "schema_version": "omniflow.androidworld.function-gate.v2",
+        "schema_version": "omniflow.function-save.v1",
         "success": True,
-        "live_probe_allowed": True,
-        "classification": "ready_for_live_probe",
-        "reason": authored["reason"],
-        "model": None,
-        "prompt_sha256": None,
-        "store_path": str(store_path),
+        "store_path": str(destination),
         "transfer_state_catalog": str(transfer_state_catalog_path),
-        "transfer_state_count": len(frozen_states),
+        "transfer_state_count": len(merged_states),
         "function_ids": function_ids,
         "function_count": len(function_ids),
         "source_arguments": json.loads(
             json.dumps(arguments_by_function, ensure_ascii=False)
         ),
-        **usage,
+        "enhanced": bool(enhance),
     }
-    (root / "compile_report.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2) + "\n"
-    )
     return report
 
 
@@ -809,23 +876,74 @@ def _action_grounded(
     *,
     allow_semantic_relocation: bool,
 ) -> bool:
-    expected = [step.action.to_dict() for step in function.steps]
-    width = len(expected)
-    return any(
-        all(
-            _grounded_action_matches(
-                expected_action,
-                source_step,
-                allow_semantic_relocation=allow_semantic_relocation,
-            )
-            for expected_action, source_step in zip(
-                expected,
-                source_steps[start : start + width],
-                strict=True,
-            )
+    return _function_source_indices(
+        function,
+        source_steps,
+        allow_semantic_relocation=allow_semantic_relocation,
+    ) is not None
+
+
+def _function_source_indices(
+    function: Any,
+    source_steps: list[dict[str, Any]],
+    *,
+    allow_semantic_relocation: bool,
+) -> tuple[int, ...] | None:
+    formal_indices: list[int] = []
+    cursor = 0
+    for expected_step in function.steps:
+        matched_index = next(
+            (
+                index
+                for index in range(cursor, len(source_steps))
+                if (
+                    allow_semantic_relocation
+                    or str(source_steps[index].get("before_state_id") or "")
+                    == expected_step.source_state_id
+                )
+                and _grounded_action_matches(
+                    expected_step.action.to_dict(),
+                    source_steps[index],
+                    allow_semantic_relocation=allow_semantic_relocation,
+                )
+            ),
+            None,
         )
-        for start in range(len(source_steps) - width + 1)
-    )
+        if matched_index is None:
+            return None
+        formal_indices.append(matched_index)
+        cursor = matched_index + 1
+
+    used = set(formal_indices)
+    checker_indices: list[int] = []
+    for rule in function.checker_rules:
+        expected_action = canonicalize_action(rule.get("action"), replayable_only=True)
+        source_state_id = str(rule.get("source_state_id") or "")
+        matched_index = next(
+            (
+                index
+                for index, source_step in enumerate(source_steps)
+                if index not in used
+                and str(source_step.get("before_state_id") or "") == source_state_id
+                and _grounded_action_matches(
+                    expected_action,
+                    source_step,
+                    allow_semantic_relocation=False,
+                )
+            ),
+            None,
+        )
+        if matched_index is None:
+            return None
+        used.add(matched_index)
+        checker_indices.append(matched_index)
+
+    coverage = tuple(sorted((*formal_indices, *checker_indices)))
+    if not coverage:
+        return None
+    if coverage != tuple(range(coverage[0], coverage[-1] + 1)):
+        return None
+    return coverage
 
 
 def _grounded_action_matches(
@@ -864,21 +982,28 @@ def _grounded_action_matches(
 
 def _validate_checker_evidence(
     functions: list[Any],
-    recovery_examples: list[dict[str, Any]],
+    run_log: dict[str, Any],
 ) -> None:
-    evidence = [
-        {
-            "source_state_id": str(example.get("source_state_id") or ""),
-            "action": json.dumps(
-                canonicalize_action(example.get("action"), replayable_only=True),
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ),
-            "trigger": str(example.get("trigger") or "").strip(),
-        }
-        for example in recovery_examples
-    ]
+    evidence: set[tuple[str, str]] = set()
+    for raw_step in run_log.get("steps") or ():
+        if not isinstance(raw_step, dict):
+            continue
+        result = raw_step.get("result")
+        if not isinstance(result, dict) or result.get("success") is not True:
+            continue
+        source_state_id, actions = _enhancement_step_actions(raw_step)
+        for action in actions:
+            evidence.add(
+                (
+                    source_state_id,
+                    json.dumps(
+                        action,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                )
+            )
     for function in functions:
         for rule in function.checker_rules:
             source_state_id = str(rule.get("source_state_id") or "")
@@ -888,258 +1013,275 @@ def _validate_checker_evidence(
                 sort_keys=True,
                 separators=(",", ":"),
             )
-            matches = [
-                example
-                for example in evidence
-                if example["source_state_id"] == source_state_id
-                and example["action"] == action
-            ]
-            if not matches:
+            if (source_state_id, action) not in evidence:
                 raise ValueError("function_checker_rule_missing_recovery_evidence")
-            captured_triggers = {
-                example["trigger"] for example in matches if example["trigger"]
-            }
-            if captured_triggers and rule.get("trigger") not in captured_triggers:
-                raise ValueError("function_checker_rule_trigger_mismatch")
 
 
-def edit_function(
-    value: dict[str, Any],
-    edits: list[dict[str, Any]],
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    original = parse_function_artifact(value).to_dict()
-    updated = json.loads(json.dumps(original, ensure_ascii=False))
-    steps = updated["steps"]
-    changes: list[dict[str, Any]] = []
-    deletes: set[int] = set()
-    for edit in edits:
-        if not isinstance(edit, dict):
-            continue
-        index = _integer(edit.get("index"), -1)
-        if index not in range(len(steps)):
-            continue
-        action = steps[index]["action"]
-        tool = action["tool"]
-        expected_tool = str(edit.get("expected_tool") or "").strip()
-        if expected_tool and expected_tool != tool:
-            continue
-        operation = str(edit.get("op") or "").strip().lower()
-        if operation == "delete":
-            deletes.add(index)
-        elif operation == "replace_args":
-            patch = edit.get("args")
-            if not isinstance(patch, dict) or not patch:
-                continue
-            canonical = canonicalize_action(
-                {"tool": tool, "args": {**action["args"], **patch}},
-                replayable_only=True,
-                persisted_only=True,
-            )
-            if canonical["args"] == action["args"]:
-                continue
-            action["args"] = canonical["args"]
-            changes.append(_change("replace_args", index, tool, edit.get("reason")))
-    if deletes and (len(deletes) >= len(steps) or updated["bindings"]):
-        deletes.clear()
-    for index in sorted(deletes, reverse=True):
-        tool = steps[index]["action"]["tool"]
-        del steps[index]
-        reason = next(
-            (
-                edit.get("reason")
-                for edit in edits
-                if isinstance(edit, dict)
-                and str(edit.get("op") or "").strip().lower() == "delete"
-                and _integer(edit.get("index"), -1) == index
-            ),
-            None,
-        )
-        changes.append(_change("delete", index, tool, reason))
-    for index, step in enumerate(steps):
-        step["step_index"] = index
-    return parse_function_artifact(updated).to_dict(), changes
 
 
-def enhance_function(
-    value: dict[str, Any],
-    run_log: dict[str, Any],
+
+
+def _author_functions(
+    facts: dict[str, Any],
     complete_json: Callable[[str], str],
     *,
-    instruction: str = "",
-    state_loader: Callable[[str], Any] | None = None,
-) -> tuple[dict[str, Any], list[dict[str, Any]], str]:
-    original = parse_function_artifact(value).to_dict()
-    proposal = _json_object(
-        complete_json(
-            _enhancement_prompt(
-                original,
-                run_log,
-                instruction=instruction,
-                state_loader=state_loader,
+    instruction: str,
+    existing_functions: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    bundle: dict[str, Any] | None = None
+    for stage in ("split", "parameters", "checkers"):
+        previous_bundle = bundle
+        proposal = _json_object(
+            complete_json(
+                _authoring_prompt(
+                    facts,
+                    stage=stage,
+                    current_bundle=bundle,
+                    existing_functions=existing_functions,
+                    instruction=instruction,
+                )
             )
         )
-    )
-    _validate_step_decisions(proposal, run_log)
-    _require_checker_evidence(proposal, run_log)
-    updated = json.loads(json.dumps(original, ensure_ascii=False))
-    changes: list[dict[str, Any]] = []
-    for field, limit in (("name", 80), ("description", 2000)):
-        replacement = str(proposal.get(field) or "").strip()[:limit]
-        if replacement and replacement != updated[field]:
-            updated[field] = replacement
-            changes.append({"part": "function", "field": field})
-    if "steps" in proposal:
-        replacement_steps = _grounded_replacement_steps(proposal["steps"], run_log)
-        if replacement_steps != updated["steps"]:
-            updated["steps"] = replacement_steps
-            updated["input_schema"] = {
+        bundle = _validate_agent_bundle(proposal, stage=stage)
+        _validate_agent_stage_contract(
+            bundle,
+            previous_bundle=previous_bundle,
+            stage=stage,
+        )
+        _validate_agent_trajectory(bundle, facts, stage=stage)
+    assert bundle is not None
+    return bundle["functions"], bundle["arguments"]
+
+
+def _validate_agent_bundle(value: Any, *, stage: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"functions", "arguments"}:
+        raise ValueError(f"function_enhancement_{stage}_output_invalid")
+    functions = value.get("functions")
+    arguments = value.get("arguments")
+    if not isinstance(functions, list) or not functions:
+        raise ValueError(f"function_enhancement_{stage}_functions_required")
+    if not isinstance(arguments, dict):
+        raise ValueError(f"function_enhancement_{stage}_arguments_invalid")
+    parsed = [parse_function_artifact(function).to_dict() for function in functions]
+    function_ids = [function["function_id"] for function in parsed]
+    if len(function_ids) != len(set(function_ids)):
+        raise ValueError("duplicate_function_id")
+    if set(arguments) != set(function_ids):
+        raise ValueError(f"function_enhancement_{stage}_arguments_incomplete")
+    return {
+        "functions": parsed,
+        "arguments": json.loads(json.dumps(arguments, ensure_ascii=False)),
+    }
+
+
+def _validate_agent_stage_contract(
+    bundle: dict[str, Any],
+    *,
+    previous_bundle: dict[str, Any] | None,
+    stage: str,
+) -> None:
+    functions = [parse_function_artifact(value) for value in bundle["functions"]]
+    if previous_bundle is not None:
+        previous_ids = [
+            str(value["function_id"]) for value in previous_bundle["functions"]
+        ]
+        if [function.id for function in functions] != previous_ids:
+            raise ValueError(f"function_enhancement_{stage}_function_set_changed")
+    if stage in {"split", "parameters"} and any(
+        function.checker_rules for function in functions
+    ):
+        raise ValueError(f"function_enhancement_{stage}_checker_rules_forbidden")
+    if stage != "split":
+        return
+    for function in functions:
+        if (
+            function.input_schema
+            != {
                 "type": "object",
                 "properties": {},
                 "required": [],
                 "additionalProperties": False,
             }
-            updated["bindings"] = []
-            changes.append({"part": "function", "field": "steps"})
-    if "parameters" in proposal and _apply_parameters(
-        updated,
-        proposal["parameters"],
-        run_log,
-    ):
-        changes.append({"part": "function", "field": "parameters"})
-    if _apply_step_roles(updated, proposal, run_log):
-        changes.append({"part": "function", "field": "step_roles"})
-    if "checker_rules" in proposal:
-        candidate = dict(updated)
-        candidate["checker_rules"] = proposal["checker_rules"]
-        canonical_rules = parse_function_artifact(candidate).to_dict()["checker_rules"]
-        if canonical_rules != updated["checker_rules"]:
-            updated["checker_rules"] = canonical_rules
-            changes.append({"part": "function", "field": "checker_rules"})
-    canonical = parse_function_artifact(updated).to_dict()
-    return canonical, changes, "enhanced" if changes else "unchanged"
+            or function.bindings
+            or bundle["arguments"][function.id] != {}
+        ):
+            raise ValueError("function_enhancement_split_parameters_forbidden")
 
 
-def _enhancement_prompt(
-    function: dict[str, Any],
-    run_log: dict[str, Any],
+def _validate_agent_trajectory(
+    bundle: dict[str, Any],
+    facts: dict[str, Any],
     *,
-    instruction: str = "",
-    state_loader: Callable[[str], Any] | None = None,
+    stage: str,
+) -> None:
+    source_steps = list(facts["steps"])
+    for raw_function in bundle["functions"]:
+        function = parse_function_artifact(raw_function)
+        raw_calls = bundle["arguments"].get(function.id, {})
+        calls = raw_calls if isinstance(raw_calls, list) else [raw_calls]
+        for arguments in calls:
+            if not isinstance(arguments, dict):
+                raise ValueError(
+                    f"function_enhancement_{stage}_arguments_invalid"
+                )
+            bound = bind_function(function, arguments)
+            if _function_source_indices(
+                bound,
+                source_steps,
+                allow_semantic_relocation=False,
+            ) == tuple(range(len(source_steps))):
+                return
+    raise ValueError(f"function_enhancement_full_trajectory_required:{stage}")
+
+
+def _authoring_prompt(
+    facts: dict[str, Any],
+    *,
+    stage: str,
+    current_bundle: dict[str, Any] | None,
+    existing_functions: list[dict[str, Any]],
+    instruction: str,
 ) -> str:
-    steps = [
+    stage_instruction = {
+        "split": (
+            "Split the successful trajectory into one or more reusable semantic "
+            "operations and draft each complete Function. In this stage only, use "
+            "an empty object input_schema, bindings=[], and empty arguments for every "
+            "Function; parameterization belongs exclusively to the next stage."
+        ),
+        "parameters": (
+            "Review the draft and expose only caller-varying text, numbers, dates, "
+            "and choices through input_schema, bindings, and source arguments. "
+            "Keep stable app packages and fixed navigation controls inside the Function."
+        ),
+        "checkers": (
+            "Review the parameterized Functions and add only Function-local checker "
+            "rules for optional setup, interruption dismissal, or recovery actions."
+        ),
+    }[stage]
+    example_steps = [
         {
-            "index": index,
-            "tool": step["action"]["tool"],
-            "target": str(step["action"]["args"].get("target_description") or "")[:120],
-        }
-        for index, step in enumerate(function["steps"])
+            "step_index": 0,
+            "source_state_id": "source-home",
+            "action": {"tool": "click", "args": {"x": 700, "y": 800}},
+        },
+        {
+            "step_index": 1,
+            "source_state_id": "source-promo-dialog",
+            "action": {"tool": "click", "args": {"x": 800, "y": 700}},
+        },
+        {
+            "step_index": 2,
+            "source_state_id": "source-search-page",
+            "action": {"tool": "input_text", "args": {"text": ""}},
+        },
+        {
+            "step_index": 3,
+            "source_state_id": "source-search-filled",
+            "action": {"tool": "click", "args": {"x": 900, "y": 900}},
+        },
     ]
-    run_log_facts = {
-        "run_id": str(run_log.get("run_id") or ""),
-        "goal": str(run_log.get("goal") or ""),
-        "successful_function_segments": _successful_source_segments(run_log),
-        "raw_steps": [
-            _enhancement_prompt_step(step, state_loader)
-            for step in run_log.get("steps") or ()
-            if isinstance(step, dict)
+    if stage == "split":
+        example_steps[2]["action"]["args"]["text"] = "museum"
+        example_bindings: list[dict[str, str]] = []
+        example_properties: dict[str, Any] = {}
+        example_required: list[str] = []
+        example_arguments: dict[str, Any] = {}
+        example_checkers: list[dict[str, Any]] = []
+    else:
+        example_bindings = [
+            {
+                "source": "$.arguments.query",
+                "target": "$.steps[2].action.args.text",
+            }
+        ]
+        example_properties = {
+            "query": {"type": "string", "description": "Text to search for"}
+        }
+        example_required = ["query"]
+        example_arguments = {"query": "museum"}
+        example_checkers = []
+    if stage == "checkers":
+        optional_step = example_steps.pop(1)
+        for index, step in enumerate(example_steps):
+            step["step_index"] = index
+        example_bindings[0]["target"] = "$.steps[1].action.args.text"
+        example_checkers = [
+            {
+                "source_state_id": optional_step["source_state_id"],
+                "action": optional_step["action"],
+            }
+        ]
+    example = {
+        "functions": [
+            {
+                "schema_version": FUNCTION_ARTIFACT_VERSION,
+                "function_id": "search_the_web",
+                "name": "Search the web",
+                "description": (
+                    "Open the browser, enter a task-provided query, and submit it."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": example_properties,
+                    "required": example_required,
+                    "additionalProperties": False,
+                },
+                "bindings": example_bindings,
+                "steps": example_steps,
+                "checker_rules": example_checkers,
+                "agent_visible": True,
+            }
         ],
+        "arguments": {"search_the_web": example_arguments},
     }
-    brief = {
-        "function_id": function["function_id"],
-        "name": function["name"],
-        "description": function["description"],
-        "steps": steps,
-        "parameter_candidates": _parameter_candidates(function, run_log),
-        "run_log": run_log_facts,
-        "user_instruction": str(instruction or "").strip()[:2000],
+    evidence = {
+        "goal": facts["goal"],
+        "actions": facts["steps"],
+        "existing_functions": existing_functions,
+        "current_bundle": current_bundle,
+        "instruction": str(instruction or "").strip()[:2000],
     }
     return f"""
-Improve the reusable Android automation Function below for future recall.
-Return one JSON object. step_decisions is required; name, description, steps,
-parameters, and checker_rules are optional.
-Review the RunLog in order, one Step at a time. For every raw RunLog Step, return exactly:
-{{"step_decisions":[{{"step":0,"role":"function","reason":"short semantic reason"}}]}}.
-role must be function, checker, or ignore. function directly advances the user's task;
-checker is optional environment setup or recovery; ignore is redundant or unrelated.
-Do not encode the decisions as one compact string or as grouped index arrays. The final
-step_decisions array must contain one object per raw Step in the original order.
-Role classification is semantic and does not depend on metadata.origin. A Step recorded
-as origin=action can still be checker when page_semantics shows optional onboarding,
-setup, or interruption.
-The runtime persists each checker decision directly on that canonical Step. Checker Steps
-are optional: OmniTransfer executes them only when their recorded target is present on the
-current page. Do not encode semantic checker decisions as trigger strings or checker_rules.
-Legacy checker_rules remain allowed only for RunLog Steps already recorded as an actual
-checker recovery with an exact captured trigger.
-Describe when to reuse the Function, visible operations, inputs, success signal, and avoid cases.
-You may add, remove, modify, or reorder actions when needed to recover the complete reusable
-semantic operation. The final steps must be one exact contiguous sequence within one supplied
-successful_function_segment. Copy every source_state_id, tool, and argument exactly; never invent
-an action or state. Keep function_id unchanged. Use the same language as the current
-name/description.
-Treat user_instruction as optional enhancement guidance. It may refine semantic naming,
-description, action selection, parameter selection, and evidence-backed checker rules, but it
-cannot override the RunLog evidence requirements above.
+You are stage {stage} of one offline save_function pipeline.
+{stage_instruction}
 
-steps is the complete replacement action sequence. Each item has exactly:
-{{"source_state_id":"state-id","action":{{"tool":"click","args":{{"x":10,"y":20}}}}}}.
-Omit steps only when the current action sequence is already complete.
+Return exactly one complete JSON object with keys functions and arguments. Every Function
+must use omniflow.function.v2 and contain function_id, name, description, input_schema,
+bindings, ordered steps, checker_rules, and agent_visible. You may write actions directly,
+but every source_state_id and action must be supported by the supplied successful RunLog.
+At every stage, include at least one large semantic Function that covers the complete
+successful trajectory. Do not replace the complete Function with one Function per click.
+You may additionally return reusable semantic subsegments. Preserve source action order
+and never invent target-device state, target coordinates,
+validator logic, task-specific gates, or source-coordinate fallback. One Function is a
+reusable semantic operation, not one click. A checker belongs only to its Function and
+contains exactly source_state_id and action; never add a trigger expression, step number,
+or condition object. During checker review, move only genuinely optional setup,
+interruption-dismissal, or recovery actions out of formal steps and into checker_rules on
+the Function that needs them. Never duplicate a formal action as a checker, never turn
+normal navigation or the task's final action into a checker, and never create a standalone
+Function merely to hold a checker. Checker actions must be transferable click, input_text,
+or long_press actions. Parameters must have
+source arguments that reproduce the recorded source action after binding. Return the full
+bundle even when this stage makes no change. Do not add commentary or extra keys.
 
-parameters is an array of semantic input bindings. Each item has exactly:
-{{"name":"query","description":"Text to search for","step_index":1,"arg_name":"text"}}.
-Only select entries present in the final steps and copy step_index and arg_name exactly.
-Choose a stable identifier name and a concise user-facing description. Return parameters=[]
-when the recorded value is intentionally fixed. Do not return input_schema or bindings; the
-runtime derives them and verifies the successful RunLog evidence.
+Few-shot shape:
+{json.dumps(example, ensure_ascii=False, separators=(",", ":"))}
 
-checker_rules is an ordered array. Each rule has exactly:
-{{"schema_version":"omniflow.checker_rule.v1","trigger":"text_contains(\\"跳过广告\\")","source_state_id":"state-id","action":{{"tool":"click","args":{{"x":900,"y":100}}}}}}.
-Create a checker only when RunLog metadata explicitly identifies a successful recovery step
-(metadata.origin == "checker" and result.success == true). Copy its action and before_state_id.
-When metadata.checker_trigger exists, copy it exactly. Otherwise return checker_rules=[].
-
-Function:
-{json.dumps(brief, ensure_ascii=False, separators=(",", ":"))}
+RunLog evidence and current draft:
+{json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))}
 """.strip()
 
 
-def _enhancement_prompt_step(
-    step: dict[str, Any],
-    state_loader: Callable[[str], Any] | None,
-) -> dict[str, Any]:
-    value = {
-        key: step.get(key)
-        for key in (
-            "step_index",
-            "before_state_id",
-            "action",
-            "result",
-            "after_state_id",
-            "metadata",
-        )
-    }
-    semantics = _compact_source_page_semantics(step, state_loader)
-    if semantics is not None:
-        value["page_semantics"] = semantics
-    return value
-
-
-def _compact_source_page_semantics(
-    step: dict[str, Any],
-    state_loader: Callable[[str], Any] | None,
-) -> dict[str, Any] | None:
-    if state_loader is None:
-        return None
-    source_state_id = str(step.get("before_state_id") or "").strip()
-    if not source_state_id:
-        return None
-    state = state_loader(source_state_id)
-    if hasattr(state, "to_dict"):
-        state = state.to_dict()
-    if not isinstance(state, dict):
-        return None
+def _source_page_summary(observation: dict[str, Any]) -> dict[str, Any]:
+    auxiliaries = (
+        observation.get("auxiliaries")
+        if isinstance(observation.get("auxiliaries"), dict)
+        else {}
+    )
     labels: list[str] = []
-    xml = str(state.get("xml") or state.get("forest") or "")
+    xml = observation_xml(observation)
     if xml:
         try:
             root = ET.fromstring(xml)
@@ -1151,361 +1293,65 @@ def _compact_source_page_semantics(
                     label = " ".join(str(node.attrib.get(field) or "").split())
                     if label and label not in labels:
                         labels.append(label[:160])
-                        if len(labels) == 16:
+                        if len(labels) == 20:
                             break
-                if len(labels) == 16:
+                if len(labels) == 20:
                     break
     return {
-        "package": str(state.get("package_name") or state.get("package") or ""),
-        "activity": str(state.get("activity_name") or state.get("activity") or ""),
+        "package": str(auxiliaries.get("package_name") or ""),
+        "activity": str(auxiliaries.get("activity_name") or ""),
         "visible_labels": labels,
+        "screenshot": (
+            observation.get("pixels", {}).get("path")
+            if isinstance(observation.get("pixels"), dict)
+            else None
+        ),
     }
 
 
-def _validate_step_decisions(
-    proposal: dict[str, Any],
-    run_log: dict[str, Any],
-) -> None:
-    source_steps = [
-        step for step in run_log.get("steps") or () if isinstance(step, dict)
-    ]
-    decisions = proposal.get("step_decisions")
-    if not isinstance(decisions, list) or len(decisions) != len(source_steps):
-        raise ValueError("function_enhancement_step_decisions_incomplete")
-    for index, decision in enumerate(decisions):
-        if not isinstance(decision, dict) or set(decision) != {
-            "step",
-            "role",
-            "reason",
-        }:
-            raise ValueError("function_enhancement_step_decision_invalid")
-        if decision.get("step") != index:
-            raise ValueError("function_enhancement_step_decisions_out_of_order")
-        if decision.get("role") not in {"function", "checker", "ignore"}:
-            raise ValueError("function_enhancement_step_role_invalid")
-        if not str(decision.get("reason") or "").strip():
-            raise ValueError("function_enhancement_step_reason_required")
-
-
-def _apply_step_roles(
-    function: dict[str, Any],
-    proposal: dict[str, Any],
-    run_log: dict[str, Any],
-) -> bool:
-    decisions = proposal["step_decisions"]
-    raw_steps = [
-        step for step in run_log.get("steps") or () if isinstance(step, dict)
-    ]
-    roles: dict[tuple[str, str], str] = {}
-    for raw_step, decision in zip(raw_steps, decisions, strict=True):
+def _source_transfer_state_summary(value: Any) -> dict[str, Any]:
+    state = value if isinstance(value, dict) else {}
+    labels: list[str] = []
+    xml = str(state.get("xml") or "")
+    if xml:
         try:
-            action = canonicalize_action(raw_step.get("action"), replayable_only=True)
-        except (TypeError, ValueError):
-            continue
-        key = (
-            str(raw_step.get("before_state_id") or ""),
-            json.dumps(action, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
-        )
-        roles[key] = str(decision["role"])
-
-    changed = False
-    for step in function["steps"]:
-        key = (
-            str(step.get("source_state_id") or ""),
-            json.dumps(
-                canonicalize_action(step.get("action"), replayable_only=True),
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ),
-        )
-        role = roles.get(key)
-        if role == "checker":
-            if step.get("role") != "checker":
-                step["role"] = "checker"
-                changed = True
-        elif step.pop("role", None) is not None:
-            changed = True
-    return changed
-
-
-def _grounded_replacement_steps(
-    proposal: Any,
-    run_log: dict[str, Any],
-) -> list[dict[str, Any]]:
-    if not isinstance(proposal, list) or not proposal:
-        raise ValueError("function_enhancement_steps_invalid")
-    steps: list[dict[str, Any]] = []
-    for index, raw_step in enumerate(proposal):
-        if not isinstance(raw_step, dict) or set(raw_step) - {
-            "step_index",
-            "source_state_id",
-            "action",
-        }:
-            raise ValueError("function_enhancement_step_contract_invalid")
-        steps.append(
-            {
-                "step_index": index,
-                "source_state_id": str(raw_step.get("source_state_id") or "").strip(),
-                "action": raw_step.get("action"),
-            }
-        )
-    candidate = {
-        "schema_version": FUNCTION_ARTIFACT_VERSION,
-        "function_id": "EnhancedFunctionEvidenceCheck",
-        "name": "Enhanced Function evidence check",
-        "description": "Validate replacement actions against source evidence.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": False,
-        },
-        "bindings": [],
-        "steps": steps,
-        "checker_rules": [],
-        "agent_visible": False,
+            root = ET.fromstring(xml)
+        except ET.ParseError:
+            root = None
+        if root is not None:
+            for node in root.iter():
+                for field in ("text", "content-desc", "content_description"):
+                    label = " ".join(str(node.attrib.get(field) or "").split())
+                    if label and label not in labels:
+                        labels.append(label[:160])
+                        if len(labels) == 20:
+                            break
+                if len(labels) == 20:
+                    break
+    return {
+        "package": str(state.get("package_name") or ""),
+        "activity": str(state.get("activity_name") or ""),
+        "visible_labels": labels,
+        "screenshot": state.get("screenshot_path"),
     }
-    function = parse_function_artifact(candidate)
-    expected = [
-        (step.source_state_id, step.action.to_dict())
-        for step in function.steps
-    ]
-    width = len(expected)
-    if not any(
-        [
-            (str(step.get("source_state_id") or ""), step["action"])
-            for step in segment[start : start + width]
-        ]
-        == expected
-        for segment in _successful_source_segments(run_log)
-        for start in range(len(segment) - width + 1)
-    ):
-        raise ValueError(
-            "function_action_not_grounded:"
-            f"{function.id}:{function.steps[0].step_index}"
-        )
-    return [step.to_dict() for step in function.steps]
 
 
-def _successful_source_steps(run_log: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
-        step
-        for segment in _successful_source_segments(run_log)
-        for step in segment
-    ]
-
-
-def _successful_source_segments(
-    run_log: dict[str, Any],
-) -> list[list[dict[str, Any]]]:
-    segments: list[list[dict[str, Any]]] = []
-    current: list[dict[str, Any]] = []
-
-    def finish_segment() -> None:
-        nonlocal current
-        if current:
-            segments.append(current)
-            current = []
-
-    for raw_step in run_log.get("steps") or ():
-        if not isinstance(raw_step, dict):
-            finish_segment()
-            continue
-        result = raw_step.get("result")
-        metadata = raw_step.get("metadata")
-        if not isinstance(result, dict) or result.get("success") is not True:
-            finish_segment()
-            continue
-        if isinstance(metadata, dict) and metadata.get("origin") == "checker":
-            continue
-        observation = raw_step.get("observation")
-        action = raw_step.get("action")
-        if isinstance(observation, dict):
-            source_state_id = state_id(observation)
-            projected = project_androidworld_step_actions(raw_step)
-        elif isinstance(action, dict) and set(action) == {"tool", "args"}:
-            source_state_id = str(raw_step.get("before_state_id") or "").strip()
-            projected = [canonicalize_action(action, replayable_only=True)]
-        else:
-            finish_segment()
-            continue
-        if not projected:
-            finish_segment()
-            continue
-        current.extend(
-            {
-                "source_state_id": source_state_id,
-                "action": projected_action,
-            }
-            for projected_action in projected
-        )
-    finish_segment()
-    return segments
-
-
-def _parameter_candidates(
-    function: dict[str, Any],
-    run_log: dict[str, Any],
-) -> list[dict[str, Any]]:
-    bound_targets = {
-        str(binding.get("target") or "")
-        for binding in function.get("bindings") or ()
-        if isinstance(binding, dict)
-    }
-    candidates: list[dict[str, Any]] = []
-    for step_index, step in enumerate(function.get("steps") or ()):
-        if not isinstance(step, dict):
-            continue
-        action = step.get("action")
-        if not isinstance(action, dict):
-            continue
-        tool = str(action.get("tool") or "")
-        args = action.get("args")
-        if not isinstance(args, dict):
-            continue
-        parameterizable = _PARAMETERIZABLE_ACTION_ARGS.get(tool, ())
-        for arg_name in parameterizable:
-            target = f"$.steps[{step_index}].action.args.{arg_name}"
-            value = args.get(arg_name)
-            if tool == "click" and arg_name == "target_description" and not value:
-                value = _semantic_click_target(step, run_log)
-            if target in bound_targets or not isinstance(value, str) or not value:
-                continue
-            candidates.append(
-                {
-                    "step_index": step_index,
-                    "tool": tool,
-                    "arg_name": arg_name,
-                    "recorded_value": value,
-                }
-            )
-    return candidates
-
-
-def _apply_parameters(
-    function: dict[str, Any],
-    proposal: Any,
-    run_log: dict[str, Any],
-) -> bool:
-    if not isinstance(proposal, list):
-        raise ValueError("function_enhancement_parameters_invalid")
-    candidates = {
-        (candidate["step_index"], candidate["arg_name"]): candidate
-        for candidate in _parameter_candidates(function, run_log)
-    }
-    schema = function["input_schema"]
-    properties = schema["properties"]
-    required = schema["required"]
-    bindings = function["bindings"]
-    existing_names = set(properties)
-    changed = False
-    for parameter in proposal:
-        if not isinstance(parameter, dict) or set(parameter) - {
-            "name",
-            "description",
-            "step_index",
-            "arg_name",
-        }:
-            raise ValueError("function_enhancement_parameter_contract_invalid")
-        name = str(parameter.get("name") or "").strip()
-        description = str(parameter.get("description") or "").strip()[:240]
-        step_index = _integer(parameter.get("step_index"), -1)
-        arg_name = str(parameter.get("arg_name") or "").strip()
-        candidate = candidates.get((step_index, arg_name))
-        if candidate is None:
-            raise ValueError("function_enhancement_parameter_target_invalid")
-        if _PARAMETER_NAME.fullmatch(name) is None or name in existing_names:
-            raise ValueError("function_enhancement_parameter_name_invalid")
-        step = function["steps"][step_index]
-        value = candidate["recorded_value"]
-        if not _has_parameter_evidence(step, arg_name, value, run_log):
-            raise ValueError("function_enhancement_parameter_evidence_missing")
-        definition: dict[str, Any] = {"type": "string"}
-        if description:
-            definition["description"] = description
-        properties[name] = definition
-        required.append(name)
-        bindings.append(
-            {
-                "source": f"$.arguments.{name}",
-                "target": f"$.steps[{step_index}].action.args.{arg_name}",
-            }
-        )
-        step["action"]["args"][arg_name] = ""
-        existing_names.add(name)
-        changed = True
-    return changed
-
-
-def _has_parameter_evidence(
-    function_step: dict[str, Any],
-    arg_name: str,
-    value: Any,
-    run_log: dict[str, Any],
-) -> bool:
-    if arg_name == "target_description":
-        return _semantic_click_target(function_step, run_log) == value
-    for raw_step in _successful_source_steps(run_log):
-        action = raw_step["action"]
-        args = action.get("args")
-        if not isinstance(args, dict):
-            continue
-        if (
-            str(raw_step.get("source_state_id") or "")
-            == str(function_step.get("source_state_id") or "")
-            and str(action.get("tool") or "")
-            == str(function_step.get("action", {}).get("tool") or "")
-            and args.get(arg_name) == value
-        ):
-            return True
-    return False
-
-
-def _semantic_click_target(
-    function_step: dict[str, Any],
-    run_log: dict[str, Any],
-) -> str:
-    action = function_step.get("action")
-    if not isinstance(action, dict) or action.get("tool") != "click":
-        return ""
-    args = action.get("args")
-    if not isinstance(args, dict):
-        return ""
+def _enhancement_step_actions(
+    step: dict[str, Any],
+) -> tuple[str, list[dict[str, Any]]]:
+    observation = step.get("observation")
+    if isinstance(observation, dict):
+        return state_id(observation), project_androidworld_step_actions(step)
+    action = step.get("action")
+    if not isinstance(action, dict):
+        return "", []
     try:
-        target_x = float(args["x"])
-        target_y = float(args["y"])
-    except (KeyError, TypeError, ValueError):
-        return ""
-    expected_state_id = str(function_step.get("source_state_id") or "")
-    for raw_step in run_log.get("steps") or ():
-        if not isinstance(raw_step, dict):
-            continue
-        result = raw_step.get("result")
-        observation = raw_step.get("observation")
-        if (
-            not isinstance(result, dict)
-            or result.get("success") is not True
-            or not isinstance(observation, dict)
-            or state_id(observation) != expected_state_id
-        ):
-            continue
-        for projected in project_androidworld_step_actions(raw_step):
-            projected_args = projected.get("args")
-            if projected.get("tool") != "click" or not isinstance(projected_args, dict):
-                continue
-            try:
-                projected_x = float(projected_args["x"])
-                projected_y = float(projected_args["y"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            if not (
-                math.isclose(projected_x, target_x)
-                and math.isclose(projected_y, target_y)
-            ):
-                continue
-            return _projected_semantic_target(projected, observation)
-    return ""
+        canonical = canonicalize_action(action, replayable_only=True)
+    except (TypeError, ValueError):
+        return "", []
+    return str(step.get("before_state_id") or "").strip(), [canonical]
+
+
 
 
 def _projected_semantic_target(
@@ -1526,68 +1372,6 @@ def _projected_semantic_target(
     return semantic_target_at_point(observation_xml(observation), x, y)
 
 
-def _require_checker_evidence(
-    proposal: dict[str, Any],
-    run_log: dict[str, Any],
-) -> None:
-    if "checker_rules" not in proposal:
-        return
-    evidence: list[tuple[str, dict[str, Any], str]] = []
-    for step in run_log.get("steps") or ():
-        if not isinstance(step, dict):
-            continue
-        metadata = step.get("metadata")
-        result = step.get("result")
-        if not isinstance(metadata, dict) or not isinstance(result, dict):
-            continue
-        if metadata.get("origin") != "checker" or result.get("success") is not True:
-            continue
-        state_id = str(step.get("before_state_id") or "").strip()
-        if not state_id:
-            continue
-        evidence.append(
-            (
-                state_id,
-                canonicalize_action(step.get("action"), replayable_only=True),
-                str(metadata.get("checker_trigger") or "").strip(),
-            )
-        )
-    candidate = {
-        "schema_version": "omniflow.function.v2",
-        "function_id": "EvidenceCheck",
-        "name": "Evidence check",
-        "description": "Validate proposed checker rules.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": False,
-        },
-        "bindings": [],
-        "steps": [
-            {
-                "step_index": 0,
-                "source_state_id": "evidence",
-                "action": {"tool": "wait", "args": {"duration_ms": 1}},
-            }
-        ],
-        "checker_rules": proposal.get("checker_rules"),
-        "agent_visible": False,
-    }
-    rules = parse_function_artifact(candidate).to_dict()["checker_rules"]
-    for rule in rules:
-        matches = [
-            item
-            for item in evidence
-            if item[0] == rule["source_state_id"] and item[1] == rule["action"]
-        ]
-        if not matches:
-            raise ValueError("checker_rule_missing_recovery_evidence")
-        captured = {item[2] for item in matches if item[2]}
-        if captured and rule["trigger"] not in captured:
-            raise ValueError("checker_rule_trigger_mismatch")
-
-
 def _json_object(raw: str) -> dict[str, Any]:
     start = raw.find("{")
     end = raw.rfind("}")
@@ -1597,26 +1381,3 @@ def _json_object(raw: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("function_enhancement_json_invalid")
     return value
-
-
-def _change(operation: str, index: int, tool: str, reason: Any) -> dict[str, Any]:
-    value = {
-        "part": "action",
-        "field": operation,
-        "op": operation,
-        "step_index": index,
-        "tool": tool,
-    }
-    text = str(reason or "").strip()
-    if text:
-        value["reason"] = text
-    return value
-
-
-def _integer(value: Any, default: int) -> int:
-    if isinstance(value, bool):
-        return default
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
