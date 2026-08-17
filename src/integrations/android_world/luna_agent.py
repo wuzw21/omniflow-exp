@@ -65,6 +65,7 @@ class LunaAndroidWorldHarness:
         adb_path: str = "",
     ) -> None:
         self.env = env
+        self.name = "luna"
         self.host = AndroidWorldHost(
             env,
             adb_serial=adb_serial,
