@@ -2396,8 +2396,8 @@ def _run_bmoca_method_cells(
         ports = {
             "appium_port": 4723 + offset,
             "appium_system_port": 8200 + offset,
-            "emulator_console_port": 5554 + 2 * offset,
-            "emulator_adb_port": 5555 + 2 * offset,
+            "emulator_console_port": 5600 + 2 * offset,
+            "emulator_adb_port": 5601 + 2 * offset,
             "emulator_grpc_port": 8554 + offset,
         }
         try:
