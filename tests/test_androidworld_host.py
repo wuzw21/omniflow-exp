@@ -101,6 +101,38 @@ def test_androidworld_chcon_compat_only_normalizes_transport_endpoint_failure() 
     assert unchanged.status == 2
 
 
+def test_androidworld_chcon_compat_normalizes_controller_exception() -> None:
+    class Response:
+        class Status:
+            OK = 1
+
+        def __init__(self) -> None:
+            self.status = 1
+
+    class AdbUtils:
+        def issue_generic_request(self, args, _env, *, timeout_sec=None):
+            raise RuntimeError(
+                "Error executing adb command: shell chcon ...: "
+                "Operation not supported on transport endpoint"
+            )
+
+    setup_module = SimpleNamespace(
+        adb_utils=AdbUtils(),
+        adb_pb2=SimpleNamespace(AdbResponse=Response),
+    )
+    original = _patch_androidworld_chcon_compat(setup_module)
+    assert original is not None
+    try:
+        response = setup_module.adb_utils.issue_generic_request(
+            ["shell", "chcon", "context", "/map.obf"],
+            object(),
+        )
+    finally:
+        setup_module.adb_utils.issue_generic_request = original
+
+    assert response.status == 1
+
+
 def test_androidworld_file_transfer_timeout_bounds_unset_and_zero(
     monkeypatch,
 ) -> None:

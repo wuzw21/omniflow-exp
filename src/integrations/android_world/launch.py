@@ -1910,31 +1910,47 @@ def _patch_androidworld_chcon_compat(setup_module: Any) -> Any | None:
     if not callable(original):
         return None
 
-    def issue_generic_request(*call_args: Any, **call_kwargs: Any) -> Any:
-        response = original(*call_args, **call_kwargs)
-        command = call_args[0] if call_args else call_kwargs.get("args")
+    def is_unsupported_chcon(command: Any, error_text: str) -> bool:
         if isinstance(command, str):
             command_parts = tuple(command.split())
         elif isinstance(command, (list, tuple)):
             command_parts = tuple(str(part) for part in command)
         else:
             command_parts = ()
+        return (
+            command_parts[:2] == ("shell", "chcon")
+            and "Operation not supported on transport endpoint" in error_text
+        )
+
+    def ok_response() -> Any:
+        response_type = getattr(
+            getattr(setup_module, "adb_pb2", None), "AdbResponse", None
+        )
+        if response_type is None:
+            raise RuntimeError("AndroidWorld AdbResponse type is unavailable")
+        response = response_type()
+        response.status = getattr(response_type.Status, "OK", 1)
+        return response
+
+    def issue_generic_request(*call_args: Any, **call_kwargs: Any) -> Any:
+        command = call_args[0] if call_args else call_kwargs.get("args")
+        try:
+            response = original(*call_args, **call_kwargs)
+        except Exception as exc:
+            if not is_unsupported_chcon(command, str(exc)):
+                raise
+            logging.warning(
+                "AndroidWorld setup skipped unsupported external-filesystem "
+                "chcon; the copied file remains available to the app"
+            )
+            return ok_response()
         generic = getattr(response, "generic", None)
         output = getattr(generic, "output", b"")
         if isinstance(output, bytes):
             output_text = output.decode(errors="replace")
         else:
             output_text = str(output or "")
-        if (
-            command_parts[:2] == ("shell", "chcon")
-            and "Operation not supported on transport endpoint" in output_text
-        ):
-            ok_status = getattr(
-                getattr(getattr(setup_module, "adb_pb2", None), "AdbResponse", None),
-                "Status",
-                None,
-            )
-            ok_value = getattr(ok_status, "OK", 1)
+        if is_unsupported_chcon(command, output_text):
             if hasattr(response, "CopyFrom"):
                 try:
                     normalized = type(response)()
@@ -1942,12 +1958,16 @@ def _patch_androidworld_chcon_compat(setup_module: Any) -> Any | None:
                     normalized = None
                 if normalized is not None:
                     normalized.CopyFrom(response)
-                    normalized.status = ok_value
+                    normalized.status = getattr(
+                        getattr(type(response), "Status", None), "OK", 1
+                    )
                     response = normalized
                 else:
-                    response.status = ok_value
+                    response.status = getattr(
+                        getattr(type(response), "Status", None), "OK", 1
+                    )
             else:
-                response.status = ok_value
+                response.status = 1
             logging.warning(
                 "AndroidWorld setup skipped unsupported external-filesystem "
                 "chcon; the copied file remains available to the app"
