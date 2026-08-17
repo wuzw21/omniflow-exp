@@ -3819,10 +3819,9 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
         raise FileExistsError(f"bmoca_attempt_already_exists:{output_dir}")
     worker_count = min(max(1, int(args.bmoca_workers or 1)), len(episodes))
     retry_count = max(0, int(args.bmoca_environment_retries or 0))
-    # The pinned official B-MoCA runtime owns one fixed Appium endpoint.  Submit
-    # the ten cells together, but serialize that non-reentrant boundary.  This
-    # preserves correctness and makes the limitation explicit in the result.
-    official_runtime_lock = threading.Lock()
+    # Submit all ten cells together, while serializing snapshots that share one
+    # physical AVD. Independent Pixel/Tablet AVDs still execute concurrently.
+    avd_locks = {episode.avd_name: threading.Lock() for episode in episodes}
 
     def run_episode(episode: Any) -> dict[str, Any]:
         attempts: list[dict[str, Any]] = []
@@ -3852,7 +3851,7 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
             episode_root = (
                 output_dir / f"env_{episode.environment_id}" / f"attempt-{attempt_number:02d}"
             )
-            with official_runtime_lock, open_bmoca_episode(
+            with avd_locks[episode.avd_name], open_bmoca_episode(
                     episode,
                     config=config,
                     source_states=source_states,
@@ -4007,8 +4006,8 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
         "environment_ids": list(environment_ids),
         "episode_count": len(rows),
         "submitted_workers": worker_count,
-        "effective_runtime_concurrency": 1,
-        "runtime_concurrency_reason": "pinned_bmoca_fixed_appium_endpoint",
+        "effective_runtime_concurrency": min(worker_count, len(avd_locks)),
+        "runtime_concurrency_reason": "one_active_snapshot_per_physical_avd",
         "official_success_count": official_successes,
         "official_success_rate": official_successes / len(rows) if rows else 0.0,
         "actions_executed": sum(int(row.get("actions_executed") or 0) for row in rows),
