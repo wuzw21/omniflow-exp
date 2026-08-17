@@ -5356,6 +5356,8 @@ def _t3a_hint_source_node(
         root = ET.fromstring(forest)
     except ET.ParseError:
         return {}
+    action_name, _ = _t3a_hint_step_action(step)
+    action_name = action_name.strip().lower()
     x = params.get("x")
     y = params.get("y")
     metadata = step.get("metadata")
@@ -5391,6 +5393,31 @@ def _t3a_hint_source_node(
             else 10**12
         )
         candidates.append(((not actionable, not semantic, area), attributes))
+    if not candidates and action_name in {
+        "input_text",
+        "type_text",
+        "set_text",
+        "enter_text",
+    } and not (
+        (isinstance(x, (int, float)) and isinstance(y, (int, float)))
+        or indexed_id
+    ):
+        for node in root.iter():
+            if str(node.tag).rsplit("}", 1)[-1] != "node":
+                continue
+            attributes = {str(key): str(value) for key, value in node.attrib.items()}
+            if (
+                attributes.get("focused") != "true"
+                or attributes.get("editable") != "true"
+            ):
+                continue
+            bounds = _t3a_hint_bounds(attributes.get("bounds", ""))
+            area = (
+                max(0, bounds[2] - bounds[0]) * max(0, bounds[3] - bounds[1])
+                if bounds is not None
+                else 10**12
+            )
+            candidates.append(((False, False, area), attributes))
     if not candidates:
         return {}
     attributes = min(candidates, key=lambda item: item[0])[1]
