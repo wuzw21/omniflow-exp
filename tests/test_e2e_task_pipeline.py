@@ -30,7 +30,6 @@ from src.experiment.e2e_task_pipeline import (
     _report,
     _resolve_args,
     _source_device_ready,
-    _source_selection_manifest,
     _fixed_replay_source_step_width,
     build_parser,
     collect_replayed_source,
@@ -46,7 +45,6 @@ from src.experiment.e2e_task_pipeline import (
 def _args(tmp_path: Path) -> SimpleNamespace:
     return SimpleNamespace(
         task="BrowserDraw",
-        source_backend="auto",
         task_deadline_sec=DEFAULT_DEADLINE_SEC,
         attempt_id="attempt-test",
         output_root=tmp_path / "output",
@@ -154,7 +152,6 @@ def test_resolve_args_preserves_symlinked_virtualenv_python(
     canonical_transfer = tmp_path / "Projects" / "Omni" / "OmniTransfer"
     canonical_transfer.mkdir(parents=True)
     args.omnitransfer_root = canonical_transfer
-    args.source_run_log = None
     args.appagent_memory_root = None
     args.source_avd = "SmallPhone"
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -563,11 +560,6 @@ def test_collect_replayed_source_uses_fixed_replay_and_captures_screenshots(
         "src.experiment.e2e_task_pipeline.run_logged_command",
         runner,
     )
-    monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.select_source_run_log",
-        lambda **_: pytest.fail("source_collection_must_not_refresh_memory"),
-    )
-
     captured_path, captured, phase = collect_replayed_source(
         args=args,
         deadline=Deadline(10),
@@ -664,7 +656,6 @@ def test_pipeline_does_not_collect_missing_canonical_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     args = _args(tmp_path)
-    args.source_backend = "auto"
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.ensure_source_device",
         lambda **_: {"status": "ready", "tool_calls": 0, "tokens": 0},
@@ -702,7 +693,6 @@ def test_source_only_pipeline_collects_replayed_source_and_stops(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     args = _args(tmp_path)
-    args.source_backend = "auto"
     args.source_only = True
     source_path = tmp_path / "source.run_log.json"
     monkeypatch.setattr(
@@ -1215,50 +1205,6 @@ def test_function_replay_success_rejects_whole_task_status_without_runtime_evide
         "canonical_run": {"status": "succeeded"},
     }
     assert _function_replay_success(row) is False
-
-
-def test_source_selection_uses_original_index_without_canonical_source(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    baseline = tmp_path / "baseline.json"
-    baseline.write_text('{"baseline": true}\n', encoding="utf-8")
-    selected = tmp_path / "selected.json"
-    selected.write_text('{"selected": true}\n', encoding="utf-8")
-    source_index = tmp_path / "source_index.json"
-    source_index.write_text(
-        json.dumps(
-            {"BrowserDraw": {"retained_source_run_log": str(baseline)}}
-        ),
-        encoding="utf-8",
-    )
-    memory_index = tmp_path / "memory" / "current.json"
-    memory_index.parent.mkdir()
-    memory_index.write_text(
-        json.dumps({"source_index": str(tmp_path / "canonical_source_index.json")}),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.load_artifact_memory",
-        lambda _: {
-            "inputs": {"source_index": str(source_index)},
-            "canonical": {"source_run_logs": {}},
-        },
-    )
-
-    manifest_path = _source_selection_manifest(
-        memory_index=memory_index,
-        task="BrowserDraw",
-        selected_run_log=selected,
-        output_path=tmp_path / "selection.json",
-        reason="Official successful replacement.",
-    )
-
-    assert manifest_path is not None
-    selection = json.loads(manifest_path.read_text(encoding="utf-8"))["selections"]
-    assert selection["BrowserDraw"]["selected_source_run_log_sha256"] != selection[
-        "BrowserDraw"
-    ]["expected_source_run_log_sha256"]
 
 
 def test_pipeline_report_always_materializes_four_report_formats(tmp_path: Path) -> None:

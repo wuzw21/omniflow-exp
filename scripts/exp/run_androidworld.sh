@@ -35,6 +35,14 @@ formal_fold_size="2208x1840"
 formal_model="GLM-5.1"
 formal_model_endpoint_profile="llmthu"
 formal_model_base_url="https://llmapi.paratera.com/v1"
+formal_bmoca_revision="de06497ae51464dd06fe4dbd2e5f59f27bcd9250"
+execution_environment="androidworld"
+bmoca_root="${OMNIFLOW_BMOCA_ROOT:-}"
+bmoca_environment_ids="${OMNIFLOW_BMOCA_ENVIRONMENT_IDS:-100,101,102,103,104,105,106,107,108,109}"
+bmoca_avd_home="${OMNIFLOW_BMOCA_AVD_HOME:-${ANDROID_AVD_HOME:-}}"
+bmoca_avd_template_home="${OMNIFLOW_BMOCA_AVD_TEMPLATE_HOME:-}"
+bmoca_output_path="${OMNIFLOW_BMOCA_OUTPUT_PATH:-}"
+bmoca_show_emulator="${OMNIFLOW_BMOCA_SHOW_EMULATOR:-0}"
 android_world_revision="632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"
 appagent_document_model="${OMNIFLOW_APPAGENT_DOCUMENT_MODEL:-$formal_model}"
 mobilegpt_embedding_model="${OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL:-text-embedding-v4}"
@@ -180,7 +188,6 @@ fold_size="${OMNIFLOW_SINGLE_TASK_FOLD_SIZE:-$formal_fold_size}"
 dry_run=0
 check_only=0
 development_run=0
-mobilegpt_native_cold_warm=0
 source_qualification_only=0
 source_collection=0
 stock_capture=0
@@ -189,18 +196,6 @@ eight_cells=0
 batch_task_filter=""
 convert_ours_assets=0
 refresh_memory=0
-page_store=0
-page_store_import=0
-page_store_root="${OMNIFLOW_PAGE_STORE_ROOT:-}"
-page_store_serial="${OMNIFLOW_PAGE_STORE_SERIAL:-}"
-page_store_top_k="${OMNIFLOW_PAGE_STORE_TOP_K:-5}"
-page_store_encoder="${OMNIFLOW_PAGE_STORE_ENCODER:-omnitransfer-v9.2-soft-1024}"
-page_store_checkpoint="${OMNIFLOW_PAGE_STORE_CHECKPOINT:-}"
-page_store_word_checkpoint="${OMNIFLOW_PAGE_WORD_CHECKPOINT:-$account_root/OmniFlowPageStore/models/soft_page_words_v1/soft_page_words_seed41.npz}"
-page_store_device="${OMNIFLOW_PAGE_STORE_DEVICE:-cpu}"
-page_store_state_package="${OMNIFLOW_PAGE_STORE_STATE_PACKAGE:-cn.com.omnimind.bot.debug}"
-page_store_run_limit="${OMNIFLOW_PAGE_STORE_RUN_LIMIT:-0}"
-page_store_merge_threshold="${OMNIFLOW_PAGE_STORE_AUTO_MERGE_THRESHOLD:-0.95}"
 convert_source_runlogs=0
 prepare_mobilegpt_memory=0
 convert_runlog_memory_method=""
@@ -208,12 +203,11 @@ runlog_memory_output_root="${OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT:-}"
 selected_methods_arg=""
 selected_devices_arg=""
 e2e_task=""
-e2e_source_backend="${OMNIFLOW_E2E_SOURCE_BACKEND:-auto}"
-e2e_source_runlog="${OMNIFLOW_E2E_SOURCE_RUNLOG:-}"
 e2e_task_deadline_sec="${OMNIFLOW_E2E_TASK_DEADLINE_SEC:-1800}"
 mobilegpt_memory_output_root="${OMNIFLOW_MOBILEGPT_MEMORY_OUTPUT_ROOT:-}"
 source_runlog_output_root="${OMNIFLOW_SOURCE_RUNLOG_OUTPUT_ROOT:-${memory_root:+$memory_root/source_runlogs}}"
 source_screenshot_roots="${OMNIFLOW_SOURCE_SCREENSHOT_ROOTS:-}"
+runlog_memory_source_runlog="${OMNIFLOW_RUNLOG_MEMORY_SOURCE_RUNLOG:-}"
 
 select_model_endpoint() {
   local profile="$1"
@@ -312,13 +306,12 @@ Usage:
   bash scripts/exp/run_androidworld.sh [OPTIONS]
 
 Options:
+  --environment NAME        Select androidworld (default) or bmoca. This changes
+                            only the official environment, never the method.
   --check-only              Validate the complete selected run without creating
                             assets, attempts, result directories, or emulators.
   --development-run         Run one unregistered `ours` episode through this
                             script for bounded method debugging.
-  --mobilegpt-native-cold-warm
-                            Run MobileGPT once from empty native memory, then
-                            rerun the same task from the memory it wrote.
   --stock-capture AGENT     Run one unregistered immutable stock `t3a` or `m3a`
                             episode and persist its step requests. The default
                             diagnostic limit is seven; set
@@ -351,19 +344,9 @@ Options:
                             qualification; create no target result cells.
   --collect-source         Re-run one task on the source device only and save
                             screenshot-backed native RunLog evidence.
-  --source-backend MODE     Source mode for --e2e-task: auto, reuse-only,
-                            manual, or online. Default: auto.
-  --source-runlog PATH      Successful native seed-111 RunLog for manual mode.
   --task-deadline-sec SEC   Whole-task wall deadline; maximum/default is 1800.
   --refresh-memory          Deduplicate and index all configured RunLogs,
                             method assets, and existing results.
-  --page-store              Interactively capture the current Android page,
-                            show separate OmniTransfer and native OmniFlow
-                            Top-K results, and save only a human-confirmed
-                            merge or new cluster.
-  --page-store-import       Import every page from recent OOB GUI recordings,
-                            exact-deduplicate it, run both Top-K encoders, and
-                            auto-merge with OmniTransfer at threshold 0.95.
   -h, --help                Show this help and exit.
 
 Required external roots:
@@ -437,17 +420,16 @@ Source RunLog conversion inputs:
   OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT
                                      Absolute immutable output for one native
                                      baseline-memory conversion.
+  --source-runlog PATH              Input RunLog for --convert-runlog-memory.
+  OMNIFLOW_BMOCA_ROOT, OMNIFLOW_BMOCA_ENVIRONMENT_IDS (default: 100..109),
+  OMNIFLOW_BMOCA_AVD_HOME, OMNIFLOW_BMOCA_AVD_TEMPLATE_HOME,
+  OMNIFLOW_BMOCA_OUTPUT_PATH, OMNIFLOW_BMOCA_SHOW_EMULATOR.
 
 Examples:
   bash scripts/exp/run_androidworld.sh --tasks AudioRecorderRecordAudio
   bash scripts/exp/run_androidworld.sh --convert-ours-assets \
     --tasks AudioRecorderRecordAudio
   bash scripts/exp/run_androidworld.sh --refresh-memory
-  OMNIFLOW_PAGE_STORE_ROOT=/abs/page-store \
-    bash scripts/exp/run_androidworld.sh --page-store
-  OMNIFLOW_PAGE_STORE_ROOT=/abs/page-store \
-    OMNIFLOW_PAGE_STORE_RUN_LIMIT=4 \
-    bash scripts/exp/run_androidworld.sh --page-store-import
   bash scripts/exp/run_androidworld.sh --convert-source-runlogs
   bash scripts/exp/run_androidworld.sh --check-only \
     --prepare-mobilegpt-memory
@@ -466,7 +448,7 @@ Examples:
     --tasks AudioRecorderRecordAudioWithFileName,SystemCopyToClipboard
   bash scripts/exp/run_androidworld.sh \
     --e2e-task AudioRecorderRecordAudioWithFileName \
-    --source-backend auto --task-deadline-sec 1800
+    --task-deadline-sec 1800
 EOF
 }
 
@@ -479,11 +461,16 @@ while [[ "$#" -gt 0 ]]; do
     --check-only)
       check_only=1
       ;;
+    --environment)
+      shift
+      if [[ "$#" -eq 0 || ( "$1" != "androidworld" && "$1" != "bmoca" ) ]]; then
+        echo "--environment requires androidworld or bmoca." >&2
+        exit 2
+      fi
+      execution_environment="$1"
+      ;;
     --development-run)
       development_run=1
-      ;;
-    --mobilegpt-native-cold-warm)
-      mobilegpt_native_cold_warm=1
       ;;
     --stock-capture)
       shift
@@ -524,13 +511,6 @@ while [[ "$#" -gt 0 ]]; do
     --refresh-memory)
       refresh_memory=1
       ;;
-    --page-store)
-      page_store=1
-      ;;
-    --page-store-import)
-      page_store=1
-      page_store_import=1
-      ;;
     --convert-source-runlogs)
       convert_source_runlogs=1
       ;;
@@ -559,22 +539,6 @@ while [[ "$#" -gt 0 ]]; do
     --collect-source)
       source_collection=1
       ;;
-    --source-backend)
-      shift
-      if [[ "$#" -eq 0 || -z "$1" ]]; then
-        echo "--source-backend requires auto, reuse-only, manual, or online." >&2
-        exit 2
-      fi
-      e2e_source_backend="$1"
-      ;;
-    --source-runlog)
-      shift
-      if [[ "$#" -eq 0 || -z "$1" ]]; then
-        echo "--source-runlog requires an absolute file path." >&2
-        exit 2
-      fi
-      e2e_source_runlog="$1"
-      ;;
     --task-deadline-sec)
       shift
       if [[ "$#" -eq 0 || -z "$1" ]]; then
@@ -582,6 +546,14 @@ while [[ "$#" -gt 0 ]]; do
         exit 2
       fi
       e2e_task_deadline_sec="$1"
+      ;;
+    --source-runlog)
+      shift
+      if [[ "$#" -eq 0 || -z "$1" ]]; then
+        echo "--source-runlog requires an absolute file path." >&2
+        exit 2
+      fi
+      runlog_memory_source_runlog="$1"
       ;;
     --tasks)
       shift
@@ -598,40 +570,103 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
-if [[ "$mobilegpt_native_cold_warm" -eq 1 ]]; then
-  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$development_run" -eq 1 || "$source_collection" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || "$page_store" -eq 1 || "$stock_capture" != "0" || -n "$e2e_task" ]]; then
-    echo "--mobilegpt-native-cold-warm cannot be combined with another execution or maintenance mode." >&2
-    exit 2
-  fi
-  if [[ -z "$batch_task_filter" || "$batch_task_filter" == *,* ]]; then
-    echo "--mobilegpt-native-cold-warm requires exactly one task through --tasks." >&2
-    exit 2
-  fi
-  if [[ -n "$selected_methods_arg" && "$selected_methods_arg" != "mobilegpt_offline_retrieval" ]]; then
-    echo "--mobilegpt-native-cold-warm accepts only mobilegpt_offline_retrieval." >&2
-    exit 2
-  fi
-  task="$batch_task_filter"
-  batch_task_filter=""
-  selected_methods_arg="mobilegpt_offline_retrieval"
-  selected_devices_arg="${selected_devices_arg:-small5554}"
-fi
-if [[ "$source_collection" -eq 1 ]]; then
+if [[ "$execution_environment" != "bmoca" && "$source_collection" -eq 1 ]]; then
   if [[ -z "$batch_task_filter" || "$batch_task_filter" == *,* ]]; then
     echo "--collect-source requires exactly one task through --tasks." >&2
     exit 2
   fi
   e2e_task="$batch_task_filter"
   batch_task_filter=""
-  e2e_source_backend="auto"
   source_qualification_only=0
 fi
+if [[ "$execution_environment" == "bmoca" ]]; then
+  if [[ "$source_collection" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || "$stock_capture" != "0" || -n "$e2e_task" || -n "$selected_methods_arg" || -n "$selected_devices_arg" ]]; then
+    echo "--environment bmoca is one native OmniFlow E2E run and cannot be combined with AndroidWorld experiment modes." >&2
+    exit 2
+  fi
+  if [[ -z "$batch_task_filter" || "$batch_task_filter" == *,* ]]; then
+    echo "--environment bmoca requires exactly one task through --tasks." >&2
+    exit 2
+  fi
+  if [[ -z "$store_path" || "$store_path" != /* || ! -f "$store_path" ]]; then
+    echo "--environment bmoca requires an existing absolute OMNIFLOW_SINGLE_TASK_STORE_PATH." >&2
+    exit 2
+  fi
+  if [[ -z "$bmoca_root" || "$bmoca_root" != /* || ! -d "$bmoca_root/asset" ]]; then
+    echo "--environment bmoca requires an absolute OMNIFLOW_BMOCA_ROOT." >&2
+    exit 2
+  fi
+  bmoca_actual_revision="$(git -C "$bmoca_root" rev-parse HEAD 2>/dev/null || true)"
+  if [[ "$bmoca_actual_revision" != "$formal_bmoca_revision" ]]; then
+    echo "B-MoCA revision mismatch: expected=$formal_bmoca_revision actual=${bmoca_actual_revision:-missing}" >&2
+    exit 2
+  fi
+  if [[ -z "$bmoca_avd_home" || "$bmoca_avd_home" != /* || ! -d "$bmoca_avd_home" ]]; then
+    echo "--environment bmoca requires an absolute OMNIFLOW_BMOCA_AVD_HOME." >&2
+    exit 2
+  fi
+  if [[ -n "$bmoca_avd_template_home" && ( "$bmoca_avd_template_home" != /* || ! -d "$bmoca_avd_template_home" ) ]]; then
+    echo "OMNIFLOW_BMOCA_AVD_TEMPLATE_HOME must be an existing absolute directory." >&2
+    exit 2
+  fi
+  if [[ -z "$bmoca_output_path" || "$bmoca_output_path" != /* || -e "$bmoca_output_path" ]]; then
+    echo "--environment bmoca requires a new absolute OMNIFLOW_BMOCA_OUTPUT_PATH." >&2
+    exit 2
+  fi
+  if [[ "$bmoca_show_emulator" != "0" && "$bmoca_show_emulator" != "1" ]]; then
+    echo "OMNIFLOW_BMOCA_SHOW_EMULATOR must be 0 or 1." >&2
+    exit 2
+  fi
+  if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
+    echo "--environment bmoca requires an existing absolute OMNIFLOW_ENV_FILE." >&2
+    exit 2
+  fi
+  if ! python_bin="$(command -v "$python_bin")"; then
+    echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
+    exit 1
+  fi
+  bmoca_android_sdk_root="${OMNIFLOW_ANDROID_SDK_ROOT:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$(resolve_default_android_sdk_root)}}}"
+  if [[ "$bmoca_android_sdk_root" != /* || ! -x "$bmoca_android_sdk_root/platform-tools/adb" || ! -x "$bmoca_android_sdk_root/emulator/emulator" ]]; then
+    echo "--environment bmoca requires a complete absolute Android SDK root: $bmoca_android_sdk_root" >&2
+    exit 2
+  fi
+  set -a
+  source "$env_file"
+  set +a
+  select_model_endpoint "$formal_model_endpoint_profile"
+  validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
+  export OMNIFLOW_MAX_FALLBACK_STEPS=0
+  bmoca_command=(
+    "$python_bin" -m src.integrations.android_world.launch
+    --environment bmoca
+    --bmoca-root "$bmoca_root"
+    --environment-ids "$bmoca_environment_ids"
+    --android-sdk-root "$bmoca_android_sdk_root"
+    --android-avd-home "$bmoca_avd_home"
+    --tasks "$batch_task_filter"
+    --agent omniflow
+    --store-path "$store_path"
+    --output-path "$bmoca_output_path"
+    --model "$formal_model"
+    --model-endpoint-profile "$formal_model_endpoint_profile"
+    --planner-provider openai_compatible
+    --planner-timeout-sec "${OMNIFLOW_BMOCA_PLANNER_TIMEOUT_SEC:-60}"
+  )
+  if [[ -n "$bmoca_avd_template_home" ]]; then
+    bmoca_command+=(--bmoca-avd-template-home "$bmoca_avd_template_home")
+  fi
+  if [[ "$bmoca_show_emulator" == "1" ]]; then
+    bmoca_command+=(--show-emulator)
+  fi
+  cd "$repo"
+  exec "${bmoca_command[@]}"
+fi
 if [[ -n "$convert_runlog_memory_method" ]]; then
-  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || "$page_store" -eq 1 || "$stock_capture" != "0" || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$e2e_task" || -n "$batch_task_filter" ]]; then
+  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || "$stock_capture" != "0" || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$e2e_task" || -n "$batch_task_filter" ]]; then
     echo "--convert-runlog-memory cannot be combined with another experiment mode." >&2
     exit 2
   fi
-  if [[ -z "$e2e_source_runlog" || "$e2e_source_runlog" != /* || ! -f "$e2e_source_runlog" ]]; then
+  if [[ -z "$runlog_memory_source_runlog" || "$runlog_memory_source_runlog" != /* || ! -f "$runlog_memory_source_runlog" ]]; then
     echo "--convert-runlog-memory requires an existing absolute --source-runlog." >&2
     exit 2
   fi
@@ -686,7 +721,7 @@ if [[ -n "$convert_runlog_memory_method" ]]; then
   cd "$repo"
   "$python_bin" - \
     "$convert_runlog_memory_method" \
-    "$e2e_source_runlog" \
+    "$runlog_memory_source_runlog" \
     "$runlog_memory_output_root" \
     "$runlog_memory_upstream_root" \
     "$runlog_memory_model" \
@@ -707,116 +742,6 @@ result = convert_runlog_memory(
 print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
 PY
   exit 0
-fi
-if [[ "$page_store" -eq 1 ]]; then
-  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$e2e_task" || -n "$batch_task_filter" ]]; then
-    echo "--page-store cannot be combined with experiment or maintenance options." >&2
-    exit 2
-  fi
-  if [[ -z "$page_store_root" || "$page_store_root" != /* ]]; then
-    echo "--page-store requires absolute OMNIFLOW_PAGE_STORE_ROOT." >&2
-    exit 2
-  fi
-  if [[ ! "$page_store_top_k" =~ ^[1-9][0-9]*$ ]]; then
-    echo "OMNIFLOW_PAGE_STORE_TOP_K must be a positive integer." >&2
-    exit 2
-  fi
-  if [[ ! "$page_store_run_limit" =~ ^[0-9]+$ ]]; then
-    echo "OMNIFLOW_PAGE_STORE_RUN_LIMIT must be a non-negative integer." >&2
-    exit 2
-  fi
-  if [[ ! "$page_store_merge_threshold" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]]; then
-    echo "OMNIFLOW_PAGE_STORE_AUTO_MERGE_THRESHOLD must be between 0 and 1." >&2
-    exit 2
-  fi
-  if [[ "$page_store_encoder" != "omnitransfer-v9.2-soft-1024" && "$page_store_encoder" != "omnitransfer-v9.2-dynamic-1024" && "$page_store_encoder" != "omniflow-native-512" ]]; then
-    echo "OMNIFLOW_PAGE_STORE_ENCODER must be omnitransfer-v9.2-soft-1024, omnitransfer-v9.2-dynamic-1024, or omniflow-native-512." >&2
-    exit 2
-  fi
-  if [[ -n "$page_store_checkpoint" && "$page_store_checkpoint" != /* ]]; then
-    echo "OMNIFLOW_PAGE_STORE_CHECKPOINT must be absolute when set." >&2
-    exit 2
-  fi
-  page_store_adb="${OMNIFLOW_ADB_PATH:-adb}"
-  if [[ -z "$page_store_serial" ]]; then
-    page_store_device_serials=()
-    page_store_device_names=()
-    while IFS=$'\t' read -r detected_serial detected_name; do
-      [[ -n "$detected_serial" ]] || continue
-      page_store_device_serials+=("$detected_serial")
-      page_store_device_names+=("$detected_name")
-    done < <(
-      "$page_store_adb" devices -l | awk '
-        NR > 1 && $2 == "device" {
-          model = $1
-          for (i = 3; i <= NF; i++) {
-            if ($i ~ /^model:/) {
-              sub(/^model:/, "", $i)
-              model = $i
-            }
-          }
-          printf "%s\t%s\n", $1, model
-        }
-      '
-    )
-    if [[ "${#page_store_device_serials[@]}" -eq 0 ]]; then
-      echo "--page-store found no authorized adb devices." >&2
-      exit 2
-    fi
-    if [[ "${#page_store_device_serials[@]}" -eq 1 ]]; then
-      page_store_serial="${page_store_device_serials[0]}"
-      echo "Using device: ${page_store_device_names[0]} ($page_store_serial)"
-    else
-      echo "Available adb devices:"
-      for ((device_index = 0; device_index < ${#page_store_device_serials[@]}; device_index++)); do
-        echo "  $((device_index + 1)). ${page_store_device_names[$device_index]} (${page_store_device_serials[$device_index]})"
-      done
-      while [[ -z "$page_store_serial" ]]; do
-        read -r -p "Select device by number, model name, or serial: " device_choice
-        for ((device_index = 0; device_index < ${#page_store_device_serials[@]}; device_index++)); do
-          if [[ "$device_choice" == "$((device_index + 1))" || "$device_choice" == "${page_store_device_names[$device_index]}" || "$device_choice" == "${page_store_device_serials[$device_index]}" ]]; then
-            if [[ -n "$page_store_serial" ]]; then
-              echo "Device name is ambiguous; select by number or serial." >&2
-              page_store_serial=""
-              break
-            fi
-            page_store_serial="${page_store_device_serials[$device_index]}"
-          fi
-        done
-        if [[ -z "$page_store_serial" ]]; then
-          echo "Unknown device; enter one of the displayed values." >&2
-        fi
-      done
-    fi
-  fi
-  page_store_args=(
-    --store "$page_store_root"
-    --serial "$page_store_serial"
-    --adb "$page_store_adb"
-    --top-k "$page_store_top_k"
-    --encoder "$page_store_encoder"
-    --omnitransfer-root "${omnitransfer_root:-$account_root/Projects/Omni/OmniTransfer}"
-    --device "$page_store_device"
-    --page-word-checkpoint "$page_store_word_checkpoint"
-    --state-package "$page_store_state_package"
-  )
-  if [[ -n "$page_store_checkpoint" ]]; then
-    page_store_args+=(--checkpoint "$page_store_checkpoint")
-  fi
-  if [[ "$page_store_import" -eq 1 ]]; then
-    page_store_args+=(
-      --import-recordings
-      --recording-run-limit "$page_store_run_limit"
-      --auto-merge-threshold "$page_store_merge_threshold"
-    )
-  fi
-  cd "$repo"
-  page_store_python="$python_bin"
-  canonical_omnitransfer_python="${omnitransfer_root:-$account_root/Projects/Omni/OmniTransfer}/.venv/bin/python"
-  if [[ -z "${PYTHON_BIN:-}" && -x "$canonical_omnitransfer_python" ]]; then
-    page_store_python="$canonical_omnitransfer_python"
-  fi
-  exec "$page_store_python" -m src.experiment.page_store "${page_store_args[@]}"
 fi
 if [[ "$stock_capture" != 0 ]]; then
   if [[ "$development_run" -eq 1 || "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$e2e_task" ]]; then
@@ -1076,28 +1001,8 @@ if [[ -n "$e2e_task" ]]; then
     echo "--e2e-task cannot be combined with maintenance or matrix-selection options." >&2
     exit 2
   fi
-  case "$e2e_source_backend" in
-    auto|reuse-only|manual|online) ;;
-    *)
-      echo "--source-backend requires auto, reuse-only, manual, or online." >&2
-      exit 2
-      ;;
-  esac
-  if [[ "$source_qualification_only" -eq 1 && "$e2e_source_backend" != "reuse-only" ]]; then
-    echo "--source-qualification-only requires --source-backend reuse-only." >&2
-    exit 2
-  fi
   if [[ ! "$e2e_task_deadline_sec" =~ ^[1-9][0-9]*$ ]] || (( e2e_task_deadline_sec > 1800 )); then
     echo "--task-deadline-sec must be a positive integer no greater than 1800." >&2
-    exit 2
-  fi
-  if [[ "$e2e_source_backend" == "manual" ]]; then
-    if [[ -z "$e2e_source_runlog" || "$e2e_source_runlog" != /* || ! -f "$e2e_source_runlog" ]]; then
-      echo "Manual source mode requires an existing absolute --source-runlog." >&2
-      exit 2
-    fi
-  elif [[ -n "$e2e_source_runlog" ]]; then
-    echo "--source-runlog is valid only with --source-backend manual." >&2
     exit 2
   fi
   if [[ -z "$asset_root" || "$asset_root" != /* || -z "$results_root" || "$results_root" != /* ]]; then
@@ -1152,15 +1057,11 @@ if [[ -n "$e2e_task" ]]; then
   set -a
   source "$env_file"
   set +a
-  e2e_source_model="${OMNIFLOW_E2E_SOURCE_MODEL:-$formal_model}"
-  e2e_semantic_model="${OMNIFLOW_E2E_SEMANTIC_MODEL:-$formal_model}"
-  for e2e_model in "$e2e_source_model" "$e2e_semantic_model" "$formal_model"; do
-    normalized_e2e_model="$(printf '%s' "$e2e_model" | tr '[:upper:]' '[:lower:]')"
-    if [[ "$normalized_e2e_model" != "glm-5.1" ]]; then
-      echo "AndroidWorld E2E requires GLM-5.1 for source, semantic, and formal models, got: $e2e_model" >&2
-      exit 2
-    fi
-  done
+  normalized_e2e_model="$(printf '%s' "$formal_model" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$normalized_e2e_model" != "glm-5.1" ]]; then
+    echo "AndroidWorld E2E requires GLM-5.1 for the formal model, got: $formal_model" >&2
+    exit 2
+  fi
   e2e_output_root="${OMNIFLOW_E2E_OUTPUT_ROOT:-$results_root/androidworld_e2e_task_attempts}"
   if [[ "$e2e_output_root" != /* ]]; then
     echo "OMNIFLOW_E2E_OUTPUT_ROOT must be absolute." >&2
@@ -1171,7 +1072,6 @@ if [[ -n "$e2e_task" ]]; then
     --repo "$repo"
     --script "$repo/scripts/exp/run_androidworld.sh"
     --task "$e2e_task"
-    --source-backend "$e2e_source_backend"
     --task-deadline-sec "$e2e_task_deadline_sec"
     --memory-index "$memory_index"
     --asset-root "$asset_root"
@@ -1188,13 +1088,8 @@ if [[ -n "$e2e_task" ]]; then
     --source-avd "${OMNIFLOW_E2E_SOURCE_AVD:-SmallPhone}"
     --emulator-gpu "${OMNIFLOW_SINGLE_TASK_EMULATOR_GPU:-swiftshader_indirect}"
     --runtime-preflight "$repo/src/experiment/preflight.py"
-    --source-model "$e2e_source_model"
-    --semantic-model "$e2e_semantic_model"
     --formal-model "$formal_model"
   )
-  if [[ -n "$e2e_source_runlog" ]]; then
-    e2e_args+=(--source-run-log "$e2e_source_runlog")
-  fi
   if [[ -n "${OMNIFLOW_E2E_ATTEMPT_ID:-}" ]]; then
     e2e_args+=(--attempt-id "$OMNIFLOW_E2E_ATTEMPT_ID")
   fi
@@ -1447,7 +1342,7 @@ if [[ "$convert_ours_assets" -eq 1 ]]; then
   cd "$repo"
   exec "$python_bin" "${conversion_args[@]}"
 fi
-if [[ -n "$batch_task_filter" && "$all_tasks" -eq 0 && "$prepare_mobilegpt_memory" -eq 0 && "$mobilegpt_native_cold_warm" -eq 0 ]]; then
+if [[ -n "$batch_task_filter" && "$all_tasks" -eq 0 && "$prepare_mobilegpt_memory" -eq 0 ]]; then
   all_tasks=1
 fi
 if [[ "$prepare_mobilegpt_memory" -eq 1 ]]; then
@@ -1870,9 +1765,6 @@ else
 fi
 attempt_series_root="${results_root:+$results_root/androidworld_single_task_attempts/$task}"
 output_root="${OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT:-$attempt_series_root/$attempt_id}"
-if [[ "$mobilegpt_native_cold_warm" -eq 1 ]]; then
-  output_root="${OMNIFLOW_MOBILEGPT_NATIVE_COLD_WARM_OUTPUT_PATH:-$results_root/mobilegpt_native_cold_warm/$task/$attempt_id}"
-fi
 preflight_output_root="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_OUTPUT_ROOT:-${results_root:+$results_root/preflight/$task/$attempt_id}}"
 requires_mobilegpt_source_memory=0
 requires_appagent_source_memory=0
@@ -1894,9 +1786,7 @@ for method in ${methods//,/ }; do
       ;;
     mobilegpt_offline_retrieval)
       need_mobilegpt_preflight=1
-      if [[ "$mobilegpt_native_cold_warm" -eq 0 ]]; then
-        requires_mobilegpt_source_memory=1
-      fi
+      requires_mobilegpt_source_memory=1
       contains_baseline_method=1
       ;;
     appagent_demo)
@@ -3281,7 +3171,7 @@ if [[ "$need_mobilegpt_preflight" -eq 1 ]]; then
     echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=$mobilegpt_runtime_embedding_model embedding_dimension=$mobilegpt_runtime_embedding_dimension"
   else
     export MOBILEGPT_EMBEDDING_MODEL="$mobilegpt_embedding_model"
-    echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=$mobilegpt_embedding_model mode=native-cold-warm"
+    echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=$mobilegpt_embedding_model"
   fi
 fi
 echo "[model] model=$paper_model model_endpoint_profile=$formal_model_endpoint_profile model_endpoint=$selected_model_base_url"
@@ -3650,7 +3540,7 @@ command=(
   "$python_bin"
   -m
   src.experiment.androidworld
-  one-task
+  cell
   --experiment-config "$config"
   --index "$source_index"
   --android-world-root "$android_world_root"
@@ -3688,8 +3578,5 @@ if [[ -n "$device_targets" ]]; then
 fi
 if [[ -n "$appagent_demo_memory_root" ]]; then
   command+=(--appagent-demo-memory-root "$appagent_demo_memory_root")
-fi
-if [[ "$mobilegpt_native_cold_warm" -eq 1 ]]; then
-  command+=(--mobilegpt-native-cold-warm)
 fi
 exec "${command[@]}"

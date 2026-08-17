@@ -1,6 +1,7 @@
 # OmniFlow-exp Rules
 
-This repository exists only for the paper's AndroidWorld experiment. Do not add
+This repository exists only for the paper's AndroidWorld experiment and the
+B-MoCA cross-environment validation of the same OmniFlow method. Do not add
 product code, historical campaigns, ablations, exploratory methods, raw data,
 or compatibility layers.
 
@@ -18,7 +19,7 @@ paper-only workflow and must stay consistent with this file.
 - OmniFlow-exp owns the experiment's core logic, but page identity is owned by
   the latest canonical OmniTransfer page embedding. The only page encoder in
   the active code path is `omniflow/transfer/page_embedding.py`; do not add a
-  local 512D/1024D page encoder, learned pooling head, or comparison baseline.
+  local legacy page encoder, learned pooling head, or comparison baseline.
 - The canonical implementation is loaded from the real
   `~/Projects/Omni/OmniTransfer` checkout. Its frozen checkpoint provenance is
   recorded in every page embedding; a missing or mismatched canonical
@@ -106,7 +107,7 @@ than fabricating experience or changing the baseline.
 
 ## Mandatory execution entry
 
-- Every AndroidWorld check, development episode, formal cell, conversion, and
+- Every AndroidWorld or B-MoCA check, development episode, formal cell, conversion, and
   memory refresh must enter through `scripts/exp/run_androidworld.sh`. Do not
   invoke `src.integrations.android_world.launch`, `src.experiment.androidworld`,
   or a skill-owned runner directly; they are implementation seams.
@@ -118,6 +119,10 @@ than fabricating experience or changing the baseline.
   use the development reuse override to create or register a formal result.
 - Treat `mobilegpt_offline_retrieval` and `appagent_demo` as frozen external
   baselines under the absolute no-repair rule above.
+- B-MoCA is an environment adapter, never a replay method. Its E2E path must use
+  the same `OmniFlow.run()` Function/checker/OmniTransfer runtime, GLM-5.1 only
+  for Planner tool selection, zero Function fallback steps, and the official
+  B-MoCA reward as the success authority.
 
 ## Local and 9207 synchronization
 

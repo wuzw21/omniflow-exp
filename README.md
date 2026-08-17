@@ -1,6 +1,7 @@
 # OmniFlow-exp
 
-Clean, paper-only AndroidWorld evaluation code for OmniFlow.
+Clean, paper-only AndroidWorld evaluation and B-MoCA environment validation
+code for OmniFlow.
 
 This repository contains code and orchestration only. RunLogs, screenshots,
 models, APKs, AndroidWorld checkouts, baseline memories, and evaluation results
@@ -35,13 +36,15 @@ The complete command reference, including one-RunLog Function conversion,
 freezing, memory registration, real-time execution, and resume behavior, is in
 [scripts/exp/README.md](scripts/exp/README.md).
 
+B-MoCA is selected through the same entry point with `--environment bmoca`.
+It changes only the official environment; the method remains the native
+OmniFlow E2E loop with Function, checker, and OmniTransfer.
+
 ## Bounded per-task E2E pipeline
 
 Use one command to obtain one complete, auditable task result set. The command
-reuses an already registered successful source RunLog when possible; otherwise
-it accepts a manually recorded RunLog or runs the strong online backend. It
-then prepares method-native memories, qualifies `ours` on the source device,
-and runs the eight target cells.
+resolves the canonical successful source RunLog, prepares method-native
+memories, qualifies `ours` on the source device, and runs the ten target cells.
 
 ```bash
 export OMNIFLOW_EXP_ASSET_ROOT=/absolute/external/assets
@@ -56,12 +59,11 @@ export OMNITRANSFER_ROOT="$HOME/Projects/Omni/OmniTransfer"
 
 bash scripts/exp/run_androidworld.sh \
   --e2e-task AudioRecorderRecordAudioWithFileName \
-  --source-backend auto \
   --task-deadline-sec 1800
 ```
 
 The deadline is a hard whole-pipeline wall limit and cannot exceed 1800
-seconds. Within that limit the output is either all eight validator
+seconds. Within that limit the output is either all ten validator
 conclusions or an immutable partial/blocked result identifying the exact
 failed phase. It is not a promise that every method succeeds. A method failure
 is retained as evaluation evidence rather than retried with changed rules.
@@ -71,8 +73,8 @@ is retained as evaluation evidence rather than retried with changed rules.
 1. Start or reuse the official source `AndroidWorldAvd` on
    `emulator-5560`, then pass the native AndroidWorld runtime preflight.
 2. Resolve the canonical successful source-seed-`111` RunLog by exact SHA-256.
-   In `auto` mode, a missing or unusable canonical source triggers one online
-   collection with `glm-5.1`; only official-validator success is harvested.
+   Missing or unusable canonical source memory blocks the pipeline; it never
+   switches to an unregistered online source.
 3. Have an offline Agent interpret the selected RunLog's goal, ordered actions,
    action metadata, and fixed OmniTransfer capability boundary, then emit complete Function
    descriptions, parameters, bindings, fixed choices, and exclusions. The
@@ -86,8 +88,8 @@ is retained as evaluation evidence rather than retried with changed rules.
 5. Resolve or create task-local MobileGPT memory and AppAgent demo memory from
    the same selected RunLog. A preparation failure blocks only that method's
    two cells.
-6. Run `fixed_replay`, `ours`, `mobilegpt_offline_retrieval`, and
-   `appagent_demo` sequentially on each device. The SmallPhone worker
+6. Run `fixed_replay`, `ours`, `mobilegpt_offline_retrieval`, `appagent_demo`,
+   and `t3a_hint` sequentially on each device. The SmallPhone worker
    (`emulator-5554`) and unfolded Pixel Fold worker (`emulator-5564`, state
    `2`) run concurrently. Target seed is always `113`; fallback budget remains
    the frozen maximum of `5`.
@@ -97,8 +99,7 @@ is retained as evaluation evidence rather than retried with changed rules.
 
 | phase | per-phase cap | model use | failure scope |
 |---|---:|---|---|
-| source device and preflight | 240 s | none | all eight cells |
-| online source acquisition | 480 s | `glm-5.1`, only when needed | all eight cells |
+| source device and preflight | 240 s | none | all ten cells |
 | semantic Function compilation | 180 s | `glm-5.1`, only when needed | two `ours` cells |
 | direct source qualification | 300 s | forbidden | two `ours` cells |
 | MobileGPT memory preparation | 300 s | frozen baseline implementation | two MobileGPT cells |
@@ -110,20 +111,7 @@ remaining part of the 1800-second global deadline. When no time remains, the
 coordinator does not launch another process and writes `deadline_exceeded` for
 every unfinished cell.
 
-### Source modes
-
-- `--source-backend auto`: reuse canonical evidence, otherwise collect online;
-  if reused evidence cannot qualify the Function, collect one fresh successful
-  source and compile a new explicitly selected immutable Function asset.
-- `--source-backend reuse-only`: never call the source online model; report a
-  blocked result when the canonical source is missing or unusable.
-- `--source-backend online`: deliberately collect one fresh successful source
-  with the configured strong backend.
-- `--source-backend manual --source-runlog /absolute/run_log.json`: import a
-  manually recorded successful native seed-`111` RunLog.
-
-`OMNIFLOW_E2E_SOURCE_MODEL` and `OMNIFLOW_E2E_SEMANTIC_MODEL` default to
-`glm-5.1`. The four target methods retain their frozen models and policies.
+The five target methods retain their frozen models and policies.
 `OMNIFLOW_E2E_OUTPUT_ROOT` changes the external attempt root, and
 `OMNIFLOW_E2E_ATTEMPT_ID` supplies a safe immutable attempt identifier.
 
@@ -335,9 +323,8 @@ official-success RunLog.
 All active page retrieval uses `omniflow/transfer/page_embedding.py`, which
 loads the latest page embedding implementation from the canonical
 `~/Projects/Omni/OmniTransfer` checkout. The adapter records the checkpoint
-path and SHA-256 in every embedding audit. OmniFlow-exp contains no native
-512D encoder, learned page-word head, functional-page head, or embedding
-comparison baseline.
+path and SHA-256 in every embedding audit. OmniFlow-exp contains no legacy
+page-encoder branch or embedding comparison baseline.
 
 The current frozen page-embedding checkpoint is
 `src/omnitransfer/checkpoints/omnitransfer_spatial_xml_alignment_v9_20260805/v9_spatial_xml_alignment_seed29.pt`.

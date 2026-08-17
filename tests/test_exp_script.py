@@ -98,6 +98,8 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
 
     assert completed.returncode == 0
     assert "--check-only" in completed.stdout
+    assert "--environment" in completed.stdout
+    assert "OMNIFLOW_BMOCA_ENVIRONMENT_IDS" in completed.stdout
     assert "--development-run" in completed.stdout
     assert "--stock-capture" in completed.stdout
     assert "--all-tasks" in completed.stdout
@@ -109,7 +111,9 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "--convert-runlog-memory" in completed.stdout
     assert "--refresh-memory" in completed.stdout
     assert "--e2e-task" in completed.stdout
-    assert "--source-backend" in completed.stdout
+    assert "--source-backend" not in completed.stdout
+    assert "--page-store" not in completed.stdout
+    assert "--mobilegpt-native-cold-warm" not in completed.stdout
     assert "--source-runlog" in completed.stdout
     assert "--task-deadline-sec" in completed.stdout
     assert "OMNIFLOW_EXP_ASSET_ROOT" in completed.stdout
@@ -585,8 +589,6 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
             str(SCRIPT),
             "--e2e-task",
             "BrowserDraw",
-            "--source-backend",
-            "reuse-only",
             "--task-deadline-sec",
             "1800",
             "--dry-run",
@@ -618,7 +620,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
     invocation = capture.read_text(encoding="utf-8").splitlines()
     assert invocation[:2] == ["-m", "src.experiment.e2e_task_pipeline"]
     assert invocation[invocation.index("--task") + 1] == "BrowserDraw"
-    assert invocation[invocation.index("--source-backend") + 1] == "reuse-only"
+    assert "--source-backend" not in invocation
     assert invocation[invocation.index("--task-deadline-sec") + 1] == "1800"
     assert invocation[invocation.index("--source-device") + 1] == (
         "source5570:emulator-5570:5570"
@@ -1449,7 +1451,7 @@ exit 0
     one_task_calls = [
         line
         for line in calls.splitlines()
-        if "src.experiment.androidworld one-task" in line
+        if "src.experiment.androidworld cell" in line
     ]
     assert one_task_calls
     assert all(f"--adb-path {fake_adb}" in line for line in one_task_calls)
@@ -1485,7 +1487,7 @@ exit 0
         "src.experiment.mobilegpt_source prepare"
     ) == 1
     assert repeated_calls.count("src.experiment.appagent_source prepare") == 1
-    assert repeated_calls.count("src.experiment.androidworld one-task") == 2
+    assert repeated_calls.count("src.experiment.androidworld cell") == 2
 
     checked = subprocess.run(
         ["bash", str(SCRIPT), "--check-only"],
@@ -1847,7 +1849,7 @@ if [ "$1" = "-" ] && [ "$2" = "$CONFIG_PATH" ]; then
   printf '%s\n' 'GLM-5.1'
   exit 0
 fi
-if [ "$1" = "-m" ] && [ "$2" = "src.experiment.androidworld" ] && [ "$3" = "one-task" ]; then
+if [ "$1" = "-m" ] && [ "$2" = "src.experiment.androidworld" ] && [ "$3" = "cell" ]; then
   device="${OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS%%:*}"
   : > "$STATE_DIR/${OMNIFLOW_SINGLE_TASK_METHODS}-${device}"
   exit 0

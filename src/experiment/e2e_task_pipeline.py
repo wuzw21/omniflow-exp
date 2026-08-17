@@ -21,7 +21,6 @@ from src.experiment.androidworld import ArchivedRunLog, build_fixed_replay_comma
 from src.experiment.artifact_memory import (
     canonical_mobilegpt_memory_from_memory,
     load_artifact_memory,
-    refresh_artifact_memory_from_pointer,
     registered_cell_plan_from_memory,
 )
 from src.experiment.batch_outcomes import (
@@ -382,107 +381,6 @@ def _resolve_reference(index_path: Path, value: Any) -> Path:
     if not path.is_absolute():
         path = index_path.parent / path
     return path.resolve()
-
-
-def _source_index_baseline(
-    memory_index: Path,
-    task: str,
-) -> tuple[dict[str, Any], Path, str]:
-    pointer = _read_object(memory_index)
-    registry = load_artifact_memory(memory_index)
-    source_index = _resolve_reference(
-        memory_index,
-        registry.get("inputs", {}).get("source_index") or pointer.get("source_index"),
-    )
-    payload = _read_object(source_index)
-    record = payload.get(task)
-    if not isinstance(record, dict):
-        raise ValueError(f"source_index_task_missing:{task}")
-    baseline = _resolve_reference(
-        source_index,
-        record.get("retained_source_run_log") or record.get("source_run_log"),
-    )
-    if not baseline.is_file():
-        raise FileNotFoundError(f"source_index_run_log_missing:{task}:{baseline}")
-    expected = str(
-        record.get("retained_source_run_log_sha256")
-        or record.get("source_run_log_sha256")
-        or ""
-    ).strip().lower()
-    actual = _sha256(baseline)
-    if expected and expected != actual:
-        raise ValueError(
-            f"source_index_run_log_hash_mismatch:{task}:"
-            f"expected={expected}:actual={actual}"
-        )
-    return pointer, baseline, actual
-
-
-def _source_selection_manifest(
-    *,
-    memory_index: Path,
-    task: str,
-    selected_run_log: Path,
-    output_path: Path,
-    reason: str,
-) -> Path | None:
-    registry = load_artifact_memory(memory_index)
-    _, _, expected_hash = _source_index_baseline(memory_index, task)
-    selected_hash = _sha256(selected_run_log)
-    if expected_hash == selected_hash:
-        return None
-    existing_record = registry.get("inputs", {}).get("source_selection_manifest")
-    existing_path = ""
-    if isinstance(existing_record, dict):
-        existing_path = str(
-            existing_record.get("object_path") or existing_record.get("path") or ""
-        )
-    payload = {
-        "schema_version": "omniflow.androidworld-source-selection.v1",
-        "selections": {},
-    }
-    if existing_path:
-        existing = _read_object(existing_path)
-        if existing.get("schema_version") != payload["schema_version"]:
-            raise ValueError("existing_source_selection_manifest_invalid")
-        payload["selections"] = dict(existing.get("selections") or {})
-    payload["selections"][task] = {
-        "expected_source_run_log_sha256": expected_hash,
-        "selected_source_run_log_sha256": selected_hash,
-        "reason": reason,
-    }
-    return _write_json(output_path, payload)
-
-
-def select_source_run_log(
-    *,
-    memory_index: Path,
-    task: str,
-    run_log_path: Path,
-    attempt_root: Path,
-    reason: str,
-) -> tuple[Path, dict[str, Any]]:
-    run_log_path = run_log_path.expanduser().resolve()
-    run_log = require_complete_source_run_log(_read_object(run_log_path))
-    if run_log["task_name"] != task or run_log["seed"] != SOURCE_SEED:
-        raise ValueError("selected_source_task_or_seed_mismatch")
-    if run_log["success"] is not True:
-        raise ValueError("selected_source_not_successful")
-    manifest = _source_selection_manifest(
-        memory_index=memory_index,
-        task=task,
-        selected_run_log=run_log_path,
-        output_path=attempt_root / "source" / "source_selection.json",
-        reason=reason,
-    )
-    if manifest is not None:
-        refresh_artifact_memory_from_pointer(
-            memory_index=memory_index,
-            source_selection_manifest=manifest,
-            additional_runlog_roots=(run_log_path.parent,),
-        )
-    _, selected_path, selected = _canonical_source(memory_index, task)
-    return selected_path, selected
 
 
 def _official_success(row: dict[str, Any]) -> bool:
@@ -1650,7 +1548,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         return {
             "schema_version": "omniflow.androidworld.e2e-task-plan.v1",
             "task": args.task,
-            "source_backend": args.source_backend,
             "deadline_sec": args.task_deadline_sec,
             "phase_timeout_caps_sec": PHASE_TIMEOUTS_SEC,
             "source_seed": SOURCE_SEED,
@@ -1677,7 +1574,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "immutable": True,
             "task": args.task,
             "attempt_id": attempt_id,
-            "source_backend": args.source_backend,
             "deadline_sec": args.task_deadline_sec,
             "phase_timeout_caps_sec": PHASE_TIMEOUTS_SEC,
             "methods": list(METHODS),
@@ -1721,23 +1617,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     try:
         source_path: Path
         run_log: dict[str, Any]
-        if args.source_backend == "manual":
-            if args.source_run_log is None:
-                raise ValueError("manual_source_run_log_required")
-            source_path, run_log = select_source_run_log(
-                memory_index=args.memory_index,
-                task=args.task,
-                run_log_path=args.source_run_log,
-                attempt_root=attempt_root,
-                reason="Explicit human-provided seed-111 AndroidWorld RunLog.",
-            )
-            phases["source"] = {
-                "status": "selected_manual",
-                "tool_calls": 0,
-                "tokens": 0,
-                "source_run_log": str(source_path),
-            }
-        elif getattr(args, "source_only", False):
+        if getattr(args, "source_only", False):
             _, source_path, run_log = _canonical_source(
                 args.memory_index,
                 args.task,
@@ -2065,12 +1945,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--script", type=Path, required=True)
     parser.add_argument("--task", required=True)
-    parser.add_argument(
-        "--source-backend",
-        choices=("auto", "reuse-only", "manual", "online"),
-        default="auto",
-    )
-    parser.add_argument("--source-run-log", type=Path)
     parser.add_argument("--task-deadline-sec", type=int, default=DEFAULT_DEADLINE_SEC)
     parser.add_argument("--memory-index", type=Path, required=True)
     parser.add_argument("--asset-root", type=Path, required=True)
@@ -2092,8 +1966,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-avd", default="SmallPhone")
     parser.add_argument("--emulator-gpu", default="swiftshader_indirect")
     parser.add_argument("--runtime-preflight", type=Path, required=True)
-    parser.add_argument("--source-model", default="GLM-5.1")
-    parser.add_argument("--semantic-model", default="GLM-5.1")
     parser.add_argument("--formal-model", default="GLM-5.1")
     parser.add_argument("--attempt-id", default="")
     parser.add_argument("--source-qualification-only", action="store_true")
@@ -2120,18 +1992,12 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
     ):
         setattr(args, field, getattr(args, field).expanduser().resolve())
     args.python_bin = args.python_bin.expanduser().absolute()
-    if args.source_run_log is not None:
-        args.source_run_log = args.source_run_log.expanduser().resolve()
     if args.appagent_memory_root is not None:
         args.appagent_memory_root = args.appagent_memory_root.expanduser().resolve()
     if args.task_deadline_sec > DEFAULT_DEADLINE_SEC:
         raise ValueError("task_deadline_exceeds_1800_seconds")
     if args.task_deadline_sec <= 0:
         raise ValueError("task_deadline_must_be_positive")
-    if args.source_backend == "manual" and args.source_run_log is None:
-        raise ValueError("manual_source_run_log_required")
-    if args.source_backend != "manual" and args.source_run_log is not None:
-        raise ValueError("source_run_log_requires_manual_backend")
     if not args.task.isalnum():
         raise ValueError("androidworld_task_name_invalid")
     if not args.source_avd.strip():

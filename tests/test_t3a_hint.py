@@ -25,7 +25,7 @@ def test_formal_one_task_method_set_is_exact() -> None:
         "appagent_demo",
         "t3a_hint",
     ]
-    with pytest.raises(ValueError, match="Unsupported one-task method"):
+    with pytest.raises(ValueError, match="Unsupported cell method"):
         _parse_one_task_methods("mobile_agent_v3")
 
 

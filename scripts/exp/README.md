@@ -11,6 +11,14 @@ seams, not alternate launchers:
 | Bounded `ours` development | `run_androidworld.sh --development-run --tasks TASK` | OmniFlow online Planner |
 | Source screenshot refresh | `run_androidworld.sh --collect-source --tasks TASK` | Existing `fixed_replay`; no Planner or model calls |
 | Static validation | `run_androidworld.sh --check-only` | No emulator or method execution |
+| B-MoCA E2E | `run_androidworld.sh --environment bmoca --tasks TASK` | The same OmniFlow method on official B-MoCA snapshots |
+
+B-MoCA changes only the environment. It is not a selector, replay baseline, or
+second execution method. The unified command enumerates the requested official
+environment IDs (100 through 109 by default), runs the normal
+`observe -> recall -> plan -> Function/checker/OmniTransfer -> act` loop, and
+reports the official reward for each episode. GLM-5.1 is used only by the front
+Planner; Function fallback is fixed at zero.
 
 `--collect-source` resolves the canonical successful seed-111 RunLog from
 `current.json`, replays its recorded coordinates through the official
@@ -36,8 +44,8 @@ the Python launcher or maintain a second runtime script.
 The active page representation is the canonical OmniTransfer page embedding,
 loaded through `omniflow/transfer/page_embedding.py` from
 `~/Projects/Omni/OmniTransfer`. Its checkpoint path and SHA-256 are part of
-the embedding provenance. This repository deliberately has no native 512D
-encoder, page-word head, functional-page encoder, or page-embedding baseline.
+the embedding provenance. This repository deliberately has no legacy
+page-encoder branch or embedding comparison baseline.
 
 The E2E pipeline does not reuse a Store merely because its RunLog hash matches.
 The Store provenance must identify the `androidworld-runlog-harvester` skill.
@@ -243,7 +251,7 @@ currently supported memory schema.
 
 ## Bounded `ours` development run
 
-Use the same script for an unregistered one-task diagnostic episode:
+Use the same script for an unregistered single-cell diagnostic episode:
 
 ```bash
 OMNIFLOW_ANDROID_WORLD_ROOT=/absolute/AndroidWorld \
@@ -280,25 +288,6 @@ Before a formal device starts, the unified script performs one authenticated
 `GET /models` probe against the selected profile. Invalid credentials or an
 unreachable endpoint fail before emulator startup; dry-runs and static checks
 remain network-free.
-
-## Native MobileGPT cold/warm diagnostic
-
-This unregistered diagnostic runs the same AndroidWorld task twice on one
-device. The cold episode starts from an empty MobileGPT memory directory. The
-warm episode starts from the exact native memory directory written by cold; no
-RunLog conversion or converted source memory participates.
-
-```bash
-OMNIFLOW_MOBILEGPT_NATIVE_COLD_WARM_OUTPUT_PATH=/absolute/new/attempt \
-bash scripts/exp/run_androidworld.sh \
-  --mobilegpt-native-cold-warm \
-  --tasks MarkorCreateFolder \
-  --devices small5554
-```
-
-The immutable `cold_warm_report.json` records both official-validator results,
-model usage, actions, duration, native memory inventory, and warm memory hit and
-fallback counts. This diagnostic never registers a formal experiment cell.
 
 ## Unregistered stock T3A/M3A capture for SkyMark
 
