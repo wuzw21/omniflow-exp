@@ -13,6 +13,8 @@ import importlib
 import json
 import os
 from pathlib import Path
+import subprocess
+import tempfile
 from typing import Any
 
 from omniflow import Action, Observation
@@ -181,16 +183,7 @@ class LunaAndroidWorldHarness:
             "observation_state": _json_copy(observation.extra.get("androidworld_state")),
         }
         try:
-            call = _run_async(
-                self._planner.one_step_tool_call(
-                    self.goal,
-                    observation,
-                    functions=(),
-                    installed_apps={package: package for package in self.host.installed_packages()},
-                )
-            )
-            metadata = self._planner.take_metadata()
-            step_usage = self._planner.take_usage()
+            call, metadata, step_usage = self._decide_with_codex(observation)
             self._merge_usage(step_usage)
             metadata["token_usage"] = _json_copy(step_usage)
             record["decision"] = {
@@ -241,6 +234,108 @@ class LunaAndroidWorldHarness:
                 "done_reason": reason,
             },
         )
+
+    def _decide_with_codex(
+        self,
+        observation: Observation,
+    ) -> tuple[Any, dict[str, Any], dict[str, int]]:
+        """Ask the installed Codex CLI to run Luna's multimodal turn.
+
+        The OmniMind credential is intentionally consumed by the standard
+        Codex client (Responses wire protocol), rather than by an HTTP relay
+        implemented in this harness.  This is required by the provider's
+        access policy and still leaves AndroidWorld observation/action entirely
+        under this adapter's control.
+        """
+
+        pixels = observation.extra.get("androidworld_state", {}).get("pixels", {})
+        screenshot = str(pixels.get("path") or "") if isinstance(pixels, dict) else ""
+        prompt = self._cli_prompt(observation)
+        with tempfile.TemporaryDirectory(prefix="luna-cli-") as temp_dir:
+            output_path = Path(temp_dir) / "last_message.txt"
+            command = [
+                "codex",
+                "exec",
+                "--ephemeral",
+                "--skip-git-repo-check",
+                "--sandbox",
+                "read-only",
+                "--color",
+                "never",
+                "--model",
+                self._planner.model,
+                "-o",
+                str(output_path),
+                "--json",
+            ]
+            if screenshot and Path(screenshot).is_file():
+                command.extend(("-i", screenshot))
+            completed = subprocess.run(
+                command,
+                input=prompt,
+                text=True,
+                capture_output=True,
+                timeout=float(self._planner.timeout),
+                check=False,
+                env=os.environ.copy(),
+            )
+            raw_response = output_path.read_text(encoding="utf-8", errors="replace") if output_path.is_file() else ""
+            usage = self._cli_usage(completed.stdout)
+            if completed.returncode != 0 or not raw_response.strip():
+                detail = (completed.stderr or completed.stdout or "codex_cli_failed").strip()
+                raise RuntimeError(f"luna_codex_cli_failed:{detail[-2000:]}")
+            payload = _parse_cli_action(raw_response)
+            from omniflow.core.model import ToolCall
+
+            call = ToolCall(str(payload["action"]), dict(payload.get("args") or {}))
+            metadata = {
+                "reasoning": str(payload.get("reasoning") or "").strip(),
+                "raw_response": raw_response,
+                "transport": "codex_cli",
+                "cli_returncode": completed.returncode,
+            }
+            return call, metadata, usage
+
+    def _cli_prompt(self, observation: Observation) -> str:
+        xml = str(observation.xml or "")
+        if len(xml) > 30000:
+            xml = xml[:30000] + "\n[xml truncated]"
+        hint = f"\nGuidance:\n{self.hint}" if self.hint else ""
+        return (
+            "You are Luna, the decision model inside a direct AndroidWorld harness. "
+            "Do not call tools, run shell commands, or modify files. Inspect the "
+            "attached current screenshot and accessibility XML, then choose exactly "
+            "one next action. Return ONLY one JSON object with keys action, args, "
+            "reasoning. Allowed action values and argument shapes: click(target_description,x,y), "
+            "input_text(target_description,text,x,y), swipe(direction), "
+            "open_app(package_name), press_key(key), finished(content). Coordinates "
+            "x/y are canonical 0-1000 values (not pixels).\n\n"
+            f"Task: {self.goal}\nAccessibility XML:\n{xml}\n{hint}"
+        )
+
+    @staticmethod
+    def _cli_usage(events: str) -> dict[str, int]:
+        usage = {key: 0 for key in (
+            "model_calls", "prompt_tokens", "completion_tokens", "total_tokens",
+            "responses_with_usage", "responses_without_usage", "failed_calls",
+        )}
+        usage["model_calls"] = 1
+        for line in str(events or "").splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("type") != "turn.completed":
+                continue
+            values = event.get("usage") if isinstance(event.get("usage"), dict) else {}
+            usage["prompt_tokens"] = int(values.get("input_tokens") or 0)
+            usage["completion_tokens"] = int(values.get("output_tokens") or 0)
+            usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
+            usage["responses_with_usage"] = 1
+        if usage["responses_with_usage"] == 0:
+            usage["responses_without_usage"] = 1
+        usage["failed_calls"] = 0
+        return usage
 
     def _execute_answer(self, content: str) -> None:
         module = importlib.import_module("android_world.env.json_action")
@@ -331,6 +426,25 @@ def _run_async(awaitable: Any) -> Any:
         return loop.run_until_complete(awaitable)
     finally:
         loop.close()
+
+
+def _parse_cli_action(text: str) -> dict[str, Any]:
+    candidate = str(text or "").strip()
+    try:
+        value = json.loads(candidate)
+    except json.JSONDecodeError:
+        start, end = candidate.find("{"), candidate.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError("luna_action_json_missing")
+        value = json.loads(candidate[start : end + 1])
+    if not isinstance(value, dict) or str(value.get("action") or "") not in {
+        "click", "input_text", "swipe", "open_app", "press_key", "finished",
+    }:
+        raise ValueError("luna_action_schema_invalid")
+    args = value.get("args")
+    if not isinstance(args, dict):
+        raise ValueError("luna_action_args_invalid")
+    return value
 
 
 def _json_copy(value: Any) -> Any:
