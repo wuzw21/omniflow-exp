@@ -295,7 +295,11 @@ class LunaAndroidWorldHarness:
                 capture_output=True,
                 timeout=float(self._planner.timeout),
                 check=False,
-                env={**os.environ, "CODEX_HOME": str(codex_home)},
+                env={
+                    **os.environ,
+                    "HOME": str(codex_home),
+                    "CODEX_HOME": str(codex_home),
+                },
             )
             raw_response = output_path.read_text(encoding="utf-8", errors="replace") if output_path.is_file() else ""
             usage = self._cli_usage(completed.stdout)
