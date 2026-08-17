@@ -1136,16 +1136,114 @@ def _validate_agent_stage_contract(
     stage: str,
 ) -> None:
     functions = [parse_function_artifact(value) for value in bundle["functions"]]
+    previous_functions: list[dict[str, Any]] = []
     if previous_bundle is not None:
-        previous_ids = [
-            str(value["function_id"]) for value in previous_bundle["functions"]
-        ]
+        previous_functions = list(previous_bundle["functions"])
+        previous_ids = [str(value["function_id"]) for value in previous_functions]
         if [function.id for function in functions] != previous_ids:
             raise ValueError(f"function_enhancement_{stage}_function_set_changed")
     if stage in {"split", "parameters"} and any(
         function.checker_rules for function in functions
     ):
         raise ValueError(f"function_enhancement_{stage}_checker_rules_forbidden")
+    if stage == "parameters":
+        immutable_fields = {
+            "schema_version",
+            "function_id",
+            "name",
+            "description",
+            "checker_rules",
+            "agent_visible",
+        }
+        for function, previous in zip(
+            functions,
+            previous_functions,
+            strict=True,
+        ):
+            current = function.to_dict()
+            if any(current[field] != previous[field] for field in immutable_fields):
+                raise ValueError("parameters_stage_changed_function_logic")
+            raw_arguments = bundle["arguments"][function.id]
+            calls = raw_arguments if isinstance(raw_arguments, list) else [raw_arguments]
+            if any(
+                bind_function(function, arguments).to_dict()["steps"]
+                != previous["steps"]
+                for arguments in calls
+            ):
+                raise ValueError("parameters_stage_changed_function_logic")
+        return
+    if stage == "checkers":
+        if bundle["arguments"] != previous_bundle["arguments"]:
+            raise ValueError("checkers_stage_changed_arguments")
+        immutable_fields = {
+            "schema_version",
+            "function_id",
+            "name",
+            "description",
+            "input_schema",
+            "agent_visible",
+        }
+        for function, previous in zip(
+            functions,
+            previous_functions,
+            strict=True,
+        ):
+            current = function.to_dict()
+            if any(current[field] != previous[field] for field in immutable_fields):
+                raise ValueError("checkers_stage_changed_function_logic")
+            selected_indices: list[int] = []
+            search_start = 0
+            for rule in current["checker_rules"]:
+                selected_index = next(
+                    (
+                        index
+                        for index in range(search_start, len(previous["steps"]))
+                        if previous["steps"][index]["source_state_id"]
+                        == rule["source_state_id"]
+                        and previous["steps"][index]["action"] == rule["action"]
+                    ),
+                    None,
+                )
+                if selected_index is None:
+                    raise ValueError("checker_not_registered_on_function")
+                selected_indices.append(selected_index)
+                search_start = selected_index + 1
+            selected = set(selected_indices)
+            remaining_indices = [
+                index
+                for index in range(len(previous["steps"]))
+                if index not in selected
+            ]
+            expected_steps = [
+                {**previous["steps"][old_index], "step_index": new_index}
+                for new_index, old_index in enumerate(remaining_indices)
+            ]
+            if current["steps"] != expected_steps:
+                raise ValueError("checkers_stage_changed_function_logic")
+            new_step_index = {
+                old_index: new_index
+                for new_index, old_index in enumerate(remaining_indices)
+            }
+            expected_bindings: list[dict[str, str]] = []
+            for binding in previous["bindings"]:
+                target_match = _TARGET_PATH.fullmatch(binding["target"])
+                if target_match is None:
+                    raise ValueError("function_binding_path_invalid")
+                old_index = int(target_match.group("action_index"))
+                if old_index in selected:
+                    raise ValueError("checker_action_cannot_use_parameter_binding")
+                expected_bindings.append(
+                    {
+                        "source": binding["source"],
+                        "target": (
+                            f"$.steps[{new_step_index[old_index]}].action.args"
+                            f"{target_match.group('tail')}"
+                        ),
+                    }
+                )
+            if current["bindings"] != expected_bindings:
+                raise ValueError("checkers_stage_changed_parameter_bindings")
+        return
     if stage != "split":
         return
     for function in functions:
@@ -1212,8 +1310,10 @@ def _authoring_prompt(
             "Keep stable app packages and fixed navigation controls inside the Function."
         ),
         "checkers": (
-            "Review the parameterized Functions and add only Function-local checker "
-            "rules for optional setup, interruption dismissal, or recovery actions."
+            "Select only which existing formal actions are optional setup, "
+            "interruption dismissal, or recovery checkers. Move each selected action "
+            "to checker_rules on that same Function. Do not change Function meaning, "
+            "parameters, arguments, or any unselected action."
         ),
     }[stage]
     example_steps = [

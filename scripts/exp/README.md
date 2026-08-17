@@ -47,6 +47,9 @@ Function authoring does not run through a shell conversion mode. Use the bridge
 Functions, or set `enhance=true` so the internal split, parameter-binding, and
 checker-review stages each return a complete Function bundle. Normal and
 enhanced saves share one validation and Store writer.
+Checker review only selects existing actions from each Function and moves them
+into that same Function's `checker_rules`; it cannot rewrite the Function or
+register another Function's action.
 
 The explicit B-MoCA campaign is the only launcher-owned preparation path: for
 each corpus task it calls that same `save_function(enhance=true)` writer once,

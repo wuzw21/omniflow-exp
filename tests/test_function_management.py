@@ -224,6 +224,68 @@ def test_enhance_rejects_extra_parameter_schema_fields(tmp_path) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("stage_to_corrupt", "expected_error"),
+    [
+        ("parameters", "parameters_stage_changed_function_logic"),
+        ("checkers", "checkers_stage_changed_function_logic"),
+    ],
+)
+def test_each_enhancement_stage_has_one_narrow_responsibility(
+    tmp_path,
+    stage_to_corrupt,
+    expected_error,
+) -> None:
+    def complete_json(prompt: str) -> str:
+        stage = _stage_from_prompt(prompt)
+        plan = json.loads(_semantic_plan(stage))
+        if stage == stage_to_corrupt:
+            plan["functions"][0]["description"] = "Rewritten by the wrong stage."
+        return json.dumps(plan)
+
+    with pytest.raises(ValueError, match=expected_error):
+        save_function(
+            _authoring_run_log(),
+            tmp_path / "store.json",
+            enhance=True,
+            complete_json=complete_json,
+        )
+
+
+def test_checker_stage_cannot_register_another_functions_action(tmp_path) -> None:
+    def complete_json(prompt: str) -> str:
+        stage = _stage_from_prompt(prompt)
+        plan = json.loads(_semantic_plan(stage))
+        wait_function = _function("wait_for_note")
+        wait_function["name"] = "Wait for note"
+        wait_function["description"] = "Wait for the note page to settle."
+        wait_function["steps"] = [
+            {
+                "step_index": 0,
+                "source_state_id": "state-ready",
+                "action": {"tool": "wait", "args": {"duration_ms": 1000}},
+            }
+        ]
+        if stage == "checkers":
+            wait_function["checker_rules"] = [
+                {
+                    "source_state_id": "state-checker",
+                    "action": {"tool": "click", "args": {"x": 500, "y": 500}},
+                }
+            ]
+        plan["functions"].append(wait_function)
+        plan["arguments"]["wait_for_note"] = {}
+        return json.dumps(plan)
+
+    with pytest.raises(ValueError, match="checker_not_registered_on_function"):
+        save_function(
+            _authoring_run_log(),
+            tmp_path / "store.json",
+            enhance=True,
+            complete_json=complete_json,
+        )
+
+
 def test_checker_registration_is_function_local(tmp_path) -> None:
     store_path = tmp_path / "store.json"
 

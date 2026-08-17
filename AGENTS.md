@@ -42,6 +42,12 @@ coordinate fallback, a trigger DSL, or a second save path. The core validates
 every stage and grounds the final actions and source states in the same
 successful RunLog before the only Store writer runs.
 
+Stage ownership is strict: split owns Function semantics and action segments;
+parameters may only add schemas, bindings, and source arguments whose bound
+actions reproduce the split output; checker review may only move selected
+formal actions into `checker_rules` on that same Function. Checker review may
+not rewrite Function meaning, parameters, arguments, or unselected actions.
+
 Every enhancement stage must retain at least one large semantic Function whose
 formal steps plus Function-local checker rules cover the complete successful
 RunLog action trajectory. The split stage must also return every reusable

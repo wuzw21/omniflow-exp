@@ -59,10 +59,10 @@ Every stage retains at least one large Function covering the complete successful
 trajectory. The split stage also returns every reusable contiguous semantic
 subsegment, without creating one-click fragments. All model transports use the
 same complete Function-bundle schema generated from the checked-in Function and
-checker contracts. Checker
-review may move an optional interruption action from the formal path into that
-Function's checker list, but cannot duplicate formal actions or replace the
-complete Function with one-click fragments.
+checker contracts. Checker review may move an optional interruption action from
+the formal path into that Function's checker list. It cannot rewrite Function
+meaning, parameters, arguments, or unselected actions, duplicate formal
+actions, or replace the complete Function with one-click fragments.
 
 The retained bridge tools are:
 

@@ -152,7 +152,6 @@ def test_save_function_optionally_derives_checker_rules_with_agent(tmp_path: Pat
     store_path = tmp_path / "store.json"
     authored = {
         **function,
-        "description": "Dismiss the optional prompt when present, then wait.",
         "steps": [
             {
                 "step_index": 0,
