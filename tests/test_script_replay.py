@@ -93,7 +93,7 @@ def test_script_replay_selects_full_function_and_uses_core_transfer(
         return TransferResult(
             Action("click", {"x": 100 + len(transferred_sources), "y": 200}),
             reason="omnitransfer_mapped",
-            detail={"score": 0.99},
+            detail={"score": 0.999, "candidates": [{"score": 0.99}]},
         )
 
     monkeypatch.setattr(

@@ -302,7 +302,10 @@ def test_checker_uses_the_configured_transfer_confidence_threshold(monkeypatch) 
 
     async def transfer(action, _observation, _source_state):
         transfer_calls.append(action)
-        return TransferResult(action, detail={"score": 0.95})
+        return TransferResult(
+            action,
+            detail={"score": 0.999, "candidates": [{"score": 0.95}]},
+        )
 
     function = Function(
         function_id="strict_checker",
@@ -395,7 +398,10 @@ def test_checker_does_not_execute_a_low_confidence_mapping(monkeypatch) -> None:
         transfer_calls.append(action)
         if action.tool == "wait":
             return TransferResult(action)
-        return TransferResult(action, detail={"score": 0.2})
+        return TransferResult(
+            action,
+            detail={"score": 0.999, "candidates": [{"score": 0.2}]},
+        )
 
     function = Function(
         function_id="scoped_checker",
@@ -447,7 +453,12 @@ def test_low_confidence_checker_is_checked_again_before_the_next_action(
             checker_calls += 1
             return TransferResult(
                 mapped_checker_action,
-                detail={"score": 0.2 if checker_calls == 1 else 0.99},
+                detail={
+                    "score": 0.999,
+                    "candidates": [
+                        {"score": 0.2 if checker_calls == 1 else 0.99}
+                    ],
+                },
             )
         return TransferResult(action)
 
@@ -492,7 +503,10 @@ def test_checker_does_not_use_page_similarity_before_action_transfer(monkeypatch
 
     async def transfer(action, _observation, _source_state):
         transfer_calls.append(action)
-        return TransferResult(action, detail={"score": 0.99})
+        return TransferResult(
+            action,
+            detail={"score": 0.999, "candidates": [{"score": 0.99}]},
+        )
 
     function = Function(
         function_id="action_scoped_checker",
@@ -524,6 +538,59 @@ def test_checker_does_not_use_page_similarity_before_action_transfer(monkeypatch
     ]
     assert result.detail["checker_decisions"][0]["status"] == "executed"
     assert "page" not in result.detail["checker_decisions"][0]
+
+
+def test_checker_uses_target_rank_probability_not_pair_confidence(monkeypatch) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    current = Observation(xml="<wrong/>", package_name="com.other")
+    source = Observation(xml="<source/>", package_name="com.example")
+    host = RecordingHost(current)
+
+    async def transfer(action, _observation, _source_state):
+        if action.tool == "wait":
+            return TransferResult(action)
+        return TransferResult(
+            action,
+            detail={
+                "score": 0.99999,
+                "candidates": [
+                    {"score": 0.338},
+                    {"score": 0.329},
+                ],
+            },
+        )
+
+    function = Function(
+        function_id="strict_target_checker",
+        name="Strict target checker",
+        description="Reject an ambiguous target despite strong pair alignment.",
+        steps=(FunctionStep(0, Action("wait", {"duration_ms": 0}), "main"),),
+        checker_rules=(
+            {
+                "source_state_id": "checker",
+                "action": {"tool": "click", "args": {"x": 100, "y": 200}},
+            },
+        ),
+    )
+
+    result = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=current,
+            state_loader=lambda _state_id: source,
+        )
+    )
+
+    assert result.success is True
+    assert host.actions == [Action("wait", {"duration_ms": 0})]
+    decision = result.detail["checker_decisions"][0]
+    assert decision["reason"] == "checker_action_confidence_too_low"
+    assert decision["action"] == {
+        "target_confidence": 0.338,
+        "minimum_target_confidence": 0.9,
+    }
 
 
 def test_function_without_registered_checker_executes_no_checker(monkeypatch) -> None:

@@ -247,10 +247,12 @@ async def execute_checker_step(
                 "transfer": dict(decision.detail or {}),
             },
         )
-    transfer_confidence = _alignment_probability(dict(decision.detail or {}))
+    transfer_confidence = _checker_target_confidence(
+        dict(decision.detail or {})
+    )
     confidence_evidence = {
-        "score": transfer_confidence,
-        "minimum_score": float(minimum_action_confidence),
+        "target_confidence": transfer_confidence,
+        "minimum_target_confidence": float(minimum_action_confidence),
     }
     if transfer_confidence is None or transfer_confidence < minimum_action_confidence:
         reason = (
@@ -641,7 +643,7 @@ def default_transfer(
             detail=_transfer_detail(result),
         )
     transfer_detail = _transfer_detail(result)
-    probability = _alignment_probability(transfer_detail)
+    probability = _pair_confidence(transfer_detail)
     if probability is not None and probability < _ALIGNMENT_MIN_PROBABILITY:
         return _recoverable_transfer_failure(
             "omnitransfer_low_confidence",
@@ -733,7 +735,7 @@ def _transfer_swipe(
         params[y_key] = target_y / height * 1000.0
         mapping_modes.append(str(result.get("mapping_mode") or "omnitransfer_mapped"))
         endpoint_details.append(_transfer_detail(result))
-        endpoint_probability = _alignment_probability(endpoint_details[-1])
+        endpoint_probability = _pair_confidence(endpoint_details[-1])
         if (
             endpoint_probability is not None
             and endpoint_probability < _ALIGNMENT_MIN_PROBABILITY
@@ -756,7 +758,7 @@ def _transfer_swipe(
     probabilities = [
         probability
         for probability in (
-            _alignment_probability(endpoint) for endpoint in endpoint_details
+            _pair_confidence(endpoint) for endpoint in endpoint_details
         )
         if probability is not None
     ]
@@ -869,7 +871,7 @@ def _transfer_detail(result: dict[str, Any]) -> dict[str, Any]:
     return detail
 
 
-def _alignment_probability(detail: dict[str, Any]) -> float | None:
+def _pair_confidence(detail: dict[str, Any]) -> float | None:
     raw = detail.get("score")
     if raw is None:
         candidates = detail.get("candidates")
@@ -880,6 +882,24 @@ def _alignment_probability(detail: dict[str, Any]) -> float | None:
     try:
         probability = float(raw)
     except (TypeError, ValueError):
+        return None
+    if not math.isfinite(probability):
+        return None
+    return min(1.0, max(0.0, probability))
+
+
+def _checker_target_confidence(detail: dict[str, Any]) -> float | None:
+    """Return the selected target's rank probability, never pair confidence."""
+
+    candidates = detail.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        return None
+    candidate = candidates[0]
+    if not isinstance(candidate, dict):
+        return None
+    try:
+        probability = float(candidate["score"])
+    except (KeyError, TypeError, ValueError):
         return None
     if not math.isfinite(probability):
         return None

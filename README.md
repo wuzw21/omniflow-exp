@@ -86,17 +86,19 @@ the following hold:
 
 1. OmniTransfer finds a valid target for the source action on the current
    observation;
-2. the action mapping reaches the configured high-confidence threshold; and
+2. the selected target's OmniTransfer rank probability reaches the configured
+   high-confidence threshold; and
 3. the rule has not already executed in this Function call.
 
 Each rule contains exactly `source_state_id` and `action`; registration on the
 Function is the rule-to-Function relationship. Otherwise the rule is skipped
 and may be checked again before a later formal action. The action threshold is
-configured once in `config/paper_androidworld.json`; page similarity is not a
-checker trigger. There are no per-rule thresholds, step-number triggers,
-trigger DSLs, global checker pool, or source-coordinate passthrough. Checker
-actions are limited to transferable `click`, `input_text`, and `long_press`
-actions.
+configured once in `config/paper_androidworld.json`. Pair confidence and page
+similarity are evidence, not checker triggers; a high pair score cannot
+compensate for an ambiguous target ranking. There are no per-rule thresholds,
+step-number triggers, trigger DSLs, global checker pool, or source-coordinate
+passthrough. Checker actions are limited to transferable `click`, `input_text`,
+and `long_press` actions.
 
 ## OmniTransfer
 
