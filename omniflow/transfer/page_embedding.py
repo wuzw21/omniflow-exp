@@ -34,6 +34,15 @@ class PageEmbedding:
     checkpoint_path: str
     checkpoint_sha256: str
 
+    def similarity(self, other: "PageEmbedding") -> float:
+        denominator = float(np.linalg.norm(self.vector) * np.linalg.norm(other.vector))
+        if denominator <= 0.0:
+            return 0.0
+        return max(
+            0.0,
+            min(1.0, float(np.dot(self.vector, other.vector) / denominator)),
+        )
+
 
 def _canonical_omnitransfer_root(configured_root: str | Path | None = None) -> Path:
     configured = str(
@@ -167,15 +176,7 @@ class OmniTransferPageEncoder:
     ) -> float:
         source_page = self.embed(source)
         current_page = self.embed(current)
-        denominator = float(
-            np.linalg.norm(source_page.vector) * np.linalg.norm(current_page.vector)
-        )
-        if denominator <= 0.0:
-            return 0.0
-        return max(
-            0.0,
-            min(1.0, float(np.dot(source_page.vector, current_page.vector) / denominator)),
-        )
+        return source_page.similarity(current_page)
 
 
 __all__ = ["OmniTransferPageEncoder", "PageEmbedding"]

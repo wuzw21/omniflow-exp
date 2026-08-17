@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import asyncio
 
+import numpy as np
+
 from omniflow import Action, ActionResult, Function, Observation, PluginSet
+from omniflow.core.config import ANDROIDWORLD_PROTOCOL, RuntimeSettings
 from omniflow.core.model import FunctionStep, StepResult, TransferResult
 from omniflow.runtime import core, execution
+from omniflow.transfer.page_embedding import PageEmbedding
 
 
 class RecordingHost:
@@ -20,6 +24,38 @@ class RecordingHost:
     def observe(self, **kwargs: object) -> Observation:
         self.observe_requests.append(dict(kwargs))
         return self.after
+
+
+class PageEncoder:
+    """Deterministic stand-in for the canonical OmniTransfer page encoder."""
+
+    def __init__(self, vectors: dict[str, tuple[float, float]]) -> None:
+        self.vectors = vectors
+
+    def embed(self, value: Observation) -> PageEmbedding:
+        vector = np.asarray(self.vectors[str(value.xml)], dtype=np.float32)
+        return PageEmbedding(
+            vector=vector,
+            element_count=1,
+            encoder_version="test",
+            checkpoint_path="/test/checkpoint.pt",
+            checkpoint_sha256="test",
+        )
+
+
+def matching_page_encoder(*xml_values: str) -> PageEncoder:
+    return PageEncoder({value: (1.0, 0.0) for value in xml_values})
+
+
+def test_checker_thresholds_come_from_the_single_protocol_config() -> None:
+    checker = ANDROIDWORLD_PROTOCOL["checker"]
+    settings = RuntimeSettings()
+
+    assert "checker_action_confidence" not in ANDROIDWORLD_PROTOCOL
+    assert settings.checker_page_threshold == checker["page_similarity_threshold"]
+    assert settings.checker_target_threshold == checker[
+        "target_probability_threshold"
+    ]
 
 
 def test_core_executes_one_transferred_action_and_observes_once(monkeypatch) -> None:
@@ -267,6 +303,7 @@ def test_checker_step_executes_when_omnitransfer_target_is_present(monkeypatch) 
             plugins=PluginSet(transfer=transfer),
             observation=before,
             state_loader=lambda _state_id: source,
+            page_encoder=matching_page_encoder("<target/>", "<source/>"),
         )
     )
 
@@ -285,7 +322,7 @@ def test_checker_step_executes_when_omnitransfer_target_is_present(monkeypatch) 
     assert result.detail["trace"][0]["metadata"]["origin"] == "checker"
 
 
-def test_checker_uses_the_configured_transfer_confidence_threshold(monkeypatch) -> None:
+def test_checker_uses_the_configured_target_probability_threshold(monkeypatch) -> None:
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     current = Observation(
         xml="<target/>",
@@ -327,7 +364,8 @@ def test_checker_uses_the_configured_transfer_confidence_threshold(monkeypatch) 
             plugins=PluginSet(transfer=transfer),
             observation=current,
             state_loader=lambda _state_id: source,
-            checker_action_confidence=0.96,
+            page_encoder=matching_page_encoder("<target/>", "<source/>"),
+            checker_target_threshold=0.96,
         )
     )
 
@@ -338,7 +376,53 @@ def test_checker_uses_the_configured_transfer_confidence_threshold(monkeypatch) 
     ]
     assert host.actions == [Action("wait", {"duration_ms": 0})]
     assert result.detail["checker_decisions"][0]["reason"] == (
-        "checker_action_confidence_too_low"
+        "checker_target_probability_too_low"
+    )
+
+
+def test_checker_uses_the_configured_page_similarity_threshold(monkeypatch) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    current = Observation(xml="<target/>", package_name="com.example")
+    source = Observation(xml="<source/>", package_name="com.example")
+    host = RecordingHost(current)
+    checker_action = Action("click", {"x": 100, "y": 200})
+    transfer_calls: list[Action] = []
+
+    async def transfer(action, _observation, _source_state):
+        transfer_calls.append(action)
+        return TransferResult(
+            action,
+            detail={"candidates": [{"score": 0.99}]},
+        )
+
+    function = Function(
+        function_id="strict_page_checker",
+        name="Strict page checker",
+        description="Use the configured page threshold.",
+        steps=(FunctionStep(0, Action("wait", {"duration_ms": 0}), "main"),),
+        checker_rules=(
+            {"source_state_id": "checker", "action": checker_action.to_dict()},
+        ),
+    )
+
+    result = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=current,
+            state_loader=lambda _state_id: source,
+            page_encoder=PageEncoder(
+                {"<target/>": (1.0, 0.0), "<source/>": (0.95, 0.3122499)}
+            ),
+            checker_page_threshold=0.96,
+        )
+    )
+
+    assert result.success is True
+    assert transfer_calls == [Action("wait", {"duration_ms": 0})]
+    assert result.detail["checker_decisions"][0]["reason"] == (
+        "checker_page_similarity_too_low"
     )
 
 
@@ -375,6 +459,7 @@ def test_checker_step_skips_when_omnitransfer_target_is_not_present(monkeypatch)
             plugins=PluginSet(transfer=transfer),
             observation=before,
             state_loader=lambda _state_id: source,
+            page_encoder=matching_page_encoder("<target/>", "<source/>"),
         )
     )
 
@@ -423,6 +508,7 @@ def test_checker_does_not_execute_a_low_confidence_mapping(monkeypatch) -> None:
             plugins=PluginSet(transfer=transfer),
             observation=current,
             state_loader=lambda _state_id: source,
+            page_encoder=matching_page_encoder("<wrong/>", "<source/>"),
         )
     )
 
@@ -432,7 +518,7 @@ def test_checker_does_not_execute_a_low_confidence_mapping(monkeypatch) -> None:
         Action("wait", {"duration_ms": 0}),
     ]
     assert result.detail["checker_decisions"][0]["reason"] == (
-        "checker_action_confidence_too_low"
+        "checker_target_probability_too_low"
     )
 
 
@@ -482,6 +568,7 @@ def test_low_confidence_checker_is_checked_again_before_the_next_action(
             plugins=PluginSet(transfer=transfer),
             observation=checker_page,
             state_loader=lambda _state_id: source,
+            page_encoder=matching_page_encoder("<checker/>", "<source/>"),
         )
     )
 
@@ -494,7 +581,7 @@ def test_low_confidence_checker_is_checked_again_before_the_next_action(
     assert host.actions.count(mapped_checker_action) == 1
 
 
-def test_checker_does_not_use_page_similarity_before_action_transfer(monkeypatch) -> None:
+def test_checker_requires_page_match_before_action_transfer(monkeypatch) -> None:
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     current = Observation(xml="<unrelated/>", package_name="com.example")
     source = Observation(xml="<dialog/>", package_name="com.example")
@@ -528,16 +615,90 @@ def test_checker_does_not_use_page_similarity_before_action_transfer(monkeypatch
             plugins=PluginSet(transfer=transfer),
             observation=current,
             state_loader=lambda _state_id: source,
+            page_encoder=PageEncoder(
+                {"<unrelated/>": (0.0, 1.0), "<dialog/>": (1.0, 0.0)}
+            ),
         )
     )
 
     assert result.success is True
-    assert transfer_calls == [
-        Action("click", {"x": 100, "y": 200}),
-        Action("wait", {"duration_ms": 0}),
+    assert transfer_calls == [Action("wait", {"duration_ms": 0})]
+    assert result.detail["checker_decisions"][0]["status"] == "skipped"
+    assert result.detail["checker_decisions"][0]["reason"] == (
+        "checker_page_similarity_too_low"
+    )
+    assert result.detail["checker_decisions"][0]["page"] == {
+        "similarity": 0.0,
+        "minimum_similarity": 0.9,
+    }
+
+
+def test_page_mismatch_checker_remains_eligible_for_the_next_action(monkeypatch) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    unrelated = Observation(xml="<unrelated/>", package_name="com.example")
+    matching = Observation(xml="<matching/>", package_name="com.example")
+    source = Observation(xml="<source/>", package_name="com.example")
+
+    class SequenceHost(RecordingHost):
+        def __init__(self) -> None:
+            super().__init__(matching)
+            self.states = iter((matching, matching, matching))
+
+        def observe(self, **kwargs: object) -> Observation:
+            self.observe_requests.append(dict(kwargs))
+            return next(self.states, matching)
+
+    host = SequenceHost()
+    checker_action = Action("click", {"x": 100, "y": 200})
+    mapped_checker_action = Action("click", {"x": 300, "y": 400})
+    transfer_calls: list[Action] = []
+
+    async def transfer(action, _observation, _source_state):
+        transfer_calls.append(action)
+        if action == checker_action:
+            return TransferResult(
+                mapped_checker_action,
+                detail={"candidates": [{"score": 0.99}]},
+            )
+        return TransferResult(action)
+
+    function = Function(
+        function_id="page_rechecked_checker",
+        name="Page rechecked checker",
+        description="Keep a page-mismatched checker eligible.",
+        steps=(
+            FunctionStep(0, Action("wait", {"duration_ms": 0}), "main-0"),
+            FunctionStep(1, Action("wait", {"duration_ms": 0}), "main-1"),
+        ),
+        checker_rules=(
+            {"source_state_id": "checker", "action": checker_action.to_dict()},
+        ),
+    )
+
+    result = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=unrelated,
+            state_loader=lambda _state_id: source,
+            page_encoder=PageEncoder(
+                {
+                    "<unrelated/>": (0.0, 1.0),
+                    "<matching/>": (1.0, 0.0),
+                    "<source/>": (1.0, 0.0),
+                }
+            ),
+        )
+    )
+
+    assert result.success is True
+    assert [item["status"] for item in result.detail["checker_decisions"]] == [
+        "skipped",
+        "executed",
     ]
-    assert result.detail["checker_decisions"][0]["status"] == "executed"
-    assert "page" not in result.detail["checker_decisions"][0]
+    assert transfer_calls.count(checker_action) == 1
+    assert host.actions.count(mapped_checker_action) == 1
 
 
 def test_checker_uses_target_rank_probability_not_pair_confidence(monkeypatch) -> None:
@@ -580,16 +741,17 @@ def test_checker_uses_target_rank_probability_not_pair_confidence(monkeypatch) -
             plugins=PluginSet(transfer=transfer),
             observation=current,
             state_loader=lambda _state_id: source,
+            page_encoder=matching_page_encoder("<wrong/>", "<source/>"),
         )
     )
 
     assert result.success is True
     assert host.actions == [Action("wait", {"duration_ms": 0})]
     decision = result.detail["checker_decisions"][0]
-    assert decision["reason"] == "checker_action_confidence_too_low"
-    assert decision["action"] == {
-        "target_confidence": 0.338,
-        "minimum_target_confidence": 0.9,
+    assert decision["reason"] == "checker_target_probability_too_low"
+    assert decision["target"] == {
+        "probability": 0.338,
+        "minimum_probability": 0.9,
     }
 
 

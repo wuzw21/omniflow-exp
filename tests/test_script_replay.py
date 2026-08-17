@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
+
 from omniflow.core.model import Action, Observation, TransferResult
+from omniflow.transfer.page_embedding import PageEmbedding
 from src.integrations.script_replay import run_script_replay
 
 
@@ -13,7 +16,7 @@ class _Host:
         self.actions: list[Action] = []
 
     def observe(self, **_: object) -> Observation:
-        return Observation(package_name="com.example")
+        return Observation(xml="<page/>", package_name="com.example")
 
     def get_state(self, state_id: str) -> Observation | None:
         return self.source_states.get(state_id)
@@ -81,10 +84,12 @@ def test_script_replay_selects_full_function_and_uses_core_transfer(
         _function(function_id="reusable_part", steps=2),
     )
     source_states = {
-        f"source-{index}": Observation(package_name="com.example")
+        f"source-{index}": Observation(xml="<page/>", package_name="com.example")
         for index in range(2)
     }
-    source_states["checker-source"] = Observation(package_name="com.example")
+    source_states["checker-source"] = Observation(
+        xml="<page/>", package_name="com.example"
+    )
     host = _Host(source_states)
     transferred_sources: list[Observation | None] = []
 
@@ -99,6 +104,21 @@ def test_script_replay_selects_full_function_and_uses_core_transfer(
     monkeypatch.setattr(
         "omniflow.runtime.execution.default_transfer",
         transfer,
+    )
+
+    class PageEncoder:
+        def embed(self, _value: Observation) -> PageEmbedding:
+            return PageEmbedding(
+                vector=np.asarray((1.0, 0.0), dtype=np.float32),
+                element_count=1,
+                encoder_version="test",
+                checkpoint_path="/test/checkpoint.pt",
+                checkpoint_sha256="test",
+            )
+
+    monkeypatch.setattr(
+        "omniflow.runtime.engine.OmniTransferPageEncoder",
+        PageEncoder,
     )
 
     result = run_script_replay(store_path=store_path, host=host)

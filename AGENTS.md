@@ -72,9 +72,11 @@ registered on that Function. A checker executes once only when all conditions
 hold:
 
 1. the rule is registered on the active Function;
-2. OmniTransfer maps the source action onto a target on the current observation;
+2. the latest canonical OmniTransfer page embedding matches the current page
+   to the rule's RunLog source state;
+3. OmniTransfer maps the source action onto a target on the current observation;
    and
-3. the selected target's OmniTransfer rank probability reaches the configured
+4. the selected target's OmniTransfer rank probability reaches the configured
    high-confidence threshold.
 
 A failed condition skips the checker and leaves it eligible before a later
@@ -82,10 +84,10 @@ formal action. Allowed checker actions are `click`, `input_text`, and
 `long_press` with source target coordinates used only as OmniTransfer evidence.
 Never execute source-device coordinates on the target.
 
-`checker_action_confidence` is defined only in the `protocol` block of
-`config/paper_androidworld.json`. Checker triggering does not use pair
-confidence or page similarity. Per-rule thresholds and condition switches are
-forbidden because they recreate a trigger language.
+The global page-similarity and target-probability thresholds are defined only
+in the `protocol.checker` block of `config/paper_androidworld.json`. Pair
+confidence is evidence, not a trigger. Per-rule thresholds and condition
+switches are forbidden because they recreate a trigger language.
 
 Function success is an ordinary Planner tool result, not AndroidWorld task
 completion. The Planner may call more Functions or GUI actions before it

@@ -26,6 +26,7 @@ from omniflow.runtime.execution import (
     execute_robust_action,
     record_execution,
 )
+from omniflow.transfer.page_embedding import OmniTransferPageEncoder
 from omniflow.vlm.usage import merge_usage, token_usage_status
 
 
@@ -92,6 +93,7 @@ class OmniFlow:
             else None
         )
         self.plugins = self.config.resolved_plugins()
+        self._page_encoder: OmniTransferPageEncoder | None = None
 
     async def _execute(
         self,
@@ -202,8 +204,14 @@ class OmniFlow:
                     state_loader=(
                         self.catalog.get_state if self.catalog is not None else None
                     ),
-                    checker_action_confidence=(
-                        self.config.runtime.checker_action_confidence
+                    page_encoder=(
+                        self._get_page_encoder()
+                        if function_session.bound.checker_rules
+                        else None
+                    ),
+                    checker_page_threshold=self.config.runtime.checker_page_threshold,
+                    checker_target_threshold=(
+                        self.config.runtime.checker_target_threshold
                     ),
                 )
             actions_executed += replay.actions_executed
@@ -526,8 +534,14 @@ class OmniFlow:
                     state_loader=(
                         self.catalog.get_state if self.catalog is not None else None
                     ),
-                    checker_action_confidence=(
-                        self.config.runtime.checker_action_confidence
+                    page_encoder=(
+                        self._get_page_encoder()
+                        if bound_function.checker_rules
+                        else None
+                    ),
+                    checker_page_threshold=self.config.runtime.checker_page_threshold,
+                    checker_target_threshold=(
+                        self.config.runtime.checker_target_threshold
                     ),
                 )
                 actions_executed += replay.actions_executed
@@ -808,7 +822,13 @@ class OmniFlow:
             functions=self.store.functions,
             source_states=source_states,
             limit=max(0, int(resolved_limit)),
+            page_encoder=self._get_page_encoder(),
         )
+
+    def _get_page_encoder(self) -> OmniTransferPageEncoder:
+        if self._page_encoder is None:
+            self._page_encoder = OmniTransferPageEncoder()
+        return self._page_encoder
 
     def call_tool(
         self,

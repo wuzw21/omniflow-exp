@@ -4,8 +4,6 @@ from dataclasses import dataclass
 import re
 from typing import Any, Mapping
 
-import numpy as np
-
 from omniflow.core.model import Function, Observation
 from omniflow.transfer.page_embedding import OmniTransferPageEncoder, PageEmbedding
 
@@ -97,7 +95,7 @@ def _score_function(
     source_observation = source_states.get(source_state_id)
     source_page = _embed_if_available(encoder, source_observation)
     page_similarity = (
-        _cosine(current_page.vector, source_page.vector)
+        current_page.similarity(source_page)
         if current_page is not None and source_page is not None
         else 0.0
     )
@@ -128,13 +126,6 @@ def _embed_if_available(
     if observation is None or not str(observation.xml or "").strip():
         return None
     return encoder.embed(observation)
-
-
-def _cosine(left: np.ndarray, right: np.ndarray) -> float:
-    denominator = float(np.linalg.norm(left) * np.linalg.norm(right))
-    if denominator <= 0.0:
-        return 0.0
-    return max(0.0, min(1.0, float(np.dot(left, right) / denominator)))
 
 
 def _tokens(value: str) -> set[str]:

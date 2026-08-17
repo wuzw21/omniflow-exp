@@ -11,7 +11,8 @@ from typing import Any, Callable
 import xml.etree.ElementTree as ET
 
 from omniflow.core.config import (
-    DEFAULT_CHECKER_ACTION_CONFIDENCE,
+    DEFAULT_CHECKER_PAGE_THRESHOLD,
+    DEFAULT_CHECKER_TARGET_THRESHOLD,
     PluginSet,
 )
 from omniflow.core.model import (
@@ -33,6 +34,7 @@ from omniflow.runtime.core import (
     prepare_action as prepare_core_action,
 )
 from omniflow.runtime.semantic_grounding import resolve_semantic_action
+from omniflow.transfer.page_embedding import OmniTransferPageEncoder, PageEmbedding
 from omniflow.transfer.runtime import transfer_action
 
 _OPEN_APP_READY_POLL_SECONDS = 0.5
@@ -58,10 +60,14 @@ async def execute_function(
     resume_metadata: dict[str, Any] | None = None,
     installed_packages: frozenset[str] | None = None,
     state_loader: StateLoader | None = None,
-    checker_action_confidence: float = DEFAULT_CHECKER_ACTION_CONFIDENCE,
+    page_encoder: OmniTransferPageEncoder | None = None,
+    checker_page_threshold: float = DEFAULT_CHECKER_PAGE_THRESHOLD,
+    checker_target_threshold: float = DEFAULT_CHECKER_TARGET_THRESHOLD,
 ) -> RunResult:
-    if not 0.0 <= float(checker_action_confidence) <= 1.0:
-        raise ValueError("checker_action_confidence_invalid")
+    if not 0.0 <= float(checker_page_threshold) <= 1.0:
+        raise ValueError("checker_page_threshold_invalid")
+    if not 0.0 <= float(checker_target_threshold) <= 1.0:
+        raise ValueError("checker_target_threshold_invalid")
     current = observation or Observation.from_value(
         await _await(host.observe(xml=True, app_info=True))
     )
@@ -72,6 +78,11 @@ async def execute_function(
     trace: list[dict[str, Any]] = []
     checker_decisions: list[dict[str, Any]] = []
     completed_checker_rules: set[int] = set()
+    checker_source_states: dict[str, Observation | None] = {}
+    checker_source_pages: dict[str, PageEmbedding] = {}
+    checker_encoder = page_encoder
+    checker_current_state: Observation | None = None
+    checker_current_page: PageEmbedding | None = None
     resume_metadata_pending = dict(resume_metadata or {})
     for function_step in steps:
         for rule_index, raw_rule in enumerate(function.checker_rules):
@@ -79,11 +90,31 @@ async def execute_function(
                 continue
             try:
                 rule = validate_checker_rule(raw_rule)
-                checker_source = await _load_state(
-                    host,
-                    rule["source_state_id"],
-                    state_loader=state_loader,
-                )
+                source_state_id = rule["source_state_id"]
+                if source_state_id not in checker_source_states:
+                    checker_source_states[source_state_id] = await _load_state(
+                        host,
+                        source_state_id,
+                        state_loader=state_loader,
+                    )
+                checker_source = checker_source_states[source_state_id]
+                if checker_source is None:
+                    page_similarity = None
+                else:
+                    if checker_encoder is None:
+                        checker_encoder = OmniTransferPageEncoder()
+                    if source_state_id not in checker_source_pages:
+                        checker_source_pages[source_state_id] = checker_encoder.embed(
+                            checker_source
+                        )
+                    if checker_current_state is not current:
+                        checker_current_page = checker_encoder.embed(current)
+                        checker_current_state = current
+                    if checker_current_page is None:
+                        raise RuntimeError("checker_current_page_embedding_missing")
+                    page_similarity = checker_source_pages[
+                        source_state_id
+                    ].similarity(checker_current_page)
                 checker_step, decision = await execute_checker_step(
                     Action.from_value(rule["action"]),
                     observation=current,
@@ -91,7 +122,9 @@ async def execute_function(
                     plugins=plugins,
                     function=function,
                     source_state=checker_source,
-                    minimum_action_confidence=float(checker_action_confidence),
+                    page_similarity=page_similarity,
+                    minimum_page_similarity=float(checker_page_threshold),
+                    minimum_target_probability=float(checker_target_threshold),
                     installed_packages=installed_packages,
                 )
             except Exception as error:  # noqa: BLE001
@@ -207,10 +240,12 @@ async def execute_checker_step(
     plugins: PluginSet,
     function: Function,
     source_state: Observation | None,
-    minimum_action_confidence: float,
+    page_similarity: float | None,
+    minimum_page_similarity: float,
+    minimum_target_probability: float,
     installed_packages: frozenset[str] | None = None,
 ) -> tuple[StepResult, dict[str, Any]]:
-    """Execute a checker only when OmniTransfer maps its target confidently."""
+    """Execute a checker only when its source page and action target both match."""
 
     if source_state is None:
         return (
@@ -223,6 +258,27 @@ async def execute_checker_step(
                 function_id=function.id,
             ),
             {"status": "skipped", "reason": "checker_source_state_missing"},
+        )
+    page_evidence = {
+        "similarity": page_similarity,
+        "minimum_similarity": float(minimum_page_similarity),
+    }
+    if page_similarity is None or page_similarity < minimum_page_similarity:
+        reason = (
+            "checker_page_similarity_missing"
+            if page_similarity is None
+            else "checker_page_similarity_too_low"
+        )
+        return (
+            StepResult(
+                True,
+                action=action,
+                before=observation,
+                after=observation,
+                origin="checker",
+                function_id=function.id,
+            ),
+            {"status": "skipped", "reason": reason, "page": page_evidence},
         )
     decision = await prepare_action(
         action,
@@ -244,21 +300,25 @@ async def execute_checker_step(
             {
                 "status": "skipped",
                 "reason": decision.reason or "transfer_not_applicable",
+                "page": page_evidence,
                 "transfer": dict(decision.detail or {}),
             },
         )
-    transfer_confidence = _checker_target_confidence(
+    target_probability = _checker_target_confidence(
         dict(decision.detail or {})
     )
-    confidence_evidence = {
-        "target_confidence": transfer_confidence,
-        "minimum_target_confidence": float(minimum_action_confidence),
+    target_evidence = {
+        "probability": target_probability,
+        "minimum_probability": float(minimum_target_probability),
     }
-    if transfer_confidence is None or transfer_confidence < minimum_action_confidence:
+    if (
+        target_probability is None
+        or target_probability < minimum_target_probability
+    ):
         reason = (
-            "checker_action_confidence_missing"
-            if transfer_confidence is None
-            else "checker_action_confidence_too_low"
+            "checker_target_probability_missing"
+            if target_probability is None
+            else "checker_target_probability_too_low"
         )
         return (
             StepResult(
@@ -273,8 +333,9 @@ async def execute_checker_step(
             {
                 "status": "skipped",
                 "reason": reason,
+                "page": page_evidence,
                 "transfer": dict(decision.detail or {}),
-                "action": confidence_evidence,
+                "target": target_evidence,
             },
         )
     step = replace(
@@ -293,8 +354,9 @@ async def execute_checker_step(
         {
             "status": "executed" if step.success else "failed",
             "reason": decision.reason or "omnitransfer_mapped",
+            "page": page_evidence,
             "transfer": dict(decision.detail or {}),
-            "action": confidence_evidence,
+            "target": target_evidence,
         },
     )
 

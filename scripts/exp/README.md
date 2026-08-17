@@ -84,13 +84,13 @@ live emulator.
 ## Checker execution
 
 Only rules registered on the active Function are considered. Before each
-pending formal Function action, OmniTransfer attempts to map each unexecuted
-rule's source action onto the current observation. It executes only when the
-configured threshold for the selected target's OmniTransfer rank probability
-passes. A rule contains only `source_state_id` and `action`; a failed condition
-skips it and keeps it eligible for a later formal action. Pair confidence and
-page similarity are not checker triggers. Source coordinates are evidence only
-and never execute on a target.
+pending formal Function action, the latest canonical OmniTransfer page
+embedding first matches each unexecuted rule's source state to the current
+page. OmniTransfer then maps that rule's source action onto the current
+observation. It executes only when both configured thresholds pass. A rule
+contains only `source_state_id` and `action`; a failed condition skips it and
+keeps it eligible for a later formal action. Pair confidence is not a trigger.
+Source coordinates are evidence only and never execute on a target.
 
 ## Configuration ownership
 
