@@ -361,7 +361,7 @@ class LunaAndroidWorldHarness:
             xml = xml[:30000] + "\n[xml truncated]"
         hint = f"\nGuidance:\n{self.hint}" if self.hint else ""
         task_parameters = json.dumps(
-            self.task_parameters, ensure_ascii=False, sort_keys=True
+            self.task_parameters, ensure_ascii=False, sort_keys=True, default=str
         )
         if self.trace:
             history_lines = []
