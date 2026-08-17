@@ -29,18 +29,7 @@ from omniflow.core.trajectory import (
 )
 from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION
 from omniflow.runtime.engine import OmniFlow
-from omniflow.transfer.embedding import (
-    ElementEmbedding,
-    EncoderWeights,
-    PageEncoder,
-    TreeEmbedding,
-)
-from omniflow.transfer.memory import (
-    TRANSFER_PAIR_MEMORY_VERSION,
-    TransferDirection,
-    TransferPair,
-    TransferPairStore,
-)
+from omniflow.transfer.page_embedding import OmniTransferPageEncoder, PageEmbedding
 
 
 def __getattr__(name: str) -> Any:
@@ -56,8 +45,6 @@ __all__ = [
     "ActionResult",
     "OMNIFLOW_RUN_LOG_SCHEMA_VERSION",
     "CheckerContext",
-    "ElementEmbedding",
-    "EncoderWeights",
     "Experiment",
     "FUNCTION_ARTIFACT_VERSION",
     "Function",
@@ -66,7 +53,8 @@ __all__ = [
     "Observation",
     "OmniFlowConfig",
     "OmniFlow",
-    "PageEncoder",
+    "OmniTransferPageEncoder",
+    "PageEmbedding",
     "Planner",
     "PluginSet",
     "PromptSet",
@@ -74,11 +62,6 @@ __all__ = [
     "RuntimeSettings",
     "StepResult",
     "ToolCall",
-    "TreeEmbedding",
-    "TRANSFER_PAIR_MEMORY_VERSION",
-    "TransferDirection",
-    "TransferPair",
-    "TransferPairStore",
     "compile_runlog_to_store",
     "canonicalize_run_log",
     "canonicalize_run_log_step",

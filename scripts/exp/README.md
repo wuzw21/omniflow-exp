@@ -31,6 +31,14 @@ the Python launcher or maintain a second runtime script.
 | `src/experiment/direct_function_launch.py` | Seed-111 atomic Function qualification runner | Called by the E2E pipeline |
 | `src/experiment/batch_outcomes.py` | Immutable cell and table accounting | Called by the E2E pipeline |
 
+## Page embedding
+
+The active page representation is the canonical OmniTransfer page embedding,
+loaded through `omniflow/transfer/page_embedding.py` from
+`~/Projects/Omni/OmniTransfer`. Its checkpoint path and SHA-256 are part of
+the embedding provenance. This repository deliberately has no native 512D
+encoder, page-word head, functional-page encoder, or page-embedding baseline.
+
 The E2E pipeline does not reuse a Store merely because its RunLog hash matches.
 The Store provenance must identify the `androidworld-runlog-harvester` skill.
 A default action wrapper or a legacy mechanical manifest is not a valid

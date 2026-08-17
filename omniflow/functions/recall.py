@@ -7,7 +7,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from omniflow.core.model import Function, Observation
-from omniflow.transfer.embedding import PageEncoder, TreeEmbedding
+from omniflow.transfer.page_embedding import OmniTransferPageEncoder, PageEmbedding
 
 RECALL_AUDIT_VERSION = "omniflow.function-recall.v1"
 PAGE_SIMILARITY_WEIGHT = 0.30
@@ -27,11 +27,11 @@ def recall_functions(
     functions: dict[str, Function] | list[Function] | tuple[Function, ...],
     source_states: Mapping[str, Observation | None],
     limit: int = 8,
-    page_encoder: PageEncoder | None = None,
+    page_encoder: OmniTransferPageEncoder | None = None,
 ) -> RecallResult:
     """Recall Planner tools using page and lexical evidence without page gating."""
 
-    encoder = page_encoder or PageEncoder()
+    encoder = page_encoder or OmniTransferPageEncoder()
     current_page = encoder.embed(observation)
     values = functions.values() if isinstance(functions, dict) else functions
     candidates: list[tuple[float, Function, dict[str, Any]]] = []
@@ -62,12 +62,13 @@ def recall_functions(
             "schema_version": RECALL_AUDIT_VERSION,
             "encoder": {
                 "name": encoder.name,
-                "version": encoder.version,
-                "dimension": encoder.dimension,
-                "weights_hash": encoder.weights.hash,
+                "version": encoder.encoder_version,
+                "dimension": int(current_page.vector.shape[0]),
+                "checkpoint_path": str(encoder.checkpoint_path),
+                "checkpoint_sha256": encoder.checkpoint_sha256,
             },
             "current_page": {
-                "element_count": len(current_page.elements),
+                "element_count": current_page.element_count,
             },
             "ranking_weights": {
                 "page_similarity": PAGE_SIMILARITY_WEIGHT,
@@ -85,9 +86,9 @@ def _score_function(
     goal: str,
     function: Function,
     *,
-    current_page: TreeEmbedding,
+    current_page: PageEmbedding,
     source_states: Mapping[str, Observation | None],
-    encoder: PageEncoder,
+    encoder: OmniTransferPageEncoder,
 ) -> dict[str, Any]:
     source_state_id = function.steps[0].source_state_id if function.steps else ""
     source_observation = source_states.get(source_state_id)

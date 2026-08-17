@@ -330,11 +330,25 @@ official-success RunLog.
 
 ## Repository contents
 
+### Page embedding contract
+
+All active page retrieval uses `omniflow/transfer/page_embedding.py`, which
+loads the latest page embedding implementation from the canonical
+`~/Projects/Omni/OmniTransfer` checkout. The adapter records the checkpoint
+path and SHA-256 in every embedding audit. OmniFlow-exp contains no native
+512D encoder, learned page-word head, functional-page head, or embedding
+comparison baseline.
+
+The current frozen page-embedding checkpoint is
+`src/omnitransfer/checkpoints/omnitransfer_spatial_xml_alignment_v9_20260805/v9_spatial_xml_alignment_seed29.pt`.
+This is the page representation; OmniTransfer's candidate-ranking release
+remains a separate runtime responsibility.
+
 - `omniflow/`: OmniFlow's public Python package.
   - `core/`: data models, configuration, schemas, and canonical RunLog handling.
   - `functions/`: Function artifacts, compilation, retrieval, storage, and management.
   - `runtime/`: runtime orchestration, action execution, and Checker recovery.
-  - `transfer/`: OmniTransfer calls, page encoding, alignment, memory, and review.
+  - `transfer/`: OmniTransfer candidate calls and the canonical page-embedding adapter.
   - `vlm/`: VLM planning, tool-call parsing, model adaptation, and accounting.
   - `bridge.py`: external JSON-line bridge entry point.
   - `vlm_coordinates.py`: shared-contract owner for VLM coordinate conversion.

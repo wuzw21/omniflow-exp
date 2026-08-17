@@ -4,6 +4,10 @@ This repository exists only for the paper's AndroidWorld experiment. Do not add
 product code, historical campaigns, ablations, exploratory methods, raw data,
 or compatibility layers.
 
+Before changing this repository, read `README.md` and
+`scripts/exp/README.md`. They are the user-facing description of the same
+paper-only workflow and must stay consistent with this file.
+
 ## OmniFlow / OmniTransfer boundary
 
 - OmniTransfer is responsible only for producing complete ranked target
@@ -11,9 +15,18 @@ or compatibility layers.
   page gate, selected action, or fallback policy.
 - OmniFlow owns OmniTransfer preflight, page checks, candidate selection,
   execution, failure classification, and fallback.
-- OmniFlow-exp owns the experiment's core logic, including the native 512D
-  pole encoding and page encoding. Do not substitute OmniTransfer matcher
-  embeddings for these OmniFlow embeddings.
+- OmniFlow-exp owns the experiment's core logic, but page identity is owned by
+  the latest canonical OmniTransfer page embedding. The only page encoder in
+  the active code path is `omniflow/transfer/page_embedding.py`; do not add a
+  local 512D/1024D page encoder, learned pooling head, or comparison baseline.
+- The canonical implementation is loaded from the real
+  `~/Projects/Omni/OmniTransfer` checkout. Its frozen checkpoint provenance is
+  recorded in every page embedding; a missing or mismatched canonical
+  checkout/checkpoint is an explicit failure.
+- The current page-embedding checkpoint is
+  `src/omnitransfer/checkpoints/omnitransfer_spatial_xml_alignment_v9_20260805/v9_spatial_xml_alignment_seed29.pt`.
+  This page embedding is separate from OmniTransfer's candidate-ranking
+  release; do not silently substitute the candidate matcher or a local pooler.
 
 ## Current phase
 
