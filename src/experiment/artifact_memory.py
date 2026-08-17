@@ -17,7 +17,15 @@ from typing import Any, Iterable, Sequence
 
 from omniflow.core.trajectory import require_complete_source_run_log
 from omniflow.transfer.runtime import load_transfer_state_catalog
-from src.experiment.protocol import SOURCE_SEED
+from src.experiment.protocol import (
+    DEVICES,
+    MAX_STEPS,
+    METHODS,
+    RESULT_COMMANDS_FILE,
+    RESULT_SUMMARY_FILE,
+    SOURCE_SEED,
+    TASK_SEED,
+)
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_LEARNING_MODE,
@@ -37,8 +45,10 @@ FUNCTION_STORE_SELECTION_SCHEMA = (
 )
 FUNCTION_SOURCE_LINEAGE_SCHEMA = "omniflow.function-store-source-lineage.v1"
 RESULT_FILE_NAMES = (
-    "one_task_commands.jsonl",
-    "one_task_summary.json",
+    RESULT_COMMANDS_FILE,
+    RESULT_SUMMARY_FILE,
+    "one_task_commands.jsonl",  # immutable historical results only
+    "one_task_summary.json",  # immutable historical results only
     "registered_result.json",
     "registration_manifest.json",
     "stats.jsonl",
@@ -1033,26 +1043,24 @@ def _formal_result_protocol_error(
     canonical_source_sha256: str = "",
 ) -> str | None:
     from src.experiment.result_registry import (
-        FORMAL_DEVICE_TARGETS,
-        FORMAL_TASK_SEED,
-        FORMAL_MAX_STEPS,
-        FORMAL_METHODS,
-        FORMAL_SOURCE_SEED,
         formal_result_environment_failure_reasons,
         has_official_validator_conclusion,
         validate_formal_result_protocol,
     )
+    formal_device_targets = {
+        label: (serial, port) for label, serial, port in DEVICES
+    }
 
     violations: list[str] = []
     if task not in task_names:
         violations.append("task_not_indexed")
-    if method not in FORMAL_METHODS:
+    if method not in METHODS:
         violations.append("unsupported_method")
-    if device not in FORMAL_DEVICE_TARGETS:
+    if device not in formal_device_targets:
         violations.append("unsupported_device")
-    if source_seed != FORMAL_SOURCE_SEED:
+    if source_seed != SOURCE_SEED:
         violations.append("source_seed")
-    if evaluation_seed != FORMAL_TASK_SEED:
+    if evaluation_seed != TASK_SEED:
         violations.append("evaluation_seed")
     if violations:
         return (
@@ -1076,8 +1084,8 @@ def _formal_result_protocol_error(
             task_name=task,
             method=method,
             device=device,
-            evaluation_seed=FORMAL_TASK_SEED,
-            max_steps=FORMAL_MAX_STEPS,
+            evaluation_seed=TASK_SEED,
+            max_steps=MAX_STEPS,
         )
     except ValueError as error:
         return str(error)
@@ -1766,9 +1774,10 @@ def _load_baseline_batch_reports(
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     """Load explicit immutable batch snapshots as read-only completed results."""
 
-    from src.experiment.result_registry import FORMAL_DEVICE_TARGETS, FORMAL_METHODS
-
     known_tasks = set(task_names)
+    formal_device_targets = {
+        label: (serial, port) for label, serial, port in DEVICES
+    }
     records: dict[str, dict[str, Any]] = {}
     results: dict[str, dict[str, Any]] = {}
     for summary_path in report_paths:
@@ -1820,11 +1829,11 @@ def _load_baseline_batch_reports(
                 raise ValueError(
                     f"baseline_batch_task_not_indexed:{summary_path}:{task}"
                 )
-            if method not in FORMAL_METHODS:
+            if method not in METHODS:
                 raise ValueError(
                     f"baseline_batch_method_invalid:{summary_path}:{method}"
                 )
-            if device not in FORMAL_DEVICE_TARGETS:
+            if device not in formal_device_targets:
                 raise ValueError(
                     f"baseline_batch_device_invalid:{summary_path}:{device}"
                 )
@@ -2828,20 +2837,14 @@ def main(argv: list[str] | None = None) -> int:
         load_artifact_memory(args.memory_index)
         output = _load_object(Path(args.memory_index).expanduser().resolve())
     else:
-        from src.experiment.result_registry import (
-            FORMAL_TASK_SEED,
-            FORMAL_MAX_STEPS,
-            FORMAL_SOURCE_SEED,
-        )
-
         output = registered_result_plan_from_memory(
             memory_index=args.memory_index,
             task_name=args.task,
             methods=tuple(item for item in args.methods.split(",") if item),
             devices=tuple(item for item in args.devices.split(",") if item),
-            source_seed=FORMAL_SOURCE_SEED,
-            evaluation_seed=FORMAL_TASK_SEED,
-            formal_max_steps=FORMAL_MAX_STEPS,
+            source_seed=SOURCE_SEED,
+            evaluation_seed=TASK_SEED,
+            formal_max_steps=MAX_STEPS,
         )
     print(json.dumps(output, ensure_ascii=False, sort_keys=True))
     return 0

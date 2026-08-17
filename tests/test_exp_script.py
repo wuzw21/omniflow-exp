@@ -263,10 +263,11 @@ def test_androidworld_defaults_to_pinned_immutable_release_without_fallback(
 ) -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
 
-    assert (
-        'android_world_revision="632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"'
-        in script_text
-    )
+    protocol = json.loads(
+        (REPO / "config" / "paper_androidworld.json").read_text(encoding="utf-8")
+    )["protocol"]
+    assert "android_world_revision=\"$(" in script_text
+    assert protocol["androidworld_revision"] == "632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"
     asset_root = tmp_path / "OmniFlow"
     dirty_fallback = (
         asset_root / "runtime" / "external" / "droidrun-android-world" / "android_world"

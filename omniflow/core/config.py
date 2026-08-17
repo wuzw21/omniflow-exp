@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
+from pathlib import Path
 
 from omniflow.core.model import (
     Checker,
     Transfer,
 )
+
+_ANDROIDWORLD_CONFIG_PATH = (
+    Path(__file__).resolve().parents[2] / "config" / "paper_androidworld.json"
+)
+_ANDROIDWORLD_CONFIG = json.loads(
+    _ANDROIDWORLD_CONFIG_PATH.read_text(encoding="utf-8")
+)
+ANDROIDWORLD_PROTOCOL = dict(_ANDROIDWORLD_CONFIG["protocol"])
 
 GUI_AGENT_RULES = (
     "Accessibility XML is primary evidence for visible controls, state, and bounds; vision only supplements missing XML details.",
@@ -19,7 +29,7 @@ GUI_AGENT_RULES = (
     "Use finished only when current evidence or a previous tool result proves the full task is complete; report one factual outcome and never claim RunLog or Function registration that the host has not confirmed.",
 )
 
-DEFAULT_MAX_STEPS = 20
+DEFAULT_MAX_STEPS = int(ANDROIDWORLD_PROTOCOL["max_steps"])
 
 DEFAULT_PLANNER_SYSTEM_PROMPT = (
     "You are a GUI agent. You are given a task and your action history, with screenshots. "

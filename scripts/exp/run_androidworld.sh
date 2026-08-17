@@ -27,12 +27,12 @@ formal_max_steps=""
 formal_max_fallback_steps=""
 formal_step_timeout_sec=""
 official_validator_flush_grace_sec=""
-formal_fixed_task_params=0
-formal_fold_state=2
-formal_fold_size="2208x1840"
+formal_fixed_task_params=""
+formal_fold_state=""
+formal_fold_size=""
 formal_model=""
 formal_model_endpoint_profile=""
-formal_model_base_url="https://llmapi.paratera.com/v1"
+formal_model_base_url=""
 formal_bmoca_revision="de06497ae51464dd06fe4dbd2e5f59f27bcd9250"
 execution_environment="androidworld"
 bmoca_root="${OMNIFLOW_BMOCA_ROOT:-}"
@@ -41,7 +41,12 @@ bmoca_avd_home="${OMNIFLOW_BMOCA_AVD_HOME:-${ANDROID_AVD_HOME:-}}"
 bmoca_avd_template_home="${OMNIFLOW_BMOCA_AVD_TEMPLATE_HOME:-}"
 bmoca_output_path="${OMNIFLOW_BMOCA_OUTPUT_PATH:-}"
 bmoca_show_emulator="${OMNIFLOW_BMOCA_SHOW_EMULATOR:-0}"
-android_world_revision="632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"
+android_world_revision="$(PYTHONPATH="$repo:$repo/src${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'
+from src.experiment.protocol import ANDROIDWORLD_REVISION
+
+print(ANDROIDWORLD_REVISION)
+PY
+)"
 mobilegpt_source_schema="omniflow.mobilegpt-runlog-direct-memory.v1"
 mobilegpt_source_method="mobilegpt_runlog_direct_memory"
 mobilegpt_source_manifest_name="mobilegpt_memory_manifest.json"
@@ -55,8 +60,13 @@ protocol_values="$(python3 - <<'PY'
 from src.experiment.protocol import (
     DEFAULT_DEVICE,
     DEFAULT_METHOD,
+    DEVICES,
     FORMAL_MODEL,
+    FORMAL_MODEL_BASE_URL,
     FORMAL_MODEL_ENDPOINT_PROFILE,
+    FIXED_TASK_PARAMS,
+    FOLD_SIZE,
+    FOLD_STATE,
     MAX_FALLBACK_STEPS,
     MAX_STEPS,
     METHODS,
@@ -78,10 +88,15 @@ print(
     TASK_DEADLINE_SEC,
     FORMAL_MODEL,
     FORMAL_MODEL_ENDPOINT_PROFILE,
+    FORMAL_MODEL_BASE_URL,
+    int(FIXED_TASK_PARAMS),
+    FOLD_STATE,
+    FOLD_SIZE,
     DEFAULT_METHOD,
     ",".join(METHODS),
     ":".join(str(value) for value in SOURCE_DEVICE),
     DEFAULT_DEVICE,
+    next(serial for label, serial, _ in DEVICES if label.startswith("fold")),
 )
 PY
 )"
@@ -89,11 +104,11 @@ read -r formal_source_seed formal_task_seed formal_max_steps \
   formal_max_fallback_steps formal_step_timeout_sec \
   official_validator_flush_grace_sec \
   formal_task_deadline_sec formal_model formal_model_endpoint_profile \
+  formal_model_base_url formal_fixed_task_params formal_fold_state formal_fold_size \
   formal_default_method all_methods \
-  source_device default_device <<< "$protocol_values"
+  source_device default_device fold_serial <<< "$protocol_values"
 expected_source_seed="${OMNIFLOW_ANDROIDWORLD_SOURCE_SEED:-$formal_source_seed}"
 task_seed="${OMNIFLOW_ANDROIDWORLD_TASK_SEED:-$formal_task_seed}"
-config="$repo/config/paper_androidworld.json"
 preflight="$repo/src/experiment/preflight.py"
 selected_method_arg=""
 selected_device_arg=""
@@ -219,7 +234,6 @@ androidworld_adb_file_transfer_timeout_sec="300"
 export OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC="$androidworld_adb_file_transfer_timeout_sec"
 androidworld_setup_timeout_sec="300"
 export OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC="$androidworld_setup_timeout_sec"
-fold_serial="emulator-5564"
 fold_state="$formal_fold_state"
 fold_size="$formal_fold_size"
 dry_run=0
@@ -1474,7 +1488,7 @@ prepare_function_asset_for_task() {
   fi
   conversion_root="$ours_converted_asset_root"
   if [[ -z "$conversion_root" ]]; then
-    conversion_root="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111/$requested_task/ours/from_canonical_runlog"
+    conversion_root="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${formal_source_seed}/$requested_task/ours/from_canonical_runlog"
   elif [[ "$all_tasks" -eq 1 ]]; then
     conversion_root="$conversion_root/$requested_task"
   fi
@@ -1680,6 +1694,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
 from src.experiment.source_assets import select_source_asset_revision
+from src.experiment.protocol import SOURCE_SEED
 
 source_index = json.loads(
     Path(sys.argv[4]).read_text(encoding="utf-8")
@@ -1739,7 +1754,7 @@ if sys.argv[8] == "omniflow.mobilegpt-runlog-direct-memory.v1":
                     validate_mobilegpt_adapted_memory(
                         indexed_memory["memory_root"],
                         task_name=sys.argv[5],
-                        source_seed=111,
+                        source_seed=SOURCE_SEED,
                         source_run_log=source_run_log,
                         compatible_source_sha256s=compatible_source_sha256s,
                         expected_model=sys.argv[7],
@@ -1756,7 +1771,7 @@ if sys.argv[8] == "omniflow.mobilegpt-runlog-direct-memory.v1":
             validate_mobilegpt_adapted_memory(
                 candidate / "memory",
                 task_name=sys.argv[5],
-                source_seed=111,
+                source_seed=SOURCE_SEED,
                 source_run_log=source_run_log,
                 compatible_source_sha256s=compatible_source_sha256s,
                 expected_model=sys.argv[7],
@@ -1808,7 +1823,7 @@ raise SystemExit(0 if payload.get("retry_allowed") is False else 1)
 PY
 }
 if [[ "$all_tasks" -eq 0 && "$requires_mobilegpt_source_memory" -eq 1 && -z "$mobilegpt_source_memory_root" ]]; then
-  mobilegpt_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111/$task/mobilegpt_offline_retrieval"
+  mobilegpt_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${formal_source_seed}/$task/mobilegpt_offline_retrieval"
   mobilegpt_source_attempt_root="$(
     select_source_asset_revision \
       "$mobilegpt_source_base" \
@@ -1823,7 +1838,7 @@ if [[ "$all_tasks" -eq 0 && "$requires_mobilegpt_source_memory" -eq 1 && -z "$mo
   mobilegpt_source_memory_root="$mobilegpt_source_attempt_root/memory"
 fi
 if [[ "$all_tasks" -eq 0 && "$requires_appagent_source_memory" -eq 1 && -z "$appagent_demo_memory_root" ]]; then
-  appagent_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_111/$task/appagent_demo"
+  appagent_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${formal_source_seed}/$task/appagent_demo"
   appagent_demo_memory_root="$(
     select_source_asset_revision \
       "$appagent_source_base" \
@@ -2120,7 +2135,6 @@ require_directory() {
     missing_assets+=("$label=$path")
   fi
 }
-require_file "experiment_config" "$config"
 require_file "runtime_preflight" "$preflight"
 require_file "androidworld_setup" "$android_world_root/android_world/env/setup_device/apps.py"
 require_file "adb" "$adb_bin"
@@ -2632,7 +2646,6 @@ command=(
   -m
   src.experiment.androidworld
   result
-  --experiment-config "$config"
   --index "$source_index"
   --android-world-root "$android_world_root"
   --adb-path "$adb_bin"

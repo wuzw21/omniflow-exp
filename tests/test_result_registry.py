@@ -41,11 +41,11 @@ def test_master_progress_usage_is_not_split_by_component() -> None:
     )
 
     row = rows[0]
-    assert row["mobilegpt_offline_retrieval_tool_calls"] == "3"
-    assert row["mobilegpt_offline_retrieval_tokens"] == "150"
+    assert row["mobilegpt_offline_retrieval_model_calls"] == "3"
+    assert row["mobilegpt_offline_retrieval_total_tokens"] == "150"
     for detailed_field in (
-        "model_calls",
-        "total_tokens",
+        "tool_calls",
+        "tokens",
         "chat_model_calls",
         "embedding_model_calls",
         "prompt_tokens",

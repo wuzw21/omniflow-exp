@@ -168,7 +168,7 @@ def test_resolve_args_preserves_symlinked_virtualenv_python(
 def test_result_environment_uses_orchestrator_budget_and_child_guard(
     tmp_path: Path,
 ) -> None:
-    from src.experiment.e2e_task_pipeline import PHASE_TIMEOUTS_SEC, _result_environment
+    from src.experiment.e2e_task_pipeline import _result_environment
 
     args = _args(tmp_path)
     args.max_steps = 7
@@ -189,7 +189,6 @@ def test_result_environment_uses_orchestrator_budget_and_child_guard(
     assert environment["OMNIFLOW_BATCH_ATTEMPT_ID"] == result_attempt_id
     assert environment["OMNIFLOW_ANDROIDWORLD_MAX_STEPS"] == "7"
     assert environment["OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS"] == "2"
-    assert PHASE_TIMEOUTS_SEC["target_result"] == PHASE_TIMEOUTS_SEC["target_episode"]
 
 
 def test_formal_timeout_covers_frozen_steps_and_validator_flush() -> None:
@@ -567,8 +566,8 @@ def test_collect_replayed_source_uses_fixed_replay_and_captures_screenshots(
     assert captured_path.is_file()
     assert captured["steps"][0]["action"] == source["steps"][0]["action"]
     assert captured["steps"][0]["observation"]["pixels"]["sha256"] == screenshot_hash
-    assert phase["tool_calls"] == 0
-    assert phase["tokens"] == 0
+    assert phase["model_calls"] == 0
+    assert phase["total_tokens"] == 0
     assert phase["status"] == "collected"
 
 
@@ -643,8 +642,8 @@ def test_collect_replayed_source_rejects_model_calls(
             source_run_log=source,
         )
 
-    assert raised.value.phase["tool_calls"] == 1
-    assert raised.value.phase["tokens"] == 10
+    assert raised.value.phase["model_calls"] == 1
+    assert raised.value.phase["total_tokens"] == 10
 
 
 def test_pipeline_does_not_collect_missing_canonical_source(
@@ -654,7 +653,7 @@ def test_pipeline_does_not_collect_missing_canonical_source(
     args = _args(tmp_path)
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.ensure_source_device",
-        lambda **_: {"status": "ready", "tool_calls": 0, "tokens": 0},
+        lambda **_: {"status": "ready", "model_calls": 0, "total_tokens": 0},
     )
     collected = False
 
@@ -679,8 +678,8 @@ def test_pipeline_does_not_collect_missing_canonical_source(
     phases = run_pipeline(args)
 
     assert phases["source"]["status"] == "failed"
-    assert phases["source"]["tool_calls"] == 0
-    assert phases["source"]["tokens"] == 0
+    assert phases["source"]["model_calls"] == 0
+    assert phases["source"]["total_tokens"] == 0
     assert collected is False
 
 
@@ -693,7 +692,7 @@ def test_source_only_pipeline_collects_replayed_source_and_stops(
     source_path = tmp_path / "source.run_log.json"
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.ensure_source_device",
-        lambda **_: {"status": "ready", "tool_calls": 0, "tokens": 0},
+        lambda **_: {"status": "ready", "model_calls": 0, "total_tokens": 0},
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline._canonical_source",
@@ -707,8 +706,8 @@ def test_source_only_pipeline_collects_replayed_source_and_stops(
             {
                 "status": "collected",
                 "source_run_log": str(source_path),
-                "tool_calls": 0,
-                "tokens": 0,
+                "model_calls": 0,
+                "total_tokens": 0,
             },
         ),
     )
@@ -736,7 +735,7 @@ def test_pipeline_stops_when_canonical_function_store_is_missing(
     source_path = tmp_path / "source.json"
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.ensure_source_device",
-        lambda **_: {"status": "ready", "tool_calls": 0, "tokens": 0},
+        lambda **_: {"status": "ready", "model_calls": 0, "total_tokens": 0},
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline._canonical_source",
@@ -796,7 +795,7 @@ def test_pipeline_qualifies_ordered_source_calls_before_target_workers(
     events: list[str] = []
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.ensure_source_device",
-        lambda **_: {"status": "ready", "tool_calls": 0, "tokens": 0},
+        lambda **_: {"status": "ready", "model_calls": 0, "total_tokens": 0},
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline._canonical_source",
@@ -808,8 +807,8 @@ def test_pipeline_qualifies_ordered_source_calls_before_target_workers(
             {"store_path": str(store_path)},
             {
                 "status": "reused",
-                "tool_calls": 0,
-                "tokens": 0,
+                "model_calls": 0,
+                "total_tokens": 0,
                 "source_calls": source_calls,
             },
         ),
@@ -821,8 +820,8 @@ def test_pipeline_qualifies_ordered_source_calls_before_target_workers(
         return {
             "status": "qualified",
             "qualified": True,
-            "tool_calls": 0,
-            "tokens": 0,
+            "model_calls": 0,
+            "total_tokens": 0,
         }
 
     monkeypatch.setattr(
@@ -870,7 +869,7 @@ def test_source_qualification_only_stops_before_baselines_and_targets(
     store_path.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.ensure_source_device",
-        lambda **_: {"status": "ready", "tool_calls": 0, "tokens": 0},
+        lambda **_: {"status": "ready", "model_calls": 0, "total_tokens": 0},
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline._canonical_source",
@@ -882,8 +881,8 @@ def test_source_qualification_only_stops_before_baselines_and_targets(
             {"store_path": str(store_path)},
             {
                 "status": "reused",
-                "tool_calls": 0,
-                "tokens": 0,
+                "model_calls": 0,
+                "total_tokens": 0,
                 "source_calls": [
                     {"function_id": "create_note", "arguments": {}}
                 ],
@@ -895,8 +894,8 @@ def test_source_qualification_only_stops_before_baselines_and_targets(
         lambda **_: {
             "status": "qualified",
             "qualified": True,
-            "tool_calls": 0,
-            "tokens": 0,
+            "model_calls": 0,
+            "total_tokens": 0,
         },
     )
     monkeypatch.setattr(
@@ -1243,16 +1242,16 @@ def test_pipeline_report_always_materializes_four_report_formats(tmp_path: Path)
         attempt_root=attempt_root,
         outcomes_root=outcomes_root,
         deadline=Deadline(10),
-        phases={"source": {"status": "failed", "tool_calls": 1, "tokens": 7}},
+        phases={"source": {"status": "failed", "model_calls": 1, "total_tokens": 7}},
     )
 
     assert summary["counts"]["planned"] == 10
     assert summary["counts"]["pending"] == 0
-    assert summary["tool_calls"] == 1
-    assert summary["tokens"] == 7
+    assert summary["model_calls"] == 1
+    assert summary["total_tokens"] == 7
     for field in ("results_jsonl", "results_csv", "results_markdown", "pipeline_markdown"):
         assert Path(summary[field]).is_file()
     assert (attempt_root / "pipeline_summary.json").is_file()
     assert len(Path(summary["results_jsonl"]).read_text(encoding="utf-8").splitlines()) == 10
-    for detailed in ("model_calls", "prompt_tokens", "completion_tokens", "total_tokens"):
-        assert detailed not in summary
+    assert "tool_calls" not in summary
+    assert "tokens" not in summary

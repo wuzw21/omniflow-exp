@@ -1,12 +1,38 @@
 {
-  "schema_version": "omniflow.androidworld.experiment_config.v1",
-  "description": "Formal AndroidWorld result protocol defaults.",
-  "result": {
+  "schema_version": "omniflow.androidworld.formal_protocol.v1",
+  "description": "The single formal AndroidWorld experiment configuration.",
+  "protocol": {
+    "methods": [
+      "fixed_replay",
+      "ours",
+      "mobilegpt_offline_retrieval",
+      "appagent_demo",
+      "t3a_hint"
+    ],
+    "devices": [
+      {"label": "small5554", "serial": "emulator-5554", "console_port": 5554},
+      {"label": "fold5564", "serial": "emulator-5564", "console_port": 5564}
+    ],
+    "source_device": {
+      "label": "source5560",
+      "serial": "emulator-5560",
+      "console_port": 5560
+    },
+    "source_seed": 111,
+    "evaluation_seed": 113,
+    "source_max_steps": 30,
     "max_steps": 20,
     "max_fallback_steps": 5,
-    "timeout_sec": 1500,
-    "task_random_seed": 113,
-    "no_fixed_task_seed": false,
-    "no_fixed_task_params": false
+    "task_deadline_sec": 1800,
+    "step_timeout_sec": 60,
+    "validator_flush_grace_sec": 300,
+    "fixed_task_seed": true,
+    "fixed_task_params": false,
+    "fold_state": 2,
+    "fold_size": "2208x1840",
+    "model": "GLM-5.1",
+    "model_endpoint_profile": "llmthu",
+    "model_base_url": "https://llmapi.paratera.com/v1",
+    "androidworld_revision": "632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"
   }
 }

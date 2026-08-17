@@ -17,7 +17,8 @@ from typing import Any, Iterable
 from src.experiment.mobilegpt_contract import MOBILEGPT_SUPPORTED_SOURCE_METHODS
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
 
-SCHEMA_VERSION = "omniflow.androidworld.cell_outcome.v1"
+SCHEMA_VERSION = "omniflow.androidworld.result_outcome.v2"
+LEGACY_SCHEMA_VERSION = "omniflow.androidworld.cell_outcome.v1"
 _MOBILEGPT_SOURCE_STATS_PATTERN = re.compile(
     r"MOBILEGPT_STATS_JSONL=(?P<path>[^\s'\"]+source_stats\.jsonl)"
 )
@@ -288,7 +289,7 @@ def concluded_result_keys(
         method = str(payload.get("method") or "")
         device = str(payload.get("device") or "")
         if (
-            payload.get("schema_version") != SCHEMA_VERSION
+            payload.get("schema_version") not in {SCHEMA_VERSION, LEGACY_SCHEMA_VERSION}
             or payload.get("immutable") is not True
             or str(payload.get("task_name") or "") != str(task_name)
             or method not in accepted_methods
@@ -511,8 +512,8 @@ def _write_markdown_report(
     *,
     rows: list[dict[str, Any]],
     counts: dict[str, int],
-    tool_calls: int,
-    tokens: int,
+    model_calls: int,
+    total_tokens: int,
 ) -> None:
     lines = [
         "# AndroidWorld Result Comparison",
@@ -522,10 +523,10 @@ def _write_markdown_report(
         f"- Validator failure: {counts['validator_failure']}",
         f"- Non-validator failure: {counts['non_validator_failure']}",
         f"- Pending: {counts['pending']}",
-        f"- Tool calls: {tool_calls}",
-        f"- Tokens: {tokens}",
+        f"- Model calls: {model_calls}",
+        f"- Total tokens: {total_tokens}",
         "",
-        "| method | device | source_seed | evaluation_seed | status | validator | tool_calls | tokens | actions | reuse | reuse_unit | reuse_evidence | episode_sec | wall_sec | error | evidence |",
+        "| method | device | source_seed | evaluation_seed | status | validator | model_calls | total_tokens | actions | reuse | reuse_unit | reuse_evidence | episode_sec | wall_sec | error | evidence |",
         "|---|---|---:|---:|---|---:|---:|---:|---:|---:|---|---|---:|---:|---|---|",
     ]
     for row in rows:
@@ -664,15 +665,15 @@ def write_batch_report(
         if rows:
             writer.writeheader()
             writer.writerows(rows)
-    tool_calls = sum(int(row["model_calls"]) for row in rows)
-    tokens = sum(int(row["total_tokens"]) for row in rows)
+    model_calls = sum(int(row["model_calls"]) for row in rows)
+    total_tokens = sum(int(row["total_tokens"]) for row in rows)
     results_markdown = destination / "results.md"
     _write_markdown_report(
         results_markdown,
         rows=rows,
         counts=counts,
-        tool_calls=tool_calls,
-        tokens=tokens,
+        model_calls=model_calls,
+        total_tokens=total_tokens,
     )
     summary = {
         "schema_version": "omniflow.androidworld.batch_report.v2",
@@ -681,8 +682,8 @@ def write_batch_report(
         "source_seed": int(source_seed),
         "evaluation_seed": int(evaluation_seed),
         "counts": counts,
-        "tool_calls": tool_calls,
-        "tokens": tokens,
+        "model_calls": model_calls,
+        "total_tokens": total_tokens,
         "episode_duration_sec": round(
             sum(_number(row["episode_duration_sec"]) for row in rows), 6
         ),

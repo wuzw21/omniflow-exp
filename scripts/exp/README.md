@@ -84,8 +84,9 @@ One normal single-result invocation performs the complete workflow:
 3. Reuse every already registered or frozen source asset without regeneration.
 4. Cold-restart each pending result's managed AVD without Quick Boot snapshot
    load/save, run AndroidWorld setup and preflight, and replay the method.
-5. Use the AndroidWorld official validator as the result, recording calls,
-   tokens, actions, reuse utilization, episode duration, and outer wall time
+5. Use the AndroidWorld official validator as the result, recording model
+   calls, total tokens, actions, reuse utilization, episode duration, and outer
+   wall time
    for every result.
 
 AppAgent online execution uses the pinned upstream prompt, parser, model request,
@@ -189,11 +190,13 @@ option and preserves all other setup behavior.
 | `OMNIFLOW_OURS_REVISION_REASON` | Explicit reason for selecting one newly converted immutable Function revision over the existing canonical Store; requires one `--tasks` value |
 | `OMNIFLOW_MEMORY_MOBILEGPT_ROOTS` | Optional colon-separated roots containing sealed MobileGPT semantic memory |
 
-Configuration ownership is intentionally small. A formal result is exactly one
-task, one method, and one device. Its kernel budget and seeds come from
-`src/experiment/protocol.py` and the six-value
-`config/paper_androidworld.json` result block. The shell owns the outer task
-matrix; the Python runner owns one result. Environment variables are limited to
+Configuration ownership is intentionally singular. A formal result is exactly
+one task, one method, and one device. The complete formal protocol—methods,
+devices, seeds, budgets, timeouts, model endpoint, fold state, and pinned
+AndroidWorld revision—lives in the `protocol` block of
+`config/paper_androidworld.json`. `src/experiment/protocol.py`, core defaults,
+and the shell only read that file; they do not define a second protocol. The
+shell owns the outer task matrix; the Python runner owns one result. Environment variables are limited to
 external roots, credentials, development/maintenance inputs, and the internal
 child-process contract. Do not expose a second alias for an existing setting.
 

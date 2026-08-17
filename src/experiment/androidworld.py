@@ -47,6 +47,10 @@ from src.experiment.protocol import (
     EPISODE_TIMEOUT_SEC,
     MAX_STEPS,
     METHODS,
+    RESULT_COMMANDS_FILE,
+    RESULT_MARKDOWN_FILE,
+    RESULT_SCHEMA,
+    RESULT_SUMMARY_FILE,
     SOURCE_SEED,
     STEP_TIMEOUT_SEC,
     TASK_SEED,
@@ -190,113 +194,6 @@ def _repo_path(value: str | Path, *, repo_root: Path = REPO_ROOT) -> Path:
     if not path.is_absolute():
         path = repo_root / path
     return path.resolve()
-
-
-def _normalize_config_arg_key(value: str) -> str:
-    return str(value or "").strip().lstrip("-").replace("-", "_")
-
-
-def _load_experiment_config(path: str | Path) -> dict[str, Any]:
-    config_path = _repo_path(path)
-    if not config_path.exists():
-        raise FileNotFoundError(f"experiment config not found: {config_path}")
-    text = config_path.read_text(encoding="utf-8")
-    if config_path.suffix.lower() in {".yaml", ".yml"}:
-        try:
-            import yaml  # type: ignore
-        except Exception as exc:
-            raise RuntimeError(
-                "YAML experiment configs require PyYAML; use JSON instead"
-            ) from exc
-        data = yaml.safe_load(text)
-    else:
-        data = json.loads(text)
-    if not isinstance(data, dict):
-        raise ValueError(f"experiment config must be a JSON/YAML object: {config_path}")
-    return data
-
-
-def _parser_option_dest_map(parser: argparse.ArgumentParser) -> dict[str, str]:
-    option_dests: dict[str, str] = {}
-    for action in parser._actions:
-        for option in action.option_strings:
-            option_dests[option] = action.dest
-        if isinstance(action, argparse._SubParsersAction):
-            for subparser in action.choices.values():
-                option_dests.update(_parser_option_dest_map(subparser))
-    return option_dests
-
-
-def _explicit_option_dests(
-    parser: argparse.ArgumentParser,
-    argv: Sequence[str],
-) -> set[str]:
-    option_dests = _parser_option_dest_map(parser)
-    explicit: set[str] = set()
-    for token in argv:
-        if not token.startswith("--"):
-            continue
-        option = token.split("=", 1)[0]
-        dest = option_dests.get(option)
-        if dest:
-            explicit.add(dest)
-    return explicit
-
-
-def _section_from_experiment_config(
-    config: dict[str, Any],
-    command: str,
-) -> dict[str, Any]:
-    command_key = _normalize_config_arg_key(command)
-    sections: list[dict[str, Any]] = []
-    defaults = config.get("defaults")
-    if isinstance(defaults, dict):
-        sections.append(defaults)
-    for key in (command, command_key):
-        value = config.get(key)
-        if isinstance(value, dict):
-            sections.append(value)
-            break
-    if not sections:
-        sections.append(config)
-    merged: dict[str, Any] = {}
-    for section in sections:
-        merged.update(section)
-    return merged
-
-
-def apply_experiment_config(
-    args: argparse.Namespace,
-    argv: Sequence[str],
-    *,
-    parser: argparse.ArgumentParser,
-) -> argparse.Namespace:
-    config_path = str(getattr(args, "experiment_config", "") or "").strip()
-    if not config_path:
-        return args
-    config = _load_experiment_config(config_path)
-    values = _section_from_experiment_config(
-        config,
-        str(getattr(args, "command", "") or ""),
-    )
-    explicit_dests = _explicit_option_dests(parser, argv)
-    explicit_dests.discard("experiment_config")
-    metadata_keys = {"schema_version", "description", "notes"}
-    for raw_key, value in values.items():
-        if raw_key in metadata_keys:
-            continue
-        dest = _normalize_config_arg_key(raw_key)
-        if dest in metadata_keys:
-            continue
-        if not hasattr(args, dest):
-            raise ValueError(
-                f"unknown experiment config key for {args.command}: {raw_key}"
-            )
-        if dest in explicit_dests:
-            continue
-        setattr(args, dest, value)
-    setattr(args, "experiment_config_path", str(_repo_path(config_path)))
-    return args
 
 
 def _default_e2e_store_path(
@@ -576,7 +473,6 @@ def _claim_result_attempt(
     task_iteration: int = 1,
     baseline_environment_repair: str = "",
     dry_run: bool = False,
-    experiment_config: str | Path | None = None,
 ) -> Path:
     if not 1 <= int(task_iteration) <= 3:
         raise ValueError(
@@ -590,14 +486,6 @@ def _claim_result_attempt(
         "runner": str(runner_path),
         "runner_sha256": _file_sha256(runner_path),
     }
-    if str(experiment_config or "").strip():
-        config_path = _repo_path(str(experiment_config))
-        provenance.update(
-            {
-                "experiment_config": str(config_path),
-                "experiment_config_sha256": _file_sha256(config_path),
-            }
-        )
     manifest = {
         "schema_version": "omniflow.androidworld_attempt.v1",
         "attempt_id": root.name,
@@ -4608,9 +4496,9 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
     replay_completed_count = sum(1 for value in replay_states if value is True)
     duration_ms = sum(_coerce_float(row.get("duration_ms")) for _, row in rows)
     actions_executed = 0
-    tool_calls = sum(_coerce_int(row.get("model_calls")) for _, row in rows)
+    model_calls = sum(_coerce_int(row.get("model_calls")) for _, row in rows)
     fallback_steps = sum(_coerce_int(row.get("fallback_steps")) for _, row in rows)
-    tokens = sum(_coerce_int(row.get("total_tokens")) for _, row in rows)
+    total_tokens = sum(_coerce_int(row.get("total_tokens")) for _, row in rows)
     replay_step_completed = 0
     replay_step_total = 0
     relocation_diagnostic_count = 0
@@ -4659,7 +4547,6 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
                 "replay_track": row.get("replay_track"),
                 "official_validator_used": official_validator_used,
                 "official_validator_success": official_validator_success,
-                "success": official_validator_success,
                 "replay_completed": _canonical_replay_completed(row),
                 "duration_ms": round(_coerce_float(row.get("duration_ms")), 3),
                 "duration_sec": round(
@@ -4670,13 +4557,11 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
                 "replay_step_completed_count": step_completed,
                 "replay_step_total": step_total,
                 "replay_step_completed_rate": _rate(step_completed, step_total),
-                "tool_calls": _coerce_int(row.get("model_calls")),
                 "model_calls": _coerce_int(row.get("model_calls")),
                 "fallback_steps": _coerce_int(row.get("fallback_steps")),
                 "prompt_tokens": _coerce_int(row.get("prompt_tokens")),
                 "completion_tokens": _coerce_int(row.get("completion_tokens")),
                 "total_tokens": _coerce_int(row.get("total_tokens")),
-                "tokens": _coerce_int(row.get("total_tokens")),
                 "token_usage_status": row.get("token_usage_status"),
                 "model": row.get("model"),
                 "model_base_url": row.get("model_base_url"),
@@ -4699,18 +4584,12 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
 
     task_count = len(rows)
     return {
-        "schema_version": "omniflow.androidworld_replay_pipeline_summary.v3",
+        "schema_version": "omniflow.androidworld_replay_pipeline_summary.v4",
         "task_count": task_count,
         "task_results_files": [str(path) for path in task_result_files],
         "official_validator_task_count": official_validator_task_count,
         "official_validator_success_count": official_validator_success_count,
         "official_validator_success_rate": _rate(
-            official_validator_success_count,
-            official_validator_task_count,
-        ),
-        "success_count": official_validator_success_count,
-        "success_total": official_validator_task_count,
-        "success_rate": _rate(
             official_validator_success_count,
             official_validator_task_count,
         ),
@@ -4735,9 +4614,9 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
             replay_step_completed,
             replay_step_total,
         ),
-        "tool_calls": tool_calls,
+        "model_calls": model_calls,
+        "total_tokens": total_tokens,
         "fallback_steps": fallback_steps,
-        "tokens": tokens,
         "relocation_diagnostic_count": relocation_diagnostic_count,
         "per_task": per_task,
     }
@@ -4754,17 +4633,21 @@ def write_metrics_summary(summary: dict[str, Any], output_path: str | Path) -> N
         "# AndroidWorld Replay Pipeline Summary",
         "",
         f"- task_count: `{summary['task_count']}`",
-        (f"- success: `{summary['success_count']}/{summary['success_total']}`"),
+        (
+            "- validator: `"
+            f"{summary['official_validator_success_count']}/"
+            f"{summary['official_validator_task_count']}`"
+        ),
         f"- replay_completed: `{summary['replay_completed_count']}/{summary['replay_task_count']}`",
         f"- replay_coverage: `{summary['replay_task_count']}/{summary['task_count']}`",
         f"- replay_step_completed: `{summary['replay_step_completed_count']}/{summary['replay_step_total']}`",
         f"- actions_executed: `{summary['actions_executed']}`",
         f"- relocation_diagnostics: `{summary.get('relocation_diagnostic_count', 0)}`",
         f"- duration_s: `{round(_coerce_float(summary['duration_ms']) / 1000.0, 3)}`",
-        f"- tool_calls: `{summary.get('tool_calls', 0)}`",
-        f"- tokens: `{summary.get('tokens', 0)}`",
+        f"- model_calls: `{summary.get('model_calls', 0)}`",
+        f"- total_tokens: `{summary.get('total_tokens', 0)}`",
         "",
-        "| task | success | replay_completed | actions | tool_calls | tokens | step_completed | relocation | sec | error |",
+        "| task | validator | replay_completed | actions | model_calls | total_tokens | step_completed | relocation | sec | error |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for item in summary.get("per_task") or []:
@@ -4773,7 +4656,7 @@ def write_metrics_summary(summary: dict[str, Any], output_path: str | Path) -> N
             + " | ".join(
                 [
                     str(item.get("task_name") or item.get("task") or ""),
-                    "1" if item.get("success") else "0",
+                    "1" if item.get("official_validator_success") else "0",
                     ""
                     if item.get("replay_completed") is None
                     else "1"
@@ -4840,11 +4723,6 @@ _RESULT_NON_EXECUTED_STATUSES = {
     "env_failed",
     "init_failed",
     "setup_failed",
-}
-
-
-TOP_LEVEL_COMMANDS = {
-    "result",
 }
 
 
@@ -6138,8 +6016,7 @@ def _normalize_result_row(row: dict[str, Any]) -> dict[str, Any]:
         normalized["completion_tokens"] = episode_completion_tokens
     if episode_total_tokens > 0:
         normalized["total_tokens"] = episode_total_tokens
-        normalized["tokens"] = episode_total_tokens
-        normalized["tokens_source"] = "mobilegpt_episode_stats"
+        normalized["total_tokens_source"] = "mobilegpt_episode_stats"
 
     if _coerce_int(normalized.get("model_calls")) <= 0 and shared_model_calls > 0:
         normalized["model_calls"] = shared_model_calls
@@ -6157,13 +6034,12 @@ def _normalize_result_row(row: dict[str, Any]) -> dict[str, Any]:
     )
     if total_tokens <= 0 and shared_total_tokens > 0:
         total_tokens = shared_total_tokens
-        normalized["tokens_source"] = "mobilegpt_stats"
+        normalized["total_tokens_source"] = "mobilegpt_stats"
     if total_tokens <= 0:
         total_tokens = _coerce_int(normalized.get("prompt_tokens")) + _coerce_int(
             normalized.get("completion_tokens")
         )
     normalized["total_tokens"] = total_tokens
-    normalized["tokens"] = total_tokens
     normalized["model_calls"] = _coerce_int(normalized.get("model_calls"))
     if "episode_actions_executed" in normalized:
         normalized["actions_executed"] = _coerce_int(
@@ -6175,7 +6051,7 @@ def _normalize_result_row(row: dict[str, Any]) -> dict[str, Any]:
             normalized.get("episode_fallback_count")
         )
         normalized["fallback_steps_source"] = "mobilegpt_episode_stats"
-    if normalized.get("tokens_source") in {
+    if normalized.get("total_tokens_source") in {
         "mobilegpt_episode_stats",
         "mobilegpt_stats",
     }:
@@ -6198,26 +6074,11 @@ def _normalize_result_row(row: dict[str, Any]) -> dict[str, Any]:
     if wall_sec > 0:
         normalized["wall_sec"] = round(wall_sec, 3)
 
-    if normalized.get("official_validator_success") is not None:
-        normalized["success"] = bool(normalized.get("official_validator_success"))
     normalized["reuse_metrics"] = reuse_metrics_from_result_row(normalized)
     return normalized
 
 
 def _result_row_value(row: dict[str, Any], key: str) -> str:
-    if key == "success":
-        if row.get("success") is True:
-            return "1"
-        if row.get("success") is False:
-            return "0"
-        return ""
-    if key == "replay":
-        if row.get("replay_step_total"):
-            return (
-                f"{row.get('replay_step_completed_count') or 0}/"
-                f"{row.get('replay_step_total') or 0}"
-            )
-        return ""
     value = row.get(key)
     if value is None:
         return ""
@@ -6720,9 +6581,6 @@ def _aggregate_normalized_result_rows(
                 official_success_count,
                 len(official_rows),
             ),
-            "success_count": official_success_count,
-            "success_total": len(official_rows),
-            "success_rate": _rate(official_success_count, len(official_rows)),
             "official_validator_coverage_rate": _rate(
                 len(official_rows),
                 task_count,
@@ -6750,20 +6608,20 @@ def _aggregate_normalized_result_rows(
                 duration_ms / max(1, actions_executed),
                 3,
             ),
+            "model_calls": sum(
+                _coerce_int(row.get("model_calls")) for row in canonical_rows
+            ),
+            "total_tokens": sum(
+                _coerce_int(row.get("total_tokens")) for row in canonical_rows
+            ),
             "replay_step_completed_count": replay_step_completed,
             "replay_step_total": replay_step_total,
             "replay_step_completed_rate": _rate(
                 replay_step_completed,
                 replay_step_total,
             ),
-            "tool_calls": sum(
-                _coerce_int(row.get("model_calls")) for row in canonical_rows
-            ),
             "fallback_steps": sum(
                 _coerce_int(row.get("fallback_steps")) for row in canonical_rows
-            ),
-            "tokens": sum(
-                _coerce_int(row.get("total_tokens")) for row in canonical_rows
             ),
             "relocation_diagnostic_count": sum(
                 _coerce_int(row.get("relocation_diagnostic_count"))
@@ -6794,18 +6652,18 @@ def _write_result_summary(
         rows,
     )
     summary = {
-        "schema_version": "omniflow.androidworld_one_task_methods.v2",
+        "schema_version": RESULT_SCHEMA,
         "task_name": task,
         "task_root": str(task_root),
         "rows": rows,
         "aggregate": canonical_aggregate,
     }
-    summary_path = task_root / "one_task_summary.json"
+    summary_path = task_root / RESULT_SUMMARY_FILE
     summary_path.write_text(
         json.dumps(summary, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
-    commands_path = task_root / "one_task_commands.jsonl"
+    commands_path = task_root / RESULT_COMMANDS_FILE
     commands_path.write_text(
         "\n".join(json.dumps(record, ensure_ascii=False) for record in command_records)
         + "\n",
@@ -6816,14 +6674,14 @@ def _write_result_summary(
         ("method", "method"),
         ("device", "device"),
         ("status", "status"),
-        ("success", "success"),
-        ("model_calls", "tool_calls"),
-        ("total_tokens", "tokens"),
+        ("official_validator_success", "validator"),
+        ("model_calls", "model_calls"),
+        ("total_tokens", "total_tokens"),
         ("wall_sec", "wall_sec"),
         ("error", "error"),
     ]
     md_lines = [
-        f"# AndroidWorld One Task Summary: {task}",
+        f"# AndroidWorld Result Summary: {task}",
         "",
         "| " + " | ".join(label for _, label in visible_columns) + " |",
         "|" + "|".join("---" for _ in visible_columns) + "|",
@@ -6834,7 +6692,7 @@ def _write_result_summary(
             + " | ".join(_result_row_value(row, key) for key, _ in visible_columns)
             + " |"
         )
-    (task_root / "one_task_summary.md").write_text(
+    (task_root / RESULT_MARKDOWN_FILE).write_text(
         "\n".join(md_lines) + "\n",
         encoding="utf-8",
     )
@@ -6846,9 +6704,9 @@ def _print_result_summary(summary: dict[str, Any]) -> None:
         ("method", "method"),
         ("device", "device"),
         ("status", "status"),
-        ("success", "success"),
-        ("model_calls", "tool_calls"),
-        ("total_tokens", "tokens"),
+        ("official_validator_success", "validator"),
+        ("model_calls", "model_calls"),
+        ("total_tokens", "total_tokens"),
         ("wall_sec", "wall_sec"),
         ("error", "error"),
     ]
@@ -7542,7 +7400,6 @@ def cmd_result(args: argparse.Namespace) -> int:
         task_iteration=int(args.task_iteration),
         baseline_environment_repair=str(args.baseline_environment_repair or ""),
         dry_run=bool(args.dry_run),
-        experiment_config=getattr(args, "experiment_config_path", None),
     )
     command_records: list[dict[str, Any]] = []
     failed = 0
@@ -7917,7 +7774,7 @@ def cmd_result(args: argparse.Namespace) -> int:
         aggregate_summary=aggregate_summary,
     )
     result_registration: dict[str, Any] = {}
-    summary_path = output_root / _safe_stem(item.task) / "one_task_summary.json"
+    summary_path = output_root / _safe_stem(item.task) / RESULT_SUMMARY_FILE
     if not bool(args.dry_run):
         result_registry_root, master_progress_root = _result_registration_roots(
             args,
@@ -8010,14 +7867,6 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Canonical master table root updated after result registration. "
             "Defaults beside --result-registry-root."
-        ),
-    )
-    result_parser.add_argument(
-        "--experiment-config",
-        default="",
-        help=(
-            "JSON/YAML defaults for this AndroidWorld result. Command-line "
-            "arguments override config values."
         ),
     )
     result_parser.add_argument("--task", required=True)
@@ -8175,34 +8024,10 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _has_cli_option(argv: Sequence[str], option: str) -> bool:
-    prefix = f"{option}="
-    return any(token == option or token.startswith(prefix) for token in argv)
-
-
-def _normalize_default_result_argv(raw_argv: Sequence[str]) -> list[str]:
-    argv = list(raw_argv)
-    if not argv:
-        return argv
-    first = str(argv[0])
-    if first in TOP_LEVEL_COMMANDS or first in {"-h", "--help"}:
-        return argv
-    if not _has_cli_option(argv, "--task"):
-        return argv
-
-    normalized = ["result"]
-    if not _has_cli_option(argv, "--experiment-config"):
-        normalized.extend(["--experiment-config", "androidworld_eval.json"])
-    normalized.extend(argv)
-    return normalized
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     raw_argv = list(argv) if argv is not None else sys.argv[1:]
-    raw_argv = _normalize_default_result_argv(raw_argv)
     parser = build_parser()
     args = parser.parse_args(raw_argv)
-    args = apply_experiment_config(args, raw_argv, parser=parser)
     return int(args.func(args))
 
 

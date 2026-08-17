@@ -50,16 +50,23 @@ opens a new execution phase.
 - The canonical formal method names are exactly `fixed_replay`, `ours`,
   `mobilegpt_offline_retrieval`, `appagent_demo`, and `t3a_hint`. The canonical
   device labels and all shared seeds, budgets, timeouts, model defaults, and
-  endpoint defaults are defined in `src/experiment/protocol.py`. New code must
-  import those values instead of defining another copy. Formal execution must
+  endpoint defaults are defined in the `protocol` block of
+  `config/paper_androidworld.json`; `src/experiment/protocol.py` is only its
+  typed runtime view. New code must import those values instead of defining
+  another copy. Formal execution must
   keep the frozen protocol values; development overrides must remain explicit
   configuration, never hidden constants.
 - `max_steps`, `max_fallback_steps`, task deadline, step timeout, and validator
   grace timeout must be configurable through the canonical config/CLI/env
   path. They may not be independently hard-coded in the shell, scheduler,
   runner, registry, or report layer.
-- The formal config surface is deliberately small: task, method, device,
-  kernel budgets/seeds, and external roots. `source_format`,
+- The formal config surface has exactly one source:
+  `config/paper_androidworld.json`. Its `protocol` block is authoritative for
+  methods, devices, seeds, budgets, timeouts, model endpoint, fold state, and
+  the pinned AndroidWorld revision. `src/experiment/protocol.py`, core
+  defaults, and the shell are derived views and must not define duplicate
+  formal values. The formal surface is deliberately small: task, method,
+  device, kernel budgets/seeds, and external roots. `source_format`,
   `accepted_first30`, `first30`, `first60`, `limit`, and source-backend
   selectors are retired history filters, not active configuration. Historical
   result readers may recognize their old schema columns, but new commands and

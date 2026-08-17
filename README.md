@@ -39,8 +39,9 @@ freezing, memory registration, real-time execution, and resume behavior, is in
 The atomic result is always one `task + method + device`. The shell is the only
 public entry point, the E2E pipeline is the only matrix scheduler, and the
 Python AndroidWorld runner executes exactly one result. Shared methods,
-devices, seeds, budgets, and timeouts come from
-`src/experiment/protocol.py`; existing prompt text and native baseline
+devices, seeds, budgets, timeouts, model endpoint, and the AndroidWorld
+revision come from the `protocol` block in `config/paper_androidworld.json`;
+`src/experiment/protocol.py` is its typed runtime view. Existing prompt text and native baseline
 contracts are frozen. Historical `cell`/`one_task` names may appear only in
 immutable compatibility schemas and are not scheduling concepts.
 
@@ -161,7 +162,7 @@ Each immutable attempt contains:
     summary.json
 ```
 
-The top-level summaries expose only aggregate `tool_calls` and `tokens`.
+The top-level summaries expose only aggregate `model_calls` and `total_tokens`.
 Detailed prompt/completion accounting, actions, validator result, episode
 duration, outer wall time, error, and evidence path remain in each result row or
 phase record. RunLogs, screenshots, memories, results, and attempts stay
@@ -199,7 +200,7 @@ and evaluated by the official validator. The result records validator
 success, model calls, prompt/completion/total tokens, actions, episode duration,
 and outer wall time. These detailed accounting fields remain in immutable result
 evidence; top-level JSON, Markdown, CSV, and terminal summaries expose only
-aggregate `tool_calls` and `tokens`. Every method and every validator outcome
+aggregate `model_calls` and `total_tokens`. Every method and every validator outcome
 records each AndroidWorld observation in order. Screenshots live under
 `observations/objects/<sha256>.png`; the independent
 `observations/index.json` is written before result aggregation.

@@ -21,8 +21,10 @@ from typing import Any
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
 from src.experiment.protocol import (
     DEVICES,
-    FORMAL_METHODS,
+    METHODS,
     MAX_STEPS,
+    RESULT_COMMANDS_FILE,
+    RESULT_SUMMARY_FILE,
     SOURCE_SEED,
     TASK_SEED,
 )
@@ -34,12 +36,9 @@ DEFAULT_SOURCE_INDEX = (
     REPO_ROOT
     / "runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json"
 )
-FORMAL_DEVICE_TARGETS = {
+DEVICE_TARGETS = {
     label: (serial, port) for label, serial, port in DEVICES
 }
-FORMAL_SOURCE_SEED = SOURCE_SEED
-FORMAL_TASK_SEED = TASK_SEED
-FORMAL_MAX_STEPS = MAX_STEPS
 
 METHOD_MATRIX_COLUMNS = [
     "task_index",
@@ -208,15 +207,15 @@ RUN_RECORD_COLUMNS = [
     "source_summary_sha256",
 ]
 
-MASTER_PROGRESS_METHODS = FORMAL_METHODS
+MASTER_PROGRESS_METHODS = METHODS
 MASTER_PROGRESS_COMMON_FIELDS = (
     "sr",
     "status",
     "record_root",
     "eval_summary",
     "stats_summary",
-    "tool_calls",
-    "tokens",
+    "model_calls",
+    "total_tokens",
 )
 MOBILEGPT_PROGRESS_METHODS = (
     "mobilegpt_offline_retrieval",
@@ -405,6 +404,13 @@ def _path_if_exists(base: str, name: str) -> str:
     return _path_cell(candidate) if candidate.exists() else ""
 
 
+def _commands_path_for_summary(summary_path: Path) -> Path:
+    modern = summary_path.with_name(RESULT_COMMANDS_FILE)
+    if modern.exists():
+        return modern
+    return summary_path.with_name("one_task_commands.jsonl")
+
+
 def _summary_mtime(path: Path) -> str:
     return dt.datetime.fromtimestamp(path.stat().st_mtime, dt.timezone.utc).isoformat()
 
@@ -570,8 +576,8 @@ def _row_from_summary(
             row.get("stats_jsonl") or row.get("mobilegpt_stats_jsonl")
         ),
         "task_results_jsonl": _path_if_exists(record_root, "task_results.jsonl"),
-        "commands_jsonl": _path_cell(summary_path.with_name("one_task_commands.jsonl"))
-        if summary_path.with_name("one_task_commands.jsonl").exists()
+        "commands_jsonl": _path_cell(_commands_path_for_summary(summary_path))
+        if _commands_path_for_summary(summary_path).exists()
         else "",
         "task_elapsed_sec": _number(row.get("task_elapsed_sec") or row.get("wall_sec")),
         "avg_task_elapsed_sec": _number(row.get("avg_task_elapsed_sec")),
@@ -614,7 +620,7 @@ def _row_from_summary(
             summary.get("registration_manifest")
         ),
         "source_summary_sha256": _cell(summary.get("source_summary_sha256")),
-        "notes": "Synced from task-local result summary (legacy one_task_summary.json).",
+        "notes": "Synced from task-local result summary.",
     }
     return {column: out.get(column, "") for column in METHOD_MATRIX_COLUMNS}
 
@@ -761,7 +767,7 @@ def validate_formal_result_protocol(
         violations.append("method")
     if normalized_device != device:
         violations.append("device")
-    expected_device = FORMAL_DEVICE_TARGETS.get(device)
+    expected_device = DEVICE_TARGETS.get(device)
     if expected_device is None:
         violations.append("unsupported_device")
     elif (
@@ -1104,10 +1110,10 @@ def build_master_progress(
                 out[f"{method}_record_root"] = latest_row.get("record_root", "")
                 out[f"{method}_eval_summary"] = latest_row.get("eval_summary", "")
                 out[f"{method}_stats_summary"] = latest_row.get("stats_summary", "")
-                out[f"{method}_tool_calls"] = str(
+                out[f"{method}_model_calls"] = str(
                     sum(int(float(row.get("model_calls") or 0)) for row in rows)
                 )
-                out[f"{method}_tokens"] = str(
+                out[f"{method}_total_tokens"] = str(
                     sum(int(float(row.get("total_tokens") or 0)) for row in rows)
                 )
             if method in MOBILEGPT_PROGRESS_METHODS and rows:
@@ -1315,7 +1321,7 @@ def register_attempt_summary(
         raise ValueError("task_name and attempt_id are required for result registration")
     source_summary_sha256 = _sha256(summary_path)
     attempt_manifest_sha256 = _sha256(attempt_manifest_path)
-    commands_path = summary_path.with_name("one_task_commands.jsonl")
+    commands_path = _commands_path_for_summary(summary_path)
     registered_at = _utc_now()
     rows = [row for row in summary.get("rows") or [] if isinstance(row, dict)]
     if not rows:
@@ -1533,6 +1539,8 @@ def sync(
         f"{method}_{field}"
         for method in MASTER_PROGRESS_METHODS
         for field in (
+            "tool_calls",
+            "tokens",
             "model_calls",
             "total_tokens",
             "chat_model_calls",
@@ -1565,7 +1573,8 @@ def sync(
     master_rows = build_master_progress(matrix_rows, source_index, master_existing)
 
     summary = {
-        "summary_files": len(list(runs_root.rglob("one_task_summary.json")))
+        "summary_files": len(list(runs_root.rglob(RESULT_SUMMARY_FILE)))
+        + len(list(runs_root.rglob("one_task_summary.json")))
         + len(list(runs_root.rglob("registered_result.json"))),
         "synced_rows": len(synced_rows),
         "method_matrix": matrix_stats,
@@ -1600,7 +1609,7 @@ def main() -> int:
     parser.add_argument(
         "--register-summary",
         default="",
-        help="Register one completed result summary (legacy one_task_summary.json) before syncing.",
+        help="Register one completed result summary before syncing.",
     )
     parser.add_argument(
         "--attempt-manifest",

@@ -85,7 +85,7 @@ def test_record_prep_failure_preserves_reason_tokens_and_time(tmp_path: Path) ->
     )
 
     outcome = json.loads(outcome_path.read_text(encoding="utf-8"))
-    assert outcome["schema_version"] == "omniflow.androidworld.cell_outcome.v1"
+    assert outcome["schema_version"] == "omniflow.androidworld.result_outcome.v2"
     assert outcome["failure_summary"] == (
         "mobilegpt_cold_memory_official_source_failed"
     )
@@ -284,9 +284,8 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
         "non_validator_failure": 1,
         "pending": 0,
     }
-    assert report["tool_calls"] == 4
-    assert report["tokens"] == 100
-    assert "total_tokens" not in report
+    assert report["model_calls"] == 4
+    assert report["total_tokens"] == 100
     rows = [
         json.loads(line)
         for line in Path(report["results_jsonl"]).read_text(encoding="utf-8").splitlines()
@@ -301,7 +300,7 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
     assert "# AndroidWorld Result Comparison" in markdown
     assert (
         "| method | device | source_seed | evaluation_seed | status | "
-        "validator | tool_calls | tokens | actions | reuse | reuse_unit | "
+        "validator | model_calls | total_tokens | actions | reuse | reuse_unit | "
         "reuse_evidence | episode_sec | wall_sec | error | evidence |"
     ) in markdown
     assert (
@@ -310,7 +309,7 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
     ) in markdown
 
 
-def test_run_summary_keeps_detailed_usage_below_top_level(tmp_path: Path) -> None:
+def test_run_summary_uses_canonical_usage_fields(tmp_path: Path) -> None:
     task_results = tmp_path / "task_results.jsonl"
     task_results.write_text(
         json.dumps(

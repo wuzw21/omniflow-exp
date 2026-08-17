@@ -478,7 +478,7 @@ def test_metrics_preserve_missing_validator_as_unknown(tmp_path) -> None:
     assert summary["official_validator_task_count"] == 0
     assert summary["official_validator_coverage_rate"] == 0.0
     assert summary["per_task"][0]["official_validator_success"] is None
-    assert summary["per_task"][0]["success"] is None
+    assert summary["per_task"][0]["official_validator_success"] is None
 
 
 def test_metrics_preserve_runtime_environment_failure_markers(tmp_path) -> None:
@@ -510,7 +510,7 @@ def test_metrics_preserve_runtime_environment_failure_markers(tmp_path) -> None:
     assert row["environment_failure"] is True
 
 
-def test_metrics_report_only_aggregate_tool_calls_and_tokens(tmp_path: Path) -> None:
+def test_metrics_report_only_aggregate_model_calls_and_total_tokens(tmp_path: Path) -> None:
     result_path = tmp_path / "Task" / "ours" / "small5554" / "task_results.jsonl"
     result_path.parent.mkdir(parents=True)
     result_path.write_text(
@@ -531,22 +531,17 @@ def test_metrics_report_only_aggregate_tool_calls_and_tokens(tmp_path: Path) -> 
 
     summary = aggregate_task_results([result_path])
 
-    assert summary["tool_calls"] == 2
-    assert summary["tokens"] == 100
-    for detailed_field in (
-        "model_calls",
-        "prompt_tokens",
-        "completion_tokens",
-        "total_tokens",
-    ):
-        assert detailed_field not in summary
+    assert summary["model_calls"] == 2
+    assert summary["total_tokens"] == 100
+    assert "tool_calls" not in summary
+    assert "tokens" not in summary
     assert summary["per_task"][0]["prompt_tokens"] == 90
     assert summary["per_task"][0]["completion_tokens"] == 10
 
     output = tmp_path / "metrics.json"
     write_metrics_summary(summary, output)
     markdown = output.with_suffix(".md").read_text(encoding="utf-8")
-    assert "- tool_calls: `2`" in markdown
-    assert "- tokens: `100`" in markdown
+    assert "- model_calls: `2`" in markdown
+    assert "- total_tokens: `100`" in markdown
     assert "prompt_tokens" not in markdown
     assert "completion_tokens" not in markdown

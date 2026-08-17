@@ -31,7 +31,6 @@ from src.experiment.batch_outcomes import (
 from src.integrations.runlog import project_androidworld_step_actions
 from src.experiment.protocol import (
     DEVICES,
-    EPISODE_TIMEOUT_SEC,
     FORMAL_MODEL,
     MAX_FALLBACK_STEPS,
     MAX_STEPS,
@@ -43,18 +42,6 @@ from src.experiment.protocol import (
     TASK_DEADLINE_SEC,
     TASK_SEED,
 )
-
-PHASE_TIMEOUTS_SEC = {
-    "source_device": 240,
-    "source_replay": 480,
-    "semantic_function": 180,
-    "source_qualification": 300,
-    "mobilegpt_memory": 300,
-    "appagent_memory": 360,
-    "target_episode": EPISODE_TIMEOUT_SEC,
-    "target_result": EPISODE_TIMEOUT_SEC,
-}
-
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -171,10 +158,10 @@ def run_logged_command(
 
 def _usage_from_result(row: dict[str, Any]) -> dict[str, int]:
     return {
-        "tool_calls": int(row.get("model_calls") or 0),
+        "model_calls": int(row.get("model_calls") or 0),
         "prompt_tokens": int(row.get("prompt_tokens") or 0),
         "completion_tokens": int(row.get("completion_tokens") or 0),
-        "tokens": int(row.get("total_tokens") or 0),
+        "total_tokens": int(row.get("total_tokens") or 0),
     }
 
 
@@ -277,7 +264,7 @@ def ensure_source_device(
         start_new_session=True,
     )
     log_file.close()
-    boot_timeout = deadline.remaining(PHASE_TIMEOUTS_SEC["source_device"] - 60)
+    boot_timeout = deadline.remaining(TASK_DEADLINE_SEC)
     boot_deadline = time.monotonic() + boot_timeout
     while time.monotonic() < boot_deadline:
         if _source_device_ready(args):
@@ -338,8 +325,8 @@ def ensure_source_device(
         "serial": source_serial,
         "avd": args.source_avd,
         "wall_sec": round(time.monotonic() - started, 6),
-        "tool_calls": 0,
-        "tokens": 0,
+        "model_calls": 0,
+        "total_tokens": 0,
         "preflight": str(preflight_path),
     }
 
@@ -595,7 +582,7 @@ def collect_replayed_source(
         console_port=source_console_port,
         adb_path=str(args.adb_path),
         max_steps=len(source_run_log["steps"]) + 1,
-        timeout_sec=int(PHASE_TIMEOUTS_SEC["source_replay"]),
+        timeout_sec=int(TASK_DEADLINE_SEC),
         task_random_seed=SOURCE_SEED,
         task_params_override=dict(source_run_log["task_parameters"]),
         perform_emulator_setup=True,
@@ -618,7 +605,7 @@ def collect_replayed_source(
         cwd=args.repo,
         environment=environment,
         log_path=phase_root / "fixed_replay.log",
-        timeout_sec=deadline.remaining(PHASE_TIMEOUTS_SEC["source_replay"]),
+        timeout_sec=deadline.remaining(TASK_DEADLINE_SEC),
     )
     task_results = command_spec.output_path / "task_results.jsonl"
     row = _last_jsonl_row(task_results)
@@ -626,8 +613,8 @@ def collect_replayed_source(
     result.update(
         {
             "usage": usage,
-            "tool_calls": usage["tool_calls"],
-            "tokens": usage["tokens"],
+            "model_calls": usage["model_calls"],
+            "total_tokens": usage["total_tokens"],
             "usage_accounting_status": _usage_accounting_status(row),
         }
     )
@@ -635,13 +622,13 @@ def collect_replayed_source(
     if (
         result["returncode"] != 0
         or not result["official_validator_success"]
-        or usage["tool_calls"] != 0
+        or usage["model_calls"] != 0
     ):
         raise PipelinePhaseError(
             (
                 f"fixed_replay_capture_failed:returncode={result['returncode']}:"
                 f"validator={result['official_validator_success']}:"
-                f"model_calls={usage['tool_calls']}"
+                f"model_calls={usage['model_calls']}"
             ),
             result,
         )
@@ -708,8 +695,8 @@ def prepare_function_asset(
         raise ValueError(f"canonical_function_source_calls_missing:{args.task}")
     return existing, {
         "status": "reused",
-        "tool_calls": 0,
-        "tokens": 0,
+        "model_calls": 0,
+        "total_tokens": 0,
         "store": str(store_path),
         "source_calls": source_calls,
     }
@@ -787,7 +774,7 @@ def qualify_source_function(
         cwd=args.repo,
         environment=environment,
         log_path=output_root.parent / "qualification.log",
-        timeout_sec=deadline.remaining(PHASE_TIMEOUTS_SEC["source_qualification"]),
+        timeout_sec=deadline.remaining(TASK_DEADLINE_SEC),
     )
     row = _last_jsonl_row(output_root / "task_results.jsonl")
     canonical = row.get("canonical_run")
@@ -890,7 +877,7 @@ def qualify_source_functions(
         cwd=args.repo,
         environment=environment,
         log_path=output_root.parent / "qualification.log",
-        timeout_sec=deadline.remaining(PHASE_TIMEOUTS_SEC["source_qualification"]),
+        timeout_sec=deadline.remaining(TASK_DEADLINE_SEC),
     )
     row = _last_jsonl_row(output_root / "task_results.jsonl")
     canonical = row.get("canonical_run")
@@ -937,8 +924,8 @@ def prepare_mobilegpt_memory(
     if existing is not None:
         return Path(str(existing["memory_root"])).resolve(), {
             "status": "reused",
-            "tool_calls": 0,
-            "tokens": 0,
+            "model_calls": 0,
+            "total_tokens": 0,
             "memory_root": str(existing["memory_root"]),
         }
     output_root = attempt_root / "assets" / "mobilegpt"
@@ -968,7 +955,7 @@ def prepare_mobilegpt_memory(
         cwd=args.repo,
         environment=environment,
         log_path=attempt_root / "prep" / "mobilegpt.log",
-        timeout_sec=deadline.remaining(PHASE_TIMEOUTS_SEC["mobilegpt_memory"]),
+        timeout_sec=deadline.remaining(TASK_DEADLINE_SEC),
     )
     stats = []
     for path in output_root.rglob("*stats.jsonl"):
@@ -982,11 +969,11 @@ def prepare_mobilegpt_memory(
     phase = {
         **result,
         "status": "created",
-        "tool_calls": sum(
+        "model_calls": sum(
             str(row.get("event") or "") in {"chat_call", "embedding_call"}
             for row in stats
         ),
-        "tokens": sum(int(row.get("total_tokens") or 0) for row in stats),
+        "total_tokens": sum(int(row.get("total_tokens") or 0) for row in stats),
     }
     if result["returncode"] != 0:
         raise PipelinePhaseError(
@@ -1014,8 +1001,8 @@ def prepare_appagent_memory(
         root = Path(explicit).expanduser().resolve()
         return root, {
             "status": "reused",
-            "tool_calls": 0,
-            "tokens": 0,
+            "model_calls": 0,
+            "total_tokens": 0,
             "memory_root": str(root),
         }
     root = attempt_root / "assets" / "appagent"
@@ -1042,12 +1029,12 @@ def prepare_appagent_memory(
         cwd=args.repo,
         environment=environment,
         log_path=attempt_root / "prep" / "appagent.log",
-        timeout_sec=deadline.remaining(PHASE_TIMEOUTS_SEC["appagent_memory"]),
+        timeout_sec=deadline.remaining(TASK_DEADLINE_SEC),
     )
     if result["returncode"] != 0:
         raise PipelinePhaseError(
             f"appagent_memory_prep_failed:{result['returncode']}",
-            {**result, "tool_calls": 0, "tokens": 0},
+            {**result, "model_calls": 0, "total_tokens": 0},
         )
     manifest = _read_object(root / "appagent_demo_manifest.json")
     usage = manifest.get("doc_generation_usage")
@@ -1055,8 +1042,8 @@ def prepare_appagent_memory(
     return root, {
         **result,
         "status": "created",
-        "tool_calls": int(usage.get("model_calls") or 0),
-        "tokens": int(usage.get("total_tokens") or 0),
+        "model_calls": int(usage.get("model_calls") or 0),
+        "total_tokens": int(usage.get("total_tokens") or 0),
         "memory_root": str(root),
     }
 
@@ -1229,7 +1216,7 @@ def run_target_workers(
                     appagent_memory=appagent_memory,
                 ),
                 log_path=log_path,
-                timeout_sec=deadline.remaining(PHASE_TIMEOUTS_SEC["target_result"]),
+                timeout_sec=deadline.remaining(TASK_DEADLINE_SEC),
             )
             if result.get("returncode") == 0:
                 completed.add((method, label))
@@ -1327,8 +1314,8 @@ def _write_pipeline_markdown(
     attempt_id: str,
     status: str,
     wall_sec: float,
-    tool_calls: int,
-    tokens: int,
+    model_calls: int,
+    total_tokens: int,
     phases: dict[str, Any],
     results_markdown: str,
 ) -> Path:
@@ -1338,11 +1325,11 @@ def _write_pipeline_markdown(
         f"- Attempt: `{attempt_id}`",
         f"- Status: `{status}`",
         f"- Outer wall seconds: {wall_sec}",
-        f"- Tool calls: {tool_calls}",
-        f"- Tokens: {tokens}",
+        f"- Model calls: {model_calls}",
+        f"- Total tokens: {total_tokens}",
         f"- Result table: `{results_markdown}`",
         "",
-        "| phase | status | tool_calls | tokens | wall_sec | error | evidence |",
+        "| phase | status | model_calls | total_tokens | wall_sec | error | evidence |",
         "|---|---|---:|---:|---:|---|---|",
     ]
     for name, raw_phase in phases.items():
@@ -1362,8 +1349,8 @@ def _write_pipeline_markdown(
                 for value in (
                     name,
                     phase.get("status", ""),
-                    phase.get("tool_calls", 0),
-                    phase.get("tokens", 0),
+                    phase.get("model_calls", 0),
+                    phase.get("total_tokens", 0),
                     phase.get("wall_sec", 0),
                     phase.get("error", ""),
                     evidence,
@@ -1395,13 +1382,13 @@ def _report(
             "status": "collected" if collected else "failed",
             "source_seed": SOURCE_SEED,
             "outer_wall_sec": deadline.elapsed,
-            "tool_calls": sum(
-                int(phase.get("tool_calls") or 0)
+            "model_calls": sum(
+                int(phase.get("model_calls") or 0)
                 for phase in phases.values()
                 if isinstance(phase, dict)
             ),
-            "tokens": sum(
-                int(phase.get("tokens") or 0)
+            "total_tokens": sum(
+                int(phase.get("total_tokens") or 0)
                 for phase in phases.values()
                 if isinstance(phase, dict)
             ),
@@ -1423,13 +1410,13 @@ def _report(
             "status": "qualified" if qualified else "failed",
             "source_seed": SOURCE_SEED,
             "outer_wall_sec": deadline.elapsed,
-            "tool_calls": sum(
-                int(phase.get("tool_calls") or 0)
+            "model_calls": sum(
+                int(phase.get("model_calls") or 0)
                 for phase in phases.values()
                 if isinstance(phase, dict)
             ),
-            "tokens": sum(
-                int(phase.get("tokens") or 0)
+            "total_tokens": sum(
+                int(phase.get("total_tokens") or 0)
                 for phase in phases.values()
                 if isinstance(phase, dict)
             ),
@@ -1450,13 +1437,13 @@ def _report(
         evaluation_seed=TASK_SEED,
         attempt_id=attempt_id,
     )
-    prep_tool_calls = sum(
-        int(phase.get("tool_calls") or 0)
+    prep_model_calls = sum(
+        int(phase.get("model_calls") or 0)
         for phase in phases.values()
         if isinstance(phase, dict)
     )
-    prep_tokens = sum(
-        int(phase.get("tokens") or 0)
+    prep_total_tokens = sum(
+        int(phase.get("total_tokens") or 0)
         for phase in phases.values()
         if isinstance(phase, dict)
     )
@@ -1468,8 +1455,8 @@ def _report(
         if deadline.expired
         else "partial"
     )
-    total_tool_calls = int(target_report["tool_calls"]) + prep_tool_calls
-    total_tokens = int(target_report["tokens"]) + prep_tokens
+    total_model_calls = int(target_report["model_calls"]) + prep_model_calls
+    total_tokens = int(target_report["total_tokens"]) + prep_total_tokens
     pipeline_markdown = attempt_root / "pipeline.md"
     _write_pipeline_markdown(
         pipeline_markdown,
@@ -1477,13 +1464,13 @@ def _report(
         attempt_id=attempt_id,
         status=status,
         wall_sec=deadline.elapsed,
-        tool_calls=total_tool_calls,
-        tokens=total_tokens,
+        model_calls=total_model_calls,
+        total_tokens=total_tokens,
         phases=phases,
         results_markdown=target_report["results_markdown"],
     )
     summary = {
-        "schema_version": "omniflow.androidworld.e2e-task-report.v1",
+        "schema_version": "omniflow.androidworld.e2e-task-report.v2",
         "immutable": True,
         "task": args.task,
         "attempt_id": attempt_id,
@@ -1493,8 +1480,8 @@ def _report(
         "deadline_sec": deadline.seconds,
         "outer_wall_sec": deadline.elapsed,
         "counts": counts,
-        "tool_calls": total_tool_calls,
-        "tokens": total_tokens,
+        "model_calls": total_model_calls,
+        "total_tokens": total_tokens,
         "target_report": target_report["summary"],
         "results_jsonl": target_report["results_jsonl"],
         "results_csv": target_report["results_csv"],
@@ -1532,7 +1519,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "deadline_sec": args.task_deadline_sec,
             "max_steps": int(args.max_steps),
             "max_fallback_steps": int(args.max_fallback_steps),
-            "phase_timeout_caps_sec": PHASE_TIMEOUTS_SEC,
             "source_seed": SOURCE_SEED,
             "evaluation_seed": TASK_SEED,
             "methods": list(METHODS),
@@ -1560,7 +1546,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "deadline_sec": args.task_deadline_sec,
             "max_steps": int(args.max_steps),
             "max_fallback_steps": int(args.max_fallback_steps),
-            "phase_timeout_caps_sec": PHASE_TIMEOUTS_SEC,
             "methods": list(METHODS),
             "devices": [list(device) for device in DEVICES],
         },
@@ -1578,8 +1563,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         )
         phases["source_device"] = {
             "status": "failed",
-            "tool_calls": 0,
-            "tokens": 0,
+            "model_calls": 0,
+            "total_tokens": 0,
             "error": str(error),
         }
         _blocked_all(
@@ -1622,8 +1607,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             )
             phases["source"] = {
                 "status": "reused",
-                "tool_calls": 0,
-                "tokens": 0,
+                "model_calls": 0,
+                "total_tokens": 0,
                 "source_run_log": str(source_path),
             }
     except Exception as error:
@@ -1635,8 +1620,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         phases["source"] = {
             **failure_phase,
             "status": "failed",
-            "tool_calls": int(failure_phase.get("tool_calls") or 0),
-            "tokens": int(failure_phase.get("tokens") or 0),
+            "model_calls": int(failure_phase.get("model_calls") or 0),
+            "total_tokens": int(failure_phase.get("total_tokens") or 0),
             "error": str(error),
         }
         _blocked_all(
@@ -1687,8 +1672,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         phases["function"] = {
             **failure_phase,
             "status": "failed",
-            "tool_calls": int(failure_phase.get("tool_calls") or 0),
-            "tokens": int(failure_phase.get("tokens") or 0),
+            "model_calls": int(failure_phase.get("model_calls") or 0),
+            "total_tokens": int(failure_phase.get("total_tokens") or 0),
             "error": str(error),
         }
         blocked_methods["ours"] = (
@@ -1722,8 +1707,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         )
         phases["source_qualification"] = {
             "status": "failed",
-            "tool_calls": 0,
-            "tokens": 0,
+            "model_calls": 0,
+            "total_tokens": 0,
             "error": "canonical_function_source_calls_missing",
         }
         blocked_methods["ours"] = (
@@ -1767,8 +1752,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             )
             phases["source_qualification"] = {
                 "status": "failed",
-                "tool_calls": 0,
-                "tokens": 0,
+                "model_calls": 0,
+                "total_tokens": 0,
                 "error": str(error),
             }
             blocked_methods["ours"] = (
@@ -1808,8 +1793,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         phases["mobilegpt_memory"] = {
             **failure_phase,
             "status": "failed",
-            "tool_calls": int(failure_phase.get("tool_calls") or 0),
-            "tokens": int(failure_phase.get("tokens") or 0),
+            "model_calls": int(failure_phase.get("model_calls") or 0),
+            "total_tokens": int(failure_phase.get("total_tokens") or 0),
             "error": str(error),
         }
         blocked_methods["mobilegpt_offline_retrieval"] = (
@@ -1834,8 +1819,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         phases["appagent_memory"] = {
             **failure_phase,
             "status": "failed",
-            "tool_calls": int(failure_phase.get("tool_calls") or 0),
-            "tokens": int(failure_phase.get("tokens") or 0),
+            "model_calls": int(failure_phase.get("model_calls") or 0),
+            "total_tokens": int(failure_phase.get("total_tokens") or 0),
             "error": str(error),
         }
         blocked_methods["appagent_demo"] = (
@@ -1881,8 +1866,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         )
         phases["targets"] = {
             "status": "finished",
-            "tool_calls": 0,
-            "tokens": 0,
+            "model_calls": 0,
+            "total_tokens": 0,
             "workers": workers,
         }
     except Exception as error:
@@ -1892,8 +1877,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         )
         phases["targets"] = {
             "status": "failed",
-            "tool_calls": 0,
-            "tokens": 0,
+            "model_calls": 0,
+            "total_tokens": 0,
             "error": str(error),
         }
         _blocked_all(
