@@ -52,6 +52,9 @@ def test_checker_thresholds_come_from_the_single_protocol_config() -> None:
     settings = RuntimeSettings()
 
     assert "checker_action_confidence" not in ANDROIDWORLD_PROTOCOL
+    assert settings.max_steps == ANDROIDWORLD_PROTOCOL["max_steps"]
+    assert settings.max_fallback_steps == ANDROIDWORLD_PROTOCOL["max_fallback_steps"]
+    assert settings.max_function_tools == ANDROIDWORLD_PROTOCOL["max_function_tools"]
     assert settings.checker_page_threshold == checker["page_similarity_threshold"]
     assert settings.checker_target_threshold == checker[
         "target_probability_threshold"

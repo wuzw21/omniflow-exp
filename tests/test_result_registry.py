@@ -12,46 +12,10 @@ from src.experiment.artifact_memory import (
     refresh_artifact_memory,
 )
 from src.experiment.result_registry import (
-    build_master_progress,
-    load_summary_rows,
     register_attempt_summary,
     registered_result_plan,
 )
-
-
-def test_master_progress_usage_is_not_split_by_component() -> None:
-    rows = build_master_progress(
-        [
-            {
-                "task_name": "BrowserDraw",
-                "method": "mobilegpt_offline_retrieval",
-                "device_label": "small5554",
-                "official_validator_success": "true",
-                "is_latest_for_task_method": "true",
-                "model_calls": "3",
-                "total_tokens": "150",
-                "chat_model_calls": "2",
-                "embedding_model_calls": "1",
-                "prompt_tokens": "120",
-                "completion_tokens": "30",
-            }
-        ],
-        {"BrowserDraw": {"task_index": 1}},
-        [],
-    )
-
-    row = rows[0]
-    assert row["mobilegpt_offline_retrieval_model_calls"] == "3"
-    assert row["mobilegpt_offline_retrieval_total_tokens"] == "150"
-    for detailed_field in (
-        "tool_calls",
-        "tokens",
-        "chat_model_calls",
-        "embedding_model_calls",
-        "prompt_tokens",
-        "completion_tokens",
-    ):
-        assert f"mobilegpt_offline_retrieval_{detailed_field}" not in row
+from src.experiment.result_schema import RESULT_FIELDS
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -176,77 +140,6 @@ def _write_registered_result(
             ).hexdigest(),
         },
     )
-
-
-def test_unregistered_result_summary_is_not_loaded(tmp_path: Path) -> None:
-    _write_json(
-        tmp_path / "attempt" / "one_task_summary.json",
-        {
-            "task_name": "SystemBluetoothTurnOn",
-            "rows": [
-                {
-                    "method": "ours",
-                    "device": "small5554",
-                    "official_validator_success": True,
-                }
-            ],
-        },
-    )
-
-    assert load_summary_rows(tmp_path, {}, []) == []
-
-
-def test_registered_result_requires_matching_immutable_manifest(
-    tmp_path: Path,
-) -> None:
-    result = tmp_path / "runs" / "result"
-    result_path = result / "registered_result.json"
-    manifest_path = result / "registration_manifest.json"
-    result = {
-        "schema_version": "omniflow.androidworld_registered_result.v1",
-        "registration_id": "registration-1",
-        "attempt_id": "attempt-1",
-        "task_name": "SystemBluetoothTurnOn",
-        "registration_manifest": str(manifest_path),
-        "rows": [
-            {
-                "method": "ours",
-                "device": "small5554",
-                "official_validator_success": True,
-            }
-        ],
-    }
-    _write_json(result_path, result)
-    _write_json(
-        manifest_path,
-        {
-            "schema_version": "omniflow.androidworld_result_registration.v1",
-            "registration_id": "registration-1",
-            "attempt_id": "attempt-1",
-            "task_name": "SystemBluetoothTurnOn",
-            "method": "ours",
-            "device": "small5554",
-            "immutable": True,
-            "registered_result_sha256": hashlib.sha256(
-                result_path.read_bytes()
-            ).hexdigest(),
-        },
-    )
-
-    rows = load_summary_rows(
-        tmp_path / "runs",
-        {"SystemBluetoothTurnOn": {"goal": "Turn Bluetooth on."}},
-        [],
-    )
-
-    assert len(rows) == 1
-    assert rows[0]["method"] == "ours"
-    assert rows[0]["device_label"] == "small5554"
-
-    result["rows"][0]["official_validator_success"] = False
-    _write_json(result_path, result)
-    with pytest.raises(ValueError, match="checksum mismatch"):
-        load_summary_rows(tmp_path / "runs", {}, [])
 
 
 def test_registered_result_plan_skips_any_result_with_a_verified_conclusion(
@@ -589,7 +482,6 @@ def test_registered_result_plan_keeps_validator_conclusions_with_error_evidence(
 
     assert plan["completed"] == [(method, "small5554")]
     assert plan["pending"] == []
-    assert len(load_summary_rows(runs_root, {}, [])) == 1
 
 
 def test_registered_result_plan_rejects_incompatible_formal_protocol(
@@ -734,8 +626,6 @@ def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
         summary_path=summary,
         attempt_manifest_path=attempt_manifest,
         runs_root=results_root / "androidworld_validator" / "runs",
-        master_root=results_root / "androidworld_validator" / "master_progress",
-        source_index_path=source_index,
         artifact_memory_index=memory_root / "current.json",
     )
 
@@ -784,15 +674,17 @@ def test_result_registration_keeps_runtime_integrity_evidence_after_conclusion(
         summary_path=summary,
         attempt_manifest_path=attempt_manifest,
         runs_root=runs_root,
-        master_root=tmp_path / "master",
-        source_index_path=source_index,
     )
 
-    row = json.loads(
+    registered = json.loads(
         Path(registration["registered_results"][0]).read_text(encoding="utf-8")
-    )["rows"][0]
-    assert row["official_validator_success"] is False
-    assert row["runtime_integrity_error"] == "mobilegpt_app_ui_not_ready"
+    )
+    assert tuple(registered["rows"][0]) == RESULT_FIELDS
+    assert registered["rows"][0]["task"] == "ContactsNewContactDraft"
+    assert registered["rows"][0]["validator_success"] is False
+    assert registered["details"][0]["runtime_integrity_error"] == (
+        "mobilegpt_app_ui_not_ready"
+    )
 
 
 def test_result_registration_rejects_missing_boolean_validator_conclusion(
@@ -832,8 +724,6 @@ def test_result_registration_rejects_missing_boolean_validator_conclusion(
             summary_path=summary,
             attempt_manifest_path=attempt_manifest,
             runs_root=runs_root,
-            master_root=tmp_path / "master",
-            source_index_path=tmp_path / "source_index.json",
         )
 
     assert not runs_root.exists()
@@ -885,11 +775,10 @@ def test_result_registration_keeps_parser_failure_after_validator_conclusion(
         summary_path=summary,
         attempt_manifest_path=attempt_manifest,
         runs_root=tmp_path / "runs",
-        master_root=tmp_path / "master",
-        source_index_path=source_index,
     )
 
     registered = Path(registration["registered_results"][0])
-    row = json.loads(registered.read_text(encoding="utf-8"))["rows"][0]
-    assert row["official_validator_success"] is False
-    assert row["runtime_integrity_error"] == parser_error
+    payload = json.loads(registered.read_text(encoding="utf-8"))
+    assert tuple(payload["rows"][0]) == RESULT_FIELDS
+    assert payload["rows"][0]["validator_success"] is False
+    assert payload["details"][0]["runtime_integrity_error"] == parser_error

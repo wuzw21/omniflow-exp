@@ -154,6 +154,7 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "-no-snapshot-load" in script_text
     assert "-no-snapshot-save" in script_text
     assert "from src.experiment.result_registry import registered_result_plan" not in script_text
+    assert "--master-progress-root" not in script_text
     assert script_text.count("registered_result_plan_from_memory(") == 0
     assert "-m src.experiment.e2e_task_pipeline" in script_text
     assert '(( e2e_task_deadline_sec > 1800 ))' in script_text

@@ -49,6 +49,26 @@ def test_public_result_row_is_compact_and_keeps_details_out_of_the_row() -> None
     assert "prep_model_calls" not in row
 
 
+def test_compact_result_row_is_idempotent_for_evidence_paths() -> None:
+    original = compact_result_row(
+        {
+            "task": "TaskOne",
+            "method": "ours",
+            "device": "small5554",
+            "validator_success": True,
+            "evidence_paths": ["/evidence/result", "/evidence/details"],
+        },
+        source_seed=111,
+        evaluation_seed=113,
+    )
+
+    assert compact_result_row(
+        original,
+        source_seed=111,
+        evaluation_seed=113,
+    ) == original
+
+
 def test_episode_recorder_preserves_every_observation_and_deduplicates_images(
     tmp_path,
 ) -> None:

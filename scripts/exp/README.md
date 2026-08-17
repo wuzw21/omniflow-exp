@@ -49,7 +49,8 @@ checker-review stages each return a complete Function bundle. Normal and
 enhanced saves share one validation and Store writer.
 Checker review only selects existing actions from each Function and moves them
 into that same Function's `checker_rules`; it cannot rewrite the Function or
-register another Function's action.
+register another Function's action. The same model tool is narrowed at each
+stage so fields owned by earlier stages are structurally immutable.
 
 The explicit B-MoCA campaign is the only launcher-owned preparation path: for
 each corpus task it calls that same `save_function(enhance=true)` writer once,
@@ -131,7 +132,9 @@ entries are preflight failures.
 
 New public rows use only the 16 fields defined in `AGENTS.md`. Preparation,
 reuse, baseline conversion, and component-level details are stored once in the
-attempt evidence. Formal attempts and validator conclusions are immutable.
+attempt evidence. Registration writes those compact rows, their single details
+block, and one immutable ledger. It does not maintain parallel master-progress
+tables. Formal attempts and validator conclusions are immutable.
 
 ## Development example
 

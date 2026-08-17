@@ -2621,7 +2621,6 @@ command=(
   --output-path "$output_root"
   --master-source-index "$master_source_index"
   --result-registry-root "$results_root/androidworld_validator/runs"
-  --master-progress-root "$results_root/androidworld_validator/master_progress"
   --omnitransfer-root "$omnitransfer_root"
   --store-path "$store_path"
   --store-index "$ours_store_index"

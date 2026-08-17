@@ -58,11 +58,14 @@ actions in the same successful RunLog, and uses the same Store writer.
 Every stage retains at least one large Function covering the complete successful
 trajectory. The split stage also returns every reusable contiguous semantic
 subsegment, without creating one-click fragments. All model transports use the
-same complete Function-bundle schema generated from the checked-in Function and
-checker contracts. Checker review may move an optional interruption action from
-the formal path into that Function's checker list. It cannot rewrite Function
-meaning, parameters, arguments, or unselected actions, duplicate formal
-actions, or replace the complete Function with one-click fragments.
+same Function-bundle tool generated from the checked-in contracts. Its schema
+is narrowed for each stage: split cannot add parameters or checkers, parameter
+binding cannot change Function identity or action order, and checker review can
+select only exact actions already registered on that Function. Checker review
+may move an optional interruption action from the formal path into that
+Function's checker list. It cannot rewrite Function meaning, parameters,
+arguments, or unselected actions, duplicate formal actions, or replace the
+complete Function with one-click fragments.
 
 The retained bridge tools are:
 
@@ -133,6 +136,8 @@ actions_executed, episode_duration_sec, outer_wall_sec, error, evidence_paths
 
 Preparation, reuse, and component diagnostics are recorded once in the
 attempt's `details` evidence instead of being repeated in every result row.
+Registration preserves that same two-level shape and appends one immutable
+registry ledger; it does not generate a second master matrix or run-record table.
 
 ## Repository layout
 

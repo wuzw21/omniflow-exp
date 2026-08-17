@@ -423,28 +423,20 @@ def _androidworld_validator_root(*, repo_root: Path = REPO_ROOT) -> Path:
     return repo_root / "runtime" / "evals" / "androidworld_validator"
 
 
-def _result_registration_roots(
+def _result_registry_root(
     args: argparse.Namespace,
     *,
     attempt_root: Path,
-) -> tuple[Path, Path]:
+) -> Path:
     explicit_runs = str(getattr(args, "result_registry_root", "") or "").strip()
-    explicit_master = str(getattr(args, "master_progress_root", "") or "").strip()
-    if explicit_runs and explicit_master:
-        return _repo_path(explicit_runs), _repo_path(explicit_master)
     if explicit_runs:
-        runs_root = _repo_path(explicit_runs)
-        return runs_root, runs_root.parent / "master_progress"
-    if explicit_master:
-        master_root = _repo_path(explicit_master)
-        return master_root.parent / "runs", master_root
+        return _repo_path(explicit_runs)
 
     index_path = _repo_path(args.index)
     for candidate in (index_path.parent, *index_path.parents):
         if candidate.name == "androidworld_validator":
-            return candidate / "runs", candidate / "master_progress"
-    fallback = attempt_root.parent / "_androidworld_result_registry"
-    return fallback / "runs", fallback / "master_progress"
+            return candidate / "runs"
+    return attempt_root.parent / "_androidworld_result_registry"
 
 
 def _task_managed_output_root(
@@ -7772,7 +7764,7 @@ def cmd_result(args: argparse.Namespace) -> int:
     result_registration: dict[str, Any] = {}
     summary_path = output_root / _safe_stem(item.task) / RESULT_SUMMARY_FILE
     if not bool(args.dry_run):
-        result_registry_root, master_progress_root = _result_registration_roots(
+        result_registry_root = _result_registry_root(
             args,
             attempt_root=attempt_root,
         )
@@ -7780,10 +7772,6 @@ def cmd_result(args: argparse.Namespace) -> int:
             summary_path=summary_path,
             attempt_manifest_path=attempt_manifest_path,
             runs_root=result_registry_root,
-            master_root=master_progress_root,
-            source_index_path=_repo_path(
-                str(getattr(args, "master_source_index", "") or args.index)
-            ),
             artifact_memory_index=Path(
                 os.environ["OMNIFLOW_EXP_MEMORY_INDEX"]
             ).expanduser()
@@ -7798,9 +7786,9 @@ def cmd_result(args: argparse.Namespace) -> int:
     if result_registration:
         print(
             "[result] registered="
-            f"{result_registration.get('registered_cells', 0)} "
+            f"{result_registration.get('registered_results_count', 0)} "
             f"ledger_appended={result_registration.get('ledger_records_appended', 0)} "
-            f"master={master_progress_root}",
+            f"registry={result_registry_root}",
             flush=True,
         )
     if source_runlog_summary:
@@ -7855,14 +7843,6 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Canonical immutable task/method/device/attempt registry. Defaults "
             "to the androidworld_validator root containing --index."
-        ),
-    )
-    result_parser.add_argument(
-        "--master-progress-root",
-        default=os.environ.get("ANDROIDWORLD_MASTER_PROGRESS_ROOT", ""),
-        help=(
-            "Canonical master table root updated after result registration. "
-            "Defaults beside --result-registry-root."
         ),
     )
     result_parser.add_argument("--task", required=True)

@@ -59,8 +59,11 @@ formal path; it may not also remain a formal action in the same Function.
 The model-facing authoring tool schema is generated from the checked-in
 Function and checker schemas. Bridge and experiment adapters must import that
 same schema instead of defining their own permissive `functions: object`
-contract. Runtime validation remains authoritative even when a model endpoint
-does not support strict structured output.
+contract. Narrow that schema to the current stage so split cannot add
+parameters/checkers, parameter binding cannot alter Function semantics or
+action order, and checker review can select only exact same-Function actions.
+Runtime validation remains authoritative even when a model endpoint does not
+support strict structured output.
 
 Checker rules are registered on one Function through that Function's
 `checker_rules`; there is no global checker pool. A rule belongs only to the
@@ -130,6 +133,8 @@ New public result rows contain only: `task`, `method`, `device`, `source_seed`,
 `prompt_tokens`, `completion_tokens`, `total_tokens`, `actions_executed`,
 `episode_duration_sec`, `outer_wall_sec`, `error`, and `evidence_paths`.
 Preparation and component diagnostics belong once in a `details` evidence block.
+Registration keeps that same compact-row/details split plus one immutable
+ledger; do not recreate master matrix, run-record, or per-method summary tables.
 
 ## Execution and memory
 

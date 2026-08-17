@@ -26,7 +26,11 @@ def compact_result_row(
     def integer(value: Any) -> int:
         return int(number(value))
 
-    evidence_paths: list[str] = []
+    evidence_paths = [
+        str(value)
+        for value in row.get("evidence_paths") or ()
+        if str(value).strip()
+    ]
     for key in (
         "source_run_log", "run_dir", "output_path", "task_results_jsonl",
         "target_run_log_path", "target_transfer_states_path", "prep_stats_summary",

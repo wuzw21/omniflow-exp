@@ -487,7 +487,7 @@ def test_planner_selects_recalled_function_as_one_peer_tool(tmp_path) -> None:
     ] == [[function_id], [function_id]]
     assert result.detail["runtime_limits"] == {
         "max_steps": 20,
-        "max_fallback_steps": None,
+        "max_fallback_steps": 5,
     }
 
 
