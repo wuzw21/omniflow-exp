@@ -36,6 +36,14 @@ The complete command reference, including one-RunLog Function conversion,
 freezing, memory registration, real-time execution, and resume behavior, is in
 [scripts/exp/README.md](scripts/exp/README.md).
 
+The atomic result is always one `task + method + device`. The shell is the only
+public entry point, the E2E pipeline is the only matrix scheduler, and the
+Python AndroidWorld runner executes exactly one result. Shared methods,
+devices, seeds, budgets, and timeouts come from
+`src/experiment/protocol.py`; existing prompt text and native baseline
+contracts are frozen. Historical `cell`/`one_task` names may appear only in
+immutable compatibility schemas and are not scheduling concepts.
+
 B-MoCA is selected through the same entry point with `--environment bmoca`.
 It changes only the official environment; the method remains the native
 OmniFlow E2E loop with Function, checker, and OmniTransfer.

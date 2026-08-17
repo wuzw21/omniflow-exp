@@ -35,6 +35,47 @@ The current phase is code migration and script maintenance only. Do not launch
 formal experiments or revise method implementations unless the user explicitly
 opens a new execution phase.
 
+## Scenario rules and naming invariants
+
+- The atomic experiment unit is exactly one `task + method + device` result.
+  Do not introduce 8-result, 10-result, or other “cell” protocols, flags,
+  summaries, or report names. The word `cell` is not an active scheduling
+  concept; immutable historical schema keys may retain their original names
+  only when changing them would rewrite or invalidate stored evidence.
+- `scripts/exp/run_androidworld.sh` is the only public entry point. The E2E
+  pipeline is the only matrix scheduler. `src/experiment/androidworld.py`
+  exposes only the single-result runner: one task, one method, one device.
+  Never add a second scheduler, nested method/device expansion, or a diagnostic
+  runner that can produce formal results.
+- The canonical formal method names are exactly `fixed_replay`, `ours`,
+  `mobilegpt_offline_retrieval`, `appagent_demo`, and `t3a_hint`. The canonical
+  device labels and all shared seeds, budgets, timeouts, model defaults, and
+  endpoint defaults are defined in `src/experiment/protocol.py`. New code must
+  import those values instead of defining another copy. Formal execution must
+  keep the frozen protocol values; development overrides must remain explicit
+  configuration, never hidden constants.
+- `max_steps`, `max_fallback_steps`, task deadline, step timeout, and validator
+  grace timeout must be configurable through the canonical config/CLI/env
+  path. They may not be independently hard-coded in the shell, scheduler,
+  runner, registry, or report layer.
+- Existing prompts are frozen. Do not edit prompt text, add task-specific
+  prompts, reintroduce `PromptSet`/step guidance plumbing, or send accumulated
+  planner history that changes the established prompt contract. Prompt
+  configuration means selecting the existing prompt contract, not rewriting it.
+- The active page representation is only the latest canonical OmniTransfer
+  page embedding. Do not restore native 512D, `page-word`, 1024D, local pooling,
+  stock-capture T3A/M3A diagnostics, or another page-encoder branch.
+- Remove dead interfaces rather than preserving aliases for retired behavior:
+  no `list`, `inspect`, `metrics`, or `doctor` experiment CLI; no fake source
+  backend modes; no `FunctionRouter`; no completion-review telemetry that is
+  always zero; and no native MobileGPT cold/warm diagnostic path in the formal
+  runner.
+- A method implementation owns its native prompt, parser, policy, retry
+  behavior, and step budget. The experiment harness owns only lifecycle,
+  observation/action bridging, accounting, validation, registration, and
+  fallback boundaries. Do not repair a baseline by adding another planner or
+  changing its prompt/memory/action contract.
+
 ## Mandatory per-task testing memory
 
 Before every AndroidWorld check, conversion, development run, formal result, or

@@ -5,6 +5,13 @@ owns source-asset conversion, long-term-memory refresh, static validation, and
 real-time AndroidWorld execution. The Python modules below are implementation
 seams, not alternate launchers:
 
+The scenario unit is one result: exactly one task, one method, and one device.
+The E2E pipeline is the only component allowed to expand the five methods over
+the two target devices. A direct `result` invocation runs one method on one
+device. Do not add 8/10-result protocols, nested schedulers, task-specific
+prompts, or duplicate protocol constants; shared values are defined in
+`src/experiment/protocol.py` and existing prompts remain unchanged.
+
 | Purpose | Unified invocation | Internal path |
 | --- | --- | --- |
 | Formal task matrix | `run_androidworld.sh --tasks TASK` | Frozen five-method evaluation |
