@@ -1803,6 +1803,7 @@ def _run_androidworld_setup_apps(
     if file_utils is not None:
         file_utils.copy_file_to_device = copy_file_to_device
     original_install_apk = _patch_androidworld_apk_install_compat(setup_module)
+    original_issue_generic_request = _patch_androidworld_chcon_compat(setup_module)
     previous_handler = signal.getsignal(signal.SIGALRM)
     previous_timer = signal.setitimer(signal.ITIMER_REAL, 0)
     setup_started_at = time.monotonic()
@@ -1846,6 +1847,10 @@ def _run_androidworld_setup_apps(
             file_utils.copy_file_to_device = original_copy_file_to_device
         if original_install_apk is not None:
             setup_module.adb_utils.install_apk = original_install_apk
+        if original_issue_generic_request is not None:
+            setup_module.adb_utils.issue_generic_request = (
+                original_issue_generic_request
+            )
 
 
 def _patch_androidworld_apk_install_compat(setup_module: Any) -> Any | None:
@@ -1886,6 +1891,70 @@ def _patch_androidworld_apk_install_compat(setup_module: Any) -> Any | None:
             return response
 
     adb_utils.install_apk = install_apk
+    return original
+
+
+def _patch_androidworld_chcon_compat(setup_module: Any) -> Any | None:
+    """Treat an unsupported external-filesystem ``chcon`` as non-fatal.
+
+    AndroidWorld's OsmAnd setup copies its map into the app's external-files
+    directory and then changes its SELinux context.  Some managed emulator
+    images expose that directory through a transport endpoint where ``chcon``
+    is unsupported, even though the copied file remains usable by the app.
+    Preserve every other ADB failure and only normalize this exact setup
+    compatibility response to AndroidWorld's normal OK status.
+    """
+
+    adb_utils = getattr(setup_module, "adb_utils", None)
+    original = getattr(adb_utils, "issue_generic_request", None)
+    if not callable(original):
+        return None
+
+    def issue_generic_request(*call_args: Any, **call_kwargs: Any) -> Any:
+        response = original(*call_args, **call_kwargs)
+        command = call_args[0] if call_args else call_kwargs.get("args")
+        if isinstance(command, str):
+            command_parts = tuple(command.split())
+        elif isinstance(command, (list, tuple)):
+            command_parts = tuple(str(part) for part in command)
+        else:
+            command_parts = ()
+        generic = getattr(response, "generic", None)
+        output = getattr(generic, "output", b"")
+        if isinstance(output, bytes):
+            output_text = output.decode(errors="replace")
+        else:
+            output_text = str(output or "")
+        if (
+            command_parts[:2] == ("shell", "chcon")
+            and "Operation not supported on transport endpoint" in output_text
+        ):
+            ok_status = getattr(
+                getattr(getattr(setup_module, "adb_pb2", None), "AdbResponse", None),
+                "Status",
+                None,
+            )
+            ok_value = getattr(ok_status, "OK", 1)
+            if hasattr(response, "CopyFrom"):
+                try:
+                    normalized = type(response)()
+                except TypeError:
+                    normalized = None
+                if normalized is not None:
+                    normalized.CopyFrom(response)
+                    normalized.status = ok_value
+                    response = normalized
+                else:
+                    response.status = ok_value
+            else:
+                response.status = ok_value
+            logging.warning(
+                "AndroidWorld setup skipped unsupported external-filesystem "
+                "chcon; the copied file remains available to the app"
+            )
+        return response
+
+    adb_utils.issue_generic_request = issue_generic_request
     return original
 
 

@@ -22,6 +22,7 @@ from src.integrations.android_world.launch import (
     _ExperimentAgentAdapter,
     _prepare_androidworld_episode_apps,
     _patch_androidworld_apk_install_compat,
+    _patch_androidworld_chcon_compat,
     _repair_androidworld_chrome_first_run,
     _result_has_official_validator_conclusion,
     _run_androidworld_setup_apps,
@@ -57,6 +58,47 @@ def test_androidworld_apk_install_retries_without_unsupported_flag() -> None:
         ("official", "/tmp/app.apk"),
         ("compat", ("install", "/tmp/app.apk"), 30.0),
     ]
+
+
+def test_androidworld_chcon_compat_only_normalizes_transport_endpoint_failure() -> None:
+    class Response:
+        def __init__(self, status: int, output: bytes) -> None:
+            self.status = status
+            self.generic = SimpleNamespace(output=output)
+
+        def CopyFrom(self, other) -> None:
+            self.status = other.status
+            self.generic = SimpleNamespace(output=other.generic.output)
+
+    responses = [
+        Response(
+            2,
+            b"chcon: Operation not supported on transport endpoint",
+        ),
+        Response(2, b"chcon: permission denied"),
+    ]
+
+    class AdbUtils:
+        def issue_generic_request(self, args, _env, *, timeout_sec=None):
+            return responses.pop(0)
+
+    setup_module = SimpleNamespace(adb_utils=AdbUtils())
+    original = _patch_androidworld_chcon_compat(setup_module)
+    assert original is not None
+    try:
+        normalized = setup_module.adb_utils.issue_generic_request(
+            ["shell", "chcon", "u:object_r:media_rw_data_file:s0", "/map.obf"],
+            object(),
+        )
+        unchanged = setup_module.adb_utils.issue_generic_request(
+            ["shell", "chcon", "u:object_r:media_rw_data_file:s0", "/map.obf"],
+            object(),
+        )
+    finally:
+        setup_module.adb_utils.issue_generic_request = original
+
+    assert normalized.status == 1
+    assert unchanged.status == 2
 
 
 def test_androidworld_file_transfer_timeout_bounds_unset_and_zero(
