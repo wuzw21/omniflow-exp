@@ -129,11 +129,31 @@ class ManualAndroidWorld:
     def act(self, action_payload: dict[str, Any]) -> dict[str, Any]:
         if self._last_observation is None:
             self.observe()
-        # AndroidWorld's actuation layer already implements drag-and-drop, but
-        # this release's JSONAction parser omits that action from its public
-        # enum.  Keep the interactive protocol explicit and construct the
-        # official action object through the same env.execute_action seam.
-        if action_payload.get("action_type") == "drag_and_drop":
+        action_record: dict[str, Any]
+        if action_payload.get("action_type") == "swipe_xy":
+            # Coordinate-bounded swipe through AndroidWorld's own ADB
+            # actuation helper.  This is needed for canvas widgets: the
+            # release's JSONAction swipe is full-screen and cannot reach the
+            # widget without triggering system navigation.
+            from android_world.env import adb_utils
+
+            start = action_payload.get("start_xy")
+            end = action_payload.get("end_xy")
+            if not (isinstance(start, (list, tuple)) and len(start) == 2
+                    and isinstance(end, (list, tuple)) and len(end) == 2):
+                raise ValueError("swipe_xy requires start_xy and end_xy")
+            duration_ms = int(action_payload.get("duration_ms", 500))
+            command = adb_utils.generate_swipe_command(
+                int(start[0]), int(start[1]), int(end[0]), int(end[1]), duration_ms
+            )
+            adb_utils.issue_generic_request(command, self._env.controller)
+            action = None
+            action_record = dict(action_payload)
+        elif action_payload.get("action_type") == "drag_and_drop":
+            # AndroidWorld's actuation layer already implements drag-and-drop, but
+            # this release's JSONAction parser omits that action from its public
+            # enum.  Keep the interactive protocol explicit and construct the
+            # official action object through the same env.execute_action seam.
             touch = action_payload.get("touch_xy")
             lift = action_payload.get("lift_xy")
             if not (isinstance(touch, (list, tuple)) and len(touch) == 2
@@ -145,15 +165,17 @@ class ManualAndroidWorld:
             action.lift_xy = tuple(int(v) for v in lift)
         else:
             action = self._json_action.JSONAction(**action_payload)
+            action_record = action.as_dict()
         before = self._last_observation
-        self._env.execute_action(action)
+        if action is not None:
+            self._env.execute_action(action)
         after = self.observe()["observation"]
         self._steps.append(
             {
                 "step_index": len(self._steps),
                 "before_state_id": f"state-{len(self._steps)}",
                 "observation": before,
-                "action": action.as_dict(),
+                "action": action_record,
                 "result": {"success": True},
                 "next_observation": after,
                 "metadata": {"decision": "manual_codex", "source": "native_androidworld"},
