@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+from threading import Lock
 import time
 from types import SimpleNamespace
 from typing import Any, Iterator, Sequence
@@ -36,6 +37,7 @@ _WRITABLE_AVD_DISKS = (
     "encryptionkey.img.qcow2",
     "userdata-qemu.img.qcow2",
 )
+_EMULATOR_CONSTRUCTION_LOCK = Lock()
 
 
 @dataclass(frozen=True)
@@ -454,20 +456,24 @@ def open_bmoca_episode(
     module = importlib.import_module("bmoca.environment.environment")
     environment_class = getattr(module, "BMocaEnv")
     sdk = config.android_sdk_root
-    environment = environment_class(
-        task_path=str(episode.task_path),
-        avd_name=episode.avd_name,
-        state_type="text",
-        action_tanh=False,
-        adjusting_freq=1.0 / 3.0,
-        run_headless=config.run_headless,
-        android_avd_home=str(config.android_avd_home),
-        android_sdk_root=str(sdk),
-        emulator_path=str(sdk / "emulator/emulator"),
-        adb_path=str(sdk / "platform-tools/adb"),
-        appium_port=int(appium_port),
-        appium_system_port=int(appium_system_port),
-    )
+    # AndroidEnv picks emulator ports before the emulator binds them. Concurrent
+    # constructors can therefore choose identical ADB/gRPC ports. Serialize only
+    # construction/boot; independent ready devices execute episodes concurrently.
+    with _EMULATOR_CONSTRUCTION_LOCK:
+        environment = environment_class(
+            task_path=str(episode.task_path),
+            avd_name=episode.avd_name,
+            state_type="text",
+            action_tanh=False,
+            adjusting_freq=1.0 / 3.0,
+            run_headless=config.run_headless,
+            android_avd_home=str(config.android_avd_home),
+            android_sdk_root=str(sdk),
+            emulator_path=str(sdk / "emulator/emulator"),
+            adb_path=str(sdk / "platform-tools/adb"),
+            appium_port=int(appium_port),
+            appium_system_port=int(appium_system_port),
+        )
     host: BMocaHost | None = None
     try:
         _wait_for_emulator_ready(environment, adb_path=sdk / "platform-tools/adb")
