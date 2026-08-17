@@ -22,6 +22,7 @@ import signal
 import socket
 import subprocess
 import sys
+from threading import Lock
 import time
 from time import perf_counter
 import types
@@ -4017,7 +4018,7 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
         raise FileExistsError(f"bmoca_attempt_already_exists:{output_dir}")
     worker_count = min(max(1, int(args.bmoca_workers or 1)), len(episodes))
 
-    def run_episode(index: int, episode: Any) -> dict[str, Any]:
+    def run_episode_on_avd(index: int, episode: Any) -> dict[str, Any]:
         started = perf_counter()
         run_evidence: dict[str, Any] = {}
         observation_evidence: list[dict[str, Any]] = []
@@ -4152,6 +4153,14 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
             }
         return row
 
+    avd_locks = {episode.avd_name: Lock() for episode in episodes}
+
+    def run_episode(index: int, episode: Any) -> dict[str, Any]:
+        # Submit every environment immediately, while preventing two emulator
+        # processes from writing the same physical AVD at once.
+        with avd_locks[episode.avd_name]:
+            return run_episode_on_avd(index, episode)
+
     rows_by_index: dict[int, dict[str, Any]] = {}
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         pending = {
@@ -4196,6 +4205,8 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
         "environment_ids": list(environment_ids),
         "episode_count": len(rows),
         "parallel_workers": worker_count,
+        "physical_avd_count": len(avd_locks),
+        "parallel_scheduling": "all_submitted_one_active_episode_per_avd",
         "official_success_count": official_successes,
         "official_success_rate": official_successes / len(rows) if rows else 0.0,
         "actions_executed": sum(int(row.get("actions_executed") or 0) for row in rows),

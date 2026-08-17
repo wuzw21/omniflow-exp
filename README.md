@@ -40,6 +40,8 @@ B-MoCA is selected through the same entry point with `--environment bmoca`.
 The default method remains the native OmniFlow E2E loop with Function, checker,
 and OmniTransfer. Passing `--methods script-replay` runs the registered
 zero-model exact-selector comparison on the same official environments.
+All environment jobs are submitted together, with a per-AVD execution lock for
+snapshots that share the same virtual device.
 The entry pins the maintained B-MoCA revision whose device builder completes
 Chrome and Gboard first-run setup before sealing the shared base snapshot; an
 unverified keyboard state fails environment construction.

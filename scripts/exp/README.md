@@ -25,8 +25,10 @@ exception to the default method above. It replays the sole visible Function,
 ignores Checker steps, and resolves each pointer action by the first unique
 exact source selector in `resource-id`, `text`, `content-desc` order. Missing
 or ambiguous matches fail closed; it never uses fuzzy matching, parent lookup,
-source coordinates, OmniTransfer, DP, Planner, or VLM. Independent environments
-run concurrently (`OMNIFLOW_BMOCA_WORKERS`, default 10 for this method).
+source coordinates, OmniTransfer, DP, Planner, or VLM. All requested environments
+are submitted together (`OMNIFLOW_BMOCA_WORKERS`, default 10 for this method).
+Different AVDs run concurrently; environments sharing one physical AVD are
+serialized so Android Emulator never has two writers for the same device disks.
 
 The maintained B-MoCA coordinator exposes every display size as screenshot
 `[height, width]`, including tablets. The Host therefore preserves canonical
