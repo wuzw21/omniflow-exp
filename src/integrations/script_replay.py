@@ -194,6 +194,87 @@ def _normalize_launcher_click(
     }
 
 
+def enhance_prepared_function_store(
+    *,
+    store_path: str | Path,
+    runlog_path: str | Path,
+    source_states_path: str | Path,
+    complete_json: Any,
+) -> dict[str, Any]:
+    """Run the canonical offline Function/checker enhancement exactly once."""
+
+    from omniflow.functions.assets import FunctionStore, enhance_function
+
+    resolved_store = Path(store_path).expanduser().resolve()
+    resolved_runlog = Path(runlog_path).expanduser().resolve()
+    resolved_states = Path(source_states_path).expanduser().resolve()
+    store_value = _read_store(resolved_store)
+    function = _only_visible_function(store_value)
+    runlog = json.loads(resolved_runlog.read_text(encoding="utf-8"))
+    catalog = json.loads(resolved_states.read_text(encoding="utf-8"))
+    states = catalog.get("states") if isinstance(catalog, dict) else None
+    if not isinstance(runlog, dict):
+        raise ValueError("function_enhancement_runlog_invalid")
+    if not isinstance(states, dict):
+        raise ValueError("function_enhancement_source_states_invalid")
+    enhanced, changes, status = enhance_function(
+        function,
+        runlog,
+        complete_json,
+        state_loader=lambda state_id: states.get(str(state_id)),
+    )
+    FunctionStore(resolved_store).put_function(enhanced)
+    role_counts = {"function": 0, "checker": 0}
+    for step in enhanced.get("steps") or ():
+        if not isinstance(step, dict):
+            continue
+        role = "checker" if step.get("role") == "checker" else "function"
+        role_counts[role] += 1
+    report = {
+        "schema_version": "omniflow.function-checker-enhancement.v1",
+        "function_id": enhanced["function_id"],
+        "status": status,
+        "model_calls": 1,
+        "changes": changes,
+        "role_counts": role_counts,
+    }
+    report_path = resolved_store.with_name("enhancement.json")
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return {**report, "report_path": str(report_path)}
+
+
+class _OpenAIJsonCompleter:
+    def __init__(self, *, model: str, api_key: str, base_url: str) -> None:
+        try:
+            from openai import OpenAI
+        except ImportError as error:
+            raise RuntimeError("Install omniflow[llm] for Function enhancement") from error
+        self._model = str(model)
+        self._client = OpenAI(
+            api_key=str(api_key or "not-required"),
+            base_url=str(base_url),
+            max_retries=0,
+        )
+
+    def __call__(self, prompt: str) -> str:
+        response = self._client.chat.completions.create(
+            model=self._model,
+            messages=[{"role": "user", "content": str(prompt)}],
+            temperature=0,
+            max_completion_tokens=4096,
+            stream=False,
+        )
+        choices = getattr(response, "choices", None) or ()
+        message = getattr(choices[0], "message", None) if choices else None
+        content = str(getattr(message, "content", None) or "").strip()
+        if not content:
+            raise RuntimeError("function_enhancement_model_response_empty")
+        return content
+
+
 def run_script_replay(
     *,
     store_path: str | Path,
@@ -625,13 +706,37 @@ def _main() -> int:
     prepare.add_argument("--source-states", required=True)
     prepare.add_argument("--output-root", required=True)
     prepare.add_argument("--task-id", required=True)
-    args = parser.parse_args()
-    report = prepare_script_replay_store(
-        runlog_path=args.runlog,
-        source_states_path=args.source_states,
-        output_root=args.output_root,
-        expected_task_id=args.task_id,
+    enhance = subparsers.add_parser(
+        "enhance", description="Enhance one prepared Function into Function/checker roles."
     )
+    enhance.add_argument("--store", required=True)
+    enhance.add_argument("--runlog", required=True)
+    enhance.add_argument("--source-states", required=True)
+    enhance.add_argument("--model", default="GLM-5.1")
+    args = parser.parse_args()
+    if args.command == "prepare":
+        report = prepare_script_replay_store(
+            runlog_path=args.runlog,
+            source_states_path=args.source_states,
+            output_root=args.output_root,
+            expected_task_id=args.task_id,
+        )
+    else:
+        from omniflow.vlm.model_config import resolve_openai_compatible_config
+
+        api_key, base_url = resolve_openai_compatible_config(profile="llmthu")
+        if not api_key or not base_url:
+            raise RuntimeError("function_enhancement_llmthu_config_missing")
+        report = enhance_prepared_function_store(
+            store_path=args.store,
+            runlog_path=args.runlog,
+            source_states_path=args.source_states,
+            complete_json=_OpenAIJsonCompleter(
+                model=args.model,
+                api_key=api_key,
+                base_url=base_url,
+            ),
+        )
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 

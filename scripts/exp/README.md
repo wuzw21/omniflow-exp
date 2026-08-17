@@ -67,7 +67,9 @@ The one-task source-to-ten-environment path is one unified invocation. When
 successful canonical RunLog and `transfer_states.json` must be beside it (or be
 selected by `OMNIFLOW_BMOCA_SOURCE_STATES_PATH`). The entry creates
 `source_function/store.json` inside the immutable result directory and then
-runs env100–109; this preparation performs no model call or semantic rewrite.
+runs env100–109. For OmniFlow, the same preparation performs exactly one
+offline GLM-5.1 Function/checker enhancement before direct zero-fallback
+execution; script-replay remains zero-model and unenhanced.
 
 ```bash
 OMNIFLOW_BMOCA_OUTPUT_PATH=/absolute/new-result \
@@ -77,6 +79,22 @@ bash scripts/exp/run_androidworld.sh \
   --methods script-replay \
   --tasks chrome/open_Chrome \
   --source-runlog /absolute/source/runlog.json
+```
+
+Run the corpus task-major through both methods with one command. Each method
+submits env100–109 together, while same-AVD writers remain serialized. The
+campaign writes `progress.jsonl` after every task/method result and preserves
+each environment's screenshots, action trace, transfer evidence, and official
+validator result. Env100–108 are the primary rate; env109 remains a Tablet
+diagnostic result.
+
+```bash
+OMNIFLOW_BMOCA_OUTPUT_PATH=/absolute/new-campaign \
+OMNIFLOW_BMOCA_AVD_HOME=/absolute/initialized-avds \
+bash scripts/exp/run_androidworld.sh \
+  --environment bmoca \
+  --all-tasks \
+  --methods omniflow,script-replay
 ```
 
 The maintained B-MoCA coordinator exposes every display size as screenshot

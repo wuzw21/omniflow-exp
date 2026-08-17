@@ -48,6 +48,7 @@ bmoca_show_emulator="${OMNIFLOW_BMOCA_SHOW_EMULATOR:-0}"
 bmoca_workers="${OMNIFLOW_BMOCA_WORKERS:-}"
 bmoca_environment_retries="${OMNIFLOW_BMOCA_ENVIRONMENT_RETRIES:-1}"
 bmoca_source_states_path="${OMNIFLOW_BMOCA_SOURCE_STATES_PATH:-}"
+bmoca_corpus_manifest="${OMNIFLOW_BMOCA_CORPUS_MANIFEST:-$repo/data/bmoca/corpus/bmoca-three-env-success-aligned-dataset-v5/manifest.json}"
 bmoca_direct_function_replay="${OMNIFLOW_BMOCA_DIRECT_FUNCTION_REPLAY:-0}"
 bmoca_max_fallback_steps="${OMNIFLOW_BMOCA_MAX_FALLBACK_STEPS:-}"
 android_world_revision="632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"
@@ -620,6 +621,162 @@ if [[ "$execution_environment" != "bmoca" && "$source_collection" -eq 1 ]]; then
   batch_task_filter=""
   source_qualification_only=0
 fi
+if [[ "$execution_environment" == "bmoca" && ( "$all_tasks" -eq 1 || "$selected_methods_arg" == *,* ) ]]; then
+  campaign_methods="${selected_methods_arg:-omniflow,script-replay}"
+  if [[ "$campaign_methods" != "omniflow,script-replay" ]]; then
+    echo "B-MoCA campaign requires --methods omniflow,script-replay." >&2
+    exit 2
+  fi
+  if [[ "$bmoca_output_path" != /* || -e "$bmoca_output_path" ]]; then
+    echo "B-MoCA campaign requires a new absolute OMNIFLOW_BMOCA_OUTPUT_PATH." >&2
+    exit 2
+  fi
+  if [[ "$bmoca_corpus_manifest" != /* || ! -f "$bmoca_corpus_manifest" ]]; then
+    echo "B-MoCA campaign corpus manifest missing: $bmoca_corpus_manifest" >&2
+    exit 2
+  fi
+  if ! python_bin="$(command -v "$python_bin")"; then
+    echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
+    exit 1
+  fi
+  mkdir -p "$bmoca_output_path"
+  task_table="$bmoca_output_path/tasks.tsv"
+  "$python_bin" - "$bmoca_corpus_manifest" "$batch_task_filter" "$task_table" "$bmoca_output_path/campaign.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1]).resolve()
+selected = [item for item in sys.argv[2].split(",") if item]
+task_table = Path(sys.argv[3])
+campaign_path = Path(sys.argv[4])
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+traces = manifest.get("traces") or []
+sources = {}
+for trace in traces:
+    if not isinstance(trace, dict) or trace.get("role") != "source":
+        continue
+    if (trace.get("success_evidence") or {}).get("official_success") is not True:
+        continue
+    task = str(trace.get("task_id") or "")
+    runlog = trace.get("runlog") or {}
+    states = trace.get("state_catalog") or {}
+    sources[task] = (
+        manifest_path.parent / str(runlog.get("path") or ""),
+        manifest_path.parent / str(states.get("path") or ""),
+    )
+tasks = selected or [str(item) for item in manifest.get("tasks") or []]
+missing = [task for task in tasks if task not in sources]
+if missing:
+    raise SystemExit("bmoca_campaign_source_missing:" + ",".join(missing))
+with task_table.open("w", encoding="utf-8") as stream:
+    for index, task in enumerate(tasks, 1):
+        runlog, states = sources[task]
+        if not runlog.is_file() or not states.is_file():
+            raise SystemExit(f"bmoca_campaign_evidence_missing:{task}")
+        stream.write(f"{index}\t{task}\t{runlog}\t{states}\n")
+campaign_path.write_text(
+    json.dumps(
+        {
+            "schema_version": "omniflow.bmoca-campaign.v1",
+            "task_count": len(tasks),
+            "methods": ["omniflow", "script-replay"],
+            "environment_ids": list(range(100, 110)),
+            "primary_environment_ids": list(range(100, 109)),
+            "diagnostic_environment_ids": [109],
+            "task_table": str(task_table),
+        },
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    ) + "\n",
+    encoding="utf-8",
+)
+PY
+  progress_path="$bmoca_output_path/progress.jsonl"
+  : > "$progress_path"
+  while IFS=$'\t' read -r task_index campaign_task source_runlog source_states; do
+    for campaign_method in omniflow script-replay; do
+      method_output="$bmoca_output_path/task_$(printf '%03d' "$task_index")/$campaign_method"
+      child_args=(
+        bash "$repo/scripts/exp/run_androidworld.sh"
+        --environment bmoca
+        --methods "$campaign_method"
+        --tasks "$campaign_task"
+        --source-runlog "$source_runlog"
+      )
+      set +e
+      if [[ "$campaign_method" == "omniflow" ]]; then
+        env -u OMNIFLOW_SINGLE_TASK_STORE_PATH \
+          OMNIFLOW_BMOCA_OUTPUT_PATH="$method_output" \
+          OMNIFLOW_BMOCA_SOURCE_STATES_PATH="$source_states" \
+          OMNIFLOW_BMOCA_DIRECT_FUNCTION_REPLAY=1 \
+          OMNIFLOW_BMOCA_MAX_FALLBACK_STEPS=0 \
+          OMNIFLOW_BMOCA_WORKERS=10 \
+          "${child_args[@]}"
+      else
+        env -u OMNIFLOW_SINGLE_TASK_STORE_PATH \
+          OMNIFLOW_BMOCA_OUTPUT_PATH="$method_output" \
+          OMNIFLOW_BMOCA_SOURCE_STATES_PATH="$source_states" \
+          OMNIFLOW_BMOCA_DIRECT_FUNCTION_REPLAY=0 \
+          OMNIFLOW_BMOCA_MAX_FALLBACK_STEPS=0 \
+          OMNIFLOW_BMOCA_WORKERS=10 \
+          "${child_args[@]}"
+      fi
+      child_exit=$?
+      set -e
+      "$python_bin" - "$progress_path" "$task_index" "$campaign_task" "$campaign_method" "$method_output" "$child_exit" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+progress = Path(sys.argv[1])
+output = Path(sys.argv[5])
+summary = output / "summary.json"
+row = {
+    "task_index": int(sys.argv[2]),
+    "task_id": sys.argv[3],
+    "method": sys.argv[4],
+    "output_path": str(output),
+    "process_exit_code": int(sys.argv[6]),
+    "terminal_summary": summary.is_file(),
+}
+if summary.is_file():
+    value = json.loads(summary.read_text(encoding="utf-8"))
+    row.update(
+        official_success_count=value.get("official_success_count"),
+        episode_count=value.get("episode_count"),
+        model_calls=value.get("model_calls"),
+        fallback_steps=value.get("fallback_steps"),
+        actions_executed=value.get("actions_executed"),
+    )
+with progress.open("a", encoding="utf-8") as stream:
+    stream.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+print(json.dumps(row, ensure_ascii=False, sort_keys=True), flush=True)
+PY
+    done
+  done < "$task_table"
+  "$python_bin" - "$progress_path" "$bmoca_output_path/campaign_summary.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+rows = [json.loads(line) for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines() if line]
+summary = {
+    "schema_version": "omniflow.bmoca-campaign-summary.v1",
+    "result_count": len(rows),
+    "terminal_result_count": sum(row.get("terminal_summary") is True for row in rows),
+    "official_success_count": sum(int(row.get("official_success_count") or 0) for row in rows),
+    "episode_count": sum(int(row.get("episode_count") or 0) for row in rows),
+    "model_calls": sum(int(row.get("model_calls") or 0) for row in rows),
+    "fallback_steps": sum(int(row.get("fallback_steps") or 0) for row in rows),
+    "rows": rows,
+}
+Path(sys.argv[2]).write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+PY
+  exit 0
+fi
 if [[ "$execution_environment" == "bmoca" ]]; then
   if [[ "$source_collection" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || "$eight_cells" -eq 1 || "$stock_capture" != "0" || -n "$e2e_task" || -n "$selected_devices_arg" ]]; then
     echo "--environment bmoca cannot be combined with AndroidWorld experiment modes." >&2
@@ -712,12 +869,8 @@ if [[ "$execution_environment" == "bmoca" ]]; then
     exit 2
   fi
   if [[ -z "$store_path" ]]; then
-    if [[ "$bmoca_method" != "script-replay" ]]; then
-      echo "B-MoCA OmniFlow requires OMNIFLOW_SINGLE_TASK_STORE_PATH." >&2
-      exit 2
-    fi
     if [[ "$runlog_memory_source_runlog" != /* || ! -f "$runlog_memory_source_runlog" ]]; then
-      echo "B-MoCA script-replay requires an absolute --source-runlog or OMNIFLOW_SINGLE_TASK_STORE_PATH." >&2
+      echo "B-MoCA requires an absolute --source-runlog or OMNIFLOW_SINGLE_TASK_STORE_PATH." >&2
       exit 2
     fi
     if [[ -z "$bmoca_source_states_path" ]]; then
@@ -733,6 +886,18 @@ if [[ "$execution_environment" == "bmoca" ]]; then
       --output-root "$bmoca_output_path/source_function" \
       --task-id "$batch_task_filter"
     store_path="$bmoca_output_path/source_function/store.json"
+    if [[ "$bmoca_method" == "omniflow" ]]; then
+      set -a
+      source "$env_file"
+      set +a
+      select_model_endpoint "$formal_model_endpoint_profile"
+      validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
+      "$python_bin" -m src.integrations.script_replay enhance \
+        --store "$store_path" \
+        --runlog "$runlog_memory_source_runlog" \
+        --source-states "$bmoca_source_states_path" \
+        --model "$formal_model"
+    fi
   elif [[ "$store_path" != /* || ! -f "$store_path" ]]; then
     echo "--environment bmoca requires an existing absolute OMNIFLOW_SINGLE_TASK_STORE_PATH." >&2
     exit 2

@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from src.integrations.script_replay import (
+    enhance_prepared_function_store,
     prepare_script_replay_store,
     run_script_replay,
 )
@@ -43,6 +44,15 @@ def _write_store(path: Path) -> Path:
                     "example": {
                         "schema_version": "omniflow.function.v2",
                         "function_id": "example",
+                        "name": "Example",
+                        "description": "Run the example action.",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {},
+                            "required": [],
+                            "additionalProperties": False,
+                        },
+                        "bindings": [],
                         "agent_visible": True,
                         "steps": [
                             {
@@ -54,6 +64,7 @@ def _write_store(path: Path) -> Path:
                                 },
                             }
                         ],
+                        "checker_rules": [],
                     }
                 },
             }
@@ -209,6 +220,81 @@ def test_prepare_script_replay_normalizes_launcher_click_to_open_app(
             },
         }
     ]
+
+
+def test_enhance_prepared_function_store_persists_checker_role(
+    tmp_path: Path,
+) -> None:
+    store_path = _write_store(tmp_path / "store.json")
+    runlog_path = tmp_path / "runlog.json"
+    states_path = tmp_path / "transfer_states.json"
+    runlog_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.canonical_run_log.v1",
+                "run_id": "source-run",
+                "goal": "dismiss optional setup",
+                "status": "succeeded",
+                "success": True,
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "before_state_id": "source",
+                        "after_state_id": "after",
+                        "action": {
+                            "tool": "click",
+                            "args": {"x": 500, "y": 500},
+                        },
+                        "result": {"success": True},
+                        "metadata": {"origin": "action"},
+                    }
+                ],
+                "final_state_id": "after",
+            }
+        ),
+        encoding="utf-8",
+    )
+    states_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.transfer-state-catalog.v1",
+                "run_id": "source-run",
+                "states": {
+                    "source": {
+                        "state_id": "source",
+                        "package_name": "com.example",
+                        "activity_name": ".SetupActivity",
+                        "xml": '<hierarchy><node text="Skip" /></hierarchy>',
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = enhance_prepared_function_store(
+        store_path=store_path,
+        runlog_path=runlog_path,
+        source_states_path=states_path,
+        complete_json=lambda _: json.dumps(
+            {
+                "step_decisions": [
+                    {
+                        "step": 0,
+                        "role": "checker",
+                        "reason": "Optional setup dialog",
+                    }
+                ]
+            }
+        ),
+    )
+
+    stored = json.loads(store_path.read_text(encoding="utf-8"))
+    function = stored["functions"]["example"]
+    assert function["steps"][0]["role"] == "checker"
+    assert report["model_calls"] == 1
+    assert report["role_counts"] == {"function": 0, "checker": 1}
+    assert Path(report["report_path"]).is_file()
 
 
 def test_script_replay_never_uses_resource_id(tmp_path: Path) -> None:
