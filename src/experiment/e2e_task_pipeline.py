@@ -935,31 +935,29 @@ def prepare_mobilegpt_memory(
             "memory_root": str(existing["memory_root"]),
         }
     output_root = attempt_root / "assets" / "mobilegpt"
-    environment = dict(os.environ)
-    environment.update(
-        {
-            "PYTHON_BIN": str(args.python_bin),
-            "OMNIFLOW_EXP_ASSET_ROOT": str(args.asset_root),
-            "OMNIFLOW_EXP_RESULTS_ROOT": str(args.results_root),
-            "OMNIFLOW_EXP_MEMORY_ROOT": str(args.memory_index.parent),
-            "OMNIFLOW_EXP_MEMORY_INDEX": str(args.memory_index),
-            "OMNIFLOW_ANDROID_WORLD_ROOT": str(args.android_world_root),
-            "OMNITRANSFER_ROOT": str(args.omnitransfer_root),
-            "OMNIFLOW_MOBILEGPT_ROOT": str(args.mobilegpt_root),
-            "OMNIFLOW_APPAGENT_ROOT": str(args.appagent_root),
-            "OMNIFLOW_MOBILEGPT_MEMORY_OUTPUT_ROOT": str(output_root),
-        }
-    )
+    pointer = _read_object(args.memory_index)
+    source_index = _resolve_reference(args.memory_index, pointer["source_index"])
     result = run_logged_command(
         [
-            "bash",
-            str(args.script),
-            "--prepare-mobilegpt-memory",
-            "--tasks",
+            str(args.python_bin),
+            "-m",
+            "src.experiment.mobilegpt_source",
+            "batch",
+            "--index",
+            str(source_index),
+            "--task",
             args.task,
+            "--mobilegpt-root",
+            str(args.mobilegpt_root),
+            "--output-root",
+            str(output_root),
+            "--model",
+            args.formal_model,
+            "--memory-index",
+            str(args.memory_index),
         ],
         cwd=args.repo,
-        environment=environment,
+        environment=dict(os.environ),
         log_path=attempt_root / "prep" / "mobilegpt.log",
         timeout_sec=deadline.remaining(TASK_DEADLINE_SEC),
     )
@@ -1113,8 +1111,6 @@ def _result_environment(
             "OMNIFLOW_ANDROIDWORLD_METHOD": method,
             "OMNIFLOW_ANDROIDWORLD_DEVICE": f"{label}:{serial}:{port}",
             "OMNIFLOW_ANDROIDWORLD_STORE_PATH": str(store_path),
-            "OMNIFLOW_ANDROIDWORLD_SOURCE_SEED": str(SOURCE_SEED),
-            "OMNIFLOW_ANDROIDWORLD_TASK_SEED": str(TASK_SEED),
             "OMNIFLOW_ANDROIDWORLD_MAX_STEPS": str(args.max_steps),
             "OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS": str(
                 args.max_fallback_steps

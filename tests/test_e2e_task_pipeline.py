@@ -29,6 +29,7 @@ from src.experiment.e2e_task_pipeline import (
     build_parser,
     collect_replayed_source,
     ensure_source_device,
+    prepare_mobilegpt_memory,
     qualify_source_function,
     qualify_source_functions,
     run_logged_command,
@@ -112,6 +113,62 @@ def test_dry_run_has_fixed_task_method_device_schedule(
     assert MAX_STEPS == 20
     assert SOURCE_DEVICE == ("source5560", "emulator-5560", 5560)
     assert plan["writes"] is False
+
+
+def test_mobilegpt_preparation_is_an_internal_pipeline_phase(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.formal_model = "GLM-5.1"
+    args.memory_index.parent.mkdir(parents=True)
+    source_index = args.memory_index.parent / "source.json"
+    source_index.write_text("{}", encoding="utf-8")
+    args.memory_index.write_text(
+        json.dumps({"source_index": str(source_index)}),
+        encoding="utf-8",
+    )
+    calls = 0
+
+    def canonical(**_: object) -> dict[str, str] | None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return None
+        return {"memory_root": str(tmp_path / "registered-mobilegpt")}
+
+    captured: list[str] = []
+
+    def run(command: list[str], **_: object) -> dict[str, object]:
+        captured.extend(command)
+        return {"returncode": 0, "timed_out": False, "wall_sec": 0.1}
+
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.canonical_mobilegpt_memory_from_memory",
+        canonical,
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.run_logged_command",
+        run,
+    )
+
+    memory_root, phase = prepare_mobilegpt_memory(
+        args=args,
+        attempt_root=tmp_path / "attempt",
+        deadline=Deadline(60),
+    )
+
+    assert captured[:4] == [
+        str(args.python_bin),
+        "-m",
+        "src.experiment.mobilegpt_source",
+        "batch",
+    ]
+    assert "bash" not in captured
+    assert "--prepare-mobilegpt-memory" not in captured
+    assert str(source_index) in captured
+    assert memory_root == tmp_path / "registered-mobilegpt"
+    assert phase["status"] == "created"
 
 
 def test_source_device_uses_independent_small_phone_avd() -> None:

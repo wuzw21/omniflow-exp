@@ -37,7 +37,6 @@ def select_source_asset_revision(
     expected_source_model: str = "",
     expected_schema_version: str = "",
     expected_source_method: str = "",
-    environment_repair_reason: str = "",
     candidate_validator: Callable[[Path, dict[str, Any]], bool] | None = None,
 ) -> Path:
     """Reuse the first frozen source asset or allocate a fresh revision path.
@@ -61,7 +60,6 @@ def select_source_asset_revision(
             if str(value or "").strip()
         )
     )
-    repair_reason = str(environment_repair_reason or "").strip()
     if source_sha256 and not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
         raise ValueError("expected_source_sha256 must be one SHA-256 digest")
     if any(not re.fullmatch(r"[0-9a-f]{64}", digest) for digest in compatible_sha256s):
@@ -131,7 +129,6 @@ def select_source_asset_revision(
             return base / prefix
         _reject_forbidden_source_retry(
             revisions,
-            environment_repair_reason=repair_reason,
             expected_source_method=source_method,
         )
         next_revision = max(revision for revision, _ in revisions) + 1
@@ -153,7 +150,6 @@ def select_source_asset_revision(
         return frozen[0][1]
     _reject_forbidden_source_retry(
         revisions,
-        environment_repair_reason=repair_reason,
     )
     next_revision = (
         max([initial_revision - 1, *(revision for revision, _ in revisions)]) + 1
@@ -164,7 +160,6 @@ def select_source_asset_revision(
 def _reject_forbidden_source_retry(
     revisions: list[tuple[int, Path]],
     *,
-    environment_repair_reason: str = "",
     expected_source_method: str = "",
 ) -> None:
     for _, candidate in sorted(revisions):
@@ -193,8 +188,6 @@ def _reject_forbidden_source_retry(
                 and failed_source_method != expected_source_method
             ):
                 continue
-        if str(environment_repair_reason or "").strip():
-            continue
         error = str(failure.get("error") or "terminal_source_failure").strip()
         raise ValueError(f"source_asset_retry_forbidden:{candidate}:{error}")
 

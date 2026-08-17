@@ -465,14 +465,8 @@ def _claim_result_attempt(
     methods: Sequence[str],
     source_seed: int,
     evaluation_seed: int | None,
-    task_iteration: int = 1,
-    baseline_environment_repair: str = "",
     dry_run: bool = False,
 ) -> Path:
-    if not 1 <= int(task_iteration) <= 3:
-        raise ValueError(
-            f"task_iteration_out_of_range:expected=1..3:actual={task_iteration}"
-        )
     root = _repo_path(output_root)
     root.mkdir(parents=True, exist_ok=True)
     manifest_path = root / "attempt_manifest.json"
@@ -488,9 +482,6 @@ def _claim_result_attempt(
         "methods": list(methods),
         "source_seed": int(source_seed),
         "evaluation_seed": evaluation_seed,
-        "task_iteration": int(task_iteration),
-        "max_task_iterations": 3,
-        "baseline_environment_repair": str(baseline_environment_repair or "").strip(),
         "dry_run": bool(dry_run),
         "immutable": True,
         "provenance": provenance,
@@ -7385,8 +7376,6 @@ def cmd_result(args: argparse.Namespace) -> int:
         methods=methods,
         source_seed=source_seed,
         evaluation_seed=task_seed,
-        task_iteration=int(args.task_iteration),
-        baseline_environment_repair=str(args.baseline_environment_repair or ""),
         dry_run=bool(args.dry_run),
     )
     command_records: list[dict[str, Any]] = []
@@ -7847,24 +7836,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     result_parser.add_argument("--task", required=True)
     result_parser.add_argument("--source-seed", type=int, default=SOURCE_SEED)
-    result_parser.add_argument(
-        "--task-iteration",
-        type=int,
-        choices=range(1, 4),
-        default=1,
-        help=(
-            "Immutable task-level revision number. Formal and diagnostic task "
-            "revisions are capped at three; setup/preflight is recorded separately."
-        ),
-    )
-    result_parser.add_argument(
-        "--baseline-environment-repair",
-        default="",
-        help=(
-            "Audit reason for rerunning a frozen baseline after an environment "
-            "failure. This never authorizes changing baseline method details."
-        ),
-    )
     result_parser.add_argument(
         "--method",
         choices=METHODS,

@@ -16,8 +16,8 @@ if [[ "$python_bin" != /* || ! -x "$python_bin" ]]; then
   exit 2
 fi
 env_file="${OMNIFLOW_ENV_FILE:-${asset_root:+$asset_root/.env}}"
-master_source_index="${OMNIFLOW_MASTER_SOURCE_INDEX:-${asset_root:+$asset_root/runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json}}"
-source_index="${OMNIFLOW_ANDROIDWORLD_SOURCE_INDEX:-$master_source_index}"
+master_source_index="${asset_root:+$asset_root/runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json}"
+source_index="$master_source_index"
 source_index_expected_tasks=""
 formal_source_seed=""
 formal_task_seed=""
@@ -117,16 +117,12 @@ read -r formal_source_seed formal_task_seed formal_max_steps \
   formal_model_base_url formal_fixed_task_params formal_fold_state formal_fold_size \
   formal_default_method all_methods \
   source_device default_device fold_serial <<< "$protocol_values"
-expected_source_seed="${OMNIFLOW_ANDROIDWORLD_SOURCE_SEED:-$formal_source_seed}"
-task_seed="${OMNIFLOW_ANDROIDWORLD_TASK_SEED:-$formal_task_seed}"
+expected_source_seed="$formal_source_seed"
+task_seed="$formal_task_seed"
 preflight="$repo/src/experiment/preflight.py"
 selected_method_arg=""
 selected_device_arg=""
 task="${OMNIFLOW_ANDROIDWORLD_TASK:-SystemBluetoothTurnOn}"
-task_iteration="${OMNIFLOW_ANDROIDWORLD_TASK_ITERATION:-1}"
-baseline_environment_repair="${OMNIFLOW_BASELINE_ENVIRONMENT_REPAIR_REASON:-}"
-mobilegpt_source_environment_repair="${OMNIFLOW_MOBILEGPT_SOURCE_ENVIRONMENT_REPAIR_REASON:-}"
-appagent_source_environment_repair="${OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON:-}"
 batch_attempt_id="${OMNIFLOW_BATCH_ATTEMPT_ID:-}"
 device_target="${OMNIFLOW_ANDROIDWORLD_DEVICE:-$default_device}"
 fixed_task_params="$formal_fixed_task_params"
@@ -135,8 +131,7 @@ preflight_minimum_free_gb="${OMNIFLOW_PREFLIGHT_MINIMUM_FREE_GB:-20}"
 max_steps="${OMNIFLOW_ANDROIDWORLD_MAX_STEPS:-$formal_max_steps}"
 max_fallback_steps="${OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS:-$formal_max_fallback_steps}"
 store_path="${OMNIFLOW_ANDROIDWORLD_STORE_PATH:-}"
-ours_store_index="${OMNIFLOW_OURS_STORE_INDEX:-}"
-ours_source_asset_index="${OMNIFLOW_OURS_SOURCE_ASSET_INDEX:-$master_source_index}"
+ours_store_index=""
 memory_root="${OMNIFLOW_EXP_MEMORY_ROOT:-$default_memory_root}"
 memory_index="${OMNIFLOW_EXP_MEMORY_INDEX:-${memory_root:+$memory_root/current.json}}"
 memory_function_catalogs="${OMNIFLOW_MEMORY_FUNCTION_CATALOGS:-}"
@@ -144,8 +139,6 @@ memory_runlog_roots="${OMNIFLOW_MEMORY_RUNLOG_ROOTS:-${asset_root:+$asset_root/r
 memory_result_roots="${OMNIFLOW_MEMORY_RESULT_ROOTS:-${asset_root:+$asset_root/runtime/evals}}"
 memory_mobilegpt_roots="${OMNIFLOW_MEMORY_MOBILEGPT_ROOTS:-}"
 memory_baseline_batch_reports="${OMNIFLOW_MEMORY_BASELINE_BATCH_REPORTS:-}"
-source_selection_manifest="${OMNIFLOW_SOURCE_SELECTION_MANIFEST:-}"
-function_store_selection_manifest="${OMNIFLOW_FUNCTION_STORE_SELECTION_MANIFEST:-}"
 if [[ -n "$results_root" && ":$memory_result_roots:" != *":$results_root:"* ]]; then
   memory_result_roots="${memory_result_roots:+$memory_result_roots:}$results_root"
 fi
@@ -267,16 +260,9 @@ source_collection=0
 all_tasks=0
 batch_task_filter=""
 refresh_memory=0
-convert_source_runlogs=0
-prepare_mobilegpt_memory=0
-convert_runlog_memory_method=""
-runlog_memory_output_root="${OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT:-}"
 e2e_task=""
-  e2e_task_deadline_sec="${OMNIFLOW_E2E_TASK_DEADLINE_SEC:-$formal_task_deadline_sec}"
-mobilegpt_memory_output_root="${OMNIFLOW_MOBILEGPT_MEMORY_OUTPUT_ROOT:-}"
-source_runlog_output_root="${OMNIFLOW_SOURCE_RUNLOG_OUTPUT_ROOT:-${memory_root:+$memory_root/source_runlogs}}"
+e2e_task_deadline_sec="${OMNIFLOW_E2E_TASK_DEADLINE_SEC:-$formal_task_deadline_sec}"
 source_screenshot_roots="${OMNIFLOW_SOURCE_SCREENSHOT_ROOTS:-}"
-runlog_memory_source_runlog="${OMNIFLOW_RUNLOG_MEMORY_SOURCE_RUNLOG:-}"
 
 select_model_endpoint() {
   local profile="$1"
@@ -389,15 +375,6 @@ Options:
                             Run one target in the single-result runner.
   --tasks TASK1,TASK2,...   Select an ordered task-major subset. Implies
                             --all-tasks during experiment execution.
-  --convert-source-runlogs  Convert the indexed legacy source RunLogs once to
-                            omniflow.run_log.v1.
-  --prepare-mobilegpt-memory
-                            Build task-local MobileGPT memory from canonical
-                            RunLogs only. With --check-only, run zero-model
-                            preflight and create nothing.
-  --convert-runlog-memory METHOD
-                            Convert one successful RunLog into native
-                            mobilegpt_offline_retrieval or appagent_demo memory.
   --e2e-task TASK           Run one bounded source-to-matrix task pipeline.
   --source-qualification-only
                             Stop that pipeline after immutable seed-111 Function
@@ -416,13 +393,9 @@ Required external roots:
   OMNITRANSFER_ROOT         Canonical/versioned OmniTransfer checkout.
 
 Optional runtime overrides:
-  PYTHON_BIN, OMNIFLOW_ENV_FILE, OMNIFLOW_ANDROIDWORLD_SOURCE_INDEX,
-  OMNIFLOW_MASTER_SOURCE_INDEX, OMNIFLOW_OURS_STORE_INDEX,
-  OMNIFLOW_MEMORY_MOBILEGPT_ROOTS,
+  PYTHON_BIN, OMNIFLOW_ENV_FILE, OMNIFLOW_MEMORY_MOBILEGPT_ROOTS,
   OMNIFLOW_MEMORY_BASELINE_BATCH_REPORTS,
   OMNIFLOW_ANDROID_SDK_ROOT, OMNIFLOW_JAVA_HOME,
-  OMNIFLOW_MOBILEGPT_SOURCE_ENVIRONMENT_REPAIR_REASON,
-  OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON,
   OMNIFLOW_DEVELOPMENT_OUTPUT_PATH, OMNIFLOW_DEVELOPMENT_MODEL,
   OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE (default: llmthu),
   OMNIFLOW_DEVELOPMENT_CONSOLE_PORT,
@@ -438,24 +411,9 @@ Long-term-memory refresh inputs:
   OMNIFLOW_MEMORY_RUNLOG_ROOTS       Colon-separated evidence roots.
   OMNIFLOW_MEMORY_RESULT_ROOTS       Colon-separated result roots.
   OMNIFLOW_MEMORY_FUNCTION_CATALOGS  Colon-separated Function catalogs.
-  OMNIFLOW_MEMORY_BASELINE_BATCH_REPORTS
-                                     Colon-separated immutable batch summaries
-                                     whose validator results must remain frozen.
-  OMNIFLOW_SOURCE_SELECTION_MANIFEST Optional audited exact-SHA source repairs.
-  OMNIFLOW_FUNCTION_STORE_SELECTION_MANIFEST
-                                     Optional audited exact-SHA Function Store
-                                     conflict selection.
   OMNIFLOW_SOURCE_SCREENSHOT_ROOTS   Optional screenshot roots for legacy repairs.
 
-Source RunLog conversion inputs:
-  OMNIFLOW_SOURCE_RUNLOG_OUTPUT_ROOT Absolute immutable output root.
-  OMNIFLOW_SOURCE_SCREENSHOT_ROOTS   Optional colon-separated screenshot roots.
-  OMNIFLOW_MOBILEGPT_MEMORY_OUTPUT_ROOT
-                                     Absolute immutable batch-attempt root.
-  OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT
-                                     Absolute immutable output for one native
-                                     baseline-memory conversion.
-  --source-runlog PATH              Input RunLog for --convert-runlog-memory.
+Environment adapters:
   OMNIFLOW_BMOCA_ROOT, OMNIFLOW_BMOCA_ANDROID_ENV_ROOT,
   OMNIFLOW_BMOCA_CORPUS_MANIFEST, OMNIFLOW_BMOCA_AVD_HOME,
   OMNIFLOW_BMOCA_OUTPUT_PATH.
@@ -463,15 +421,6 @@ Source RunLog conversion inputs:
 Examples:
   bash scripts/exp/run_androidworld.sh --tasks AudioRecorderRecordAudio
   bash scripts/exp/run_androidworld.sh --refresh-memory
-  bash scripts/exp/run_androidworld.sh --convert-source-runlogs
-  bash scripts/exp/run_androidworld.sh --check-only \
-    --prepare-mobilegpt-memory
-  bash scripts/exp/run_androidworld.sh --prepare-mobilegpt-memory \
-    --tasks ContactsAddContact
-  OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT=/abs/new-memory \
-    bash scripts/exp/run_androidworld.sh \
-      --convert-runlog-memory mobilegpt_offline_retrieval \
-      --source-runlog /abs/success.run_log.json
   bash scripts/exp/run_androidworld.sh --check-only --all-tasks
   bash scripts/exp/run_androidworld.sh --all-tasks \
     --tasks AudioRecorderRecordAudioWithFileName,SystemCopyToClipboard
@@ -529,20 +478,6 @@ while [[ "$#" -gt 0 ]]; do
     --refresh-memory)
       refresh_memory=1
       ;;
-    --convert-source-runlogs)
-      convert_source_runlogs=1
-      ;;
-    --prepare-mobilegpt-memory)
-      prepare_mobilegpt_memory=1
-      ;;
-    --convert-runlog-memory)
-      shift
-      if [[ "$#" -eq 0 || ( "$1" != "mobilegpt_offline_retrieval" && "$1" != "appagent_demo" ) ]]; then
-        echo "--convert-runlog-memory requires mobilegpt_offline_retrieval or appagent_demo." >&2
-        exit 2
-      fi
-      convert_runlog_memory_method="$1"
-      ;;
     --e2e-task)
       shift
       if [[ "$#" -eq 0 || -z "$1" ]]; then
@@ -565,14 +500,6 @@ while [[ "$#" -gt 0 ]]; do
       fi
       e2e_task_deadline_sec="$1"
       ;;
-    --source-runlog)
-      shift
-      if [[ "$#" -eq 0 || -z "$1" ]]; then
-        echo "--source-runlog requires an absolute file path." >&2
-        exit 2
-      fi
-      runlog_memory_source_runlog="$1"
-      ;;
     --tasks)
       shift
       if [[ "$#" -eq 0 || -z "$1" ]]; then
@@ -591,9 +518,7 @@ done
 if [[ "$execution_environment" != "bmoca" && ( -n "$selected_method_arg" || -n "$selected_device_arg" ) ]] && {
   [[ "$development_run" -eq 1 || "$source_collection" -eq 1 ||
     "$all_tasks" -eq 1 || -n "$e2e_task" || -n "$batch_task_filter" ||
-    "$refresh_memory" -eq 1 ||
-    "$convert_source_runlogs" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 ||
-    -n "$convert_runlog_memory_method" ]];
+    "$refresh_memory" -eq 1 ]];
 }; then
   echo "--method/--device are only valid for one direct AndroidWorld result." >&2
   exit 2
@@ -608,7 +533,7 @@ if [[ "$execution_environment" != "bmoca" && "$source_collection" -eq 1 ]]; then
   source_qualification_only=0
 fi
 if [[ "$execution_environment" == "bmoca" ]]; then
-  if [[ "$source_collection" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || -n "$e2e_task" || -n "$selected_device_arg" || "$refresh_memory" -eq 1 || "$convert_source_runlogs" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || -n "$convert_runlog_memory_method" ]]; then
+  if [[ "$source_collection" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || -n "$e2e_task" || -n "$selected_device_arg" || "$refresh_memory" -eq 1 ]]; then
     echo "--environment bmoca cannot be combined with AndroidWorld-only modes." >&2
     exit 2
   fi
@@ -752,90 +677,8 @@ if [[ "$execution_environment" == "bmoca" ]]; then
   cd "$repo"
   exec "$python_bin" "${bmoca_pipeline_args[@]}"
 fi
-if [[ -n "$convert_runlog_memory_method" ]]; then
-  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || -n "$e2e_task" || -n "$batch_task_filter" ]]; then
-    echo "--convert-runlog-memory cannot be combined with another experiment mode." >&2
-    exit 2
-  fi
-  if [[ -z "$runlog_memory_source_runlog" || "$runlog_memory_source_runlog" != /* || ! -f "$runlog_memory_source_runlog" ]]; then
-    echo "--convert-runlog-memory requires an existing absolute --source-runlog." >&2
-    exit 2
-  fi
-  if [[ -z "$runlog_memory_output_root" || "$runlog_memory_output_root" != /* ]]; then
-    echo "--convert-runlog-memory requires absolute OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT." >&2
-    exit 2
-  fi
-  if [[ -e "$runlog_memory_output_root" ]]; then
-    echo "Immutable RunLog memory output already exists: $runlog_memory_output_root" >&2
-    exit 2
-  fi
-  if ! python_bin="$(command -v "$python_bin")"; then
-    echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
-    exit 1
-  fi
-  if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
-    echo "RunLog memory conversion requires an existing absolute OMNIFLOW_ENV_FILE." >&2
-    exit 2
-  fi
-  case "$convert_runlog_memory_method" in
-    mobilegpt_offline_retrieval)
-      runlog_memory_upstream_root="$mobilegpt_root"
-      runlog_memory_model="$formal_model"
-      runlog_memory_embedding_model="text-embedding-v4"
-      ;;
-    appagent_demo)
-      runlog_memory_upstream_root="$appagent_root"
-      runlog_memory_model="$formal_model"
-      runlog_memory_embedding_model=""
-      ;;
-  esac
-  if [[ "$runlog_memory_upstream_root" != /* || ! -d "$runlog_memory_upstream_root" ]]; then
-    echo "Native baseline root missing: $runlog_memory_upstream_root" >&2
-    exit 2
-  fi
-  set -a
-  source "$env_file"
-  set +a
-  if [[ "$convert_runlog_memory_method" == "mobilegpt_offline_retrieval" ]]; then
-    if [[ -z "${OPENAI_API_KEY:-}" || -z "${OPENAI_BASE_URL:-}" ]]; then
-      echo "MobileGPT conversion requires OPENAI_API_KEY/OPENAI_BASE_URL for its embedding model." >&2
-      exit 2
-    fi
-    export MOBILEGPT_EMBEDDING_MODEL="$runlog_memory_embedding_model"
-  elif [[ -z "$runlog_memory_model" ]]; then
-    echo "AppAgent document model is required." >&2
-    exit 2
-  else
-    select_model_endpoint "$formal_model_endpoint_profile"
-    validate_experiment_model "$runlog_memory_model" "$formal_model_endpoint_profile"
-  fi
-  cd "$repo"
-  "$python_bin" - \
-    "$convert_runlog_memory_method" \
-    "$runlog_memory_source_runlog" \
-    "$runlog_memory_output_root" \
-    "$runlog_memory_upstream_root" \
-    "$runlog_memory_model" \
-    "$runlog_memory_embedding_model" <<'PY'
-import json
-import sys
-
-from src.experiment.source_assets import convert_runlog_memory
-
-result = convert_runlog_memory(
-    sys.argv[1],
-    source_run_log=sys.argv[2],
-    output_root=sys.argv[3],
-    upstream_root=sys.argv[4],
-    model=sys.argv[5],
-    embedding_model=sys.argv[6],
-)
-print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
-PY
-  exit 0
-fi
 if [[ "$development_run" -eq 1 ]]; then
-  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || -n "$e2e_task" ]]; then
+  if [[ "$refresh_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || -n "$e2e_task" ]]; then
     echo "--development-run cannot be combined with maintenance, formal matrix, or E2E options." >&2
     exit 2
   fi
@@ -960,7 +803,7 @@ if [[ "$development_run" -eq 1 ]]; then
   exec "${development_command[@]}"
 fi
 if [[ -n "$e2e_task" ]]; then
-  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || -n "$batch_task_filter" ]]; then
+  if [[ "$refresh_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || -n "$batch_task_filter" ]]; then
     echo "--e2e-task cannot be combined with maintenance or matrix-selection options." >&2
     exit 2
   fi
@@ -1077,50 +920,9 @@ if [[ -n "$e2e_task" ]]; then
   cd "$repo"
   exec "$python_bin" "${e2e_args[@]}"
 fi
-if [[ "$convert_source_runlogs" -eq 1 ]]; then
-  if [[ "$refresh_memory" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 ]]; then
-    echo "--convert-source-runlogs cannot be combined with experiment or other maintenance options." >&2
-    exit 2
-  fi
-  if [[ -z "$master_source_index" || "$master_source_index" != /* || ! -f "$master_source_index" ]]; then
-    echo "Source RunLog conversion requires an existing absolute master source index." >&2
-    exit 2
-  fi
-  if [[ -z "$source_runlog_output_root" || "$source_runlog_output_root" != /* ]]; then
-    echo "OMNIFLOW_SOURCE_RUNLOG_OUTPUT_ROOT must be absolute." >&2
-    exit 2
-  fi
-  if ! python_bin="$(command -v "$python_bin")"; then
-    echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
-    exit 1
-  fi
-  source_conversion_args=(
-    -m src.experiment.source_runlogs
-    --source-index "$master_source_index"
-    --output-root "$source_runlog_output_root"
-  )
-  if [[ -n "$source_screenshot_roots" ]]; then
-    IFS=':' read -r -a configured_screenshot_roots <<< "$source_screenshot_roots"
-    for configured_root in "${configured_screenshot_roots[@]}"; do
-      if [[ "$configured_root" != /* || ! -d "$configured_root" ]]; then
-        echo "Screenshot root must be an existing absolute directory: $configured_root" >&2
-        exit 2
-      fi
-      source_conversion_args+=(--screenshot-root "$configured_root")
-    done
-  fi
-  if [[ -n "$batch_task_filter" ]]; then
-    IFS=',' read -r -a conversion_tasks <<< "$batch_task_filter"
-    for conversion_task in "${conversion_tasks[@]}"; do
-      source_conversion_args+=(--task "$conversion_task")
-    done
-  fi
-  cd "$repo"
-  exec "$python_bin" "${source_conversion_args[@]}"
-fi
 if [[ "$refresh_memory" -eq 1 ]]; then
-  if [[ "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || -n "$batch_task_filter" ]]; then
-    echo "--refresh-memory cannot be combined with conversion or experiment run options." >&2
+  if [[ "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || -n "$batch_task_filter" ]]; then
+    echo "--refresh-memory cannot be combined with experiment run options." >&2
     exit 2
   fi
   if [[ -z "$memory_root" || "$memory_root" != /* ]]; then
@@ -1147,20 +949,6 @@ if [[ "$refresh_memory" -eq 1 ]]; then
   )
   if [[ ! -f "$memory_pointer" ]]; then
     memory_args+=(--source-index "$master_source_index")
-  fi
-  if [[ -n "$source_selection_manifest" ]]; then
-    if [[ "$source_selection_manifest" != /* || ! -f "$source_selection_manifest" ]]; then
-      echo "Source selection manifest must be an existing absolute file: $source_selection_manifest" >&2
-      exit 2
-    fi
-    memory_args+=(--source-selection-manifest "$source_selection_manifest")
-  fi
-  if [[ -n "$function_store_selection_manifest" ]]; then
-    if [[ "$function_store_selection_manifest" != /* || ! -f "$function_store_selection_manifest" ]]; then
-      echo "Function Store selection manifest must be an existing absolute file: $function_store_selection_manifest" >&2
-      exit 2
-    fi
-    memory_args+=(--function-store-selection-manifest "$function_store_selection_manifest")
   fi
   if [[ -n "$source_screenshot_roots" ]]; then
     IFS=':' read -r -a configured_screenshot_roots <<< "$source_screenshot_roots"
@@ -1255,20 +1043,10 @@ print(
 )
 PY
 }
-if [[ -n "$batch_task_filter" && "$all_tasks" -eq 0 && "$prepare_mobilegpt_memory" -eq 0 ]]; then
+if [[ -n "$batch_task_filter" && "$all_tasks" -eq 0 ]]; then
   all_tasks=1
 fi
-if [[ "$prepare_mobilegpt_memory" -eq 1 ]]; then
-  if [[ "$dry_run" -eq 1 || "$all_tasks" -eq 1 ]]; then
-    echo "--prepare-mobilegpt-memory cannot be combined with formal experiment axes or --dry-run." >&2
-    exit 2
-  fi
-fi
-if [[ "$task_iteration" == "1" ]]; then
-  default_method="$formal_default_method"
-else
-  default_method="ours"
-fi
+default_method="$formal_default_method"
 method="${selected_method_arg:-${OMNIFLOW_ANDROIDWORLD_METHOD:-$default_method}}"
 case ",$all_methods," in
   *",$method,"*)
@@ -1365,7 +1143,6 @@ fields = (
     ("store_path", "store_sha256"),
     ("source_run_log_path", "source_run_log_sha256"),
     ("transfer_states_path", "transfer_states_sha256"),
-    ("provenance_path", "provenance_sha256"),
 )
 for path_field, hash_field in fields:
     path = Path(str(row.get(path_field) or "")).expanduser()
@@ -1380,24 +1157,6 @@ for path_field, hash_field in fields:
             f"ours_store_index_hash_mismatch:{task_name}:{path_field}:"
             f"expected={expected or 'missing'}:actual={actual}"
         )
-provenance_path = Path(str(row.get("provenance_path") or "")).expanduser()
-if not provenance_path.is_absolute() or not provenance_path.is_file():
-    raise SystemExit(
-        f"ours_store_index_file_missing:{task_name}:provenance_path:{provenance_path}"
-    )
-provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
-collection = provenance.get("semantic_collection")
-semantic_function = str(collection.get("function") or "") if isinstance(collection, dict) else ""
-skill_authored = (
-    semantic_function == "androidworld_runlog_harvester_skill"
-    and isinstance(collection.get("producer"), dict)
-    and collection["producer"].get("kind") == "androidworld_runlog_harvester_skill"
-)
-if not skill_authored:
-    raise SystemExit(
-        f"ours_store_index_mechanical_asset:{task_name}:"
-        "create a Function registration from the androidworld-runlog-harvester skill"
-    )
 store_path = Path(str(row["store_path"])).resolve()
 transfer_path = Path(str(row["transfer_states_path"])).resolve()
 if transfer_path != store_path.with_name("transfer_states.json"):
@@ -1411,73 +1170,6 @@ master_source_index="$memory_source_index"
 source_index="$memory_source_index"
 ours_store_index="$memory_store_index"
 export OMNIFLOW_EXP_MEMORY_INDEX="$memory_index"
-if [[ "$prepare_mobilegpt_memory" -eq 1 ]]; then
-  if [[ "$mobilegpt_root" != /* || ! -d "$mobilegpt_root/Server" ]]; then
-    echo "MobileGPT source-only generation requires an absolute native MobileGPT root: $mobilegpt_root" >&2
-    exit 2
-  fi
-  mobilegpt_batch_args=(
-    --index "$source_index"
-  )
-  if [[ -n "$batch_task_filter" ]]; then
-    IFS=',' read -r -a mobilegpt_batch_tasks <<< "$batch_task_filter"
-    for mobilegpt_batch_task in "${mobilegpt_batch_tasks[@]}"; do
-      if [[ -z "$mobilegpt_batch_task" ]]; then
-        echo "MobileGPT task filter contains an empty task name." >&2
-        exit 2
-      fi
-      mobilegpt_batch_args+=(--task "$mobilegpt_batch_task")
-    done
-  fi
-  cd "$repo"
-  if [[ "$check_only" -eq 1 ]]; then
-    exec "$python_bin" -m src.experiment.mobilegpt_source \
-      preflight-batch "${mobilegpt_batch_args[@]}"
-  fi
-  if [[ -z "$mobilegpt_memory_output_root" ]]; then
-    if [[ -z "$asset_root" || "$asset_root" != /* ]]; then
-      echo "Set OMNIFLOW_MOBILEGPT_MEMORY_OUTPUT_ROOT or OMNIFLOW_EXP_ASSET_ROOT." >&2
-      exit 2
-    fi
-    mobilegpt_memory_output_root="$asset_root/runtime/evals/androidworld_mobilegpt_runlog_direct_memory/attempt-$(date -u +%Y%m%dT%H%M%SZ)-$$"
-  fi
-  if [[ "$mobilegpt_memory_output_root" != /* ]]; then
-    echo "OMNIFLOW_MOBILEGPT_MEMORY_OUTPUT_ROOT must be absolute." >&2
-    exit 2
-  fi
-  if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
-    echo "MobileGPT model generation requires an existing absolute OMNIFLOW_ENV_FILE." >&2
-    exit 2
-  fi
-  set -a
-  source "$env_file"
-  set +a
-  if ! "$python_bin" - "$mobilegpt_root/Server" <<'PY'
-import importlib
-import sys
-
-sys.path.insert(0, sys.argv[1])
-for module_name in (
-    "pandas",
-    "agents.task_agent",
-    "mobilegpt",
-    "screenParser.Encoder",
-    "utils.parsing_utils",
-):
-    importlib.import_module(module_name)
-PY
-  then
-    echo "MobileGPT source-only generation Python dependencies are incomplete: $python_bin" >&2
-    exit 2
-  fi
-  echo "[mobilegpt-memory] start output=$mobilegpt_memory_output_root model=$formal_model"
-  exec "$python_bin" -m src.experiment.mobilegpt_source batch \
-    "${mobilegpt_batch_args[@]}" \
-    --mobilegpt-root "$mobilegpt_root" \
-    --output-root "$mobilegpt_memory_output_root" \
-    --model "$formal_model" \
-    --memory-index "$memory_index"
-fi
 requires_function_asset=0
 if [[ "$method" == "ours" ]]; then
   requires_function_asset=1
@@ -1501,10 +1193,6 @@ if [[ "$check_only" -eq 1 && "$dry_run" -eq 1 ]]; then
   echo "--check-only cannot be combined with --dry-run." >&2
   exit 2
 fi
-if [[ ! "$task_iteration" =~ ^[1-3]$ ]]; then
-  echo "OMNIFLOW_ANDROIDWORLD_TASK_ITERATION must be an integer from 1 through 3." >&2
-  exit 2
-fi
 if [[ ! "$max_fallback_steps" =~ ^[0-5]$ ]]; then
   echo "OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS must be an integer from 0 through 5." >&2
   exit 2
@@ -1514,19 +1202,10 @@ if [[ ! "$max_steps" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 timeout_sec="$((max_steps * formal_step_timeout_sec + official_validator_flush_grace_sec))"
-if [[ ! "$expected_source_seed" =~ ^[0-9]+$ ]]; then
-  echo "OMNIFLOW_ANDROIDWORLD_SOURCE_SEED must be a non-negative integer." >&2
-  exit 2
-fi
-if [[ ! "$task_seed" =~ ^[0-9]+$ ]]; then
-  echo "OMNIFLOW_ANDROIDWORLD_TASK_SEED must be a non-negative integer." >&2
-  exit 2
-fi
 if [[ ! "$manage_emulators" =~ ^[01]$ ]]; then
   echo "OMNIFLOW_ANDROIDWORLD_MANAGE_EMULATORS must be 0 or 1." >&2
   exit 2
 fi
-printf -v iteration_label '%02d' "$task_iteration"
 if [[ -n "$batch_attempt_id" ]]; then
   if [[ ! "$batch_attempt_id" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
     echo "OMNIFLOW_BATCH_ATTEMPT_ID must be one safe path component." >&2
@@ -1534,7 +1213,7 @@ if [[ -n "$batch_attempt_id" ]]; then
   fi
   attempt_id="$batch_attempt_id"
 else
-  attempt_id="iteration_${iteration_label}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  attempt_id="result-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 fi
 attempt_series_root="${results_root:+$results_root/androidworld_single_task_attempts/$task}"
 output_root="${OMNIFLOW_ANDROIDWORLD_OUTPUT_PATH:-$attempt_series_root/$attempt_id}"
@@ -1545,7 +1224,6 @@ requires_omnitransfer=0
 need_native_preflight=0
 need_mobilegpt_preflight=0
 need_appagent_preflight=0
-contains_baseline_method=0
 
 case "$method" in
     ours)
@@ -1554,31 +1232,23 @@ case "$method" in
       ;;
     fixed_replay)
       need_native_preflight=1
-      contains_baseline_method=1
       ;;
     mobilegpt_offline_retrieval)
       need_mobilegpt_preflight=1
       requires_mobilegpt_source_memory=1
-      contains_baseline_method=1
       ;;
     appagent_demo)
       need_appagent_preflight=1
       requires_appagent_source_memory=1
-      contains_baseline_method=1
       ;;
     t3a_hint)
       need_native_preflight=1
-      contains_baseline_method=1
       ;;
     *)
       echo "Unsupported paper method: $method" >&2
       exit 2
       ;;
 esac
-if [[ "$task_iteration" != "1" && "$contains_baseline_method" -eq 1 && -z "$baseline_environment_repair" ]]; then
-  echo "Baseline methods are frozen after iteration 1. Set OMNIFLOW_BASELINE_ENVIRONMENT_REPAIR_REASON only for an audited environment-only retry." >&2
-  exit 2
-fi
 
 if [[ -z "$asset_root" || -z "$results_root" ]]; then
   echo "Set OMNIFLOW_EXP_ASSET_ROOT and OMNIFLOW_EXP_RESULTS_ROOT to external absolute paths." >&2
@@ -1586,10 +1256,6 @@ if [[ -z "$asset_root" || -z "$results_root" ]]; then
 fi
 if [[ "$asset_root" != /* || "$results_root" != /* ]]; then
   echo "Experiment asset and result roots must be absolute paths." >&2
-  exit 2
-fi
-if [[ -n "$ours_store_index" && "$ours_store_index" != /* ]]; then
-  echo "OMNIFLOW_OURS_STORE_INDEX must be an absolute path." >&2
   exit 2
 fi
 if ! python_bin="$(command -v "$python_bin")"; then
@@ -1653,11 +1319,11 @@ export JAVA_HOME="$java_home"
 export PATH="$java_home/bin:$PATH"
 echo "[java] home=$java_home major=$java_major version=$java_version_line"
 select_source_asset_revision() {
-  local hash_index="${5:-$source_index}"
-  local expected_source_model="${6:-}"
-  local expected_schema_version="${7:-}"
-  local expected_source_method="${8:-}"
-  "$python_bin" - "$repo" "$1" "$2" "$hash_index" "$3" "${4:-}" "$expected_source_model" "$expected_schema_version" "$expected_source_method" "$memory_index" <<'PY'
+  local hash_index="${4:-$source_index}"
+  local expected_source_model="${5:-}"
+  local expected_schema_version="${6:-}"
+  local expected_source_method="${7:-}"
+  "$python_bin" - "$repo" "$1" "$2" "$hash_index" "$3" "$expected_source_model" "$expected_schema_version" "$expected_source_method" "$memory_index" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1691,7 +1357,7 @@ if lineage is not None:
         raise SystemExit(f"canonical_source_run_log_lineage_invalid:{sys.argv[5]}")
     compatible_source_sha256s.append(str(lineage.get("source_sha256") or ""))
 candidate_validator = None
-if sys.argv[8] == "omniflow.mobilegpt-runlog-direct-memory.v1":
+if sys.argv[7] == "omniflow.mobilegpt-runlog-direct-memory.v1":
     from src.experiment.androidworld import validate_mobilegpt_adapted_memory
     from src.experiment.artifact_memory import (
         canonical_mobilegpt_memory_from_memory,
@@ -1705,7 +1371,7 @@ if sys.argv[8] == "omniflow.mobilegpt-runlog-direct-memory.v1":
         or source_row.get("source_run_log")
         or ""
     ).strip()
-    memory_index = Path(sys.argv[10]).expanduser().resolve()
+    memory_index = Path(sys.argv[9]).expanduser().resolve()
     if memory_index.is_file():
         indexed_memory = canonical_mobilegpt_memory_from_memory(
             memory_index=memory_index,
@@ -1727,7 +1393,7 @@ if sys.argv[8] == "omniflow.mobilegpt-runlog-direct-memory.v1":
                         source_seed=SOURCE_SEED,
                         source_run_log=source_run_log,
                         compatible_source_sha256s=compatible_source_sha256s,
-                        expected_model=sys.argv[7],
+                        expected_model=sys.argv[6],
                         expected_source_method=indexed_source_method,
                     )
                 except (OSError, TypeError, ValueError):
@@ -1744,13 +1410,13 @@ if sys.argv[8] == "omniflow.mobilegpt-runlog-direct-memory.v1":
                 source_seed=SOURCE_SEED,
                 source_run_log=source_run_log,
                 compatible_source_sha256s=compatible_source_sha256s,
-                expected_model=sys.argv[7],
-                expected_source_method=sys.argv[9],
+                expected_model=sys.argv[6],
+                expected_source_method=sys.argv[8],
             )
         except (OSError, TypeError, ValueError):
             return False
         return True
-elif sys.argv[8] == "omniflow.appagent-demo-memory.v2":
+elif sys.argv[7] == "omniflow.appagent-demo-memory.v2":
     def candidate_validator(_candidate, payload):
         return (
             payload.get("conversion_mode") == "canonical_runlog_offline"
@@ -1762,10 +1428,9 @@ try:
         manifest_name=sys.argv[3],
         expected_source_sha256=source_sha256,
         compatible_source_sha256s=compatible_source_sha256s,
-        expected_source_model=sys.argv[7],
-        expected_schema_version=sys.argv[8],
-        expected_source_method=sys.argv[9],
-        environment_repair_reason=sys.argv[6],
+        expected_source_model=sys.argv[6],
+        expected_schema_version=sys.argv[7],
+        expected_source_method=sys.argv[8],
         candidate_validator=candidate_validator,
     )
 except ValueError as error:
@@ -1799,7 +1464,6 @@ if [[ "$all_tasks" -eq 0 && "$requires_mobilegpt_source_memory" -eq 1 && -z "$mo
       "$mobilegpt_source_base" \
       "$mobilegpt_source_manifest_name" \
       "$task" \
-      "$mobilegpt_source_environment_repair" \
       "$source_index" \
       "$formal_model" \
       "$mobilegpt_source_schema" \
@@ -1814,7 +1478,6 @@ if [[ "$all_tasks" -eq 0 && "$requires_appagent_source_memory" -eq 1 && -z "$app
       "$appagent_source_base" \
       "appagent_demo_manifest.json" \
       "$task" \
-      "$appagent_source_environment_repair" \
       "$source_index" \
       "" \
       "omniflow.appagent-demo-memory.v2"
@@ -1861,10 +1524,6 @@ if [[ "$all_tasks" -eq 1 ]]; then
     || "$fold_state" != "$formal_fold_state" \
     || "$fold_size" != "$formal_fold_size" ]]; then
     echo "--all-tasks requires the frozen formal protocol: source_seed=$formal_source_seed task_seed=$formal_task_seed max_steps=$formal_max_steps max_fallback_steps=$formal_max_fallback_steps fixed_task_params=$formal_fixed_task_params fold_state=$formal_fold_state fold_size=$formal_fold_size" >&2
-    exit 2
-  fi
-  if [[ "$task_iteration" != "1" && -z "$baseline_environment_repair" ]]; then
-    echo "--all-tasks iterations after 1 require an audited environment repair reason." >&2
     exit 2
   fi
   if [[ ! -f "$source_index" ]]; then
@@ -1954,13 +1613,12 @@ PY
   exit "$batch_status"
 fi
 if [[ "${OMNIFLOW_BATCH_CHILD:-0}" != "1" ]]; then
-"$python_bin" - "$task_iteration" "$attempt_series_root" "$(dirname "$output_root")" <<'PY'
+"$python_bin" - "$attempt_series_root" "$(dirname "$output_root")" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-iteration = int(sys.argv[1])
-roots = {Path(value).expanduser().resolve() for value in sys.argv[2:]}
+roots = {Path(value).expanduser().resolve() for value in sys.argv[1:]}
 matches = []
 for root in roots:
     if not root.is_dir():
@@ -1972,13 +1630,13 @@ for root in roots:
             continue
         if (
             manifest.get("dry_run") is not True
-            and int(manifest.get("task_iteration") or 0) == iteration
+            and manifest.get("task_name")
         ):
             matches.append(str(manifest_path))
 if matches:
     raise SystemExit(
-        "task_iteration_already_executed:"
-        f"iteration={iteration}:manifests={','.join(sorted(matches))}"
+        "task_result_already_executed:"
+        f"manifests={','.join(sorted(matches))}"
     )
 PY
 fi
@@ -2623,7 +2281,6 @@ command=(
   --adb-path "$adb_bin"
   --task "$task"
   --source-seed "$expected_source_seed"
-  --task-iteration "$task_iteration"
   --output-path "$output_root"
   --master-source-index "$master_source_index"
   --result-registry-root "$results_root/androidworld_validator/runs"
@@ -2640,9 +2297,6 @@ command=(
   --model "$paper_model"
   --planner-provider openai
 )
-if [[ -n "$baseline_environment_repair" ]]; then
-  command+=(--baseline-environment-repair "$baseline_environment_repair")
-fi
 command+=(--method "$method")
 if [[ "$fixed_task_params" != "1" ]]; then
   command+=(--no-fixed-task-params --task-params-json "")

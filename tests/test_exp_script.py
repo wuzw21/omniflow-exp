@@ -110,18 +110,22 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "--devices" not in completed.stdout
     assert "--tasks" in completed.stdout
     assert "--convert-ours-assets" not in completed.stdout
-    assert "--convert-runlog-memory" in completed.stdout
+    assert "--convert-runlog-memory" not in completed.stdout
+    assert "--convert-source-runlogs" not in completed.stdout
+    assert "--prepare-mobilegpt-memory" not in completed.stdout
     assert "--refresh-memory" in completed.stdout
     assert "--e2e-task" in completed.stdout
     assert "--source-backend" not in completed.stdout
     assert "--page-store" not in completed.stdout
     assert "--mobilegpt-native-cold-warm" not in completed.stdout
-    assert "--source-runlog" in completed.stdout
+    assert "--source-runlog" not in completed.stdout
     assert "--task-deadline-sec" in completed.stdout
     assert "OMNIFLOW_EXP_ASSET_ROOT" in completed.stdout
     assert "OMNIFLOW_EXP_MEMORY_ROOT" in completed.stdout
     assert "OMNIFLOW_OURS_AUTHORING_MANIFEST" not in completed.stdout
-    assert "OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT" in completed.stdout
+    assert "OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT" not in completed.stdout
+    assert "OMNIFLOW_SOURCE_SELECTION_MANIFEST" not in completed.stdout
+    assert "OMNIFLOW_FUNCTION_STORE_SELECTION_MANIFEST" not in completed.stdout
     assert "OMNIFLOW_DEVELOPMENT_OUTPUT_PATH" in completed.stdout
     assert "OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP" in completed.stdout
     assert "cold-restarted before every pending result" in completed.stdout
@@ -143,8 +147,8 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert 'omnitransfer_root="${OMNITRANSFER_ROOT:-$workspace_root/OmniTransfer}"' in (
         script_text
     )
-    assert "ours_store_index_mechanical_asset" in script_text
-    assert "androidworld_runlog_harvester_skill" in script_text
+    assert "provenance_path" not in script_text
+    assert "androidworld_runlog_harvester_skill" not in script_text
     assert f'mobilegpt_source_schema="{MOBILEGPT_MEMORY_SCHEMA}"' in script_text
     assert f'mobilegpt_source_method="{MOBILEGPT_SOURCE_METHOD}"' in script_text
     assert script_text.count(MOBILEGPT_MEMORY_SCHEMA) >= 2
@@ -184,58 +188,11 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "formal_cell_timeout_sec" not in script_text
 
 
-def test_runlog_memory_mode_does_not_treat_disabled_diagnostic_mode_as_active(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "source.json"
-    source.write_text("{}", encoding="utf-8")
-    completed = subprocess.run(
-        [
-            "bash",
-            str(SCRIPT),
-            "--convert-runlog-memory",
-            "mobilegpt_offline_retrieval",
-            "--source-runlog",
-            str(source),
-        ],
-        cwd=REPO,
-        env={
-            **os.environ,
-            "OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT": str(tmp_path / "output"),
-            "OMNIFLOW_ENV_FILE": str(tmp_path / "missing.env"),
-        },
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert completed.returncode == 2
-    assert "cannot be combined" not in completed.stderr
-    assert "OMNIFLOW_ENV_FILE" in completed.stderr
-
-
 def test_selected_model_profile_is_exported_for_native_openai_clients() -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
 
     assert 'export OPENAI_API_KEY="$selected_model_api_key"' in script_text
     assert 'export OPENAI_BASE_URL="$selected_model_base_url"' in script_text
-
-
-def test_appagent_runlog_conversion_uses_offline_visual_document_model() -> None:
-    script_text = SCRIPT.read_text(encoding="utf-8")
-
-    assert 'runlog_memory_model="$formal_model"' in script_text
-    assert (
-        'if [[ "$convert_runlog_memory_method" == "mobilegpt_offline_retrieval" ]]'
-        in script_text
-    )
-
-
-def test_mobilegpt_runlog_conversion_uses_independent_embedding_model() -> None:
-    script_text = SCRIPT.read_text(encoding="utf-8")
-
-    assert 'runlog_memory_embedding_model="text-embedding-v4"' in script_text
-    assert 'runlog_memory_model="$formal_model"' in script_text
 
 
 def test_mobilegpt_runtime_uses_sealed_embedding_contract_and_split_endpoints() -> None:
@@ -505,7 +462,7 @@ def test_development_run_rejects_incomplete_code_release_before_device_start(
     assert "src/experiment/development_emulator.py" in completed.stderr
 
 
-def test_experiment_script_prefers_existing_miniconda_base_python(
+def test_experiment_script_uses_explicit_python_override(
     tmp_path: Path,
 ) -> None:
     account_root = tmp_path / "account"
@@ -530,6 +487,7 @@ def test_experiment_script_prefers_existing_miniconda_base_python(
         env={
             **os.environ,
             "HOME": str(account_root),
+            "PYTHON_BIN": str(base_python),
             "SCRIPT_PREFIX": str(script_prefix),
         },
         check=False,
@@ -658,6 +616,7 @@ def test_default_avd_system_image_matches_host_architecture(
     environment = {
         **os.environ,
         "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        "PYTHON_BIN": sys.executable,
         "SCRIPT_PREFIX": str(script_prefix),
     }
 
@@ -706,6 +665,7 @@ def test_default_android_sdk_root_prefers_macos_standard_path(tmp_path: Path) ->
         cwd=REPO,
         env={
             **os.environ,
+            "PYTHON_BIN": sys.executable,
             "SCRIPT_PREFIX": str(script_prefix),
             "TEST_ROOT": str(tmp_path),
         },
@@ -737,7 +697,11 @@ def test_default_topology_uses_three_distinct_device_instances(
             "\"$source_device\" \"$device_target\" \"$emulator_avds\"",
         ],
         cwd=REPO,
-        env={**os.environ, "SCRIPT_PREFIX": str(script_prefix)},
+        env={
+            **os.environ,
+            "PYTHON_BIN": sys.executable,
+            "SCRIPT_PREFIX": str(script_prefix),
+        },
         check=False,
         capture_output=True,
         text=True,
@@ -909,8 +873,6 @@ def test_check_only_is_read_only_before_any_runtime_output(
         "OMNIFLOW_EXP_ASSET_ROOT": str(assets),
         "OMNIFLOW_EXP_RESULTS_ROOT": str(results),
         "OMNIFLOW_ENV_FILE": str(env_file),
-        "OMNIFLOW_ANDROIDWORLD_SOURCE_INDEX": str(source_index),
-        "OMNIFLOW_MASTER_SOURCE_INDEX": str(source_index),
         "OMNIFLOW_ANDROID_WORLD_ROOT": str(android_world),
         "OMNIFLOW_ADB_PATH": str(fake_adb),
         "OMNIFLOW_ANDROIDWORLD_MANAGE_EMULATORS": "0",
@@ -958,7 +920,17 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
     results = tmp_path / "results"
     runlogs.mkdir()
     results.mkdir()
-    source_index = tmp_path / "source-index.json"
+    assets = tmp_path / "assets"
+    source_index = (
+        assets
+        / "runtime"
+        / "evals"
+        / "androidworld_validator"
+        / "core_archive"
+        / "success_source_runlogs"
+        / "index_by_task.json"
+    )
+    source_index.parent.mkdir(parents=True)
     source_index.write_text("{}", encoding="utf-8")
     catalog = tmp_path / "catalog.json"
     catalog.write_text("{}", encoding="utf-8")
@@ -974,8 +946,8 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
         **os.environ,
         "PYTHON_BIN": str(fake_python),
         "CAPTURE_ARGS": str(captured),
+        "OMNIFLOW_EXP_ASSET_ROOT": str(assets),
         "OMNIFLOW_EXP_MEMORY_ROOT": str(memory_root),
-        "OMNIFLOW_MASTER_SOURCE_INDEX": str(source_index),
         "OMNIFLOW_MEMORY_RUNLOG_ROOTS": str(runlogs),
         "OMNIFLOW_MEMORY_RESULT_ROOTS": str(results),
         "OMNIFLOW_EXP_RESULTS_ROOT": str(results),
