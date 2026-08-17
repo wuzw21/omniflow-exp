@@ -1,0 +1,44 @@
+import importlib.util
+from types import SimpleNamespace
+from pathlib import Path
+
+import pytest
+
+_HARNESS_PATH = Path(__file__).parents[1] / "tools" / "manual_androidworld_harness.py"
+_SPEC = importlib.util.spec_from_file_location("manual_androidworld_harness", _HARNESS_PATH)
+assert _SPEC and _SPEC.loader
+_MODULE = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_MODULE)
+_find_ui_element_index = _MODULE._find_ui_element_index
+
+
+def test_find_ui_element_index_accepts_native_dicts_and_exact_selector():
+    elements = [
+        {"resource_name": "com.example:id/other", "text": "Submit"},
+        {"resource_name": "submitButton", "text": "Submit"},
+    ]
+
+    assert _find_ui_element_index(elements, resource_name="submitButton") == 1
+
+
+def test_find_ui_element_index_accepts_native_objects():
+    elements = [SimpleNamespace(resource_name="clearButton", text="Clear")]
+
+    assert _find_ui_element_index(elements, text="Clear") == 0
+
+
+def test_find_ui_element_index_rejects_ambiguous_or_missing_targets():
+    elements = [
+        {"content_description": "More options"},
+        {"content_description": "More options"},
+    ]
+
+    with pytest.raises(ValueError, match="multiple current UI elements"):
+        _find_ui_element_index(elements, content_description="More options")
+    with pytest.raises(ValueError, match="no current UI element"):
+        _find_ui_element_index(elements, resource_name="submitButton")
+
+
+def test_find_ui_element_index_requires_one_selector():
+    with pytest.raises(ValueError, match="exactly one"):
+        _find_ui_element_index([], text="Submit", resource_name="submitButton")

@@ -4,6 +4,11 @@ This intentionally does not import the experiment launcher or an agent.  The
 operator sends one JSON command at a time, reads the native observation, and
 chooses the next AndroidWorld JSONAction.  The official task validator remains
 the only success signal.
+
+In addition to ``act``, the interactive protocol accepts a native selector
+click, for example ``{"cmd":"click","resource_name":"submitButton"}``.
+The selector is resolved against a freshly observed UI tree and still executes
+through AndroidWorld's official index-based JSONAction click.
 """
 
 from __future__ import annotations
@@ -41,6 +46,44 @@ def _jsonable(value: Any) -> Any:
     if hasattr(value, "tolist"):
         return _jsonable(value.tolist())
     return str(value)
+
+
+def _find_ui_element_index(
+    ui_elements: list[Any],
+    *,
+    resource_name: str | None = None,
+    text: str | None = None,
+    content_description: str | None = None,
+) -> int:
+    """Resolve one current native UI element without using coordinates."""
+    selectors = {
+        "resource_name": resource_name,
+        "text": text,
+        "content_description": content_description,
+    }
+    selectors = {key: value for key, value in selectors.items() if value is not None}
+    if len(selectors) != 1:
+        raise ValueError(
+            "exactly one of resource_name, text, or content_description is required"
+        )
+
+    key, expected = next(iter(selectors.items()))
+    matches = []
+    for index, element in enumerate(ui_elements):
+        actual = (
+            element.get(key)
+            if isinstance(element, dict)
+            else getattr(element, key, None)
+        )
+        if actual == expected:
+            matches.append(index)
+    if not matches:
+        raise ValueError(f"no current UI element matched {key}={expected!r}")
+    if len(matches) > 1:
+        raise ValueError(
+            f"multiple current UI elements matched {key}={expected!r}: {matches}"
+        )
+    return matches[0]
 
 
 class ManualAndroidWorld:
@@ -125,6 +168,19 @@ class ManualAndroidWorld:
             "step_index": len(self._steps),
             "observation": self._last_observation,
         }
+
+    def click_target(self, selector: dict[str, Any]) -> dict[str, Any]:
+        """Click one element resolved from the latest native observation."""
+        # Refresh the native state immediately before resolving the selector so
+        # a delayed manual decision cannot click an index from an old screen.
+        self.observe()
+        index = _find_ui_element_index(
+            self._last_observation["ui_elements"],
+            resource_name=selector.get("resource_name"),
+            text=selector.get("text"),
+            content_description=selector.get("content_description"),
+        )
+        return self.act({"action_type": "click", "index": index})
 
     def act(self, action_payload: dict[str, Any]) -> dict[str, Any]:
         if self._last_observation is None:
@@ -246,6 +302,8 @@ def main() -> int:
             kind = command.get("cmd")
             if kind == "observe":
                 result = harness.observe(stable=bool(command.get("stable", True)))
+            elif kind == "click":
+                result = harness.click_target(dict(command.get("target", command)))
             elif kind == "act":
                 result = harness.act(dict(command["action"]))
             elif kind == "validate":
