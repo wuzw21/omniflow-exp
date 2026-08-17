@@ -101,6 +101,7 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "--environment" in completed.stdout
     assert "OMNIFLOW_BMOCA_ENVIRONMENT_IDS" in completed.stdout
     assert "OMNIFLOW_BMOCA_WORKERS" in completed.stdout
+    assert "OMNIFLOW_BMOCA_SOURCE_STATES_PATH" in completed.stdout
     assert "script-replay" in completed.stdout
     assert "--development-run" in completed.stdout
     assert "--stock-capture" in completed.stdout
@@ -136,6 +137,8 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
         'androidworld-experiment-memory-v1"' in script_text
     )
     assert "validate_model_endpoint_auth" in script_text
+    assert "src.integrations.script_replay prepare" in script_text
+    assert 'store_path="$bmoca_output_path/source_function/store.json"' in script_text
     assert 'f\"{base_url}/models\"' in script_text
     assert 'omnitransfer_root="${OMNITRANSFER_ROOT:-$workspace_root/OmniTransfer}"' in (
         script_text

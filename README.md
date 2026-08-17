@@ -43,6 +43,9 @@ zero-model MobileGPT-style semantic-selector comparison on the same official
 environments. It never uses resource IDs: pointer actions require a unique
 text/content-description or local child/parent structural locator on a stable
 target page.
+For one-task evaluation, pass the successful canonical source RunLog through
+`--source-runlog`; the same entry automatically builds the single replay
+Function from its sibling `transfer_states.json` before running env100–109.
 All environment jobs are submitted together, with a per-AVD execution lock for
 snapshots that share the same virtual device.
 The entry pins the maintained B-MoCA revision whose device builder completes

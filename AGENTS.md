@@ -129,6 +129,9 @@ than fabricating experience or changing the baseline.
   IDs are prohibited. It has no Planner, model, coordinate fallback, DP, or
   OmniTransfer call. Two consecutive semantic page observations must be stable
   and free of visible progress indicators before any pointer action.
+  With `--source-runlog`, the unified entry first performs a schema-only,
+  one-RunLog-to-one-Function conversion using the sibling transfer-state
+  catalog; it does not split, rewrite, or semantically enhance the trajectory.
 
 ## Local and 9207 synchronization
 

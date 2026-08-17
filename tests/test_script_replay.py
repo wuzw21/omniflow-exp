@@ -4,7 +4,10 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from src.integrations.script_replay import run_script_replay
+from src.integrations.script_replay import (
+    prepare_script_replay_store,
+    run_script_replay,
+)
 
 
 class _Host:
@@ -58,6 +61,78 @@ def _write_store(path: Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def test_prepare_script_replay_store_from_canonical_runlog(tmp_path: Path) -> None:
+    runlog_path = tmp_path / "runlog.json"
+    states_path = tmp_path / "transfer_states.json"
+    runlog_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.canonical_run_log.v1",
+                "run_id": "source-run",
+                "goal": "open Chrome",
+                "status": "succeeded",
+                "success": True,
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "before_state_id": "source",
+                        "action": {
+                            "tool": "click",
+                            "args": {"x": 500, "y": 500},
+                        },
+                        "result": {"success": True},
+                        "after_state_id": "target",
+                    }
+                ],
+                "diagnostics": {"task_id": "chrome/open_Chrome"},
+                "final_state_id": "target",
+            }
+        ),
+        encoding="utf-8",
+    )
+    states_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.transfer-state-catalog.v1",
+                "run_id": "source-run",
+                "states": {
+                    "source": {
+                        "state_id": "source",
+                        "xml": '<hierarchy width="1000" height="1000" />',
+                    },
+                    "target": {
+                        "state_id": "target",
+                        "xml": '<hierarchy width="1000" height="1000" />',
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = prepare_script_replay_store(
+        runlog_path=runlog_path,
+        source_states_path=states_path,
+        output_root=tmp_path / "prepared",
+        expected_task_id="chrome/open_Chrome",
+    )
+
+    store = json.loads(Path(report["store_path"]).read_text(encoding="utf-8"))
+    function = next(iter(store["functions"].values()))
+    assert function["steps"] == [
+        {
+            "step_index": 0,
+            "source_state_id": "source",
+            "action": {"tool": "click", "args": {"x": 500, "y": 500}},
+        }
+    ]
+    assert function["checker_rules"] == []
+    assert report["model_calls"] == 0
+    assert report["step_count"] == 1
+    assert (tmp_path / "prepared" / "source.runlog.json").is_file()
+    assert (tmp_path / "prepared" / "transfer_states.json").is_file()
 
 
 def test_script_replay_never_uses_resource_id(tmp_path: Path) -> None:

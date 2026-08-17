@@ -7,10 +7,12 @@ and execution fallbacks are deliberately excluded.
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
+import shutil
 import time
 from typing import Any, Mapping
 from xml.etree import ElementTree
@@ -44,6 +46,122 @@ class ScriptReplayResult:
             "fallback_steps": 0,
             **({"failure_reason": self.error} if self.error else {}),
         }
+
+
+def prepare_script_replay_store(
+    *,
+    runlog_path: str | Path,
+    source_states_path: str | Path,
+    output_root: str | Path,
+    expected_task_id: str | None = None,
+) -> dict[str, Any]:
+    """Convert one successful canonical RunLog into one replay Function."""
+
+    from omniflow.functions.assets import FunctionStore, parse_function_artifact
+
+    source_runlog = Path(runlog_path).expanduser().resolve()
+    source_states = Path(source_states_path).expanduser().resolve()
+    root = Path(output_root).expanduser().resolve()
+    if not source_runlog.is_file():
+        raise FileNotFoundError(f"script_replay_source_runlog_missing:{source_runlog}")
+    if not source_states.is_file():
+        raise FileNotFoundError(f"script_replay_source_states_missing:{source_states}")
+    if root.exists() and any(root.iterdir()):
+        raise FileExistsError(f"script_replay_output_not_empty:{root}")
+
+    runlog = json.loads(source_runlog.read_text(encoding="utf-8"))
+    catalog = json.loads(source_states.read_text(encoding="utf-8"))
+    if not isinstance(runlog, dict) or runlog.get("schema_version") != (
+        "omniflow.canonical_run_log.v1"
+    ):
+        raise ValueError("script_replay_canonical_runlog_required")
+    if runlog.get("success") is not True or runlog.get("status") != "succeeded":
+        raise ValueError("script_replay_successful_runlog_required")
+    if not isinstance(catalog, dict) or catalog.get("schema_version") != (
+        "omniflow.transfer-state-catalog.v1"
+    ):
+        raise ValueError("script_replay_source_state_catalog_required")
+    if str(catalog.get("run_id") or "") != str(runlog.get("run_id") or ""):
+        raise ValueError("script_replay_source_lineage_mismatch")
+    states = catalog.get("states")
+    if not isinstance(states, dict):
+        raise ValueError("script_replay_source_states_invalid")
+
+    diagnostics = runlog.get("diagnostics")
+    diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+    task_id = str(diagnostics.get("task_id") or expected_task_id or "").strip()
+    if expected_task_id and task_id and task_id != str(expected_task_id):
+        raise ValueError(
+            f"script_replay_task_mismatch:{expected_task_id}:{task_id}"
+        )
+    if not task_id:
+        raise ValueError("script_replay_task_id_required")
+    goal = str(runlog.get("goal") or "").strip()
+    if not goal:
+        raise ValueError("script_replay_goal_required")
+
+    function_steps: list[dict[str, Any]] = []
+    for raw_step in runlog.get("steps") or ():
+        if not isinstance(raw_step, dict):
+            continue
+        result = raw_step.get("result")
+        if not isinstance(result, dict) or result.get("success") is not True:
+            continue
+        source_state_id = str(raw_step.get("before_state_id") or "").strip()
+        if source_state_id not in states:
+            raise ValueError(
+                f"script_replay_source_state_missing:{source_state_id or 'missing'}"
+            )
+        action = raw_step.get("action")
+        if not isinstance(action, dict):
+            raise ValueError("script_replay_source_action_invalid")
+        function_steps.append(
+            {
+                "step_index": len(function_steps),
+                "source_state_id": source_state_id,
+                "action": action,
+            }
+        )
+    if not function_steps:
+        raise ValueError("script_replay_source_actions_required")
+
+    function_id = "script_replay_" + re.sub(
+        r"[^a-z0-9]+", "_", task_id.lower()
+    ).strip("_")
+    function = parse_function_artifact(
+        {
+            "schema_version": "omniflow.function.v2",
+            "function_id": function_id,
+            "name": goal,
+            "description": f"Replay the successful source trajectory for: {goal}",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": False,
+            },
+            "bindings": [],
+            "steps": function_steps,
+            "checker_rules": [],
+            "agent_visible": True,
+        }
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    store_path = root / "store.json"
+    FunctionStore(store_path).put_function(function)
+    shutil.copy2(source_states, root / "transfer_states.json")
+    shutil.copy2(source_runlog, root / "source.runlog.json")
+    return {
+        "schema_version": "omniflow.script-replay-source.v1",
+        "task_id": task_id,
+        "run_id": str(runlog.get("run_id") or ""),
+        "function_id": function_id,
+        "step_count": len(function_steps),
+        "store_path": str(store_path),
+        "source_states_path": str(root / "transfer_states.json"),
+        "source_runlog_path": str(root / "source.runlog.json"),
+        "model_calls": 0,
+    }
 
 
 def run_script_replay(
@@ -465,3 +583,28 @@ def _target_extent(observation: Any, xml: str) -> tuple[float, float]:
     except (TypeError, ValueError):
         width = height = 0
     return (width, height) if width > 0 and height > 0 else _xml_extent(_xml_root(xml, error="script_replay_target_xml_invalid"))
+
+
+def _main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    prepare = subparsers.add_parser(
+        "prepare", description="Build one replay Function from a successful RunLog."
+    )
+    prepare.add_argument("--runlog", required=True)
+    prepare.add_argument("--source-states", required=True)
+    prepare.add_argument("--output-root", required=True)
+    prepare.add_argument("--task-id", required=True)
+    args = parser.parse_args()
+    report = prepare_script_replay_store(
+        runlog_path=args.runlog,
+        source_states_path=args.source_states,
+        output_root=args.output_root,
+        expected_task_id=args.task_id,
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

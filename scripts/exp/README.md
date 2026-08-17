@@ -38,6 +38,23 @@ attempt is preserved under the result directory. Selector/validator failures
 are method outcomes and are never retried. Set
 `OMNIFLOW_BMOCA_ENVIRONMENT_RETRIES=0` to disable environment retries.
 
+The one-task source-to-ten-environment path is one unified invocation. When
+`OMNIFLOW_SINGLE_TASK_STORE_PATH` is omitted, `--source-runlog` must point to a
+successful canonical RunLog and `transfer_states.json` must be beside it (or be
+selected by `OMNIFLOW_BMOCA_SOURCE_STATES_PATH`). The entry creates
+`source_function/store.json` inside the immutable result directory and then
+runs env100–109; this preparation performs no model call or semantic rewrite.
+
+```bash
+OMNIFLOW_BMOCA_OUTPUT_PATH=/absolute/new-result \
+OMNIFLOW_BMOCA_AVD_HOME=/absolute/initialized-avds \
+bash scripts/exp/run_androidworld.sh \
+  --environment bmoca \
+  --methods script-replay \
+  --tasks chrome/open_Chrome \
+  --source-runlog /absolute/source/runlog.json
+```
+
 The maintained B-MoCA coordinator exposes every display size as screenshot
 `[height, width]`, including tablets. The Host therefore preserves canonical
 normalized UI coordinates without a tablet-specific axis swap or rescaling.

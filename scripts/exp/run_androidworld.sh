@@ -47,6 +47,7 @@ bmoca_output_path="${OMNIFLOW_BMOCA_OUTPUT_PATH:-}"
 bmoca_show_emulator="${OMNIFLOW_BMOCA_SHOW_EMULATOR:-0}"
 bmoca_workers="${OMNIFLOW_BMOCA_WORKERS:-}"
 bmoca_environment_retries="${OMNIFLOW_BMOCA_ENVIRONMENT_RETRIES:-1}"
+bmoca_source_states_path="${OMNIFLOW_BMOCA_SOURCE_STATES_PATH:-}"
 android_world_revision="632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"
 appagent_document_model="${OMNIFLOW_APPAGENT_DOCUMENT_MODEL:-$formal_model}"
 mobilegpt_embedding_model="${OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL:-text-embedding-v4}"
@@ -447,12 +448,14 @@ Source RunLog conversion inputs:
   OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT
                                      Absolute immutable output for one native
                                      baseline-memory conversion.
-  --source-runlog PATH              Input RunLog for --convert-runlog-memory.
+  --source-runlog PATH              Input RunLog for --convert-runlog-memory,
+                                    or automatic B-MoCA script-replay setup.
   OMNIFLOW_BMOCA_ROOT, OMNIFLOW_BMOCA_ANDROID_ENV_ROOT,
   OMNIFLOW_BMOCA_ENVIRONMENT_IDS (default: 100..109),
   OMNIFLOW_BMOCA_AVD_HOME, OMNIFLOW_BMOCA_AVD_TEMPLATE_HOME,
   OMNIFLOW_BMOCA_OUTPUT_PATH, OMNIFLOW_BMOCA_SHOW_EMULATOR,
-  OMNIFLOW_BMOCA_WORKERS (script-replay default: 10).
+  OMNIFLOW_BMOCA_WORKERS (script-replay default: 10),
+  OMNIFLOW_BMOCA_SOURCE_STATES_PATH (defaults beside --source-runlog).
 
 Examples:
   bash scripts/exp/run_androidworld.sh --tasks AudioRecorderRecordAudio
@@ -468,6 +471,11 @@ Examples:
     bash scripts/exp/run_androidworld.sh \
       --convert-runlog-memory mobilegpt_offline_retrieval \
       --source-runlog /abs/success.run_log.json
+  OMNIFLOW_BMOCA_OUTPUT_PATH=/abs/new-result \
+  OMNIFLOW_BMOCA_AVD_HOME=/abs/initialized-avds \
+    bash scripts/exp/run_androidworld.sh --environment bmoca \
+      --methods script-replay --tasks chrome/open_Chrome \
+      --source-runlog /abs/source/runlog.json
   bash scripts/exp/run_androidworld.sh --check-only --all-tasks \
     --methods mobilegpt_offline_retrieval
   bash scripts/exp/run_androidworld.sh --all-tasks \
@@ -637,10 +645,6 @@ if [[ "$execution_environment" == "bmoca" ]]; then
     echo "--environment bmoca requires exactly one task through --tasks." >&2
     exit 2
   fi
-  if [[ -z "$store_path" || "$store_path" != /* || ! -f "$store_path" ]]; then
-    echo "--environment bmoca requires an existing absolute OMNIFLOW_SINGLE_TASK_STORE_PATH." >&2
-    exit 2
-  fi
   if [[ -z "$bmoca_root" || "$bmoca_root" != /* || ! -d "$bmoca_root/asset" ]]; then
     echo "--environment bmoca requires an absolute OMNIFLOW_BMOCA_ROOT." >&2
     exit 2
@@ -675,6 +679,36 @@ if [[ "$execution_environment" == "bmoca" ]]; then
   if ! python_bin="$(command -v "$python_bin")"; then
     echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
     exit 1
+  fi
+  if [[ -n "$store_path" && -n "$runlog_memory_source_runlog" ]]; then
+    echo "B-MoCA accepts either OMNIFLOW_SINGLE_TASK_STORE_PATH or --source-runlog, not both." >&2
+    exit 2
+  fi
+  if [[ -z "$store_path" ]]; then
+    if [[ "$bmoca_method" != "script-replay" ]]; then
+      echo "B-MoCA OmniFlow requires OMNIFLOW_SINGLE_TASK_STORE_PATH." >&2
+      exit 2
+    fi
+    if [[ "$runlog_memory_source_runlog" != /* || ! -f "$runlog_memory_source_runlog" ]]; then
+      echo "B-MoCA script-replay requires an absolute --source-runlog or OMNIFLOW_SINGLE_TASK_STORE_PATH." >&2
+      exit 2
+    fi
+    if [[ -z "$bmoca_source_states_path" ]]; then
+      bmoca_source_states_path="$(dirname "$runlog_memory_source_runlog")/transfer_states.json"
+    fi
+    if [[ "$bmoca_source_states_path" != /* || ! -f "$bmoca_source_states_path" ]]; then
+      echo "B-MoCA script-replay source states missing: $bmoca_source_states_path" >&2
+      exit 2
+    fi
+    "$python_bin" -m src.integrations.script_replay prepare \
+      --runlog "$runlog_memory_source_runlog" \
+      --source-states "$bmoca_source_states_path" \
+      --output-root "$bmoca_output_path/source_function" \
+      --task-id "$batch_task_filter"
+    store_path="$bmoca_output_path/source_function/store.json"
+  elif [[ "$store_path" != /* || ! -f "$store_path" ]]; then
+    echo "--environment bmoca requires an existing absolute OMNIFLOW_SINGLE_TASK_STORE_PATH." >&2
+    exit 2
   fi
   if [[ "$bmoca_android_env_root" != /* || ! -f "$bmoca_android_env_root/android_env/components/utils.py" ]]; then
     echo "--environment bmoca requires the pinned AndroidEnv checkout: $bmoca_android_env_root" >&2
