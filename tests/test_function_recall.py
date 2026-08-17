@@ -109,13 +109,15 @@ def test_function_recall_uses_one_lexical_and_page_score() -> None:
         lexical_but_wrong_page.id,
         matching.id,
     ]
-    decisions = {item["function_id"]: item for item in result.audit["decisions"]}
+    decisions = {
+        item["function_id"]: item for item in result.audit["decisions"]
+    }
     assert decisions[matching.id]["goal_lexical_score"] == 0.0
     assert decisions[matching.id]["page_similarity"] == 1.0
     assert decisions[matching.id]["score"] == PAGE_SIMILARITY_WEIGHT
-    assert (
-        decisions[lexical_but_wrong_page.id]["score"] > decisions[matching.id]["score"]
-    )
+    assert decisions[lexical_but_wrong_page.id]["score"] > decisions[matching.id][
+        "score"
+    ]
     assert result.audit["ranking_weights"] == {
         "page_similarity": PAGE_SIMILARITY_WEIGHT,
         "goal_lexical": GOAL_LEXICAL_WEIGHT,
@@ -153,9 +155,9 @@ def test_open_app_function_uses_the_same_page_weighted_score() -> None:
     assert result.functions == (open_app_function,)
     decisions = {item["function_id"]: item for item in result.audit["decisions"]}
     assert decisions[open_app_function.id]["page_similarity"] == 1.0
-    assert (
-        decisions[open_app_function.id]["score"] > decisions[click_function.id]["score"]
-    )
+    assert decisions[open_app_function.id]["score"] > decisions[click_function.id][
+        "score"
+    ]
 
 
 def test_missing_page_evidence_contributes_zero() -> None:
