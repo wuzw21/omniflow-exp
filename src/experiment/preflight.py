@@ -19,6 +19,7 @@ import time
 from typing import Any
 
 from omniflow.core.trajectory import canonicalize_run_log as import_run_log
+from src.experiment.protocol import SOURCE_SEED
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
@@ -71,9 +72,7 @@ def _command_targets_serial(command: str, serial: str) -> bool:
     )
     if requested in explicit_serials:
         return True
-    target_values = re.findall(
-        r"(?:--device-targets?|--target-device)(?:=|\s+)([^\s]+)", command
-    )
+    target_values = re.findall(r"(?:--device)(?:=|\s+)([^\s]+)", command)
     if any(requested in value.split(":") for value in target_values):
         return True
     android_serials = re.findall(r"(?:^|\s)ANDROID_SERIAL=([^\s]+)", command)
@@ -181,7 +180,7 @@ def _validate_mobilegpt_manifest(memory_root: Path) -> dict[str, Any]:
         "schema_version"
     ) != MOBILEGPT_MEMORY_SCHEMA:
         raise ValueError("mobilegpt_cold_memory_manifest_schema_invalid")
-    if payload.get("source_seed") != 111:
+    if payload.get("source_seed") != SOURCE_SEED:
         raise ValueError("mobilegpt_cold_memory_source_seed_invalid")
     provenance = payload.get("provenance")
     if not isinstance(provenance, dict):
@@ -284,7 +283,7 @@ def _valid_appagent_demo_manifest(payload: Any) -> bool:
             payload.get("schema_version") == "omniflow.appagent-demo-memory.v2"
             and payload.get("official_appagent_revision")
             == APPAGENT_OFFICIAL_REVISION
-            and payload.get("source_seed") == 111
+            and payload.get("source_seed") == SOURCE_SEED
             and (
                 offline_conversion
                 or payload.get("official_source_success") is True

@@ -11,6 +11,7 @@ import time
 from typing import Any
 
 from src.experiment import androidworld as pipeline
+from src.experiment.protocol import SOURCE_SEED
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
@@ -25,7 +26,6 @@ from src.integrations.mobilegpt_converter import (
 )
 from src.integrations.runlog import import_run_log
 
-SOURCE_SEED = 111
 _IGNORED_SOURCE_PACKAGES = {
     "com.android.systemui",
     "com.example.MobileGPT",

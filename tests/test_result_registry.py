@@ -15,7 +15,7 @@ from src.experiment.result_registry import (
     build_master_progress,
     load_summary_rows,
     register_attempt_summary,
-    registered_cell_plan,
+    registered_result_plan,
 )
 
 
@@ -62,7 +62,7 @@ def _write_json(path: Path, payload: dict) -> None:
     )
 
 
-def _write_registered_cell(
+def _write_registered_result(
     runs_root: Path,
     *,
     task: str,
@@ -84,9 +84,9 @@ def _write_registered_cell(
     runtime_integrity_error: str = "",
     environment_failure: bool = False,
 ) -> None:
-    cell = runs_root / task / method / device / attempt
-    result_path = cell / "registered_result.json"
-    manifest_path = cell / "registration_manifest.json"
+    result = runs_root / task / method / device / attempt
+    result_path = result / "registered_result.json"
+    manifest_path = result / "registration_manifest.json"
     task_params = {"seed": 1859998934}
     command = (
         "python -m src.integrations.android_world.launch "
@@ -199,9 +199,9 @@ def test_unregistered_one_task_summary_is_not_loaded(tmp_path: Path) -> None:
 def test_registered_result_requires_matching_immutable_manifest(
     tmp_path: Path,
 ) -> None:
-    cell = tmp_path / "runs" / "cell"
-    result_path = cell / "registered_result.json"
-    manifest_path = cell / "registration_manifest.json"
+    result = tmp_path / "runs" / "result"
+    result_path = result / "registered_result.json"
+    manifest_path = result / "registration_manifest.json"
     result = {
         "schema_version": "omniflow.androidworld_registered_result.v1",
         "registration_id": "registration-1",
@@ -249,19 +249,19 @@ def test_registered_result_requires_matching_immutable_manifest(
         load_summary_rows(tmp_path / "runs", {}, [])
 
 
-def test_registered_cell_plan_skips_any_cell_with_a_verified_conclusion(
+def test_registered_result_plan_skips_any_result_with_a_verified_conclusion(
     tmp_path: Path,
 ) -> None:
     runs_root = tmp_path / "runs"
     task = "AudioRecorderRecordAudioWithFileName"
-    _write_registered_cell(
+    _write_registered_result(
         runs_root,
         task=task,
         method="fixed_replay",
         device="small5554",
         success=True,
     )
-    _write_registered_cell(
+    _write_registered_result(
         runs_root,
         task=task,
         method="ours",
@@ -269,7 +269,7 @@ def test_registered_cell_plan_skips_any_cell_with_a_verified_conclusion(
         success=False,
     )
 
-    plan = registered_cell_plan(
+    plan = registered_result_plan(
         runs_root=runs_root,
         task_name=task,
         methods=("fixed_replay", "ours"),
@@ -289,12 +289,12 @@ def test_registered_cell_plan_skips_any_cell_with_a_verified_conclusion(
     ]
 
 
-def test_registered_cell_plan_rejects_legacy_coordinate_fixed_replay(
+def test_registered_result_plan_rejects_legacy_coordinate_fixed_replay(
     tmp_path: Path,
 ) -> None:
     runs_root = tmp_path / "runs"
     task = "AudioRecorderRecordAudio"
-    _write_registered_cell(
+    _write_registered_result(
         runs_root,
         task=task,
         method="fixed_replay",
@@ -304,7 +304,7 @@ def test_registered_cell_plan_rejects_legacy_coordinate_fixed_replay(
     )
 
     with pytest.raises(ValueError, match="formal_result_protocol_mismatch"):
-        registered_cell_plan(
+        registered_result_plan(
             runs_root=runs_root,
             task_name=task,
             methods=("fixed_replay",),
@@ -315,12 +315,12 @@ def test_registered_cell_plan_rejects_legacy_coordinate_fixed_replay(
         )
 
 
-def test_registered_cell_plan_rejects_previous_selector_stop_policy(
+def test_registered_result_plan_rejects_previous_selector_stop_policy(
     tmp_path: Path,
 ) -> None:
     runs_root = tmp_path / "runs"
     task = "BrowserMaze"
-    _write_registered_cell(
+    _write_registered_result(
         runs_root,
         task=task,
         method="fixed_replay",
@@ -330,7 +330,7 @@ def test_registered_cell_plan_rejects_previous_selector_stop_policy(
     )
 
     with pytest.raises(ValueError, match="formal_result_protocol_mismatch"):
-        registered_cell_plan(
+        registered_result_plan(
             runs_root=runs_root,
             task_name=task,
             methods=("fixed_replay",),
@@ -341,12 +341,12 @@ def test_registered_cell_plan_rejects_previous_selector_stop_policy(
         )
 
 
-def test_registered_cell_plan_accepts_coordinate_replay_missing_redundant_audit_flag(
+def test_registered_result_plan_accepts_coordinate_replay_missing_redundant_audit_flag(
     tmp_path: Path,
 ) -> None:
     runs_root = tmp_path / "runs"
     task = "BrowserMaze"
-    _write_registered_cell(
+    _write_registered_result(
         runs_root,
         task=task,
         method="fixed_replay",
@@ -355,7 +355,7 @@ def test_registered_cell_plan_accepts_coordinate_replay_missing_redundant_audit_
         include_uses_source_xml=False,
     )
 
-    plan = registered_cell_plan(
+    plan = registered_result_plan(
         runs_root=runs_root,
         task_name=task,
         methods=("fixed_replay",),
@@ -369,12 +369,12 @@ def test_registered_cell_plan_accepts_coordinate_replay_missing_redundant_audit_
     assert plan["pending"] == []
 
 
-def test_registered_cell_plan_does_not_skip_a_different_evaluation_seed(
+def test_registered_result_plan_does_not_skip_a_different_evaluation_seed(
     tmp_path: Path,
 ) -> None:
     runs_root = tmp_path / "runs"
     task = "AudioRecorderRecordAudioWithFileName"
-    _write_registered_cell(
+    _write_registered_result(
         runs_root,
         task=task,
         method="ours",
@@ -384,7 +384,7 @@ def test_registered_cell_plan_does_not_skip_a_different_evaluation_seed(
         evaluation_seed=113,
     )
 
-    plan = registered_cell_plan(
+    plan = registered_result_plan(
         runs_root=runs_root,
         task_name=task,
         methods=("ours",),
@@ -397,12 +397,12 @@ def test_registered_cell_plan_does_not_skip_a_different_evaluation_seed(
     assert plan["pending"] == [("ours", "small5554")]
 
 
-def test_registered_cell_plan_retries_rows_without_validator_coverage(
+def test_registered_result_plan_retries_rows_without_validator_coverage(
     tmp_path: Path,
 ) -> None:
     runs_root = tmp_path / "runs"
     task = "AudioRecorderRecordAudioWithFileName"
-    _write_registered_cell(
+    _write_registered_result(
         runs_root,
         task=task,
         method="ours",
@@ -412,7 +412,7 @@ def test_registered_cell_plan_retries_rows_without_validator_coverage(
         validator_used=False,
     )
 
-    plan = registered_cell_plan(
+    plan = registered_result_plan(
         runs_root=runs_root,
         task_name=task,
         methods=("ours",),
@@ -425,12 +425,12 @@ def test_registered_cell_plan_retries_rows_without_validator_coverage(
     assert plan["pending"] == [("ours", "small5554")]
 
 
-def test_registered_cell_plan_keeps_validator_rows_with_environment_error(
+def test_registered_result_plan_keeps_validator_rows_with_environment_error(
     tmp_path: Path,
 ) -> None:
     runs_root = tmp_path / "runs"
     task = "NotesIsTodo"
-    _write_registered_cell(
+    _write_registered_result(
         runs_root,
         task=task,
         method="fixed_replay",
@@ -439,7 +439,7 @@ def test_registered_cell_plan_keeps_validator_rows_with_environment_error(
         error="FileNotFoundError: app database missing",
     )
 
-    plan = registered_cell_plan(
+    plan = registered_result_plan(
         runs_root=runs_root,
         task_name=task,
         methods=("fixed_replay",),
@@ -452,12 +452,12 @@ def test_registered_cell_plan_keeps_validator_rows_with_environment_error(
     assert plan["pending"] == []
 
 
-def test_registered_cell_plan_accepts_per_episode_validator_conclusion(
+def test_registered_result_plan_accepts_per_episode_validator_conclusion(
     tmp_path: Path,
 ) -> None:
     runs_root = tmp_path / "runs"
     task = "AudioRecorderRecordAudioWithFileName"
-    _write_registered_cell(
+    _write_registered_result(
         runs_root,
         task=task,
         method="fixed_replay",
@@ -467,7 +467,7 @@ def test_registered_cell_plan_accepts_per_episode_validator_conclusion(
         validator_used=True,
     )
 
-    plan = registered_cell_plan(
+    plan = registered_result_plan(
         runs_root=runs_root,
         task_name=task,
         methods=("fixed_replay",),
@@ -480,12 +480,12 @@ def test_registered_cell_plan_accepts_per_episode_validator_conclusion(
     assert plan["pending"] == []
 
 
-def test_registered_cell_plan_does_not_treat_coverage_as_a_conclusion(
+def test_registered_result_plan_does_not_treat_coverage_as_a_conclusion(
     tmp_path: Path,
 ) -> None:
     runs_root = tmp_path / "runs"
     task = "AudioRecorderRecordAudioWithFileName"
-    _write_registered_cell(
+    _write_registered_result(
         runs_root,
         task=task,
         method="t3a_hint",
@@ -495,7 +495,7 @@ def test_registered_cell_plan_does_not_treat_coverage_as_a_conclusion(
         validator_used=True,
     )
 
-    plan = registered_cell_plan(
+    plan = registered_result_plan(
         runs_root=runs_root,
         task_name=task,
         methods=("t3a_hint",),
@@ -516,13 +516,13 @@ def test_registered_cell_plan_does_not_treat_coverage_as_a_conclusion(
         "unclassified parser failure",
     ),
 )
-def test_registered_cell_plan_keeps_validator_failure_with_parser_error(
+def test_registered_result_plan_keeps_validator_failure_with_parser_error(
     tmp_path: Path,
     parser_error: str,
 ) -> None:
     runs_root = tmp_path / "runs"
     task = "AudioRecorderRecordAudioWithFileName"
-    _write_registered_cell(
+    _write_registered_result(
         runs_root,
         task=task,
         method="t3a_hint",
@@ -532,7 +532,7 @@ def test_registered_cell_plan_keeps_validator_failure_with_parser_error(
         runtime_integrity_error=parser_error,
     )
 
-    plan = registered_cell_plan(
+    plan = registered_result_plan(
         runs_root=runs_root,
         task_name=task,
         methods=("t3a_hint",),
@@ -558,7 +558,7 @@ def test_registered_cell_plan_keeps_validator_failure_with_parser_error(
         ),
     ),
 )
-def test_registered_cell_plan_keeps_validator_conclusions_with_error_evidence(
+def test_registered_result_plan_keeps_validator_conclusions_with_error_evidence(
     tmp_path: Path,
     method: str,
     runtime_integrity_error: str,
@@ -567,7 +567,7 @@ def test_registered_cell_plan_keeps_validator_conclusions_with_error_evidence(
 ) -> None:
     runs_root = tmp_path / "runs"
     task = "ContactsNewContactDraft"
-    _write_registered_cell(
+    _write_registered_result(
         runs_root,
         task=task,
         method=method,
@@ -578,7 +578,7 @@ def test_registered_cell_plan_keeps_validator_conclusions_with_error_evidence(
         error=error,
     )
 
-    plan = registered_cell_plan(
+    plan = registered_result_plan(
         runs_root=runs_root,
         task_name=task,
         methods=(method,),
@@ -592,12 +592,12 @@ def test_registered_cell_plan_keeps_validator_conclusions_with_error_evidence(
     assert len(load_summary_rows(runs_root, {}, [])) == 1
 
 
-def test_registered_cell_plan_rejects_incompatible_formal_protocol(
+def test_registered_result_plan_rejects_incompatible_formal_protocol(
     tmp_path: Path,
 ) -> None:
     runs_root = tmp_path / "runs"
     task = "BrowserDraw"
-    _write_registered_cell(
+    _write_registered_result(
         runs_root,
         task=task,
         method="t3a_hint",
@@ -609,7 +609,7 @@ def test_registered_cell_plan_rejects_incompatible_formal_protocol(
     )
 
     with pytest.raises(ValueError, match="formal_result_protocol_mismatch"):
-        registered_cell_plan(
+        registered_result_plan(
             runs_root=runs_root,
             task_name=task,
             methods=("t3a_hint",),
@@ -620,13 +620,13 @@ def test_registered_cell_plan_rejects_incompatible_formal_protocol(
         )
 
 
-def test_registered_cell_plan_uses_earliest_validator_conclusion(
+def test_registered_result_plan_uses_earliest_validator_conclusion(
     tmp_path: Path,
 ) -> None:
     runs_root = tmp_path / "runs"
     task = "BrowserDraw"
     for attempt, max_steps in (("iteration_01", 20), ("iteration_02", 30)):
-        _write_registered_cell(
+        _write_registered_result(
             runs_root,
             task=task,
             method="t3a_hint",
@@ -636,7 +636,7 @@ def test_registered_cell_plan_uses_earliest_validator_conclusion(
             max_steps=max_steps,
         )
 
-    assert registered_cell_plan(
+    assert registered_result_plan(
         runs_root=runs_root,
         task_name=task,
         methods=("t3a_hint",),
@@ -733,10 +733,10 @@ def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
 
     assert registration["artifact_memory_updated"] is True
     memory = load_artifact_memory(memory_root / "current.json")
-    cell = memory["canonical"]["result_cells"][
+    result = memory["canonical"]["result_cells"][
         "TaskOne|ours|small5554|111|113"
     ]
-    assert cell["official_validator_success"] is False
+    assert result["official_validator_success"] is False
 
 
 def test_result_registration_keeps_runtime_integrity_evidence_after_conclusion(

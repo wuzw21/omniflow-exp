@@ -17,7 +17,7 @@ from src.experiment.artifact_memory import (
     load_artifact_memory,
     refresh_artifact_memory,
     refresh_artifact_memory_from_pointer,
-    registered_cell_plan_from_memory,
+    registered_result_plan_from_memory,
 )
 from src.experiment.artifact_memory import main as artifact_memory_main
 from src.experiment.mobilegpt_contract import (
@@ -1658,7 +1658,7 @@ def test_refresh_keeps_earliest_formal_result_without_success_cherry_picking(
         canonical["selection_reason"]
         == "earliest_formal_protocol_compliant_validator_conclusion"
     )
-    assert registered_cell_plan_from_memory(
+    assert registered_result_plan_from_memory(
         memory_index=pointer,
         task_name="RecordWithName",
         methods=("ours",),
@@ -1669,7 +1669,7 @@ def test_refresh_keeps_earliest_formal_result_without_success_cherry_picking(
         "completed": [("ours", "small5554")],
         "pending": [("ours", "fold5564")],
     }
-    assert registered_cell_plan_from_memory(
+    assert registered_result_plan_from_memory(
         memory_index=pointer,
         task_name="RecordWithName",
         methods=("ours",),
@@ -1794,7 +1794,7 @@ def test_refresh_keeps_validator_conclusion_with_method_error(
         },
     )
     runs = tmp_path / "runs"
-    result = _write_registered_result(
+    registered_result_path = _write_registered_result(
         runs,
         attempt="attempt_001",
         registered_at="2026-07-20T00:00:00+00:00",
@@ -1815,8 +1815,8 @@ def test_refresh_keeps_validator_conclusion_with_method_error(
         "RecordWithName|ours|small5554|111|113"
     ]
     assert canonical["official_validator_success"] is False
-    assert canonical["registered_result_aliases"] == [str(result)]
-    assert registered_cell_plan_from_memory(
+    assert canonical["registered_result_aliases"] == [str(registered_result_path)]
+    assert registered_result_plan_from_memory(
         memory_index=tmp_path / "memory" / "current.json",
         task_name="RecordWithName",
         methods=("ours",),
@@ -1856,14 +1856,14 @@ def test_refresh_freezes_only_validator_cells_from_authoritative_batch_report(
     assert report["counts"]["baseline_batch_reports"] == 1
     assert report["counts"]["baseline_validator_cells"] == 1
     assert report["counts"]["canonical_result_cells"] == 1
-    cell = report["canonical"]["result_cells"][
+    result = report["canonical"]["result_cells"][
         "RecordWithName|mobilegpt_offline_retrieval|small5554|111|113"
     ]
-    assert cell["official_validator_success"] is False
-    assert cell["selection_reason"] == (
+    assert result["official_validator_success"] is False
+    assert result["selection_reason"] == (
         "authoritative_immutable_batch_report_validator_conclusion"
     )
-    assert registered_cell_plan_from_memory(
+    assert registered_result_plan_from_memory(
         memory_index=tmp_path / "memory" / "current.json",
         task_name="RecordWithName",
         methods=("mobilegpt_offline_retrieval",),
@@ -1897,7 +1897,7 @@ def test_refresh_reads_archived_mobilegpt_result_without_reusing_memory(
         source_method=ARCHIVED_MOBILEGPT_SOURCE_METHOD,
         teacher_forcing=True,
     )
-    result = _write_registered_result(
+    registered_result_path = _write_registered_result(
         tmp_path / "runs",
         attempt="attempt_001",
         registered_at="2026-07-20T00:00:00+00:00",
@@ -1914,12 +1914,12 @@ def test_refresh_reads_archived_mobilegpt_result_without_reusing_memory(
         result_roots=(tmp_path / "runs",),
     )
 
-    cell = report["canonical"]["result_cells"][
+    canonical_result = report["canonical"]["result_cells"][
         "RecordWithName|mobilegpt_offline_retrieval|small5554|111|113"
     ]
-    assert cell["registered_result_aliases"] == [str(result)]
-    assert cell["mobilegpt_memory_schema"] == ARCHIVED_MOBILEGPT_MEMORY_SCHEMA
-    assert registered_cell_plan_from_memory(
+    assert canonical_result["registered_result_aliases"] == [str(registered_result_path)]
+    assert canonical_result["mobilegpt_memory_schema"] == ARCHIVED_MOBILEGPT_MEMORY_SCHEMA
+    assert registered_result_plan_from_memory(
         memory_index=tmp_path / "memory" / "current.json",
         task_name="RecordWithName",
         methods=("mobilegpt_offline_retrieval",),
@@ -1979,12 +1979,12 @@ def test_refresh_prefers_current_mobilegpt_contract_over_earlier_archived_result
         result_roots=(tmp_path / "runs",),
     )
 
-    cell = report["canonical"]["result_cells"][
+    result = report["canonical"]["result_cells"][
         "RecordWithName|mobilegpt_offline_retrieval|small5554|111|113"
     ]
-    assert cell["registered_result_aliases"] == [str(current)]
-    assert cell["mobilegpt_memory_schema"] == MOBILEGPT_MEMORY_SCHEMA
-    assert cell["official_validator_success"] is False
+    assert result["registered_result_aliases"] == [str(current)]
+    assert result["mobilegpt_memory_schema"] == MOBILEGPT_MEMORY_SCHEMA
+    assert result["official_validator_success"] is False
 
 
 @pytest.mark.parametrize(
@@ -2105,11 +2105,11 @@ def test_refresh_selects_fixed_replay_result_for_canonical_source_only(
         result_roots=(runs,),
     )
 
-    cell = report["canonical"]["result_cells"][
+    result = report["canonical"]["result_cells"][
         "RecordWithName|fixed_replay|small5554|111|113"
     ]
-    assert cell["registered_result_aliases"] == [str(current)]
-    assert cell["source_run_log_sha256"] == _sha256(canonical_source)
+    assert result["registered_result_aliases"] == [str(current)]
+    assert result["source_run_log_sha256"] == _sha256(canonical_source)
     stale_record = report["artifacts"]["results"][_sha256(stale)]
     assert any(
         "formal_result_fixed_replay_source_hash_mismatch" in error
@@ -2148,10 +2148,10 @@ def test_refresh_selects_validator_conclusion_with_error_evidence(
     )
 
     assert report["counts"]["canonical_result_cells"] == 1
-    cell = report["canonical"]["result_cells"][
+    result = report["canonical"]["result_cells"][
         "RecordWithName|ours|small5554|111|113"
     ]
-    assert cell["official_validator_success"] is False
+    assert result["official_validator_success"] is False
     assert report["artifacts"]["results"][_sha256(invalid)][
         "verified_registration"
     ] is True
@@ -2212,10 +2212,10 @@ def test_refresh_selects_validator_conclusions_with_error_evidence(
         result_roots=(tmp_path / "runs",),
     )
 
-    cell = report["canonical"]["result_cells"][
+    result = report["canonical"]["result_cells"][
         f"RecordWithName|{method}|small5554|111|113"
     ]
-    assert cell["official_validator_success"] is False
+    assert result["official_validator_success"] is False
     record = report["artifacts"]["results"][_sha256(invalid)]
     assert record["verified_registration"] is True
     assert record.get("canonical_exclusion_errors", []) == []
@@ -2290,9 +2290,9 @@ def test_refresh_normalizes_legacy_target_device_labels(
         result_roots=(runs,),
     )
 
-    cell = report["canonical"]["result_cells"]["RecordWithName|ours|small5554|111|113"]
-    assert cell["device"] == "small5554"
-    assert cell["registered_device_label"] == "target5554"
+    result = report["canonical"]["result_cells"]["RecordWithName|ours|small5554|111|113"]
+    assert result["device"] == "small5554"
+    assert result["registered_device_label"] == "target5554"
 
 
 def test_refresh_preserves_but_does_not_select_incompatible_formal_result(
@@ -2335,7 +2335,7 @@ def test_refresh_preserves_but_does_not_select_incompatible_formal_result(
         "formal_result_protocol_mismatch" in error
         for error in record["canonical_exclusion_errors"]
     )
-    assert registered_cell_plan_from_memory(
+    assert registered_result_plan_from_memory(
         memory_index=tmp_path / "memory" / "current.json",
         task_name="RecordWithName",
         methods=("ours",),
@@ -2362,13 +2362,13 @@ def test_memory_plan_rejects_incompatible_canonical_payload(
         use_oob=True,
         include_task_params=False,
     )
-    cell_key = "RecordWithName|ours|small5554|111|113"
+    result_key = "RecordWithName|ours|small5554|111|113"
     monkeypatch.setattr(
         "src.experiment.artifact_memory.load_artifact_memory",
         lambda _: {
             "canonical": {
                 "result_cells": {
-                    cell_key: {
+                    result_key: {
                         "registered_result_object_path": str(incompatible),
                         "registered_result_sha256": _sha256(incompatible),
                     }
@@ -2378,7 +2378,7 @@ def test_memory_plan_rejects_incompatible_canonical_payload(
     )
 
     with pytest.raises(ValueError, match="formal_result_protocol_mismatch"):
-        registered_cell_plan_from_memory(
+        registered_result_plan_from_memory(
             memory_index=tmp_path / "memory" / "current.json",
             task_name="RecordWithName",
             methods=("ours",),

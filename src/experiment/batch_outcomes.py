@@ -1,4 +1,4 @@
-"""Immutable conclusions for AndroidWorld cells without validator results."""
+"""Immutable conclusions for AndroidWorld results without validator results."""
 
 from __future__ import annotations
 
@@ -173,10 +173,10 @@ def _failure_summary(task_log: Path | None, artifact_root: Path | None) -> str:
                 return line[-2000:]
         if lines:
             return lines[-1][-2000:]
-    return "cell_finished_without_registered_validator_result"
+    return "result_finished_without_registered_validator_result"
 
 
-def record_cell_outcome(
+def record_result_outcome(
     *,
     outcomes_root: str | Path,
     task_name: str,
@@ -192,7 +192,7 @@ def record_cell_outcome(
     artifact_root: str | Path | None = None,
     outer_wall_sec: float = 0.0,
 ) -> Path:
-    """Write one immutable non-validator cell conclusion."""
+    """Write one immutable non-validator result conclusion."""
 
     root = Path(outcomes_root).expanduser().resolve()
     log_path = Path(task_log).expanduser().resolve() if task_log else None
@@ -250,7 +250,7 @@ def record_cell_outcome(
             key: value for key, value in existing.items() if key != "recorded_at"
         }
         if comparable != existing_comparable:
-            raise FileExistsError(f"immutable cell outcome conflict: {destination}")
+            raise FileExistsError(f"immutable result outcome conflict: {destination}")
         return outcome_path
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(
@@ -264,7 +264,7 @@ def record_cell_outcome(
     return outcome_path
 
 
-def concluded_cell_keys(
+def concluded_result_keys(
     *,
     outcomes_root: str | Path,
     task_name: str,
@@ -274,7 +274,7 @@ def concluded_cell_keys(
     evaluation_seed: int,
     attempt_id: str | None = None,
 ) -> set[tuple[str, str]]:
-    """Return cells concluded within the selected immutable attempt."""
+    """Return results concluded within the selected immutable attempt."""
 
     root = Path(outcomes_root).expanduser().resolve()
     accepted_methods = {str(value) for value in methods}
@@ -305,7 +305,7 @@ def concluded_cell_keys(
     return concluded
 
 
-def _registered_cell_rows(memory_index: Path) -> dict[str, dict[str, Any]]:
+def _registered_result_rows(memory_index: Path) -> dict[str, dict[str, Any]]:
     pointer = _json_object(memory_index)
     result_cells_path = Path(str(pointer.get("result_cells") or "")).expanduser()
     if not result_cells_path.is_absolute():
@@ -515,9 +515,9 @@ def _write_markdown_report(
     tokens: int,
 ) -> None:
     lines = [
-        "# AndroidWorld Cell Comparison",
+        "# AndroidWorld Result Comparison",
         "",
-        f"- Planned cells: {counts['planned']}",
+        f"- Planned results: {counts['planned']}",
         f"- Validator success: {counts['validator_success']}",
         f"- Validator failure: {counts['validator_failure']}",
         f"- Non-validator failure: {counts['non_validator_failure']}",
@@ -574,14 +574,14 @@ def write_batch_report(
     evaluation_seed: int,
     attempt_id: str,
 ) -> dict[str, Any]:
-    """Write one complete per-cell report from results and failure outcomes."""
+    """Write one complete per-result report from results and failure outcomes."""
 
     destination = Path(report_root).expanduser().resolve()
     memory_path = Path(memory_index).expanduser().resolve()
     source_path = Path(source_index).expanduser().resolve()
     if not source_path.is_file():
         raise FileNotFoundError(f"source index missing: {source_path}")
-    registered = _registered_cell_rows(memory_path)
+    registered = _registered_result_rows(memory_path)
     outcomes = _outcome_rows(
         Path(outcomes_root).expanduser().resolve(),
         attempt_id=attempt_id,
@@ -744,7 +744,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.command == "record":
-        result: Any = record_cell_outcome(
+        result: Any = record_result_outcome(
             outcomes_root=args.outcomes_root,
             task_name=args.task,
             method=args.method,
@@ -761,7 +761,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(result)
     elif args.command == "concluded":
-        result = concluded_cell_keys(
+        result = concluded_result_keys(
             outcomes_root=args.outcomes_root,
             task_name=args.task,
             methods=tuple(args.methods.split(",")),
@@ -789,8 +789,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 __all__ = [
-    "concluded_cell_keys",
-    "record_cell_outcome",
+    "concluded_result_keys",
+    "record_result_outcome",
     "write_batch_report",
 ]
 

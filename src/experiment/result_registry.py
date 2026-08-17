@@ -19,6 +19,13 @@ import tempfile
 from typing import Any
 
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
+from src.experiment.protocol import (
+    DEVICES,
+    FORMAL_METHODS,
+    MAX_STEPS,
+    SOURCE_SEED,
+    TASK_SEED,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RUNS_ROOT = REPO_ROOT / "runtime/evals/androidworld_validator/runs"
@@ -28,12 +35,11 @@ DEFAULT_SOURCE_INDEX = (
     / "runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json"
 )
 FORMAL_DEVICE_TARGETS = {
-    "small5554": ("emulator-5554", 5554),
-    "fold5564": ("emulator-5564", 5564),
+    label: (serial, port) for label, serial, port in DEVICES
 }
-FORMAL_SOURCE_SEED = 111
-FORMAL_EVALUATION_SEED = 113
-FORMAL_MAX_STEPS = 20
+FORMAL_SOURCE_SEED = SOURCE_SEED
+FORMAL_TASK_SEED = TASK_SEED
+FORMAL_MAX_STEPS = MAX_STEPS
 
 METHOD_MATRIX_COLUMNS = [
     "task_index",
@@ -202,13 +208,6 @@ RUN_RECORD_COLUMNS = [
     "source_summary_sha256",
 ]
 
-FORMAL_METHODS = (
-    "fixed_replay",
-    "ours",
-    "mobilegpt_offline_retrieval",
-    "appagent_demo",
-    "t3a_hint",
-)
 MASTER_PROGRESS_METHODS = FORMAL_METHODS
 MASTER_PROGRESS_COMMON_FIELDS = (
     "sr",
@@ -673,7 +672,7 @@ def _load_verified_registered_result(summary_path: Path) -> dict[str, Any]:
         str(row.get("method") or "") != str(manifest.get("method") or "")
         or str(row.get("device") or "") != str(manifest.get("device") or "")
     ):
-        raise ValueError(f"registered result cell mismatch: {summary_path}")
+        raise ValueError(f"registered result result mismatch: {summary_path}")
     return summary
 
 
@@ -838,7 +837,7 @@ def validate_formal_result_protocol(
         )
 
 
-def registered_cell_plan(
+def registered_result_plan(
     *,
     runs_root: Path,
     task_name: str,
@@ -848,9 +847,9 @@ def registered_cell_plan(
     evaluation_seed: int,
     formal_max_steps: int | None = None,
 ) -> dict[str, list[tuple[str, str]]]:
-    """Return completed and pending formal cells in protocol order.
+    """Return completed and pending formal results in protocol order.
 
-    A cell is completed once at least one immutable registered result verifies.
+    A result is completed once at least one immutable registered result verifies.
     Official success is deliberately not required: a verified failure is still
     a formal conclusion and must not be rerun by the batch launcher.
     """
@@ -871,7 +870,7 @@ def registered_cell_plan(
                 or str(row.get("device") or "") != device
             ):
                 raise ValueError(
-                    f"registered result does not match expected cell: {path}"
+                    f"registered result does not match expected result: {path}"
                 )
             if (
                 summary.get("source_seed") != source_seed
@@ -897,7 +896,7 @@ def registered_cell_plan(
             completed.append((method, device))
     return {
         "completed": completed,
-        "pending": [cell for cell in expected if cell not in completed],
+        "pending": [result for result in expected if result not in completed],
     }
 
 
@@ -1167,7 +1166,7 @@ def _validate_no_cell_regression(
     existing_rows: list[dict[str, str]],
     merged_rows: list[dict[str, str]],
 ) -> None:
-    def cells(rows: list[dict[str, str]]) -> set[tuple[str, str, str]]:
+    def results(rows: list[dict[str, str]]) -> set[tuple[str, str, str]]:
         return {
             (
                 str(row.get("task_name") or "").strip(),
@@ -1181,10 +1180,10 @@ def _validate_no_cell_regression(
             and str(row.get("device_label") or "").strip()
         }
 
-    missing_cells = sorted(cells(existing_rows) - cells(merged_rows))
+    missing_cells = sorted(results(existing_rows) - results(merged_rows))
     if missing_cells:
-        rendered = ", ".join("/".join(cell) for cell in missing_cells)
-        raise ValueError(f"sync would drop existing result cells: {rendered}")
+        rendered = ", ".join("/".join(result) for result in missing_cells)
+        raise ValueError(f"sync would drop existing result results: {rendered}")
 
 
 @contextmanager

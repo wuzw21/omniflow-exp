@@ -37,7 +37,7 @@ the Python launcher or maintain a second runtime script.
 | `omniflow/functions/assets.py` | Function validation, storage, editing, and freezing of a skill-produced bundle | Yes, for every `ours` Function asset |
 | `src/experiment/function_assets.py` | Immutable skill-manifest conversion | Used when the configured skill manifest supplies the missing task |
 | `src/experiment/direct_function_launch.py` | Seed-111 atomic Function qualification runner | Called by the E2E pipeline |
-| `src/experiment/batch_outcomes.py` | Immutable cell and table accounting | Called by the E2E pipeline |
+| `src/experiment/batch_outcomes.py` | Immutable result and table accounting | Called by the E2E pipeline |
 
 ## Page embedding
 
@@ -75,11 +75,11 @@ One normal single-task invocation performs the complete workflow:
      an unidentified pointer action fails conversion instead of becoming a
      generic “relevant UI target” instruction.
 3. Reuse every already registered or frozen source asset without regeneration.
-4. Cold-restart each pending cell's managed AVD without Quick Boot snapshot
+4. Cold-restart each pending result's managed AVD without Quick Boot snapshot
    load/save, run AndroidWorld setup and preflight, and replay the method.
 5. Use the AndroidWorld official validator as the result, recording calls,
    tokens, actions, reuse utilization, episode duration, and outer wall time
-   for every cell.
+   for every result.
 
 AppAgent online execution uses the pinned upstream prompt, parser, model request,
 label ordering, document UID algorithm, grid behavior, request interval,
@@ -170,14 +170,14 @@ option and preserves all other setup behavior.
 | `OMNIFLOW_EXP_MEMORY_ROOT` | Content-addressed long-term-memory root |
 | `PYTHON_BIN` | Python executable containing the project dependencies |
 | `OMNITRANSFER_ROOT` | Canonical OmniTransfer checkout |
-| `OMNIFLOW_SINGLE_TASK_SOURCE_SEED` | Source RunLog seed; formal value is `111` |
-| `OMNIFLOW_SINGLE_TASK_EVALUATION_SEED` | Target evaluation seed; formal value is `113` |
+| `OMNIFLOW_ANDROIDWORLD_SOURCE_SEED` | Source RunLog seed; formal value is `111` |
+| `OMNIFLOW_ANDROIDWORLD_TASK_SEED` | Target evaluation seed; formal value is `113` |
 | `OMNIFLOW_OURS_CONVERTED_ASSET_ROOT` | A new, empty conversion version directory |
 | `OMNIFLOW_ENV_FILE` | Model credentials and OpenAI-compatible endpoint |
 | `OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT` | Optional immutable AndroidWorld checkout root containing the `android_world` package; defaults to the pinned `632ac95` release beside the asset root |
 | `OMNIFLOW_SQLITE_FTS4_LIBRARY` | Optional absolute compatible `libsqlite3` path; the unified entry automatically selects a system library when the experiment Python lacks AndroidWorld's required FTS4 support |
 | `OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC` | Positive timeout for each official AndroidWorld adb file push/copy; defaults to 300 seconds and never permits the upstream `None`/`0` unbounded wait |
-| `OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC` | Positive hard deadline for the complete official per-cell app setup; defaults to 300 seconds so an AndroidEnv/adb coordinator stall cannot consume the full episode budget |
+| `OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC` | Positive hard deadline for the complete official per-result app setup; defaults to 300 seconds so an AndroidEnv/adb coordinator stall cannot consume the full episode budget |
 | `OMNIFLOW_APPAGENT_DOCUMENT_MODEL` | AppAgent offline documentation VLM; defaults to the paper model `GLM-5.1` |
 | `OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL` | MobileGPT offline embedding model; defaults to its native `text-embedding-v4` |
 | `OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE` | Development endpoint profile; defaults to `llmthu` |
@@ -231,7 +231,7 @@ bash scripts/exp/run_androidworld.sh \
 
 The formal batch always uses all five methods and both formal devices. Use only
 `--tasks` to select an ordered task subset; method/device selection is an
-internal single-result runner concern. `OMNIFLOW_SINGLE_TASK_METHODS` remains an
+internal single-result runner concern. `OMNIFLOW_ANDROIDWORLD_METHOD` remains an
 internal/runtime override. When
 the canonical `ours` Store is missing, the command creates and registers it
 before preparing MobileGPT and AppAgent assets, provided the immutable
@@ -251,12 +251,12 @@ currently supported memory schema.
 
 ## Bounded `ours` development run
 
-Use the same script for an unregistered single-cell diagnostic episode:
+Use the same script for an unregistered single-result diagnostic episode:
 
 ```bash
 OMNIFLOW_ANDROID_WORLD_ROOT=/absolute/AndroidWorld \
 OMNIFLOW_ENV_FILE=/absolute/model.env \
-OMNIFLOW_SINGLE_TASK_STORE_PATH=/absolute/function_store/store.json \
+OMNIFLOW_ANDROIDWORLD_STORE_PATH=/absolute/function_store/store.json \
 OMNIFLOW_DEVELOPMENT_OUTPUT_PATH=/absolute/new/attempt \
 OMNIFLOW_DEVELOPMENT_MODEL=GLM-4.6V \
 OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE=llmthu \
@@ -274,10 +274,10 @@ by task initialization. To repeat against the same already initialized live
 emulator without rerunning onboarding and permission setup, add:
 
 ```bash
-OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP=0
+OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP=0
 ```
 
-This override is development-only. Formal cells retain cold restart, setup,
+This override is development-only. Formal results retain cold restart, setup,
 memory resolution, immutable registration, and the paper model. MobileGPT is
 owned by its adapter and does not participate in an `ours` development run.
 The endpoint profile is explicit and fail-closed: `llmthu` reads only
@@ -366,8 +366,8 @@ bash -n scripts/exp/run_androidworld.sh
 Conversion prints a JSON summary containing the catalog, Store index, memory
 index, converted task count, and frozen status. Real-time runs write logs and
 attempt evidence only beneath `OMNIFLOW_EXP_RESULTS_ROOT`.
-Every method cell records all AndroidWorld observations, including successful
-cells. `observations/index.json` is written before result aggregation; the same
+Every method result records all AndroidWorld observations, including successful
+results. `observations/index.json` is written before result aggregation; the same
 ordered records appear as `observation_evidence` in `task_results.jsonl`.
 Entries point to screenshots under `observations/objects/` with exact SHA-256
 and dimensions. Repeated observations keep separate indices while identical
@@ -397,7 +397,7 @@ official wrapper, and retries that same observation once. Healthy observations
 take no extra read, and unrelated state errors still fail unchanged.
 If the official forwarder restart is itself temporarily unable to bind, that
 failure remains inside the same bounded readiness loop instead of aborting the
-cell before task start.
+result before task start.
 
 Before any AndroidWorld formal or development path, the unified script verifies
 that the selected Python SQLite can create an FTS4 virtual table. If the managed
@@ -412,7 +412,7 @@ positive upstream timeout, but replaces upstream `None` or `0` so a dead adb
 transfer terminates as an environment failure instead of blocking a batch.
 The complete official setup call also has a separate 300-second hard deadline.
 This covers AndroidEnv coordinator stalls where an adb child has already exited
-but the upstream future never resolves; the cell remains an environment failure
+but the upstream future never resolves; the result remains an environment failure
 with no fabricated validator conclusion, and the batch can advance.
 The pinned AndroidWorld setup retries an app once with UIAutomator when its
 native accessibility-backed setup raises `ValueError`. It saves the app snapshot

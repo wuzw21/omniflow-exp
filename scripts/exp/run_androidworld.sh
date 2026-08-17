@@ -19,21 +19,20 @@ fi
 python_bin="${PYTHON_BIN:-$unified_python}"
 env_file="${OMNIFLOW_ENV_FILE:-${asset_root:+$asset_root/.env}}"
 master_source_index="${OMNIFLOW_MASTER_SOURCE_INDEX:-${asset_root:+$asset_root/runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json}}"
-source_index="${OMNIFLOW_SINGLE_TASK_SOURCE_INDEX:-$master_source_index}"
+source_index="${OMNIFLOW_ANDROIDWORLD_SOURCE_INDEX:-$master_source_index}"
 source_index_expected_tasks="${OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS:-116}"
-formal_source_seed=111
-formal_evaluation_seed=113
-formal_max_steps=20
-formal_max_fallback_steps=5
-formal_step_timeout_sec=60
-official_validator_flush_grace_sec=300
-formal_episode_timeout_sec="$((formal_max_steps * formal_step_timeout_sec + official_validator_flush_grace_sec))"
-formal_cell_timeout_sec="$((formal_episode_timeout_sec + 120))"
+formal_source_seed=""
+formal_task_seed=""
+formal_max_steps=""
+formal_max_fallback_steps=""
+formal_step_timeout_sec=""
+official_validator_flush_grace_sec=""
+formal_episode_timeout_sec=""
 formal_fixed_task_params=0
 formal_fold_state=2
 formal_fold_size="2208x1840"
-formal_model="GLM-5.1"
-formal_model_endpoint_profile="llmthu"
+formal_model=""
+formal_model_endpoint_profile=""
 formal_model_base_url="https://llmapi.paratera.com/v1"
 formal_bmoca_revision="de06497ae51464dd06fe4dbd2e5f59f27bcd9250"
 execution_environment="androidworld"
@@ -44,34 +43,79 @@ bmoca_avd_template_home="${OMNIFLOW_BMOCA_AVD_TEMPLATE_HOME:-}"
 bmoca_output_path="${OMNIFLOW_BMOCA_OUTPUT_PATH:-}"
 bmoca_show_emulator="${OMNIFLOW_BMOCA_SHOW_EMULATOR:-0}"
 android_world_revision="632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"
-appagent_document_model="${OMNIFLOW_APPAGENT_DOCUMENT_MODEL:-$formal_model}"
+appagent_document_model=""
 mobilegpt_embedding_model="${OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL:-text-embedding-v4}"
 mobilegpt_source_schema="omniflow.mobilegpt-runlog-direct-memory.v1"
 mobilegpt_source_method="mobilegpt_runlog_direct_memory"
 mobilegpt_source_manifest_name="mobilegpt_memory_manifest.json"
-expected_source_seed="${OMNIFLOW_SINGLE_TASK_SOURCE_SEED:-$formal_source_seed}"
-evaluation_seed="${OMNIFLOW_SINGLE_TASK_EVALUATION_SEED:-$formal_evaluation_seed}"
+expected_source_seed=""
+task_seed=""
 omnitransfer_root="${OMNITRANSFER_ROOT:-$workspace_root/OmniTransfer}"
 android_world_release_root="${OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT:-$(dirname "$asset_root")/releases/android-world-$android_world_revision}"
 android_world_root="${OMNIFLOW_ANDROID_WORLD_ROOT:-$android_world_release_root}"
 export PYTHONPATH="$repo:$repo/src${android_world_root:+:$android_world_root}${PYTHONPATH:+:$PYTHONPATH}"
+protocol_values="$(python3 - <<'PY'
+from src.experiment.protocol import (
+    DEFAULT_DEVICE,
+    DEFAULT_METHOD,
+    FORMAL_MODEL,
+    FORMAL_MODEL_ENDPOINT_PROFILE,
+    MAX_FALLBACK_STEPS,
+    MAX_STEPS,
+    METHODS,
+    EPISODE_TIMEOUT_SEC,
+    SOURCE_DEVICE,
+    SOURCE_SEED,
+    STEP_TIMEOUT_SEC,
+    TASK_DEADLINE_SEC,
+    TASK_SEED,
+    VALIDATOR_FLUSH_GRACE_SEC,
+)
+
+print(
+    SOURCE_SEED,
+    TASK_SEED,
+    MAX_STEPS,
+    MAX_FALLBACK_STEPS,
+    STEP_TIMEOUT_SEC,
+    VALIDATOR_FLUSH_GRACE_SEC,
+    EPISODE_TIMEOUT_SEC,
+    TASK_DEADLINE_SEC,
+    FORMAL_MODEL,
+    FORMAL_MODEL_ENDPOINT_PROFILE,
+    DEFAULT_METHOD,
+    ",".join(METHODS),
+    ":".join(str(value) for value in SOURCE_DEVICE),
+    DEFAULT_DEVICE,
+)
+PY
+)"
+read -r formal_source_seed formal_task_seed formal_max_steps \
+  formal_max_fallback_steps formal_step_timeout_sec \
+  official_validator_flush_grace_sec formal_episode_timeout_sec \
+  formal_task_deadline_sec formal_model formal_model_endpoint_profile \
+  formal_default_method all_methods \
+  source_device default_device <<< "$protocol_values"
+appagent_document_model="${OMNIFLOW_APPAGENT_DOCUMENT_MODEL:-$formal_model}"
+expected_source_seed="${OMNIFLOW_ANDROIDWORLD_SOURCE_SEED:-$formal_source_seed}"
+task_seed="${OMNIFLOW_ANDROIDWORLD_TASK_SEED:-$formal_task_seed}"
 config="$repo/config/paper_androidworld.json"
 preflight="$repo/src/experiment/preflight.py"
-task="${OMNIFLOW_SINGLE_TASK_TASK:-SystemBluetoothTurnOn}"
-task_iteration="${OMNIFLOW_SINGLE_TASK_ITERATION:-1}"
-all_methods="fixed_replay,ours,mobilegpt_offline_retrieval,appagent_demo,t3a_hint"
+selected_method_arg=""
+selected_device_arg=""
+task="${OMNIFLOW_ANDROIDWORLD_TASK:-SystemBluetoothTurnOn}"
+task_iteration="${OMNIFLOW_ANDROIDWORLD_TASK_ITERATION:-1}"
 baseline_environment_repair="${OMNIFLOW_BASELINE_ENVIRONMENT_REPAIR_REASON:-}"
 mobilegpt_source_environment_repair="${OMNIFLOW_MOBILEGPT_SOURCE_ENVIRONMENT_REPAIR_REASON:-}"
 appagent_source_environment_repair="${OMNIFLOW_APPAGENT_SOURCE_ENVIRONMENT_REPAIR_REASON:-}"
 batch_attempt_id="${OMNIFLOW_BATCH_ATTEMPT_ID:-}"
-formal_device_targets="small5554:emulator-5554:5554,fold5564:emulator-5564:5564"
-device_targets="${OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS:-$formal_device_targets}"
-fixed_task_params="${OMNIFLOW_SINGLE_TASK_FIXED_TASK_PARAMS:-$formal_fixed_task_params}"
-timeout_sec="${OMNIFLOW_SINGLE_TASK_TIMEOUT_SEC:-$formal_episode_timeout_sec}"
+device_target="${OMNIFLOW_ANDROIDWORLD_DEVICE:-$default_device}"
+fixed_task_params="${OMNIFLOW_ANDROIDWORLD_FIXED_TASK_PARAMS:-$formal_fixed_task_params}"
+timeout_sec="${OMNIFLOW_ANDROIDWORLD_TIMEOUT_SEC:-$formal_episode_timeout_sec}"
 preflight_minimum_free_gb="${OMNIFLOW_PREFLIGHT_MINIMUM_FREE_GB:-20}"
-max_steps="${OMNIFLOW_SINGLE_TASK_MAX_STEPS:-$formal_max_steps}"
-max_fallback_steps="${OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS:-$formal_max_fallback_steps}"
-store_path="${OMNIFLOW_SINGLE_TASK_STORE_PATH:-}"
+max_steps="${OMNIFLOW_ANDROIDWORLD_MAX_STEPS:-$formal_max_steps}"
+max_fallback_steps="${OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS:-$formal_max_fallback_steps}"
+store_path="${OMNIFLOW_ANDROIDWORLD_STORE_PATH:-}"
 ours_store_index="${OMNIFLOW_OURS_STORE_INDEX:-}"
 ours_source_asset_index="${OMNIFLOW_OURS_SOURCE_ASSET_INDEX:-$master_source_index}"
 ours_converted_asset_root="${OMNIFLOW_OURS_CONVERTED_ASSET_ROOT:-}"
@@ -93,11 +137,11 @@ mobilegpt_root="${OMNIFLOW_MOBILEGPT_ROOT:-${asset_root:+$asset_root/runtime/ext
 mobilegpt_source_memory_root="${OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT:-}"
 appagent_root="${OMNIFLOW_APPAGENT_ROOT:-${asset_root:+$asset_root/runtime/external/appagent}}"
 appagent_demo_memory_root="${OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT:-}"
-source_device="${OMNIFLOW_SOURCE_DEVICE:-source5560:emulator-5560:5560}"
-preflight_profile="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_PROFILE:-}"
-preflight_serials="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_SERIALS:-}"
-manage_emulators="${OMNIFLOW_SINGLE_TASK_MANAGE_EMULATORS:-1}"
-emulator_avds="${OMNIFLOW_SINGLE_TASK_EMULATOR_AVDS:-emulator-5554=OmniFlowTargetSmall,emulator-5560=SmallPhone,emulator-5564=OmniFlowTargetFold}"
+source_device="${OMNIFLOW_ANDROIDWORLD_SOURCE_DEVICE:-$source_device}"
+preflight_profile="${OMNIFLOW_ANDROIDWORLD_PREFLIGHT_PROFILE:-}"
+preflight_serials="${OMNIFLOW_ANDROIDWORLD_PREFLIGHT_SERIALS:-}"
+manage_emulators="${OMNIFLOW_ANDROIDWORLD_MANAGE_EMULATORS:-1}"
+emulator_avds="${OMNIFLOW_ANDROIDWORLD_EMULATOR_AVDS:-emulator-5554=OmniFlowTargetSmall,emulator-5560=SmallPhone,emulator-5564=OmniFlowTargetFold}"
 host_machine="$(uname -m)"
 case "$host_machine" in
   x86_64|amd64)
@@ -173,18 +217,18 @@ PY
   return 1
 }
 default_emulator_avd_specs="SmallPhone|system-images;android-33;google_apis;$default_emulator_system_image_abi|small_phone,OmniFlowTargetSmall|system-images;android-33;google_apis;$default_emulator_system_image_abi|small_phone,OmniFlowTargetFold|system-images;android-34;google_apis;$default_emulator_system_image_abi|pixel_fold"
-emulator_avd_specs="${OMNIFLOW_SINGLE_TASK_EMULATOR_AVD_SPECS:-$default_emulator_avd_specs}"
-emulator_gpu="${OMNIFLOW_SINGLE_TASK_EMULATOR_GPU:-swiftshader_indirect}"
-emulator_boot_timeout_sec="${OMNIFLOW_SINGLE_TASK_EMULATOR_BOOT_TIMEOUT_SEC:-240}"
-emulator_graceful_shutdown_timeout_sec="${OMNIFLOW_SINGLE_TASK_EMULATOR_GRACEFUL_SHUTDOWN_TIMEOUT_SEC:-30}"
-emulator_forced_shutdown_timeout_sec="${OMNIFLOW_SINGLE_TASK_EMULATOR_FORCED_SHUTDOWN_TIMEOUT_SEC:-10}"
+emulator_avd_specs="${OMNIFLOW_ANDROIDWORLD_EMULATOR_AVD_SPECS:-$default_emulator_avd_specs}"
+emulator_gpu="${OMNIFLOW_ANDROIDWORLD_EMULATOR_GPU:-swiftshader_indirect}"
+emulator_boot_timeout_sec="${OMNIFLOW_ANDROIDWORLD_EMULATOR_BOOT_TIMEOUT_SEC:-240}"
+emulator_graceful_shutdown_timeout_sec="${OMNIFLOW_ANDROIDWORLD_EMULATOR_GRACEFUL_SHUTDOWN_TIMEOUT_SEC:-30}"
+emulator_forced_shutdown_timeout_sec="${OMNIFLOW_ANDROIDWORLD_EMULATOR_FORCED_SHUTDOWN_TIMEOUT_SEC:-10}"
 androidworld_adb_file_transfer_timeout_sec="${OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC:-300}"
 export OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC="$androidworld_adb_file_transfer_timeout_sec"
 androidworld_setup_timeout_sec="${OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC:-300}"
 export OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC="$androidworld_setup_timeout_sec"
-fold_serial="${OMNIFLOW_SINGLE_TASK_FOLD_SERIAL:-emulator-5564}"
-fold_state="${OMNIFLOW_SINGLE_TASK_FOLD_STATE:-$formal_fold_state}"
-fold_size="${OMNIFLOW_SINGLE_TASK_FOLD_SIZE:-$formal_fold_size}"
+fold_serial="${OMNIFLOW_ANDROIDWORLD_FOLD_SERIAL:-emulator-5564}"
+fold_state="${OMNIFLOW_ANDROIDWORLD_FOLD_STATE:-$formal_fold_state}"
+fold_size="${OMNIFLOW_ANDROIDWORLD_FOLD_SIZE:-$formal_fold_size}"
 dry_run=0
 check_only=0
 development_run=0
@@ -198,10 +242,8 @@ convert_source_runlogs=0
 prepare_mobilegpt_memory=0
 convert_runlog_memory_method=""
 runlog_memory_output_root="${OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT:-}"
-selected_methods_arg=""
-selected_devices_arg=""
 e2e_task=""
-e2e_task_deadline_sec="${OMNIFLOW_E2E_TASK_DEADLINE_SEC:-1800}"
+  e2e_task_deadline_sec="${OMNIFLOW_E2E_TASK_DEADLINE_SEC:-$formal_task_deadline_sec}"
 mobilegpt_memory_output_root="${OMNIFLOW_MOBILEGPT_MEMORY_OUTPUT_ROOT:-}"
 source_runlog_output_root="${OMNIFLOW_SOURCE_RUNLOG_OUTPUT_ROOT:-${memory_root:+$memory_root/source_runlogs}}"
 source_screenshot_roots="${OMNIFLOW_SOURCE_SCREENSHOT_ROOTS:-}"
@@ -312,8 +354,9 @@ Options:
                             script for bounded method debugging.
   --dry-run                 Build one task command without executing it.
   --all-tasks               Run the selected task set in task-major order.
-  --methods METHOD1,...     Select an ordered subset of the five paper methods.
-  --devices DEVICE1,...     Select small5554 and/or fold5564 independently.
+  --method METHOD           Run one method in the single-result runner.
+  --device LABEL:SERIAL:PORT
+                            Run one target in the single-result runner.
   --tasks TASK1,TASK2,...   Run an ordered task-major subset, or limit
                             --convert-ours-assets. Implies --all-tasks during
                             experiment execution.
@@ -332,7 +375,7 @@ Options:
   --e2e-task TASK           Run one bounded source-to-matrix task pipeline.
   --source-qualification-only
                             Stop that pipeline after immutable seed-111 Function
-                            qualification; create no target result cells.
+                            qualification; create no target result results.
   --collect-source         Re-run one task on the source device only and save
                             screenshot-backed native RunLog evidence.
   --task-deadline-sec SEC   Whole-task wall deadline; maximum/default is 1800.
@@ -347,7 +390,7 @@ Required external roots:
   OMNITRANSFER_ROOT         Canonical/versioned OmniTransfer checkout.
 
 Optional runtime overrides:
-  PYTHON_BIN, OMNIFLOW_ENV_FILE, OMNIFLOW_SINGLE_TASK_SOURCE_INDEX,
+  PYTHON_BIN, OMNIFLOW_ENV_FILE, OMNIFLOW_ANDROIDWORLD_SOURCE_INDEX,
   OMNIFLOW_MASTER_SOURCE_INDEX, OMNIFLOW_OURS_STORE_INDEX,
   OMNIFLOW_MEMORY_MOBILEGPT_ROOTS,
   OMNIFLOW_MEMORY_BASELINE_BATCH_REPORTS,
@@ -361,12 +404,11 @@ Optional runtime overrides:
   OMNIFLOW_DEVELOPMENT_CONSOLE_PORT,
   OMNIFLOW_DEVELOPMENT_AVD (default: OmniFlowTargetSmall),
   OMNIFLOW_ANDROIDWORLD_LLM_MAX_TOKENS (online T3A response budget),
-  OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP (0 reuses prior app snapshots),
+  OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP (0 reuses prior app snapshots),
   OMNIFLOW_BATCH_ATTEMPT_ID (resume one interrupted immutable batch).
-  OMNIFLOW_E2E_OUTPUT_ROOT, OMNIFLOW_E2E_SOURCE_MODEL,
-  OMNIFLOW_E2E_SEMANTIC_MODEL, OMNIFLOW_E2E_ATTEMPT_ID.
+  OMNIFLOW_E2E_OUTPUT_ROOT, OMNIFLOW_E2E_ATTEMPT_ID.
   OMNIFLOW_ADB_PATH.
-  Managed emulators are cold-restarted before every pending cell.
+  Managed emulators are cold-restarted before every pending result.
 
 Asset conversion inputs:
   OMNIFLOW_OURS_SOURCE_ASSET_INDEX Source RunLog index; defaults to the master
@@ -383,7 +425,7 @@ Long-term-memory refresh inputs:
   OMNIFLOW_MEMORY_FUNCTION_CATALOGS  Colon-separated Function catalogs.
   OMNIFLOW_MEMORY_BASELINE_BATCH_REPORTS
                                      Colon-separated immutable batch summaries
-                                     whose validator cells must remain frozen.
+                                     whose validator results must remain frozen.
   OMNIFLOW_SOURCE_SELECTION_MANIFEST Optional audited exact-SHA source repairs.
   OMNIFLOW_FUNCTION_STORE_SELECTION_MANIFEST
                                      Optional audited exact-SHA Function Store
@@ -452,21 +494,21 @@ while [[ "$#" -gt 0 ]]; do
     --all-tasks)
       all_tasks=1
       ;;
-    --methods)
+    --method)
       shift
       if [[ "$#" -eq 0 || -z "$1" ]]; then
-        echo "--methods requires a comma-separated method list." >&2
+        echo "--method requires one paper method." >&2
         exit 2
       fi
-      selected_methods_arg="$1"
+      selected_method_arg="$1"
       ;;
-    --devices)
+    --device)
       shift
       if [[ "$#" -eq 0 || -z "$1" ]]; then
-        echo "--devices requires a comma-separated device list." >&2
+        echo "--device requires LABEL:SERIAL:PORT." >&2
         exit 2
       fi
-      selected_devices_arg="$1"
+      selected_device_arg="$1"
       ;;
     --convert-ours-assets)
       convert_ours_assets=1
@@ -533,6 +575,16 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
+if [[ -n "$selected_method_arg" || -n "$selected_device_arg" ]] && {
+  [[ "$development_run" -eq 1 || "$source_collection" -eq 1 ||
+    "$all_tasks" -eq 1 || -n "$e2e_task" || -n "$batch_task_filter" ||
+    "$convert_ours_assets" -eq 1 || "$refresh_memory" -eq 1 ||
+    "$convert_source_runlogs" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 ||
+    -n "$convert_runlog_memory_method" ]];
+}; then
+  echo "--method/--device are only valid for one direct AndroidWorld result." >&2
+  exit 2
+fi
 if [[ "$execution_environment" != "bmoca" && "$source_collection" -eq 1 ]]; then
   if [[ -z "$batch_task_filter" || "$batch_task_filter" == *,* ]]; then
     echo "--collect-source requires exactly one task through --tasks." >&2
@@ -543,7 +595,7 @@ if [[ "$execution_environment" != "bmoca" && "$source_collection" -eq 1 ]]; then
   source_qualification_only=0
 fi
 if [[ "$execution_environment" == "bmoca" ]]; then
-  if [[ "$source_collection" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || -n "$e2e_task" || -n "$selected_methods_arg" || -n "$selected_devices_arg" ]]; then
+  if [[ "$source_collection" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || -n "$e2e_task" || -n "$selected_method_arg" || -n "$selected_device_arg" ]]; then
     echo "--environment bmoca is one native OmniFlow E2E run and cannot be combined with AndroidWorld experiment modes." >&2
     exit 2
   fi
@@ -552,7 +604,7 @@ if [[ "$execution_environment" == "bmoca" ]]; then
     exit 2
   fi
   if [[ -z "$store_path" || "$store_path" != /* || ! -f "$store_path" ]]; then
-    echo "--environment bmoca requires an existing absolute OMNIFLOW_SINGLE_TASK_STORE_PATH." >&2
+    echo "--environment bmoca requires an existing absolute OMNIFLOW_ANDROIDWORLD_STORE_PATH." >&2
     exit 2
   fi
   if [[ -z "$bmoca_root" || "$bmoca_root" != /* || ! -d "$bmoca_root/asset" ]]; then
@@ -625,7 +677,7 @@ if [[ "$execution_environment" == "bmoca" ]]; then
   exec "${bmoca_command[@]}"
 fi
 if [[ -n "$convert_runlog_memory_method" ]]; then
-  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$e2e_task" || -n "$batch_task_filter" ]]; then
+  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || -n "$e2e_task" || -n "$batch_task_filter" ]]; then
     echo "--convert-runlog-memory cannot be combined with another experiment mode." >&2
     exit 2
   fi
@@ -707,7 +759,7 @@ PY
   exit 0
 fi
 if [[ "$development_run" -eq 1 ]]; then
-  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" || -n "$e2e_task" ]]; then
+  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || -n "$e2e_task" ]]; then
     echo "--development-run cannot be combined with maintenance, formal matrix, or E2E options." >&2
     exit 2
   fi
@@ -723,7 +775,7 @@ if [[ "$development_run" -eq 1 ]]; then
   development_model_endpoint_profile="${OMNIFLOW_DEVELOPMENT_MODEL_ENDPOINT_PROFILE:-llmthu}"
   development_console_port="${OMNIFLOW_DEVELOPMENT_CONSOLE_PORT:-5554}"
   development_avd="${OMNIFLOW_DEVELOPMENT_AVD:-OmniFlowTargetSmall}"
-  development_perform_setup="${OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP:-1}"
+  development_perform_setup="${OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP:-1}"
   development_planner_timeout="${OMNIFLOW_PLANNER_TIMEOUT_SEC:-60}"
   development_runtime_files=(
     "src/experiment/development_emulator.py"
@@ -741,11 +793,11 @@ if [[ "$development_run" -eq 1 ]]; then
     exit 1
   fi
   if [[ -z "$task" || "$task" == *,* ]]; then
-    echo "--development-run requires exactly one task through --tasks or OMNIFLOW_SINGLE_TASK_TASK." >&2
+    echo "--development-run requires exactly one task through --tasks or OMNIFLOW_ANDROIDWORLD_TASK." >&2
     exit 2
   fi
   if [[ -z "$store_path" || "$store_path" != /* || ! -f "$store_path" ]]; then
-    echo "--development-run requires an existing absolute OMNIFLOW_SINGLE_TASK_STORE_PATH." >&2
+    echo "--development-run requires an existing absolute OMNIFLOW_ANDROIDWORLD_STORE_PATH." >&2
     exit 2
   fi
   if [[ -z "$development_output_path" || "$development_output_path" != /* ]]; then
@@ -765,7 +817,7 @@ if [[ "$development_run" -eq 1 ]]; then
     exit 2
   fi
   if [[ ! "$development_perform_setup" =~ ^[01]$ ]]; then
-    echo "OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP must be 0 or 1." >&2
+    echo "OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP must be 0 or 1." >&2
     exit 2
   fi
   if [[ -z "$android_world_root" || "$android_world_root" != /* || ! -d "$android_world_root/android_world" ]]; then
@@ -797,7 +849,7 @@ if [[ "$development_run" -eq 1 ]]; then
     "$python_bin" -m src.integrations.android_world.launch
     --android-world-root "$android_world_root"
     --tasks "$task"
-    --task-random-seed "$evaluation_seed"
+    --task-random-seed "$task_seed"
     --n-task-combinations 1
     --console-port "$development_console_port"
     --agent omniflow
@@ -831,7 +883,7 @@ if [[ "$development_run" -eq 1 ]]; then
   exec "${development_command[@]}"
 fi
 if [[ -n "$e2e_task" ]]; then
-  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || -n "$batch_task_filter" || -n "$selected_methods_arg" || -n "$selected_devices_arg" ]]; then
+  if [[ "$convert_source_runlogs" -eq 1 || "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || -n "$batch_task_filter" ]]; then
     echo "--e2e-task cannot be combined with maintenance or matrix-selection options." >&2
     exit 2
   fi
@@ -921,8 +973,8 @@ if [[ -n "$e2e_task" ]]; then
     --adb-path "$e2e_adb_path"
     --emulator-bin "$e2e_emulator_bin"
     --source-device "$source_device"
-    --source-avd "${OMNIFLOW_E2E_SOURCE_AVD:-SmallPhone}"
-    --emulator-gpu "${OMNIFLOW_SINGLE_TASK_EMULATOR_GPU:-swiftshader_indirect}"
+    --source-avd "${OMNIFLOW_ANDROIDWORLD_SOURCE_AVD:-SmallPhone}"
+    --emulator-gpu "${OMNIFLOW_ANDROIDWORLD_EMULATOR_GPU:-swiftshader_indirect}"
     --runtime-preflight "$repo/src/experiment/preflight.py"
     --formal-model "$formal_model"
   )
@@ -949,7 +1001,7 @@ if [[ -n "$e2e_task" ]]; then
   exec "$python_bin" "${e2e_args[@]}"
 fi
 if [[ "$convert_source_runlogs" -eq 1 ]]; then
-  if [[ "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" ]]; then
+  if [[ "$refresh_memory" -eq 1 || "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 ]]; then
     echo "--convert-source-runlogs cannot be combined with experiment or other maintenance options." >&2
     exit 2
   fi
@@ -990,7 +1042,7 @@ if [[ "$convert_source_runlogs" -eq 1 ]]; then
   exec "$python_bin" "${source_conversion_args[@]}"
 fi
 if [[ "$refresh_memory" -eq 1 ]]; then
-  if [[ "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || -n "$batch_task_filter" || -n "$selected_methods_arg" || -n "$selected_devices_arg" ]]; then
+  if [[ "$convert_ours_assets" -eq 1 || "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || -n "$batch_task_filter" ]]; then
     echo "--refresh-memory cannot be combined with conversion or experiment run options." >&2
     exit 2
   fi
@@ -1127,7 +1179,7 @@ print(
 PY
 }
 if [[ "$convert_ours_assets" -eq 1 ]]; then
-  if [[ "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" ]]; then
+  if [[ "$prepare_mobilegpt_memory" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || "$all_tasks" -eq 1 ]]; then
     echo "--convert-ours-assets cannot be combined with experiment run options." >&2
     exit 2
   fi
@@ -1182,82 +1234,31 @@ if [[ -n "$batch_task_filter" && "$all_tasks" -eq 0 && "$prepare_mobilegpt_memor
   all_tasks=1
 fi
 if [[ "$prepare_mobilegpt_memory" -eq 1 ]]; then
-  if [[ "$dry_run" -eq 1 || "$all_tasks" -eq 1 || -n "$selected_methods_arg" || -n "$selected_devices_arg" ]]; then
+  if [[ "$dry_run" -eq 1 || "$all_tasks" -eq 1 ]]; then
     echo "--prepare-mobilegpt-memory cannot be combined with formal experiment axes or --dry-run." >&2
     exit 2
   fi
 fi
 if [[ "$task_iteration" == "1" ]]; then
-  default_methods="$all_methods"
+  default_method="$formal_default_method"
 else
-  default_methods="ours"
+  default_method="ours"
 fi
-methods="${selected_methods_arg:-${OMNIFLOW_SINGLE_TASK_METHODS:-$default_methods}}"
-validate_method_subset() {
-  local raw_methods="$1"
-  local selected_method canonical_method
-  local seen_methods="," canonical_match
-  local -a selected_method_array=()
-  IFS=',' read -r -a selected_method_array <<< "$raw_methods"
-  if [[ "${#selected_method_array[@]}" -eq 0 ]]; then
-    echo "Method selection is empty." >&2
-    return 2
-  fi
-  for selected_method in "${selected_method_array[@]}"; do
-    if [[ -z "$selected_method" ]]; then
-      echo "Method selection contains an empty name: $raw_methods" >&2
-      return 2
-    fi
-    canonical_match=0
-    for canonical_method in ${all_methods//,/ }; do
-      if [[ "$selected_method" == "$canonical_method" ]]; then
-        canonical_match=1
-        break
-      fi
-    done
-    if [[ "$canonical_match" -ne 1 ]]; then
-      echo "Unsupported paper method: $selected_method" >&2
-      return 2
-    fi
-    if [[ "$seen_methods" == *",$selected_method,"* ]]; then
-      echo "Duplicate method in --methods: $selected_method" >&2
-      return 2
-    fi
-    seen_methods+="$selected_method,"
-  done
-}
-validate_method_subset "$methods" || exit "$?"
-if [[ -n "$selected_devices_arg" ]]; then
-  device_targets=""
-  selected_device_seen=","
-  selected_device_array=()
-  IFS=',' read -r -a selected_device_array <<< "$selected_devices_arg"
-  for selected_device in "${selected_device_array[@]}"; do
-    if [[ "$selected_device_seen" == *",$selected_device,"* ]]; then
-      echo "Duplicate device in --devices: $selected_device" >&2
-      exit 2
-    fi
-    case "$selected_device" in
-      small5554)
-        selected_device_target="small5554:emulator-5554:5554"
-        ;;
-      fold5564)
-        selected_device_target="fold5564:emulator-5564:5564"
-        ;;
-      *)
-        echo "Unsupported formal device: $selected_device" >&2
-        exit 2
-        ;;
-    esac
-    device_targets="${device_targets:+$device_targets,}$selected_device_target"
-    selected_device_seen+="$selected_device,"
-  done
-fi
+method="${selected_method_arg:-${OMNIFLOW_ANDROIDWORLD_METHOD:-$default_method}}"
+case ",$all_methods," in
+  *",$method,"*)
+    ;;
+  *)
+    echo "Unsupported paper method: $method" >&2
+    exit 2
+    ;;
+esac
+device_target="${selected_device_arg:-${OMNIFLOW_ANDROIDWORLD_DEVICE:-$default_device}}"
 target_serials=()
 target_labels_seen=","
 target_serials_seen=","
 target_console_ports_seen=","
-IFS=',' read -r -a target_specs <<< "$device_targets"
+IFS=',' read -r -a target_specs <<< "$device_target"
 for target_spec in "${target_specs[@]}"; do
   IFS=':' read -r target_label target_serial target_console_port target_extra <<< "$target_spec"
   if [[ -z "$target_label" || -z "$target_serial" || ! "$target_console_port" =~ ^[0-9]+$ || -n "${target_extra:-}" ]]; then
@@ -1453,13 +1454,9 @@ PY
     --memory-index "$memory_index"
 fi
 requires_function_asset=0
-for selected_method in ${methods//,/ }; do
-  case "$selected_method" in
-    ours)
-      requires_function_asset=1
-      ;;
-  esac
-done
+if [[ "$method" == "ours" ]]; then
+  requires_function_asset=1
+fi
 prepare_function_asset_for_task() {
   local requested_task="$1"
   local conversion_root resolved_store_path store_status revision_reason
@@ -1530,15 +1527,15 @@ if [[ "$check_only" -eq 1 && "$dry_run" -eq 1 ]]; then
   exit 2
 fi
 if [[ ! "$task_iteration" =~ ^[1-3]$ ]]; then
-  echo "OMNIFLOW_SINGLE_TASK_ITERATION must be an integer from 1 through 3." >&2
+  echo "OMNIFLOW_ANDROIDWORLD_TASK_ITERATION must be an integer from 1 through 3." >&2
   exit 2
 fi
 if [[ ! "$max_fallback_steps" =~ ^[0-5]$ ]]; then
-  echo "OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS must be an integer from 0 through 5." >&2
+  echo "OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS must be an integer from 0 through 5." >&2
   exit 2
 fi
 if [[ ! "$max_steps" =~ ^[1-9][0-9]*$ ]]; then
-  echo "OMNIFLOW_SINGLE_TASK_MAX_STEPS must be a positive integer." >&2
+  echo "OMNIFLOW_ANDROIDWORLD_MAX_STEPS must be a positive integer." >&2
   exit 2
 fi
 if [[ ! "$source_index_expected_tasks" =~ ^[1-9][0-9]*$ ]]; then
@@ -1546,27 +1543,27 @@ if [[ ! "$source_index_expected_tasks" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 if [[ ! "$expected_source_seed" =~ ^[0-9]+$ ]]; then
-  echo "OMNIFLOW_SINGLE_TASK_SOURCE_SEED must be a non-negative integer." >&2
+  echo "OMNIFLOW_ANDROIDWORLD_SOURCE_SEED must be a non-negative integer." >&2
   exit 2
 fi
-if [[ ! "$evaluation_seed" =~ ^[0-9]+$ ]]; then
-  echo "OMNIFLOW_SINGLE_TASK_EVALUATION_SEED must be a non-negative integer." >&2
+if [[ ! "$task_seed" =~ ^[0-9]+$ ]]; then
+  echo "OMNIFLOW_ANDROIDWORLD_TASK_SEED must be a non-negative integer." >&2
   exit 2
 fi
 if [[ ! "$manage_emulators" =~ ^[01]$ ]]; then
-  echo "OMNIFLOW_SINGLE_TASK_MANAGE_EMULATORS must be 0 or 1." >&2
+  echo "OMNIFLOW_ANDROIDWORLD_MANAGE_EMULATORS must be 0 or 1." >&2
   exit 2
 fi
 if [[ ! "$emulator_boot_timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
-  echo "OMNIFLOW_SINGLE_TASK_EMULATOR_BOOT_TIMEOUT_SEC must be a positive integer." >&2
+  echo "OMNIFLOW_ANDROIDWORLD_EMULATOR_BOOT_TIMEOUT_SEC must be a positive integer." >&2
   exit 2
 fi
 if [[ ! "$emulator_graceful_shutdown_timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
-  echo "OMNIFLOW_SINGLE_TASK_EMULATOR_GRACEFUL_SHUTDOWN_TIMEOUT_SEC must be a positive integer." >&2
+  echo "OMNIFLOW_ANDROIDWORLD_EMULATOR_GRACEFUL_SHUTDOWN_TIMEOUT_SEC must be a positive integer." >&2
   exit 2
 fi
 if [[ ! "$emulator_forced_shutdown_timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
-  echo "OMNIFLOW_SINGLE_TASK_EMULATOR_FORCED_SHUTDOWN_TIMEOUT_SEC must be a positive integer." >&2
+  echo "OMNIFLOW_ANDROIDWORLD_EMULATOR_FORCED_SHUTDOWN_TIMEOUT_SEC must be a positive integer." >&2
   exit 2
 fi
 if [[ ! "$androidworld_adb_file_transfer_timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
@@ -1588,8 +1585,8 @@ else
   attempt_id="iteration_${iteration_label}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 fi
 attempt_series_root="${results_root:+$results_root/androidworld_single_task_attempts/$task}"
-output_root="${OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT:-$attempt_series_root/$attempt_id}"
-preflight_output_root="${OMNIFLOW_SINGLE_TASK_PREFLIGHT_OUTPUT_ROOT:-${results_root:+$results_root/preflight/$task/$attempt_id}}"
+output_root="${OMNIFLOW_ANDROIDWORLD_OUTPUT_PATH:-$attempt_series_root/$attempt_id}"
+preflight_output_root="${OMNIFLOW_ANDROIDWORLD_PREFLIGHT_OUTPUT_ROOT:-${results_root:+$results_root/preflight/$task/$attempt_id}}"
 requires_mobilegpt_source_memory=0
 requires_appagent_source_memory=0
 requires_omnitransfer=0
@@ -1598,8 +1595,7 @@ need_mobilegpt_preflight=0
 need_appagent_preflight=0
 contains_baseline_method=0
 
-for method in ${methods//,/ }; do
-  case "$method" in
+case "$method" in
     ours)
       requires_omnitransfer=1
       need_native_preflight=1
@@ -1626,8 +1622,7 @@ for method in ${methods//,/ }; do
       echo "Unsupported paper method: $method" >&2
       exit 2
       ;;
-  esac
-done
+esac
 if [[ "$task_iteration" != "1" && "$contains_baseline_method" -eq 1 && -z "$baseline_environment_repair" ]]; then
   echo "Baseline methods are frozen after iteration 1. Set OMNIFLOW_BASELINE_ENVIRONMENT_REPAIR_REASON only for an audited environment-only retry." >&2
   exit 2
@@ -1905,18 +1900,14 @@ if [[ "$requires_omnitransfer" -eq 1 && "$all_tasks" -eq 0 && "$store_path" != /
   exit 2
 fi
 if [[ "$all_tasks" -eq 1 ]]; then
-  if [[ "$methods" != "$all_methods" || "$device_targets" != "$formal_device_targets" ]]; then
-    echo "--all-tasks uses the fixed five-method, two-device experiment matrix." >&2
-    exit 2
-  fi
   if [[ "$expected_source_seed" != "$formal_source_seed" \
-    || "$evaluation_seed" != "$formal_evaluation_seed" \
+    || "$task_seed" != "$formal_task_seed" \
     || "$max_steps" != "$formal_max_steps" \
     || "$max_fallback_steps" != "$formal_max_fallback_steps" \
     || "$fixed_task_params" != "$formal_fixed_task_params" \
     || "$fold_state" != "$formal_fold_state" \
     || "$fold_size" != "$formal_fold_size" ]]; then
-    echo "--all-tasks requires the frozen formal protocol: source_seed=$formal_source_seed evaluation_seed=$formal_evaluation_seed max_steps=$formal_max_steps max_fallback_steps=$formal_max_fallback_steps fixed_task_params=$formal_fixed_task_params fold_state=$formal_fold_state fold_size=$formal_fold_size" >&2
+    echo "--all-tasks requires the frozen formal protocol: source_seed=$formal_source_seed task_seed=$formal_task_seed max_steps=$formal_max_steps max_fallback_steps=$formal_max_fallback_steps fixed_task_params=$formal_fixed_task_params fold_state=$formal_fold_state fold_size=$formal_fold_size" >&2
     exit 2
   fi
   if [[ "$task_iteration" != "1" && -z "$baseline_environment_repair" ]]; then
@@ -2273,7 +2264,7 @@ if [[ "$requires_appagent_source_memory" -eq 1 ]]; then
   fi
 fi
 if [[ "$check_only" -eq 1 ]]; then
-  echo "[static] ready task=$task methods=$methods; no persistent output created"
+  echo "[static] ready task=$task method=$method; no persistent output created"
   exit 0
 fi
 if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
@@ -2313,7 +2304,7 @@ if [[ "$need_mobilegpt_preflight" -eq 1 ]]; then
 fi
 echo "[model] model=$paper_model model_endpoint_profile=$formal_model_endpoint_profile model_endpoint=$selected_model_base_url"
 if [[ "$dry_run" -eq 1 ]]; then
-  echo "[dry-run] ready task=$task methods=$methods devices=$device_targets; no device or persistent output created"
+  echo "[dry-run] ready task=$task method=$method device=$device_target; no device or persistent output created"
   exit 0
 fi
 ensure_androidworld_sqlite_fts4
@@ -2542,7 +2533,7 @@ ensure_emulator() {
     stop_emulator "$serial" "cold-restart"
   fi
   if ! avd="$(avd_for_serial "$serial")"; then
-    echo "No AVD mapping configured for $serial in OMNIFLOW_SINGLE_TASK_EMULATOR_AVDS." >&2
+    echo "No AVD mapping configured for $serial in OMNIFLOW_ANDROIDWORLD_EMULATOR_AVDS." >&2
     return 1
   fi
   if ! ensure_avd_installed "$avd"; then
@@ -2677,15 +2668,15 @@ command=(
   "$python_bin"
   -m
   src.experiment.androidworld
-  cell
+  result
   --experiment-config "$config"
   --index "$source_index"
   --android-world-root "$android_world_root"
   --adb-path "$adb_bin"
-  --tasks "$task"
+  --task "$task"
   --source-seed "$expected_source_seed"
   --task-iteration "$task_iteration"
-  --output-root "$output_root"
+  --output-path "$output_root"
   --master-source-index "$master_source_index"
   --result-registry-root "$results_root/androidworld_validator/runs"
   --master-progress-root "$results_root/androidworld_validator/master_progress"
@@ -2698,21 +2689,17 @@ command=(
   --timeout-sec "$timeout_sec"
   --max-steps "$max_steps"
   --max-fallback-steps "$max_fallback_steps"
-  --task-random-seed "$evaluation_seed"
+  --task-random-seed "$task_seed"
   --model "$paper_model"
 )
 if [[ -n "$baseline_environment_repair" ]]; then
   command+=(--baseline-environment-repair "$baseline_environment_repair")
 fi
-if [[ -n "$methods" ]]; then
-  command+=(--methods "$methods")
-fi
+command+=(--method "$method")
 if [[ "$fixed_task_params" != "1" ]]; then
   command+=(--no-fixed-task-params --task-params-json "")
 fi
-if [[ -n "$device_targets" ]]; then
-  command+=(--device-targets "$device_targets")
-fi
+command+=(--device "$device_target")
 if [[ -n "$appagent_demo_memory_root" ]]; then
   command+=(--appagent-demo-memory-root "$appagent_demo_memory_root")
 fi

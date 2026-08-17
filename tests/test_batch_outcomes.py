@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 from src.experiment.batch_outcomes import (
-    concluded_cell_keys,
-    record_cell_outcome,
+    concluded_result_keys,
+    record_result_outcome,
     write_batch_report,
 )
 from src.experiment.mobilegpt_contract import MOBILEGPT_SOURCE_METHOD
@@ -68,7 +68,7 @@ def test_record_prep_failure_preserves_reason_tokens_and_time(tmp_path: Path) ->
         encoding="utf-8",
     )
 
-    outcome_path = record_cell_outcome(
+    outcome_path = record_result_outcome(
         outcomes_root=tmp_path / "outcomes",
         task_name="ExpenseAddSingle",
         method="mobilegpt_offline_retrieval",
@@ -103,7 +103,7 @@ def test_record_outcome_accepts_empty_integer_token_totals(tmp_path: Path) -> No
     artifact_root = tmp_path / "fixed_replay"
     artifact_root.mkdir()
 
-    outcome_path = record_cell_outcome(
+    outcome_path = record_result_outcome(
         outcomes_root=tmp_path / "outcomes",
         task_name="BrowserMaze",
         method="fixed_replay",
@@ -123,8 +123,8 @@ def test_record_outcome_accepts_empty_integer_token_totals(tmp_path: Path) -> No
     assert outcome["total_tokens"] == 0
 
 
-def test_concluded_cell_keys_skip_immutable_failure_on_resume(tmp_path: Path) -> None:
-    record_cell_outcome(
+def test_concluded_result_keys_skip_immutable_failure_on_resume(tmp_path: Path) -> None:
+    record_result_outcome(
         outcomes_root=tmp_path / "outcomes",
         task_name="BrowserDraw",
         method="mobilegpt_offline_retrieval",
@@ -137,7 +137,7 @@ def test_concluded_cell_keys_skip_immutable_failure_on_resume(tmp_path: Path) ->
         stage="target_episode",
     )
 
-    concluded = concluded_cell_keys(
+    concluded = concluded_result_keys(
         outcomes_root=tmp_path / "outcomes",
         task_name="BrowserDraw",
         methods=("mobilegpt_offline_retrieval",),
@@ -153,7 +153,7 @@ def test_environment_repair_retry_ignores_prior_attempt_outcomes(
     tmp_path: Path,
 ) -> None:
     outcomes_root = tmp_path / "outcomes"
-    record_cell_outcome(
+    record_result_outcome(
         outcomes_root=outcomes_root,
         task_name="BrowserDraw",
         method="fixed_replay",
@@ -166,7 +166,7 @@ def test_environment_repair_retry_ignores_prior_attempt_outcomes(
         stage="target_episode",
     )
 
-    assert concluded_cell_keys(
+    assert concluded_result_keys(
         outcomes_root=outcomes_root,
         task_name="BrowserDraw",
         methods=("fixed_replay",),
@@ -176,7 +176,7 @@ def test_environment_repair_retry_ignores_prior_attempt_outcomes(
         attempt_id="iteration_02-environment-repair",
     ) == set()
 
-    record_cell_outcome(
+    record_result_outcome(
         outcomes_root=outcomes_root,
         task_name="BrowserDraw",
         method="fixed_replay",
@@ -189,7 +189,7 @@ def test_environment_repair_retry_ignores_prior_attempt_outcomes(
         stage="target_episode",
     )
 
-    assert concluded_cell_keys(
+    assert concluded_result_keys(
         outcomes_root=outcomes_root,
         task_name="BrowserDraw",
         methods=("fixed_replay",),
@@ -250,7 +250,7 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
         json.dumps({"result_cells": str(result_cells)}),
         encoding="utf-8",
     )
-    record_cell_outcome(
+    record_result_outcome(
         outcomes_root=tmp_path / "outcomes",
         task_name="BrowserDraw",
         method="mobilegpt_offline_retrieval",
@@ -294,11 +294,11 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
     assert rows[0]["total_tokens"] == 100
     assert rows[0]["episode_duration_sec"] == 9.5
     assert rows[1]["failure_summary"] == (
-        "cell_finished_without_registered_validator_result"
+        "result_finished_without_registered_validator_result"
     )
     assert rows[1]["outer_wall_sec"] == 12.0
     markdown = Path(report["results_markdown"]).read_text(encoding="utf-8")
-    assert "# AndroidWorld Cell Comparison" in markdown
+    assert "# AndroidWorld Result Comparison" in markdown
     assert (
         "| method | device | source_seed | evaluation_seed | status | "
         "validator | tool_calls | tokens | actions | reuse | reuse_unit | "
@@ -367,7 +367,7 @@ def test_batch_report_uses_current_attempt_failure_outcome(tmp_path: Path) -> No
         ("iteration_01-environment-failure", 12.0),
         ("iteration_02-environment-repair", 34.0),
     ):
-        record_cell_outcome(
+        record_result_outcome(
             outcomes_root=outcomes_root,
             task_name="BrowserDraw",
             method="fixed_replay",
@@ -446,7 +446,7 @@ def test_batch_report_current_attempt_failure_overrides_registered_result(
         json.dumps({"result_cells": str(result_cells)}),
         encoding="utf-8",
     )
-    record_cell_outcome(
+    record_result_outcome(
         outcomes_root=tmp_path / "outcomes",
         task_name="BrowserDraw",
         method="mobilegpt_offline_retrieval",
@@ -548,7 +548,7 @@ def test_batch_report_recovers_runlog_teacher_source_failure_accounting(
         "ValueError: mobilegpt_cold_memory_not_task_local\n",
         encoding="utf-8",
     )
-    outcome_path = record_cell_outcome(
+    outcome_path = record_result_outcome(
         outcomes_root=tmp_path / "outcomes",
         task_name="BrowserDraw",
         method="mobilegpt_offline_retrieval",

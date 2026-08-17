@@ -9,20 +9,8 @@ from types import SimpleNamespace
 import pytest
 from runlog_fixtures import androidworld_run_log
 
-from src.experiment.batch_outcomes import record_cell_outcome
+from src.experiment.batch_outcomes import record_result_outcome
 from src.experiment.e2e_task_pipeline import (
-    DEFAULT_DEADLINE_SEC,
-    DEVICES,
-    EVALUATION_SEED,
-    FORMAL_CELL_TIMEOUT_SEC,
-    FORMAL_EPISODE_TIMEOUT_SEC,
-    FORMAL_MAX_STEPS,
-    FORMAL_STEP_TIMEOUT_SEC,
-    MAX_FALLBACK_STEPS,
-    METHODS,
-    SOURCE_DEVICE,
-    SOURCE_MAX_STEPS,
-    SOURCE_SEED,
     Deadline,
     PipelinePhaseError,
     _function_replay_success,
@@ -40,13 +28,26 @@ from src.experiment.e2e_task_pipeline import (
     run_pipeline,
     run_target_workers,
 )
+from src.experiment.protocol import (
+    DEVICES,
+    EPISODE_TIMEOUT_SEC,
+    MAX_FALLBACK_STEPS,
+    MAX_STEPS,
+    METHODS,
+    SOURCE_DEVICE,
+    SOURCE_MAX_STEPS,
+    SOURCE_SEED,
+    STEP_TIMEOUT_SEC,
+    TASK_DEADLINE_SEC,
+    TASK_SEED,
+)
 
 
 def _args(tmp_path: Path) -> SimpleNamespace:
     return SimpleNamespace(
         task="BrowserDraw",
-        task_deadline_sec=DEFAULT_DEADLINE_SEC,
-        max_steps=FORMAL_MAX_STEPS,
+        task_deadline_sec=TASK_DEADLINE_SEC,
+        max_steps=MAX_STEPS,
         max_fallback_steps=MAX_FALLBACK_STEPS,
         attempt_id="attempt-test",
         output_root=tmp_path / "output",
@@ -80,7 +81,7 @@ def test_dry_run_has_fixed_task_method_device_schedule(
         lambda _: {"canonical": {"source_run_logs": {}, "function_stores": {}}},
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.registered_cell_plan_from_memory",
+        "src.experiment.e2e_task_pipeline.registered_result_plan_from_memory",
         lambda **_: {
             "completed": [],
             "pending": [
@@ -93,7 +94,7 @@ def test_dry_run_has_fixed_task_method_device_schedule(
 
     assert len(plan["pending"]) == 10
     assert plan["source_seed"] == SOURCE_SEED == 111
-    assert plan["evaluation_seed"] == EVALUATION_SEED == 113
+    assert plan["evaluation_seed"] == TASK_SEED == 113
     assert plan["methods"] == list(METHODS)
     assert plan["devices"] == [list(device) for device in DEVICES]
     assert plan["schedule"] == {
@@ -101,7 +102,7 @@ def test_dry_run_has_fixed_task_method_device_schedule(
     }
     assert MAX_FALLBACK_STEPS == 5
     assert SOURCE_MAX_STEPS == 30
-    assert FORMAL_MAX_STEPS == 20
+    assert MAX_STEPS == 20
     assert SOURCE_DEVICE == ("source5560", "emulator-5560", 5560)
     assert plan["writes"] is False
 
@@ -164,15 +165,15 @@ def test_resolve_args_preserves_symlinked_virtualenv_python(
     assert resolved.python_bin.is_symlink()
 
 
-def test_cell_environment_uses_orchestrator_budget_and_child_guard(
+def test_result_environment_uses_orchestrator_budget_and_child_guard(
     tmp_path: Path,
 ) -> None:
-    from src.experiment.e2e_task_pipeline import PHASE_TIMEOUTS_SEC, _cell_environment
+    from src.experiment.e2e_task_pipeline import PHASE_TIMEOUTS_SEC, _result_environment
 
     args = _args(tmp_path)
     args.max_steps = 7
     args.max_fallback_steps = 2
-    environment = _cell_environment(
+    environment = _result_environment(
         args=args,
         attempt_id="attempt-test",
         attempt_root=tmp_path / "attempt",
@@ -183,29 +184,28 @@ def test_cell_environment_uses_orchestrator_budget_and_child_guard(
         appagent_memory=None,
     )
 
-    cell_attempt_id = "attempt-test.t3a_hint.small5554"
+    result_attempt_id = "attempt-test.t3a_hint.small5554"
     assert environment["OMNIFLOW_BATCH_CHILD"] == "1"
-    assert environment["OMNIFLOW_BATCH_ATTEMPT_ID"] == cell_attempt_id
-    assert environment["OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT"] == str(
+    assert environment["OMNIFLOW_BATCH_ATTEMPT_ID"] == result_attempt_id
+    assert environment["OMNIFLOW_ANDROIDWORLD_OUTPUT_PATH"] == str(
         tmp_path
         / "attempt"
         / "target_attempts"
         / "small5554"
         / "t3a_hint"
-        / cell_attempt_id
+        / result_attempt_id
     )
-    assert environment["OMNIFLOW_SINGLE_TASK_TIMEOUT_SEC"] == str(
+    assert environment["OMNIFLOW_ANDROIDWORLD_TIMEOUT_SEC"] == str(
         PHASE_TIMEOUTS_SEC["target_episode"]
     )
-    assert environment["OMNIFLOW_SINGLE_TASK_MAX_STEPS"] == "7"
-    assert environment["OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS"] == "2"
-    assert PHASE_TIMEOUTS_SEC["target_cell"] > PHASE_TIMEOUTS_SEC["target_episode"]
+    assert environment["OMNIFLOW_ANDROIDWORLD_MAX_STEPS"] == "7"
+    assert environment["OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS"] == "2"
+    assert PHASE_TIMEOUTS_SEC["target_result"] == PHASE_TIMEOUTS_SEC["target_episode"]
 
 
 def test_formal_timeout_covers_frozen_steps_and_validator_flush() -> None:
-    assert FORMAL_EPISODE_TIMEOUT_SEC == FORMAL_MAX_STEPS * FORMAL_STEP_TIMEOUT_SEC + 300
-    assert FORMAL_EPISODE_TIMEOUT_SEC > 600
-    assert FORMAL_CELL_TIMEOUT_SEC > FORMAL_EPISODE_TIMEOUT_SEC
+    assert EPISODE_TIMEOUT_SEC == MAX_STEPS * STEP_TIMEOUT_SEC + 300
+    assert EPISODE_TIMEOUT_SEC > 600
 
 
 def test_source_device_ready_requires_exact_avd_identity(
@@ -302,23 +302,23 @@ def test_target_workers_parallelize_devices_and_serialize_methods(
     calls: list[tuple[str, str, float, float]] = []
     completed: set[tuple[str, str]] = set()
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._concluded_cells",
+        "src.experiment.e2e_task_pipeline._concluded_results",
         lambda *_: set(completed),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.concluded_cell_keys",
+        "src.experiment.e2e_task_pipeline.concluded_result_keys",
         lambda **_: set(),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.record_cell_outcome",
+        "src.experiment.e2e_task_pipeline.record_result_outcome",
         lambda **_: tmp_path / "outcome.json",
     )
 
     def runner(command: list[str], **kwargs: object) -> dict[str, object]:
         environment = kwargs["environment"]
         assert isinstance(environment, dict)
-        method = str(environment["OMNIFLOW_SINGLE_TASK_METHODS"])
-        device = str(environment["OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS"]).split(":")[0]
+        method = str(environment["OMNIFLOW_ANDROIDWORLD_METHOD"])
+        device = str(environment["OMNIFLOW_ANDROIDWORLD_DEVICE"]).split(":")[0]
         started = time.monotonic()
         time.sleep(0.03)
         finished = time.monotonic()
@@ -357,15 +357,15 @@ def test_target_workers_fail_stop_after_pending_environment_failure(
     calls: list[tuple[str, str]] = []
     recorded: list[dict[str, object]] = []
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._concluded_cells",
+        "src.experiment.e2e_task_pipeline._concluded_results",
         lambda *_: set(),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.concluded_cell_keys",
+        "src.experiment.e2e_task_pipeline.concluded_result_keys",
         lambda **_: set(),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.record_cell_outcome",
+        "src.experiment.e2e_task_pipeline.record_result_outcome",
         lambda **kwargs: recorded.append(kwargs) or tmp_path / "outcome.json",
     )
 
@@ -374,8 +374,8 @@ def test_target_workers_fail_stop_after_pending_environment_failure(
         assert isinstance(environment, dict)
         calls.append(
             (
-                str(environment["OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS"]).split(":")[0],
-                str(environment["OMNIFLOW_SINGLE_TASK_METHODS"]),
+                str(environment["OMNIFLOW_ANDROIDWORLD_DEVICE"]).split(":")[0],
+                str(environment["OMNIFLOW_ANDROIDWORLD_METHOD"]),
             )
         )
         return {"returncode": 1, "timed_out": False, "wall_sec": 0.01}
@@ -408,15 +408,15 @@ def test_blocked_cells_do_not_duplicate_shared_prep_accounting(
     recorded: list[dict[str, object]] = []
     completed: set[tuple[str, str]] = set()
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._concluded_cells",
+        "src.experiment.e2e_task_pipeline._concluded_results",
         lambda *_: set(completed),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.concluded_cell_keys",
+        "src.experiment.e2e_task_pipeline.concluded_result_keys",
         lambda **_: set(),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.record_cell_outcome",
+        "src.experiment.e2e_task_pipeline.record_result_outcome",
         lambda **kwargs: recorded.append(kwargs) or tmp_path / "outcome.json",
     )
 
@@ -435,9 +435,9 @@ def test_blocked_cells_do_not_duplicate_shared_prep_accounting(
         command_runner=lambda *args, **kwargs: (
             completed.add(
                 (
-                    str(kwargs["environment"]["OMNIFLOW_SINGLE_TASK_METHODS"]),
+                    str(kwargs["environment"]["OMNIFLOW_ANDROIDWORLD_METHOD"]),
                     str(
-                        kwargs["environment"]["OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS"]
+                        kwargs["environment"]["OMNIFLOW_ANDROIDWORLD_DEVICE"]
                     ).split(":")[0],
                 )
             )
@@ -1235,7 +1235,7 @@ def test_pipeline_report_always_materializes_four_report_formats(tmp_path: Path)
     outcomes_root = tmp_path / "outcomes"
     for method in METHODS:
         for label, serial, _ in DEVICES:
-            record_cell_outcome(
+            record_result_outcome(
                 outcomes_root=outcomes_root,
                 task_name=args.task,
                 method=method,
@@ -1243,7 +1243,7 @@ def test_pipeline_report_always_materializes_four_report_formats(tmp_path: Path)
                 device_serial=serial,
                 attempt_id="attempt-test",
                 source_seed=SOURCE_SEED,
-                evaluation_seed=EVALUATION_SEED,
+                evaluation_seed=TASK_SEED,
                 status="prep_failed",
                 stage="test",
             )

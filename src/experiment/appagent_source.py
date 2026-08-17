@@ -21,6 +21,7 @@ from PIL import Image
 from omniflow.core.trajectory import require_complete_source_run_log
 from omniflow.core.trajectory import observation_xml
 from src.experiment import androidworld as pipeline
+from src.experiment.protocol import SOURCE_SEED
 from src.experiment.mobilegpt_source import (
     load_canonical_source_item,
 )
@@ -44,9 +45,6 @@ from src.integrations.appagent_adapter import (
     seal_appagent_demo_memory,
     validate_appagent_demo_memory,
 )
-
-SOURCE_SEED = 111
-
 
 def _appagent_observation_xml(observation: dict[str, Any]) -> str:
     return androidworld_observation_xml(observation)

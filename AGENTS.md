@@ -37,13 +37,13 @@ opens a new execution phase.
 
 ## Mandatory per-task testing memory
 
-Before every AndroidWorld check, conversion, development run, formal cell, or
+Before every AndroidWorld check, conversion, development run, formal result, or
 failure diagnosis, re-read this file and `scripts/exp/README.md`. This section
 is the persistent testing protocol; do not replace it with task-local notes.
 
 Run one task to a terminal conclusion before advancing to the next task. The
 only task order is the persistent external difficulty-ordered experiment table.
-For each task, resolve `current.json` first and skip every formal cell that
+For each task, resolve `current.json` first and skip every formal result that
 already has an official-validator conclusion.
 
 Use this order for each unfinished task:
@@ -57,7 +57,7 @@ Use this order for each unfinished task:
 4. Run bounded unregistered `ours` development episodes on SmallPhone and then
    Pixel Fold. A task gets at most three development iterations; preserve the
    failure and advance after the third unsuccessful iteration.
-5. Freeze the development version, then fill only missing formal cells for the
+5. Freeze the development version, then fill only missing formal results for the
    task. Formal results remain immutable and are never replaced by a retry.
 
 Harness and script repairs are allowed only for reproducible task-independent
@@ -65,7 +65,7 @@ defects in environment resolution, dependency installation, official emulator
 lifecycle, AndroidWorld setup, a11y/gRPC readiness, native `get_state()`, the
 single `observe -> plan -> act` step boundary, schema-only adapter conversion,
 coordinate-contract normalization, immutable accounting, result registration,
-and completed-cell skipping. Add a deterministic regression test before the
+and completed-result skipping. Add a deterministic regression test before the
 repair whenever practical.
 
 Every reproducible configuration, environment, setup, or runtime failure must
@@ -107,13 +107,13 @@ than fabricating experience or changing the baseline.
 
 ## Mandatory execution entry
 
-- Every AndroidWorld or B-MoCA check, development episode, formal cell, conversion, and
+- Every AndroidWorld or B-MoCA check, development episode, formal result, conversion, and
   memory refresh must enter through `scripts/exp/run_androidworld.sh`. Do not
   invoke `src.integrations.android_world.launch`, `src.experiment.androidworld`,
   or a skill-owned runner directly; they are implementation seams.
 - Use `--development-run` for an unregistered bounded `ours` episode. A first
   run uses AndroidWorld setup. A repeated development run may set
-  `OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP=0` only when the same live
+  `OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP=0` only when the same live
   emulator already has the required AndroidWorld app snapshots.
 - Formal experiment execution keeps the default cold restart and setup. Never
   use the development reuse override to create or register a formal result.
@@ -128,7 +128,7 @@ than fabricating experience or changing the baseline.
 
 - The only active OmniFlow-exp checkout on both the local machine and host
   `9207` is `~/Projects/Omni/OmniFlow-exp` on branch `main`.
-- Before every 9207 check, conversion, development episode, or formal cell,
+- Before every 9207 check, conversion, development episode, or formal result,
   compare `git rev-parse HEAD` in both active checkouts. The two full commit
   SHAs must be identical and both worktrees must contain no uncommitted tracked
   changes. A mismatch is a preflight failure; do not run an experiment.
@@ -149,7 +149,7 @@ than fabricating experience or changing the baseline.
 - Targets are SmallPhone and Pixel Fold in unfolded state `2`.
 - Use AndroidWorld native observation/action and its official validator. Do not use OOB.
 - Record validator result, model calls, prompt/completion/total tokens, actions,
-  episode duration, and outer wall time for every cell.
+  episode duration, and outer wall time for every result.
 - Results and attempts are immutable and live outside this repository.
 
 ## Method boundary
@@ -222,11 +222,11 @@ coordinates directly on a target device.
   A converted Function Store is canonical only when the v2 Store, transfer
   states, provenance hashes, and no-target-input audit all verify. Equal-quality
   conflicting Stores are an error and must not be selected silently.
-- For a task/method/device result cell, use the earliest immutable registered
+- For a task/method/device result, use the earliest immutable registered
   result with an official-validator conclusion. Never rank or replace results
   by success, token count, duration, or a later retry.
 - If `current.json` already contains a canonical asset or formal result, reuse
-  it or skip the completed cell. Do not call a model, rebuild an asset, rerun a
-  completed cell, or reason about which historical directory to use.
+  it or skip the completed result. Do not call a model, rebuild an asset, rerun a
+  completed result, or reason about which historical directory to use.
 - A missing, corrupt, or ambiguous memory entry is a preflight failure. Report
   it explicitly; do not fall back to path guessing or automatic generation.

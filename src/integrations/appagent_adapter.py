@@ -29,9 +29,9 @@ from src.integrations.android_world.host import (
 )
 from src.integrations.runlog import import_run_log, project_androidworld_step_actions
 from src.integrations.android_world.host import androidworld_elements_xml
+from src.experiment.protocol import SOURCE_SEED as APPAGENT_SOURCE_SEED
 
 APPAGENT_OFFICIAL_REVISION = "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
-APPAGENT_SOURCE_SEED = 111
 APPAGENT_TEACHER_SOURCE_SCHEMA = "omniflow.appagent-teacher-source.v2"
 APPAGENT_DEMO_MEMORY_SCHEMA = "omniflow.appagent-demo-memory.v2"
 APPAGENT_DEMO_MANIFEST = "appagent_demo_manifest.json"

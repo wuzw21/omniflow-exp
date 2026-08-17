@@ -95,7 +95,7 @@ is retained as evaluation evidence rather than retried with changed rules.
    `2`) run concurrently. Target seed is always `113`; fallback budget remains
    the frozen maximum of `5`.
 7. Register every official-validator result immediately in the canonical
-   external memory. Reuse already registered cells and never rerun them merely
+   external memory. Reuse already registered results and never rerun them merely
    to improve success or cost.
 
 | phase | per-phase cap | model use | failure scope |
@@ -110,7 +110,7 @@ is retained as evaluation evidence rather than retried with changed rules.
 These are local caps, not additive reservations. Every child receives only the
 remaining part of the 1800-second global deadline. When no time remains, the
 coordinator does not launch another process and writes `deadline_exceeded` for
-every unfinished cell.
+every unfinished result.
 
 The five target methods retain their frozen models and policies.
 `OMNIFLOW_E2E_OUTPUT_ROOT` changes the external attempt root, and
@@ -155,7 +155,7 @@ Each immutable attempt contains:
 
 The top-level summaries expose only aggregate `tool_calls` and `tokens`.
 Detailed prompt/completion accounting, actions, validator result, episode
-duration, outer wall time, error, and evidence path remain in each cell row or
+duration, outer wall time, error, and evidence path remain in each result row or
 phase record. RunLogs, screenshots, memories, results, and attempts stay
 outside this repository.
 
@@ -187,9 +187,9 @@ the same RunLog. T3A derives its hint from the same frozen Function and RunLog.
 Existing valid assets are reused without rebuilding or re-authoring them.
 
 After adaptation, every selected method is replayed on the configured targets
-and evaluated by the official validator. The result cell records validator
+and evaluated by the official validator. The result records validator
 success, model calls, prompt/completion/total tokens, actions, episode duration,
-and outer wall time. These detailed accounting fields remain in immutable cell
+and outer wall time. These detailed accounting fields remain in immutable result
 evidence; top-level JSON, Markdown, CSV, and terminal summaries expose only
 aggregate `tool_calls` and `tokens`. Every method and every validator outcome
 records each AndroidWorld observation in order. Screenshots live under
@@ -202,7 +202,7 @@ object. Missing or unencodable images are explicit per-observation errors. For
 `ours`, each Function action is mapped by the canonical OmniTransfer
 implementation; a mapping failure returns to the normal VLM fallback.
 Source-device coordinates are never executed directly on a target.
-`--tasks` implies task-major execution and skips cells that already have a
+`--tasks` implies task-major execution and skips results that already have a
 registered official-validator conclusion.
 
 `--convert-ours-assets` remains a conversion-only maintenance mode. It is not
@@ -249,7 +249,7 @@ bash scripts/exp/run_androidworld.sh --all-tasks \
   --tasks AudioRecorderRecordAudio,AudioRecorderRecordAudioWithFileName,FilesMoveFile
 ```
 
-For a bounded slice, set `OMNIFLOW_SINGLE_TASK_SOURCE_INDEX` to the immutable
+For a bounded slice, set `OMNIFLOW_ANDROIDWORLD_SOURCE_INDEX` to the immutable
 index containing exactly those selected tasks. Keep
 `OMNIFLOW_MASTER_SOURCE_INDEX` pointed at the full 116-task inventory used by
 result registration. When the frozen Function Stores do not use the default
@@ -292,7 +292,7 @@ or consume the formal immutable task attempt.
 The scheduler is task-major: it completes all method/device results for one
 task before starting the next task. It does not launch a method-major campaign.
 The same entry point validates the frozen ours assets, then starts or
-repairs the configured AVDs. Every pending cell cold-restarts its managed AVD
+repairs the configured AVDs. Every pending result cold-restarts its managed AVD
 without loading or saving a Quick Boot snapshot, waits for adb and emulator
 gRPC, forces the Pixel Fold to state `2`, and runs every required runtime
 preflight. If the versioned

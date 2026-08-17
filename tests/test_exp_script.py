@@ -102,8 +102,10 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "OMNIFLOW_BMOCA_ENVIRONMENT_IDS" in completed.stdout
     assert "--development-run" in completed.stdout
     assert "--all-tasks" in completed.stdout
-    assert "--methods" in completed.stdout
-    assert "--devices" in completed.stdout
+    assert "--method" in completed.stdout
+    assert "--device" in completed.stdout
+    assert "--methods" not in completed.stdout
+    assert "--devices" not in completed.stdout
     assert "--tasks" in completed.stdout
     assert "--convert-ours-assets" in completed.stdout
     assert "--convert-runlog-memory" in completed.stdout
@@ -119,8 +121,8 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "OMNIFLOW_OURS_AUTHORING_MANIFEST" in completed.stdout
     assert "OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT" in completed.stdout
     assert "OMNIFLOW_DEVELOPMENT_OUTPUT_PATH" in completed.stdout
-    assert "OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP" in completed.stdout
-    assert "cold-restarted before every pending cell" in completed.stdout
+    assert "OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP" in completed.stdout
+    assert "cold-restarted before every pending result" in completed.stdout
     assert completed.stderr == ""
     script_text = SCRIPT.read_text(encoding="utf-8")
     assert 'workspace_root="$(cd "$repo/.." && pwd)"' in script_text
@@ -149,8 +151,8 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "-read-only" in script_text
     assert "-no-snapshot-load" in script_text
     assert "-no-snapshot-save" in script_text
-    assert "from src.experiment.result_registry import registered_cell_plan" not in script_text
-    assert script_text.count("registered_cell_plan_from_memory(") == 0
+    assert "from src.experiment.result_registry import registered_result_plan" not in script_text
+    assert script_text.count("registered_result_plan_from_memory(") == 0
     assert "-m src.experiment.e2e_task_pipeline" in script_text
     assert '(( e2e_task_deadline_sec > 1800 ))' in script_text
     native_preflight = script_text.split(
@@ -166,10 +168,10 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert 'while [[ -n "$(device_state "$serial")" ]] || grpc_ready "$grpc_port"; do' in script_text
     assert 'echo "[emulator] already stopped serial=$serial"' in script_text
     assert "No emulator process found while device remained visible" in script_text
-    assert 'formal_step_timeout_sec=60' in script_text
-    assert 'official_validator_flush_grace_sec=300' in script_text
-    assert 'formal_episode_timeout_sec="$((formal_max_steps * formal_step_timeout_sec + official_validator_flush_grace_sec))"' in script_text
-    assert 'timeout_sec="${OMNIFLOW_SINGLE_TASK_TIMEOUT_SEC:-$formal_episode_timeout_sec}"' in script_text
+    assert "src.experiment.protocol" in script_text
+    assert "protocol_values=" in script_text
+    assert 'timeout_sec="${OMNIFLOW_ANDROIDWORLD_TIMEOUT_SEC:-$formal_episode_timeout_sec}"' in script_text
+    assert "formal_cell_timeout_sec" not in script_text
     assert (
         'androidworld_adb_file_transfer_timeout_sec="${OMNIFLOW_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC:-300}"'
         in script_text
@@ -269,7 +271,7 @@ def test_mobilegpt_runtime_uses_sealed_embedding_contract_and_split_endpoints() 
 def test_formal_dry_run_exits_before_output_and_emulator_management() -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
     dry_run_gate = script_text.index(
-        'echo "[dry-run] ready task=$task methods=$methods devices=$device_targets; '
+        'echo "[dry-run] ready task=$task method=$method device=$device_target; '
         'no device or persistent output created"'
     )
 
@@ -329,7 +331,7 @@ def test_unified_script_repairs_missing_androidworld_sqlite_fts4_support() -> No
     assert 'export LD_PRELOAD="$candidate_preload"' in script_text
     sqlite_gate = script_text.rindex("ensure_androidworld_sqlite_fts4\n")
     dry_run_gate = script_text.index(
-        'echo "[dry-run] ready task=$task methods=$methods devices=$device_targets; '
+        'echo "[dry-run] ready task=$task method=$method device=$device_target; '
     )
     assert dry_run_gate < sqlite_gate
     assert sqlite_gate < script_text.index('mkdir -p "$preflight_output_root"')
@@ -384,10 +386,10 @@ def test_development_run_routes_through_the_only_script_without_repeated_setup(
             "OMNIFLOW_ANDROID_WORLD_ROOT": str(android_world),
             "OMNIFLOW_ADB_PATH": str(adb),
             "OMNIFLOW_ENV_FILE": str(env_file),
-            "OMNIFLOW_SINGLE_TASK_STORE_PATH": str(store),
+            "OMNIFLOW_ANDROIDWORLD_STORE_PATH": str(store),
             "OMNIFLOW_DEVELOPMENT_OUTPUT_PATH": str(output),
             "OMNIFLOW_DEVELOPMENT_MODEL": "GLM-5.1",
-            "OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP": "0",
+            "OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP": "0",
         },
         check=False,
         capture_output=True,
@@ -438,7 +440,7 @@ def test_development_run_rejects_qwen3_vl_plus_before_device_start(
             "OMNIFLOW_ANDROID_WORLD_ROOT": str(android_world),
             "OMNIFLOW_ADB_PATH": str(adb),
             "OMNIFLOW_ENV_FILE": str(env_file),
-            "OMNIFLOW_SINGLE_TASK_STORE_PATH": str(store),
+            "OMNIFLOW_ANDROIDWORLD_STORE_PATH": str(store),
             "OMNIFLOW_DEVELOPMENT_OUTPUT_PATH": str(tmp_path / "attempt"),
             "OMNIFLOW_DEVELOPMENT_MODEL": "qwen3-vl-plus",
         },
@@ -491,7 +493,7 @@ def test_development_run_rejects_incomplete_code_release_before_device_start(
             "OMNIFLOW_ADB_PATH": str(adb),
             "OMNIFLOW_EMULATOR_BIN": str(emulator),
             "OMNIFLOW_ENV_FILE": str(env_file),
-            "OMNIFLOW_SINGLE_TASK_STORE_PATH": str(store),
+            "OMNIFLOW_ANDROIDWORLD_STORE_PATH": str(store),
             "OMNIFLOW_DEVELOPMENT_OUTPUT_PATH": str(tmp_path / "attempt"),
             "OMNIFLOW_DEVELOPMENT_MODEL": "GLM-5.1",
         },
@@ -606,7 +608,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
             "OMNIFLOW_MOBILEGPT_ROOT": str(mobilegpt),
             "OMNIFLOW_APPAGENT_ROOT": str(appagent),
             "OMNITRANSFER_ROOT": str(omnitransfer),
-            "OMNIFLOW_SOURCE_DEVICE": "source5570:emulator-5570:5570",
+            "OMNIFLOW_ANDROIDWORLD_SOURCE_DEVICE": "source5570:emulator-5570:5570",
         },
         check=False,
         capture_output=True,
@@ -732,7 +734,7 @@ def test_default_topology_uses_three_distinct_device_instances(
             "-c",
             "source \"$SCRIPT_PREFIX\"; "
             "printf '%s\\n%s\\n%s\\n' "
-            "\"$source_device\" \"$device_targets\" \"$emulator_avds\"",
+            "\"$source_device\" \"$device_target\" \"$emulator_avds\"",
         ],
         cwd=REPO,
         env={**os.environ, "SCRIPT_PREFIX": str(script_prefix)},
@@ -744,7 +746,7 @@ def test_default_topology_uses_three_distinct_device_instances(
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.splitlines() == [
         "source5560:emulator-5560:5560",
-        "small5554:emulator-5554:5554,fold5564:emulator-5564:5564",
+        "small5554:emulator-5554:5554",
         (
                 "emulator-5554=OmniFlowTargetSmall,emulator-5560=SmallPhone,"
             "emulator-5564=OmniFlowTargetFold"
@@ -765,12 +767,12 @@ def test_default_topology_uses_three_distinct_device_instances(
     ("environment_override", "message"),
     [
         (
-            {"OMNIFLOW_SOURCE_DEVICE": "source5560:emulator-5554:5554"},
+            {"OMNIFLOW_ANDROIDWORLD_SOURCE_DEVICE": "source5560:emulator-5554:5554"},
             "Source serial must be separate from target serials",
         ),
         (
             {
-                "OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS": (
+                "OMNIFLOW_ANDROIDWORLD_DEVICE": (
                     "small5554:emulator-5554:5554,"
                     "fold5564:emulator-5554:5554"
                 )
@@ -779,7 +781,7 @@ def test_default_topology_uses_three_distinct_device_instances(
         ),
         (
             {
-                "OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS": (
+                "OMNIFLOW_ANDROIDWORLD_DEVICE": (
                     "small5554:emulator-5554:5554,"
                     "fold5564:emulator-5564:5554"
                 )
@@ -808,19 +810,14 @@ def test_experiment_topology_rejects_shared_device_identity(
 @pytest.mark.parametrize(
     ("arguments", "message"),
     [
+        (["--method", "unknown_method"], "Unsupported paper method"),
         (
-            [
-                "--methods",
-                "mobilegpt_offline_retrieval,mobilegpt_offline_retrieval",
-            ],
-            "Duplicate method",
+            ["--device", "small5554,small5554"],
+            "Invalid device target",
         ),
-        (["--methods", "unknown_method"], "Unsupported paper method"),
-        (["--devices", "small5554,small5554"], "Duplicate device"),
-        (["--devices", "unknown_device"], "Unsupported formal device"),
     ],
 )
-def test_experiment_axes_reject_invalid_selections(
+def test_single_result_options_reject_invalid_selections(
     arguments: list[str],
     message: str,
 ) -> None:
@@ -920,13 +917,13 @@ def test_check_only_is_read_only_before_any_runtime_output(
         "OMNIFLOW_EXP_ASSET_ROOT": str(assets),
         "OMNIFLOW_EXP_RESULTS_ROOT": str(results),
         "OMNIFLOW_ENV_FILE": str(env_file),
-        "OMNIFLOW_SINGLE_TASK_SOURCE_INDEX": str(source_index),
+        "OMNIFLOW_ANDROIDWORLD_SOURCE_INDEX": str(source_index),
         "OMNIFLOW_MASTER_SOURCE_INDEX": str(source_index),
         "OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS": "1",
         "OMNIFLOW_ANDROID_WORLD_ROOT": str(android_world),
         "OMNIFLOW_ADB_PATH": str(fake_adb),
-        "OMNIFLOW_SINGLE_TASK_MANAGE_EMULATORS": "0",
-        "OMNIFLOW_SINGLE_TASK_METHODS": "fixed_replay",
+        "OMNIFLOW_ANDROIDWORLD_MANAGE_EMULATORS": "0",
+        "OMNIFLOW_ANDROIDWORLD_METHOD": "fixed_replay",
         "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_root / "current.json"),
         "OMNIFLOW_JAVA_HOME": str(tmp_path),
         "PYTHON_BIN": sys.executable,
@@ -1132,290 +1129,6 @@ printf '%s\n' "$@" > "$CAPTURE_ARGS"
     arguments = captured.read_text(encoding="utf-8").splitlines()
     source_index_argument = arguments.index("--source-asset-index") + 1
     assert arguments[source_index_argument] == str(canonical_source_index)
-
-
-def test_one_task_run_adapts_all_methods_then_replays(
-    tmp_path: Path,
-) -> None:
-    assets = tmp_path / "assets"
-    results = tmp_path / "results"
-    memory_index = tmp_path / "memory" / "current.json"
-    source_index = tmp_path / "memory" / "source_index.json"
-    store_index = tmp_path / "memory" / "store_index.json"
-    converted_root = assets / "converted"
-    store_path = assets / "store.json"
-    android_world = assets / "android_world"
-    omnitransfer = assets / "OmniTransfer"
-    env_file = assets / ".env"
-    authoring_manifest = assets / "authoring-manifest.json"
-    for path, content in (
-        (memory_index, "{}"),
-        (source_index, "{}"),
-        (store_index, "{}"),
-        (store_path, "{}"),
-            (
-                env_file,
-                "LLMTHU_KEY=test-only\n"
-                "LLMTHU_BASE_URL=https://llmapi.paratera.com/v1\n"
-                "OPENAI_API_KEY=embedding-test-only\n"
-                "OPENAI_BASE_URL=https://embedding.example/v1\n",
-        ),
-        (authoring_manifest, "{}"),
-        (
-            android_world
-            / "android_world"
-            / "env"
-            / "setup_device"
-            / "apps.py",
-            "",
-        ),
-        (omnitransfer / "src" / "omnitransfer" / "runtime.py", ""),
-    ):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
-
-    call_log = tmp_path / "calls.txt"
-    converted_marker = tmp_path / "converted.marker"
-    replayed_marker = tmp_path / "replayed.marker"
-    mobilegpt_marker = tmp_path / "mobilegpt.marker"
-    mobilegpt_install_marker = tmp_path / "mobilegpt-install.marker"
-    appagent_marker = tmp_path / "appagent.marker"
-    fake_python = tmp_path / "python"
-    fake_python.write_text(
-        """#!/bin/sh
-printf '%s\n' "$*" >> "$CALL_LOG"
-if [ "$1" = "-" ] && [ "$2" = "llmthu" ]; then
-  printf '%s\n' 'https://llmapi.paratera.com/v1'
-  exit 0
-fi
-if [ "$1" = "-m" ] && [ "$2" = "src.experiment.function_assets" ]; then
-  : > "$CONVERTED_MARKER"
-  exit 0
-fi
-if [ "$1" = "-m" ] && [ "$2" = "src.experiment.androidworld" ]; then
-  if [ "$3" = "mobilegpt" ] && [ "$4" = "prepare-client" ]; then
-    if [ "$ANDROID_SDK_ROOT" != "$EXPECTED_ANDROID_SDK_ROOT" ] || [ "$ANDROID_HOME" != "$EXPECTED_ANDROID_SDK_ROOT" ]; then
-      exit 42
-    fi
-  fi
-  : > "$REPLAYED_MARKER"
-  exit 0
-fi
-if [ "$1" = "-m" ] && [ "$2" = "src.experiment.mobilegpt_source" ]; then
-  if [ "$3" = "prepare" ]; then
-    : > "$MOBILEGPT_MARKER"
-    mkdir -p "$(dirname "$MOBILEGPT_MANIFEST")"
-    : > "$MOBILEGPT_MANIFEST"
-  fi
-  exit 0
-fi
-if [ "$1" = "-m" ] && [ "$2" = "src.experiment.appagent_source" ]; then
-  if [ "$3" = "prepare" ]; then
-    : > "$APPAGENT_MARKER"
-    mkdir -p "$(dirname "$APPAGENT_MANIFEST")"
-    : > "$APPAGENT_MANIFEST"
-  fi
-  exit 0
-fi
-if [ "$1" = "-" ] && [ "$2" = "$REPO_PATH" ] && [ "$3" = "$MEMORY_INDEX" ]; then
-  printf '%s\t%s\n' "$SOURCE_INDEX" "$STORE_INDEX"
-  exit 0
-fi
-if [ "$1" = "-" ] && [ "$2" = "$STORE_INDEX" ]; then
-  if [ -f "$CONVERTED_MARKER" ]; then
-    printf '%s\n' "$STORE_PATH"
-    exit 0
-  fi
-  exit 3
-fi
-if [ "$1" = "-" ] && [ "$2" = "$CONFIG_PATH" ]; then
-  printf '%s\n' 'GLM-5.1'
-  exit 0
-fi
-exit 0
-""",
-        encoding="utf-8",
-    )
-    fake_python.chmod(0o755)
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    android_sdk_root = assets / "android-sdk"
-    android_sdk_root.mkdir()
-    fake_adb = fake_bin / "adb"
-    fake_adb.write_text(
-        """#!/bin/sh
-if [ "$1" = "devices" ]; then
-  printf 'List of devices attached\nemulator-5554\tdevice\nemulator-5560\tdevice\n'
-elif [ "$1" = "-s" ] && [ "$3" = "shell" ] && [ "$4" = "pm" ]; then
-  printf 'package:/data/app/mobilegpt.apk\n'
-elif [ "$1" = "-s" ] && [ "$3" = "shell" ] && [ "$4" = "sha256sum" ]; then
-  if [ -f "$MOBILEGPT_INSTALL_MARKER" ]; then
-    printf '%s  %s\n' "$MOBILEGPT_APK_SHA" "$5"
-  else
-    printf '%064d  %s\n' 0 "$5"
-  fi
-elif [ "$1" = "-s" ] && [ "$3" = "install" ] && [ "$4" = "-r" ]; then
-  printf '%s\n' 'Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: signatures do not match]' >&2
-  exit 1
-elif [ "$1" = "-s" ] && [ "$3" = "uninstall" ]; then
-  exit 0
-elif [ "$1" = "-s" ] && [ "$3" = "install" ]; then
-  : > "$MOBILEGPT_INSTALL_MARKER"
-fi
-exit 0
-""",
-        encoding="utf-8",
-    )
-    fake_adb.chmod(0o755)
-    fake_java = fake_bin / "java"
-    fake_java.write_text(
-        "#!/bin/sh\nprintf '%s\\n' 'openjdk version \"17.0.19\"' >&2\n",
-        encoding="utf-8",
-    )
-    fake_java.chmod(0o755)
-    fake_jq = fake_bin / "jq"
-    fake_jq.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    fake_jq.chmod(0o755)
-    mobilegpt_root = assets / "mobilegpt"
-    appagent_root = assets / "appagent"
-    for path in (
-        mobilegpt_root / "Server" / "main.py",
-        mobilegpt_root / "App" / "app" / "build" / "outputs" / "apk" / "debug"
-        / "app-debug.apk",
-        appagent_root / "README.md",
-    ):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("", encoding="utf-8")
-
-    environment = {
-        **os.environ,
-        "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
-        "PYTHON_BIN": str(fake_python),
-        "CALL_LOG": str(call_log),
-        "CONVERTED_MARKER": str(converted_marker),
-        "REPLAYED_MARKER": str(replayed_marker),
-        "MOBILEGPT_MARKER": str(mobilegpt_marker),
-        "MOBILEGPT_APK_SHA": hashlib.sha256(b"").hexdigest(),
-        "MOBILEGPT_INSTALL_MARKER": str(mobilegpt_install_marker),
-        "APPAGENT_MARKER": str(appagent_marker),
-        "MOBILEGPT_MANIFEST": str(
-            assets / "mobilegpt-source" / "mobilegpt_memory_manifest.json"
-        ),
-        "APPAGENT_MANIFEST": str(
-            assets / "appagent-source" / "appagent_demo_manifest.json"
-        ),
-        "REPO_PATH": str(REPO),
-        "MEMORY_INDEX": str(memory_index),
-        "SOURCE_INDEX": str(source_index),
-        "STORE_INDEX": str(store_index),
-        "STORE_PATH": str(store_path),
-        "CONFIG_PATH": str(REPO / "config" / "paper_androidworld.json"),
-        "EXPECTED_ANDROID_SDK_ROOT": str(android_sdk_root),
-        "OMNIFLOW_EXP_ASSET_ROOT": str(assets),
-        "OMNIFLOW_EXP_RESULTS_ROOT": str(results),
-        "OMNIFLOW_EXP_MEMORY_INDEX": str(memory_index),
-        "OMNIFLOW_ENV_FILE": str(env_file),
-        "OMNIFLOW_ANDROID_WORLD_ROOT": str(android_world),
-        "OMNIFLOW_ANDROID_SDK_ROOT": str(android_sdk_root),
-        "OMNIFLOW_ADB_PATH": str(fake_adb),
-        "OMNITRANSFER_ROOT": str(omnitransfer),
-        "OMNIFLOW_OURS_CONVERTED_ASSET_ROOT": str(converted_root),
-        "OMNIFLOW_OURS_AUTHORING_MANIFEST": str(authoring_manifest),
-        "OMNIFLOW_MOBILEGPT_ROOT": str(mobilegpt_root),
-        "OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT": str(
-            assets / "mobilegpt-source" / "memory"
-        ),
-        "OMNIFLOW_APPAGENT_ROOT": str(appagent_root),
-        "OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT": str(
-            assets / "appagent-source"
-        ),
-        "OMNIFLOW_SINGLE_TASK_TASK": "RecordWithName",
-        "OMNIFLOW_SINGLE_TASK_METHODS": (
-            "fixed_replay,ours,mobilegpt_offline_retrieval,"
-            "appagent_demo,t3a_hint"
-        ),
-        "OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS": (
-            "small5554:emulator-5554:5554"
-        ),
-        "OMNIFLOW_SINGLE_TASK_MANAGE_EMULATORS": "0",
-        "OMNIFLOW_SINGLE_TASK_FOLD_SERIAL": "",
-        "OMNIFLOW_SOURCE_INDEX_EXPECTED_TASKS": "1",
-    }
-
-    completed = subprocess.run(
-        ["bash", str(SCRIPT)],
-        cwd=REPO,
-        env=environment,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    assert converted_marker.is_file()
-    assert mobilegpt_marker.is_file()
-    assert not mobilegpt_install_marker.exists()
-    assert appagent_marker.is_file()
-    assert replayed_marker.is_file()
-    calls = call_log.read_text(encoding="utf-8")
-    assert calls.index("src.experiment.function_assets") < calls.index(
-        "src.experiment.androidworld"
-    )
-    assert f"--store-index {store_index}" in calls
-    one_task_calls = [
-        line
-        for line in calls.splitlines()
-        if "src.experiment.androidworld cell" in line
-    ]
-    assert one_task_calls
-    assert all(f"--adb-path {fake_adb}" in line for line in one_task_calls)
-    mobilegpt_source_calls = [
-        line
-        for line in calls.splitlines()
-        if "src.experiment.mobilegpt_source" in line
-    ]
-    assert mobilegpt_source_calls
-    assert all(
-        "--store-index" not in line
-        for line in mobilegpt_source_calls
-    )
-    assert calls.index(
-        "src.experiment.mobilegpt_source prepare"
-    ) < calls.index(
-        "src.integrations.mobilegpt_runtime preflight-endpoints"
-    )
-
-    repeated = subprocess.run(
-        ["bash", str(SCRIPT)],
-        cwd=REPO,
-        env=environment,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert repeated.returncode == 0, repeated.stderr
-    repeated_calls = call_log.read_text(encoding="utf-8")
-    assert repeated_calls.count("src.experiment.function_assets") == 1
-    assert repeated_calls.count(
-        "src.experiment.mobilegpt_source prepare"
-    ) == 1
-    assert repeated_calls.count("src.experiment.appagent_source prepare") == 1
-    assert repeated_calls.count("src.experiment.androidworld cell") == 2
-
-    checked = subprocess.run(
-        ["bash", str(SCRIPT), "--check-only"],
-        cwd=REPO,
-        env=environment,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert checked.returncode == 0, checked.stderr
-    checked_calls = call_log.read_text(encoding="utf-8")
-    assert "src.experiment.androidworld mobilegpt audit-client" not in checked_calls
-    assert "src.experiment.androidworld mobilegpt prepare-client" not in checked_calls
 
 
 def test_memory_refresh_routes_all_evidence_through_the_only_script(

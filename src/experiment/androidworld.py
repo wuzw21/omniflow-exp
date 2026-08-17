@@ -41,6 +41,16 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
 )
 from src.experiment.result_registry import register_attempt_summary
+from src.experiment.protocol import (
+    DEFAULT_METHOD,
+    DEFAULT_DEVICE,
+    EPISODE_TIMEOUT_SEC,
+    MAX_STEPS,
+    METHODS,
+    SOURCE_SEED,
+    STEP_TIMEOUT_SEC,
+    TASK_SEED,
+)
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
 from src.integrations.appagent_adapter import validate_appagent_demo_memory
 
@@ -66,13 +76,12 @@ DEFAULT_MOBILEGPT_STATS_JSONL = (
 DEFAULT_MOBILEGPT_STATS_SUMMARY = (
     DEFAULT_OUTPUT_ROOT / "_mobilegpt_stats" / "mobilegpt_stats_summary.json"
 )
-DEFAULT_DEVICE_TARGETS = "small5554:emulator-5554:5554,fold5564:emulator-5564:5564"
 DEFAULT_MOBILEGPT_WAIT_START_TIMEOUT_SEC = 60.0
 DEFAULT_MOBILEGPT_EPISODE_WAIT_TIMEOUT_SEC = 120.0
 DEFAULT_MOBILEGPT_APP_READY_TIMEOUT_SEC = 15.0
 DEFAULT_MOBILEGPT_APP_READY_POLL_SEC = 0.25
-DEFAULT_EVAL_TASK_RANDOM_SEED = 113
-DEFAULT_SOURCE_METHOD = "fixed_replay"
+DEFAULT_TASK_RANDOM_SEED = TASK_SEED
+DEFAULT_SOURCE_METHOD = DEFAULT_METHOD
 
 
 @dataclass(frozen=True)
@@ -1556,7 +1565,7 @@ def build_fixed_replay_command(
     android_world_root: str | Path = DEFAULT_ANDROID_WORLD_ROOT,
     output_root: str | Path = DEFAULT_OUTPUT_ROOT,
     replay_memory_root: str | Path | None = None,
-    method_name: str = "fixed_replay",
+    method_name: str = DEFAULT_SOURCE_METHOD,
     device_label: str = "",
     serial: str = "",
     console_port: int = 5554,
@@ -1579,7 +1588,7 @@ def build_fixed_replay_command(
         serial=serial,
         console_port=console_port,
     )
-    resolved_method = _safe_stem(method_name, fallback="fixed_replay")
+    resolved_method = _safe_stem(method_name, fallback=DEFAULT_SOURCE_METHOD)
     resolved_output = _experiment_run_dir(
         output_root,
         task=item.task,
@@ -1715,7 +1724,7 @@ def build_official_androidworld_command(
     serial: str = "",
     console_port: int = 5554,
     adb_path: str = "",
-    max_steps: int = 20,
+    max_steps: int = MAX_STEPS,
     timeout_sec: int = 180,
     task_random_seed: int | None = None,
     fixed_task_seed: bool = True,
@@ -1850,7 +1859,7 @@ def build_e2e_command(
     serial: str = "",
     console_port: int = 5554,
     adb_path: str = "",
-    max_steps: int = 20,
+    max_steps: int = MAX_STEPS,
     timeout_sec: int | None = None,
     max_fallback_steps: int | None = None,
     task_random_seed: int | None = None,
@@ -3117,7 +3126,7 @@ def _validate_mobilegpt_converted_memory(
         raise ValueError("mobilegpt_virtual_memory_task_name_mismatch")
     if int(manifest.get("source_seed") or -1) != int(source_seed):
         raise ValueError("mobilegpt_virtual_memory_source_seed_mismatch")
-    if int(source_seed) != 111:
+    if int(source_seed) != SOURCE_SEED:
         raise ValueError("mobilegpt_virtual_memory_requires_source_seed_111")
     source_method = str(manifest.get("source_method") or "").strip()
     if source_method != schema_source_method:
@@ -3361,7 +3370,7 @@ def seal_mobilegpt_source_memory(
     source_stats: str | Path,
     trajectory_audit: str | Path,
     task_name: str,
-    source_seed: int = 111,
+    source_seed: int = SOURCE_SEED,
     target_package: str = "",
     target_app: str = "",
     source_wall_sec: float = 0.0,
@@ -3376,7 +3385,7 @@ def seal_mobilegpt_source_memory(
     source_method = MOBILEGPT_SOURCE_METHOD
     learning_mode = MOBILEGPT_LEARNING_MODE
 
-    if int(source_seed) != 111:
+    if int(source_seed) != SOURCE_SEED:
         raise ValueError("mobilegpt_virtual_memory_requires_source_seed_111")
     memory = _repo_path(memory_root)
     bundle_root = memory.parent.resolve()
@@ -4264,14 +4273,14 @@ def _success_source_task_seed(row: dict[str, Any], params: dict[str, Any]) -> in
         for key in ("task_random_seed", "seed", "collect_seed", "replay_seed"):
             value = context.get(key)
             if value not in (None, ""):
-                return _coerce_int(value, DEFAULT_EVAL_TASK_RANDOM_SEED)
+                return _coerce_int(value, DEFAULT_TASK_RANDOM_SEED)
     for key in ("task_random_seed", "collect_seed", "replay_seed", "seed"):
         value = row.get(key)
         if value not in (None, ""):
-            return _coerce_int(value, DEFAULT_EVAL_TASK_RANDOM_SEED)
+                return _coerce_int(value, DEFAULT_TASK_RANDOM_SEED)
     if params.get("seed") not in (None, ""):
-        return _coerce_int(params.get("seed"), DEFAULT_EVAL_TASK_RANDOM_SEED)
-    return DEFAULT_EVAL_TASK_RANDOM_SEED
+        return _coerce_int(params.get("seed"), DEFAULT_TASK_RANDOM_SEED)
+    return DEFAULT_TASK_RANDOM_SEED
 
 
 def _success_source_step_count(row: dict[str, Any], canonical: dict[str, Any]) -> int:
@@ -4331,7 +4340,7 @@ def _success_source_archive_entry(
         record.get("source_seed")
         or record.get("replay_seed")
         or record.get("task_random_seed"),
-        DEFAULT_EVAL_TASK_RANDOM_SEED,
+        DEFAULT_TASK_RANDOM_SEED,
     )
     return {
         "schema_version": "omniflow.androidworld_success_source_runlog_index.v1",
@@ -4346,15 +4355,15 @@ def _success_source_archive_entry(
         "source_seed": source_seed,
         "replay_seed": _coerce_int(
             record.get("replay_seed") or record.get("task_random_seed"),
-            DEFAULT_EVAL_TASK_RANDOM_SEED,
+            DEFAULT_TASK_RANDOM_SEED,
         ),
         "collect_seed": _coerce_int(
             record.get("collect_seed") or record.get("task_random_seed"),
-            DEFAULT_EVAL_TASK_RANDOM_SEED,
+            DEFAULT_TASK_RANDOM_SEED,
         ),
         "task_random_seed": _coerce_int(
             record.get("task_random_seed"),
-            DEFAULT_EVAL_TASK_RANDOM_SEED,
+            DEFAULT_TASK_RANDOM_SEED,
         ),
         "step_count": _coerce_int(record.get("step_count"), 0),
         "method": record.get("method") or "",
@@ -4873,7 +4882,7 @@ def _select_from_args(args: argparse.Namespace) -> list[ArchivedRunLog]:
     archive = load_archive_index(args.index)
     selected = select_archive_items(
         archive,
-        tasks=args.tasks,
+        tasks=args.task,
         first60=bool(getattr(args, "first60", False)),
         limit=None,
     )
@@ -4908,14 +4917,6 @@ def _profile_summary(profiles: Sequence[SourceRunLogProfile]) -> dict[str, Any]:
 
 
 
-ONE_TASK_ALL_METHODS = (
-    "fixed_replay",
-    "ours",
-    "mobilegpt_offline_retrieval",
-    "appagent_demo",
-    "t3a_hint",
-)
-ONE_TASK_SUPPORTED_METHODS = ONE_TASK_ALL_METHODS
 MOBILEGPT_METHODS = frozenset({"mobilegpt_offline_retrieval"})
 APPAGENT_METHODS = frozenset({"appagent_demo"})
 _ONE_TASK_NON_EXECUTED_STATUSES = {
@@ -4927,20 +4928,8 @@ _ONE_TASK_NON_EXECUTED_STATUSES = {
 
 
 TOP_LEVEL_COMMANDS = {
-    "cell",
+    "result",
 }
-
-
-def _parse_one_task_methods(raw_methods: str) -> list[str]:
-    raw = str(raw_methods or "").strip()
-    if not raw or raw == "all":
-        return list(ONE_TASK_ALL_METHODS)
-    methods = [_safe_stem(item, fallback="") for item in raw.split(",")]
-    methods = [method for method in methods if method]
-    invalid = [method for method in methods if method not in ONE_TASK_SUPPORTED_METHODS]
-    if invalid:
-        raise ValueError(f"Unsupported cell method(s): {', '.join(invalid)}")
-    return methods
 
 
 def _is_mobilegpt_method(method: str) -> bool:
@@ -7229,7 +7218,7 @@ def _run_one_task_mobilegpt(
     adapted_memory = validate_mobilegpt_adapted_memory(
         source_memory_root,
         task_name=item.task,
-        source_seed=111,
+        source_seed=SOURCE_SEED,
         source_run_log=source_run_log,
         compatible_source_sha256s=compatible_source_sha256s,
         expected_model=str(args.model or ""),
@@ -7297,7 +7286,7 @@ def _run_one_task_mobilegpt(
         task=item.task,
         method=method,
         memory_mode=f"mobilegpt_single_episode_{memory_condition}",
-        source_seed=111,
+        source_seed=SOURCE_SEED,
         evaluation_seed=task_seed,
         attempt_id=attempt_id,
         target_inputs_read=False,
@@ -7486,7 +7475,7 @@ def _run_one_task_mobilegpt(
                     server_host=args.mobilegpt_server_host,
                     server_port=int(args.mobilegpt_port),
                     target_package=target_package,
-                    max_steps=int(args.max_steps or 20),
+                    max_steps=int(args.max_steps or MAX_STEPS),
                     task_random_seed=task_seed,
                     fixed_task_seed=not bool(args.no_fixed_task_seed),
                     fixed_task_params=not bool(args.no_fixed_task_params),
@@ -7611,22 +7600,20 @@ def _run_one_task_mobilegpt(
     return records, failed
 
 
-def cmd_cell(args: argparse.Namespace) -> int:
+def cmd_result(args: argparse.Namespace) -> int:
     selected = _select_from_args(args)
     if len(selected) != 1:
-        raise ValueError("cell requires exactly one selected --tasks entry")
+        raise ValueError("result requires exactly one selected --task entry")
     item = selected[0]
-    methods = _parse_one_task_methods(args.methods)
-    if len(methods) != 1:
-        raise ValueError("cell requires exactly one method")
-    targets = parse_device_targets(args.device_targets)
+    methods = (args.method,)
+    targets = parse_device_targets(args.device)
     if len(targets) != 1:
-        raise ValueError("cell requires exactly one device")
+        raise ValueError("result requires exactly one device")
     mobilegpt_source_run_log = item.source_run_log
     mobilegpt_source_run_log_sha256s = (
         _file_sha256(mobilegpt_source_run_log),
     )
-    attempt_root, _ = _task_managed_output_root(args.output_root)
+    attempt_root, _ = _task_managed_output_root(args.output_path)
     source_seed = int(args.source_seed)
     output_root = _source_seed_output_root(attempt_root, source_seed)
     attempt_id = attempt_root.name
@@ -7917,7 +7904,7 @@ def cmd_cell(args: argparse.Namespace) -> int:
                     output_root=output_root,
                     appagent_root=args.appagent_root,
                     docs_root=appagent_docs_root,
-                    max_steps=int(args.max_steps or 20),
+                    max_steps=int(args.max_steps or MAX_STEPS),
                     timeout_sec=int(args.timeout_sec or 0),
                     task_random_seed=task_seed,
                     fixed_task_seed=not bool(args.no_fixed_task_seed),
@@ -7938,7 +7925,7 @@ def cmd_cell(args: argparse.Namespace) -> int:
                     serial=target.serial,
                     console_port=target.console_port,
                     adb_path=args.adb_path,
-                    max_steps=int(args.max_steps or 20),
+                    max_steps=int(args.max_steps or MAX_STEPS),
                     timeout_sec=int(args.timeout_sec or 0),
                     task_random_seed=task_seed,
                     fixed_task_seed=not bool(args.no_fixed_task_seed),
@@ -7956,7 +7943,7 @@ def cmd_cell(args: argparse.Namespace) -> int:
                     serial=target.serial,
                     console_port=target.console_port,
                     adb_path=args.adb_path,
-                    max_steps=int(args.max_steps or 20),
+                    max_steps=int(args.max_steps or MAX_STEPS),
                     timeout_sec=int(args.timeout_sec or 0),
                     max_fallback_steps=args.max_fallback_steps,
                     task_random_seed=task_seed,
@@ -8073,7 +8060,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     one_task_parser = subparsers.add_parser(
-        "cell",
+        "result",
         help=(
             "Run exactly one AndroidWorld method on one device for one archived "
             "task"
@@ -8092,7 +8079,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--android-world-root", default=str(DEFAULT_ANDROID_WORLD_ROOT)
     )
     one_task_parser.add_argument(
-        "--output-root",
+        "--output-path",
+        dest="output_path",
         default=str(DEFAULT_OUTPUT_ROOT),
         help=(
             "Exact fresh immutable attempt directory. The shared canonical "
@@ -8119,12 +8107,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--experiment-config",
         default="",
         help=(
-            "JSON/YAML defaults for this AndroidWorld cell. Command-line "
+            "JSON/YAML defaults for this AndroidWorld result. Command-line "
             "arguments override config values."
         ),
     )
-    one_task_parser.add_argument("--tasks", required=True)
-    one_task_parser.add_argument("--source-seed", type=int, default=111)
+    one_task_parser.add_argument("--task", required=True)
+    one_task_parser.add_argument("--source-seed", type=int, default=SOURCE_SEED)
     one_task_parser.add_argument(
         "--task-iteration",
         type=int,
@@ -8144,12 +8132,10 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     one_task_parser.add_argument(
-        "--methods",
-        default="all",
-        help=(
-            "Comma-separated methods or `all`: fixed_replay, ours, "
-            "mobilegpt_offline_retrieval, appagent_demo, and t3a_hint."
-        ),
+        "--method",
+        choices=METHODS,
+        default=DEFAULT_SOURCE_METHOD,
+        help="One paper method for this AndroidWorld result.",
     )
     one_task_parser.add_argument(
         "--store-path",
@@ -8170,9 +8156,9 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     one_task_parser.add_argument(
-        "--device-targets",
-        default=DEFAULT_DEVICE_TARGETS,
-        help="Comma-separated LABEL:SERIAL:PORT entries.",
+        "--device",
+        default=DEFAULT_DEVICE,
+        help="One LABEL:SERIAL:PORT AndroidWorld target device.",
     )
     one_task_parser.add_argument(
         "--source-device",
@@ -8187,7 +8173,7 @@ def build_parser() -> argparse.ArgumentParser:
     one_task_parser.add_argument("--accepted-first30", action="store_true")
     one_task_parser.add_argument("--limit", type=int, default=None)
     one_task_parser.add_argument("--adb-path", default="")
-    one_task_parser.add_argument("--max-steps", type=int, default=20)
+    one_task_parser.add_argument("--max-steps", type=int, default=MAX_STEPS)
     one_task_parser.add_argument(
         "--max-fallback-steps",
         type=int,
@@ -8197,11 +8183,11 @@ def build_parser() -> argparse.ArgumentParser:
             "consume this budget; omitted means the normal max-step behavior."
         ),
     )
-    one_task_parser.add_argument("--timeout-sec", type=int, default=180)
+    one_task_parser.add_argument("--timeout-sec", type=int, default=EPISODE_TIMEOUT_SEC)
     one_task_parser.add_argument(
         "--task-random-seed",
         type=int,
-        default=DEFAULT_EVAL_TASK_RANDOM_SEED,
+        default=DEFAULT_TASK_RANDOM_SEED,
         help="AndroidWorld warm/target seed. Formal experiments use 113.",
     )
     one_task_parser.add_argument("--random-task-seed", action="store_true")
@@ -8214,7 +8200,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     one_task_parser.add_argument("--planner-provider", default="")
     one_task_parser.add_argument("--model", default="")
-    one_task_parser.add_argument("--planner-timeout-sec", type=float, default=60.0)
+    one_task_parser.add_argument(
+        "--planner-timeout-sec", type=float, default=STEP_TIMEOUT_SEC
+    )
     _add_androidworld_setup_args(one_task_parser)
     one_task_parser.add_argument(
         "--mobilegpt-root", default=str(DEFAULT_MOBILEGPT_ROOT)
@@ -8286,7 +8274,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     one_task_parser.add_argument("--dry-run", action="store_true")
     one_task_parser.add_argument("--fail-fast", action="store_true")
-    one_task_parser.set_defaults(func=cmd_cell)
+    one_task_parser.set_defaults(func=cmd_result)
     return parser
 
 
@@ -8295,28 +8283,26 @@ def _has_cli_option(argv: Sequence[str], option: str) -> bool:
     return any(token == option or token.startswith(prefix) for token in argv)
 
 
-def _normalize_default_cell_argv(raw_argv: Sequence[str]) -> list[str]:
+def _normalize_default_result_argv(raw_argv: Sequence[str]) -> list[str]:
     argv = list(raw_argv)
     if not argv:
         return argv
     first = str(argv[0])
     if first in TOP_LEVEL_COMMANDS or first in {"-h", "--help"}:
         return argv
-    if not _has_cli_option(argv, "--tasks"):
+    if not _has_cli_option(argv, "--task"):
         return argv
 
-    normalized = ["cell"]
+    normalized = ["result"]
     if not _has_cli_option(argv, "--experiment-config"):
         normalized.extend(["--experiment-config", "androidworld_eval.json"])
-    if not _has_cli_option(argv, "--methods"):
-        normalized.extend(["--methods", "all"])
     normalized.extend(argv)
     return normalized
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     raw_argv = list(argv) if argv is not None else sys.argv[1:]
-    raw_argv = _normalize_default_cell_argv(raw_argv)
+    raw_argv = _normalize_default_result_argv(raw_argv)
     parser = build_parser()
     args = parser.parse_args(raw_argv)
     args = apply_experiment_config(args, raw_argv, parser=parser)

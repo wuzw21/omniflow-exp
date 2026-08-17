@@ -21,40 +21,30 @@ from src.experiment.androidworld import ArchivedRunLog, build_fixed_replay_comma
 from src.experiment.artifact_memory import (
     canonical_mobilegpt_memory_from_memory,
     load_artifact_memory,
-    registered_cell_plan_from_memory,
+    registered_result_plan_from_memory,
 )
 from src.experiment.batch_outcomes import (
-    concluded_cell_keys,
-    record_cell_outcome,
+    concluded_result_keys,
+    record_result_outcome,
     write_batch_report,
 )
 from src.integrations.runlog import project_androidworld_step_actions
+from src.experiment.protocol import (
+    DEVICES,
+    EPISODE_TIMEOUT_SEC,
+    FORMAL_MODEL,
+    FORMAL_MODEL_ENDPOINT_PROFILE,
+    MAX_FALLBACK_STEPS,
+    MAX_STEPS,
+    METHODS,
+    SOURCE_DEVICE,
+    SOURCE_MAX_STEPS,
+    SOURCE_SEED,
+    STEP_TIMEOUT_SEC,
+    TASK_DEADLINE_SEC,
+    TASK_SEED,
+)
 
-METHODS = (
-    "fixed_replay",
-    "ours",
-    "mobilegpt_offline_retrieval",
-    "appagent_demo",
-    "t3a_hint",
-)
-DEVICES = (
-    ("small5554", "emulator-5554", 5554),
-    ("fold5564", "emulator-5564", 5564),
-)
-SOURCE_DEVICE = ("source5560", "emulator-5560", 5560)
-SOURCE_SEED = 111
-EVALUATION_SEED = 113
-SOURCE_MAX_STEPS = 30
-FORMAL_MAX_STEPS = 20
-MAX_FALLBACK_STEPS = 5
-DEFAULT_DEADLINE_SEC = 1800
-FORMAL_STEP_TIMEOUT_SEC = 60
-OFFICIAL_VALIDATOR_FLUSH_GRACE_SEC = 300
-FORMAL_EPISODE_TIMEOUT_SEC = (
-    FORMAL_MAX_STEPS * FORMAL_STEP_TIMEOUT_SEC
-    + OFFICIAL_VALIDATOR_FLUSH_GRACE_SEC
-)
-FORMAL_CELL_TIMEOUT_SEC = FORMAL_EPISODE_TIMEOUT_SEC + 120
 PHASE_TIMEOUTS_SEC = {
     "source_device": 240,
     "source_replay": 480,
@@ -62,8 +52,8 @@ PHASE_TIMEOUTS_SEC = {
     "source_qualification": 300,
     "mobilegpt_memory": 300,
     "appagent_memory": 360,
-    "target_episode": FORMAL_EPISODE_TIMEOUT_SEC,
-    "target_cell": FORMAL_CELL_TIMEOUT_SEC,
+    "target_episode": EPISODE_TIMEOUT_SEC,
+    "target_result": EPISODE_TIMEOUT_SEC,
 }
 
 
@@ -338,7 +328,7 @@ def ensure_source_device(
         cwd=args.repo,
         environment=environment,
         log_path=attempt_root / "preflight" / "source_native.log",
-        timeout_sec=deadline.remaining(60),
+        timeout_sec=deadline.remaining(STEP_TIMEOUT_SEC),
     )
     if result["returncode"] != 0:
         raise RuntimeError(f"source_runtime_preflight_failed:{result['returncode']}")
@@ -1072,32 +1062,32 @@ def prepare_appagent_memory(
     }
 
 
-def _concluded_cells(
+def _concluded_results(
     args: argparse.Namespace,
     outcomes_root: Path,
     attempt_id: str,
 ) -> set[tuple[str, str]]:
-    plan = registered_cell_plan_from_memory(
+    plan = registered_result_plan_from_memory(
         memory_index=args.memory_index,
         task_name=args.task,
         methods=METHODS,
         devices=tuple(device[0] for device in DEVICES),
         source_seed=SOURCE_SEED,
-        evaluation_seed=EVALUATION_SEED,
+        evaluation_seed=TASK_SEED,
         formal_max_steps=int(args.max_steps),
     )
-    return set(plan["completed"]) | concluded_cell_keys(
+    return set(plan["completed"]) | concluded_result_keys(
         outcomes_root=outcomes_root,
         task_name=args.task,
         methods=METHODS,
         devices=tuple(device[0] for device in DEVICES),
         source_seed=SOURCE_SEED,
-        evaluation_seed=EVALUATION_SEED,
+        evaluation_seed=TASK_SEED,
         attempt_id=attempt_id,
     )
 
 
-def _cell_environment(
+def _result_environment(
     *,
     args: argparse.Namespace,
     attempt_id: str,
@@ -1109,9 +1099,9 @@ def _cell_environment(
     appagent_memory: Path | None,
 ) -> dict[str, str]:
     label, serial, port = device
-    cell_attempt_id = f"{attempt_id}.{method}.{label}"
-    cell_attempt_root = (
-        attempt_root / "target_attempts" / label / method / cell_attempt_id
+    result_attempt_id = f"{attempt_id}.{method}.{label}"
+    result_attempt_root = (
+        attempt_root / "target_attempts" / label / method / result_attempt_id
     )
     environment = dict(os.environ)
     environment.update(
@@ -1125,27 +1115,27 @@ def _cell_environment(
             "OMNITRANSFER_ROOT": str(args.omnitransfer_root),
             "OMNIFLOW_MOBILEGPT_ROOT": str(args.mobilegpt_root),
             "OMNIFLOW_APPAGENT_ROOT": str(args.appagent_root),
-            "OMNIFLOW_BATCH_ATTEMPT_ID": cell_attempt_id,
+            "OMNIFLOW_BATCH_ATTEMPT_ID": result_attempt_id,
             "OMNIFLOW_BATCH_CHILD": "1",
-            "OMNIFLOW_SINGLE_TASK_TASK": args.task,
-            "OMNIFLOW_SINGLE_TASK_METHODS": method,
-            "OMNIFLOW_SINGLE_TASK_DEVICE_TARGETS": f"{label}:{serial}:{port}",
-            "OMNIFLOW_SINGLE_TASK_STORE_PATH": str(store_path),
-            "OMNIFLOW_SINGLE_TASK_SOURCE_SEED": str(SOURCE_SEED),
-            "OMNIFLOW_SINGLE_TASK_EVALUATION_SEED": str(EVALUATION_SEED),
-            "OMNIFLOW_SINGLE_TASK_FIXED_TASK_PARAMS": "0",
-            "OMNIFLOW_SINGLE_TASK_MAX_STEPS": str(args.max_steps),
-            "OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS": str(
+            "OMNIFLOW_ANDROIDWORLD_TASK": args.task,
+            "OMNIFLOW_ANDROIDWORLD_METHOD": method,
+            "OMNIFLOW_ANDROIDWORLD_DEVICE": f"{label}:{serial}:{port}",
+            "OMNIFLOW_ANDROIDWORLD_STORE_PATH": str(store_path),
+            "OMNIFLOW_ANDROIDWORLD_SOURCE_SEED": str(SOURCE_SEED),
+            "OMNIFLOW_ANDROIDWORLD_TASK_SEED": str(TASK_SEED),
+            "OMNIFLOW_ANDROIDWORLD_FIXED_TASK_PARAMS": "0",
+            "OMNIFLOW_ANDROIDWORLD_MAX_STEPS": str(args.max_steps),
+            "OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS": str(
                 args.max_fallback_steps
             ),
-            "OMNIFLOW_SINGLE_TASK_TIMEOUT_SEC": str(
+            "OMNIFLOW_ANDROIDWORLD_TIMEOUT_SEC": str(
                 PHASE_TIMEOUTS_SEC["target_episode"]
             ),
-            "OMNIFLOW_SINGLE_TASK_OUTPUT_ROOT": str(cell_attempt_root),
-            "OMNIFLOW_SINGLE_TASK_PREFLIGHT_OUTPUT_ROOT": str(
+            "OMNIFLOW_ANDROIDWORLD_OUTPUT_PATH": str(result_attempt_root),
+            "OMNIFLOW_ANDROIDWORLD_PREFLIGHT_OUTPUT_ROOT": str(
                 attempt_root / "preflight" / label / method
             ),
-            "OMNIFLOW_FORMAL_MODEL_ENDPOINT_PROFILE": "llmthu",
+            "OMNIFLOW_FORMAL_MODEL_ENDPOINT_PROFILE": FORMAL_MODEL_ENDPOINT_PROFILE,
         }
     )
     if mobilegpt_memory is not None:
@@ -1172,13 +1162,13 @@ def run_target_workers(
 ) -> list[dict[str, Any]]:
     """Run methods sequentially per device and devices concurrently."""
 
-    completed = _concluded_cells(args, outcomes_root, attempt_id)
+    completed = _concluded_results(args, outcomes_root, attempt_id)
     stop_event = threading.Event()
     for method, (status, stage, evidence) in blocked_methods.items():
         for label, serial, _ in DEVICES:
             if (method, label) in completed:
                 continue
-            record_cell_outcome(
+            record_result_outcome(
                 outcomes_root=outcomes_root,
                 task_name=args.task,
                 method=method,
@@ -1186,7 +1176,7 @@ def run_target_workers(
                 device_serial=serial,
                 attempt_id=attempt_id,
                 source_seed=SOURCE_SEED,
-                evaluation_seed=EVALUATION_SEED,
+                evaluation_seed=TASK_SEED,
                 status=status,
                 stage=stage,
                 task_log=evidence if Path(evidence).is_file() else None,
@@ -1205,7 +1195,7 @@ def run_target_workers(
                 )
                 continue
             if deadline.expired:
-                outcome_path = record_cell_outcome(
+                outcome_path = record_result_outcome(
                     outcomes_root=outcomes_root,
                     task_name=args.task,
                     method=method,
@@ -1213,7 +1203,7 @@ def run_target_workers(
                     device_serial=serial,
                     attempt_id=attempt_id,
                     source_seed=SOURCE_SEED,
-                    evaluation_seed=EVALUATION_SEED,
+                    evaluation_seed=TASK_SEED,
                     status="deadline_exceeded",
                     stage="target_episode",
                     artifact_root=attempt_root,
@@ -1237,7 +1227,7 @@ def run_target_workers(
             result = command_runner(
                 ["bash", str(args.script)],
                 cwd=args.repo,
-                environment=_cell_environment(
+                environment=_result_environment(
                     args=args,
                     attempt_id=attempt_id,
                     attempt_root=attempt_root,
@@ -1248,7 +1238,7 @@ def run_target_workers(
                     appagent_memory=appagent_memory,
                 ),
                 log_path=log_path,
-                timeout_sec=deadline.remaining(PHASE_TIMEOUTS_SEC["target_cell"]),
+                timeout_sec=deadline.remaining(PHASE_TIMEOUTS_SEC["target_result"]),
             )
             if result.get("returncode") == 0:
                 completed.add((method, label))
@@ -1258,7 +1248,7 @@ def run_target_workers(
                     if result.get("timed_out") or deadline.expired
                     else "environment_failure"
                 )
-                outcome_path = record_cell_outcome(
+                outcome_path = record_result_outcome(
                     outcomes_root=outcomes_root,
                     task_name=args.task,
                     method=method,
@@ -1266,7 +1256,7 @@ def run_target_workers(
                     device_serial=serial,
                     attempt_id=attempt_id,
                     source_seed=SOURCE_SEED,
-                    evaluation_seed=EVALUATION_SEED,
+                    evaluation_seed=TASK_SEED,
                     status=status,
                     stage="target_episode",
                     task_log=log_path,
@@ -1312,12 +1302,12 @@ def _blocked_all(
         args, "source_only", False
     ):
         return
-    completed = _concluded_cells(args, outcomes_root, attempt_id)
+    completed = _concluded_results(args, outcomes_root, attempt_id)
     for method in METHODS:
         for label, serial, _ in DEVICES:
             if (method, label) in completed:
                 continue
-            record_cell_outcome(
+            record_result_outcome(
                 outcomes_root=outcomes_root,
                 task_name=args.task,
                 method=method,
@@ -1325,7 +1315,7 @@ def _blocked_all(
                 device_serial=serial,
                 attempt_id=attempt_id,
                 source_seed=SOURCE_SEED,
-                evaluation_seed=EVALUATION_SEED,
+                evaluation_seed=TASK_SEED,
                 status=status,
                 stage=stage,
                 task_log=evidence if evidence.is_file() else None,
@@ -1466,7 +1456,7 @@ def _report(
         methods=METHODS,
         devices=tuple(device[0] for device in DEVICES),
         source_seed=SOURCE_SEED,
-        evaluation_seed=EVALUATION_SEED,
+        evaluation_seed=TASK_SEED,
         attempt_id=attempt_id,
     )
     prep_tool_calls = sum(
@@ -1508,7 +1498,7 @@ def _report(
         "attempt_id": attempt_id,
         "status": status,
         "source_seed": SOURCE_SEED,
-        "evaluation_seed": EVALUATION_SEED,
+        "evaluation_seed": TASK_SEED,
         "deadline_sec": deadline.seconds,
         "outer_wall_sec": deadline.elapsed,
         "counts": counts,
@@ -1533,16 +1523,16 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         + f"_{os.getpid()}"
     )
     attempt_root = args.output_root / _safe_component(args.task) / attempt_id
-    outcomes_root = args.results_root / "androidworld_validator" / "cell_outcomes"
+    outcomes_root = args.results_root / "androidworld_validator" / "result_outcomes"
     if args.dry_run:
         registry = load_artifact_memory(args.memory_index)
-        plan = registered_cell_plan_from_memory(
+        plan = registered_result_plan_from_memory(
             memory_index=args.memory_index,
             task_name=args.task,
             methods=METHODS,
             devices=tuple(device[0] for device in DEVICES),
             source_seed=SOURCE_SEED,
-            evaluation_seed=EVALUATION_SEED,
+            evaluation_seed=TASK_SEED,
             formal_max_steps=int(args.max_steps),
         )
         return {
@@ -1553,14 +1543,14 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "max_fallback_steps": int(args.max_fallback_steps),
             "phase_timeout_caps_sec": PHASE_TIMEOUTS_SEC,
             "source_seed": SOURCE_SEED,
-            "evaluation_seed": EVALUATION_SEED,
+            "evaluation_seed": TASK_SEED,
             "methods": list(METHODS),
             "devices": [list(device) for device in DEVICES],
             "schedule": {
                 device[0]: list(METHODS) for device in DEVICES
             },
-            "completed": [list(cell) for cell in plan["completed"]],
-            "pending": [list(cell) for cell in plan["pending"]],
+            "completed": [list(result) for result in plan["completed"]],
+            "pending": [list(result) for result in plan["pending"]],
             "canonical_source_available": args.task
             in registry.get("canonical", {}).get("source_run_logs", {}),
             "canonical_function_available": args.task
@@ -1949,8 +1939,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--script", type=Path, required=True)
     parser.add_argument("--task", required=True)
-    parser.add_argument("--task-deadline-sec", type=int, default=DEFAULT_DEADLINE_SEC)
-    parser.add_argument("--max-steps", type=int, default=FORMAL_MAX_STEPS)
+    parser.add_argument("--task-deadline-sec", type=int, default=TASK_DEADLINE_SEC)
+    parser.add_argument("--max-steps", type=int, default=MAX_STEPS)
     parser.add_argument(
         "--max-fallback-steps", type=int, default=MAX_FALLBACK_STEPS
     )
@@ -1974,7 +1964,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-avd", default="SmallPhone")
     parser.add_argument("--emulator-gpu", default="swiftshader_indirect")
     parser.add_argument("--runtime-preflight", type=Path, required=True)
-    parser.add_argument("--formal-model", default="GLM-5.1")
+    parser.add_argument("--formal-model", default=FORMAL_MODEL)
     parser.add_argument("--attempt-id", default="")
     parser.add_argument("--source-qualification-only", action="store_true")
     parser.add_argument("--source-only", action="store_true")
@@ -2002,13 +1992,13 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
     args.python_bin = args.python_bin.expanduser().absolute()
     if args.appagent_memory_root is not None:
         args.appagent_memory_root = args.appagent_memory_root.expanduser().resolve()
-    if args.task_deadline_sec > DEFAULT_DEADLINE_SEC:
+    if args.task_deadline_sec > TASK_DEADLINE_SEC:
         raise ValueError("task_deadline_exceeds_1800_seconds")
     if args.task_deadline_sec <= 0:
         raise ValueError("task_deadline_must_be_positive")
     if args.max_steps <= 0:
         raise ValueError("max_steps_must_be_positive")
-    if not 0 <= args.max_fallback_steps <= 5:
+    if not 0 <= args.max_fallback_steps <= MAX_FALLBACK_STEPS:
         raise ValueError("max_fallback_steps_out_of_range")
     if not args.task.isalnum():
         raise ValueError("androidworld_task_name_invalid")

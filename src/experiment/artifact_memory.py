@@ -17,6 +17,7 @@ from typing import Any, Iterable, Sequence
 
 from omniflow.core.trajectory import require_complete_source_run_log
 from omniflow.transfer.runtime import load_transfer_state_catalog
+from src.experiment.protocol import SOURCE_SEED
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_LEARNING_MODE,
@@ -1033,7 +1034,7 @@ def _formal_result_protocol_error(
 ) -> str | None:
     from src.experiment.result_registry import (
         FORMAL_DEVICE_TARGETS,
-        FORMAL_EVALUATION_SEED,
+        FORMAL_TASK_SEED,
         FORMAL_MAX_STEPS,
         FORMAL_METHODS,
         FORMAL_SOURCE_SEED,
@@ -1051,7 +1052,7 @@ def _formal_result_protocol_error(
         violations.append("unsupported_device")
     if source_seed != FORMAL_SOURCE_SEED:
         violations.append("source_seed")
-    if evaluation_seed != FORMAL_EVALUATION_SEED:
+    if evaluation_seed != FORMAL_TASK_SEED:
         violations.append("evaluation_seed")
     if violations:
         return (
@@ -1075,7 +1076,7 @@ def _formal_result_protocol_error(
             task_name=task,
             method=method,
             device=device,
-            evaluation_seed=FORMAL_EVALUATION_SEED,
+            evaluation_seed=FORMAL_TASK_SEED,
             max_steps=FORMAL_MAX_STEPS,
         )
     except ValueError as error:
@@ -1270,8 +1271,8 @@ def _load_results(
             candidate["source_run_log_sha256"] = _sha256(
                 Path(str(result_row["source_run_log"])).expanduser()
             )
-        cell = f"{task}|{method}|{device}|{source_seed}|{evaluation_seed}"
-        candidates.setdefault(cell, []).append(
+        result = f"{task}|{method}|{device}|{source_seed}|{evaluation_seed}"
+        candidates.setdefault(result, []).append(
             (
                 candidate["registered_at"],
                 candidate["registration_id"],
@@ -1284,7 +1285,7 @@ def _load_results(
         for field in ("aliases", "file_names", "tasks", "methods", "devices"):
             record[field] = sorted(set(record[field]))
     canonical: dict[str, dict[str, Any]] = {}
-    for cell, cell_candidates in sorted(candidates.items()):
+    for result, cell_candidates in sorted(candidates.items()):
         ordered = sorted(cell_candidates, key=lambda value: value[:3])
         current_mobilegpt = [
             value
@@ -1293,7 +1294,7 @@ def _load_results(
             and value[3].get("mobilegpt_memory_schema")
             in MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS
         ]
-        canonical[cell] = (current_mobilegpt or ordered)[0][3]
+        canonical[result] = (current_mobilegpt or ordered)[0][3]
     return paths, records, canonical
 
 
@@ -1659,7 +1660,7 @@ def _load_mobilegpt_memories(
         validated = validate_mobilegpt_adapted_memory(
             memory_path,
             task_name=task,
-            source_seed=111,
+            source_seed=SOURCE_SEED,
             source_run_log=str(source["object_path"]),
             expected_model=str(manifest.get("source_model") or ""),
             expected_source_method=source_method,
@@ -1671,7 +1672,7 @@ def _load_mobilegpt_memories(
             {
                 "task": task,
                 "schema_version": schema_version,
-                "source_seed": 111,
+                "source_seed": SOURCE_SEED,
                 "source_method": source_method,
                 "source_model": str(manifest.get("source_model") or ""),
                 "source_run_log_sha256": str(source["sha256"]),
@@ -1763,13 +1764,13 @@ def _load_baseline_batch_reports(
     *,
     task_names: Sequence[str],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    """Load explicit immutable batch snapshots as read-only completed cells."""
+    """Load explicit immutable batch snapshots as read-only completed results."""
 
     from src.experiment.result_registry import FORMAL_DEVICE_TARGETS, FORMAL_METHODS
 
     known_tasks = set(task_names)
     records: dict[str, dict[str, Any]] = {}
-    cells: dict[str, dict[str, Any]] = {}
+    results: dict[str, dict[str, Any]] = {}
     for summary_path in report_paths:
         if not summary_path.is_file():
             raise FileNotFoundError(
@@ -1834,16 +1835,16 @@ def _load_baseline_batch_reports(
                 raise ValueError(
                     f"baseline_batch_seed_mismatch:{summary_path}:{task}:{device}"
                 )
-            cell = f"{task}|{method}|{device}|{source_seed}|{evaluation_seed}"
-            if cell in report_cells:
+            result = f"{task}|{method}|{device}|{source_seed}|{evaluation_seed}"
+            if result in report_cells:
                 raise ValueError(
-                    f"baseline_batch_duplicate_cell:{summary_path}:{cell}"
+                    f"baseline_batch_duplicate_cell:{summary_path}:{result}"
                 )
-            report_cells.add(cell)
+            report_cells.add(result)
             conclusion = str(row.get("conclusion") or "")
             if conclusion not in actual_counts or conclusion == "planned":
                 raise ValueError(
-                    f"baseline_batch_conclusion_invalid:{summary_path}:{cell}:"
+                    f"baseline_batch_conclusion_invalid:{summary_path}:{result}:"
                     f"{conclusion}"
                 )
             actual_counts[conclusion] += 1
@@ -1852,7 +1853,7 @@ def _load_baseline_batch_reports(
             success = row.get("official_validator_success")
             if not isinstance(success, bool):
                 raise ValueError(
-                    f"baseline_batch_validator_result_invalid:{summary_path}:{cell}"
+                    f"baseline_batch_validator_result_invalid:{summary_path}:{result}"
                 )
             expected_conclusion = (
                 "validator_success" if success else "validator_failure"
@@ -1860,7 +1861,7 @@ def _load_baseline_batch_reports(
             if conclusion != expected_conclusion:
                 raise ValueError(
                     f"baseline_batch_validator_conclusion_mismatch:"
-                    f"{summary_path}:{cell}"
+                    f"{summary_path}:{result}"
                 )
             validator_cell_count += 1
             row_payload = _json_bytes({"rows": [row]})
@@ -1885,10 +1886,10 @@ def _load_baseline_batch_reports(
                 "baseline_batch_report": str(summary_path),
                 "baseline_batch_cells": str(cells_path),
             }
-            existing = cells.get(cell)
+            existing = results.get(result)
             if existing is not None and existing != candidate:
-                raise ValueError(f"conflicting_baseline_batch_cell:{cell}")
-            cells[cell] = candidate
+                raise ValueError(f"conflicting_baseline_batch_cell:{result}")
+            results[result] = candidate
         summary_counts = summary.get("counts")
         if not isinstance(summary_counts, dict) or any(
             int(summary_counts.get(key, -1)) != value
@@ -1915,7 +1916,7 @@ def _load_baseline_batch_reports(
             "planned_cells": len(rows),
             "validator_cells": validator_cell_count,
         }
-    return records, cells
+    return records, results
 
 
 def _refresh_artifact_memory_unlocked(
@@ -2274,9 +2275,9 @@ def _refresh_artifact_memory_unlocked(
                 "function_store": canonical_function_stores.get(task),
                 "mobilegpt_memory": canonical_mobilegpt_memories.get(task),
                 "result_cells": {
-                    cell: value
-                    for cell, value in canonical_result_cells.items()
-                    if cell.split("|", 1)[0] == task
+                    result: value
+                    for result, value in canonical_result_cells.items()
+                    if result.split("|", 1)[0] == task
                 },
             },
         }
@@ -2517,7 +2518,7 @@ def load_artifact_memory(memory_index: str | Path) -> dict[str, Any]:
     return registry
 
 
-def registered_cell_plan_from_memory(
+def registered_result_plan_from_memory(
     *,
     memory_index: str | Path,
     task_name: str,
@@ -2528,15 +2529,15 @@ def registered_cell_plan_from_memory(
     formal_max_steps: int | None = None,
     mobilegpt_memory_schemas: Sequence[str] | None = None,
 ) -> dict[str, list[tuple[str, str]]]:
-    """Resolve completed formal cells without rescanning historical results."""
+    """Resolve completed formal results without rescanning historical results."""
 
     registry = load_artifact_memory(memory_index)
-    cells = registry["canonical"]["result_cells"]
+    results = registry["canonical"]["result_cells"]
     expected = [(method, device) for method in methods for device in devices]
     completed: list[tuple[str, str]] = []
     for method, device in expected:
-        cell_key = f"{task_name}|{method}|{device}|{source_seed}|{evaluation_seed}"
-        record = cells.get(cell_key)
+        result_key = f"{task_name}|{method}|{device}|{source_seed}|{evaluation_seed}"
+        record = results.get(result_key)
         if not isinstance(record, dict):
             continue
         if (
@@ -2559,7 +2560,7 @@ def registered_cell_plan_from_memory(
                 or _sha256(object_path) != expected_hash
             ):
                 raise ValueError(
-                    f"artifact_memory_result_object_invalid:{cell_key}:{object_path}"
+                    f"artifact_memory_result_object_invalid:{result_key}:{object_path}"
                 )
             payload = _load_object(object_path)
             rows = payload.get("rows") if isinstance(payload, dict) else None
@@ -2569,7 +2570,7 @@ def registered_cell_plan_from_memory(
                 or not isinstance(rows[0], dict)
             ):
                 raise ValueError(
-                    f"artifact_memory_result_payload_invalid:{cell_key}:{object_path}"
+                    f"artifact_memory_result_payload_invalid:{result_key}:{object_path}"
                 )
             if record.get("selection_reason") != BASELINE_BATCH_REPORT_SELECTION:
                 from src.experiment.result_registry import (
@@ -2587,7 +2588,7 @@ def registered_cell_plan_from_memory(
         completed.append((method, device))
     return {
         "completed": completed,
-        "pending": [cell for cell in expected if cell not in completed],
+        "pending": [result for result in expected if result not in completed],
     }
 
 
@@ -2828,18 +2829,18 @@ def main(argv: list[str] | None = None) -> int:
         output = _load_object(Path(args.memory_index).expanduser().resolve())
     else:
         from src.experiment.result_registry import (
-            FORMAL_EVALUATION_SEED,
+            FORMAL_TASK_SEED,
             FORMAL_MAX_STEPS,
             FORMAL_SOURCE_SEED,
         )
 
-        output = registered_cell_plan_from_memory(
+        output = registered_result_plan_from_memory(
             memory_index=args.memory_index,
             task_name=args.task,
             methods=tuple(item for item in args.methods.split(",") if item),
             devices=tuple(item for item in args.devices.split(",") if item),
             source_seed=FORMAL_SOURCE_SEED,
-            evaluation_seed=FORMAL_EVALUATION_SEED,
+            evaluation_seed=FORMAL_TASK_SEED,
             formal_max_steps=FORMAL_MAX_STEPS,
         )
     print(json.dumps(output, ensure_ascii=False, sort_keys=True))
@@ -2851,7 +2852,7 @@ __all__ = [
     "canonical_mobilegpt_memory_from_memory",
     "refresh_artifact_memory",
     "refresh_artifact_memory_from_pointer",
-    "registered_cell_plan_from_memory",
+    "registered_result_plan_from_memory",
 ]
 
 

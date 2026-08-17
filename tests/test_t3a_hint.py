@@ -6,7 +6,6 @@ from omniflow.core.model import Action, Function, FunctionStep
 from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION, FunctionStore
 from src.experiment.androidworld import (
     ArchivedRunLog,
-    _parse_one_task_methods,
     _promote_one_task_metadata_to_row,
     _select_complete_function,
     _t3a_hint_action_identity,
@@ -14,23 +13,18 @@ from src.experiment.androidworld import (
     _t3a_semantic_hint_step,
     build_official_androidworld_command,
 )
+from src.experiment.protocol import METHODS
 from src.integrations.android_world.launch import _render_official_reference_prompt
 
 
 def test_formal_one_task_method_set_is_exact() -> None:
-    assert _parse_one_task_methods("all") == [
+    assert list(METHODS) == [
         "fixed_replay",
         "ours",
         "mobilegpt_offline_retrieval",
         "appagent_demo",
         "t3a_hint",
     ]
-    with pytest.raises(ValueError, match="Unsupported cell method"):
-        _parse_one_task_methods("mobile_agent_v3")
-
-
-def test_t3a_hint_is_a_supported_one_task_method() -> None:
-    assert _parse_one_task_methods("t3a_hint") == ["t3a_hint"]
 
 
 def test_t3a_hint_reads_androidworld_action_type() -> None:

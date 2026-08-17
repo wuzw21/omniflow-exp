@@ -3734,14 +3734,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=float(os.environ.get("OMNIFLOW_PLANNER_TIMEOUT_SEC") or 60.0),
         help="Per-call timeout in seconds for the online OmniFlow planner.",
     )
-    parser.add_argument(
-        "--step-skill-guidance-path",
-        default="",
-        help=(
-            "Optional UTF-8 text artifact containing task-independent candidate "
-            "Harness guidance for the online OmniFlow planner."
-        ),
-    )
     return parser
 
 

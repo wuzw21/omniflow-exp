@@ -30,7 +30,7 @@ def reuse_metrics(
     source_action_hint: dict[str, Any] | None = None,
     uses_source_action_hints: bool = False,
 ) -> dict[str, Any]:
-    """Return one evidence-backed reuse/utilization metric for a method cell."""
+    """Return one evidence-backed reuse/utilization metric for a method result."""
 
     normalized = str(method or "").strip()
     actions = max(0, int(actions_executed or 0))
