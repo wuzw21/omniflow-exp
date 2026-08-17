@@ -260,6 +260,8 @@ class LunaAndroidWorldHarness:
                     (
                         f'model = "{self._planner.model}"',
                         'model_provider = "omnimind"',
+                        "[features]",
+                        "plugins = false",
                         "[model_providers.omnimind]",
                         'name = "omnimind"',
                         f'base_url = "{os.environ.get("OMNIFLOW_LUNA_CODEX_BASE_URL", "http://cloud.omnimind.com.cn/v1")}"',
