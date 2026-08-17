@@ -46,7 +46,15 @@ def _jsonable(value: Any) -> Any:
 class ManualAndroidWorld:
     def __init__(self, args: argparse.Namespace) -> None:
         if args.android_world_root:
-            sys.path.insert(0, str(Path(args.android_world_root).resolve()))
+            android_world_root = Path(args.android_world_root).resolve()
+            # Accept either the release root or its ``android_world`` package
+            # directory; Python needs the parent directory on sys.path.
+            import_root = (
+                android_world_root.parent
+                if android_world_root.name == "android_world"
+                else android_world_root
+            )
+            sys.path.insert(0, str(import_root))
         from android_world import registry
         from android_world.env import env_launcher
 
