@@ -30,11 +30,15 @@ def run_script_replay(
     visible = store.list_functions(include_hidden=False, limit=500)
     if not visible:
         raise ValueError("script_replay_full_function_missing")
-    largest_step_count = max(len(function.steps) for function in visible)
+    coverage_sizes = {
+        function.id: len(function.steps) + len(function.checker_rules)
+        for function in visible
+    }
+    largest_coverage = max(coverage_sizes.values())
     complete = [
         function
         for function in visible
-        if len(function.steps) == largest_step_count
+        if coverage_sizes[function.id] == largest_coverage
     ]
     if len(complete) != 1:
         ids = ",".join(sorted(function.id for function in complete))

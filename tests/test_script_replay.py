@@ -68,15 +68,23 @@ def _store(path: Path, *functions: dict[str, object]) -> Path:
 def test_script_replay_selects_full_function_and_uses_core_transfer(
     tmp_path: Path, monkeypatch
 ) -> None:
+    complete = _function(function_id="complete_task", steps=2)
+    complete["checker_rules"] = [
+        {
+            "source_state_id": "checker-source",
+            "action": {"tool": "click", "args": {"x": 300, "y": 400}},
+        }
+    ]
     store_path = _store(
         tmp_path / "store.json",
-        _function(function_id="complete_task", steps=2),
-        _function(function_id="reusable_part", steps=1),
+        complete,
+        _function(function_id="reusable_part", steps=2),
     )
     source_states = {
         f"source-{index}": Observation(package_name="com.example")
         for index in range(2)
     }
+    source_states["checker-source"] = Observation(package_name="com.example")
     host = _Host(source_states)
     transferred_sources: list[Observation | None] = []
 
@@ -85,6 +93,7 @@ def test_script_replay_selects_full_function_and_uses_core_transfer(
         return TransferResult(
             Action("click", {"x": 100 + len(transferred_sources), "y": 200}),
             reason="omnitransfer_mapped",
+            detail={"score": 0.99},
         )
 
     monkeypatch.setattr(
@@ -98,10 +107,15 @@ def test_script_replay_selects_full_function_and_uses_core_transfer(
     assert result.function_id == "complete_task"
     assert result.model_calls == 0
     assert result.fallback_steps == 0
-    assert transferred_sources == [source_states["source-0"], source_states["source-1"]]
+    assert transferred_sources == [
+        source_states["checker-source"],
+        source_states["source-0"],
+        source_states["source-1"],
+    ]
     assert host.actions == [
         Action("click", {"x": 101, "y": 200}),
         Action("click", {"x": 102, "y": 200}),
+        Action("click", {"x": 103, "y": 200}),
     ]
 
 

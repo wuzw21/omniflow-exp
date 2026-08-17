@@ -50,9 +50,10 @@ enhanced saves share one validation and Store writer.
 
 The explicit B-MoCA campaign is the only launcher-owned preparation path: for
 each corpus task it calls that same `save_function(enhance=true)` writer once,
-then executes OmniFlow and the zero-model semantic script-replay baseline on
-env100--109. It writes `progress.csv`, `progress.jsonl`, per-attempt RunLogs,
-and the terminal `campaign_summary.json` under the new output root.
+then executes Planner-selected and zero-model direct-Function variants through
+the same OmniFlow runtime on env100--109. It writes `progress.csv`,
+`progress.jsonl`, per-attempt RunLogs, and the terminal
+`campaign_summary.json` under the new output root.
 
 After saving, ingest the external Function catalog with `--refresh-memory`.
 Experiment execution resolves the task's Store from `current.json`. If no Store
