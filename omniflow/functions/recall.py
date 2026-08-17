@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from omniflow.core.model import Function, Observation
+from omniflow.core.model import Function, FunctionStep, Observation
 from omniflow.transfer.embedding import PageEncoder, TreeEmbedding
 
 RECALL_AUDIT_VERSION = "omniflow.function-recall.v1"
@@ -18,6 +18,12 @@ GOAL_LEXICAL_WEIGHT = 0.70
 class RecallResult:
     functions: tuple[Function, ...]
     audit: dict[str, Any]
+
+
+def function_entry_step(function: Function) -> FunctionStep | None:
+    """Return the first required Step that defines a Function's entry page."""
+
+    return next((step for step in function.steps if step.role == "function"), None)
 
 
 def recall_functions(
@@ -89,7 +95,8 @@ def _score_function(
     source_states: Mapping[str, Observation | None],
     encoder: PageEncoder,
 ) -> dict[str, Any]:
-    source_state_id = function.steps[0].source_state_id if function.steps else ""
+    entry_step = function_entry_step(function)
+    source_state_id = entry_step.source_state_id if entry_step is not None else ""
     source_observation = source_states.get(source_state_id)
     source_page = encoder.embed(source_observation) if source_observation is not None else None
     page_similarity = (
@@ -147,5 +154,6 @@ __all__ = [
     "PAGE_SIMILARITY_WEIGHT",
     "RECALL_AUDIT_VERSION",
     "RecallResult",
+    "function_entry_step",
     "recall_functions",
 ]

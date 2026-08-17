@@ -21,7 +21,11 @@ from omniflow.core.model import (
 )
 from omniflow.core.schemas import canonicalize_action
 from omniflow.functions.assets import FunctionStore, bind_function
-from omniflow.functions.recall import RecallResult, recall_functions
+from omniflow.functions.recall import (
+    RecallResult,
+    function_entry_step,
+    recall_functions,
+)
 from omniflow.runtime.execution import (
     execute_function,
     execute_robust_action,
@@ -812,7 +816,10 @@ class OmniFlow:
         for function in self.store.functions.values():
             if not function.steps:
                 continue
-            source_state_id = function.steps[0].source_state_id
+            entry_step = function_entry_step(function)
+            if entry_step is None:
+                continue
+            source_state_id = entry_step.source_state_id
             if source_state_id in source_states:
                 continue
             source_state = (

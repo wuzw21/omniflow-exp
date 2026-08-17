@@ -181,6 +181,50 @@ def test_missing_page_evidence_contributes_zero() -> None:
     assert decision["score"] == GOAL_LEXICAL_WEIGHT * decision["goal_lexical_score"]
 
 
+def test_function_recall_anchors_on_first_required_step_after_checker() -> None:
+    checker_page = _page("Welcome to Chrome", "terms_accept")
+    required_page = _page("Search or type URL", "url_bar")
+    function = Function(
+        function_id="open_web_page",
+        name="Open a web page",
+        description="Open a URL from the Chrome start page.",
+        steps=(
+            FunctionStep(
+                step_index=0,
+                source_state_id="chrome_onboarding",
+                action=Action("click", {"x": 500.0, "y": 800.0}),
+                role="checker",
+            ),
+            FunctionStep(
+                step_index=1,
+                source_state_id="chrome_start",
+                action=Action("click", {"x": 500.0, "y": 100.0}),
+            ),
+        ),
+        schema_version=FUNCTION_ARTIFACT_VERSION,
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+        agent_visible=True,
+    )
+
+    result = recall_functions(
+        "Open a web page",
+        observation=required_page,
+        functions=(function,),
+        source_states={
+            "chrome_onboarding": checker_page,
+            "chrome_start": required_page,
+        },
+    )
+
+    assert result.audit["decisions"][0]["source_state_id"] == "chrome_start"
+    assert result.audit["decisions"][0]["page_similarity"] == 1.0
+
+
 def test_top_k_includes_zero_score_functions_with_stable_id_tiebreak() -> None:
     function = _function(
         "tap_settings_control",
