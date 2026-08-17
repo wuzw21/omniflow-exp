@@ -18,7 +18,11 @@ TOOLS = [
     },
     {
         "name": "androidworld_act",
-        "description": "Execute exactly one native AndroidWorld action. Use {action:{tool,args}}.",
+        "description": (
+            "Execute exactly one native AndroidWorld action. Use {action:{tool,args}}. "
+            "For click, long_press, and input_text, x/y are canonical 0..1000 "
+            "coordinates, not screenshot pixels; convert using the display size."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {

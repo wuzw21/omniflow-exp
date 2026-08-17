@@ -131,6 +131,33 @@ class _AndroidWorldBridgeServer:
             action = request.get("action")
             if not isinstance(action, dict):
                 raise ValueError("action_object_required")
+            tool = str(action.get("tool") or "")
+            args = action.get("args") if isinstance(action.get("args"), dict) else {}
+            if tool in {"click", "long_press", "input_text"}:
+                invalid = []
+                for key in ("x", "y"):
+                    if args.get(key) is None:
+                        continue
+                    try:
+                        value = float(args[key])
+                    except (TypeError, ValueError):
+                        invalid.append(f"{key}=not_numeric")
+                        continue
+                    if not 0.0 <= value <= 1000.0:
+                        invalid.append(f"{key}={value}")
+                if invalid:
+                    error = (
+                        "coordinate_contract_violation: x/y must be canonical 0..1000, "
+                        "not screenshot pixels; convert XML bounds using display width/height. "
+                        + ", ".join(invalid)
+                    )
+                    value = {
+                        "action": _json_copy(action),
+                        "action_result": {"success": False, "error": error},
+                        "error": error,
+                    }
+                    self.owner._record_bridge_action(value)
+                    return value
             result = self.owner.host.act(Action.from_value(action))
             value = {"action": _json_copy(action), "action_result": _json_copy(result.to_dict())}
             self.owner.actions_executed += 1
@@ -429,7 +456,14 @@ class LunaAndroidWorldHarness:
             "limit; continue until the task is actually complete. Use only the current "
             "device state and current task parameters; never replay source coordinates, "
             "stale node IDs, or old input values. Call the tools rather than using ADB "
-            "or a fixed script. Only finish after the final requested state is visible.\n\n"
+            "or a fixed script. For click, long_press, and input_text actions, x/y "
+            "must be canonical coordinates from 0 to 1000. The accessibility XML "
+            "bounds and screenshot pixels use the physical display size; convert "
+            "pixel_x to 1000*pixel_x/display_width and pixel_y to "
+            "1000*pixel_y/display_height before calling androidworld_act. Never send "
+            "physical pixel coordinates or values above 1000. If the tool reports a "
+            "coordinate contract error, observe again and correct the conversion. "
+            "Only finish after the final requested state is visible.\n\n"
             f"Task: {self.goal}\nTask parameters: {params}\n\n{self.source_reference}\n"
             "Begin by calling androidworld_observe now, then continue until completion."
         )
