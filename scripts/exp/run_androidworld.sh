@@ -46,6 +46,7 @@ bmoca_avd_template_home="${OMNIFLOW_BMOCA_AVD_TEMPLATE_HOME:-}"
 bmoca_output_path="${OMNIFLOW_BMOCA_OUTPUT_PATH:-}"
 bmoca_show_emulator="${OMNIFLOW_BMOCA_SHOW_EMULATOR:-0}"
 bmoca_workers="${OMNIFLOW_BMOCA_WORKERS:-}"
+bmoca_environment_retries="${OMNIFLOW_BMOCA_ENVIRONMENT_RETRIES:-1}"
 android_world_revision="632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"
 appagent_document_model="${OMNIFLOW_APPAGENT_DOCUMENT_MODEL:-$formal_model}"
 mobilegpt_embedding_model="${OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL:-text-embedding-v4}"
@@ -628,6 +629,10 @@ if [[ "$execution_environment" == "bmoca" ]]; then
     echo "OMNIFLOW_BMOCA_WORKERS must be a positive integer." >&2
     exit 2
   fi
+  if [[ ! "$bmoca_environment_retries" =~ ^[0-9]+$ ]]; then
+    echo "OMNIFLOW_BMOCA_ENVIRONMENT_RETRIES must be a non-negative integer." >&2
+    exit 2
+  fi
   if [[ -z "$batch_task_filter" || "$batch_task_filter" == *,* ]]; then
     echo "--environment bmoca requires exactly one task through --tasks." >&2
     exit 2
@@ -708,6 +713,7 @@ if [[ "$execution_environment" == "bmoca" ]]; then
     --tasks "$batch_task_filter"
     --agent "$bmoca_method"
     --bmoca-workers "$bmoca_workers"
+    --bmoca-environment-retries "$bmoca_environment_retries"
     --store-path "$store_path"
     --output-path "$bmoca_output_path"
   )

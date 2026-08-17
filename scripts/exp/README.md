@@ -12,7 +12,7 @@ seams, not alternate launchers:
 | Source screenshot refresh | `run_androidworld.sh --collect-source --tasks TASK` | Existing `fixed_replay`; no Planner or model calls |
 | Static validation | `run_androidworld.sh --check-only` | No emulator or method execution |
 | B-MoCA E2E | `run_androidworld.sh --environment bmoca --tasks TASK` | The same OmniFlow method on official B-MoCA snapshots |
-| B-MoCA exact selector | `run_androidworld.sh --environment bmoca --methods script-replay --tasks TASK` | Parallel zero-model exact-selector replay |
+| B-MoCA semantic script replay | `run_androidworld.sh --environment bmoca --methods script-replay --tasks TASK` | Parallel zero-model MobileGPT-style replay |
 
 B-MoCA changes only the environment by default. The unified command enumerates
 the requested official environment IDs (100 through 109 by default), runs the normal
@@ -22,13 +22,21 @@ Planner; Function fallback is fixed at zero.
 
 The explicitly registered B-MoCA comparison `script-replay` is the only
 exception to the default method above. It replays the sole visible Function,
-ignores Checker steps, and resolves each pointer action by the first unique
-exact source selector in `resource-id`, `text`, `content-desc` order. Missing
-or ambiguous matches fail closed; it never uses fuzzy matching, parent lookup,
-source coordinates, OmniTransfer, DP, Planner, or VLM. All requested environments
-are submitted together (`OMNIFLOW_BMOCA_WORKERS`, default 10 for this method).
+ignores Checker steps, and adapts each pointer action using MobileGPT's locator
+order: direct text/content-description, semantic children at matching depth and
+rank, then a semantic parent plus child rank. Resource IDs are never used.
+Missing or ambiguous matches fail closed; it never uses source coordinates,
+OmniTransfer, DP, Planner, or VLM. Before clicking it requires two identical
+semantic page observations and rejects visible progress indicators. All requested
+environments are submitted together (`OMNIFLOW_BMOCA_WORKERS`, default 10 for
+this method).
 Different AVDs run concurrently; environments sharing one physical AVD are
 serialized so Android Emulator never has two writers for the same device disks.
+Transient environment failures (boot/action transport, invalid target XML,
+loading, or a changing page) are retried automatically once by default and every
+attempt is preserved under the result directory. Selector/validator failures
+are method outcomes and are never retried. Set
+`OMNIFLOW_BMOCA_ENVIRONMENT_RETRIES=0` to disable environment retries.
 
 The maintained B-MoCA coordinator exposes every display size as screenshot
 `[height, width]`, including tablets. The Host therefore preserves canonical

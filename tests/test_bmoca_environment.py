@@ -174,8 +174,11 @@ def test_bmoca_cli_registers_parallel_script_replay() -> None:
             "/opt/store.json",
             "--bmoca-workers",
             "10",
+            "--bmoca-environment-retries",
+            "1",
         ]
     )
 
     assert args.agent == "script-replay"
     assert args.bmoca_workers == 10
+    assert args.bmoca_environment_retries == 1

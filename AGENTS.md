@@ -2,7 +2,7 @@
 
 This repository exists only for the paper's AndroidWorld experiment and B-MoCA
 cross-environment validation. B-MoCA additionally registers `script-replay` as
-its deterministic exact-selector comparison baseline. Do not add product code,
+its deterministic MobileGPT-style semantic-selector comparison baseline. Do not add product code,
 historical campaigns, other exploratory methods, raw data, or compatibility
 layers.
 
@@ -124,9 +124,11 @@ than fabricating experience or changing the baseline.
   `OmniFlow.run()` Function/checker/OmniTransfer runtime, GLM-5.1 only for
   Planner tool selection, zero Function fallback steps, and the official
   B-MoCA reward as the success authority. Its registered `script-replay`
-  comparison skips Checker steps and permits only unique exact resource ID,
-  text, or content-description selection; it has no Planner, model, fuzzy
-  match, parent climb, coordinate fallback, DP, or OmniTransfer call.
+  comparison skips Checker steps and permits only unique text/content-description,
+  semantic-child depth/rank, or semantic-parent/child-rank selection. Resource
+  IDs are prohibited. It has no Planner, model, coordinate fallback, DP, or
+  OmniTransfer call. Two consecutive semantic page observations must be stable
+  and free of visible progress indicators before any pointer action.
 
 ## Local and 9207 synchronization
 

@@ -3829,6 +3829,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="Number of independent B-MoCA environments to execute concurrently.",
     )
+    parser.add_argument(
+        "--bmoca-environment-retries",
+        type=int,
+        default=0,
+        help="Additional attempts permitted only after B-MoCA environment failure.",
+    )
     parser.add_argument("--show-emulator", action="store_true")
     parser.add_argument("--suite-family", default="android_world")
     parser.add_argument("--tasks", default="ContactsAddContact")
@@ -4014,16 +4020,28 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / "summary.json"
     episodes_path = output_dir / "episodes.jsonl"
-    if summary_path.exists() or episodes_path.exists():
+    environment_attempts_path = output_dir / "environment_attempts.jsonl"
+    if (
+        summary_path.exists()
+        or episodes_path.exists()
+        or environment_attempts_path.exists()
+    ):
         raise FileExistsError(f"bmoca_attempt_already_exists:{output_dir}")
     worker_count = min(max(1, int(args.bmoca_workers or 1)), len(episodes))
+    environment_retry_limit = max(0, int(args.bmoca_environment_retries or 0))
 
-    def run_episode_on_avd(index: int, episode: Any) -> dict[str, Any]:
+    def run_episode_on_avd(
+        index: int, episode: Any, attempt_number: int
+    ) -> dict[str, Any]:
         started = perf_counter()
         run_evidence: dict[str, Any] = {}
         observation_evidence: list[dict[str, Any]] = []
         try:
-            episode_root = output_dir / f"env_{episode.environment_id}"
+            episode_root = (
+                output_dir
+                / f"env_{episode.environment_id}"
+                / f"attempt_{attempt_number}"
+            )
             with open_bmoca_episode(
                 episode,
                 config=config,
@@ -4102,6 +4120,20 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                     raise run_error
                 if result is None:
                     raise RuntimeError("bmoca_result_missing")
+                result_error = str(result.error or "")
+                failure_kind = None
+                if not result.success or not host.official_success:
+                    transient_environment_errors = (
+                        "bmoca_step_failed:",
+                        "script_replay_page_loading",
+                        "script_replay_page_unstable",
+                        "script_replay_target_xml_invalid",
+                    )
+                    failure_kind = (
+                        "environment"
+                        if result_error.startswith(transient_environment_errors)
+                        else "method"
+                    )
                 row = {
                     "method": method,
                     "task_id": episode.task_id,
@@ -4111,6 +4143,8 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                     "official_success": host.official_success,
                     "method_success": result.success,
                     "error": result.error,
+                    "failure_kind": failure_kind,
+                    "attempt_number": attempt_number,
                     **result.execution_summary,
                     "function_id": result.function_id,
                     "function_resolution": (
@@ -4144,6 +4178,8 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                 "official_success": False,
                 "method_success": False,
                 "error": str(error),
+                "failure_kind": "environment",
+                "attempt_number": attempt_number,
                 "actions_executed": 0,
                 "model_calls": 0,
                 "fallback_steps": 0,
@@ -4159,7 +4195,31 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
         # Submit every environment immediately, while preventing two emulator
         # processes from writing the same physical AVD at once.
         with avd_locks[episode.avd_name]:
-            return run_episode_on_avd(index, episode)
+            attempt_rows: list[dict[str, Any]] = []
+            for attempt_number in range(1, environment_retry_limit + 2):
+                row = run_episode_on_avd(index, episode, attempt_number)
+                attempt_rows.append(row)
+                if row.get("failure_kind") != "environment":
+                    break
+                if attempt_number <= environment_retry_limit:
+                    print(
+                        json.dumps(
+                            {
+                                "environment_id": episode.environment_id,
+                                "event": "environment_retry",
+                                "failed_attempt": attempt_number,
+                                "error": row.get("error"),
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        flush=True,
+                    )
+            final_row = dict(attempt_rows[-1])
+            final_row["environment_attempt_count"] = len(attempt_rows)
+            final_row["environment_retry_count"] = len(attempt_rows) - 1
+            final_row["environment_attempts"] = attempt_rows
+            return final_row
 
     rows_by_index: dict[int, dict[str, Any]] = {}
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
@@ -4188,6 +4248,12 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
     with episodes_path.open("w", encoding="utf-8") as stream:
         for row in rows:
             stream.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    with environment_attempts_path.open("w", encoding="utf-8") as stream:
+        for row in rows:
+            for attempt in row["environment_attempts"]:
+                stream.write(
+                    json.dumps(attempt, ensure_ascii=False, sort_keys=True) + "\n"
+                )
     official_successes = sum(row["official_success"] is True for row in rows)
     revision = subprocess.run(
         ["git", "-C", str(config.bmoca_root), "rev-parse", "HEAD"],
@@ -4207,6 +4273,10 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
         "parallel_workers": worker_count,
         "physical_avd_count": len(avd_locks),
         "parallel_scheduling": "all_submitted_one_active_episode_per_avd",
+        "environment_retry_limit": environment_retry_limit,
+        "environment_retry_count": sum(
+            int(row["environment_retry_count"]) for row in rows
+        ),
         "official_success_count": official_successes,
         "official_success_rate": official_successes / len(rows) if rows else 0.0,
         "actions_executed": sum(int(row.get("actions_executed") or 0) for row in rows),

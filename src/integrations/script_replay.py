@@ -1,8 +1,8 @@
-"""Deterministic exact-selector replay baseline.
+"""Deterministic MobileGPT-style semantic script replay baseline.
 
-The baseline reuses only stable selectors from source click targets.  It never
-uses coordinates from the source device, fuzzy matching, a model, a checker,
-or an execution fallback.
+The baseline adapts a source click through text/content-description and local
+tree structure.  Resource IDs, source-device coordinates, models, checkers,
+and execution fallbacks are deliberately excluded.
 """
 
 from __future__ import annotations
@@ -19,7 +19,8 @@ _BOUNDS = re.compile(
     r"^\[(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)\]"
     r"\[(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)\]$"
 )
-_SELECTOR_FIELDS = ("resource-id", "text", "content-desc")
+_SEMANTIC_FIELDS = ("text", "content-desc")
+_LOCAL_DEPTH = 3
 
 
 @dataclass(frozen=True)
@@ -51,8 +52,9 @@ def run_script_replay(
     source_states: Mapping[str, Mapping[str, Any]],
     host: Any,
     post_action_wait_seconds: float = 0.0,
+    stability_wait_seconds: float = 0.5,
 ) -> ScriptReplayResult:
-    """Replay the only visible Function using unique exact UI selectors."""
+    """Replay one Function through unique, stable semantic UI locators."""
 
     function = _only_visible_function(_read_store(store_path))
     function_id = str(function.get("function_id") or "").strip()
@@ -85,14 +87,16 @@ def run_script_replay(
                 source_state = source_states.get(source_state_id)
                 if not isinstance(source_state, Mapping):
                     raise ValueError(f"script_replay_source_state_missing:{source_state_id}")
-                observation = host.observe(xml=True, screenshot=False, app_info=True)
-                target_xml = str(getattr(observation, "xml", "") or "")
-                source_node = _source_target_node(
+                observation, target_xml = _stable_observation(
+                    host, wait_seconds=stability_wait_seconds
+                )
+                source_root, source_node = _source_target_node(
                     str(source_state.get("xml") or ""),
                     x=args.get("x"),
                     y=args.get("y"),
                 )
-                matched, selector, candidates = _unique_exact_target(
+                matched, selector, candidates = _unique_semantic_target(
+                    source_root,
                     source_node,
                     target_xml,
                 )
@@ -156,7 +160,9 @@ def _only_visible_function(store: Mapping[str, Any]) -> dict[str, Any]:
     return visible[0]
 
 
-def _source_target_node(xml: str, *, x: Any, y: Any) -> ElementTree.Element:
+def _source_target_node(
+    xml: str, *, x: Any, y: Any
+) -> tuple[ElementTree.Element, ElementTree.Element]:
     root = _xml_root(xml, error="script_replay_source_xml_invalid")
     width, height = _xml_extent(root)
     try:
@@ -164,9 +170,10 @@ def _source_target_node(xml: str, *, x: Any, y: Any) -> ElementTree.Element:
         point_y = float(y) / 1000.0 * height
     except (TypeError, ValueError) as error:
         raise ValueError("script_replay_source_point_invalid") from error
+    parent_map = _parent_map(root)
     hits: list[tuple[float, int, ElementTree.Element]] = []
     for node in root.iter():
-        if not _stable_values(node):
+        if not _has_semantic_locator(node, parent_map):
             continue
         try:
             left, top, right, bottom = _node_bounds(node)
@@ -176,46 +183,239 @@ def _source_target_node(xml: str, *, x: Any, y: Any) -> ElementTree.Element:
             clickable_rank = 0 if node.attrib.get("clickable") == "true" else 1
             hits.append(((right - left) * (bottom - top), clickable_rank, node))
     if not hits:
-        raise ValueError("script_replay_source_selector_missing")
+        raise ValueError("script_replay_source_semantic_locator_missing")
     hits.sort(key=lambda item: (item[0], item[1]))
-    return hits[0][2]
+    return root, hits[0][2]
 
 
-def _unique_exact_target(
+def _unique_semantic_target(
+    source_root: ElementTree.Element,
     source_node: ElementTree.Element,
     target_xml: str,
-) -> tuple[ElementTree.Element, dict[str, str], dict[str, int]]:
+) -> tuple[ElementTree.Element, dict[str, Any], dict[str, int]]:
     root = _xml_root(target_xml, error="script_replay_target_xml_invalid")
     source_package = str(source_node.attrib.get("package") or "").strip()
+    source_class = str(source_node.attrib.get("class") or "").strip()
     candidate_counts: dict[str, int] = {}
-    for field, value in _stable_values(source_node):
-        matches = []
-        for node in root.iter():
-            if str(node.attrib.get(field) or "").strip() != value:
-                continue
-            if source_package and str(node.attrib.get("package") or "").strip() != source_package:
-                continue
-            if node.attrib.get("enabled") == "false" or node.attrib.get("displayed") == "false":
-                continue
-            try:
-                _node_bounds(node)
-            except ValueError:
-                continue
-            matches.append(node)
+    ambiguous = False
+
+    # MobileGPT's first locator: direct semantic attribute.
+    for field, value in _semantic_values(source_node):
+        matches = [
+            node
+            for node in root.iter()
+            if str(node.attrib.get(field) or "").strip() == value
+            and _target_candidate(
+                node,
+                source_package=source_package,
+                source_class=source_class,
+                constrain_class=False,
+            )
+        ]
         candidate_counts[field] = len(matches)
         if len(matches) == 1:
             return matches[0], {"kind": field, "value": value}, candidate_counts
-    if any(count > 1 for count in candidate_counts.values()):
-        raise ValueError(f"script_replay_selector_ambiguous:{candidate_counts}")
-    raise ValueError(f"script_replay_selector_absent:{candidate_counts}")
+        ambiguous = ambiguous or len(matches) > 1
+
+    # MobileGPT's second locator: semantic children at the same depth/rank.
+    anchors = _descendant_anchors(source_node)
+    if anchors:
+        matches = [
+            node
+            for node in root.iter()
+            if _target_candidate(
+                node,
+                source_package=source_package,
+                source_class=source_class,
+                constrain_class=True,
+            )
+            and _matches_descendant_anchors(node, anchors)
+        ]
+        candidate_counts["children"] = len(matches)
+        if len(matches) == 1:
+            selector = {
+                "kind": "children",
+                "anchors": [
+                    {"path": list(path), "field": field, "value": value}
+                    for path, field, value in anchors
+                ],
+            }
+            return matches[0], selector, candidate_counts
+        ambiguous = ambiguous or len(matches) > 1
+
+    # MobileGPT's third locator: semantic parent plus the source child rank.
+    source_parent = _parent_map(source_root).get(source_node)
+    if source_parent is not None:
+        source_siblings = list(source_parent)
+        child_rank = source_siblings.index(source_node)
+        for field, value in _semantic_values(source_parent):
+            matches = []
+            for target_parent in root.iter():
+                if str(target_parent.attrib.get(field) or "").strip() != value:
+                    continue
+                children = list(target_parent)
+                if child_rank >= len(children):
+                    continue
+                node = children[child_rank]
+                if _target_candidate(
+                    node,
+                    source_package=source_package,
+                    source_class=source_class,
+                    constrain_class=True,
+                ):
+                    matches.append(node)
+            key = f"parent_{field}"
+            candidate_counts[key] = len(matches)
+            if len(matches) == 1:
+                return (
+                    matches[0],
+                    {
+                        "kind": "parent",
+                        "field": field,
+                        "value": value,
+                        "child_rank": child_rank,
+                    },
+                    candidate_counts,
+                )
+            ambiguous = ambiguous or len(matches) > 1
+
+    failure = "ambiguous" if ambiguous else "absent"
+    raise ValueError(f"script_replay_semantic_locator_{failure}:{candidate_counts}")
 
 
-def _stable_values(node: ElementTree.Element) -> tuple[tuple[str, str], ...]:
+def _semantic_values(node: ElementTree.Element) -> tuple[tuple[str, str], ...]:
     return tuple(
         (field, value)
-        for field in _SELECTOR_FIELDS
+        for field in _SEMANTIC_FIELDS
         if (value := str(node.attrib.get(field) or "").strip())
     )
+
+
+def _parent_map(root: ElementTree.Element) -> dict[ElementTree.Element, ElementTree.Element]:
+    return {child: parent for parent in root.iter() for child in parent}
+
+
+def _has_semantic_locator(
+    node: ElementTree.Element,
+    parent_map: Mapping[ElementTree.Element, ElementTree.Element],
+) -> bool:
+    if _semantic_values(node) or _descendant_anchors(node):
+        return True
+    parent = parent_map.get(node)
+    return parent is not None and bool(_semantic_values(parent))
+
+
+def _descendant_anchors(
+    node: ElementTree.Element,
+) -> tuple[tuple[tuple[int, ...], str, str], ...]:
+    anchors: list[tuple[tuple[int, ...], str, str]] = []
+
+    def visit(parent: ElementTree.Element, path: tuple[int, ...]) -> None:
+        if len(path) >= _LOCAL_DEPTH:
+            return
+        for rank, child in enumerate(parent):
+            child_path = (*path, rank)
+            for field, value in _semantic_values(child):
+                anchors.append((child_path, field, value))
+            visit(child, child_path)
+
+    visit(node, ())
+    return tuple(anchors)
+
+
+def _node_at_path(
+    node: ElementTree.Element, path: tuple[int, ...]
+) -> ElementTree.Element | None:
+    current = node
+    for rank in path:
+        children = list(current)
+        if rank >= len(children):
+            return None
+        current = children[rank]
+    return current
+
+
+def _matches_descendant_anchors(
+    node: ElementTree.Element,
+    anchors: tuple[tuple[tuple[int, ...], str, str], ...],
+) -> bool:
+    for path, field, value in anchors:
+        descendant = _node_at_path(node, path)
+        if descendant is None:
+            return False
+        if str(descendant.attrib.get(field) or "").strip() != value:
+            return False
+    return True
+
+
+def _target_candidate(
+    node: ElementTree.Element,
+    *,
+    source_package: str,
+    source_class: str,
+    constrain_class: bool,
+) -> bool:
+    if source_package and str(node.attrib.get("package") or "").strip() != source_package:
+        return False
+    if constrain_class and source_class:
+        if str(node.attrib.get("class") or "").strip() != source_class:
+            return False
+    if node.attrib.get("enabled") == "false" or node.attrib.get("displayed") == "false":
+        return False
+    try:
+        _node_bounds(node)
+    except ValueError:
+        return False
+    return True
+
+
+def _stable_observation(host: Any, *, wait_seconds: float) -> tuple[Any, str]:
+    first = host.observe(xml=True, screenshot=False, app_info=True)
+    first_xml = str(getattr(first, "xml", "") or "")
+    first_root = _xml_root(first_xml, error="script_replay_target_xml_invalid")
+    if _page_has_loading_indicator(first_root):
+        raise ValueError("script_replay_page_loading")
+    if wait_seconds > 0:
+        time.sleep(float(wait_seconds))
+    second = host.observe(xml=True, screenshot=False, app_info=True)
+    second_xml = str(getattr(second, "xml", "") or "")
+    second_root = _xml_root(second_xml, error="script_replay_target_xml_invalid")
+    if _page_has_loading_indicator(second_root):
+        raise ValueError("script_replay_page_loading")
+    if _semantic_page_signature(first_root) != _semantic_page_signature(second_root):
+        raise ValueError("script_replay_page_unstable")
+    return second, second_xml
+
+
+def _page_has_loading_indicator(root: ElementTree.Element) -> bool:
+    for node in root.iter():
+        if node.attrib.get("displayed") == "false":
+            continue
+        class_name = str(node.attrib.get("class") or "").lower()
+        if "progressbar" in class_name or "progressindicator" in class_name:
+            return True
+    return False
+
+
+def _semantic_page_signature(root: ElementTree.Element) -> tuple[Any, ...]:
+    def signature(node: ElementTree.Element) -> tuple[Any, ...]:
+        attributes = tuple(
+            (field, str(node.attrib.get(field) or "").strip())
+            for field in (
+                "package",
+                "class",
+                "text",
+                "content-desc",
+                "clickable",
+                "long-clickable",
+                "scrollable",
+                "enabled",
+                "displayed",
+            )
+        )
+        return node.tag, attributes, tuple(signature(child) for child in node)
+
+    return signature(root)
 
 
 def _xml_root(xml: str, *, error: str) -> ElementTree.Element:
