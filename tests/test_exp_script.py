@@ -138,6 +138,15 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert 'omnitransfer_root="${OMNITRANSFER_ROOT:-$workspace_root/OmniTransfer}"' in (
         script_text
     )
+    assert (
+        'bmoca_android_env_root="${OMNIFLOW_BMOCA_ANDROID_ENV_ROOT:-'
+        '$workspace_root/releases/android-env-$formal_bmoca_android_env_revision}"'
+        in script_text
+    )
+    assert (
+        'export PYTHONPATH="$bmoca_android_env_root${PYTHONPATH:+:$PYTHONPATH}"'
+        in script_text
+    )
     assert "ours_store_index_mechanical_asset" in script_text
     assert "androidworld_runlog_harvester_skill" in script_text
     assert f'mobilegpt_source_schema="{MOBILEGPT_MEMORY_SCHEMA}"' in script_text

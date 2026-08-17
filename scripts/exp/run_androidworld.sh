@@ -36,8 +36,10 @@ formal_model="GLM-5.1"
 formal_model_endpoint_profile="llmthu"
 formal_model_base_url="https://llmapi.paratera.com/v1"
 formal_bmoca_revision="de06497ae51464dd06fe4dbd2e5f59f27bcd9250"
+formal_bmoca_android_env_revision="11e08d1b6e263ced6d040e9189832cd6dc99d446"
 execution_environment="androidworld"
 bmoca_root="${OMNIFLOW_BMOCA_ROOT:-}"
+bmoca_android_env_root="${OMNIFLOW_BMOCA_ANDROID_ENV_ROOT:-$workspace_root/releases/android-env-$formal_bmoca_android_env_revision}"
 bmoca_environment_ids="${OMNIFLOW_BMOCA_ENVIRONMENT_IDS:-100,101,102,103,104,105,106,107,108,109}"
 bmoca_avd_home="${OMNIFLOW_BMOCA_AVD_HOME:-${ANDROID_AVD_HOME:-}}"
 bmoca_avd_template_home="${OMNIFLOW_BMOCA_AVD_TEMPLATE_HOME:-}"
@@ -443,7 +445,8 @@ Source RunLog conversion inputs:
                                      Absolute immutable output for one native
                                      baseline-memory conversion.
   --source-runlog PATH              Input RunLog for --convert-runlog-memory.
-  OMNIFLOW_BMOCA_ROOT, OMNIFLOW_BMOCA_ENVIRONMENT_IDS (default: 100..109),
+  OMNIFLOW_BMOCA_ROOT, OMNIFLOW_BMOCA_ANDROID_ENV_ROOT,
+  OMNIFLOW_BMOCA_ENVIRONMENT_IDS (default: 100..109),
   OMNIFLOW_BMOCA_AVD_HOME, OMNIFLOW_BMOCA_AVD_TEMPLATE_HOME,
   OMNIFLOW_BMOCA_OUTPUT_PATH, OMNIFLOW_BMOCA_SHOW_EMULATOR.
 
@@ -647,6 +650,20 @@ if [[ "$execution_environment" == "bmoca" ]]; then
     echo "Python runtime missing: ${PYTHON_BIN:-python3}" >&2
     exit 1
   fi
+  if [[ "$bmoca_android_env_root" != /* || ! -f "$bmoca_android_env_root/android_env/components/utils.py" ]]; then
+    echo "--environment bmoca requires the pinned AndroidEnv checkout: $bmoca_android_env_root" >&2
+    exit 2
+  fi
+  bmoca_android_env_actual_revision="$(git -C "$bmoca_android_env_root" rev-parse HEAD 2>/dev/null || true)"
+  if [[ "$bmoca_android_env_actual_revision" != "$formal_bmoca_android_env_revision" ]]; then
+    echo "B-MoCA AndroidEnv revision mismatch: expected=$formal_bmoca_android_env_revision actual=${bmoca_android_env_actual_revision:-missing}" >&2
+    exit 2
+  fi
+  if [[ -n "$(git -C "$bmoca_android_env_root" status --porcelain 2>/dev/null)" ]]; then
+    echo "B-MoCA AndroidEnv checkout must be clean: $bmoca_android_env_root" >&2
+    exit 2
+  fi
+  export PYTHONPATH="$bmoca_android_env_root${PYTHONPATH:+:$PYTHONPATH}"
   bmoca_android_sdk_root="${OMNIFLOW_ANDROID_SDK_ROOT:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$(resolve_default_android_sdk_root)}}}"
   if [[ "$bmoca_android_sdk_root" != /* || ! -x "$bmoca_android_sdk_root/platform-tools/adb" || ! -x "$bmoca_android_sdk_root/emulator/emulator" ]]; then
     echo "--environment bmoca requires a complete absolute Android SDK root: $bmoca_android_sdk_root" >&2
