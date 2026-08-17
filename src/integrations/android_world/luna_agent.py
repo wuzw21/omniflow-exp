@@ -100,6 +100,11 @@ class LunaAndroidWorldHarness:
             )
         }
         self._last_result: _LunaRuntimeResult | None = None
+        # One persistent Codex conversation owns the complete AndroidWorld
+        # task. A fresh CLI invocation per observe/act turn made Luna
+        # stateless and caused repeated actions without recovery.
+        self._cli_temp_dir: tempfile.TemporaryDirectory[str] | None = None
+        self._codex_session_id: str | None = None
         self._planner = VLMPlanner(
             model=str(model).strip() or "gpt-5.6-luna",
             provider=provider or "openai",
@@ -115,6 +120,7 @@ class LunaAndroidWorldHarness:
         self._omniflow_llm_usage_tracker = _UsageSummaryProxy(self)
 
     def reset(self, go_home: bool = False) -> None:
+        self._close_cli_session()
         self.host.reset(go_home=go_home)
         self.step_index = 0
         self.actions_executed = 0
@@ -141,6 +147,8 @@ class LunaAndroidWorldHarness:
         goal: str = "",
         context: dict[str, Any] | None = None,
     ) -> None:
+        if self.task_name and str(task_name or "").strip() != self.task_name:
+            self._close_cli_session()
         self.task_name = str(task_name or "").strip()
         self.goal = str(goal or "").strip()
         values = dict(context or {}).get("task_parameters")
@@ -239,21 +247,14 @@ class LunaAndroidWorldHarness:
         self,
         observation: Observation,
     ) -> tuple[Any, dict[str, Any], dict[str, int]]:
-        """Ask the installed Codex CLI to run Luna's multimodal turn.
-
-        The OmniMind credential is intentionally consumed by the standard
-        Codex client (Responses wire protocol), rather than by an HTTP relay
-        implemented in this harness.  This is required by the provider's
-        access policy and still leaves AndroidWorld observation/action entirely
-        under this adapter's control.
-        """
-
+        """Ask one persistent Codex/Luna session for the next native action."""
         pixels = observation.extra.get("androidworld_state", {}).get("pixels", {})
         screenshot = str(pixels.get("path") or "") if isinstance(pixels, dict) else ""
         prompt = self._cli_prompt(observation)
-        with tempfile.TemporaryDirectory(prefix="luna-cli-") as temp_dir:
-            output_path = Path(temp_dir) / "last_message.txt"
-            codex_home = Path(temp_dir) / "codex-home"
+        temp_dir = self._ensure_cli_session()
+        output_path = temp_dir / f"last_message_{self.step_index:04d}.txt"
+        codex_home = temp_dir / "codex-home"
+        try:
             codex_home.mkdir(parents=True, exist_ok=True)
             (codex_home / "config.toml").write_text(
                 "\n".join(
@@ -273,21 +274,18 @@ class LunaAndroidWorldHarness:
                 + "\n",
                 encoding="utf-8",
             )
-            command = [
-                "codex",
-                "exec",
-                "--ephemeral",
-                "--skip-git-repo-check",
-                "--sandbox",
-                "read-only",
-                "--color",
-                "never",
-                "--model",
-                self._planner.model,
-                "-o",
-                str(output_path),
-                "--json",
-            ]
+            if self._codex_session_id:
+                command = [
+                    "codex", "exec", "resume", self._codex_session_id,
+                    "--skip-git-repo-check", "--model", self._planner.model,
+                    "-o", str(output_path), "--json",
+                ]
+            else:
+                command = [
+                    "codex", "exec", "--skip-git-repo-check", "--sandbox",
+                    "read-only", "--color", "never", "--model",
+                    self._planner.model, "-o", str(output_path), "--json",
+                ]
             if screenshot and Path(screenshot).is_file():
                 command.extend(("-i", screenshot))
             completed = subprocess.run(
@@ -303,11 +301,17 @@ class LunaAndroidWorldHarness:
                     "CODEX_HOME": str(codex_home),
                 },
             )
-            raw_response = output_path.read_text(encoding="utf-8", errors="replace") if output_path.is_file() else ""
+            raw_response = (
+                output_path.read_text(encoding="utf-8", errors="replace")
+                if output_path.is_file() else ""
+            )
             usage = self._cli_usage(completed.stdout)
             if completed.returncode != 0 or not raw_response.strip():
                 detail = (completed.stderr or completed.stdout or "codex_cli_failed").strip()
                 raise RuntimeError(f"luna_codex_cli_failed:{detail[-2000:]}")
+            session_id = self._cli_session_id_from_events(completed.stdout)
+            if session_id:
+                self._codex_session_id = session_id
             payload = _parse_cli_action(raw_response)
             from omniflow.core.model import ToolCall
 
@@ -315,26 +319,96 @@ class LunaAndroidWorldHarness:
             metadata = {
                 "reasoning": str(payload.get("reasoning") or "").strip(),
                 "raw_response": raw_response,
-                "transport": "codex_cli",
+                "transport": "codex_cli_persistent_session",
                 "cli_returncode": completed.returncode,
+                "codex_session_id": self._codex_session_id,
             }
             return call, metadata, usage
+        except Exception:
+            self._close_cli_session()
+            raise
+
+    def _ensure_cli_session(self) -> Path:
+        if self._cli_temp_dir is None:
+            self._cli_temp_dir = tempfile.TemporaryDirectory(prefix="luna-cli-session-")
+        return Path(self._cli_temp_dir.name)
+
+    def _close_cli_session(self) -> None:
+        self._codex_session_id = None
+        if self._cli_temp_dir is not None:
+            try:
+                self._cli_temp_dir.cleanup()
+            finally:
+                self._cli_temp_dir = None
+
+    @staticmethod
+    def _cli_session_id_from_events(events: str) -> str | None:
+        for line in str(events or "").splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("type") != "thread.started":
+                continue
+            value = event.get("thread_id") or event.get("id")
+            if value:
+                return str(value)
+        return None
 
     def _cli_prompt(self, observation: Observation) -> str:
         xml = str(observation.xml or "")
         if len(xml) > 30000:
             xml = xml[:30000] + "\n[xml truncated]"
         hint = f"\nGuidance:\n{self.hint}" if self.hint else ""
+        task_parameters = json.dumps(
+            self.task_parameters, ensure_ascii=False, sort_keys=True
+        )
+        if self.trace:
+            history_lines = []
+            for item in self.trace:
+                decision = item.get("decision") or {}
+                metadata = decision.get("metadata") or {}
+                history_lines.append(
+                    json.dumps(
+                        {
+                            "step": item.get("step_index"),
+                            "screen": {
+                                "package": (item.get("observation") or {}).get("package_name"),
+                                "activity": (item.get("observation") or {}).get("activity_name"),
+                            },
+                            "action": item.get("action") or {
+                                "name": decision.get("tool"),
+                                "arguments": decision.get("arguments"),
+                            },
+                            "action_result": item.get("action_result"),
+                            "reasoning": metadata.get("reasoning"),
+                            "error": item.get("error"),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                )
+            history = "\n".join(history_lines)
+        else:
+            history = "(no action has been executed yet)"
         return (
-            "You are Luna, the decision model inside a direct AndroidWorld harness. "
-            "Do not call tools, run shell commands, or modify files. Inspect the "
-            "attached current screenshot and accessibility XML, then choose exactly "
-            "one next action. Return ONLY one JSON object with keys action, args, "
-            "reasoning. Allowed action values and argument shapes: click(target_description,x,y), "
-            "input_text(target_description,text,x,y), swipe(direction), "
-            "open_app(package_name), press_key(key), finished(content). Coordinates "
-            "x/y are canonical 0-1000 values (not pixels).\n\n"
-            f"Task: {self.goal}\nAccessibility XML:\n{xml}\n{hint}"
+            "You are Luna, the decision model executing one complete AndroidWorld task. "
+            "This is a persistent conversation: previous turns, screenshots, actions, "
+            "and action results remain available. Re-plan from the global goal after "
+            "every result; do not blindly repeat an action that did not change the "
+            "screen. If an action failed or the UI differs, recover using the current "
+            "screenshot/XML. Do not call tools, run shell commands, or modify files. "
+            "Inspect the attached current screenshot and accessibility XML, then choose "
+            "exactly one next AndroidWorld action. Return ONLY one JSON object with keys "
+            "action, args, reasoning. Allowed action values and argument shapes: "
+            "click(target_description,x,y), input_text(target_description,text,x,y), "
+            "swipe(direction), open_app(package_name), press_key(key), "
+            "finished(content). Coordinates x/y are canonical 0-1000 values (not "
+            "pixels). Only return finished when the requested end state has actually "
+            "been achieved.\n\n"
+            f"Task: {self.goal}\nTask parameters: {task_parameters}\n"
+            f"Complete action history:\n{history}\n\n"
+            f"Current accessibility XML:\n{xml}\n{hint}"
         )
 
     @staticmethod
