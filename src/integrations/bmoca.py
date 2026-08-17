@@ -320,10 +320,7 @@ class BMocaHost:
         )
 
     def _screen_size(self) -> tuple[int, int]:
-        height, width = self._official_touch_size()
-        if self._is_tablet():
-            return width, height
-        return height, width
+        return self._official_touch_size()
 
     def _official_touch_size(self) -> tuple[int, int]:
         raw = getattr(getattr(self.environment, "_coordinator", None), "_screen_size", None)
@@ -333,12 +330,7 @@ class BMocaHost:
         return int(values[0]), int(values[1])
 
     def _ui_to_official_touch(self, x: float, y: float) -> tuple[float, float]:
-        touch_height, touch_width = self._official_touch_size()
-        display_height, display_width = self._screen_size()
-        return (
-            x * display_width / touch_width,
-            y * display_height / touch_height,
-        )
+        return x, y
 
     def _xml_text(self) -> str:
         if self._xml_cache:

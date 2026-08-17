@@ -20,6 +20,10 @@ environment IDs (100 through 109 by default), runs the normal
 reports the official reward for each episode. GLM-5.1 is used only by the front
 Planner; Function fallback is fixed at zero.
 
+The maintained B-MoCA coordinator exposes every display size as screenshot
+`[height, width]`, including tablets. The Host therefore preserves canonical
+normalized UI coordinates without a tablet-specific axis swap or rescaling.
+
 The B-MoCA source is the pinned maintained revision under
 `$workspace_root/releases/b-moca-$formal_bmoca_revision` unless
 `OMNIFLOW_BMOCA_ROOT` supplies another exact-revision checkout. Its device
