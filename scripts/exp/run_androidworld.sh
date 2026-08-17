@@ -300,6 +300,27 @@ validate_experiment_model() {
   fi
 }
 
+# Stock AndroidWorld captures may use the configured OpenAI-compatible
+# provider (for example OmniMind) while retaining the fixed GLM-5.1 model.
+# Formal paper cells keep the stricter Paratera/llmthu contract above.
+validate_stock_capture_model() {
+  local model="$1"
+  local normalized_model
+  normalized_model="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$normalized_model" == "qwen3-vl-plus" ]]; then
+    echo "qwen3-vl-plus is prohibited for AndroidWorld stock capture." >&2
+    exit 2
+  fi
+  if [[ "$normalized_model" != "glm-5.1" ]]; then
+    echo "AndroidWorld stock capture requires GLM-5.1, got: $model" >&2
+    exit 2
+  fi
+  if [[ -z "${selected_model_api_key:-}" || -z "${selected_model_base_url:-}" ]]; then
+    echo "stock_capture_model_endpoint_incomplete" >&2
+    exit 2
+  fi
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -814,7 +835,7 @@ if [[ "$stock_capture" != 0 ]]; then
   source "$env_file"
   set +a
   select_model_endpoint "$stock_capture_model_endpoint_profile"
-  validate_experiment_model "$stock_capture_model" "$stock_capture_model_endpoint_profile"
+  validate_stock_capture_model "$stock_capture_model"
   echo "[stock-capture] agent=$stock_capture task=$task model=$stock_capture_model model_endpoint=$selected_model_base_url"
   stock_capture_command=(
     "$python_bin" -m src.integrations.android_world.launch

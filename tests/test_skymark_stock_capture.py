@@ -320,6 +320,52 @@ def test_stock_capture_script_passes_semantic_source_hint(tmp_path: Path) -> Non
     assert str(hint) in result.stdout
 
 
+def test_stock_capture_accepts_openai_compatible_profile(tmp_path: Path) -> None:
+    repo = Path(__file__).resolve().parents[1]
+    output = tmp_path / "capture"
+    env_file = tmp_path / "model.env"
+    env_file.write_text(
+        "OPENAI_API_KEY=test\nOPENAI_BASE_URL=http://omnimind.test/v1\n",
+        encoding="utf-8",
+    )
+    android_world = tmp_path / "android-world"
+    (android_world / "android_world").mkdir(parents=True)
+    sdk = tmp_path / "sdk"
+    (sdk / "platform-tools").mkdir(parents=True)
+    (sdk / "emulator").mkdir(parents=True)
+    for executable in (sdk / "platform-tools" / "adb", sdk / "emulator" / "emulator"):
+        executable.write_text("#!/bin/sh\n", encoding="utf-8")
+        executable.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts/exp/run_androidworld.sh"),
+            "--stock-capture",
+            "t3a",
+            "--tasks",
+            "SystemBluetoothTurnOn",
+            "--dry-run",
+        ],
+        cwd=repo,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "PYTHON_BIN": sys.executable,
+            "OMNIFLOW_ANDROID_WORLD_ROOT": str(android_world),
+            "OMNIFLOW_ANDROID_SDK_ROOT": str(sdk),
+            "OMNIFLOW_ENV_FILE": str(env_file),
+            "OMNIFLOW_STOCK_CAPTURE_OUTPUT_PATH": str(output),
+            "OMNIFLOW_STOCK_CAPTURE_MODEL_ENDPOINT_PROFILE": "openai",
+        },
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert "--model-endpoint-profile openai" in result.stdout
+
+
 def test_action_consistency_wrapper_returns_reviewed_action(monkeypatch) -> None:
     class Delegate:
         def __init__(self) -> None:
