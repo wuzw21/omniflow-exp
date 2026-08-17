@@ -58,13 +58,38 @@ def _function_step(source_step: dict, step_index: int = 0) -> dict:
     }
 
 
+def _proposal(
+    run_log: dict,
+    updates: dict | None = None,
+    *,
+    roles: list[str] | None = None,
+) -> str:
+    source_steps = [
+        step for step in run_log.get("steps") or () if isinstance(step, dict)
+    ]
+    selected_roles = roles or ["function"] * len(source_steps)
+    return json.dumps(
+        {
+            "step_decisions": [
+                {
+                    "step": index,
+                    "role": role,
+                    "reason": f"Step {index} is {role} evidence.",
+                }
+                for index, role in enumerate(selected_roles)
+            ],
+            **dict(updates or {}),
+        }
+    )
+
+
 def test_enhancement_instruction_is_included_in_prompt() -> None:
     prompts: list[str] = []
 
     enhance_function(
         _function(),
         {},
-        lambda prompt: prompts.append(prompt) or "{}",
+        lambda prompt: prompts.append(prompt) or _proposal({}),
         instruction="Prefer a reusable search-first workflow.",
     )
 
@@ -78,11 +103,43 @@ def test_enhancement_uses_default_guidance_when_instruction_is_empty() -> None:
     enhance_function(
         _function(),
         {},
-        lambda prompt: prompts.append(prompt) or "{}",
+        lambda prompt: prompts.append(prompt) or _proposal({}),
     )
 
     assert len(prompts) == 1
     assert '"user_instruction":""' in prompts[0]
+    assert (
+        '"step_decisions":[{"step":0,"role":"function",'
+        '"reason":"short semantic reason"}]' in prompts[0]
+    )
+    assert "one compact string" in prompts[0]
+
+
+def test_enhancement_rejects_out_of_order_step_decisions() -> None:
+    run_log = {
+        "steps": [
+            _source_step("state-1", "click", {"x": 10, "y": 20}),
+            _source_step("state-2", "click", {"x": 30, "y": 40}),
+        ]
+    }
+
+    try:
+        enhance_function(
+            _function(),
+            run_log,
+            lambda _prompt: json.dumps(
+                {
+                    "step_decisions": [
+                        {"step": 1, "role": "function", "reason": "Task action."},
+                        {"step": 0, "role": "checker", "reason": "Setup action."},
+                    ]
+                }
+            ),
+        )
+    except ValueError as error:
+        assert str(error) == "function_enhancement_step_decisions_out_of_order"
+    else:
+        raise AssertionError("out-of-order Step decisions must be rejected")
 
 
 def test_enhancement_prompt_projects_androidworld_actions_with_state_ids() -> None:
@@ -96,7 +153,7 @@ def test_enhancement_prompt_projects_androidworld_actions_with_state_ids() -> No
     enhance_function(
         _function(),
         run_log,
-        lambda prompt: prompts.append(prompt) or "{}",
+        lambda prompt: prompts.append(prompt) or _proposal(run_log),
     )
 
     assert '"source_state_id":"source-state"' in prompts[0]
@@ -130,7 +187,8 @@ def test_enhancement_parameterizes_projected_androidworld_input_text() -> None:
     enhanced, _, status = enhance_function(
         function,
         run_log,
-        lambda _prompt: json.dumps(
+        lambda _prompt: _proposal(
+            run_log,
             {
                 "parameters": [
                     {
@@ -140,7 +198,7 @@ def test_enhancement_parameterizes_projected_androidworld_input_text() -> None:
                         "arg_name": "text",
                     }
                 ]
-            }
+            },
         ),
     )
 
@@ -190,7 +248,8 @@ def test_enhancement_parameterizes_projected_androidworld_click_target() -> None
     enhanced, _, status = enhance_function(
         function,
         run_log,
-        lambda _prompt: json.dumps(
+        lambda _prompt: _proposal(
+            run_log,
             {
                 "parameters": [
                     {
@@ -200,7 +259,7 @@ def test_enhancement_parameterizes_projected_androidworld_click_target() -> None
                         "arg_name": "target_description",
                     }
                 ]
-            }
+            },
         ),
     )
 
@@ -232,7 +291,8 @@ def test_enhancement_parameterizes_task_varying_open_app_package() -> None:
     enhanced, changes, status = enhance_function(
         _function(),
         run_log,
-        lambda _prompt: json.dumps(
+        lambda _prompt: _proposal(
+            run_log,
             {
                 "name": "Open requested app",
                 "description": "Open the requested installed Android app.",
@@ -244,7 +304,7 @@ def test_enhancement_parameterizes_task_varying_open_app_package() -> None:
                         "arg_name": "package_name",
                     }
                 ],
-            }
+            },
         ),
     )
 
@@ -301,7 +361,8 @@ def test_enhancement_replaces_steps_with_successful_runlog_segment() -> None:
     enhanced, changes, status = enhance_function(
         _function(),
         run_log,
-        lambda _prompt: json.dumps(
+        lambda _prompt: _proposal(
+            run_log,
             {
                 "name": "Add expense note",
                 "description": "Open the expense app and enter one expense note.",
@@ -336,7 +397,7 @@ def test_enhancement_replaces_steps_with_successful_runlog_segment() -> None:
                         "arg_name": "text",
                     }
                 ],
-            }
+            },
         ),
     )
 
@@ -382,13 +443,14 @@ def test_enhancement_can_delete_actions_at_segment_edges() -> None:
     enhanced, _, status = enhance_function(
         current,
         run_log,
-        lambda _prompt: json.dumps(
+        lambda _prompt: _proposal(
+            run_log,
             {
                 "steps": [
                     _function_step(source_steps[1]),
                     _function_step(source_steps[2]),
                 ]
-            }
+            },
         ),
     )
 
@@ -415,13 +477,14 @@ def test_enhancement_can_reorder_only_to_recorded_source_order() -> None:
     enhanced, _, status = enhance_function(
         current,
         run_log,
-        lambda _prompt: json.dumps(
+        lambda _prompt: _proposal(
+            run_log,
             {
                 "steps": [
                     _function_step(second),
                     _function_step(first),
                 ]
-            }
+            },
         ),
     )
 
@@ -449,7 +512,8 @@ def test_enhancement_rejects_action_not_grounded_in_runlog() -> None:
         enhance_function(
             _function(),
             run_log,
-            lambda _prompt: json.dumps(
+            lambda _prompt: _proposal(
+                run_log,
                 {
                     "steps": [
                         {
@@ -460,7 +524,7 @@ def test_enhancement_rejects_action_not_grounded_in_runlog() -> None:
                             },
                         }
                     ]
-                }
+                },
             ),
         )
     except ValueError as error:
@@ -489,13 +553,14 @@ def test_enhancement_rejects_successful_actions_separated_by_failure() -> None:
         enhance_function(
             _function(),
             run_log,
-            lambda _prompt: json.dumps(
+            lambda _prompt: _proposal(
+                run_log,
                 {
                     "steps": [
                         _function_step(first),
                         _function_step(last),
                     ]
-                }
+                },
             ),
         )
     except ValueError as error:
@@ -688,7 +753,11 @@ def test_agent_enhancement_generates_checker_from_runlog_evidence() -> None:
     enhanced, changes, status = enhance_function(
         _function(),
         run_log,
-        lambda _prompt: json.dumps({"checker_rules": [checker_rule]}),
+        lambda _prompt: _proposal(
+            run_log,
+            {"checker_rules": [checker_rule]},
+            roles=["checker"],
+        ),
         instruction="Add only evidence-backed recovery conditions.",
     )
 

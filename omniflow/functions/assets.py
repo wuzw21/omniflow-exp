@@ -962,6 +962,7 @@ def enhance_function(
     proposal = _json_object(
         complete_json(_enhancement_prompt(original, run_log, instruction=instruction))
     )
+    _validate_step_decisions(proposal, run_log)
     _require_checker_evidence(proposal, run_log)
     updated = json.loads(json.dumps(original, ensure_ascii=False))
     changes: list[dict[str, Any]] = []
@@ -1044,7 +1045,16 @@ def _enhancement_prompt(
     }
     return f"""
 Improve the reusable Android automation Function below for future recall.
-Return one JSON object with optional keys: name, description, steps, parameters, and checker_rules.
+Return one JSON object. step_decisions is required; name, description, steps,
+parameters, and checker_rules are optional.
+Review the RunLog in order, one Step at a time. For every raw RunLog Step, return exactly:
+{{"step_decisions":[{{"step":0,"role":"function","reason":"short semantic reason"}}]}}.
+role must be function, checker, or ignore. function directly advances the user's task;
+checker is optional environment setup or recovery; ignore is redundant or unrelated.
+Do not encode the decisions as one compact string or as grouped index arrays. The final
+step_decisions array must contain one object per raw Step in the original order.
+Use those decisions consistently: replacement steps come from function Steps, while
+checker_rules come only from checker Steps with the required RunLog recovery evidence.
 Describe when to reuse the Function, visible operations, inputs, success signal, and avoid cases.
 You may add, remove, modify, or reorder actions when needed to recover the complete reusable
 semantic operation. The final steps must be one exact contiguous sequence within one supplied
@@ -1075,6 +1085,31 @@ When metadata.checker_trigger exists, copy it exactly. Otherwise return checker_
 Function:
 {json.dumps(brief, ensure_ascii=False, separators=(",", ":"))}
 """.strip()
+
+
+def _validate_step_decisions(
+    proposal: dict[str, Any],
+    run_log: dict[str, Any],
+) -> None:
+    source_steps = [
+        step for step in run_log.get("steps") or () if isinstance(step, dict)
+    ]
+    decisions = proposal.get("step_decisions")
+    if not isinstance(decisions, list) or len(decisions) != len(source_steps):
+        raise ValueError("function_enhancement_step_decisions_incomplete")
+    for index, decision in enumerate(decisions):
+        if not isinstance(decision, dict) or set(decision) != {
+            "step",
+            "role",
+            "reason",
+        }:
+            raise ValueError("function_enhancement_step_decision_invalid")
+        if decision.get("step") != index:
+            raise ValueError("function_enhancement_step_decisions_out_of_order")
+        if decision.get("role") not in {"function", "checker", "ignore"}:
+            raise ValueError("function_enhancement_step_role_invalid")
+        if not str(decision.get("reason") or "").strip():
+            raise ValueError("function_enhancement_step_reason_required")
 
 
 def _grounded_replacement_steps(
