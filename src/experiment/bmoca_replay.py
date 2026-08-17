@@ -1,9 +1,9 @@
-"""Offline B-MoCA replay comparisons for transfer-DP and replay baselines.
+"""B-MoCA replay comparisons and official-device Function replay evaluation.
 
-The existing replay path is not imported or modified here.  Each source/target
-trace pair can be evaluated by the action-aware transfer-DP sidecar or by the
-model-free selector/coordinate baseline suite.  No suite executes a source
-coordinate on a target device.
+Offline source/target trace pairs support the existing comparison suites.  The
+device-e2e suite invokes the real OmniFlow Function replay path on official
+B-MoCA snapshots, with model calls, fallback, and source-coordinate replay
+disabled.
 """
 
 from __future__ import annotations
@@ -2809,7 +2809,13 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument(
         "--suite",
-        choices=("transfer-dp", "replay-baselines", "mock-e2e", "function-replay"),
+        choices=(
+            "transfer-dp",
+            "replay-baselines",
+            "mock-e2e",
+            "function-replay",
+            "device-e2e",
+        ),
         default="function-replay",
     )
     parser.add_argument("--target-env", action="append", dest="target_environments")
@@ -2824,12 +2830,45 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--disable-selector-resource-id", action="store_true")
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--full-matrix", action="store_true")
+    parser.add_argument("--bmoca-root", type=Path)
+    parser.add_argument("--store-path", type=Path)
+    parser.add_argument("--task-id")
+    parser.add_argument("--android-sdk-root", type=Path)
+    parser.add_argument("--android-avd-home", type=Path)
+    parser.add_argument("--run-with-head", action="store_true")
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     environments = tuple(args.target_environments or ("101", "105"))
+    if args.suite == "device-e2e":
+        required = {
+            "bmoca_root": args.bmoca_root,
+            "store_path": args.store_path,
+            "task_id": args.task_id,
+            "android_sdk_root": args.android_sdk_root,
+            "android_avd_home": args.android_avd_home,
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise SystemExit("device_e2e_arguments_required:" + ",".join(missing))
+        from src.experiment.bmoca_device_replay import (
+            evaluate_device_function_replay,
+        )
+
+        report = evaluate_device_function_replay(
+            bmoca_root=args.bmoca_root,
+            store_path=args.store_path,
+            task_id=args.task_id,
+            environment_ids=tuple(args.target_environments or ("100", "101", "105")),
+            android_sdk_root=args.android_sdk_root,
+            android_avd_home=args.android_avd_home,
+            run_headless=not args.run_with_head,
+        )
+        _write_report(args.output.expanduser().resolve(), report)
+        print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
+        return 0
     if args.suite == "function-replay":
         report = evaluate_function_replay(
             args.corpus,
