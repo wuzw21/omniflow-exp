@@ -3794,12 +3794,34 @@ def _build_launch_agent(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Run AndroidWorld as one unified test shell. "
+            "Run OmniFlow E2E in one selected official environment. "
             "Use `--agent omniflow` for the shared OmniFlow cache-first path, "
             "or `--agent official:<name>` for one upstream AndroidWorld agent."
         )
     )
-    parser.add_argument("--android-world-root", required=True)
+    parser.add_argument(
+        "--environment",
+        choices=("androidworld", "bmoca"),
+        default="androidworld",
+        help="Official task environment; this does not select an execution method.",
+    )
+    parser.add_argument("--android-world-root", default="")
+    parser.add_argument("--bmoca-root", default="")
+    parser.add_argument(
+        "--environment-ids",
+        default="100,101,102,103,104,105,106,107,108,109",
+        help="Comma-separated B-MoCA environment IDs.",
+    )
+    parser.add_argument(
+        "--android-sdk-root",
+        default=os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME") or "",
+    )
+    parser.add_argument(
+        "--android-avd-home",
+        default=os.environ.get("ANDROID_AVD_HOME") or "",
+    )
+    parser.add_argument("--bmoca-avd-template-home", default="")
+    parser.add_argument("--show-emulator", action="store_true")
     parser.add_argument("--suite-family", default="android_world")
     parser.add_argument("--tasks", default="ContactsAddContact")
     parser.add_argument("--max-steps", type=int, default=20)
@@ -3920,6 +3942,175 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _run_bmoca_e2e(args: argparse.Namespace) -> int:
+    """Use the normal OmniFlow runtime against the B-MoCA Host adapter."""
+
+    from omniflow import OmniFlow, OmniFlowConfig, RuntimeSettings
+    from omniflow.core.config import Experiment
+    from omniflow.transfer.runtime import load_transfer_state_catalog
+    from omniflow.vlm.planner import VLMPlanner
+    from src.integrations.bmoca import (
+        BMocaEnvironmentConfig,
+        discover_bmoca_episodes,
+        open_bmoca_episode,
+    )
+
+    if str(args.agent or "").strip() != MODE_OMNIFLOW:
+        raise ValueError("bmoca_supports_only_the_shared_omniflow_method")
+    selected_tasks = [item.strip() for item in str(args.tasks).split(",") if item.strip()]
+    if len(selected_tasks) != 1:
+        raise ValueError("bmoca_e2e_requires_exactly_one_task")
+    model = str(args.model or "").strip()
+    if model != "GLM-5.1":
+        raise ValueError("bmoca_e2e_requires_GLM-5.1")
+    if str(args.model_endpoint_profile or "").strip() != "llmthu":
+        raise ValueError("bmoca_e2e_requires_llmthu_endpoint_profile")
+    store_path = Path(args.store_path).expanduser().resolve()
+    if not store_path.is_file():
+        raise FileNotFoundError(f"bmoca_function_store_missing:{store_path}")
+    transfer_state_path = store_path.with_name("transfer_states.json")
+    if not transfer_state_path.is_file():
+        raise FileNotFoundError(
+            f"bmoca_transfer_state_catalog_missing:{transfer_state_path}"
+        )
+    environment_ids = tuple(
+        item.strip() for item in str(args.environment_ids).split(",") if item.strip()
+    )
+    if not environment_ids:
+        raise ValueError("bmoca_environment_ids_required")
+    config = BMocaEnvironmentConfig.resolve(
+        bmoca_root=args.bmoca_root,
+        android_sdk_root=args.android_sdk_root,
+        android_avd_home=args.android_avd_home,
+        avd_template_home=args.bmoca_avd_template_home or None,
+        run_headless=not bool(args.show_emulator),
+    )
+    for required_path, error_code in (
+        (config.bmoca_root, "bmoca_root_missing"),
+        (config.android_sdk_root, "bmoca_android_sdk_missing"),
+        (config.android_avd_home, "bmoca_avd_home_missing"),
+    ):
+        if not required_path.is_dir():
+            raise FileNotFoundError(f"{error_code}:{required_path}")
+    episodes = discover_bmoca_episodes(
+        config.bmoca_root,
+        task_id=selected_tasks[0],
+        environment_ids=environment_ids,
+    )
+    source_states = load_transfer_state_catalog(transfer_state_path)
+    planner_api_key, planner_base_url = resolve_openai_compatible_config(
+        profile="llmthu"
+    )
+    output_dir = Path(args.output_path).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = output_dir / "summary.json"
+    episodes_path = output_dir / "episodes.jsonl"
+    if summary_path.exists() or episodes_path.exists():
+        raise FileExistsError(f"bmoca_attempt_already_exists:{output_dir}")
+    rows: list[dict[str, Any]] = []
+    for episode in episodes:
+        started = perf_counter()
+        try:
+            with open_bmoca_episode(
+                episode,
+                config=config,
+                source_states=source_states,
+            ) as host:
+                planner = VLMPlanner(
+                    provider="openai_compatible",
+                    model=model,
+                    api_key=planner_api_key,
+                    base_url=planner_base_url,
+                    timeout=float(args.planner_timeout_sec or 60.0),
+                    step_skill_guidance=_read_step_skill_guidance(
+                        args.step_skill_guidance_path
+                    ),
+                    max_steps=episode.max_steps,
+                )
+                flow = OmniFlow(
+                    store_path,
+                    host=host,
+                    planner=planner,
+                    installed_apps={},
+                    config=OmniFlowConfig(
+                        runtime=RuntimeSettings(
+                            max_steps=episode.max_steps,
+                            max_fallback_steps=0,
+                        )
+                    ),
+                )
+                result = flow.run(
+                    episode.goal,
+                    experiment=Experiment(name="bmoca"),
+                )
+                row = {
+                    "task_id": episode.task_id,
+                    "environment_id": episode.environment_id,
+                    "snapshot_id": episode.snapshot_id,
+                    "avd_name": episode.avd_name,
+                    "official_success": host.official_success,
+                    "omniflow_success": result.success,
+                    "error": result.error,
+                    **result.execution_summary,
+                    "function_id": result.function_id,
+                    "function_resolution": dict(
+                        result.detail.get("function_resolution") or {}
+                    ),
+                    "checker_decisions": list(
+                        result.detail.get("checker_decisions") or []
+                    ),
+                    "wall_seconds": round(perf_counter() - started, 6),
+                }
+                if row["fallback_steps"] != 0:
+                    raise RuntimeError("bmoca_function_fallback_must_be_zero")
+        except Exception as error:  # noqa: BLE001 - preserve one environment result
+            row = {
+                "task_id": episode.task_id,
+                "environment_id": episode.environment_id,
+                "snapshot_id": episode.snapshot_id,
+                "avd_name": episode.avd_name,
+                "official_success": False,
+                "omniflow_success": False,
+                "error": str(error),
+                "actions_executed": 0,
+                "model_calls": 0,
+                "fallback_steps": 0,
+                "wall_seconds": round(perf_counter() - started, 6),
+            }
+        rows.append(row)
+        with episodes_path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    official_successes = sum(row["official_success"] is True for row in rows)
+    revision = subprocess.run(
+        ["git", "-C", str(config.bmoca_root), "rev-parse", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    summary = {
+        "schema_version": "omniflow.environment-e2e.v1",
+        "environment": "bmoca",
+        "method": "omniflow",
+        "task_id": selected_tasks[0],
+        "bmoca_root": str(config.bmoca_root),
+        "bmoca_revision": revision or None,
+        "environment_ids": list(environment_ids),
+        "episode_count": len(rows),
+        "official_success_count": official_successes,
+        "official_success_rate": official_successes / len(rows) if rows else 0.0,
+        "actions_executed": sum(int(row.get("actions_executed") or 0) for row in rows),
+        "model_calls": sum(int(row.get("model_calls") or 0) for row in rows),
+        "fallback_steps": sum(int(row.get("fallback_steps") or 0) for row in rows),
+        "results": rows,
+    }
+    summary_path.write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if official_successes == len(rows) else 1
+
+
 def _read_step_skill_guidance(path_value: object) -> str:
     text = str(path_value or "").strip()
     if not text:
@@ -3962,6 +4153,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         os.environ["OMNIFLOW_PLANNER_TIMEOUT_SEC"] = str(
             float(args.planner_timeout_sec)
         )
+    if args.environment == "bmoca":
+        return _run_bmoca_e2e(args)
     android_world_root = Path(args.android_world_root).expanduser().resolve()
     run_py = android_world_root / "run.py"
     if not run_py.exists():
