@@ -360,6 +360,9 @@ class FunctionStore:
     def put_function(self, value: Function | dict) -> Function:
         function = value if isinstance(value, Function) else parse_function_artifact(value)
         validate_function_artifact(function)
+        previous = self.functions.get(function.id)
+        if previous is not None:
+            function = _monotonically_aggregate_checker_steps(function, previous)
         self.functions[function.id] = function
         self.load_errors.clear()
         self.save()
@@ -441,6 +444,85 @@ class FunctionStore:
             changed = True
         if changed:
             self.save()
+
+
+def _monotonically_aggregate_checker_steps(
+    replacement: Function,
+    previous: Function,
+) -> Function:
+    """Keep evidence-backed checker Steps when replacing a Function."""
+    if replacement.id != previous.id:
+        raise ValueError("function_checker_aggregation_id_mismatch")
+
+    replacement_value = replacement.to_dict()
+    prior_by_anchor: dict[int, list[dict[str, Any]]] = {}
+    core_steps_seen = 0
+    for step in previous.to_dict()["steps"]:
+        if step.get("role", "function") == "checker":
+            prior_by_anchor.setdefault(core_steps_seen, []).append(step)
+        else:
+            core_steps_seen += 1
+
+    replacement_checker_keys = {
+        (
+            str(step["source_state_id"]),
+            json.dumps(step["action"], ensure_ascii=False, sort_keys=True),
+        )
+        for step in replacement_value["steps"]
+        if step.get("role", "function") == "checker"
+    }
+    replacement_core_count = sum(
+        step.get("role", "function") != "checker"
+        for step in replacement_value["steps"]
+    )
+    missing_anchors = sorted(
+        anchor for anchor in prior_by_anchor if anchor > replacement_core_count
+    )
+    if missing_anchors:
+        raise ValueError(
+            "function_checker_aggregation_anchor_missing:"
+            + ",".join(str(anchor) for anchor in missing_anchors)
+        )
+
+    merged_steps: list[dict[str, Any]] = []
+    replacement_index_map: dict[int, int] = {}
+    emitted_anchors: set[int] = set()
+    core_steps_seen = 0
+
+    def emit_prior_checkers(anchor: int) -> None:
+        if anchor in emitted_anchors:
+            return
+        emitted_anchors.add(anchor)
+        for step in prior_by_anchor.get(anchor, ()):
+            key = (
+                str(step["source_state_id"]),
+                json.dumps(step["action"], ensure_ascii=False, sort_keys=True),
+            )
+            if key in replacement_checker_keys:
+                continue
+            merged_steps.append(dict(step))
+
+    for step in replacement_value["steps"]:
+        emit_prior_checkers(core_steps_seen)
+        replacement_index_map[int(step["step_index"])] = len(merged_steps)
+        merged_steps.append(dict(step))
+        if step.get("role", "function") != "checker":
+            core_steps_seen += 1
+    emit_prior_checkers(core_steps_seen)
+
+    for index, step in enumerate(merged_steps):
+        step["step_index"] = index
+    for binding in replacement_value["bindings"]:
+        match = _TARGET_PATH.fullmatch(binding["target"])
+        if match is None:
+            raise ValueError("function_binding_path_invalid")
+        old_index = int(match.group("action_index"))
+        new_index = replacement_index_map[old_index]
+        binding["target"] = (
+            f"$.steps[{new_index}].action.args{match.group('tail')}"
+        )
+    replacement_value["steps"] = merged_steps
+    return parse_function_artifact(replacement_value)
 
 
 def compile_runlog_to_store(
