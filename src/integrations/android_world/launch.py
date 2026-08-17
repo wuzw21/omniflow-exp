@@ -98,7 +98,7 @@ def _normalize_androidworld_setup_label(value: Any) -> Any:
     )
 
 
-def _patch_androidworld_optional_permission_click() -> tuple[Any, Any] | None:
+def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
     try:
         tools_module = importlib.import_module("android_world.env.tools")
     except ModuleNotFoundError:
@@ -112,10 +112,22 @@ def _patch_androidworld_optional_permission_click() -> tuple[Any, Any] | None:
         try:
             return original(controller, element_text)
         except ValueError as error:
-            if _normalize_androidworld_setup_label(element_text) != "Don't allow":
-                raise
             message = str(error)
             if "Target text" not in message or "not found" not in message:
+                raise
+            normalized_label = _normalize_androidworld_setup_label(element_text)
+            if normalized_label == "OK":
+                activity = str(
+                    getattr(controller._env, "foreground_activity_name", "") or ""
+                ).strip()
+                if not activity.startswith("net.gsantner.markor/"):
+                    raise
+                logger.info(
+                    "AndroidWorld Markor setup is already complete; skipping "
+                    "absent OK button"
+                )
+                return None
+            if normalized_label != "Don't allow":
                 raise
             elements = controller._env.get_ui_elements() or []
             packages = {
@@ -1867,7 +1879,7 @@ def _run_androidworld_setup_apps(
         file_utils.copy_file_to_device = copy_file_to_device
     original_install_apk = _patch_androidworld_apk_install_compat(setup_module)
     original_issue_generic_request = _patch_androidworld_chcon_compat(setup_module)
-    optional_permission_patch = _patch_androidworld_optional_permission_click()
+    optional_setup_patch = _patch_androidworld_optional_setup_click()
     previous_handler = signal.getsignal(signal.SIGALRM)
     previous_timer = signal.setitimer(signal.ITIMER_REAL, 0)
     setup_started_at = time.monotonic()
@@ -1915,8 +1927,8 @@ def _run_androidworld_setup_apps(
             setup_module.adb_utils.issue_generic_request = (
                 original_issue_generic_request
             )
-        if optional_permission_patch is not None:
-            controller_type, original_click_element = optional_permission_patch
+        if optional_setup_patch is not None:
+            controller_type, original_click_element = optional_setup_patch
             controller_type.click_element = original_click_element
 
 
@@ -2112,6 +2124,18 @@ def _prepare_androidworld_episode_apps(
         )
         if not app_name or not package_name:
             continue
+        if app_name == "markor":
+            device_constants = importlib.import_module(
+                "android_world.env.device_constants"
+            )
+            response = setup_module.adb_utils.issue_generic_request(
+                ["shell", "mkdir", "-p", device_constants.MARKOR_DATA],
+                env.controller,
+            )
+            setup_module.adb_utils.check_ok(
+                response,
+                "Failed to prepare Markor data directory.",
+            )
         actuation = importlib.import_module("android_world.env.actuation")
         setup_module.adb_utils.launch_app(app_name, env.controller)
         try:
@@ -2162,6 +2186,25 @@ def _prepare_official_harness_episode(env: Any, *, selected_agent: str) -> None:
     from android_world.env import adb_utils
 
     adb_utils.press_home_button(env.controller)
+
+
+def _patch_androidworld_directory_clear(file_utils: Any, adb_utils: Any) -> Any:
+    """Make AndroidWorld directory clearing idempotent on noisy ADB hosts."""
+
+    original = file_utils.clear_directory
+
+    def clear_directory(directory_path: str, controller: Any) -> None:
+        response = adb_utils.issue_generic_request(
+            ["shell", "rm", "-rf", f"{directory_path}/*"],
+            controller,
+        )
+        adb_utils.check_ok(
+            response,
+            f"Failed to clear directory {directory_path}.",
+        )
+
+    file_utils.clear_directory = clear_directory
+    return original
 
 
 def _prepare_androidworld_snapshot_restore(
@@ -4202,13 +4245,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 env,
                 selected_agent=selected_agent,
             )
-            results = suite_utils.run(
-                suite,
-                instrumented_agent,
-                checkpointer=checkpointer,
-                demo_mode=False,
-                return_full_episode_data=True,
+            file_utils = importlib.import_module("android_world.utils.file_utils")
+            original_clear_directory = _patch_androidworld_directory_clear(
+                file_utils,
+                aw_setup.adb_utils,
             )
+            try:
+                results = suite_utils.run(
+                    suite,
+                    instrumented_agent,
+                    checkpointer=checkpointer,
+                    demo_mode=False,
+                    return_full_episode_data=True,
+                )
+            finally:
+                file_utils.clear_directory = original_clear_directory
             result = results[0] if results else None
         finally:
             try:

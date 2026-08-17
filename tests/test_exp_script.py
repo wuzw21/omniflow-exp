@@ -314,8 +314,7 @@ def test_development_run_routes_through_the_only_script_without_repeated_setup(
     env_file.write_text(
         "OPENAI_API_KEY=dashscope-key\n"
         "OPENAI_BASE_URL=https://dashscope.example/v1\n"
-        "LLMTHU_KEY=llmthu-key\n"
-        "LLMTHU_BASE_URL=https://llmapi.paratera.com/v1\n",
+        "LLMTHU_API_KEY=llmthu-key\n",
         encoding="utf-8",
     )
     adb = tmp_path / "adb"
@@ -369,8 +368,7 @@ def test_development_run_rejects_qwen3_vl_plus_before_device_start(
     store.write_text("{}", encoding="utf-8")
     env_file = tmp_path / ".env"
     env_file.write_text(
-        "LLMTHU_KEY=llmthu-key\n"
-        "LLMTHU_BASE_URL=https://llmapi.paratera.com/v1\n",
+        "LLMTHU_API_KEY=llmthu-key\n",
         encoding="utf-8",
     )
     adb = tmp_path / "adb"
@@ -419,7 +417,7 @@ def test_development_run_rejects_incomplete_code_release_before_device_start(
     store.write_text("{}", encoding="utf-8")
     env_file = tmp_path / ".env"
     env_file.write_text(
-        "LLMTHU_KEY=test-key\nLLMTHU_BASE_URL=https://llmapi.paratera.com/v1\n",
+        "LLMTHU_API_KEY=test-key\n",
         encoding="utf-8",
     )
     adb = tmp_path / "adb"
@@ -524,7 +522,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
     memory_index = memory / "current.json"
     memory_index.write_text("{}", encoding="utf-8")
     env_file = assets / ".env"
-    env_file.write_text("LLMTHU_KEY=test-only\n", encoding="utf-8")
+    env_file.write_text("LLMTHU_API_KEY=test-only\n", encoding="utf-8")
     capture = tmp_path / "invocation.txt"
     fake_python = tmp_path / "python"
     fake_python.write_text(

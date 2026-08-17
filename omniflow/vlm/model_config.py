@@ -21,7 +21,7 @@ def resolve_openai_compatible_config(
         raise ValueError(f"model_endpoint_profile_invalid:{resolved_profile}")
 
     if resolved_profile == "llmthu":
-        key_candidates = (api_key, env.get("LLMTHU_KEY"))
+        key_candidates = (api_key, env.get("LLMTHU_API_KEY"))
         base_url_candidates = (base_url, env.get("LLMTHU_BASE_URL"))
     elif resolved_profile == "openai":
         key_candidates = (api_key, env.get("OPENAI_API_KEY"))
@@ -30,7 +30,7 @@ def resolve_openai_compatible_config(
         key_candidates = (
             api_key,
             env.get("OPENAI_API_KEY"),
-            env.get("LLMTHU_KEY"),
+            env.get("LLMTHU_API_KEY"),
             env.get("DASHSCOPE_API_KEY"),
         )
         base_url_candidates = (

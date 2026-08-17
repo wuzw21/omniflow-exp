@@ -22,7 +22,8 @@ from src.integrations.android_world.launch import (
     _ExperimentAgentAdapter,
     _patch_androidworld_apk_install_compat,
     _patch_androidworld_chcon_compat,
-    _patch_androidworld_optional_permission_click,
+    _patch_androidworld_directory_clear,
+    _patch_androidworld_optional_setup_click,
     _prepare_androidworld_episode_apps,
     _repair_androidworld_chrome_first_run,
     _result_has_official_validator_conclusion,
@@ -57,7 +58,7 @@ def test_androidworld_setup_skips_only_already_settled_notification_permission(
         )
     )
 
-    patch = _patch_androidworld_optional_permission_click()
+    patch = _patch_androidworld_optional_setup_click()
     assert patch is not None
     controller_type, original = patch
     try:
@@ -73,6 +74,152 @@ def test_androidworld_setup_skips_only_already_settled_notification_permission(
             controller.click_element("Don't allow")
     finally:
         controller_type.click_element = original
+
+
+def test_androidworld_setup_skips_only_absent_markor_final_ok(monkeypatch) -> None:
+    class AndroidToolController:
+        def __init__(self, env) -> None:
+            self._env = env
+
+        def click_element(self, element_text: str) -> None:
+            raise ValueError(f'Target text "{element_text}" not found.')
+
+    tools_module = SimpleNamespace(AndroidToolController=AndroidToolController)
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.importlib.import_module",
+        lambda name: tools_module
+        if name == "android_world.env.tools"
+        else pytest.fail(f"unexpected import: {name}"),
+    )
+    controller = AndroidToolController(
+        SimpleNamespace(
+            foreground_activity_name="net.gsantner.markor/.MainActivity",
+            get_ui_elements=lambda: [],
+        )
+    )
+
+    patch = _patch_androidworld_optional_setup_click()
+    assert patch is not None
+    controller_type, original = patch
+    try:
+        controller.click_element("OK")
+        with pytest.raises(ValueError, match="CANCEL"):
+            controller.click_element("CANCEL")
+        controller._env.foreground_activity_name = "com.example/.MainActivity"
+        with pytest.raises(ValueError, match="OK"):
+            controller.click_element("OK")
+    finally:
+        controller_type.click_element = original
+
+
+def test_androidworld_prepares_markor_data_directory(monkeypatch) -> None:
+    calls: list[tuple[object, ...]] = []
+    response = SimpleNamespace(status=1)
+
+    class App:
+        app_name = "markor"
+
+        @staticmethod
+        def package_name() -> str:
+            return "net.gsantner.markor"
+
+    controller = SimpleNamespace(get_ui_elements=lambda: [])
+    env = SimpleNamespace(controller=controller)
+
+    def issue_generic_request(arguments, request_env):
+        calls.append(("adb", tuple(arguments), request_env))
+        return response
+
+    def check_ok(actual_response, message):
+        calls.append(("check", actual_response, message))
+
+    setup_module = SimpleNamespace(
+        adb_utils=SimpleNamespace(
+            issue_generic_request=issue_generic_request,
+            check_ok=check_ok,
+            launch_app=lambda app_name, actual_controller: calls.append(
+                ("launch", app_name, actual_controller)
+            ),
+            close_app=lambda app_name, actual_controller: calls.append(
+                ("close", app_name, actual_controller)
+            ),
+        )
+    )
+    real_import_module = __import__("importlib").import_module
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.importlib.import_module",
+        lambda name: SimpleNamespace(
+            MARKOR_DATA="/storage/emulated/0/Documents/Markor"
+        )
+        if name == "android_world.env.device_constants"
+        else SimpleNamespace()
+        if name == "android_world.env.actuation"
+        else real_import_module(name),
+    )
+    monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
+
+    _prepare_androidworld_episode_apps(
+        env,
+        setup_module=setup_module,
+        setup_apps=(App,),
+    )
+
+    assert calls == [
+        (
+            "adb",
+            (
+                "shell",
+                "mkdir",
+                "-p",
+                "/storage/emulated/0/Documents/Markor",
+            ),
+            controller,
+        ),
+        ("check", response, "Failed to prepare Markor data directory."),
+        ("launch", "markor", controller),
+        ("close", "markor", controller),
+    ]
+
+
+def test_androidworld_directory_clear_is_idempotent() -> None:
+    calls: list[tuple[object, ...]] = []
+    response = SimpleNamespace(status=1)
+
+    def original_clear_directory(_path, _controller):
+        raise AssertionError("official non-idempotent clear should be replaced")
+
+    file_utils = SimpleNamespace(clear_directory=original_clear_directory)
+    adb_utils = SimpleNamespace(
+        issue_generic_request=lambda arguments, controller: (
+            calls.append(("adb", tuple(arguments), controller)) or response
+        ),
+        check_ok=lambda actual_response, message: calls.append(
+            ("check", actual_response, message)
+        ),
+    )
+    controller = object()
+
+    original = _patch_androidworld_directory_clear(file_utils, adb_utils)
+    file_utils.clear_directory("/storage/emulated/0/Documents/Markor", controller)
+
+    assert original is original_clear_directory
+    assert calls == [
+        (
+            "adb",
+            (
+                "shell",
+                "rm",
+                "-rf",
+                "/storage/emulated/0/Documents/Markor/*",
+            ),
+            controller,
+        ),
+        (
+            "check",
+            response,
+            "Failed to clear directory /storage/emulated/0/Documents/Markor.",
+        ),
+    ]
 
 
 def test_androidworld_apk_install_retries_without_unsupported_flag() -> None:

@@ -267,14 +267,18 @@ source_screenshot_roots="${OMNIFLOW_SOURCE_SCREENSHOT_ROOTS:-}"
 select_model_endpoint() {
   local profile="$1"
   local selected_model_config
-  if ! selected_model_config="$($python_bin - "$profile" <<'PY'
+  if ! selected_model_config="$($python_bin - "$profile" "$formal_model_base_url" <<'PY'
 import sys
 
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 
 profile = sys.argv[1]
+base_url = sys.argv[2]
 try:
-    api_key, base_url = resolve_openai_compatible_config(profile=profile)
+    api_key, base_url = resolve_openai_compatible_config(
+        profile=profile,
+        base_url=base_url,
+    )
 except ValueError as error:
     raise SystemExit(str(error)) from error
 if not api_key or not base_url:
@@ -294,6 +298,10 @@ PY
   export OPENAI_API_KEY="$selected_model_api_key"
   export OPENAI_BASE_URL="$selected_model_base_url"
   export OMNIFLOW_MODEL_ENDPOINT_PROFILE="$profile"
+  if [[ "$profile" == "llmthu" ]]; then
+    export LLMTHU_API_KEY="$selected_model_api_key"
+    export LLMTHU_BASE_URL="$selected_model_base_url"
+  fi
 }
 
 validate_model_endpoint_auth() {

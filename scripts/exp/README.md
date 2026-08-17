@@ -44,6 +44,8 @@ AndroidWorld, MobileGPT, and AppAgent checkouts may be supplied through their
 documented absolute root variables. Credentials remain in `OMNIFLOW_ENV_FILE`.
 Formal protocol values are not environment configuration: they come only from
 `config/paper_androidworld.json`.
+The GLM-5.1 credential name is `LLMTHU_API_KEY`; do not duplicate the canonical
+endpoint as `LLMTHU_BASE_URL` in the environment file.
 
 ## Function preparation
 
@@ -89,6 +91,11 @@ are skipped before emulator startup. Formal runs use cold restart and official
 AndroidWorld setup; only repeated development runs may set
 `OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP=0` for an already initialized
 live emulator.
+
+The shared lifecycle seam keeps AndroidWorld directory cleanup idempotent when
+host gRPC diagnostics pollute ADB stdout. It accepts Markor's absent final `OK`
+only after the Markor main activity is already foregrounded; every other setup
+error remains a failure.
 
 For `ours`, the AndroidWorld Method Adapter invokes one complete
 `OmniFlow.run()` cycle on the task. The official episode runner contributes the

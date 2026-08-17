@@ -769,7 +769,7 @@ def qualify_source_function(
     for key in (
         "OPENAI_API_KEY",
         "OPENAI_BASE_URL",
-        "LLMTHU_KEY",
+        "LLMTHU_API_KEY",
         "LLMTHU_BASE_URL",
         "ANTHROPIC_API_KEY",
         "GOOGLE_API_KEY",
@@ -872,7 +872,7 @@ def qualify_source_functions(
     for key in (
         "OPENAI_API_KEY",
         "OPENAI_BASE_URL",
-        "LLMTHU_KEY",
+        "LLMTHU_API_KEY",
         "LLMTHU_BASE_URL",
         "ANTHROPIC_API_KEY",
         "GOOGLE_API_KEY",
@@ -1934,7 +1934,7 @@ _BMOCA_PROGRESS_FIELDS = (
 _MODEL_ENVIRONMENT_KEYS = (
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
-    "LLMTHU_KEY",
+    "LLMTHU_API_KEY",
     "LLMTHU_BASE_URL",
     "ANTHROPIC_API_KEY",
     "GOOGLE_API_KEY",

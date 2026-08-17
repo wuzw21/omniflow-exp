@@ -20,6 +20,9 @@ Before changing or running this repository, read this file, `README.md`, and
 - Do not add an authoring manifest converter, automatic missing-Store builder,
   second compiler, second writer, checker plugin, diagnostic runner, or alias
   for a retired interface.
+- `LLMTHU_API_KEY` is the only GLM-5.1 credential variable. The endpoint is
+  canonical protocol configuration; do not restore `LLMTHU_KEY` or require
+  operators to duplicate it as `LLMTHU_BASE_URL`.
 
 The retained management tools are `list_functions`, `get_function`,
 `save_function`, `delete_function`, `clear_functions`, `list_run_logs`,

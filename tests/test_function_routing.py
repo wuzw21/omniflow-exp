@@ -1849,7 +1849,7 @@ def test_androidworld_launcher_configures_one_unified_planner(
     )
     monkeypatch.setenv("OPENAI_API_KEY", "not-required")
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    monkeypatch.setenv("LLMTHU_KEY", "unified-key")
+    monkeypatch.setenv("LLMTHU_API_KEY", "unified-key")
     monkeypatch.setenv("LLMTHU_BASE_URL", "https://llmapi.example/v1")
 
     flow = androidworld_launch._build_launch_agent(
@@ -1871,7 +1871,7 @@ def test_llmthu_endpoint_profile_ignores_conflicting_openai_variables() -> None:
         environment={
             "OPENAI_API_KEY": "dashscope-key",
             "OPENAI_BASE_URL": "https://dashscope.example/v1",
-            "LLMTHU_KEY": "llmthu-key",
+            "LLMTHU_API_KEY": "llmthu-key",
             "LLMTHU_BASE_URL": "https://llmthu.example/v1",
         },
         profile="llmthu",
