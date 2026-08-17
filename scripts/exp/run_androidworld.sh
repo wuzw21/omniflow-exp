@@ -390,7 +390,9 @@ Optional runtime overrides:
   OMNIFLOW_STOCK_CAPTURE_OUTPUT_PATH, OMNIFLOW_STOCK_CAPTURE_MODEL,
   OMNIFLOW_STOCK_CAPTURE_MODEL_ENDPOINT_PROFILE (default: openai),
   OMNIFLOW_STOCK_CAPTURE_TASK_PARAMS_JSON (fixed AndroidWorld task params),
+  OMNIFLOW_STOCK_CAPTURE_SOURCE_ACTION_HINT_PATH (semantic RunLog hint),
   OMNIFLOW_STOCK_CAPTURE_CANDIDATE_PROPOSAL (candidate Harness wrapper),
+  OMNIFLOW_ANDROIDWORLD_LLM_MAX_TOKENS (online T3A response budget),
   OMNIFLOW_SINGLE_TASK_PERFORM_EMULATOR_SETUP (0 reuses prior app snapshots),
   OMNIFLOW_BATCH_ATTEMPT_ID (resume one interrupted immutable batch).
   OMNIFLOW_E2E_OUTPUT_ROOT, OMNIFLOW_E2E_SOURCE_MODEL,
@@ -837,6 +839,7 @@ if [[ "$stock_capture" != 0 ]]; then
   stock_capture_max_steps="${OMNIFLOW_STOCK_CAPTURE_MAX_STEPS:-7}"
   stock_capture_candidate_proposal="${OMNIFLOW_STOCK_CAPTURE_CANDIDATE_PROPOSAL:-}"
   stock_capture_task_params_json="${OMNIFLOW_STOCK_CAPTURE_TASK_PARAMS_JSON:-}"
+  stock_capture_source_action_hint="${OMNIFLOW_STOCK_CAPTURE_SOURCE_ACTION_HINT_PATH:-}"
   if [[ -z "$task" || "$task" == *,* ]]; then
     echo "--stock-capture requires exactly one task through --tasks or OMNIFLOW_SINGLE_TASK_TASK." >&2
     exit 2
@@ -874,6 +877,10 @@ if [[ "$stock_capture" != 0 ]]; then
       exit 2
     fi
   fi
+  if [[ -n "$stock_capture_source_action_hint" && ( "$stock_capture_source_action_hint" != /* || ! -f "$stock_capture_source_action_hint" ) ]]; then
+    echo "OMNIFLOW_STOCK_CAPTURE_SOURCE_ACTION_HINT_PATH must be an existing absolute file." >&2
+    exit 2
+  fi
   if [[ ! "$stock_capture_max_steps" =~ ^[1-9][0-9]*$ ]] || (( stock_capture_max_steps > formal_max_steps )); then
     echo "OMNIFLOW_STOCK_CAPTURE_MAX_STEPS must be an integer from 1 to $formal_max_steps." >&2
     exit 2
@@ -901,6 +908,9 @@ if [[ "$stock_capture" != 0 ]]; then
   )
   if [[ -n "$stock_capture_task_params_json" ]]; then
     stock_capture_command+=(--task-params-json "$stock_capture_task_params_json")
+  fi
+  if [[ -n "$stock_capture_source_action_hint" ]]; then
+    stock_capture_command+=(--source-action-hint-path "$stock_capture_source_action_hint")
   fi
   if [[ -n "$stock_capture_candidate_proposal" ]]; then
     if [[ "$stock_capture_candidate_proposal" != /* || ! -f "$stock_capture_candidate_proposal" ]]; then

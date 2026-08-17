@@ -501,7 +501,11 @@ class _OpenAICompatibleMultimodalWrapper:
         self.openai_api_key = resolved_api_key
         self.max_retry = min(retry_count, 5)
         self.temperature = float(temperature)
-        self.max_tokens = int(max_tokens)
+        configured_max_tokens = os.environ.get("OMNIFLOW_ANDROIDWORLD_LLM_MAX_TOKENS")
+        try:
+            self.max_tokens = max(1, int(configured_max_tokens)) if configured_max_tokens else int(max_tokens)
+        except (TypeError, ValueError):
+            self.max_tokens = int(max_tokens)
         self.model_calls = 0
         self.prompt_tokens = 0
         self.completion_tokens = 0
