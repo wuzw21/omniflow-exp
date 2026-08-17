@@ -129,6 +129,10 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
     assert 'workspace_root="$(cd "$repo/.." && pwd)"' in script_text
     assert 'default_asset_root="$workspace_root/OmniFlow"' in script_text
+    assert 'default_python="$workspace_root/OmniFlow/.venv/bin/python"' in script_text
+    assert "miniconda3/envs/omniflow-py31113" not in script_text
+    assert 'python_bin="${PYTHON_BIN:-$default_python}"' in script_text
+    assert "validate_page_encoder_runtime" in script_text
     assert "OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS" not in script_text
     assert (
         'default_memory_root="$workspace_root/assets/'

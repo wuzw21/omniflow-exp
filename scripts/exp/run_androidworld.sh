@@ -9,14 +9,12 @@ default_memory_root="$workspace_root/assets/androidworld-experiment-memory-v1"
 asset_root="${OMNIFLOW_EXP_ASSET_ROOT:-$default_asset_root}"
 results_root="${OMNIFLOW_EXP_RESULTS_ROOT:-$asset_root/runtime/evals}"
 account_root="$(cd && pwd)"
-unified_python="$account_root/miniconda3/envs/omniflow-py31113/bin/python"
-if [[ ! -x "$unified_python" ]]; then
-  unified_python="$account_root/miniconda3/bin/python"
+default_python="$workspace_root/OmniFlow/.venv/bin/python"
+python_bin="${PYTHON_BIN:-$default_python}"
+if [[ "$python_bin" != /* || ! -x "$python_bin" ]]; then
+  echo "Python runtime missing: set PYTHON_BIN to one absolute executable (default: $default_python)." >&2
+  exit 2
 fi
-if [[ ! -x "$unified_python" ]]; then
-  unified_python="python3"
-fi
-python_bin="${PYTHON_BIN:-$unified_python}"
 env_file="${OMNIFLOW_ENV_FILE:-${asset_root:+$asset_root/.env}}"
 master_source_index="${OMNIFLOW_MASTER_SOURCE_INDEX:-${asset_root:+$asset_root/runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json}}"
 source_index="${OMNIFLOW_ANDROIDWORLD_SOURCE_INDEX:-$master_source_index}"
@@ -61,6 +59,13 @@ omnitransfer_root="${OMNITRANSFER_ROOT:-$workspace_root/OmniTransfer}"
 android_world_release_root="${OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT:-$(dirname "$asset_root")/releases/android-world-$android_world_revision}"
 android_world_root="${OMNIFLOW_ANDROID_WORLD_ROOT:-$android_world_release_root}"
 export PYTHONPATH="$repo:$repo/src${android_world_root:+:$android_world_root}${PYTHONPATH:+:$PYTHONPATH}"
+validate_page_encoder_runtime() {
+  "$python_bin" - <<'PY'
+from omniflow.transfer.page_embedding import OmniTransferPageEncoder
+
+OmniTransferPageEncoder()
+PY
+}
 protocol_values="$("$python_bin" - <<'PY'
 from src.experiment.protocol import (
     DEFAULT_DEVICE,
@@ -915,6 +920,7 @@ if [[ "$development_run" -eq 1 ]]; then
   set +a
   select_model_endpoint "$development_model_endpoint_profile"
   validate_experiment_model "$development_model" "$development_model_endpoint_profile"
+  validate_page_encoder_runtime
   echo "[model] model=$development_model model_endpoint_profile=$development_model_endpoint_profile model_endpoint=$selected_model_base_url"
   development_command=(
     "$python_bin" -m src.integrations.android_world.launch

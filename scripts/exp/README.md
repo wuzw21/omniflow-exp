@@ -31,9 +31,14 @@ export OMNIFLOW_EXP_ASSET_ROOT=/absolute/assets
 export OMNIFLOW_EXP_RESULTS_ROOT=/absolute/results
 export OMNIFLOW_EXP_MEMORY_ROOT=/absolute/memory
 export OMNIFLOW_ENV_FILE=/absolute/model.env
-export PYTHON_BIN=/absolute/python
 export OMNITRANSFER_ROOT="$HOME/Projects/Omni/OmniTransfer"
 ```
+
+The launcher uses the single runtime at `../OmniFlow/.venv/bin/python` by
+default. Set `PYTHON_BIN` only when that canonical workspace runtime lives at a
+different absolute path. Development preflight loads the canonical
+OmniTransfer page encoder before starting an emulator, so a broken Torch or
+checkpoint installation fails without consuming an episode.
 
 AndroidWorld, MobileGPT, and AppAgent checkouts may be supplied through their
 documented absolute root variables. Credentials remain in `OMNIFLOW_ENV_FILE`.
