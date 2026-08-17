@@ -583,7 +583,7 @@ def _select_transfer_candidate(
         return {
             **ranking,
             "mapped": False,
-            "reason": "omnitransfer_rank_probability_below_threshold",
+            "reason": "rank_probability_below_threshold",
             "rank_probability": rank_probability,
             "rank_probability_threshold": _MIN_RANK_PROBABILITY,
         }

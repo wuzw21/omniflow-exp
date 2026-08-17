@@ -87,7 +87,7 @@ def test_omniflow_rejects_rank_one_below_probability_gate(monkeypatch) -> None:
 
     assert len(calls) == 1
     assert result["mapped"] is False
-    assert result["reason"] == "omnitransfer_rank_probability_below_threshold"
+    assert result["reason"] == "rank_probability_below_threshold"
     assert result["rank_probability"] == 0.51
     assert result["rank_probability_threshold"] == 0.70
     assert len(result["candidates"]) == 2
