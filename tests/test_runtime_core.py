@@ -336,7 +336,16 @@ def test_navigation_checker_runs_only_when_next_required_target_is_absent(
     before = Observation(xml="<launcher/>", package_name="com.launcher")
     source = Observation(xml="<source/>", package_name="com.launcher")
     host = RecordingHost(before)
-    swipe = Action("swipe", {"direction": "up"})
+    swipe = Action(
+        "swipe",
+        {
+            "direction": "up",
+            "x1": 540,
+            "y1": 1400,
+            "x2": 540,
+            "y2": 400,
+        },
+    )
     chrome = Action("click", {"x": 700, "y": 700})
     mapped_chrome = Action("click", {"x": 600, "y": 600})
     function = Function(

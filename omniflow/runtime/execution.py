@@ -216,7 +216,10 @@ async def execute_checker_step(
     applies = _checker_transfer_applicable(decision.detail)
     applicability_reason = "source_target_not_present"
     applicability_evidence: dict[str, Any] = dict(decision.detail or {})
-    if not _action_uses_transfer_target(action):
+    # Directional swipes are navigation checkers even when the recorded Action
+    # also preserves concrete endpoints.  The endpoints describe actuation;
+    # they must not turn the swipe into a point-target transfer decision.
+    if action.tool == "swipe" and action.args.get("direction") is not None:
         applies, applicability_reason, applicability_evidence = (
             await _navigation_checker_applicable(
                 action,
