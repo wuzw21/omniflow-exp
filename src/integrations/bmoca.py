@@ -15,12 +15,16 @@ import shutil
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
 from typing import Any, Iterator, Sequence
 
 import numpy as np
 from PIL import Image
 
 from omniflow import Action, ActionResult, Observation
+from omniflow.core.trajectory import state_id
+from omniflow.transfer.runtime import capture_transfer_state
+from src.experiment.observation_evidence import AndroidWorldEpisodeRecorder
 
 _NAVIGATION_GESTURES = {
     "BACK": (252 / 256, 43 / 128, 252 / 256, 43 / 128),
@@ -85,6 +89,7 @@ class BMocaHost:
         *,
         snapshot_id: str,
         source_states: dict[str, dict[str, Any]] | None = None,
+        evidence_root: str | Path | None = None,
     ) -> None:
         self.environment = environment
         self.snapshot_id = str(snapshot_id)
@@ -92,6 +97,16 @@ class BMocaHost:
         self.timestep: Any | None = None
         self.environment_error: str | None = None
         self._xml_cache = ""
+        self._captured_transfer_states: dict[str, dict[str, Any]] = {}
+        self._recorder = (
+            AndroidWorldEpisodeRecorder(
+                self._recording_state,
+                self._unused_execute_action,
+                evidence_root=evidence_root,
+            )
+            if evidence_root is not None
+            else None
+        )
 
     @property
     def official_success(self) -> bool:
@@ -108,6 +123,8 @@ class BMocaHost:
     def reset(self) -> None:
         self.timestep = self.environment.reset(target_env_id=self.snapshot_id)
         self._xml_cache = ""
+        if self._recorder is not None:
+            self._recorder.start_episode()
 
     def observe(
         self,
@@ -119,6 +136,37 @@ class BMocaHost:
     ) -> Observation:
         if self.timestep is None:
             raise RuntimeError("bmoca_episode_not_reset")
+        if self._recorder is not None:
+            recorded = self._recorder.get_state()
+            auxiliaries = dict(recorded.auxiliaries)
+            pixels = bytes(recorded.pixels)
+            identified_state_id = state_id(
+                {
+                    "pixels": None,
+                    "forest": recorded.forest,
+                    "ui_elements": list(recorded.ui_elements),
+                    "auxiliaries": auxiliaries,
+                }
+            )
+            observation = Observation(
+                xml=str(recorded.forest or "") if xml else None,
+                package_name=str(auxiliaries.get("package_name") or "") or None
+                if app_info
+                else None,
+                activity_name=str(auxiliaries.get("activity_name") or "") or None
+                if app_info
+                else None,
+                image_base64=(
+                    base64.b64encode(pixels).decode("ascii") if screenshot else None
+                ),
+                extra={
+                    **auxiliaries,
+                    "state_id": identified_state_id,
+                },
+            )
+            transfer_state = capture_transfer_state(observation)
+            self._captured_transfer_states[identified_state_id] = transfer_state
+            return observation
         package_name, activity_name = self._app_info() if app_info else ("", "")
         height, width = self._screen_size()
         return Observation(
@@ -137,6 +185,15 @@ class BMocaHost:
 
     def act(self, value: Action | dict[str, Any], **_: Any) -> ActionResult:
         action = Action.from_value(value)
+        if self._recorder is not None:
+            return self._recorder.execute_host_action(
+                action,
+                execute=lambda: self._act(action),
+                project=self._recording_action,
+            )
+        return self._act(action)
+
+    def _act(self, action: Action) -> ActionResult:
         if self.timestep is None:
             return ActionResult(False, "bmoca_episode_not_reset")
         if self.episode_done:
@@ -162,6 +219,39 @@ class BMocaHost:
                 "episode_done": self.episode_done,
             },
         )
+
+    def seal_run_log(
+        self,
+        *,
+        task_name: str,
+        goal: str,
+        diagnostics: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        if self._recorder is None:
+            return None
+        return self._recorder.seal_run_log(
+            task_name=task_name,
+            goal=goal,
+            task_parameters={
+                "benchmark": "b-moca",
+                "snapshot_id": self.snapshot_id,
+            },
+            seed=None,
+            validator_success=self.official_success,
+            validator_reward=float(
+                getattr(self.timestep, "curr_rew", 0.0) or 0.0
+            ),
+            diagnostics=diagnostics,
+        )
+
+    def persist_observations(self) -> list[dict[str, Any]] | None:
+        return self._recorder.persist_observations() if self._recorder is not None else None
+
+    def get_captured_transfer_states(self) -> dict[str, dict[str, Any]]:
+        return {
+            state_identifier: dict(self._captured_transfer_states[state_identifier])
+            for state_identifier in sorted(self._captured_transfer_states)
+        }
 
     def get_state(self, source_state_id: str) -> Observation | None:
         state = self.source_states.get(str(source_state_id or ""))
@@ -193,6 +283,7 @@ class BMocaHost:
         if action.tool == "click":
             x = _relative_coordinate(action.args.get("x"), "x", maximum=maximum)
             y = _relative_coordinate(action.args.get("y"), "y", maximum=maximum)
+            x, y = self._ui_to_official_touch(x, y)
             return y, x, y, x
         if action.tool == "swipe":
             keys = ("x1", "y1", "x2", "y2")
@@ -201,6 +292,8 @@ class BMocaHost:
                     _relative_coordinate(action.args[key], key, maximum=maximum)
                     for key in keys
                 )
+                x1, y1 = self._ui_to_official_touch(x1, y1)
+                x2, y2 = self._ui_to_official_touch(x2, y2)
                 return y1, x1, y2, x2
         key = str(
             action.args.get("key") or action.args.get("keycode") or ""
@@ -227,11 +320,25 @@ class BMocaHost:
         )
 
     def _screen_size(self) -> tuple[int, int]:
+        height, width = self._official_touch_size()
+        if self._is_tablet():
+            return width, height
+        return height, width
+
+    def _official_touch_size(self) -> tuple[int, int]:
         raw = getattr(getattr(self.environment, "_coordinator", None), "_screen_size", None)
         values = tuple(raw) if raw is not None else ()
         if len(values) != 2 or min(int(values[0]), int(values[1])) <= 0:
             raise RuntimeError("bmoca_screen_size_unavailable")
         return int(values[0]), int(values[1])
+
+    def _ui_to_official_touch(self, x: float, y: float) -> tuple[float, float]:
+        touch_height, touch_width = self._official_touch_size()
+        display_height, display_width = self._screen_size()
+        return (
+            x * display_width / touch_width,
+            y * display_height / touch_height,
+        )
 
     def _xml_text(self) -> str:
         if self._xml_cache:
@@ -254,13 +361,17 @@ class BMocaHost:
         return package_name, activity_name
 
     def _image_base64(self) -> str | None:
+        payload = self._image_bytes()
+        return base64.b64encode(payload).decode("ascii") if payload else None
+
+    def _image_bytes(self) -> bytes | None:
         driver = self._driver()
         screenshot = getattr(driver, "get_screenshot_as_png", None)
         if callable(screenshot):
             with suppress(Exception):
                 payload = screenshot()
                 if isinstance(payload, (bytes, bytearray)) and payload:
-                    return base64.b64encode(bytes(payload)).decode("ascii")
+                    return bytes(payload)
         observation = dict(getattr(self.timestep, "curr_obs", {}) or {})
         pixels = observation.get("pixel")
         if pixels is None:
@@ -273,7 +384,60 @@ class BMocaHost:
             array = np.clip(array, 0, 255).astype(np.uint8)
         output = io.BytesIO()
         Image.fromarray(array).save(output, format="PNG")
-        return base64.b64encode(output.getvalue()).decode("ascii")
+        return output.getvalue()
+
+    def _recording_state(self) -> SimpleNamespace:
+        package_name, activity_name = self._app_info()
+        height, width = self._screen_size()
+        return SimpleNamespace(
+            pixels=self._image_bytes(),
+            forest=self._xml_text(),
+            ui_elements=[],
+            auxiliaries={
+                "benchmark": "b-moca",
+                "snapshot_id": self.snapshot_id,
+                "package_name": package_name,
+                "activity_name": activity_name,
+                "display": {"width": width, "height": height},
+                "official_success": self.official_success,
+                "episode_done": self.episode_done,
+            },
+        )
+
+    @staticmethod
+    def _unused_execute_action(*_: Any, **__: Any) -> None:
+        raise RuntimeError("bmoca_recorder_uses_host_action_boundary")
+
+    def _recording_action(self, action: Action | dict[str, Any]) -> dict[str, Any]:
+        value = Action.from_value(action)
+        args = dict(value.args)
+        height, width = self._screen_size()
+        if value.tool in {"click", "long_press"}:
+            return {
+                "action_type": value.tool,
+                "x": float(args["x"]) / 1000.0 * width,
+                "y": float(args["y"]) / 1000.0 * height,
+            }
+        if value.tool == "swipe":
+            direction = str(args.get("direction") or "").strip().lower()
+            if not direction:
+                direction = _swipe_direction(args)
+            return {"action_type": "swipe", "direction": direction}
+        if value.tool == "open_app":
+            return {
+                "action_type": "open_app",
+                "app_name": str(args.get("package_name") or ""),
+            }
+        key = str(args.get("key") or args.get("keycode") or "").upper()
+        if value.tool == "press_back" or key.endswith("BACK"):
+            return {"action_type": "navigate_back"}
+        if value.tool == "press_home" or key.endswith("HOME"):
+            return {"action_type": "navigate_home"}
+        if key.endswith("ENTER"):
+            return {"action_type": "keyboard_enter"}
+        if value.tool == "wait":
+            return {"action_type": "wait"}
+        return {"action_type": "unknown"}
 
 
 @contextmanager
@@ -282,6 +446,7 @@ def open_bmoca_episode(
     *,
     config: BMocaEnvironmentConfig,
     source_states: dict[str, dict[str, Any]] | None = None,
+    evidence_root: str | Path | None = None,
 ) -> Iterator[BMocaHost]:
     """Open one official B-MoCA episode and expose only the Host contract."""
 
@@ -315,6 +480,7 @@ def open_bmoca_episode(
             environment,
             snapshot_id=episode.snapshot_id,
             source_states=source_states,
+            evidence_root=evidence_root,
         )
         host.reset()
         yield host
@@ -494,3 +660,14 @@ def _relative_coordinate(value: Any, name: str, *, maximum: float) -> float:
     if not 0.0 <= coordinate <= maximum:
         raise ValueError(f"bmoca_{name}_coordinate_out_of_range:{coordinate}")
     return coordinate / maximum
+
+
+def _swipe_direction(args: dict[str, Any]) -> str:
+    try:
+        dx = float(args["x2"]) - float(args["x1"])
+        dy = float(args["y2"]) - float(args["y1"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("bmoca_swipe_direction_required") from error
+    if abs(dx) >= abs(dy):
+        return "right" if dx > 0 else "left"
+    return "down" if dy > 0 else "up"
