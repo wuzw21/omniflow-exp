@@ -30,6 +30,26 @@ def test_explicit_transient_dismiss_is_recovered_without_model() -> None:
     assert 0.0 <= action.args["y"] <= 1000.0
 
 
+def test_transient_dismiss_uses_host_display_instead_of_xml_content_height() -> None:
+    observation = Observation(
+        xml=(
+            '<hierarchy rotation="0" width="1080" height="2148">'
+            '<node text="No Thanks" resource-id="com.example:id/negative_button" '
+            'class="android.widget.Button" package="com.example" '
+            'clickable="true" enabled="true" bounds="[44,2005][299,2104]" />'
+            "</hierarchy>"
+        ),
+        package_name="com.example",
+        extra={"display": {"width": 1080, "height": 2280}},
+    )
+
+    action = transient_obstruction_recovery(observation)
+
+    assert action is not None
+    assert action.args["x"] == 171.5 / 1080 * 1000
+    assert action.args["y"] == 2054.5 / 2280 * 1000
+
+
 def test_exact_ok_is_not_treated_as_transient_obstruction() -> None:
     assert transient_obstruction_recovery(_page("OK")) is None
 
