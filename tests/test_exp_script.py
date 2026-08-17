@@ -172,6 +172,9 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "No emulator process found while device remained visible" in script_text
     assert "src.experiment.protocol" in script_text
     assert "protocol_values=" in script_text
+    assert 'PYTHONPATH="$repo:$repo/src${PYTHONPATH:+:$PYTHONPATH}" "$python_bin" -' in script_text
+    assert 'protocol_values="$("$python_bin" -' in script_text
+    assert "python3 - <<'PY'" not in script_text
     assert 'timeout_sec="$((max_steps * formal_step_timeout_sec + official_validator_flush_grace_sec))"' in script_text
     assert "formal_cell_timeout_sec" not in script_text
 
@@ -562,7 +565,11 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
     capture = tmp_path / "invocation.txt"
     fake_python = tmp_path / "python"
     fake_python.write_text(
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE\"\n",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = \"-\" ]; then\n"
+        "  exec \"$REAL_PYTHON\" \"$@\"\n"
+        "fi\n"
+        "printf '%s\\n' \"$@\" > \"$CAPTURE\"\n",
         encoding="utf-8",
     )
     fake_python.chmod(0o755)
@@ -585,6 +592,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
             **os.environ,
             "HOME": str(account_root),
             "CAPTURE": str(capture),
+            "REAL_PYTHON": sys.executable,
             "PYTHON_BIN": str(fake_python),
             "OMNIFLOW_EXP_ASSET_ROOT": str(assets),
             "OMNIFLOW_EXP_RESULTS_ROOT": str(results),

@@ -46,7 +46,7 @@ bmoca_appium_system_port="${OMNIFLOW_BMOCA_APPIUM_SYSTEM_PORT:-}"
 bmoca_emulator_console_port="${OMNIFLOW_BMOCA_EMULATOR_CONSOLE_PORT:-}"
 bmoca_emulator_adb_port="${OMNIFLOW_BMOCA_EMULATOR_ADB_PORT:-}"
 bmoca_emulator_grpc_port="${OMNIFLOW_BMOCA_EMULATOR_GRPC_PORT:-}"
-android_world_revision="$(PYTHONPATH="$repo:$repo/src${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'
+android_world_revision="$(PYTHONPATH="$repo:$repo/src${PYTHONPATH:+:$PYTHONPATH}" "$python_bin" - <<'PY'
 from src.experiment.protocol import ANDROIDWORLD_REVISION
 
 print(ANDROIDWORLD_REVISION)
@@ -61,7 +61,7 @@ omnitransfer_root="${OMNITRANSFER_ROOT:-$workspace_root/OmniTransfer}"
 android_world_release_root="${OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT:-$(dirname "$asset_root")/releases/android-world-$android_world_revision}"
 android_world_root="${OMNIFLOW_ANDROID_WORLD_ROOT:-$android_world_release_root}"
 export PYTHONPATH="$repo:$repo/src${android_world_root:+:$android_world_root}${PYTHONPATH:+:$PYTHONPATH}"
-protocol_values="$(python3 - <<'PY'
+protocol_values="$("$python_bin" - <<'PY'
 from src.experiment.protocol import (
     DEFAULT_DEVICE,
     DEFAULT_METHOD,
