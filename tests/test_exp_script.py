@@ -101,6 +101,8 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "--environment" in completed.stdout
     assert "OMNIFLOW_BMOCA_ENVIRONMENT_IDS" in completed.stdout
     assert "OMNIFLOW_BMOCA_WORKERS" in completed.stdout
+    assert "OMNIFLOW_BMOCA_DIRECT_FUNCTION_REPLAY" in completed.stdout
+    assert "OMNIFLOW_BMOCA_MAX_FALLBACK_STEPS" in completed.stdout
     assert "OMNIFLOW_BMOCA_SOURCE_STATES_PATH" in completed.stdout
     assert "script-replay" in completed.stdout
     assert "--development-run" in completed.stdout

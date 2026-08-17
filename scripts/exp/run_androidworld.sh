@@ -48,6 +48,8 @@ bmoca_show_emulator="${OMNIFLOW_BMOCA_SHOW_EMULATOR:-0}"
 bmoca_workers="${OMNIFLOW_BMOCA_WORKERS:-}"
 bmoca_environment_retries="${OMNIFLOW_BMOCA_ENVIRONMENT_RETRIES:-1}"
 bmoca_source_states_path="${OMNIFLOW_BMOCA_SOURCE_STATES_PATH:-}"
+bmoca_direct_function_replay="${OMNIFLOW_BMOCA_DIRECT_FUNCTION_REPLAY:-0}"
+bmoca_max_fallback_steps="${OMNIFLOW_BMOCA_MAX_FALLBACK_STEPS:-}"
 android_world_revision="632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"
 appagent_document_model="${OMNIFLOW_APPAGENT_DOCUMENT_MODEL:-$formal_model}"
 mobilegpt_embedding_model="${OMNIFLOW_MOBILEGPT_EMBEDDING_MODEL:-text-embedding-v4}"
@@ -408,6 +410,8 @@ Optional runtime overrides:
   OMNIFLOW_BATCH_ATTEMPT_ID (resume one interrupted immutable batch).
   OMNIFLOW_E2E_OUTPUT_ROOT, OMNIFLOW_E2E_SOURCE_MODEL,
   OMNIFLOW_E2E_SEMANTIC_MODEL, OMNIFLOW_E2E_ATTEMPT_ID.
+  OMNIFLOW_BMOCA_DIRECT_FUNCTION_REPLAY (1 directly calls the sole Function),
+  OMNIFLOW_BMOCA_MAX_FALLBACK_STEPS (default: 3 in direct mode; otherwise 0).
   OMNIFLOW_PAGE_STORE_ROOT,
   OMNIFLOW_PAGE_STORE_SERIAL (optional; otherwise select an adb device),
   OMNIFLOW_PAGE_STORE_TOP_K, OMNIFLOW_PAGE_STORE_ENCODER,
@@ -626,8 +630,31 @@ if [[ "$execution_environment" == "bmoca" ]]; then
     echo "B-MoCA --methods requires exactly script-replay when supplied." >&2
     exit 2
   fi
+  if [[ "$bmoca_direct_function_replay" != "0" && "$bmoca_direct_function_replay" != "1" ]]; then
+    echo "OMNIFLOW_BMOCA_DIRECT_FUNCTION_REPLAY must be 0 or 1." >&2
+    exit 2
+  fi
+  if [[ "$bmoca_direct_function_replay" == "1" && "$bmoca_method" != "omniflow" ]]; then
+    echo "OMNIFLOW_BMOCA_DIRECT_FUNCTION_REPLAY requires the OmniFlow method." >&2
+    exit 2
+  fi
+  if [[ -z "$bmoca_max_fallback_steps" ]]; then
+    if [[ "$bmoca_direct_function_replay" == "1" ]]; then
+      bmoca_max_fallback_steps=3
+    else
+      bmoca_max_fallback_steps=0
+    fi
+  fi
+  if [[ ! "$bmoca_max_fallback_steps" =~ ^[0-3]$ ]]; then
+    echo "OMNIFLOW_BMOCA_MAX_FALLBACK_STEPS must be an integer from 0 to 3." >&2
+    exit 2
+  fi
+  if [[ "$bmoca_direct_function_replay" == "0" && "$bmoca_max_fallback_steps" != "0" ]]; then
+    echo "OMNIFLOW_BMOCA_MAX_FALLBACK_STEPS is only available in direct Function replay mode." >&2
+    exit 2
+  fi
   if [[ -z "$bmoca_workers" ]]; then
-    if [[ "$bmoca_method" == "script-replay" ]]; then
+    if [[ "$bmoca_method" == "script-replay" || "$bmoca_direct_function_replay" == "1" ]]; then
       bmoca_workers=10
     else
       bmoca_workers=1
@@ -736,7 +763,8 @@ if [[ "$execution_environment" == "bmoca" ]]; then
     select_model_endpoint "$formal_model_endpoint_profile"
     validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
   fi
-  export OMNIFLOW_MAX_FALLBACK_STEPS=0
+  export OMNIFLOW_BMOCA_DIRECT_FUNCTION_REPLAY="$bmoca_direct_function_replay"
+  export OMNIFLOW_MAX_FALLBACK_STEPS="$bmoca_max_fallback_steps"
   bmoca_command=(
     "$python_bin" -m src.integrations.android_world.launch
     --environment bmoca

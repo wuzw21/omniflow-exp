@@ -7,7 +7,10 @@ import numpy as np
 import pytest
 
 from omniflow import Action
-from src.integrations.android_world.launch import build_parser
+from src.integrations.android_world.launch import (
+    _run_bmoca_omniflow,
+    build_parser,
+)
 from src.integrations.bmoca import (
     BMocaHost,
     discover_bmoca_episodes,
@@ -182,3 +185,67 @@ def test_bmoca_cli_registers_parallel_script_replay() -> None:
     assert args.agent == "script-replay"
     assert args.bmoca_workers == 10
     assert args.bmoca_environment_retries == 1
+
+
+def test_bmoca_direct_function_replay_bypasses_initial_planner() -> None:
+    function = SimpleNamespace(
+        id="open_new_chrome_tab",
+        input_schema={"required": []},
+    )
+
+    class Store:
+        def list_functions(self, *, include_hidden: bool = True):
+            assert include_hidden is False
+            return [function]
+
+    class Flow:
+        store = Store()
+
+        def __init__(self) -> None:
+            self.direct_calls: list[object] = []
+            self.planner_goals: list[str] = []
+
+        def call_tool(self, call, *, experiment=None):
+            self.direct_calls.append((call, experiment))
+            return "direct-result"
+
+        def run(self, goal, *, experiment=None):
+            self.planner_goals.append(goal)
+            return "planner-result"
+
+    flow = Flow()
+
+    result = _run_bmoca_omniflow(
+        flow,
+        goal="Open a new tab in Chrome",
+        direct_function_replay=True,
+    )
+
+    assert result == "direct-result"
+    assert flow.planner_goals == []
+    assert len(flow.direct_calls) == 1
+    call, experiment = flow.direct_calls[0]
+    assert call.name == function.id
+    assert call.arguments == {}
+    assert experiment.name == "bmoca"
+
+
+def test_bmoca_default_path_keeps_normal_e2e_planner() -> None:
+    class Flow:
+        def __init__(self) -> None:
+            self.goals: list[str] = []
+
+        def run(self, goal, *, experiment=None):
+            self.goals.append(goal)
+            return experiment.name
+
+    flow = Flow()
+
+    result = _run_bmoca_omniflow(
+        flow,
+        goal="Open Chrome",
+        direct_function_replay=False,
+    )
+
+    assert result == "bmoca"
+    assert flow.goals == ["Open Chrome"]

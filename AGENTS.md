@@ -123,7 +123,10 @@ than fabricating experience or changing the baseline.
 - B-MoCA is an environment adapter. Its default E2E path uses the same
   `OmniFlow.run()` Function/checker/OmniTransfer runtime, GLM-5.1 only for
   Planner tool selection, zero Function fallback steps, and the official
-  B-MoCA reward as the success authority. Its registered `script-replay`
+  B-MoCA reward as the success authority. The optional direct-Function diagnostic
+  remains the `omniflow` method, calls the sole visible zero-argument Function,
+  and permits at most three existing fallback steps after Function failure. Its
+  registered `script-replay`
   comparison skips Checker steps and permits only unique text/content-description,
   semantic-child depth/rank, or semantic-parent/child-rank selection. Resource
   IDs are prohibited. It has no Planner, model, coordinate fallback, DP, or

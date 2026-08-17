@@ -48,6 +48,11 @@ For one-task evaluation, pass the successful canonical source RunLog through
 Function from its sibling `transfer_states.json` before running env100–109.
 All environment jobs are submitted together, with a per-AVD execution lock for
 snapshots that share the same virtual device.
+For the same `omniflow` method, setting
+`OMNIFLOW_BMOCA_DIRECT_FUNCTION_REPLAY=1` bypasses only the initial Planner and
+directly calls the sole visible zero-argument Function. Successful replay makes
+zero Planner calls; failed replay can use at most three existing fallback steps.
+This switch does not add a new method or change Checker/OmniTransfer semantics.
 The entry pins the maintained B-MoCA revision whose device builder completes
 Chrome and Gboard first-run setup before sealing the shared base snapshot; an
 unverified keyboard state fails environment construction.

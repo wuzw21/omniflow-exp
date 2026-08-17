@@ -3956,6 +3956,33 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _run_bmoca_omniflow(
+    flow: Any,
+    *,
+    goal: str,
+    direct_function_replay: bool,
+) -> Any:
+    from omniflow import ToolCall
+    from omniflow.core.config import Experiment
+
+    experiment = Experiment(name="bmoca")
+    if not direct_function_replay:
+        return flow.run(goal, experiment=experiment)
+    visible = flow.store.list_functions(include_hidden=False)
+    if len(visible) != 1:
+        raise ValueError(
+            f"bmoca_direct_function_requires_one_function:{len(visible)}"
+        )
+    function = visible[0]
+    required = tuple(function.input_schema.get("required") or ())
+    if required:
+        raise ValueError(
+            "bmoca_direct_function_arguments_required:"
+            + ",".join(str(item) for item in required)
+        )
+    return flow.call_tool(ToolCall(function.id, {}), experiment=experiment)
+
+
 def _run_bmoca_e2e(args: argparse.Namespace) -> int:
     """Run one registered method against independent official B-MoCA episodes."""
 
@@ -3973,6 +4000,21 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
     if len(selected_tasks) != 1:
         raise ValueError("bmoca_e2e_requires_exactly_one_task")
     model = str(args.model or "").strip()
+    direct_function_replay = (
+        str(os.environ.get("OMNIFLOW_BMOCA_DIRECT_FUNCTION_REPLAY") or "0").strip()
+        == "1"
+    )
+    max_fallback_steps = read_env_int(
+        "OMNIFLOW_MAX_FALLBACK_STEPS",
+        0,
+    )
+    if direct_function_replay and method != MODE_OMNIFLOW:
+        raise ValueError("bmoca_direct_function_requires_omniflow")
+    if max_fallback_steps > (3 if direct_function_replay else 0):
+        raise ValueError(
+            "bmoca_fallback_limit_invalid:"
+            f"direct={int(direct_function_replay)}:value={max_fallback_steps}"
+        )
     if method == MODE_OMNIFLOW:
         if model != "GLM-5.1":
             raise ValueError("bmoca_e2e_requires_GLM-5.1")
@@ -4064,7 +4106,6 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                         )
                     else:
                         from omniflow import OmniFlow, OmniFlowConfig, RuntimeSettings
-                        from omniflow.core.config import Experiment
                         from omniflow.vlm.planner import VLMPlanner
 
                         planner = VLMPlanner(
@@ -4086,13 +4127,14 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                             config=OmniFlowConfig(
                                 runtime=RuntimeSettings(
                                     max_steps=episode.max_steps,
-                                    max_fallback_steps=0,
+                                    max_fallback_steps=max_fallback_steps,
                                 )
                             ),
                         )
-                        result = flow.run(
-                            episode.goal,
-                            experiment=Experiment(name="bmoca"),
+                        result = _run_bmoca_omniflow(
+                            flow,
+                            goal=episode.goal,
+                            direct_function_replay=direct_function_replay,
                         )
                 except Exception as error:  # noqa: BLE001 - seal failed episodes too
                     run_error = error
@@ -4166,8 +4208,11 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                     "observation_evidence": observation_evidence,
                     "wall_seconds": round(perf_counter() - started, 6),
                 }
-                if row["fallback_steps"] != 0:
-                    raise RuntimeError("bmoca_fallback_must_be_zero")
+                if int(row["fallback_steps"]) > max_fallback_steps:
+                    raise RuntimeError(
+                        "bmoca_fallback_limit_exceeded:"
+                        f"actual={row['fallback_steps']}:limit={max_fallback_steps}"
+                    )
         except Exception as error:  # noqa: BLE001 - preserve one environment result
             row = {
                 "method": method,
@@ -4265,6 +4310,8 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
         "schema_version": "omniflow.environment-e2e.v1",
         "environment": "bmoca",
         "method": method,
+        "direct_function_replay": direct_function_replay,
+        "max_fallback_steps": max_fallback_steps,
         "task_id": selected_tasks[0],
         "bmoca_root": str(config.bmoca_root),
         "bmoca_revision": revision or None,

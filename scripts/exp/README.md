@@ -20,6 +20,25 @@ the requested official environment IDs (100 through 109 by default), runs the no
 reports the official reward for each episode. GLM-5.1 is used only by the front
 Planner; Function fallback is fixed at zero.
 
+For a fast Function-replay diagnostic with the same OmniFlow runtime, set
+`OMNIFLOW_BMOCA_DIRECT_FUNCTION_REPLAY=1`. The entry directly invokes the sole
+visible zero-argument Function, so a successful Function makes no Planner call;
+Checker and OmniTransfer behavior remain unchanged. A failed Function may use at
+most three existing Planner fallback steps (the default in this mode), configurable
+downward with `OMNIFLOW_BMOCA_MAX_FALLBACK_STEPS`. This is an execution switch on
+the `omniflow` method, not a separate method or launcher.
+
+```bash
+OMNIFLOW_BMOCA_DIRECT_FUNCTION_REPLAY=1 \
+OMNIFLOW_BMOCA_MAX_FALLBACK_STEPS=3 \
+OMNIFLOW_BMOCA_OUTPUT_PATH=/absolute/new-result \
+OMNIFLOW_BMOCA_AVD_HOME=/absolute/initialized-avds \
+OMNIFLOW_SINGLE_TASK_STORE_PATH=/absolute/function/store.json \
+bash scripts/exp/run_androidworld.sh \
+  --environment bmoca \
+  --tasks chrome/open_Chrome
+```
+
 The explicitly registered B-MoCA comparison `script-replay` is the only
 exception to the default method above. It replays the sole visible Function,
 ignores Checker steps, and adapts each pointer action using MobileGPT's locator
