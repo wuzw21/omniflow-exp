@@ -289,7 +289,14 @@ def _transient_recovery(
     if not candidates:
         return None
     _, _, target = min(candidates, key=lambda item: (item[0], item[1], item[2].node_id))
-    point = _relative_center(target.bbox, graph.width, graph.height)
+    display = getattr(observation, "extra", {}).get("display", {})
+    width = display.get("width") if isinstance(display, dict) else None
+    height = display.get("height") if isinstance(display, dict) else None
+    point = _relative_center(
+        target.bbox,
+        width or graph.width,
+        height or graph.height,
+    )
     if point is None or (
         original_action is not None and _original_targets(original_action, point)
     ):
