@@ -1,9 +1,10 @@
 # OmniFlow-exp Rules
 
-This repository exists only for the paper's AndroidWorld experiment and the
-B-MoCA cross-environment validation of the same OmniFlow method. Do not add
-product code, historical campaigns, ablations, exploratory methods, raw data,
-or compatibility layers.
+This repository exists only for the paper's AndroidWorld experiment and B-MoCA
+cross-environment validation. B-MoCA additionally registers `script-replay` as
+its deterministic exact-selector comparison baseline. Do not add product code,
+historical campaigns, other exploratory methods, raw data, or compatibility
+layers.
 
 Before changing this repository, read `README.md` and
 `scripts/exp/README.md`. They are the user-facing description of the same
@@ -119,10 +120,13 @@ than fabricating experience or changing the baseline.
   use the development reuse override to create or register a formal result.
 - Treat `mobilegpt_offline_retrieval` and `appagent_demo` as frozen external
   baselines under the absolute no-repair rule above.
-- B-MoCA is an environment adapter, never a replay method. Its E2E path must use
-  the same `OmniFlow.run()` Function/checker/OmniTransfer runtime, GLM-5.1 only
-  for Planner tool selection, zero Function fallback steps, and the official
-  B-MoCA reward as the success authority.
+- B-MoCA is an environment adapter. Its default E2E path uses the same
+  `OmniFlow.run()` Function/checker/OmniTransfer runtime, GLM-5.1 only for
+  Planner tool selection, zero Function fallback steps, and the official
+  B-MoCA reward as the success authority. Its registered `script-replay`
+  comparison skips Checker steps and permits only unique exact resource ID,
+  text, or content-description selection; it has no Planner, model, fuzzy
+  match, parent climb, coordinate fallback, DP, or OmniTransfer call.
 
 ## Local and 9207 synchronization
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import copy
 import dataclasses
 import datetime
@@ -3821,6 +3822,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("ANDROID_AVD_HOME") or "",
     )
     parser.add_argument("--bmoca-avd-template-home", default="")
+    parser.add_argument(
+        "--bmoca-workers",
+        type=int,
+        default=1,
+        help="Number of independent B-MoCA environments to execute concurrently.",
+    )
     parser.add_argument("--show-emulator", action="store_true")
     parser.add_argument("--suite-family", default="android_world")
     parser.add_argument("--tasks", default="ContactsAddContact")
@@ -3943,29 +3950,27 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _run_bmoca_e2e(args: argparse.Namespace) -> int:
-    """Use the normal OmniFlow runtime against the B-MoCA Host adapter."""
+    """Run one registered method against independent official B-MoCA episodes."""
 
-    from omniflow import OmniFlow, OmniFlowConfig, RuntimeSettings
-    from omniflow.core.config import Experiment
     from omniflow.transfer.runtime import load_transfer_state_catalog
-    from omniflow.vlm.planner import VLMPlanner
-    from src.experiment.observation_evidence import persist_target_run_evidence
     from src.integrations.bmoca import (
         BMocaEnvironmentConfig,
         discover_bmoca_episodes,
         open_bmoca_episode,
     )
 
-    if str(args.agent or "").strip() != MODE_OMNIFLOW:
-        raise ValueError("bmoca_supports_only_the_shared_omniflow_method")
+    method = str(args.agent or "").strip()
+    if method not in {MODE_OMNIFLOW, "script-replay"}:
+        raise ValueError(f"bmoca_method_unsupported:{method}")
     selected_tasks = [item.strip() for item in str(args.tasks).split(",") if item.strip()]
     if len(selected_tasks) != 1:
         raise ValueError("bmoca_e2e_requires_exactly_one_task")
     model = str(args.model or "").strip()
-    if model != "GLM-5.1":
-        raise ValueError("bmoca_e2e_requires_GLM-5.1")
-    if str(args.model_endpoint_profile or "").strip() != "llmthu":
-        raise ValueError("bmoca_e2e_requires_llmthu_endpoint_profile")
+    if method == MODE_OMNIFLOW:
+        if model != "GLM-5.1":
+            raise ValueError("bmoca_e2e_requires_GLM-5.1")
+        if str(args.model_endpoint_profile or "").strip() != "llmthu":
+            raise ValueError("bmoca_e2e_requires_llmthu_endpoint_profile")
     store_path = Path(args.store_path).expanduser().resolve()
     if not store_path.is_file():
         raise FileNotFoundError(f"bmoca_function_store_missing:{store_path}")
@@ -3999,17 +4004,20 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
         environment_ids=environment_ids,
     )
     source_states = load_transfer_state_catalog(transfer_state_path)
-    planner_api_key, planner_base_url = resolve_openai_compatible_config(
-        profile="llmthu"
-    )
+    planner_api_key = planner_base_url = ""
+    if method == MODE_OMNIFLOW:
+        planner_api_key, planner_base_url = resolve_openai_compatible_config(
+            profile="llmthu"
+        )
     output_dir = Path(args.output_path).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / "summary.json"
     episodes_path = output_dir / "episodes.jsonl"
     if summary_path.exists() or episodes_path.exists():
         raise FileExistsError(f"bmoca_attempt_already_exists:{output_dir}")
-    rows: list[dict[str, Any]] = []
-    for episode in episodes:
+    worker_count = min(max(1, int(args.bmoca_workers or 1)), len(episodes))
+
+    def run_episode(index: int, episode: Any) -> dict[str, Any]:
         started = perf_counter()
         run_evidence: dict[str, Any] = {}
         observation_evidence: list[dict[str, Any]] = []
@@ -4020,45 +4028,67 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                 config=config,
                 source_states=source_states,
                 evidence_root=episode_root,
+                appium_port=4723 + index,
+                appium_system_port=8200 + index,
             ) as host:
-                planner = VLMPlanner(
-                    provider="openai_compatible",
-                    model=model,
-                    api_key=planner_api_key,
-                    base_url=planner_base_url,
-                    timeout=float(args.planner_timeout_sec or 60.0),
-                    step_skill_guidance=_read_step_skill_guidance(
-                        args.step_skill_guidance_path
-                    ),
-                    max_steps=episode.max_steps,
-                )
-                flow = OmniFlow(
-                    store_path,
-                    host=host,
-                    planner=planner,
-                    installed_apps={},
-                    config=OmniFlowConfig(
-                        runtime=RuntimeSettings(
-                            max_steps=episode.max_steps,
-                            max_fallback_steps=0,
-                        )
-                    ),
-                )
                 result = None
                 run_error: Exception | None = None
                 try:
-                    result = flow.run(
-                        episode.goal,
-                        experiment=Experiment(name="bmoca"),
-                    )
+                    if method == "script-replay":
+                        from src.integrations.script_replay import run_script_replay
+
+                        result = run_script_replay(
+                            store_path=store_path,
+                            source_states=source_states,
+                            host=host,
+                            post_action_wait_seconds=1.0,
+                        )
+                    else:
+                        from omniflow import OmniFlow, OmniFlowConfig, RuntimeSettings
+                        from omniflow.core.config import Experiment
+                        from omniflow.vlm.planner import VLMPlanner
+
+                        planner = VLMPlanner(
+                            provider="openai_compatible",
+                            model=model,
+                            api_key=planner_api_key,
+                            base_url=planner_base_url,
+                            timeout=float(args.planner_timeout_sec or 60.0),
+                            step_skill_guidance=_read_step_skill_guidance(
+                                args.step_skill_guidance_path
+                            ),
+                            max_steps=episode.max_steps,
+                        )
+                        flow = OmniFlow(
+                            store_path,
+                            host=host,
+                            planner=planner,
+                            installed_apps={},
+                            config=OmniFlowConfig(
+                                runtime=RuntimeSettings(
+                                    max_steps=episode.max_steps,
+                                    max_fallback_steps=0,
+                                )
+                            ),
+                        )
+                        result = flow.run(
+                            episode.goal,
+                            experiment=Experiment(name="bmoca"),
+                        )
                 except Exception as error:  # noqa: BLE001 - seal failed episodes too
                     run_error = error
+                diagnostics: dict[str, Any] | None = None
+                if run_error is not None:
+                    diagnostics = {"runtime_error": str(run_error), "method": method}
+                elif method == "script-replay" and result is not None:
+                    diagnostics = {
+                        "method": method,
+                        "script_replay_trace": list(result.trace),
+                    }
                 run_log = host.seal_run_log(
                     task_name=episode.task_id,
                     goal=episode.goal,
-                    diagnostics=(
-                        {"runtime_error": str(run_error)} if run_error is not None else None
-                    ),
+                    diagnostics=diagnostics,
                 )
                 observation_evidence = list(host.persist_observations() or [])
                 if run_log is not None:
@@ -4072,36 +4102,46 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                 if result is None:
                     raise RuntimeError("bmoca_result_missing")
                 row = {
+                    "method": method,
                     "task_id": episode.task_id,
                     "environment_id": episode.environment_id,
                     "snapshot_id": episode.snapshot_id,
                     "avd_name": episode.avd_name,
                     "official_success": host.official_success,
-                    "omniflow_success": result.success,
+                    "method_success": result.success,
                     "error": result.error,
                     **result.execution_summary,
                     "function_id": result.function_id,
-                    "function_resolution": dict(
-                        result.detail.get("function_resolution") or {}
+                    "function_resolution": (
+                        dict(result.detail.get("function_resolution") or {})
+                        if method == MODE_OMNIFLOW
+                        else {}
                     ),
-                    "checker_decisions": list(
-                        result.detail.get("checker_decisions") or []
+                    "checker_decisions": (
+                        list(result.detail.get("checker_decisions") or [])
+                        if method == MODE_OMNIFLOW
+                        else []
                     ),
-                    "trace": list(result.detail.get("trace") or []),
+                    "trace": (
+                        list(result.detail.get("trace") or [])
+                        if method == MODE_OMNIFLOW
+                        else list(result.trace)
+                    ),
                     "run_log_evidence": run_evidence,
                     "observation_evidence": observation_evidence,
                     "wall_seconds": round(perf_counter() - started, 6),
                 }
                 if row["fallback_steps"] != 0:
-                    raise RuntimeError("bmoca_function_fallback_must_be_zero")
+                    raise RuntimeError("bmoca_fallback_must_be_zero")
         except Exception as error:  # noqa: BLE001 - preserve one environment result
             row = {
+                "method": method,
                 "task_id": episode.task_id,
                 "environment_id": episode.environment_id,
                 "snapshot_id": episode.snapshot_id,
                 "avd_name": episode.avd_name,
                 "official_success": False,
-                "omniflow_success": False,
+                "method_success": False,
                 "error": str(error),
                 "actions_executed": 0,
                 "model_calls": 0,
@@ -4110,8 +4150,34 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                 "observation_evidence": observation_evidence,
                 "wall_seconds": round(perf_counter() - started, 6),
             }
-        rows.append(row)
-        with episodes_path.open("a", encoding="utf-8") as stream:
+        return row
+
+    rows_by_index: dict[int, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        pending = {
+            executor.submit(run_episode, index, episode): index
+            for index, episode in enumerate(episodes)
+        }
+        for future in as_completed(pending):
+            index = pending[future]
+            row = future.result()
+            rows_by_index[index] = row
+            print(
+                json.dumps(
+                    {
+                        "environment_id": row["environment_id"],
+                        "official_success": row["official_success"],
+                        "actions_executed": row["actions_executed"],
+                        "error": row.get("error"),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+    rows = [rows_by_index[index] for index in range(len(episodes))]
+    with episodes_path.open("w", encoding="utf-8") as stream:
+        for row in rows:
             stream.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
     official_successes = sum(row["official_success"] is True for row in rows)
     revision = subprocess.run(
@@ -4123,12 +4189,13 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
     summary = {
         "schema_version": "omniflow.environment-e2e.v1",
         "environment": "bmoca",
-        "method": "omniflow",
+        "method": method,
         "task_id": selected_tasks[0],
         "bmoca_root": str(config.bmoca_root),
         "bmoca_revision": revision or None,
         "environment_ids": list(environment_ids),
         "episode_count": len(rows),
+        "parallel_workers": worker_count,
         "official_success_count": official_successes,
         "official_success_rate": official_successes / len(rows) if rows else 0.0,
         "actions_executed": sum(int(row.get("actions_executed") or 0) for row in rows),

@@ -439,6 +439,8 @@ def open_bmoca_episode(
     config: BMocaEnvironmentConfig,
     source_states: dict[str, dict[str, Any]] | None = None,
     evidence_root: str | Path | None = None,
+    appium_port: int = 4723,
+    appium_system_port: int = 8200,
 ) -> Iterator[BMocaHost]:
     """Open one official B-MoCA episode and expose only the Host contract."""
 
@@ -463,6 +465,8 @@ def open_bmoca_episode(
         android_sdk_root=str(sdk),
         emulator_path=str(sdk / "emulator/emulator"),
         adb_path=str(sdk / "platform-tools/adb"),
+        appium_port=int(appium_port),
+        appium_system_port=int(appium_system_port),
     )
     host: BMocaHost | None = None
     try:

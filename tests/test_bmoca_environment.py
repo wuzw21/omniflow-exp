@@ -159,3 +159,23 @@ def test_unified_e2e_parser_selects_bmoca_as_an_environment() -> None:
 
     assert args.environment == "bmoca"
     assert args.bmoca_root == "/opt/bmoca"
+
+
+def test_bmoca_cli_registers_parallel_script_replay() -> None:
+    args = build_parser().parse_args(
+        [
+            "--environment",
+            "bmoca",
+            "--tasks",
+            "open_settings",
+            "--agent",
+            "script-replay",
+            "--store-path",
+            "/opt/store.json",
+            "--bmoca-workers",
+            "10",
+        ]
+    )
+
+    assert args.agent == "script-replay"
+    assert args.bmoca_workers == 10

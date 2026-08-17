@@ -12,13 +12,21 @@ seams, not alternate launchers:
 | Source screenshot refresh | `run_androidworld.sh --collect-source --tasks TASK` | Existing `fixed_replay`; no Planner or model calls |
 | Static validation | `run_androidworld.sh --check-only` | No emulator or method execution |
 | B-MoCA E2E | `run_androidworld.sh --environment bmoca --tasks TASK` | The same OmniFlow method on official B-MoCA snapshots |
+| B-MoCA exact selector | `run_androidworld.sh --environment bmoca --methods script-replay --tasks TASK` | Parallel zero-model exact-selector replay |
 
-B-MoCA changes only the environment. It is not a selector, replay baseline, or
-second execution method. The unified command enumerates the requested official
-environment IDs (100 through 109 by default), runs the normal
+B-MoCA changes only the environment by default. The unified command enumerates
+the requested official environment IDs (100 through 109 by default), runs the normal
 `observe -> recall -> plan -> Function/checker/OmniTransfer -> act` loop, and
 reports the official reward for each episode. GLM-5.1 is used only by the front
 Planner; Function fallback is fixed at zero.
+
+The explicitly registered B-MoCA comparison `script-replay` is the only
+exception to the default method above. It replays the sole visible Function,
+ignores Checker steps, and resolves each pointer action by the first unique
+exact source selector in `resource-id`, `text`, `content-desc` order. Missing
+or ambiguous matches fail closed; it never uses fuzzy matching, parent lookup,
+source coordinates, OmniTransfer, DP, Planner, or VLM. Independent environments
+run concurrently (`OMNIFLOW_BMOCA_WORKERS`, default 10 for this method).
 
 The maintained B-MoCA coordinator exposes every display size as screenshot
 `[height, width]`, including tablets. The Host therefore preserves canonical

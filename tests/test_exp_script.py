@@ -100,6 +100,8 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "--check-only" in completed.stdout
     assert "--environment" in completed.stdout
     assert "OMNIFLOW_BMOCA_ENVIRONMENT_IDS" in completed.stdout
+    assert "OMNIFLOW_BMOCA_WORKERS" in completed.stdout
+    assert "script-replay" in completed.stdout
     assert "--development-run" in completed.stdout
     assert "--stock-capture" in completed.stdout
     assert "--all-tasks" in completed.stdout
@@ -144,7 +146,7 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
         in script_text
     )
     assert (
-        'formal_bmoca_revision="8c199bfc67ad4ff1555906d128179116b0fcf301"'
+        'formal_bmoca_revision="60630d8fbbe037c7d5468eb66eb12dd10abb179c"'
         in script_text
     )
     assert (
