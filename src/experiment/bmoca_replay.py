@@ -2835,6 +2835,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--task-id")
     parser.add_argument("--android-sdk-root", type=Path)
     parser.add_argument("--android-avd-home", type=Path)
+    parser.add_argument("--avd-template-home", type=Path)
     parser.add_argument("--run-with-head", action="store_true")
     return parser.parse_args(argv)
 
@@ -2849,6 +2850,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "task_id": args.task_id,
             "android_sdk_root": args.android_sdk_root,
             "android_avd_home": args.android_avd_home,
+            "avd_template_home": args.avd_template_home,
         }
         missing = [name for name, value in required.items() if not value]
         if missing:
@@ -2864,6 +2866,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             environment_ids=tuple(args.target_environments or ("100", "101", "105")),
             android_sdk_root=args.android_sdk_root,
             android_avd_home=args.android_avd_home,
+            avd_template_home=args.avd_template_home,
             run_headless=not args.run_with_head,
         )
         _write_report(args.output.expanduser().resolve(), report)

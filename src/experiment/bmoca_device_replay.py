@@ -13,6 +13,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import sys
 import time
 from typing import Any, Sequence
@@ -38,6 +39,11 @@ _NAVIGATION_GESTURES = {
     "HOME": (252 / 256, 64 / 128, 252 / 256, 64 / 128),
     "OVERVIEW": (252 / 256, 85 / 128, 252 / 256, 85 / 128),
 }
+_WRITABLE_AVD_DISKS = (
+    "cache.img.qcow2",
+    "encryptionkey.img.qcow2",
+    "userdata-qemu.img.qcow2",
+)
 
 
 @dataclass(frozen=True)
@@ -257,6 +263,7 @@ def evaluate_device_function_replay(
     environment_ids: Sequence[str] = ("100", "101", "105"),
     android_sdk_root: str | Path,
     android_avd_home: str | Path,
+    avd_template_home: str | Path,
     run_headless: bool = True,
 ) -> dict[str, Any]:
     """Run one stored Function on official B-MoCA snapshots."""
@@ -265,6 +272,7 @@ def evaluate_device_function_replay(
     store = Path(store_path).expanduser().resolve()
     sdk = Path(android_sdk_root).expanduser().resolve()
     avd_home = Path(android_avd_home).expanduser().resolve()
+    template_home = Path(avd_template_home).expanduser().resolve()
     _configure_runtime(root, sdk=sdk, avd_home=avd_home)
     episodes = _episodes(root, task_id=task_id, environment_ids=environment_ids)
     results = []
@@ -277,6 +285,7 @@ def evaluate_device_function_replay(
                 store_path=store,
                 sdk=sdk,
                 avd_home=avd_home,
+                template_home=template_home,
                 run_headless=run_headless,
             )
         )
@@ -292,6 +301,8 @@ def evaluate_device_function_replay(
             "vlm_model_calls": 0,
             "fallback_steps_allowed": 0,
             "source_coordinate_fallback": "disabled",
+            "episode_isolation": "restore_writable_avd_disks_from_template",
+            "avd_template_home": str(template_home),
             "store_path": str(store),
         },
         "summary": {
@@ -319,12 +330,18 @@ def _evaluate_episode(
     store_path: Path,
     sdk: Path,
     avd_home: Path,
+    template_home: Path,
     run_headless: bool,
 ) -> dict[str, Any]:
     started = time.monotonic()
     env = host = None
     try:
         try:
+            _restore_writable_avd_disks(
+                episode.avd_name,
+                avd_home=avd_home,
+                template_home=template_home,
+            )
             module = importlib.import_module("bmoca.environment.environment")
             environment_class = getattr(module, "BMocaEnv")
             kwargs = {
@@ -461,6 +478,30 @@ def _configure_runtime(root: Path, *, sdk: Path, avd_home: Path) -> None:
         sys.path.remove(root_text)
     sys.path.insert(0, root_text)
     importlib.invalidate_caches()
+
+
+def _restore_writable_avd_disks(
+    avd_name: str,
+    *,
+    avd_home: Path,
+    template_home: Path,
+) -> None:
+    source_root = template_home / f"{avd_name}.avd"
+    target_root = avd_home / f"{avd_name}.avd"
+    if not target_root.is_dir():
+        raise FileNotFoundError(f"bmoca_avd_missing:{target_root}")
+    for filename in _WRITABLE_AVD_DISKS:
+        source = source_root / filename
+        target = target_root / filename
+        if not source.is_file():
+            raise FileNotFoundError(f"bmoca_avd_template_disk_missing:{source}")
+        temporary = target.with_name(f".{target.name}.restore-{os.getpid()}")
+        try:
+            shutil.copyfile(source, temporary)
+            os.replace(temporary, target)
+        finally:
+            with suppress(FileNotFoundError):
+                temporary.unlink()
 
 
 def _episodes(
