@@ -49,7 +49,7 @@ def test_omniflow_owns_candidate_api_preflight(monkeypatch) -> None:
     )
 
 
-def test_omniflow_selects_rank_one_without_a_confidence_gate(monkeypatch) -> None:
+def test_omniflow_rejects_rank_one_below_probability_gate(monkeypatch) -> None:
     calls = []
     module = SimpleNamespace(
         rank_action_candidates=lambda **kwargs: calls.append(kwargs)
@@ -86,10 +86,10 @@ def test_omniflow_selects_rank_one_without_a_confidence_gate(monkeypatch) -> Non
     )
 
     assert len(calls) == 1
-    assert result["mapped"] is True
-    assert result["selection_policy"] == "omniflow_top_candidate"
-    assert result["target_candidate_id"] == "first"
-    assert (result["new_x"], result["new_y"]) == (15.0, 25.0)
+    assert result["mapped"] is False
+    assert result["reason"] == "omnitransfer_rank_probability_below_threshold"
+    assert result["rank_probability"] == 0.51
+    assert result["rank_probability_threshold"] == 0.70
     assert len(result["candidates"]) == 2
 
 

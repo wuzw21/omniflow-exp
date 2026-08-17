@@ -23,10 +23,12 @@ Planner; Function fallback is fixed at zero.
 For a fast Function-replay diagnostic with the same OmniFlow runtime, set
 `OMNIFLOW_BMOCA_DIRECT_FUNCTION_REPLAY=1`. The entry directly invokes the sole
 visible zero-argument Function, so a successful Function makes no Planner call;
-Checker and OmniTransfer behavior remain unchanged. A failed Function may use at
+Checker behavior and OmniTransfer ranking remain unchanged. A failed Function may use at
 most three existing Planner fallback steps (the default in this mode), configurable
 downward with `OMNIFLOW_BMOCA_MAX_FALLBACK_STEPS`. This is an execution switch on
 the `omniflow` method, not a separate method or launcher.
+OmniFlow rejects an OmniTransfer candidate when its Top-1 rank probability is
+below `0.70`; margin is recorded for diagnosis but is not an acceptance gate.
 
 ```bash
 OMNIFLOW_BMOCA_DIRECT_FUNCTION_REPLAY=1 \

@@ -53,6 +53,8 @@ For the same `omniflow` method, setting
 directly calls the sole visible zero-argument Function. Successful replay makes
 zero Planner calls; failed replay can use at most three existing fallback steps.
 This switch does not add a new method or change Checker/OmniTransfer semantics.
+OmniFlow rejects a transferred action only when its Top-1 rank probability is
+below `0.70`; candidate margin remains diagnostic-only.
 The entry pins the maintained B-MoCA revision whose device builder completes
 Chrome and Gboard first-run setup before sealing the shared base snapshot; an
 unverified keyboard state fails environment construction.

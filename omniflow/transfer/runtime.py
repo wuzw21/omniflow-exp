@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 
 TRANSFER_STATE_CATALOG_FILENAME = "transfer_states.json"
 TRANSFER_STATE_CATALOG_VERSION = "omniflow.transfer-state-catalog.v1"
+_MIN_RANK_PROBABILITY = 0.70
 _TRANSFER_STATE_FIELDS = {
     "state_id",
     "xml",
@@ -572,6 +573,20 @@ def _select_transfer_candidate(
     selected = candidates[0]
     if not isinstance(selected, dict):
         raise RuntimeError("omnitransfer_candidate_invalid")
+    try:
+        rank_probability = float(selected["score"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise RuntimeError("omnitransfer_candidate_score_invalid") from error
+    if not math.isfinite(rank_probability):
+        raise RuntimeError("omnitransfer_candidate_score_invalid")
+    if rank_probability < _MIN_RANK_PROBABILITY:
+        return {
+            **ranking,
+            "mapped": False,
+            "reason": "omnitransfer_rank_probability_below_threshold",
+            "rank_probability": rank_probability,
+            "rank_probability_threshold": _MIN_RANK_PROBABILITY,
+        }
     try:
         new_x = float(selected["new_x"])
         new_y = float(selected["new_y"])

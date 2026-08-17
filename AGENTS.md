@@ -209,9 +209,9 @@ This contract is defined by OmniFlow source and the checked-in schema, never by
 `current.json`; experiment memory only indexes immutable assets and results.
 
 An empty or unusable OmniTransfer candidate ranking must return to the normal
-OmniFlow fallback path. Low confidence alone is not a transfer failure when a
-ranked target candidate with valid bounds exists. Never replay source-device
-coordinates directly on a target device.
+OmniFlow fallback path. A Top-1 rank probability below `0.70` is an explicit
+transfer failure; margin remains diagnostic evidence only. Never replay
+source-device coordinates directly on a target device.
 
 ## Long-term experiment memory
 
