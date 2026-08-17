@@ -5402,14 +5402,12 @@ def _t3a_hint_source_node(
         (isinstance(x, (int, float)) and isinstance(y, (int, float)))
         or indexed_id
     ):
+        editable_nodes: list[tuple[bool, int, dict[str, str]]] = []
         for node in root.iter():
             if str(node.tag).rsplit("}", 1)[-1] != "node":
                 continue
             attributes = {str(key): str(value) for key, value in node.attrib.items()}
-            if (
-                attributes.get("focused") != "true"
-                or attributes.get("editable") != "true"
-            ):
+            if attributes.get("editable") != "true":
                 continue
             bounds = _t3a_hint_bounds(attributes.get("bounds", ""))
             area = (
@@ -5417,6 +5415,15 @@ def _t3a_hint_source_node(
                 if bounds is not None
                 else 10**12
             )
+            editable_nodes.append((attributes.get("focused") == "true", area, attributes))
+        focused_nodes = [item for item in editable_nodes if item[0]]
+        if focused_nodes:
+            candidates.extend(
+                ((False, False, area), attributes)
+                for _, area, attributes in focused_nodes
+            )
+        elif len(editable_nodes) == 1:
+            _, area, attributes = editable_nodes[0]
             candidates.append(((False, False, area), attributes))
     if not candidates:
         return {}

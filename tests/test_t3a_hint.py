@@ -144,6 +144,23 @@ def test_t3a_hint_uses_focused_editable_node_for_unlocated_text_input() -> None:
         },
     }
 
+    semantic_without_focus = _t3a_semantic_hint_step(
+        {
+            "action": {"action_type": "input_text", "text": "Paris"},
+            "observation": {
+                "forest": (
+                    '<hierarchy><node id="9" class="android.widget.EditText" '
+                    'text="Type to search all" resource-id="net.osmand:id/search_text" '
+                    'package="net.osmand" bounds="[144,48][720,160]" '
+                    'editable="true" />'
+                    "</hierarchy>"
+                )
+            },
+        },
+        forbidden_values=("Paris",),
+    )
+    assert semantic_without_focus == semantic
+
 
 def test_t3a_hint_rejects_unidentified_pointer_action() -> None:
     with pytest.raises(ValueError, match="t3a_hint_unidentified_target:click"):
