@@ -16,6 +16,7 @@ import re
 import socket
 import sys
 import threading
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 import subprocess
@@ -136,6 +137,7 @@ class _AndroidWorldBridgeServer:
             self.owner._record_bridge_action(value)
             if str(action.get("tool") or "") == "finished":
                 self.owner.done = True
+                self.owner._whole_task_finished_event.set()
             return value
         raise ValueError(f"unknown_operation:{operation}")
 
@@ -206,6 +208,7 @@ class LunaAndroidWorldHarness:
         self._cli_temp_dir: tempfile.TemporaryDirectory[str] | None = None
         self._codex_session_id: str | None = None
         self._whole_task_started = False
+        self._whole_task_finished_event = threading.Event()
         self._bridge: _AndroidWorldBridgeServer | None = None
         self._planner = VLMPlanner(
             model=str(model).strip() or "gpt-5.6-luna",
@@ -228,6 +231,7 @@ class LunaAndroidWorldHarness:
         self.actions_executed = 0
         self.done = False
         self._whole_task_started = False
+        self._whole_task_finished_event.clear()
         self.trace = []
         self._last_result = None
         self.state["last_result"] = None
@@ -364,25 +368,48 @@ class LunaAndroidWorldHarness:
             "-o", str(output_path), "--json",
         ]
         try:
-            completed = subprocess.run(
+            timeout_seconds = max(
+                float(self._planner.timeout),
+                float(os.environ.get("OMNIFLOW_LUNA_TASK_TIMEOUT", "900")),
+            )
+            process = subprocess.Popen(
                 command,
-                input=self._whole_task_prompt(),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                capture_output=True,
-                timeout=max(float(self._planner.timeout), float(os.environ.get("OMNIFLOW_LUNA_TASK_TIMEOUT", "1800"))),
-                check=False,
                 env={**os.environ, "HOME": str(codex_home), "CODEX_HOME": str(codex_home)},
                 cwd=str(repo_root),
             )
+            assert process.stdin is not None
+            process.stdin.write(self._whole_task_prompt())
+            process.stdin.close()
+            deadline = time.monotonic() + timeout_seconds
+            stopped_after_finished = False
+            while process.poll() is None:
+                if self._whole_task_finished_event.wait(timeout=0.5):
+                    stopped_after_finished = True
+                    process.terminate()
+                    break
+                if time.monotonic() >= deadline:
+                    process.terminate()
+                    raise TimeoutError(f"luna_codex_whole_task_timeout:{int(timeout_seconds)}s")
+            try:
+                stdout, stderr = process.communicate(timeout=10.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                stdout, stderr = process.communicate()
+            returncode = int(process.returncode or 0)
             raw_response = output_path.read_text(encoding="utf-8", errors="replace") if output_path.is_file() else ""
-            usage = self._cli_usage(completed.stdout)
-            if completed.returncode != 0 or not raw_response.strip():
-                detail = (completed.stderr or completed.stdout or "codex_cli_failed").strip()
+            usage = self._cli_usage(stdout)
+            if (returncode != 0 and not stopped_after_finished) or (not raw_response.strip() and not stopped_after_finished):
+                detail = (stderr or stdout or "codex_cli_failed").strip()
                 raise RuntimeError(f"luna_codex_whole_task_failed:{detail[-4000:]}")
             return usage, {
                 "transport": "codex_cli_whole_task_mcp",
                 "raw_response": raw_response,
-                "cli_returncode": completed.returncode,
+                "cli_returncode": returncode,
+                "stopped_after_finished": stopped_after_finished,
                 "bridge_tools": ["androidworld_observe", "androidworld_act"],
             }
         finally:
