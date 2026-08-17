@@ -5306,6 +5306,7 @@ def _t3a_hint_source_node(
     step: Any,
     *,
     forbidden_values: Sequence[str],
+    editable_only: bool = False,
 ) -> dict[str, str]:
     if not isinstance(step, dict):
         return {}
@@ -5371,6 +5372,11 @@ def _t3a_hint_source_node(
         if str(node.tag).rsplit("}", 1)[-1] != "node":
             continue
         attributes = {str(key): str(value) for key, value in node.attrib.items()}
+        if editable_only and not (
+            attributes.get("editable") == "true"
+            or "edittext" in attributes.get("class", "").casefold()
+        ):
+            continue
         bounds = _t3a_hint_bounds(attributes.get("bounds", ""))
         coordinate_match = False
         if bounds is not None and isinstance(x, (int, float)) and isinstance(y, (int, float)):
@@ -5452,6 +5458,7 @@ def _t3a_semantic_hint_step(
     step: Any,
     *,
     forbidden_values: Sequence[str],
+    preceding_step: Any = None,
 ) -> dict[str, Any] | None:
     name, params = _t3a_hint_step_action(step)
     action = name.strip().lower()
@@ -5477,6 +5484,20 @@ def _t3a_semantic_hint_step(
             or source_node.get("text")
             or source_node.get("resource_id")
         )
+    if (
+        action in {"input_text", "type_text", "set_text", "enter_text"}
+        and not target
+        and not source_node
+    ):
+        preceding_action, _ = _t3a_hint_step_action(preceding_step)
+        if preceding_action.strip().lower() in {"click", "tap"}:
+            source_node = _t3a_hint_source_node(
+                preceding_step,
+                forbidden_values=forbidden_values,
+                editable_only=True,
+            )
+            if source_node:
+                target = "editable text field selected by the preceding action"
     if action in {"click", "tap", "long_press", "input_text", "type_text", "set_text", "enter_text"} and not target and not source_node:
         raise ValueError(f"t3a_hint_unidentified_target:{action}")
     if target:
@@ -5575,6 +5596,7 @@ def _source_action_hint_path_for_item(
     source_steps = list(payload.get("steps") or [])
     semantic_source = "source_run_log"
     semantic_input_steps = source_steps
+    semantic_preceding_steps = [None, *source_steps[:-1]]
     store_alignment_mode = "not_applicable"
     if store_path is not None:
         resolved_store_path = _repo_path(store_path, repo_root=repo_root)
@@ -5594,6 +5616,7 @@ def _source_action_hint_path_for_item(
                 f"t3a_hint_complete_function_raw_steps_missing:{task_function.id}"
             )
         semantic_input_steps = []
+        semantic_preceding_steps = []
         alignment_modes: list[str] = []
         source_cursor = 0
         for function_step in raw_function_steps:
@@ -5634,6 +5657,9 @@ def _source_action_hint_path_for_item(
                     f"{function_state_id}:{function_action}"
                 )
             semantic_input_steps.append(source_steps[aligned_index])
+            semantic_preceding_steps.append(
+                source_steps[aligned_index - 1] if aligned_index > 0 else None
+            )
             alignment_modes.append(alignment_mode)
             source_cursor = aligned_index + 1
         semantic_source = "omniflow_function_store"
@@ -5642,17 +5668,19 @@ def _source_action_hint_path_for_item(
             if all(mode == "state_identity" for mode in alignment_modes)
             else "ordered_action"
         )
-    semantic_steps = [
-        semantic
-        for semantic in (
-            _t3a_semantic_hint_step(
-                step,
-                forbidden_values=forbidden_values,
-            )
-            for step in semantic_input_steps
+    semantic_steps = []
+    for step, preceding_step in zip(
+        semantic_input_steps,
+        semantic_preceding_steps,
+        strict=True,
+    ):
+        semantic = _t3a_semantic_hint_step(
+            step,
+            forbidden_values=forbidden_values,
+            preceding_step=preceding_step,
         )
-        if semantic is not None
-    ]
+        if semantic is not None:
+            semantic_steps.append(semantic)
     if not semantic_steps:
         raise ValueError(f"source runlog produced no safe T3A hints: {item.task}")
     hint_payload = {

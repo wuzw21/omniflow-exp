@@ -162,6 +162,63 @@ def test_t3a_hint_uses_focused_editable_node_for_unlocated_text_input() -> None:
     assert semantic_without_focus == semantic
 
 
+def test_t3a_hint_uses_immediately_selected_editable_for_keyboard_obscured_input() -> None:
+    semantic = _t3a_semantic_hint_step(
+        {
+            "action": {
+                "action_type": "input_text",
+                "clear_text": True,
+                "text": "New track name",
+            },
+            "observation": {
+                "forest": (
+                    '<hierarchy><node id="0" bounds="[263,273][343,353]" />'
+                    "</hierarchy>"
+                )
+            },
+        },
+        preceding_step={
+            "action": {"action_type": "click", "x": 320, "y": 675},
+            "observation": {
+                "forest": (
+                    '<hierarchy><node id="14" class="android.widget.EditText" '
+                    'text="Default name" bounds="[32,617][688,728]" '
+                    'editable="true" clickable="true" /></hierarchy>'
+                )
+            },
+        },
+        forbidden_values=("New track name",),
+    )
+
+    assert semantic == {
+        "action": "input_text",
+        "target": "editable text field selected by the preceding action",
+        "source_node": {
+            "node_id": "14",
+            "class_name": "android.widget.EditText",
+            "text": "Default name",
+        },
+    }
+
+    with pytest.raises(ValueError, match="t3a_hint_unidentified_target:input_text"):
+        _t3a_semantic_hint_step(
+            {
+                "action": {"action_type": "input_text", "text": "value"},
+                "observation": {"forest": "<hierarchy />"},
+            },
+            preceding_step={
+                "action": {"action_type": "click", "x": 20, "y": 20},
+                "observation": {
+                    "forest": (
+                        '<hierarchy><node id="7" text="Save" '
+                        'bounds="[0,0][40,40]" clickable="true" /></hierarchy>'
+                    )
+                },
+            },
+            forbidden_values=("value",),
+        )
+
+
 def test_t3a_hint_rejects_unidentified_pointer_action() -> None:
     with pytest.raises(ValueError, match="t3a_hint_unidentified_target:click"):
         _t3a_semantic_hint_step(
