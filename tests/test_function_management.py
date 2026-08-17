@@ -5,7 +5,7 @@ import json
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from omniflow.bridge import JsonLineBridge
-from omniflow.functions.assets import enhance_function
+from omniflow.functions.assets import FunctionStore, bind_function, enhance_function
 
 
 def _function() -> dict:
@@ -81,6 +81,107 @@ def _proposal(
             **dict(updates or {}),
         }
     )
+
+
+def test_store_update_monotonically_preserves_existing_checker_steps(tmp_path) -> None:
+    store = FunctionStore(tmp_path / "store.json")
+    existing = {
+        **_function(),
+        "steps": [
+            {
+                "step_index": 0,
+                "source_state_id": "launch",
+                "action": {
+                    "tool": "open_app",
+                    "args": {"package_name": "com.android.settings"},
+                },
+            },
+            {
+                "step_index": 1,
+                "source_state_id": "old-optional-page",
+                "role": "checker",
+                "action": {
+                    "tool": "click",
+                    "args": {
+                        "target_description": "Dismiss old optional page",
+                        "x": 10,
+                        "y": 20,
+                    },
+                },
+            },
+            {
+                "step_index": 2,
+                "source_state_id": "settings-home",
+                "action": {
+                    "tool": "click",
+                    "args": {"target_description": "Sound", "x": 30, "y": 40},
+                },
+            },
+        ],
+    }
+    replacement = {
+        **_function(),
+        "input_schema": {
+            "type": "object",
+            "properties": {"section": {"type": "string"}},
+            "required": ["section"],
+            "additionalProperties": False,
+        },
+        "bindings": [
+            {
+                "source": "$.arguments.section",
+                "target": "$.steps[2].action.args.target_description",
+            }
+        ],
+        "steps": [
+            existing["steps"][0],
+            {
+                "step_index": 1,
+                "source_state_id": "new-optional-page",
+                "role": "checker",
+                "action": {
+                    "tool": "click",
+                    "args": {
+                        "target_description": "Dismiss new optional page",
+                        "x": 50,
+                        "y": 60,
+                    },
+                },
+            },
+            {
+                **existing["steps"][2],
+                "step_index": 2,
+                "action": {
+                    "tool": "click",
+                    "args": {"target_description": "", "x": 30, "y": 40},
+                },
+            },
+        ],
+    }
+
+    store.put_function(existing)
+    updated = store.put_function(replacement)
+    bound = bind_function(updated, {"section": "Sound"})
+    repeated = store.put_function(replacement).to_dict()
+    updated = updated.to_dict()
+
+    assert [step.get("role", "function") for step in updated["steps"]] == [
+        "function",
+        "checker",
+        "checker",
+        "function",
+    ]
+    assert [step["source_state_id"] for step in updated["steps"]] == [
+        "launch",
+        "old-optional-page",
+        "new-optional-page",
+        "settings-home",
+    ]
+    assert updated["bindings"][0]["target"] == (
+        "$.steps[3].action.args.target_description"
+    )
+    assert bound.steps[3].action.args["target_description"] == "Sound"
+    assert repeated["steps"] == updated["steps"]
 
 
 def test_enhancement_instruction_is_included_in_prompt() -> None:
