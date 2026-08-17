@@ -2297,7 +2297,11 @@ def _persist_official_step_captures(
     image_root.mkdir(parents=True, exist_ok=True)
     harness_id = "m3a" if selected_agent == "official:m3a" else "t3a"
     rows = []
-    for step_index, step in enumerate(history[:7]):
+    # Persist the complete official-agent history.  The stock-capture CLI
+    # bounds the episode with ``--max-steps``; truncating here to seven steps
+    # silently discarded later screenshots and actions from otherwise valid
+    # T3A episodes.
+    for step_index, step in enumerate(history):
         if not isinstance(step, dict):
             continue
         request_record = action_requests[step_index] if step_index < len(action_requests) else {}

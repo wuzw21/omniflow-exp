@@ -63,6 +63,45 @@ def test_stock_capture_persists_exact_model_images_without_reference_action(
     assert image["exact_model_payload"] is True
 
 
+def test_stock_capture_persists_history_beyond_legacy_seven_step_limit(
+    tmp_path: Path,
+) -> None:
+    history = [
+        {
+            "action_prompt": f"prompt-{index}",
+            "action_output": '{"action_type":"wait"}',
+            "action_raw_response": {"id": str(index)},
+            "action_output_json": {"action_type": "wait"},
+        }
+        for index in range(8)
+    ]
+    tracker = type(
+        "Tracker",
+        (),
+        {
+            "request_records": [
+                {"kind": "action", "image_payloads": [f"image-{index}".encode()]}
+                for index in range(8)
+            ]
+        },
+    )
+    agent = type("Agent", (), {"history": history, "_omniflow_llm_usage_tracker": tracker})()
+
+    result = _persist_official_step_captures(
+        output_dir=tmp_path,
+        agent=agent,
+        selected_agent="official:t3a",
+        task_name="BrowserDraw",
+        goal="Draw",
+        task_params_sha256="params-sha",
+    )
+
+    assert result is not None
+    payload = json.loads(Path(result["path"]).read_text(encoding="utf-8"))
+    assert payload["steps"][-1]["step_index"] == 8
+    assert len(payload["steps"]) == 8
+
+
 def test_official_builder_dispatches_stock_t3a_and_m3a(monkeypatch) -> None:
     class FakeT3A:
         def __init__(self, env, llm):
