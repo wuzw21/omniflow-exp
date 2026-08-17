@@ -217,7 +217,6 @@ class MethodAdapterContext:
     planner_model: str = ""
     model_endpoint_profile: str = ""
     planner_timeout_sec: float | None = None
-    step_skill_guidance: str = ""
     max_steps: int = 20
     raw_replay_run_log: str = ""
     appagent_root: str = ""
@@ -327,7 +326,6 @@ def _build_omniflow_replay(context: MethodAdapterContext) -> Any:
             api_key=planner_api_key,
             base_url=planner_base_url,
             timeout=resolved_planner_timeout,
-            step_skill_guidance=str(context.step_skill_guidance or "").strip(),
         )
     build_kwargs: dict[str, Any] = {
         "env": context.env,

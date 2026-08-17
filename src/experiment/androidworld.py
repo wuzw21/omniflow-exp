@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-
 import argparse
 from collections import Counter
 from contextlib import contextmanager
@@ -23,7 +22,6 @@ import tempfile
 import time
 from typing import Any, Iterable, Sequence
 import xml.etree.ElementTree as ET
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -4908,65 +4906,6 @@ def _profile_summary(profiles: Sequence[SourceRunLogProfile]) -> dict[str, Any]:
     }
 
 
-def cmd_list(args: argparse.Namespace) -> int:
-    selected = _select_from_args(args)
-    if args.json:
-        print(
-            json.dumps(
-                [
-                    {
-                        "task": item.task,
-                        "goal": item.goal,
-                        "source_run_log": str(item.source_run_log),
-                        "replay_seed": item.replay_seed,
-                        "params": item.params,
-                        "source_profile": profile_source_run_log(item).to_dict(),
-                    }
-                    for item in selected
-                ],
-                indent=2,
-                ensure_ascii=False,
-            )
-        )
-        return 0
-    for index, item in enumerate(selected, 1):
-        profile = profile_source_run_log(item)
-        print(
-            f"{index:02d} {item.task} format={profile.replay_format} "
-            f"steps={profile.step_count} cards={profile.card_count} "
-            f"seed={item.replay_seed} runlog={item.source_run_log}"
-        )
-    return 0
-
-
-def cmd_inspect(args: argparse.Namespace) -> int:
-    selected = _select_from_args(args)
-    profiles = [profile_source_run_log(item) for item in selected]
-    summary = _profile_summary(profiles)
-    if args.output:
-        output_path = _repo_path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(
-            json.dumps(summary, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-    if args.json:
-        print(json.dumps(summary, indent=2, ensure_ascii=False))
-        return 0
-    print(
-        f"tasks={summary['task_count']} ready={summary['direct_replay_ready_count']} "
-        f"accepted_first30={summary['accepted_first30_count']} "
-        f"by_format={summary['by_format']}"
-    )
-    for index, profile in enumerate(profiles, 1):
-        notes = "; ".join(profile.notes)
-        print(
-            f"{index:02d} {profile.task} {profile.replay_format} "
-            f"steps={profile.step_count} cards={profile.card_count} "
-            f"ready={int(profile.direct_replay_ready)}"
-            + (f" notes={notes}" if notes else "")
-        )
-    return 0
 
 
 ONE_TASK_ALL_METHODS = (
@@ -4988,12 +4927,7 @@ _ONE_TASK_NON_EXECUTED_STATUSES = {
 
 
 TOP_LEVEL_COMMANDS = {
-    "list",
-    "inspect",
     "cell",
-    "mobilegpt",
-    "metrics",
-    "doctor",
 }
 
 
@@ -8130,106 +8064,6 @@ def cmd_cell(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
-def cmd_mobilegpt(args: argparse.Namespace) -> int:
-    if bool(args.patch_stats):
-        patched_stats = _patch_mobilegpt_stats(mobilegpt_root=args.mobilegpt_root)
-        for path in patched_stats:
-            print(f"[mobilegpt:patch-stats] {path}", flush=True)
-
-    if args.mobilegpt_action == "stats":
-        summary = summarize_mobilegpt_stats(args.stats_jsonl)
-        output_path = _repo_path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(
-            json.dumps(summary, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        if args.json:
-            print(json.dumps(summary, indent=2, ensure_ascii=False))
-        else:
-            print(
-                "[mobilegpt:stats] "
-                f"tasks={summary['task_finished_count']}/{summary['task_started_count']} "
-                f"tool_calls={summary['model_calls']} tokens={summary['total_tokens']} "
-                f"summary={output_path}",
-                flush=True,
-            )
-        return 0
-
-    spec = build_mobilegpt_command(
-        args.mobilegpt_action,
-        mobilegpt_root=args.mobilegpt_root,
-        serial=args.serial,
-        adb_path=args.adb_path,
-        server_host=args.server_host,
-        port=args.port,
-        stats_jsonl=args.stats_jsonl,
-    )
-    return run_command(spec, dry_run=args.dry_run)
-
-
-def cmd_metrics(args: argparse.Namespace) -> int:
-    summary = aggregate_task_results(args.paths)
-    write_metrics_summary(summary, args.output)
-    print(
-        "[metrics] "
-        f"success={summary['success_count']}/{summary['success_total']} "
-        f"replay_completed={summary['replay_completed_count']}/"
-        f"{summary['replay_task_count']} "
-        f"tool_calls={summary['tool_calls']} tokens={summary['tokens']} "
-        f"summary={_repo_path(args.output)}"
-    )
-    return 0
-
-
-def cmd_doctor(args: argparse.Namespace) -> int:
-    selected = _select_from_args(args)
-    specs = collect_androidworld_app_specs(
-        selected,
-        android_world_root=args.android_world_root,
-        suite_family=args.suite_family,
-    )
-    installed_packages: set[str] | None = None
-    if bool(args.check_device) or bool(str(args.serial or "").strip()):
-        installed_packages = read_adb_installed_packages(
-            serial=args.serial,
-            adb_path=args.adb_path,
-        )
-    cached_apks = list_cached_androidworld_apks(args.apk_cache_dir or None)
-    summary = build_device_readiness_summary(
-        specs,
-        installed_packages=installed_packages,
-        cached_apks=cached_apks,
-        cache_dir=args.apk_cache_dir or None,
-    )
-    if args.output:
-        output_path = _repo_path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(
-            json.dumps(summary, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-    if args.json:
-        print(json.dumps(summary, indent=2, ensure_ascii=False))
-        return 0
-
-    ready = summary.get("ready_task_count")
-    ready_text = (
-        f" ready_tasks={ready}/{summary['task_count']}" if ready is not None else ""
-    )
-    print(
-        f"apps={summary['app_count']} tasks={summary['task_count']}{ready_text} "
-        f"missing_packages={summary['missing_package_count']} "
-        f"missing_cached_apks={summary['missing_cached_apk_count']}"
-    )
-    for row in summary.get("missing_packages") or []:
-        print(
-            f"missing-package app={row['app_name']} package={row['package_name']} "
-            f"tasks={','.join(row['tasks'])}"
-        )
-    for apk in summary.get("missing_cached_apks") or []:
-        print(f"missing-apk {apk}")
-    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -8237,40 +8071,6 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run and summarize normal AndroidWorld experiment episodes."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-
-    list_parser = subparsers.add_parser(
-        "list", help="List archived success source runlogs"
-    )
-    list_parser.add_argument("--index", default=str(DEFAULT_ARCHIVE_INDEX))
-    list_parser.add_argument("--tasks", default="")
-    list_parser.add_argument("--first60", action="store_true")
-    list_parser.add_argument("--limit", type=int, default=None)
-    list_parser.add_argument(
-        "--source-format",
-        choices=["all", "ready", "canonical", "payload"],
-        default="all",
-    )
-    list_parser.add_argument("--accepted-first30", action="store_true")
-    list_parser.add_argument("--json", action="store_true")
-    list_parser.set_defaults(func=cmd_list)
-
-    inspect_parser = subparsers.add_parser(
-        "inspect",
-        help="Inspect archived source runlog formats before replay",
-    )
-    inspect_parser.add_argument("--index", default=str(DEFAULT_ARCHIVE_INDEX))
-    inspect_parser.add_argument("--tasks", default="")
-    inspect_parser.add_argument("--first60", action="store_true")
-    inspect_parser.add_argument("--limit", type=int, default=None)
-    inspect_parser.add_argument(
-        "--source-format",
-        choices=["all", "ready", "canonical", "payload"],
-        default="all",
-    )
-    inspect_parser.add_argument("--accepted-first30", action="store_true")
-    inspect_parser.add_argument("--json", action="store_true")
-    inspect_parser.add_argument("--output", default="")
-    inspect_parser.set_defaults(func=cmd_inspect)
 
     one_task_parser = subparsers.add_parser(
         "cell",
@@ -8487,95 +8287,6 @@ def build_parser() -> argparse.ArgumentParser:
     one_task_parser.add_argument("--dry-run", action="store_true")
     one_task_parser.add_argument("--fail-fast", action="store_true")
     one_task_parser.set_defaults(func=cmd_cell)
-
-    mobilegpt_parser = subparsers.add_parser(
-        "mobilegpt",
-        help="Run MobileGPT external baseline setup/actions through this unified script",
-    )
-    mobilegpt_parser.add_argument(
-        "mobilegpt_action",
-        choices=["server", "stats"],
-        help="`server` starts MobileGPT; `stats` aggregates its JSONL stats.",
-    )
-    mobilegpt_parser.add_argument(
-        "--mobilegpt-root",
-        default=str(DEFAULT_MOBILEGPT_ROOT),
-    )
-    mobilegpt_parser.add_argument("--index", default=str(DEFAULT_ARCHIVE_INDEX))
-    mobilegpt_parser.add_argument(
-        "--android-world-root", default=str(DEFAULT_ANDROID_WORLD_ROOT)
-    )
-    mobilegpt_parser.add_argument("--tasks", default="")
-    mobilegpt_parser.add_argument(
-        "--source-format",
-        choices=["all", "ready", "canonical", "payload"],
-        default="all",
-    )
-    mobilegpt_parser.add_argument("--accepted-first30", action="store_true")
-    mobilegpt_parser.add_argument("--limit", type=int, default=None)
-    mobilegpt_parser.add_argument("--serial", default="")
-    mobilegpt_parser.add_argument("--adb-path", default="")
-    mobilegpt_parser.add_argument("--server-host", default="0.0.0.0")
-    mobilegpt_parser.add_argument("--port", type=int, default=12345)
-    mobilegpt_parser.add_argument("--max-steps", type=int, default=20)
-    mobilegpt_parser.add_argument(
-        "--stats-jsonl",
-        default=str(DEFAULT_MOBILEGPT_STATS_JSONL),
-        help="JSONL path used by patched MobileGPT server stats.",
-    )
-    mobilegpt_parser.add_argument(
-        "--output",
-        default=str(DEFAULT_MOBILEGPT_STATS_SUMMARY),
-        help="Output path for `mobilegpt stats` summary JSON.",
-    )
-    mobilegpt_parser.add_argument("--json", action="store_true")
-    mobilegpt_parser.add_argument(
-        "--patch-stats",
-        action="store_true",
-        help=(
-            "Patch MobileGPT Server utils/mobilegpt modules to write OpenAI usage "
-            "and task finish events to --stats-jsonl."
-        ),
-    )
-    mobilegpt_parser.add_argument("--dry-run", action="store_true")
-    mobilegpt_parser.set_defaults(func=cmd_mobilegpt)
-
-    metrics_parser = subparsers.add_parser(
-        "metrics", help="Aggregate task_results.jsonl files"
-    )
-    metrics_parser.add_argument("paths", nargs="+")
-    metrics_parser.add_argument(
-        "--output",
-        default=str(DEFAULT_OUTPUT_ROOT / "aggregate_summary.json"),
-    )
-    metrics_parser.set_defaults(func=cmd_metrics)
-
-    doctor_parser = subparsers.add_parser(
-        "doctor",
-        help="Check archive task app requirements against the target device/cache",
-    )
-    doctor_parser.add_argument("--index", default=str(DEFAULT_ARCHIVE_INDEX))
-    doctor_parser.add_argument(
-        "--android-world-root", default=str(DEFAULT_ANDROID_WORLD_ROOT)
-    )
-    doctor_parser.add_argument("--suite-family", default="android_world")
-    doctor_parser.add_argument("--tasks", default="")
-    doctor_parser.add_argument("--first60", action="store_true")
-    doctor_parser.add_argument("--limit", type=int, default=None)
-    doctor_parser.add_argument(
-        "--source-format",
-        choices=["all", "ready", "canonical", "payload"],
-        default="all",
-    )
-    doctor_parser.add_argument("--accepted-first30", action="store_true")
-    doctor_parser.add_argument("--serial", default="")
-    doctor_parser.add_argument("--adb-path", default="")
-    doctor_parser.add_argument("--check-device", action="store_true")
-    doctor_parser.add_argument("--apk-cache-dir", default="")
-    doctor_parser.add_argument("--json", action="store_true")
-    doctor_parser.add_argument("--output", default="")
-    doctor_parser.set_defaults(func=cmd_doctor)
-
     return parser
 
 

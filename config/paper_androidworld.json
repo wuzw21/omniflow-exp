@@ -1,6 +1,6 @@
 {
   "schema_version": "omniflow.androidworld.experiment_config.v1",
-  "description": "Task-major ten-cell evaluation: five paper methods on SmallPhone and Pixel Fold for one SystemBluetoothTurnOn tuple.",
+  "description": "Task-major evaluation: five paper methods on SmallPhone and Pixel Fold for one SystemBluetoothTurnOn tuple.",
   "one_task": {
     "index": "runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json",
     "android_world_root": "runtime/external/droidrun-android-world/android_world",

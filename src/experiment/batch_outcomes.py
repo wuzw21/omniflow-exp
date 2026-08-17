@@ -653,22 +653,22 @@ def write_batch_report(
                     counts["pending"] += 1
                 rows.append(row)
     destination.mkdir(parents=True, exist_ok=False)
-    cells_jsonl = destination / "cells.jsonl"
-    cells_jsonl.write_text(
+    results_jsonl = destination / "results.jsonl"
+    results_jsonl.write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
         encoding="utf-8",
     )
-    cells_csv = destination / "cells.csv"
-    with cells_csv.open("w", newline="", encoding="utf-8") as file:
+    results_csv = destination / "results.csv"
+    with results_csv.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=list(rows[0]) if rows else [])
         if rows:
             writer.writeheader()
             writer.writerows(rows)
     tool_calls = sum(int(row["model_calls"]) for row in rows)
     tokens = sum(int(row["total_tokens"]) for row in rows)
-    cells_markdown = destination / "cells.md"
+    results_markdown = destination / "results.md"
     _write_markdown_report(
-        cells_markdown,
+        results_markdown,
         rows=rows,
         counts=counts,
         tool_calls=tool_calls,
@@ -689,9 +689,9 @@ def write_batch_report(
         "outer_wall_sec": round(
             sum(_number(row["outer_wall_sec"]) for row in rows), 6
         ),
-        "cells_jsonl": str(cells_jsonl),
-        "cells_csv": str(cells_csv),
-        "cells_markdown": str(cells_markdown),
+        "results_jsonl": str(results_jsonl),
+        "results_csv": str(results_csv),
+        "results_markdown": str(results_markdown),
     }
     summary_path = destination / "summary.json"
     summary_path.write_text(

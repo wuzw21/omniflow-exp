@@ -1,4 +1,4 @@
-"""Bounded source-to-ten-cell AndroidWorld task pipeline."""
+"""Bounded source-to-result AndroidWorld task pipeline."""
 
 from __future__ import annotations
 
@@ -1072,7 +1072,11 @@ def prepare_appagent_memory(
     }
 
 
-def _completed_cells(args: argparse.Namespace) -> set[tuple[str, str]]:
+def _concluded_cells(
+    args: argparse.Namespace,
+    outcomes_root: Path,
+    attempt_id: str,
+) -> set[tuple[str, str]]:
     plan = registered_cell_plan_from_memory(
         memory_index=args.memory_index,
         task_name=args.task,
@@ -1080,17 +1084,9 @@ def _completed_cells(args: argparse.Namespace) -> set[tuple[str, str]]:
         devices=tuple(device[0] for device in DEVICES),
         source_seed=SOURCE_SEED,
         evaluation_seed=EVALUATION_SEED,
-        formal_max_steps=FORMAL_MAX_STEPS,
+        formal_max_steps=int(args.max_steps),
     )
-    return set(plan["completed"])
-
-
-def _concluded_cells(
-    args: argparse.Namespace,
-    outcomes_root: Path,
-    attempt_id: str,
-) -> set[tuple[str, str]]:
-    return _completed_cells(args) | concluded_cell_keys(
+    return set(plan["completed"]) | concluded_cell_keys(
         outcomes_root=outcomes_root,
         task_name=args.task,
         methods=METHODS,
@@ -1138,8 +1134,10 @@ def _cell_environment(
             "OMNIFLOW_SINGLE_TASK_SOURCE_SEED": str(SOURCE_SEED),
             "OMNIFLOW_SINGLE_TASK_EVALUATION_SEED": str(EVALUATION_SEED),
             "OMNIFLOW_SINGLE_TASK_FIXED_TASK_PARAMS": "0",
-            "OMNIFLOW_SINGLE_TASK_MAX_STEPS": str(FORMAL_MAX_STEPS),
-            "OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS": str(MAX_FALLBACK_STEPS),
+            "OMNIFLOW_SINGLE_TASK_MAX_STEPS": str(args.max_steps),
+            "OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS": str(
+                args.max_fallback_steps
+            ),
             "OMNIFLOW_SINGLE_TASK_TIMEOUT_SEC": str(
                 PHASE_TIMEOUTS_SEC["target_episode"]
             ),
@@ -1201,7 +1199,7 @@ def run_target_workers(
         for method in METHODS:
             if stop_event.is_set():
                 break
-            if method in blocked_methods or (method, label) in _completed_cells(args):
+            if method in blocked_methods or (method, label) in completed:
                 worker_results.append(
                     {"method": method, "device": label, "status": "reused_or_blocked"}
                 )
@@ -1252,7 +1250,9 @@ def run_target_workers(
                 log_path=log_path,
                 timeout_sec=deadline.remaining(PHASE_TIMEOUTS_SEC["target_cell"]),
             )
-            if (method, label) not in _completed_cells(args):
+            if result.get("returncode") == 0:
+                completed.add((method, label))
+            if (method, label) not in completed:
                 status = (
                     "deadline_exceeded"
                     if result.get("timed_out") or deadline.expired
@@ -1349,7 +1349,7 @@ def _write_pipeline_markdown(
     tool_calls: int,
     tokens: int,
     phases: dict[str, Any],
-    cells_markdown: str,
+    results_markdown: str,
 ) -> Path:
     lines = [
         f"# AndroidWorld E2E Task: {task}",
@@ -1359,7 +1359,7 @@ def _write_pipeline_markdown(
         f"- Outer wall seconds: {wall_sec}",
         f"- Tool calls: {tool_calls}",
         f"- Tokens: {tokens}",
-        f"- 10-cell table: `{cells_markdown}`",
+        f"- Result table: `{results_markdown}`",
         "",
         "| phase | status | tool_calls | tokens | wall_sec | error | evidence |",
         "|---|---|---:|---:|---:|---|---|",
@@ -1499,7 +1499,7 @@ def _report(
         tool_calls=total_tool_calls,
         tokens=total_tokens,
         phases=phases,
-        cells_markdown=target_report["cells_markdown"],
+        results_markdown=target_report["results_markdown"],
     )
     summary = {
         "schema_version": "omniflow.androidworld.e2e-task-report.v1",
@@ -1515,9 +1515,9 @@ def _report(
         "tool_calls": total_tool_calls,
         "tokens": total_tokens,
         "target_report": target_report["summary"],
-        "cells_jsonl": target_report["cells_jsonl"],
-        "cells_csv": target_report["cells_csv"],
-        "cells_markdown": target_report["cells_markdown"],
+        "results_jsonl": target_report["results_jsonl"],
+        "results_csv": target_report["results_csv"],
+        "results_markdown": target_report["results_markdown"],
         "pipeline_markdown": str(pipeline_markdown),
         "phases": phases,
     }
@@ -1543,12 +1543,14 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             devices=tuple(device[0] for device in DEVICES),
             source_seed=SOURCE_SEED,
             evaluation_seed=EVALUATION_SEED,
-            formal_max_steps=FORMAL_MAX_STEPS,
+            formal_max_steps=int(args.max_steps),
         )
         return {
             "schema_version": "omniflow.androidworld.e2e-task-plan.v1",
             "task": args.task,
             "deadline_sec": args.task_deadline_sec,
+            "max_steps": int(args.max_steps),
+            "max_fallback_steps": int(args.max_fallback_steps),
             "phase_timeout_caps_sec": PHASE_TIMEOUTS_SEC,
             "source_seed": SOURCE_SEED,
             "evaluation_seed": EVALUATION_SEED,
@@ -1575,6 +1577,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "task": args.task,
             "attempt_id": attempt_id,
             "deadline_sec": args.task_deadline_sec,
+            "max_steps": int(args.max_steps),
+            "max_fallback_steps": int(args.max_fallback_steps),
             "phase_timeout_caps_sec": PHASE_TIMEOUTS_SEC,
             "methods": list(METHODS),
             "devices": [list(device) for device in DEVICES],
@@ -1946,6 +1950,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--script", type=Path, required=True)
     parser.add_argument("--task", required=True)
     parser.add_argument("--task-deadline-sec", type=int, default=DEFAULT_DEADLINE_SEC)
+    parser.add_argument("--max-steps", type=int, default=FORMAL_MAX_STEPS)
+    parser.add_argument(
+        "--max-fallback-steps", type=int, default=MAX_FALLBACK_STEPS
+    )
     parser.add_argument("--memory-index", type=Path, required=True)
     parser.add_argument("--asset-root", type=Path, required=True)
     parser.add_argument("--results-root", type=Path, required=True)
@@ -1998,6 +2006,10 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
         raise ValueError("task_deadline_exceeds_1800_seconds")
     if args.task_deadline_sec <= 0:
         raise ValueError("task_deadline_must_be_positive")
+    if args.max_steps <= 0:
+        raise ValueError("max_steps_must_be_positive")
+    if not 0 <= args.max_fallback_steps <= 5:
+        raise ValueError("max_fallback_steps_out_of_range")
     if not args.task.isalnum():
         raise ValueError("androidworld_task_name_invalid")
     if not args.source_avd.strip():

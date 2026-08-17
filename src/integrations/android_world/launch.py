@@ -2305,202 +2305,17 @@ def _build_official_androidworld_agent(
     """
 
     resolved_name = str(official_agent_name or "").strip() or "t3a_gpt4"
-    if resolved_name not in {"t3a", "t3a_gpt4", "m3a"}:
+    if resolved_name != "t3a_gpt4":
         raise ValueError(f"Unknown AndroidWorld official agent: {resolved_name}")
     llm = _OpenAICompatibleMultimodalWrapper(model_name=model_name)
-    if resolved_name == "m3a":
-        from android_world.agents import m3a
+    from android_world.agents import t3a
 
-        agent = m3a.M3A(env, llm)
-    else:
-        from android_world.agents import t3a
-
-        agent = t3a.T3A(env, llm)
+    agent = t3a.T3A(env, llm)
     agent._omniflow_llm_usage_tracker = llm
     agent.name = resolved_name
     return agent
 
 
-def _official_parser_result(step: dict[str, Any]) -> dict[str, Any]:
-    parsed = step.get("action_output_json")
-    if parsed is not None:
-        return {"status": "parsed", "action": to_serializable(parsed)}
-    output = str(step.get("action_output") or "")
-    if not output:
-        return {"status": "missing_output", "action": None}
-    try:
-        from android_world.agents import agent_utils, m3a_utils
-
-        reason, action_text = m3a_utils.parse_reason_action_output(output)
-        if not reason or not action_text:
-            return {"status": "parse_failed", "action": None}
-        return {
-            "status": "parsed",
-            "reason": reason,
-            "action": to_serializable(agent_utils.extract_json(action_text)),
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "parse_failed", "action": None, "error": str(exc)}
-
-
-def _persist_official_step_captures(
-    *,
-    output_dir: Path,
-    agent: Any,
-    selected_agent: str,
-    task_name: str,
-    goal: str,
-    task_params_sha256: str,
-    version_id: str = "stock",
-    candidate_proposal: dict[str, Any] | None = None,
-) -> dict[str, Any] | None:
-    if selected_agent not in {"official:t3a", "official:t3a_gpt4", "official:m3a"}:
-        return None
-    history = list(getattr(agent, "history", None) or [])
-    tracker = getattr(agent, "_omniflow_llm_usage_tracker", None)
-    action_requests = [
-        record
-        for record in list(getattr(tracker, "request_records", None) or [])
-        if record.get("kind") == "action"
-    ]
-    capture_root = output_dir / "skymark_stock_capture"
-    image_root = capture_root / "images"
-    image_root.mkdir(parents=True, exist_ok=True)
-    harness_id = "m3a" if selected_agent == "official:m3a" else "t3a"
-    rows = []
-    # Persist the complete official-agent history.  The stock-capture CLI
-    # bounds the episode with ``--max-steps``; truncating here to seven steps
-    # silently discarded later screenshots and actions from otherwise valid
-    # T3A episodes.
-    for step_index, step in enumerate(history):
-        if not isinstance(step, dict):
-            continue
-        request_record = action_requests[step_index] if step_index < len(action_requests) else {}
-        image_refs = []
-        for image_index, payload in enumerate(list(request_record.get("image_payloads") or [])):
-            image_sha256 = hashlib.sha256(payload).hexdigest()
-            image_path = image_root / f"{image_sha256}.jpg"
-            if not image_path.exists():
-                image_path.write_bytes(payload)
-            image_refs.append(
-                {
-                    "role": "raw_screenshot" if image_index == 0 else "som_screenshot",
-                    "path": str(image_path),
-                    "sha256": image_sha256,
-                    "mime_type": "image/jpeg",
-                    "exact_model_payload": True,
-                }
-            )
-        rows.append(
-            {
-                "schema_version": "skymark.stock_androidworld_step_capture.v1",
-                "request_id": f"{task_name}:{harness_id}:{version_id}:step-{step_index + 1}",
-                "logical_test_id": f"{task_name}:{harness_id}:step-{step_index + 1}",
-                "campaign_cell_id": f"{task_name}:{harness_id}:{version_id}",
-                "task_id": task_name,
-                "harness_id": harness_id,
-                "version_id": version_id,
-                "step_index": step_index + 1,
-                "goal": goal,
-                "task_params_sha256": task_params_sha256,
-                "action_prompt": str(step.get("action_prompt") or request_record.get("prompt") or ""),
-                "model_input_images": image_refs,
-                "modality": "vision_text" if image_refs else "text_only",
-                "raw_response": step.get("action_raw_response"),
-                "action_output": step.get("action_output"),
-                "parser_result": _official_parser_result(step),
-                "request_timing_ms": request_record.get("duration_ms"),
-                "prompt_tokens": _coerce_int(
-                    (request_record.get("response_metadata") or {}).get("usage", {}).get("prompt_tokens")
-                    if isinstance(request_record.get("response_metadata"), dict)
-                    else 0
-                ),
-                "completion_tokens": _coerce_int(
-                    (request_record.get("response_metadata") or {}).get("usage", {}).get("completion_tokens")
-                    if isinstance(request_record.get("response_metadata"), dict)
-                    else 0
-                ),
-                "reference_action_available_to_runtime": False,
-                "source": "stock_androidworld_agent_step_capture",
-                "candidate_proposal": to_serializable(candidate_proposal),
-            }
-        )
-    capture_path = capture_root / "steps.json"
-    capture_path.write_text(
-        json.dumps({"schema_version": "skymark.stock_capture_bundle.v1", "steps": rows}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    return {
-        "path": str(capture_path),
-        "step_count": len(rows),
-        "harness_id": harness_id,
-        "version_id": version_id,
-    }
-
-
-def _apply_candidate_harness_proposal(agent: Any, path_text: str) -> dict[str, Any] | None:
-    text = str(path_text or "").strip()
-    if not text:
-        return None
-    path = Path(text).expanduser().resolve()
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("schema_version") != "skymark.harness_revision.v1":
-        raise ValueError("unsupported_candidate_harness_proposal")
-    expected_harness = "m3a" if isinstance(getattr(agent, "history", None), list) and agent.__class__.__name__ == "M3A" else "t3a"
-    if str(payload.get("harness_id") or "") != expected_harness:
-        raise ValueError("candidate_harness_proposal_agent_mismatch")
-    guidelines = []
-    action_consistency_policy = None
-    for patch in payload.get("patches") or []:
-        if not isinstance(patch, dict):
-            raise ValueError("candidate_harness_patch_invalid")
-        if patch.get("seam") not in {
-            "history_policy",
-            "system_instruction",
-            "completion_policy",
-            "action_consistency_policy",
-        }:
-            raise ValueError(f"candidate_harness_patch_seam_not_runtime_safe:{patch.get('seam')}")
-        if patch.get("seam") == "action_consistency_policy":
-            if patch.get("operation") != "configure":
-                raise ValueError("action_consistency_policy_requires_configure")
-            value = patch.get("value")
-            if not isinstance(value, dict) or str(value.get("mode") or "") not in {
-                "always",
-                "keyboard_obstruction_guard",
-            }:
-                raise ValueError("action_consistency_policy_invalid")
-            if not str(value.get("instruction") or "").strip():
-                raise ValueError("action_consistency_instruction_required")
-            action_consistency_policy = dict(value)
-            continue
-        if patch.get("operation") != "append":
-            raise ValueError("candidate_harness_runtime_text_seams_only_support_append")
-        value = str(patch.get("value") or "").strip()
-        if value:
-            guidelines.append(value)
-    if not guidelines and action_consistency_policy is None:
-        raise ValueError("candidate_harness_patches_required")
-    if guidelines:
-        setter = getattr(agent, "set_task_guidelines", None)
-        if not callable(setter):
-            raise ValueError("candidate_harness_guideline_seam_unavailable")
-        setter(guidelines)
-    if action_consistency_policy is not None:
-        delegate = getattr(agent, "llm", None)
-        if delegate is None:
-            raise ValueError("candidate_harness_llm_seam_unavailable")
-        wrapped = _ActionConsistencyLlmWrapper(delegate, action_consistency_policy)
-        agent.llm = wrapped
-        agent._omniflow_llm_usage_tracker = wrapped
-    return {
-        "proposal_id": str(payload.get("proposal_id") or ""),
-        "harness_version_id": str(payload.get("harness_version_id") or ""),
-        "content_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-        "path": str(path),
-        "guidelines": guidelines,
-        "action_consistency_policy": to_serializable(action_consistency_policy),
-    }
 
 
 def _read_raw_replay_run_log(path_text: str) -> dict[str, Any]:
@@ -3733,7 +3548,6 @@ def _build_launch_agent(
     planner_model: str = "",
     model_endpoint_profile: str = "",
     planner_timeout_sec: float | None = None,
-    step_skill_guidance: str = "",
     max_steps: int = 20,
     raw_replay_run_log: str = "",
     appagent_root: str = "",
@@ -3773,7 +3587,6 @@ def _build_launch_agent(
             planner_model=planner_model,
             model_endpoint_profile=model_endpoint_profile,
             planner_timeout_sec=planner_timeout_sec,
-            step_skill_guidance=step_skill_guidance,
             max_steps=max_steps,
             raw_replay_run_log=raw_replay_run_log,
             appagent_root=appagent_root,
@@ -3842,14 +3655,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--checkpoint-dir", default="")
     parser.add_argument(
-        "--candidate-harness-proposal",
-        default="",
-        help=(
-            "Optional SkyMark harness_revision.v1 wrapper applied only to an "
-            "unregistered official:t3a or official:m3a capture."
-        ),
-    )
-    parser.add_argument(
         "--agent",
         default=MODE_OMNIFLOW,
         help=(
@@ -3857,9 +3662,7 @@ def build_parser() -> argparse.ArgumentParser:
             "`external:mobilegpt` delegates one official episode to MobileGPT; "
             "`external:appagent` runs pinned AppAgent deployment; "
             "`external:appagent_teacher` captures one source human demo; "
-            "`official:t3a` and `official:m3a` run immutable stock AndroidWorld "
-            "agents for unregistered SkyMark capture; `official:t3a_gpt4` "
-            "keeps the paper baseline compatibility path."
+            "`official:t3a_gpt4` keeps the paper baseline compatibility path."
         ),
     )
     parser.add_argument(
@@ -3949,6 +3752,7 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
     from omniflow.core.config import Experiment
     from omniflow.transfer.runtime import load_transfer_state_catalog
     from omniflow.vlm.planner import VLMPlanner
+    from src.experiment.observation_evidence import persist_target_run_evidence
     from src.integrations.bmoca import (
         BMocaEnvironmentConfig,
         discover_bmoca_episodes,
@@ -4010,11 +3814,15 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
     rows: list[dict[str, Any]] = []
     for episode in episodes:
         started = perf_counter()
+        run_evidence: dict[str, Any] = {}
+        observation_evidence: list[dict[str, Any]] = []
         try:
+            episode_root = output_dir / f"env_{episode.environment_id}"
             with open_bmoca_episode(
                 episode,
                 config=config,
                 source_states=source_states,
+                evidence_root=episode_root,
             ) as host:
                 planner = VLMPlanner(
                     provider="openai_compatible",
@@ -4022,9 +3830,6 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                     api_key=planner_api_key,
                     base_url=planner_base_url,
                     timeout=float(args.planner_timeout_sec or 60.0),
-                    step_skill_guidance=_read_step_skill_guidance(
-                        args.step_skill_guidance_path
-                    ),
                     max_steps=episode.max_steps,
                 )
                 flow = OmniFlow(
@@ -4039,10 +3844,33 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                         )
                     ),
                 )
-                result = flow.run(
-                    episode.goal,
-                    experiment=Experiment(name="bmoca"),
+                result = None
+                run_error: Exception | None = None
+                try:
+                    result = flow.run(
+                        episode.goal,
+                        experiment=Experiment(name="bmoca"),
+                    )
+                except Exception as error:  # noqa: BLE001 - seal failed episodes too
+                    run_error = error
+                run_log = host.seal_run_log(
+                    task_name=episode.task_id,
+                    goal=episode.goal,
+                    diagnostics=(
+                        {"runtime_error": str(run_error)} if run_error is not None else None
+                    ),
                 )
+                observation_evidence = list(host.persist_observations() or [])
+                if run_log is not None:
+                    run_evidence = persist_target_run_evidence(
+                        episode_root,
+                        run_log=run_log,
+                        captured_transfer_states=host.get_captured_transfer_states(),
+                    )
+                if run_error is not None:
+                    raise run_error
+                if result is None:
+                    raise RuntimeError("bmoca_result_missing")
                 row = {
                     "task_id": episode.task_id,
                     "environment_id": episode.environment_id,
@@ -4060,6 +3888,8 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                         result.detail.get("checker_decisions") or []
                     ),
                     "trace": list(result.detail.get("trace") or []),
+                    "run_log_evidence": run_evidence,
+                    "observation_evidence": observation_evidence,
                     "wall_seconds": round(perf_counter() - started, 6),
                 }
                 if row["fallback_steps"] != 0:
@@ -4076,6 +3906,8 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                 "actions_executed": 0,
                 "model_calls": 0,
                 "fallback_steps": 0,
+                "run_log_evidence": run_evidence,
+                "observation_evidence": observation_evidence,
                 "wall_seconds": round(perf_counter() - started, 6),
             }
         rows.append(row)
@@ -4110,19 +3942,6 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if official_successes == len(rows) else 1
-
-
-def _read_step_skill_guidance(path_value: object) -> str:
-    text = str(path_value or "").strip()
-    if not text:
-        return ""
-    path = Path(text).expanduser().resolve()
-    if not path.is_file():
-        raise FileNotFoundError(f"step skill guidance artifact not found: {path}")
-    guidance = path.read_text(encoding="utf-8").strip()
-    if not guidance:
-        raise ValueError(f"step skill guidance artifact is empty: {path}")
-    return guidance
 
 
 def _decode_task_params(
@@ -4164,10 +3983,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.task_params_json,
         task_random_seed=int(args.task_random_seed),
     )
-    step_skill_guidance = _read_step_skill_guidance(
-        args.step_skill_guidance_path
-    )
-
     env = None
     try:
         _add_android_world_path(android_world_root)
@@ -4285,7 +4100,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             planner_model=str(args.model or ""),
             model_endpoint_profile=str(args.model_endpoint_profile or "auto"),
             planner_timeout_sec=float(args.planner_timeout_sec or 60.0),
-            step_skill_guidance=step_skill_guidance,
             max_steps=max(1, int(args.max_steps)),
             appagent_root=str(args.appagent_root or ""),
             appagent_workspace_root=str(args.appagent_workspace_root or ""),
@@ -4296,16 +4110,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             task_seed=int(args.task_random_seed),
             evidence_root=str(run_output_dir),
         )
-        candidate_harness = None
-        if str(args.candidate_harness_proposal or "").strip():
-            if selected_agent not in {"official:t3a", "official:m3a"}:
-                raise ValueError(
-                    "candidate_harness_proposal_requires_stock_capture_agent"
-                )
-            candidate_harness = _apply_candidate_harness_proposal(
-                agent,
-                args.candidate_harness_proposal,
-            )
         checkpoint_dir = (
             str(Path(args.checkpoint_dir).expanduser().resolve())
             if args.checkpoint_dir
@@ -4790,22 +4594,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     task_result_record["androidworld_task_context"] = (
                         to_serializable(task_context)
                     )
-                stock_capture = _persist_official_step_captures(
-                    output_dir=run_output_dir,
-                    agent=agent,
-                    selected_agent=selected_agent,
-                    task_name=task_name,
-                    goal=goal_text,
-                    task_params_sha256=evaluation_task_params_sha256,
-                    version_id=(
-                        str(candidate_harness.get("harness_version_id") or "candidate")
-                        if candidate_harness
-                        else "stock"
-                    ),
-                    candidate_proposal=candidate_harness,
-                )
-                if stock_capture is not None:
-                    task_result_record["skymark_stock_capture"] = stock_capture
                 if canonical_run is not None:
                     task_result_record["canonical_run"] = to_serializable(
                         canonical_run

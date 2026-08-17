@@ -44,7 +44,8 @@ OmniFlow E2E loop with Function, checker, and OmniTransfer.
 
 Use one command to obtain one complete, auditable task result set. The command
 resolves the canonical successful source RunLog, prepares method-native
-memories, qualifies `ours` on the source device, and runs the ten target cells.
+memories, qualifies `ours` on the source device, and runs the selected target
+results.
 
 ```bash
 export OMNIFLOW_EXP_ASSET_ROOT=/absolute/external/assets
@@ -63,7 +64,7 @@ bash scripts/exp/run_androidworld.sh \
 ```
 
 The deadline is a hard whole-pipeline wall limit and cannot exceed 1800
-seconds. Within that limit the output is either all ten validator
+seconds. Within that limit the output is either all selected validator
 conclusions or an immutable partial/blocked result identifying the exact
 failed phase. It is not a promise that every method succeeds. A method failure
 is retained as evaluation evidence rather than retried with changed rules.
@@ -84,10 +85,10 @@ is retained as evaluation evidence rather than retried with changed rules.
 4. Invoke that exact Function and its source arguments directly on
    `emulator-5560`. Qualification requires full replay, official validator
    success, `model_calls=0`, and `fallback_steps=0`. A failed qualification
-   blocks only the two `ours` target cells.
+   blocks only the `ours` target results.
 5. Resolve or create task-local MobileGPT memory and AppAgent demo memory from
    the same selected RunLog. A preparation failure blocks only that method's
-   two cells.
+   results.
 6. Run `fixed_replay`, `ours`, `mobilegpt_offline_retrieval`, `appagent_demo`,
    and `t3a_hint` sequentially on each device. The SmallPhone worker
    (`emulator-5554`) and unfolded Pixel Fold worker (`emulator-5564`, state
@@ -99,12 +100,12 @@ is retained as evaluation evidence rather than retried with changed rules.
 
 | phase | per-phase cap | model use | failure scope |
 |---|---:|---|---|
-| source device and preflight | 240 s | none | all ten cells |
-| semantic Function compilation | 180 s | `glm-5.1`, only when needed | two `ours` cells |
-| direct source qualification | 300 s | forbidden | two `ours` cells |
-| MobileGPT memory preparation | 300 s | frozen baseline implementation | two MobileGPT cells |
-| AppAgent memory preparation | 360 s | frozen baseline implementation | two AppAgent cells |
-| each target cell | 240 s | frozen method implementation | that cell |
+| source device and preflight | 240 s | none | selected results |
+| semantic Function compilation | 180 s | `glm-5.1`, only when needed | `ours` results |
+| direct source qualification | 300 s | forbidden | `ours` results |
+| MobileGPT memory preparation | 300 s | frozen baseline implementation | MobileGPT results |
+| AppAgent memory preparation | 360 s | frozen baseline implementation | AppAgent results |
+| each target result | 240 s | frozen method implementation | that result |
 
 These are local caps, not additive reservations. Every child receives only the
 remaining part of the 1800-second global deadline. When no time remains, the
@@ -146,9 +147,9 @@ Each immutable attempt contains:
   assets/                     # immutable task-local preparation artifacts
   target_attempts/            # method/device child evidence
   report/
-    cells.jsonl               # exactly eight rows
-    cells.csv                 # exactly eight rows
-    cells.md                  # human-readable 8-cell table
+    results.jsonl             # one row per task + method + device result
+    results.csv
+    results.md                # human-readable result table
     summary.json
 ```
 
@@ -241,17 +242,10 @@ result directory:
 bash scripts/exp/run_androidworld.sh --check-only --all-tasks
 ```
 
-When frozen T3A results are imported separately, run the remaining four
-methods on both devices as the eight-cell phase:
-
-```bash
-bash scripts/exp/run_androidworld.sh --all-tasks --eight-cells
-```
-
 To run a bounded task-major slice through the same entry point:
 
 ```bash
-bash scripts/exp/run_androidworld.sh --all-tasks --eight-cells \
+bash scripts/exp/run_androidworld.sh --all-tasks \
   --tasks AudioRecorderRecordAudio,AudioRecorderRecordAudioWithFileName,FilesMoveFile
 ```
 
@@ -262,18 +256,10 @@ result registration. When the frozen Function Stores do not use the default
 layout, set `OMNIFLOW_OURS_STORE_INDEX` to their immutable hash-bound JSON
 index.
 
-The same `--eight-cells` flag without `--all-tasks` runs the selected single
-task. It excludes only `t3a_hint`; it does not change any of the four method
-implementations.
-
-Batch mode requires both devices and either the exact five-method set or the
-exact four-method eight-cell set. It skips a task only when every expected
-immutable cell is registered, and stops for audit if a task is only partially
-registered or an execution/environment failure occurs.
-It performs one read-only static pass over every remaining selected task before
-creating any batch directory. If any task fails, the whole batch stops before
-source generation or target execution. Before it creates an attempt or starts
-an emulator, it requires:
+The batch entry always uses the fixed five-method, two-device protocol. The
+shell layer only dispatches tasks; the E2E pipeline owns method/device
+scheduling and immutable result accounting. A result is identified by
+task + method + device. Before it starts a task pipeline, it requires:
 
 - exactly 116 indexed canonical RunLogs from source seed `111`, each
   marked as an AndroidWorld official-validator success, non-empty, and bound to
@@ -303,7 +289,7 @@ Environment setup and preflight logs are written to a separate unique external
 preflight directory. A device or dependency failure therefore does not create
 or consume the formal immutable task attempt.
 
-The scheduler is task-major: it completes all ten method/device cells for one
+The scheduler is task-major: it completes all method/device results for one
 task before starting the next task. It does not launch a method-major campaign.
 The same entry point validates the frozen ours assets, then starts or
 repairs the configured AVDs. Every pending cell cold-restarts its managed AVD

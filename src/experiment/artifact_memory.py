@@ -1782,7 +1782,7 @@ def _load_baseline_batch_reports(
             or summary.get("immutable") is not True
         ):
             raise ValueError(f"baseline_batch_report_invalid:{summary_path}")
-        cells_path = Path(str(summary.get("cells_jsonl") or "")).expanduser()
+        cells_path = Path(str(summary.get("results_jsonl") or "")).expanduser()
         if not cells_path.is_absolute():
             cells_path = (summary_path.parent / cells_path).resolve()
         else:

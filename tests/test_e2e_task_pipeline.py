@@ -46,6 +46,8 @@ def _args(tmp_path: Path) -> SimpleNamespace:
     return SimpleNamespace(
         task="BrowserDraw",
         task_deadline_sec=DEFAULT_DEADLINE_SEC,
+        max_steps=FORMAL_MAX_STEPS,
+        max_fallback_steps=MAX_FALLBACK_STEPS,
         attempt_id="attempt-test",
         output_root=tmp_path / "output",
         results_root=tmp_path / "results",
@@ -67,7 +69,7 @@ def _args(tmp_path: Path) -> SimpleNamespace:
     )
 
 
-def test_dry_run_has_fixed_ten_cell_schedule(
+def test_dry_run_has_fixed_task_method_device_schedule(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -167,8 +169,11 @@ def test_cell_environment_uses_orchestrator_budget_and_child_guard(
 ) -> None:
     from src.experiment.e2e_task_pipeline import PHASE_TIMEOUTS_SEC, _cell_environment
 
+    args = _args(tmp_path)
+    args.max_steps = 7
+    args.max_fallback_steps = 2
     environment = _cell_environment(
-        args=_args(tmp_path),
+        args=args,
         attempt_id="attempt-test",
         attempt_root=tmp_path / "attempt",
         method="t3a_hint",
@@ -192,6 +197,8 @@ def test_cell_environment_uses_orchestrator_budget_and_child_guard(
     assert environment["OMNIFLOW_SINGLE_TASK_TIMEOUT_SEC"] == str(
         PHASE_TIMEOUTS_SEC["target_episode"]
     )
+    assert environment["OMNIFLOW_SINGLE_TASK_MAX_STEPS"] == "7"
+    assert environment["OMNIFLOW_SINGLE_TASK_MAX_FALLBACK_STEPS"] == "2"
     assert PHASE_TIMEOUTS_SEC["target_cell"] > PHASE_TIMEOUTS_SEC["target_episode"]
 
 
@@ -295,8 +302,8 @@ def test_target_workers_parallelize_devices_and_serialize_methods(
     calls: list[tuple[str, str, float, float]] = []
     completed: set[tuple[str, str]] = set()
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._completed_cells",
-        lambda _: set(completed),
+        "src.experiment.e2e_task_pipeline._concluded_cells",
+        lambda *_: set(completed),
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.concluded_cell_keys",
@@ -350,8 +357,8 @@ def test_target_workers_fail_stop_after_pending_environment_failure(
     calls: list[tuple[str, str]] = []
     recorded: list[dict[str, object]] = []
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._completed_cells",
-        lambda _: set(),
+        "src.experiment.e2e_task_pipeline._concluded_cells",
+        lambda *_: set(),
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.concluded_cell_keys",
@@ -401,8 +408,8 @@ def test_blocked_cells_do_not_duplicate_shared_prep_accounting(
     recorded: list[dict[str, object]] = []
     completed: set[tuple[str, str]] = set()
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._completed_cells",
-        lambda _: set(completed),
+        "src.experiment.e2e_task_pipeline._concluded_cells",
+        lambda *_: set(completed),
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.concluded_cell_keys",
@@ -1254,9 +1261,9 @@ def test_pipeline_report_always_materializes_four_report_formats(tmp_path: Path)
     assert summary["counts"]["pending"] == 0
     assert summary["tool_calls"] == 1
     assert summary["tokens"] == 7
-    for field in ("cells_jsonl", "cells_csv", "cells_markdown", "pipeline_markdown"):
+    for field in ("results_jsonl", "results_csv", "results_markdown", "pipeline_markdown"):
         assert Path(summary[field]).is_file()
     assert (attempt_root / "pipeline_summary.json").is_file()
-    assert len(Path(summary["cells_jsonl"]).read_text(encoding="utf-8").splitlines()) == 10
+    assert len(Path(summary["results_jsonl"]).read_text(encoding="utf-8").splitlines()) == 10
     for detailed in ("model_calls", "prompt_tokens", "completion_tokens", "total_tokens"):
         assert detailed not in summary

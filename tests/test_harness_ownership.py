@@ -2,11 +2,7 @@ from __future__ import annotations
 
 from omniflow import Function, RunResult
 from omniflow.bridge import _run_result
-from omniflow.vlm.planner import (
-    DEFAULT_STEP_GUIDANCE,
-    build_model_turn_request,
-    resolve_step_guidance,
-)
+from omniflow.vlm.planner import build_model_turn_request
 
 
 def _function() -> Function:
@@ -30,12 +26,6 @@ def _function() -> Function:
     )
 
 
-def test_planner_guidance_is_explicit_only() -> None:
-    assert resolve_step_guidance("find a contact") == DEFAULT_STEP_GUIDANCE
-    assert DEFAULT_STEP_GUIDANCE == ""
-    assert resolve_step_guidance("order coffee", "custom") == "custom"
-
-
 def test_bridge_planner_exposes_function_with_native_actions() -> None:
     function = _function()
     request = build_model_turn_request(
@@ -43,7 +33,6 @@ def test_bridge_planner_exposes_function_with_native_actions() -> None:
         model="scene.vlm.operation.primary",
         state={"state_id": "state-1", "display": {"width": 100, "height": 200}},
         functions=(function,),
-        max_steps=20,
         turn_index=1,
     )
 

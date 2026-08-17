@@ -57,8 +57,7 @@
           "required": ["goal", "model"],
           "optional": [
             "defer_user_input",
-            "max_steps",
-            "step_skill_guidance"
+            "max_steps"
           ],
           "max_steps": {
             "type": "integer",
@@ -120,7 +119,7 @@
     "installed_apps_response": {"required": ["apps"]},
     "model_turn_payload": {
       "required": ["goal", "model", "request"],
-      "optional": ["state", "max_steps", "step_skill_guidance"]
+      "optional": ["state", "max_steps"]
     },
     "model_turn_response": {
       "required": ["requested_model", "tool_calls"],

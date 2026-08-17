@@ -319,7 +319,7 @@ def _write_mobilegpt_manifest(
 
 def _write_baseline_batch_report(tmp_path: Path) -> Path:
     report_root = tmp_path / "baseline" / "iteration_01"
-    cells_path = report_root / "cells.jsonl"
+    cells_path = report_root / "results.jsonl"
     rows = [
         {
             "task_name": "RecordWithName",
@@ -386,7 +386,7 @@ def _write_baseline_batch_report(tmp_path: Path) -> Path:
                 "non_validator_failure": 1,
                 "pending": 0,
             },
-            "cells_jsonl": str(cells_path),
+            "results_jsonl": str(cells_path),
         },
     )
 

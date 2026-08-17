@@ -149,7 +149,6 @@ class FinishingPlanner:
     def __init__(self) -> None:
         self.visible_function_ids: list[tuple[str, ...]] = []
         self.observations: list[Observation] = []
-        self.action_results: list[dict[str, object]] = []
 
     def one_step_tool_call(
         self,
@@ -161,10 +160,6 @@ class FinishingPlanner:
         self.visible_function_ids.append(tuple(function.id for function in functions))
         self.observations.append(_observation)
         return ToolCall("finished", {"content": ""})
-
-    def record_action_result(self, payload: dict[str, object]) -> None:
-        self.action_results.append(dict(payload))
-
 
 class SequencePlanner(FinishingPlanner):
     def __init__(self, responses: list[ToolCall]) -> None:
@@ -213,7 +208,6 @@ def test_ui_tars_mobile_prompt_keeps_structured_peer_tools() -> None:
             "image_base64": "full-image",
             "display": {"width": 720, "height": 1280},
         },
-        max_steps=20,
         turn_index=1,
         functions=(function,),
     )
@@ -526,8 +520,6 @@ def test_zero_fallback_budget_allows_task_planning_after_function(tmp_path) -> N
     assert [action.tool for action in host.actions] == ["open_app"]
     assert planner.visible_function_ids == [(function_id,), (function_id,)]
     assert result.fallback_steps == 0
-    assert result.detail["completion_review_calls"] == 0
-    assert result.execution_summary["completion_review_calls"] == 0
     assert result.detail["function_resolution"]["status"] == "planner_tool_space"
     assert result.detail["runtime_limits"] == {
         "max_steps": 20,
@@ -581,14 +573,6 @@ def test_one_function_call_is_one_planner_step_with_multiple_actions(tmp_path) -
     assert result.detail["done_reason"] == "step_completed"
     assert result.detail["planner_steps"] == 1
     assert result.actions_executed == 3
-    assert planner.action_results == [
-        {
-            "status": "succeeded",
-            "function_id": function_id,
-            "actions_executed": 3,
-            "error": None,
-        }
-    ]
 
 
 def test_one_native_action_is_one_nonterminal_planner_step(tmp_path) -> None:
@@ -728,28 +712,6 @@ def test_direct_function_transfer_failure_continues_with_gui_planner(tmp_path) -
     assert planner.previous_action_errors[0] == "omnitransfer_missing_target_page"
     assert "Continue Function" in planner.goals[0]
     assert "Do not repeat actions that already succeeded" in planner.goals[0]
-    assert planner.action_results == [
-        {
-            "status": "succeeded",
-            "action": {
-                "tool": "open_app",
-                "args": {"package_name": "com.android.settings"},
-            },
-            "execution": {
-                "origin": "action",
-                "error": None,
-                "result": {"success": True, "error": None, "extra": {}},
-                "detail": {},
-            },
-            "state_transition": {
-                "before_state_id": "state_0",
-                "after_state_id": "state_1",
-                "changed": True,
-                "before_package": "com.android.launcher",
-                "after_package": "com.android.settings",
-            },
-        }
-    ]
     assert result.detail["function_resolution"]["status"] == "direct"
     assert result.detail["function_resolution"]["replay_status"] == "failed"
 
@@ -906,7 +868,6 @@ def test_successful_function_can_be_called_again_without_resume(tmp_path) -> Non
         (function_id,),
     ]
     assert "function_resume" not in result.detail
-    assert result.detail["completion_review_calls"] == 0
 
 
 def test_planner_can_repeat_action_on_same_logical_ui_state(
@@ -1051,7 +1012,6 @@ def test_planner_exposes_normalized_coordinates_independent_of_display() -> None
         goal="Tap add",
         model="test-model",
         state={"display": {"width": 720, "height": 1280}},
-        max_steps=8,
         turn_index=1,
     )
 
@@ -1098,7 +1058,6 @@ def test_model_turn_uses_only_generic_planning_context() -> None:
             "package_name": "com.example.source",
             "display": {"width": 720, "height": 1280},
         },
-        max_steps=20,
         turn_index=1,
     )
 
@@ -1268,7 +1227,6 @@ def test_vlm_planner_omits_androidworld_internal_state_from_prompt() -> None:
             "display": {"width": 100, "height": 200},
             "extra": {"androidworld_state": official_state},
         },
-        max_steps=8,
         turn_index=1,
     )
 
@@ -1282,7 +1240,7 @@ def test_vlm_planner_omits_androidworld_internal_state_from_prompt() -> None:
     assert official_state["ui_elements"]
 
 
-def test_vlm_planner_keeps_ui_tars_style_action_history() -> None:
+def test_vlm_planner_sends_only_current_observation() -> None:
     requests: list[dict[str, object]] = []
     responses = iter(
         [
@@ -1340,39 +1298,13 @@ def test_vlm_planner_keeps_ui_tars_style_action_history() -> None:
     asyncio.run(
         planner.one_step_tool_call("Add three expenses", first, installed_apps=installed_apps)
     )
-    planner.record_action_result(
-        {
-            "status": "succeeded",
-            "action": {
-                "tool": "open_app",
-                "args": {"package_name": "com.arduia.expense"},
-            },
-            "state_transition": {
-                "before_package": "com.simplemobiletools.gallery.pro",
-                "after_package": "com.arduia.expense",
-                "changed": True,
-            },
-        }
-    )
     asyncio.run(
         planner.one_step_tool_call("Add three expenses", second, installed_apps=installed_apps)
     )
 
     messages = requests[1]["messages"]
     assert isinstance(messages, list)
-    assert [message["role"] for message in messages] == [
-        "system",
-        "assistant",
-        "tool",
-        "user",
-    ]
-    assistant_call = messages[1]["tool_calls"][0]["function"]
-    assert json.loads(assistant_call["arguments"]) == {
-        "package_name": "com.arduia.expense"
-    }
-    assert '"status":"succeeded"' in messages[2]["content"]
-    assert '"before_package":"com.simplemobiletools.gallery.pro"' in messages[2]["content"]
-    assert '"after_package":"com.arduia.expense"' in messages[2]["content"]
+    assert [message["role"] for message in messages] == ["system", "user"]
     assert [tool["function"]["name"] for tool in requests[1]["tools"]] == [
         "click",
         "input_text",
@@ -1396,7 +1328,6 @@ def test_bridge_planner_exposes_installed_apps_only_through_open_app() -> None:
             "display": {"width": 720, "height": 1280},
             "extra": {"installed_apps": installed_apps},
         },
-        max_steps=8,
         turn_index=0,
         installed_apps=installed_apps,
     )
@@ -1435,7 +1366,6 @@ def test_planner_uses_compact_xml_as_primary_grounding_with_screenshot() -> None
             "package_name": "com.android.contacts",
             "display": {"width": 720, "height": 1280},
         },
-        max_steps=8,
         turn_index=1,
     )
 
@@ -1470,7 +1400,6 @@ def test_xml_only_state_does_not_expose_a_second_observation_tool() -> None:
             "package_name": "com.example.app",
             "display": {"width": 720, "height": 1280},
         },
-        max_steps=8,
         turn_index=1,
     )
 
@@ -1502,7 +1431,6 @@ def test_screenshot_state_hides_get_state_fallback() -> None:
             "package_name": "com.example.app",
             "display": {"width": 720, "height": 1280},
         },
-        max_steps=8,
         turn_index=2,
     )
 
@@ -1536,7 +1464,6 @@ def test_visual_surface_keeps_screenshot_and_full_gui_fallback_tools() -> None:
             "package_name": "com.example.game",
             "display": {"width": 720, "height": 1280},
         },
-        max_steps=8,
         turn_index=1,
     )
 
@@ -1569,7 +1496,6 @@ def test_labeled_controls_keep_image_and_full_tool_set() -> None:
             "package_name": "com.android.settings",
             "display": {"width": 720, "height": 1280},
         },
-        max_steps=8,
         turn_index=1,
     )
 
@@ -1611,7 +1537,6 @@ def test_compact_xml_prioritizes_actionable_navigation_after_long_content() -> N
             "package_name": "com.android.contacts",
             "display": {"width": 1080, "height": 2376},
         },
-        max_steps=8,
         turn_index=1,
     )
 
@@ -1635,7 +1560,6 @@ def test_open_app_remains_available_in_current_app() -> None:
             "display": {"width": 720, "height": 1280},
         },
         installed_apps={"Settings": "com.android.settings"},
-        max_steps=8,
         turn_index=1,
     )
 
@@ -1663,7 +1587,6 @@ def test_open_app_exposes_complete_installed_app_vocabulary() -> None:
             "Settings": "com.android.settings",
             "Chrome": "com.android.chrome",
         },
-        max_steps=8,
         turn_index=1,
     )
 
@@ -1711,7 +1634,6 @@ def test_parameterized_app_function_exposes_installed_app_vocabulary() -> None:
             "Settings": "com.android.settings",
         },
         functions=(function,),
-        max_steps=8,
         turn_index=1,
     )
 
@@ -1739,7 +1661,6 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
         goal="Search for a contact",
         model="test-model",
         state={"xml": "", "display": {"width": 720, "height": 1280}},
-        max_steps=8,
         turn_index=0,
     )
 
@@ -1776,7 +1697,6 @@ def test_planner_adds_recalled_function_as_a_peer_action_api() -> None:
         goal="Add three expenses",
         model="test-model",
         state={"xml": "", "display": {"width": 720, "height": 1280}},
-        max_steps=8,
         turn_index=0,
         functions=(function,),
     )
@@ -1854,7 +1774,6 @@ def test_function_completion_review_keeps_current_screenshot_and_result() -> Non
                 },
             },
         },
-        max_steps=8,
         turn_index=0,
     )
 
@@ -1944,14 +1863,10 @@ def test_androidworld_launcher_configures_one_unified_planner(
         adb_serial="emulator-5554",
         planner_provider="openai",
         planner_model="test-model",
-        step_skill_guidance="Use the selected candidate policy.",
     )
 
     assert planner_options["api_key"] == "unified-key"
     assert planner_options["base_url"] == "https://llmapi.example/v1"
-    assert planner_options["step_skill_guidance"] == (
-        "Use the selected candidate policy."
-    )
     assert flow.planner is not None
 
 

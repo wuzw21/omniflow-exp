@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from omniflow.core.config import DEFAULT_PLANNER_SYSTEM_PROMPT, PromptSet
+from omniflow.core.config import DEFAULT_PLANNER_SYSTEM_PROMPT
 from omniflow.core.model import Function, Observation, ToolCall
 from omniflow.core.schemas import canonicalize_action, vlm_action_tools
 from omniflow.functions.assets import validate_arguments
@@ -40,18 +40,13 @@ def build_model_turn_request(
     goal: str,
     model: str,
     state: dict[str, Any],
-    max_steps: int,
     turn_index: int,
-    step_skill_guidance: str = "",
     installed_apps: dict[str, str] | None = None,
     functions: list[Function] | tuple[Function, ...] = (),
-    system_prompt: str = SYSTEM_PROMPT,
-    history: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
 ) -> dict[str, Any]:
     text = _turn_text(
         goal=goal,
         state=state,
-        step_skill_guidance=step_skill_guidance,
     )
     content: list[dict[str, Any]] = []
     current_image = _state_image_data_uri(state)
@@ -72,8 +67,7 @@ def build_model_turn_request(
     return {
         "model": str(model),
         "messages": [
-            {"role": "system", "content": str(system_prompt)},
-            *deepcopy(list(history)),
+            {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": content},
         ],
         "max_completion_tokens": 512,
@@ -213,7 +207,6 @@ def _turn_text(
     *,
     goal: str,
     state: dict[str, Any],
-    step_skill_guidance: str,
 ) -> str:
     display = state.get("display") if isinstance(state.get("display"), dict) else {}
     lines = [
@@ -225,8 +218,6 @@ def _turn_text(
             f"display={display.get('width') or '?'}x{display.get('height') or '?'}"
         ),
     ]
-    if step_skill_guidance.strip():
-        lines.append(f"Task guidance: {step_skill_guidance.strip()}")
     page_context = analyze_page_context(state)
     if page_context.useful:
         lines.append(page_context.evidence)
@@ -353,9 +344,6 @@ class VLMPlanner:
         client: Any | None = None,
         transport: ModelTransport | None = None,
         metadata_sink: Callable[[dict[str, Any]], None] | None = None,
-        prompts: PromptSet | None = None,
-        step_skill_guidance: str = "",
-        max_steps: int = 20,
     ):
         if provider not in {"openai", "openai_compatible"}:
             raise ValueError("VLMPlanner supports OpenAI-compatible providers only")
@@ -370,13 +358,9 @@ class VLMPlanner:
             api_key=api_key,
             base_url=base_url,
         )
-        self.system_prompt = prompts.planner_system if prompts is not None else SYSTEM_PROMPT
-        self.step_skill_guidance = str(step_skill_guidance).strip()
-        self.max_steps = max(1, int(max_steps))
         self._turn_index = 0
         self._metadata: dict[str, Any] = {}
         self._usage = LLMUsageTracker(component="planner", model=self.model)
-        self._history: list[dict[str, Any]] = []
 
     async def one_step_tool_call(
         self,
@@ -391,13 +375,9 @@ class VLMPlanner:
             goal=str(goal),
             model=self.model,
             state=state,
-            step_skill_guidance=self.step_skill_guidance,
             installed_apps=installed_apps or {},
             functions=functions,
-            max_steps=self.max_steps,
             turn_index=self._turn_index,
-            system_prompt=self.system_prompt,
-            history=self._history,
         )
         self._usage.start_call()
         try:
@@ -405,8 +385,6 @@ class VLMPlanner:
                 {
                     "goal": str(goal),
                     "model": self.model,
-                    "step_skill_guidance": self.step_skill_guidance,
-                    "max_steps": self.max_steps,
                     "request": request,
                 }
             )
@@ -422,56 +400,9 @@ class VLMPlanner:
             self._usage.record_failure()
             raise
         self._metadata = metadata
-        self._remember_turn(tool_call)
         if self._metadata_sink is not None:
             self._metadata_sink(dict(metadata))
         return tool_call
-
-    def _remember_turn(
-        self,
-        tool_call: ToolCall,
-    ) -> None:
-        call_id = f"omniflow_planner_{self._turn_index}"
-        self._history.extend(
-            (
-                {
-                    "role": "assistant",
-                    "tool_calls": [
-                        {
-                            "id": call_id,
-                            "type": "function",
-                            "function": {
-                                "name": tool_call.name,
-                                "arguments": json.dumps(
-                                    dict(tool_call.arguments),
-                                    ensure_ascii=False,
-                                    separators=(",", ":"),
-                                ),
-                            },
-                        }
-                    ],
-                },
-                {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": "Execution result pending.",
-                },
-            )
-        )
-
-    def record_action_result(self, payload: dict[str, Any]) -> None:
-        content = "Action result: " + json.dumps(
-            payload,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        for message in reversed(self._history):
-            if message.get("role") != "tool":
-                continue
-            if message.get("content") != "Execution result pending.":
-                continue
-            message["content"] = content
-            return
 
     def take_metadata(self) -> dict[str, Any]:
         metadata = dict(self._metadata)
@@ -545,14 +476,6 @@ def _normalize_response(value: Any, *, requested_model: str) -> dict[str, Any]:
             else None
         ),
     }
-
-
-DEFAULT_STEP_GUIDANCE = ""
-ORDERING_STEP_GUIDANCE = ""
-
-
-def resolve_step_guidance(goal: str, explicit: str = "") -> str:
-    return str(explicit or "").strip()
 
 
 _ADAPTER_NAME = "qwen_vl_coordinate_arrays.v1"
@@ -733,12 +656,9 @@ def _is_number(value: Any) -> bool:
 
 
 __all__ = [
-    "DEFAULT_STEP_GUIDANCE",
     "ModelTransport",
-    "ORDERING_STEP_GUIDANCE",
     "SYSTEM_PROMPT",
     "VLMPlanner",
     "build_model_turn_request",
     "function_tools",
-    "resolve_step_guidance",
 ]

@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from omniflow import Action
 from src.integrations.android_world.launch import build_parser
@@ -36,12 +37,12 @@ class _TimeStep:
 
 
 class _Environment:
-    def __init__(self) -> None:
+    def __init__(self, *, tablet: bool = False) -> None:
         self.gestures: list[np.ndarray] = []
         self._coordinator = SimpleNamespace(
             _driver=_Driver(),
-            _screen_size=(1920, 1080),
-            _is_tablet=False,
+            _screen_size=(1280, 800) if tablet else (1920, 1080),
+            _is_tablet=tablet,
         )
         self._simulator = SimpleNamespace(_adb_port=5555)
 
@@ -68,6 +69,48 @@ def test_bmoca_host_is_only_an_omniflow_host_adapter() -> None:
     assert result.success is True
     assert host.official_success is True
     assert environment.gestures[0].tolist() == [0.25, 0.5, 0.25, 0.5]
+
+
+def test_bmoca_tablet_keeps_ui_coordinates_canonical_at_host_boundary() -> None:
+    environment = _Environment(tablet=True)
+    host = BMocaHost(environment, snapshot_id="test_env_100")
+
+    host.reset()
+    observation = host.observe(xml=True, screenshot=False, app_info=True)
+    result = host.act(Action("click", {"x": 681.818, "y": 802.5}))
+
+    assert observation.extra["display"] == {"width": 1280, "height": 800}
+    assert result.success is True
+    assert environment.gestures[0].tolist() == pytest.approx(
+        [0.5015625, 1.0909088, 0.5015625, 1.0909088]
+    )
+
+
+def test_bmoca_host_reuses_canonical_episode_recorder(tmp_path: Path) -> None:
+    environment = _Environment()
+    host = BMocaHost(
+        environment,
+        snapshot_id="test_env_100",
+        evidence_root=tmp_path,
+    )
+
+    host.reset()
+    host.observe(xml=True, screenshot=True, app_info=True)
+    host.act(Action("click", {"x": 500, "y": 250}))
+    run_log = host.seal_run_log(task_name="open_settings", goal="Open settings")
+    observation_index = host.persist_observations()
+
+    assert run_log is not None
+    assert run_log["schema_version"] == "omniflow.run_log.v1"
+    assert run_log["success"] is True
+    assert run_log["steps"][0]["action"] == {
+        "action_type": "click",
+        "x": 540.0,
+        "y": 480.0,
+    }
+    assert observation_index
+    assert (tmp_path / "observations" / "index.json").is_file()
+    assert host.get_captured_transfer_states()
 
 
 def test_bmoca_episode_discovery_uses_every_requested_environment(

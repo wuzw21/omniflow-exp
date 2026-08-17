@@ -35,11 +35,6 @@ class Experiment:
 
 
 @dataclass(frozen=True)
-class PromptSet:
-    planner_system: str = DEFAULT_PLANNER_SYSTEM_PROMPT
-
-
-@dataclass(frozen=True)
 class PluginSet:
     checker: Checker | None = None
     transfer: Transfer | None = None
@@ -54,7 +49,6 @@ class RuntimeSettings:
 
 @dataclass(frozen=True)
 class OmniFlowConfig:
-    prompts: PromptSet = field(default_factory=PromptSet)
     runtime: RuntimeSettings = field(default_factory=RuntimeSettings)
     plugins: PluginSet = field(default_factory=PluginSet)
 

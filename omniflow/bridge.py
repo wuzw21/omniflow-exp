@@ -22,7 +22,7 @@ from omniflow.core.trajectory import canonicalize_run_log
 from omniflow.functions.assets import compile_runlog_to_store, parse_function_artifact
 from omniflow.runlog import import_run_log_evidence
 from omniflow.runtime.engine import InputRequired, OmniFlow
-from omniflow.vlm.planner import VLMPlanner, resolve_step_guidance
+from omniflow.vlm.planner import VLMPlanner
 
 PROTOCOL_VERSION = "2025-11-25"
 _DEFAULT_GUI_MAX_STEPS = 20
@@ -253,10 +253,6 @@ class JsonLineBridge:
             defer_user_input=body.get("defer_user_input") is True,
         )
         installed_apps = host.installed_apps()
-        step_skill_guidance = resolve_step_guidance(
-            goal,
-            str(body.get("step_skill_guidance") or ""),
-        )
         planner = VLMPlanner(
             model=model,
             metadata_sink=lambda value: setattr(
@@ -267,8 +263,6 @@ class JsonLineBridge:
                 "model_turn",
                 envelope,
             ),
-            step_skill_guidance=step_skill_guidance,
-            max_steps=max_steps,
         )
         flow = OmniFlow(
             self.flow.store.path,
@@ -305,10 +299,6 @@ class JsonLineBridge:
                     "model_turn",
                     envelope,
                 ),
-                step_skill_guidance=str(
-                    run_metadata.get("step_skill_guidance") or ""
-                ),
-                max_steps=max_steps,
             )
             if model
             else None
@@ -902,9 +892,6 @@ def _run_result(
         "model": str(body.get("model") or "") or None,
         "model_calls": int(result.model_calls),
         "fallback_steps": int(result.fallback_steps),
-        "completion_review_calls": int(
-            result.detail.get("completion_review_calls") or 0
-        ),
         "planner_diagnostics": result.detail.get("planner_diagnostics") or None,
         "function_resolution": function_resolution,
         "recall_hit": recall_hit,

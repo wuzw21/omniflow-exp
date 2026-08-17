@@ -185,7 +185,7 @@ def test_omniflow_adapter_preserves_launcher_step_cap() -> None:
     assert captured["max_steps"] == 20
 
 
-def test_omniflow_adapter_passes_explicit_step_guidance_to_planner(
+def test_omniflow_adapter_uses_canonical_planner_configuration(
     monkeypatch,
 ) -> None:
     planner_options: dict[str, object] = {}
@@ -203,15 +203,12 @@ def test_omniflow_adapter_passes_explicit_step_guidance_to_planner(
         store_path="store.json",
         adb_serial="emulator-5554",
         planner_model="test-model",
-        step_skill_guidance="Prefer semantic labels over nearby duplicate text.",
         build_omniflow_agent=lambda **options: SimpleNamespace(**options),
     )
 
     default_method_adapter_registry().build(context)
 
-    assert planner_options["step_skill_guidance"] == (
-        "Prefer semantic labels over nearby duplicate text."
-    )
+    assert planner_options
 
 
 def test_androidworld_complexity_budget_cannot_raise_omniflow_step_cap(

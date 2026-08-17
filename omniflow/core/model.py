@@ -239,10 +239,6 @@ class RunResult:
             "actions_executed": self.actions_executed,
             "model_calls": self.model_calls,
             "fallback_steps": self.fallback_steps,
-            "completion_review_calls": max(
-                0,
-                _coerce_int(self.detail.get("completion_review_calls")),
-            ),
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
@@ -320,14 +316,6 @@ class Planner(Protocol):
         functions: tuple[Function, ...],
         installed_apps: dict[str, str],
     ) -> ToolCall | Awaitable[ToolCall]: ...
-
-
-class FunctionRouter(Protocol):
-    def route_function(
-        self,
-        goal: str,
-        functions: tuple[Function, ...],
-    ) -> ToolCall | None | Awaitable[ToolCall | None]: ...
 
 
 def _coerce_int(value: Any) -> int:

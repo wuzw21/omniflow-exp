@@ -289,7 +289,7 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
     assert "total_tokens" not in report
     rows = [
         json.loads(line)
-        for line in Path(report["cells_jsonl"]).read_text(encoding="utf-8").splitlines()
+        for line in Path(report["results_jsonl"]).read_text(encoding="utf-8").splitlines()
     ]
     assert rows[0]["total_tokens"] == 100
     assert rows[0]["episode_duration_sec"] == 9.5
@@ -297,7 +297,7 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
         "cell_finished_without_registered_validator_result"
     )
     assert rows[1]["outer_wall_sec"] == 12.0
-    markdown = Path(report["cells_markdown"]).read_text(encoding="utf-8")
+    markdown = Path(report["results_markdown"]).read_text(encoding="utf-8")
     assert "# AndroidWorld Cell Comparison" in markdown
     assert (
         "| method | device | source_seed | evaluation_seed | status | "
@@ -395,7 +395,7 @@ def test_batch_report_uses_current_attempt_failure_outcome(tmp_path: Path) -> No
     )
 
     row = json.loads(
-        Path(report["cells_jsonl"]).read_text(encoding="utf-8").strip()
+        Path(report["results_jsonl"]).read_text(encoding="utf-8").strip()
     )
     assert row["attempt_id"] == "iteration_02-environment-repair"
     assert row["outer_wall_sec"] == 34.0
@@ -480,7 +480,7 @@ def test_batch_report_current_attempt_failure_overrides_registered_result(
         "non_validator_failure": 1,
         "pending": 0,
     }
-    row = json.loads(Path(report["cells_jsonl"]).read_text(encoding="utf-8"))
+    row = json.loads(Path(report["results_jsonl"]).read_text(encoding="utf-8"))
     assert row["attempt_id"] == "iteration_02-source-failure"
     assert row["status"] == "prep_failed"
     assert row["official_validator_success"] is None
@@ -588,7 +588,7 @@ def test_batch_report_recovers_runlog_teacher_source_failure_accounting(
         attempt_id="iteration_01-report",
     )
 
-    row = json.loads(Path(report["cells_jsonl"]).read_text(encoding="utf-8"))
+    row = json.loads(Path(report["results_jsonl"]).read_text(encoding="utf-8"))
     assert row["model_calls"] == 2
     assert row["prompt_tokens"] == 98
     assert row["completion_tokens"] == 10

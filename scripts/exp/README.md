@@ -33,7 +33,7 @@ the Python launcher or maintain a second runtime script.
 
 | Component | Role | Used by the normal E2E command? |
 | --- | --- | --- |
-| `src/experiment/e2e_task_pipeline.py` | Source qualification and 10-cell orchestration | Yes |
+| `src/experiment/e2e_task_pipeline.py` | Source qualification and task-result orchestration | Yes |
 | `omniflow/functions/assets.py` | Function validation, storage, editing, and freezing of a skill-produced bundle | Yes, for every `ours` Function asset |
 | `src/experiment/function_assets.py` | Immutable skill-manifest conversion | Used when the configured skill manifest supplies the missing task |
 | `src/experiment/direct_function_launch.py` | Seed-111 atomic Function qualification runner | Called by the E2E pipeline |
@@ -229,22 +229,22 @@ bash scripts/exp/run_androidworld.sh \
   --tasks AudioRecorderRecordAudio
 ```
 
-The default method set contains all five methods. Set
-`--methods`, `--devices`, and `--tasks` independently select ordered subsets;
-their defaults remain all five methods, both formal devices, and every indexed
-task. `OMNIFLOW_SINGLE_TASK_METHODS` remains an internal/runtime override. When
+The formal batch always uses all five methods and both formal devices. Use only
+`--tasks` to select an ordered task subset; method/device selection is an
+internal single-result runner concern. `OMNIFLOW_SINGLE_TASK_METHODS` remains an
+internal/runtime override. When
 the canonical `ours` Store is missing, the command creates and registers it
 before preparing MobileGPT and AppAgent assets, provided the immutable
 authoring manifest is configured; then the same process continues to
 target replay. `--tasks` implies task-major scheduling and skips every result
-cell with the same task, method, device, source seed, and evaluation seed that
+with the same task, method, device, source seed, and evaluation seed that
 is already registered with an official-validator conclusion. A result from a
 different seed never causes a skip. There is no model retry. A failed target
 execution never rebuilds or replaces frozen source assets.
-Completed cells are skipped before device startup. Pending cells use the same
+Completed results are skipped before device startup. Pending results use the same
 script-owned cold-restart lifecycle on SmallPhone, Pixel Fold, and the
 source-only emulator; no device is prepared manually.
-For MobileGPT, a result cell is identified by the frozen native-memory contract
+For MobileGPT, a result is identified by the frozen native-memory contract
 as well as task, method, device, and seeds. Archived memory protocols remain
 immutable evidence but cannot shadow the earliest result produced by the
 currently supported memory schema.
@@ -289,27 +289,6 @@ Before a formal device starts, the unified script performs one authenticated
 unreachable endpoint fail before emulator startup; dry-runs and static checks
 remain network-free.
 
-## Unregistered stock T3A/M3A capture for SkyMark
-
-SkyMark may collect immutable stock AndroidWorld step requests without adding a
-method to the frozen five-method matrix. This diagnostic mode still enters only
-through the unified script, uses the official task lifecycle and validator, and
-caps the episode at seven decisions:
-
-```bash
-OMNIFLOW_STOCK_CAPTURE_OUTPUT_PATH=/absolute/new/attempt \
-OMNIFLOW_STOCK_CAPTURE_MODEL=GLM-5.1 \
-OMNIFLOW_STOCK_CAPTURE_MODEL_ENDPOINT_PROFILE=openai \
-bash scripts/exp/run_androidworld.sh \
-  --stock-capture m3a --tasks ContactsAddContact
-```
-
-Use `--stock-capture t3a` for the upstream text-only T3A Harness. The capture
-persists exact action prompts, responses, parser results, request timings, and,
-for M3A, the exact JPEG payloads sent to the model. It never exposes a reference
-action to the runtime and never registers a formal experiment result. The stock
-Harness and upstream prompts remain unchanged.
-
 `--check-only` is deliberately read-only. It validates existing assets but
 will fail rather than create a missing method asset:
 
@@ -330,7 +309,7 @@ a task. By default it resolves the canonical normalized source index from
 `OMNIFLOW_EXP_MEMORY_ROOT/current.json`; `OMNIFLOW_OURS_SOURCE_ASSET_INDEX` is
 only an explicit immutable-index override.
 
-## Full and bounded matrices
+## Full and bounded task runs
 
 Run all five methods, both devices, and every indexed task:
 
@@ -338,38 +317,26 @@ Run all five methods, both devices, and every indexed task:
 bash scripts/exp/run_androidworld.sh --all-tasks
 ```
 
-Run only MobileGPT on both formal devices for every indexed task:
+Run a bounded task slice on the same fixed protocol:
 
 ```bash
 bash scripts/exp/run_androidworld.sh \
   --all-tasks \
-  --methods mobilegpt_offline_retrieval
-```
-
-The three axes are independent. For example, select one task, one method, and
-one formal device with `--tasks AudioRecorderRecordAudio`,
-`--methods mobilegpt_offline_retrieval`, and `--devices fold5564`.
-
-Run the four non-T3A methods on both devices for a bounded task slice:
-
-```bash
-bash scripts/exp/run_androidworld.sh \
-  --all-tasks \
-  --eight-cells \
   --tasks AudioRecorderRecordAudio,FilesMoveFile
 ```
 
-Batch scheduling is task-major. Before execution it performs a read-only static
-pass over every selected task. A cell with an existing official-validator
-conclusion in long-term memory is skipped; it is never rerun merely because a
-later attempt might succeed or be cheaper.
+Task scheduling is task-major. The shell dispatches one task at a time; the
+E2E pipeline owns method/device scheduling and immutable result accounting. A
+result with an existing official-validator conclusion in long-term memory is
+skipped; it is never rerun merely because a later attempt might succeed or be
+cheaper.
 
 An official-validator boolean conclusion is the terminal result for a formal
-cell, even when the attempt also records parser, runtime-integrity, or
+result, even when the attempt also records parser, runtime-integrity, or
 environment error evidence after task start. Registration preserves those
 fields without interpreting exception names. An attempt with no boolean
 official-validator conclusion remains pending and is excluded from the
-completed-cell index.
+completed-result index.
 
 ## Refresh long-term memory
 
