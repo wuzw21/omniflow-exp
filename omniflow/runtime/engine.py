@@ -122,6 +122,7 @@ class OmniFlow:
         fallback_steps = 0
         completion_review_calls = 0
         trace: list[dict[str, Any]] = []
+        checker_decisions: list[dict[str, Any]] = []
         last_error = "tool_not_selected"
         llm_usage: dict[str, Any] = {}
         function_session = _FunctionSession()
@@ -155,6 +156,12 @@ class OmniFlow:
                         for event in function_session.resume_events
                     ),
                 }
+                kwargs["terminal_detail"] = terminal_detail
+            if checker_decisions:
+                terminal_detail = dict(kwargs.get("terminal_detail") or {})
+                terminal_detail["checker_decisions"] = [
+                    dict(decision) for decision in checker_decisions
+                ]
                 kwargs["terminal_detail"] = terminal_detail
             return self._result(
                 success,
@@ -208,6 +215,7 @@ class OmniFlow:
                 )
             actions_executed += replay.actions_executed
             trace.extend(replay.detail.get("trace") or ())
+            checker_decisions.extend(replay.detail.get("checker_decisions") or ())
             if replay.success:
                 function_resolution["replay_status"] = "succeeded"
                 observation = replay.final_state or observation
@@ -536,6 +544,9 @@ class OmniFlow:
                 actions_executed += replay.actions_executed
                 replay_trace = list(replay.detail.get("trace") or ())
                 trace.extend(replay_trace)
+                checker_decisions.extend(
+                    replay.detail.get("checker_decisions") or ()
+                )
                 observation = replay.final_state or observation
                 if replay.success:
                     if resume_event is not None:
