@@ -263,6 +263,10 @@ The endpoint profile is explicit and fail-closed: `llmthu` reads only
 `LLMTHU_KEY`/`LLMTHU_BASE_URL`, while `openai` reads only
 `OPENAI_API_KEY`/`OPENAI_BASE_URL`. It never switches accounts because another
 credential happens to be present in the same environment file.
+Before a formal device starts, the unified script performs one authenticated
+`GET /models` probe against the selected profile. Invalid credentials or an
+unreachable endpoint fail before emulator startup; dry-runs and static checks
+remain network-free.
 
 ## Native MobileGPT cold/warm diagnostic
 

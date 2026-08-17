@@ -247,6 +247,42 @@ PY
   export OMNIFLOW_MODEL_ENDPOINT_PROFILE="$profile"
 }
 
+validate_model_endpoint_auth() {
+  if [[ "$dry_run" -eq 1 || "$check_only" -eq 1 ]]; then
+    return 0
+  fi
+  local probe_status
+  if ! probe_status="$(
+    MODEL_ENDPOINT_API_KEY="$selected_model_api_key" \
+    MODEL_ENDPOINT_BASE_URL="$selected_model_base_url" \
+      "$python_bin" - <<'PY'
+import os
+import urllib.error
+import urllib.request
+
+base_url = os.environ["MODEL_ENDPOINT_BASE_URL"].rstrip("/")
+request = urllib.request.Request(
+    f"{base_url}/models",
+    headers={"Authorization": f"Bearer {os.environ['MODEL_ENDPOINT_API_KEY']}"},
+    method="GET",
+)
+try:
+    with urllib.request.urlopen(request, timeout=10) as response:
+        status = int(response.status)
+except urllib.error.HTTPError as error:
+    status = int(error.code)
+except Exception as error:
+    print(f"unavailable:{error}")
+    raise SystemExit(1)
+print(status)
+raise SystemExit(0 if 200 <= status < 300 else 1)
+PY
+  )"; then
+    echo "model_endpoint_auth_failed:profile=$formal_model_endpoint_profile status=$probe_status" >&2
+    exit 2
+  fi
+}
+
 validate_experiment_model() {
   local model="$1"
   local profile="$2"
@@ -3214,6 +3250,7 @@ if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
 fi
 select_model_endpoint "$formal_model_endpoint_profile"
 validate_experiment_model "$paper_model" "$formal_model_endpoint_profile"
+validate_model_endpoint_auth
 export MOBILEGPT_CHAT_API_KEY="$selected_model_api_key"
 export MOBILEGPT_CHAT_BASE_URL="$selected_model_base_url"
 if [[ "$need_mobilegpt_preflight" -eq 1 ]]; then

@@ -129,6 +129,8 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
         'default_memory_root="$workspace_root/assets/'
         'androidworld-experiment-memory-v1"' in script_text
     )
+    assert "validate_model_endpoint_auth" in script_text
+    assert 'f\"{base_url}/models\"' in script_text
     assert 'omnitransfer_root="${OMNITRANSFER_ROOT:-$workspace_root/OmniTransfer}"' in (
         script_text
     )
