@@ -160,16 +160,18 @@ class _BMocaHost:
                 os.environ.pop("ANDROID_SERIAL", None)
 
     def _gesture(self, action: Action) -> tuple[float, float, float, float]:
+        maximum = 2000.0 if self._is_tablet() else 1000.0
         if action.tool == "click":
-            x = _relative_coordinate(action.args.get("x"), "x")
-            y = _relative_coordinate(action.args.get("y"), "y")
+            x = _relative_coordinate(action.args.get("x"), "x", maximum=maximum)
+            y = _relative_coordinate(action.args.get("y"), "y", maximum=maximum)
             touch_y, touch_x = self._touch_point(x, y)
             return touch_y, touch_x, touch_y, touch_x
         if action.tool == "swipe":
             keys = ("x1", "y1", "x2", "y2")
             if all(action.args.get(key) is not None for key in keys):
                 x1, y1, x2, y2 = (
-                    _relative_coordinate(action.args[key], key) for key in keys
+                    _relative_coordinate(action.args[key], key, maximum=maximum)
+                    for key in keys
                 )
                 touch_y1, touch_x1 = self._touch_point(x1, y1)
                 touch_y2, touch_x2 = self._touch_point(x2, y2)
@@ -189,8 +191,6 @@ class _BMocaHost:
         raise ValueError(f"bmoca_official_action_unsupported:{action.tool}")
 
     def _touch_point(self, x: float, y: float) -> tuple[float, float]:
-        if self._is_tablet():
-            return x, 1.0 - y
         return y, x
 
     def _is_tablet(self) -> bool:
@@ -203,10 +203,7 @@ class _BMocaHost:
         values = tuple(raw) if raw is not None else ()
         if len(values) != 2:
             raise RuntimeError("bmoca_screen_size_unavailable")
-        if self._is_tablet():
-            width, height = int(values[0]), int(values[1])
-        else:
-            height, width = int(values[0]), int(values[1])
+        height, width = int(values[0]), int(values[1])
         if min(height, width) <= 0:
             raise RuntimeError("bmoca_screen_size_invalid")
         return height, width
@@ -583,12 +580,17 @@ def _launcher_target_package(
     return next(iter(packages)) if len(packages) == 1 else None
 
 
-def _relative_coordinate(value: Any, name: str) -> float:
+def _relative_coordinate(
+    value: Any,
+    name: str,
+    *,
+    maximum: float = 1000.0,
+) -> float:
     try:
         numeric = float(value)
     except (TypeError, ValueError) as error:
         raise ValueError(f"bmoca_{name}_coordinate_invalid") from error
-    if not math.isfinite(numeric) or not 0 <= numeric <= 1000:
+    if not math.isfinite(numeric) or not 0 <= numeric <= maximum:
         raise ValueError(f"bmoca_{name}_coordinate_out_of_range")
     return numeric / 1000.0
 
