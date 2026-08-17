@@ -123,6 +123,15 @@ class ScreenshotResolver:
             direct = Path(raw_path).expanduser()
             if direct.is_absolute() and direct.is_file():
                 candidates.add(direct.resolve())
+            elif not direct.is_absolute():
+                for root in self.roots:
+                    candidate = (root / direct).resolve()
+                    try:
+                        candidate.relative_to(root)
+                    except ValueError:
+                        continue
+                    if candidate.is_file():
+                        candidates.add(candidate)
             basename = direct.name
             if basename:
                 candidates.update(self._alias_candidates(task_name, basename))
@@ -817,10 +826,12 @@ def _legacy_actions(step: dict[str, Any]) -> list[Any]:
 def _legacy_before_observation(step: dict[str, Any]) -> dict[str, Any]:
     source_context = _map(step.get("source_context"))
     source_context = _map(source_context.get("src_ctx")) or source_context
+    metadata = _map(step.get("metadata"))
     observation = _legacy_observation(
         step.get("state")
         or step.get("observation")
         or step.get("observation_before_act")
+        or metadata.get("observation_before_act")
         or step.get("before")
     )
     for key, value in source_context.items():

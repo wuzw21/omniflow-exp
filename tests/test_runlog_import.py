@@ -421,6 +421,61 @@ def test_explicit_converter_records_screenshot_reference(tmp_path: Path) -> None
     }
 
 
+def test_explicit_converter_aligns_nested_relative_screenshot_metadata(
+    tmp_path: Path,
+) -> None:
+    screenshot = tmp_path / "traces" / "trace-one" / "screenshots" / "state.png"
+    screenshot.parent.mkdir(parents=True)
+    Image.new("RGB", (32, 48), color="white").save(screenshot)
+    source = tmp_path / "traces" / "trace-one" / "runlog.json"
+    payload = {
+        "schema_version": "omniflow.canonical_run_log.v1",
+        "run_id": "legacy-source",
+        "goal": "Wait.",
+        "status": "succeeded",
+        "success": True,
+        "steps": [
+            {
+                "step_index": 0,
+                "before_state_id": "state-before",
+                "action": {"tool": "wait", "args": {"duration_ms": 1000}},
+                "result": {"success": True},
+                "metadata": {
+                    "observation_before_act": {
+                        "screenshot_path": (
+                            "traces/trace-one/screenshots/state.png"
+                        )
+                    }
+                },
+            }
+        ],
+    }
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    converted = convert_legacy_run_log(
+        payload,
+        task_name="WaitTask",
+        task_parameters={},
+        seed=None,
+        source_path=source,
+        source_states={
+            "state-before": {
+                "state_id": "state-before",
+                "xml": '<hierarchy><node bounds="[0,0][32,48]" /></hierarchy>',
+                "display": {"width": 32, "height": 48},
+            }
+        },
+        screenshot_roots=(tmp_path,),
+    )
+
+    assert converted["steps"][0]["observation"]["pixels"]["path"] == str(
+        screenshot.resolve()
+    )
+    assert converted["steps"][0]["observation"]["auxiliaries"]["state_id"] == (
+        "state-before"
+    )
+
+
 def test_source_adapter_keeps_official_xml_and_screenshot_reference(
     tmp_path: Path,
 ) -> None:
