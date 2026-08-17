@@ -16,6 +16,7 @@ from typing import Any, Iterable
 
 from src.experiment.mobilegpt_contract import MOBILEGPT_SUPPORTED_SOURCE_METHODS
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
+from src.experiment.result_schema import RESULT_FIELDS, compact_result_row
 
 SCHEMA_VERSION = "omniflow.androidworld.result_outcome.v2"
 LEGACY_SCHEMA_VERSION = "omniflow.androidworld.cell_outcome.v1"
@@ -528,11 +529,11 @@ def _write_markdown_report(
         f"- Model calls: {model_calls}",
         f"- Total tokens: {total_tokens}",
         "",
-        "| method | device | source_seed | evaluation_seed | status | validator | model_calls | total_tokens | actions | reuse | reuse_unit | reuse_evidence | episode_sec | wall_sec | error | evidence |",
-        "|---|---|---:|---:|---|---:|---:|---:|---:|---:|---|---|---:|---:|---|---|",
+        "| " + " | ".join(RESULT_FIELDS) + " |",
+        "|" + "|".join("---" for _ in RESULT_FIELDS) + "|",
     ]
     for row in rows:
-        official_success = row.get("official_validator_success")
+        official_success = row.get("validator_success")
         success = (
             "1" if official_success is True else "0" if official_success is False else ""
         )
@@ -541,22 +542,8 @@ def _write_markdown_report(
             + " | ".join(
                 _markdown_cell(value)
                 for value in (
-                    row.get("method"),
-                    row.get("device"),
-                    row.get("source_seed"),
-                    row.get("evaluation_seed"),
-                    row.get("status"),
-                    success,
-                    row.get("model_calls", 0),
-                    row.get("total_tokens", 0),
-                    row.get("actions_executed", 0),
-                    row.get("reuse_rate"),
-                    row.get("reuse_unit", ""),
-                    row.get("reuse_evidence_status", ""),
-                    row.get("episode_duration_sec", 0),
-                    row.get("outer_wall_sec", 0),
-                    row.get("failure_summary", ""),
-                    row.get("evidence_path", ""),
+                    row.get(field, "")
+                    for field in RESULT_FIELDS
                 )
             )
             + " |"
@@ -656,23 +643,36 @@ def write_batch_report(
                     counts["pending"] += 1
                 rows.append(row)
     destination.mkdir(parents=True, exist_ok=False)
+    detailed_results_jsonl = destination / "details.jsonl"
+    detailed_results_jsonl.write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    public_rows = [
+        compact_result_row(
+            row,
+            source_seed=source_seed,
+            evaluation_seed=evaluation_seed,
+        )
+        for row in rows
+    ]
     results_jsonl = destination / "results.jsonl"
     results_jsonl.write_text(
-        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in public_rows),
         encoding="utf-8",
     )
     results_csv = destination / "results.csv"
     with results_csv.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=list(rows[0]) if rows else [])
-        if rows:
+        writer = csv.DictWriter(file, fieldnames=list(RESULT_FIELDS))
+        if public_rows:
             writer.writeheader()
-            writer.writerows(rows)
-    model_calls = sum(int(row["model_calls"]) for row in rows)
-    total_tokens = sum(int(row["total_tokens"]) for row in rows)
+            writer.writerows(public_rows)
+    model_calls = sum(int(row["model_calls"]) for row in public_rows)
+    total_tokens = sum(int(row["total_tokens"]) for row in public_rows)
     results_markdown = destination / "results.md"
     _write_markdown_report(
         results_markdown,
-        rows=rows,
+        rows=public_rows,
         counts=counts,
         model_calls=model_calls,
         total_tokens=total_tokens,
@@ -693,6 +693,7 @@ def write_batch_report(
             sum(_number(row["outer_wall_sec"]) for row in rows), 6
         ),
         "results_jsonl": str(results_jsonl),
+        "details_jsonl": str(detailed_results_jsonl),
         "results_csv": str(results_csv),
         "results_markdown": str(results_markdown),
     }

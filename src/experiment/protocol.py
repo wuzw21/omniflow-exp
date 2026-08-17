@@ -51,21 +51,3 @@ RESULT_SUMMARY_FILE = "result_summary.json"
 RESULT_COMMANDS_FILE = "result_commands.jsonl"
 RESULT_MARKDOWN_FILE = "result_summary.md"
 RESULT_SCHEMA = "omniflow.androidworld.result.v1"
-RESULT_FIELDS = (
-    "task",
-    "method",
-    "device",
-    "source_seed",
-    "evaluation_seed",
-    "status",
-    "validator_success",
-    "model_calls",
-    "prompt_tokens",
-    "completion_tokens",
-    "total_tokens",
-    "actions_executed",
-    "episode_duration_sec",
-    "outer_wall_sec",
-    "error",
-    "evidence_paths",
-)

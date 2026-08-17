@@ -9,11 +9,10 @@ from PIL import Image
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment.androidworld import (
-    _compact_result_row,
     aggregate_task_results,
     write_metrics_summary,
 )
-from src.experiment.protocol import RESULT_FIELDS
+from src.experiment.result_schema import RESULT_FIELDS, compact_result_row
 from src.experiment.observation_evidence import (
     AndroidWorldEpisodeRecorder,
     androidworld_json_action_dict,
@@ -22,7 +21,7 @@ from src.experiment.observation_evidence import (
 
 
 def test_public_result_row_is_compact_and_keeps_details_out_of_the_row() -> None:
-    row = _compact_result_row(
+    row = compact_result_row(
         {
             "task_name": "Task",
             "method": "ours",

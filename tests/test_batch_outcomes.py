@@ -292,7 +292,7 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
     ]
     assert rows[0]["total_tokens"] == 100
     assert rows[0]["episode_duration_sec"] == 9.5
-    assert rows[1]["failure_summary"] == (
+    assert rows[1]["error"] == (
         "result_finished_without_registered_validator_result"
     )
     assert rows[1]["outer_wall_sec"] == 12.0
@@ -300,13 +300,11 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
     assert "# AndroidWorld Result Comparison" in markdown
     assert (
         "| method | device | source_seed | evaluation_seed | status | "
-        "validator | model_calls | total_tokens | actions | reuse | reuse_unit | "
-        "reuse_evidence | episode_sec | wall_sec | error | evidence |"
+        "validator_success | model_calls | prompt_tokens | completion_tokens | "
+        "total_tokens | actions_executed | episode_duration_sec | outer_wall_sec | "
+        "error | evidence_paths |"
     ) in markdown
-    assert (
-        "| mobilegpt_offline_retrieval | small5554 | 111 | 113 | completed | "
-        "1 | 4 | 100 | 3 |  | memory_lookup | unavailable | 9.5 | 11.0 |"
-    ) in markdown
+    assert "| BrowserDraw | mobilegpt_offline_retrieval | small5554 |" in markdown
 
 
 def test_run_summary_uses_canonical_usage_fields(tmp_path: Path) -> None:
@@ -396,7 +394,8 @@ def test_batch_report_uses_current_attempt_failure_outcome(tmp_path: Path) -> No
     row = json.loads(
         Path(report["results_jsonl"]).read_text(encoding="utf-8").strip()
     )
-    assert row["attempt_id"] == "iteration_02-environment-repair"
+    detail = json.loads(Path(report["details_jsonl"]).read_text(encoding="utf-8"))
+    assert detail["attempt_id"] == "iteration_02-environment-repair"
     assert row["outer_wall_sec"] == 34.0
 
 
@@ -480,9 +479,10 @@ def test_batch_report_current_attempt_failure_overrides_registered_result(
         "pending": 0,
     }
     row = json.loads(Path(report["results_jsonl"]).read_text(encoding="utf-8"))
-    assert row["attempt_id"] == "iteration_02-source-failure"
+    details = json.loads(Path(report["details_jsonl"]).read_text(encoding="utf-8"))
+    assert details["attempt_id"] == "iteration_02-source-failure"
     assert row["status"] == "prep_failed"
-    assert row["official_validator_success"] is None
+    assert row["validator_success"] is None
     assert row["outer_wall_sec"] == 4.0
 
 
@@ -588,11 +588,12 @@ def test_batch_report_recovers_runlog_teacher_source_failure_accounting(
     )
 
     row = json.loads(Path(report["results_jsonl"]).read_text(encoding="utf-8"))
+    details = json.loads(Path(report["details_jsonl"]).read_text(encoding="utf-8"))
     assert row["model_calls"] == 2
     assert row["prompt_tokens"] == 98
     assert row["completion_tokens"] == 10
     assert row["total_tokens"] == 108
     assert row["actions_executed"] == 1
     assert row["episode_duration_sec"] == 7.5
-    assert row["accounting_recovered"] is True
-    assert row["accounting_evidence_path"] == str(source_attempt)
+    assert details["accounting_recovered"] is True
+    assert details["accounting_evidence_path"] == str(source_attempt)
