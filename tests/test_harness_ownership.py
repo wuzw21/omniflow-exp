@@ -147,3 +147,49 @@ def test_bmoca_waits_for_online_booted_emulator(monkeypatch) -> None:
     )
 
     assert serial == "emulator-5554"
+
+
+def test_bmoca_snapshot_gate_waits_before_restarting_task_manager(monkeypatch) -> None:
+    events: list[str] = []
+
+    class TaskManager:
+        def stop(self):
+            events.append("stop")
+
+        def start(self, **_kwargs):
+            events.append("start")
+
+    class Simulator:
+        _adb_port = 5555
+
+        def load_state(self, _request):
+            events.append("load")
+            return "loaded"
+
+        def create_log_stream(self):
+            events.append("log_stream")
+            return object()
+
+    class Coordinator:
+        _task_manager = TaskManager()
+        _simulator = Simulator()
+
+        def _create_adb_call_parser(self):
+            return None
+
+    class Environment:
+        _coordinator = Coordinator()
+
+    monkeypatch.setattr(
+        bmoca_device_replay,
+        "_wait_for_emulator_ready",
+        lambda *_args, **_kwargs: events.append("ready"),
+    )
+    environment = Environment()
+    bmoca_device_replay._install_snapshot_ready_gate(
+        environment,
+        adb_path=bmoca_device_replay.Path("/sdk/adb"),
+    )
+
+    assert environment._coordinator.load_snapshot("snapshot") == "loaded"
+    assert events == ["stop", "load", "ready", "log_stream", "start"]

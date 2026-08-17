@@ -392,6 +392,10 @@ def _evaluate_episode(
             }
             env = environment_class(**kwargs)
             _wait_for_emulator_ready(env, adb_path=sdk / "platform-tools/adb")
+            _install_snapshot_ready_gate(
+                env,
+                adb_path=sdk / "platform-tools/adb",
+            )
             host = _BMocaHost(env, snapshot_id=episode.snapshot_id)
             host.reset()
         except Exception as error:  # noqa: BLE001 - environment boundary
@@ -562,6 +566,29 @@ def _wait_for_emulator_ready(
             last_state = str(error) or type(error).__name__
         time.sleep(1.0)
     raise RuntimeError(f"bmoca_emulator_not_ready:{serial}:{last_state}")
+
+
+def _install_snapshot_ready_gate(env: Any, *, adb_path: Path) -> None:
+    coordinator = getattr(env, "_coordinator", None)
+    if coordinator is None or getattr(coordinator, "_omniflow_ready_gate", False):
+        return
+    task_manager = getattr(coordinator, "_task_manager", None)
+    simulator = getattr(coordinator, "_simulator", None)
+    if task_manager is None or simulator is None:
+        raise RuntimeError("bmoca_snapshot_ready_gate_unavailable")
+
+    def load_snapshot(request: Any) -> Any:
+        task_manager.stop()
+        response = simulator.load_state(request)
+        _wait_for_emulator_ready(coordinator, adb_path=adb_path)
+        task_manager.start(
+            adb_call_parser_factory=coordinator._create_adb_call_parser,
+            log_stream=simulator.create_log_stream(),
+        )
+        return response
+
+    coordinator.load_snapshot = load_snapshot
+    coordinator._omniflow_ready_gate = True
 
 
 def _restore_writable_avd_disks(
