@@ -12,6 +12,8 @@ from dataclasses import dataclass
 import importlib
 import json
 import os
+import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 import subprocess
 import tempfile
@@ -83,6 +85,14 @@ class LunaAndroidWorldHarness:
         self.task_name = ""
         self.goal = ""
         self.task_parameters: dict[str, Any] = {}
+        self.source_runlog_path = str(
+            os.environ.get("OMNIFLOW_LUNA_SOURCE_RUNLOG_PATH") or ""
+        ).strip()
+        self.source_index_path = str(
+            os.environ.get("OMNIFLOW_LUNA_SOURCE_INDEX_PATH") or ""
+        ).strip()
+        self.source_reference = ""
+        self.source_reference_steps = 0
         self.step_index = 0
         self.actions_executed = 0
         self.done = False
@@ -153,6 +163,7 @@ class LunaAndroidWorldHarness:
         self.goal = str(goal or "").strip()
         values = dict(context or {}).get("task_parameters")
         self.task_parameters = dict(values) if isinstance(values, dict) else {}
+        self._load_source_reference()
 
     def update_current_task_context(self, task: Any) -> dict[str, Any]:
         params = getattr(task, "params", {})
@@ -355,6 +366,104 @@ class LunaAndroidWorldHarness:
                 return str(value)
         return None
 
+    def _load_source_reference(self) -> None:
+        path = Path(self.source_runlog_path).expanduser() if self.source_runlog_path else None
+        if (path is None or not path.is_file()) and self.source_index_path:
+            try:
+                index = json.loads(Path(self.source_index_path).expanduser().read_text(encoding="utf-8"))
+                row = index.get(self.task_name) if isinstance(index, dict) else None
+                candidate = row.get("retained_source_run_log") if isinstance(row, dict) else ""
+                if candidate:
+                    path = Path(str(candidate)).expanduser()
+                    self.source_runlog_path = str(path)
+            except Exception:
+                path = None
+        self.source_reference = ""
+        self.source_reference_steps = 0
+        if path is None or not path.is_file():
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not isinstance(payload, dict) or payload.get("success") is not True:
+            return
+        steps = payload.get("steps")
+        if not isinstance(steps, list):
+            return
+        rendered = []
+        for index, step in enumerate(steps[:32], start=1):
+            line = self._render_source_step(index, step)
+            if line:
+                rendered.append(line)
+        if rendered:
+            self.source_reference_steps = len(rendered)
+            self.source_reference = (
+                "Successful source RunLog semantic reference (guidance only):\n"
+                + "\n".join(rendered)
+                + "\nUse this as a plan template, not replay. Never reuse source "
+                  "coordinates, node IDs, or old input values; match the current "
+                  "screenshot/accessibility tree and current task parameters."
+            )
+
+    @classmethod
+    def _render_source_step(cls, index: int, step: Any) -> str:
+        action = step.get("action") if isinstance(step, dict) else None
+        if not isinstance(action, dict):
+            return ""
+        kind = str(action.get("action_type") or "").strip().lower()
+        if kind == "open_app":
+            app = str(action.get("app_name") or action.get("package_name") or "").strip()
+            return f"{index}. Open the matching app{(' ' + app) if app else ''}."
+        if kind in {"swipe", "scroll"}:
+            return f"{index}. Swipe/scroll {str(action.get('direction') or 'as needed')}."
+        if kind in {"press_key", "key_event"}:
+            return f"{index}. Press {str(action.get('key') or 'the relevant key')}."
+        if kind in {"input_text", "type_text", "set_text"}:
+            label = cls._source_node_labels(step)
+            return f"{index}. Enter the current task value into {label or 'the matching text field'}."
+        if kind in {"click", "tap", "long_press"}:
+            label = cls._source_node_labels(step)
+            verb = "Long-press" if kind == "long_press" else "Click"
+            return f"{index}. {verb} {label or 'the matching semantic UI control'}."
+        if kind in {"answer", "finished"}:
+            return f"{index}. Finish only after the requested end state is visible."
+        return f"{index}. Perform the matching {kind} action if exposed by the current UI."
+
+    @staticmethod
+    def _source_node_labels(step: dict[str, Any]) -> str:
+        action = step.get("action") or {}
+        try:
+            x, y = float(action.get("x")), float(action.get("y"))
+        except (TypeError, ValueError):
+            return ""
+        observation = step.get("observation") or {}
+        forest = observation.get("forest") if isinstance(observation, dict) else ""
+        if not isinstance(forest, str) or not forest.strip():
+            return ""
+        try:
+            root = ET.fromstring(forest)
+        except ET.ParseError:
+            return ""
+        matches = []
+        for node in root.iter():
+            bounds = str(node.attrib.get("bounds") or "")
+            nums = [float(v) for v in re.findall(r"-?\d+(?:\.\d+)?", bounds)]
+            if len(nums) != 4:
+                continue
+            left, top, right, bottom = nums
+            if left <= x <= right and top <= y <= bottom:
+                matches.append(((right-left) * (bottom-top), node))
+        if not matches:
+            return ""
+        node = min(matches, key=lambda item: item[0])[1]
+        labels = []
+        for key in ("content-desc", "text", "resource-id", "class"):
+            value = str(node.attrib.get(key) or "").strip()
+            if value and value not in labels:
+                labels.append(value)
+        return "UI control " + " / ".join(labels[:3]) if labels else ""
+
     def _cli_prompt(self, observation: Observation) -> str:
         xml = str(observation.xml or "")
         if len(xml) > 30000:
@@ -408,6 +517,7 @@ class LunaAndroidWorldHarness:
             "been achieved.\n\n"
             f"Task: {self.goal}\nTask parameters: {task_parameters}\n"
             f"Complete action history:\n{history}\n\n"
+            f"{self.source_reference}\n"
             f"Current accessibility XML:\n{xml}\n{hint}"
         )
 
@@ -452,6 +562,8 @@ class LunaAndroidWorldHarness:
                 "task_name": self.task_name,
                 "steps": len(self.trace),
                 "screenshots_per_step": True,
+                "source_reference_steps": self.source_reference_steps,
+                "source_runlog_path": self.source_runlog_path,
             },
             "llm_usage": _json_copy(usage),
             "execution_summary": {
