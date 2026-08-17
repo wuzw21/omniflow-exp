@@ -124,6 +124,9 @@ class _BMocaHost:
             return ActionResult(False, "bmoca_episode_ended")
         try:
             gesture = self._gesture(action)
+        except (TypeError, ValueError) as error:
+            return ActionResult(False, str(error))
+        try:
             self.timestep = self.env.step(np.asarray(gesture, dtype=float))
             self._xml_cache = ""
         except Exception as error:  # noqa: BLE001 - environment boundary
@@ -180,11 +183,15 @@ class _BMocaHost:
         raise ValueError(f"bmoca_official_action_unsupported:{action.tool}")
 
     def _screen_size(self) -> tuple[int, int]:
-        raw = getattr(getattr(self.env, "_coordinator", None), "_screen_size", None)
+        coordinator = getattr(self.env, "_coordinator", None)
+        raw = getattr(coordinator, "_screen_size", None)
         values = tuple(raw) if raw is not None else ()
         if len(values) != 2:
             raise RuntimeError("bmoca_screen_size_unavailable")
-        height, width = int(values[0]), int(values[1])
+        if bool(getattr(coordinator, "_is_tablet", False)):
+            width, height = int(values[0]), int(values[1])
+        else:
+            height, width = int(values[0]), int(values[1])
         if min(height, width) <= 0:
             raise RuntimeError("bmoca_screen_size_invalid")
         return height, width
