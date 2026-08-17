@@ -9,6 +9,7 @@ _SPEC = importlib.util.spec_from_file_location("manual_androidworld_harness", _H
 assert _SPEC and _SPEC.loader
 _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
+ManualAndroidWorld = _MODULE.ManualAndroidWorld
 _find_ui_element_index = _MODULE._find_ui_element_index
 
 
@@ -42,3 +43,41 @@ def test_find_ui_element_index_rejects_ambiguous_or_missing_targets():
 def test_find_ui_element_index_requires_one_selector():
     with pytest.raises(ValueError, match="exactly one"):
         _find_ui_element_index([], text="Submit", resource_name="submitButton")
+
+
+def test_wait_duration_uses_native_json_action_and_sleeps(monkeypatch):
+    """The friendly duration must not be forwarded to JSONAction."""
+
+    class FakeJSONAction:
+        def __init__(self, *, action_type):
+            self.action_type = action_type
+
+        def as_dict(self):
+            return {"action_type": self.action_type}
+
+    class FakeEnv:
+        def __init__(self):
+            self.actions = []
+
+        def execute_action(self, action):
+            self.actions.append(action)
+
+    harness = ManualAndroidWorld.__new__(ManualAndroidWorld)
+    harness._json_action = type("JsonActionModule", (), {"JSONAction": FakeJSONAction})
+    harness._env = FakeEnv()
+    harness._last_observation = {"pixels": None, "forest": {}, "ui_elements": [], "auxiliaries": {}}
+    harness._steps = []
+    harness._finished = False
+    harness._write_run_log = lambda **_: None
+
+    observation = {"pixels": None, "forest": {}, "ui_elements": [], "auxiliaries": {}}
+    monkeypatch.setattr(harness, "observe", lambda: {"observation": observation})
+    slept = []
+    monkeypatch.setattr(_MODULE.time, "sleep", slept.append)
+
+    result = harness.act({"action_type": "wait", "duration": 2.5})
+
+    assert result["action"]["duration"] == 2.5
+    assert [action.action_type for action in harness._env.actions] == ["wait"]
+    assert slept == [2.5]
+    assert harness._steps[0]["action"] == {"action_type": "wait", "duration": 2.5}

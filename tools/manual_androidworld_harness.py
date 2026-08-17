@@ -185,7 +185,14 @@ class ManualAndroidWorld:
         if self._last_observation is None:
             self.observe()
         action_record: dict[str, Any]
-        if action_payload.get("action_type") == "swipe_xy":
+        if action_payload.get("action_type") == "wait" and "duration" in action_payload:
+            # JSONAction's public wait action has no duration field.  Keep the
+            # native action contract and make the interactive protocol tolerant
+            # of a human-friendly duration by sleeping after the official wait.
+            duration = float(action_payload["duration"])
+            action = self._json_action.JSONAction(action_type="wait")
+            action_record = dict(action_payload)
+        elif action_payload.get("action_type") == "swipe_xy":
             # Coordinate-bounded swipe through AndroidWorld's own ADB
             # actuation helper.  This is needed for canvas widgets: the
             # release's JSONAction swipe is full-screen and cannot reach the
@@ -224,6 +231,8 @@ class ManualAndroidWorld:
         before = self._last_observation
         if action is not None:
             self._env.execute_action(action)
+        if action_payload.get("action_type") == "wait" and "duration" in action_payload:
+            time.sleep(max(0.0, duration))
         after = self.observe()["observation"]
         self._steps.append(
             {
