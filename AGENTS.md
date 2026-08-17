@@ -167,6 +167,13 @@ runtime and official B-MoCA reward. `ours` lets the Planner select Functions;
 `script_replay` selects the one complete Function directly, but may not own a
 second action mapper or executor.
 
+The AndroidWorld `ours` adapter runs exactly one persistent `OmniFlow.run()`
+cycle per task. The official episode runner's outer `step()` call is only an
+adapter invocation; it may not recreate OmniFlow with `max_steps=1`, accumulate
+separate partial RunResults, or own Function resume/fallback state. The
+official complexity budget may lower the canonical planner budget but never
+raise it.
+
 Local and host `9207` active checkouts are
 `~/Projects/Omni/OmniFlow-exp` on `main`. Before remote execution, both full
 commit SHAs must match and both tracked worktrees must be clean. Synchronize only

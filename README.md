@@ -147,4 +147,8 @@ attempt's `details` evidence instead of being repeated in every result row.
 - `scripts/exp/run_androidworld.sh`: only public experiment launcher
 - `schemas/oob/`: shared RunLog, Function, checker, and bridge schemas
 
+The AndroidWorld `ours` adapter invokes one complete, persistent OmniFlow cycle
+per task. AndroidWorld's outer episode step does not split that cycle or own a
+second planner budget, Function session, resume state, or fallback counter.
+
 No formal experiment is launched during code migration.

@@ -4,8 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from omniflow import RunResult
-from src.integrations.android_world.agent import _accumulate_results
+from omniflow import OmniFlowConfig, RunResult, RuntimeSettings
 from src.integrations.android_world.methods import (
     MethodAdapter,
     MethodAdapterContext,
@@ -214,14 +213,14 @@ def test_androidworld_complexity_budget_cannot_raise_omniflow_step_cap(
     monkeypatch,
 ) -> None:
     flow = SimpleNamespace(
-        config=SimpleNamespace(
-            runtime=SimpleNamespace(max_steps=1, max_fallback_steps=None)
-        )
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=20)),
     )
 
     monkeypatch.setattr(
         "src.integrations.android_world.agent.OmniFlow",
-        lambda *_args, **_kwargs: flow,
+        lambda *_args, **kwargs: (
+            setattr(flow, "config", kwargs["config"]) or flow
+        ),
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.AndroidWorldHost",
@@ -246,36 +245,83 @@ def test_androidworld_complexity_budget_cannot_raise_omniflow_step_cap(
     built = build_agent(env=SimpleNamespace(), store_path="store.json", max_steps=20)
     built.set_max_steps(60)
 
-    assert built.config.runtime.max_steps == 1
+    assert built.config.runtime.max_steps == 20
 
 
-def test_androidworld_step_continues_after_one_nonterminal_action(
+def test_androidworld_complexity_budget_can_lower_omniflow_step_cap(
+    monkeypatch,
+) -> None:
+    flow = SimpleNamespace(
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=20)),
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.agent.OmniFlow",
+        lambda *_args, **kwargs: (
+            setattr(flow, "config", kwargs["config"]) or flow
+        ),
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.agent.AndroidWorldHost",
+        lambda *_args, **_kwargs: SimpleNamespace(installed_packages=lambda: set()),
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.agent.load_transfer_state_catalog",
+        lambda _path: {},
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.agent.transfer_state_coverage",
+        lambda *_args: {
+            "required_state_count": 0,
+            "complete": True,
+            "missing_state_ids": [],
+        },
+    )
+    flow.store = SimpleNamespace(functions={})
+
+    from src.integrations.android_world.agent import build_agent
+
+    built = build_agent(env=SimpleNamespace(), store_path="store.json", max_steps=20)
+    built.set_max_steps(7)
+
+    assert built.config.runtime.max_steps == 7
+
+
+def test_androidworld_step_runs_one_complete_omniflow_cycle(
     monkeypatch,
 ) -> None:
     result = RunResult(
-        success=False,
+        success=True,
         error=None,
-        function_id=None,
-        actions_executed=1,
-        model_calls=1,
-        fallback_steps=0,
+        function_id="turn_on_bluetooth",
+        actions_executed=4,
+        model_calls=3,
+        fallback_steps=1,
         detail={
-            "done_reason": "step_completed",
-            "planner_steps": 1,
-            "llm_usage": {"model_calls": 1},
+            "done_reason": "finished",
+            "planner_steps": 3,
+            "llm_usage": {"model_calls": 3},
+            "function_resume": {"attempt_count": 1, "success_count": 1},
         },
     )
+    run_calls: list[str] = []
+
+    def run(goal: str, **_kwargs: object) -> RunResult:
+        run_calls.append(goal)
+        return result
+
     flow = SimpleNamespace(
-        config=SimpleNamespace(
-            runtime=SimpleNamespace(max_steps=20, max_fallback_steps=None)
-        ),
-        run=lambda *_args, **_kwargs: result,
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=20)),
+        run=run,
         store=SimpleNamespace(functions={}),
     )
 
     monkeypatch.setattr(
         "src.integrations.android_world.agent.OmniFlow",
-        lambda *_args, **_kwargs: flow,
+        lambda *_args, **kwargs: (
+            setattr(flow, "config", kwargs["config"])
+            or setattr(flow, "host", kwargs["host"])
+            or flow
+        ),
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.AndroidWorldHost",
@@ -297,38 +343,18 @@ def test_androidworld_step_continues_after_one_nonterminal_action(
     from src.integrations.android_world.agent import build_agent
 
     agent = build_agent(env=SimpleNamespace(), store_path="store.json", max_steps=20)
-    interaction = agent.step("Turn bluetooth on")
+    first = agent.step("Turn bluetooth on")
+    second = agent.step("Turn bluetooth on")
 
-    assert interaction.done is False
-    assert interaction.data["done_reason"] == "step_completed"
-    assert interaction.data["planner_steps"] == 1
-
-
-def test_androidworld_accumulates_planner_steps_separately_from_actions() -> None:
-    accumulated = _accumulate_results(
-        [
-            RunResult(
-                False,
-                actions_executed=3,
-                model_calls=1,
-                detail={"planner_steps": 1, "llm_usage": {"model_calls": 1}},
-            ),
-            RunResult(
-                False,
-                actions_executed=1,
-                model_calls=1,
-                detail={"planner_steps": 1, "llm_usage": {"model_calls": 1}},
-            ),
-        ],
-        max_steps=20,
-    )
-
-    assert accumulated.detail["planner_steps"] == 2
-    assert accumulated.actions_executed == 4
-    assert accumulated.execution_summary["steps"] == 4
-    assert accumulated.execution_summary["planner_steps"] == 2
-    assert accumulated.execution_summary["actions_executed"] == 4
-    assert accumulated.detail["runtime_limits"]["max_steps"] == 20
+    assert first.done is True
+    assert first.data["done_reason"] == "finished"
+    assert first.data["planner_steps"] == 3
+    assert first.data["actions_executed"] == 4
+    assert first.data["fallback"] is True
+    assert second.done is True
+    assert second.data["done_reason"] == "omniflow_cycle_already_completed"
+    assert run_calls == ["Turn bluetooth on"]
+    assert agent.host.state["last_result"] is result
 
 
 def test_androidworld_stops_at_the_planner_step_budget(monkeypatch) -> None:
@@ -338,18 +364,20 @@ def test_androidworld_stops_at_the_planner_step_budget(monkeypatch) -> None:
         model_calls=1,
         detail={
             "done_reason": "step_completed",
-            "planner_steps": 1,
+            "planner_steps": 2,
             "llm_usage": {"model_calls": 1},
         },
     )
     flow = SimpleNamespace(
-        config=SimpleNamespace(runtime=SimpleNamespace(max_steps=1)),
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=2)),
         run=lambda *_args, **_kwargs: result,
         store=SimpleNamespace(functions={}),
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.OmniFlow",
-        lambda *_args, **_kwargs: flow,
+        lambda *_args, **kwargs: (
+            setattr(flow, "config", kwargs["config"]) or flow
+        ),
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.AndroidWorldHost",
@@ -372,7 +400,6 @@ def test_androidworld_stops_at_the_planner_step_budget(monkeypatch) -> None:
 
     agent = build_agent(env=SimpleNamespace(), store_path="store.json", max_steps=2)
 
-    assert agent.step("Continue").done is False
     exhausted = agent.step("Continue")
     assert exhausted.done is True
     assert exhausted.data["planner_steps"] == 2
@@ -391,13 +418,15 @@ def test_androidworld_stops_after_a_fatal_planner_failure(monkeypatch) -> None:
         },
     )
     flow = SimpleNamespace(
-        config=SimpleNamespace(runtime=SimpleNamespace(max_steps=1)),
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=20)),
         run=lambda *_args, **_kwargs: result,
         store=SimpleNamespace(functions={}),
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.OmniFlow",
-        lambda *_args, **_kwargs: flow,
+        lambda *_args, **kwargs: (
+            setattr(flow, "config", kwargs["config"]) or flow
+        ),
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.AndroidWorldHost",

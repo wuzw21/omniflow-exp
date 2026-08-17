@@ -81,6 +81,12 @@ AndroidWorld setup; only repeated development runs may set
 `OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP=0` for an already initialized
 live emulator.
 
+For `ours`, the AndroidWorld Method Adapter invokes one complete
+`OmniFlow.run()` cycle on the task. The official episode runner contributes the
+native lifecycle and may lower the canonical step budget; it does not split the
+Planner into repeated one-step OmniFlow runs or maintain separate resume and
+fallback state.
+
 ## Checker execution
 
 Only rules registered on the active Function are considered. Before each

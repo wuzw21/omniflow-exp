@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import importlib
 import json
 import os
@@ -111,7 +112,6 @@ def build_agent(
         "last_result": None,
         "step_index": 0,
         "max_steps": max(1, int(max_steps)),
-        "results": [],
         "captured_transfer_states": {},
     }
     transfer_states = load_transfer_state_catalog(transfer_state_path)
@@ -130,7 +130,7 @@ def build_agent(
         installed_apps={package: package for package in raw_host.installed_packages()},
         config=OmniFlowConfig(
             runtime=RuntimeSettings(
-                max_steps=1,
+                max_steps=configured_max_steps,
                 max_fallback_steps=max_fallback_steps,
             ),
         ),
@@ -150,13 +150,17 @@ def build_agent(
         state.update(
             last_result=None,
             step_index=0,
-            results=[],
             captured_transfer_states={},
         )
         raw_host.reset(go_home=go_home)
 
     def set_max_steps(step_budget: int) -> None:
-        state["max_steps"] = min(configured_max_steps, max(1, int(step_budget)))
+        resolved_budget = min(configured_max_steps, max(1, int(step_budget)))
+        state["max_steps"] = resolved_budget
+        flow.config = replace(
+            flow.config,
+            runtime=replace(flow.config.runtime, max_steps=resolved_budget),
+        )
 
     def set_current_task(
         task_name: str,
@@ -180,18 +184,28 @@ def build_agent(
 
     def step(goal: str):
         goal_text = str(goal or "").strip()
+        if state["last_result"] is not None:
+            return make_agent_result(
+                done=True,
+                data={
+                    "summary": "OmniFlow cycle already completed.",
+                    "step_index": int(state["step_index"]),
+                    "planner_steps": 0,
+                    "source": "planner",
+                    "function_id": state["last_result"].function_id,
+                    "actions_executed": 0,
+                    "fallback": False,
+                    "error": None,
+                    "done_reason": "omniflow_cycle_already_completed",
+                    "answer": None,
+                },
+            )
         state["goal"] = goal_text
         result = flow.run(
             goal_text,
             experiment=Experiment(name="androidworld"),
         )
-        state["step_index"] = int(state["step_index"]) + 1
-        state["results"].append(result)
-        accumulated = _accumulate_results(
-            state["results"],
-            max_steps=int(state["max_steps"]),
-        )
-        planner_steps = int(accumulated.detail.get("planner_steps") or 0)
+        planner_steps = int(result.detail.get("planner_steps") or 0)
         finished_content = str(result.detail.get("finished_content") or "").strip()
         done_reason = str(result.detail.get("done_reason") or "").strip()
         planner_failed = str(result.error or "").startswith("vlm_planner_failed:")
@@ -204,21 +218,16 @@ def build_agent(
             "waiting_input",
         }:
             done_reason = "max_steps_exceeded"
-            accumulated = RunResult(
+            result = RunResult(
                 False,
-                accumulated.function_id,
-                accumulated.actions_executed,
-                accumulated.model_calls,
-                accumulated.fallback_steps,
+                result.function_id,
+                result.actions_executed,
+                result.model_calls,
+                result.fallback_steps,
                 "max_steps_exceeded",
-                accumulated.final_state,
-                {**accumulated.detail, "done_reason": done_reason},
+                result.final_state,
+                {**result.detail, "done_reason": done_reason},
             )
-        done = planner_failed or budget_exhausted or done_reason in {
-            "finished",
-            "abort",
-            "waiting_input",
-        }
         if done_reason == "finished" and finished_content:
             json_action = importlib.import_module("android_world.env.json_action")
             env.execute_action(
@@ -227,20 +236,23 @@ def build_agent(
                     text=finished_content,
                 )
             )
-        state["last_result"] = accumulated
+        state["step_index"] = 1
+        state["last_result"] = result
         return make_agent_result(
-            done=done,
+            done=True,
             data={
                 "summary": result.error or done_reason or "step completed",
-                "step_index": state["step_index"],
+                "step_index": 1,
                 "planner_steps": planner_steps,
                 "source": "planner",
                 "function_id": result.function_id,
                 "actions_executed": result.actions_executed,
                 "fallback": result.fallback_steps > 0,
-                "error": accumulated.error,
+                "error": result.error,
                 "done_reason": done_reason or (
-                    "step_completed" if result.actions_executed else "planner_failed"
+                    "omniflow_cycle_completed"
+                    if result.actions_executed
+                    else "planner_failed"
                 ),
                 "answer": finished_content or None,
             },
@@ -261,69 +273,6 @@ def build_agent(
 
 def _json_copy(value: Any) -> Any:
     return json.loads(json.dumps(value, ensure_ascii=False, default=str))
-
-
-def _accumulate_results(
-    results: list[RunResult],
-    *,
-    max_steps: int,
-) -> RunResult:
-    latest = results[-1]
-    prompt_tokens = completion_tokens = total_tokens = model_calls = 0
-    responses_with_usage = responses_without_usage = failed_calls = 0
-    actions_executed = fallback_steps = 0
-    planner_steps = 0
-    traces: list[dict[str, Any]] = []
-    for result in results:
-        summary = result.execution_summary
-        prompt_tokens += int(summary.get("prompt_tokens") or 0)
-        completion_tokens += int(summary.get("completion_tokens") or 0)
-        total_tokens += int(summary.get("total_tokens") or 0)
-        model_calls += int(summary.get("model_calls") or 0)
-        usage = result.detail.get("llm_usage")
-        if isinstance(usage, dict):
-            responses_with_usage += int(usage.get("responses_with_usage") or 0)
-            responses_without_usage += int(usage.get("responses_without_usage") or 0)
-            failed_calls += int(usage.get("failed_calls") or 0)
-        actions_executed += int(result.actions_executed or 0)
-        planner_steps += int(result.detail.get("planner_steps") or 0)
-        fallback_steps += int(result.fallback_steps or 0)
-        traces.extend(result.detail.get("trace") or ())
-    detail = dict(latest.detail)
-    detail["trace"] = traces
-    detail["planner_steps"] = planner_steps
-    detail["runtime_limits"] = {
-        **dict(detail.get("runtime_limits") or {}),
-        "max_steps": max(1, int(max_steps)),
-    }
-    detail["llm_usage"] = {
-        "model_calls": model_calls,
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": total_tokens,
-        "responses_with_usage": responses_with_usage,
-        "responses_without_usage": responses_without_usage,
-        "failed_calls": failed_calls,
-        "token_usage_status": (
-            "not_applicable"
-            if model_calls == 0
-            else "tracked"
-            if responses_with_usage == model_calls
-            else "partial"
-            if responses_with_usage > 0
-            else "unavailable"
-        ),
-    }
-    return RunResult(
-        latest.success,
-        latest.function_id,
-        actions_executed,
-        model_calls,
-        fallback_steps,
-        latest.error,
-        latest.final_state,
-        detail,
-    )
 
 
 __all__ = ["MODE_OMNIFLOW", "AndroidWorldHost", "build_agent"]
