@@ -1,4 +1,4 @@
-"""Official-device B-MoCA Function replay with zero model execution."""
+"""Official-device B-MoCA Function replay and native OmniFlow E2E evaluation."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ from omniflow import (
     ToolCall,
 )
 from omniflow.transfer.runtime import load_transfer_state_catalog
+from omniflow.vlm.planner import VLMPlanner
 
 _NAVIGATION_GESTURES = {
     "BACK": (252 / 256, 43 / 128, 252 / 256, 43 / 128),
@@ -286,6 +287,70 @@ def evaluate_device_function_replay(
 ) -> dict[str, Any]:
     """Run one stored Function on official B-MoCA snapshots."""
 
+    return _evaluate_device(
+        bmoca_root=bmoca_root,
+        store_path=store_path,
+        task_id=task_id,
+        environment_ids=environment_ids,
+        android_sdk_root=android_sdk_root,
+        android_avd_home=android_avd_home,
+        avd_template_home=avd_template_home,
+        run_headless=run_headless,
+        planner_model=None,
+        planner_provider="openai_compatible",
+        planner_timeout_seconds=60.0,
+    )
+
+
+def evaluate_device_omniflow_e2e(
+    *,
+    bmoca_root: str | Path,
+    store_path: str | Path,
+    task_id: str,
+    planner_model: str,
+    environment_ids: Sequence[str] = ("100", "101", "105"),
+    android_sdk_root: str | Path,
+    android_avd_home: str | Path,
+    avd_template_home: str | Path,
+    planner_provider: str = "openai_compatible",
+    planner_timeout_seconds: float = 60.0,
+    run_headless: bool = True,
+) -> dict[str, Any]:
+    """Run the native observe/recall/plan/act OmniFlow loop on B-MoCA."""
+
+    model = str(planner_model or "").strip()
+    if not model:
+        raise ValueError("bmoca_e2e_planner_model_required")
+    return _evaluate_device(
+        bmoca_root=bmoca_root,
+        store_path=store_path,
+        task_id=task_id,
+        environment_ids=environment_ids,
+        android_sdk_root=android_sdk_root,
+        android_avd_home=android_avd_home,
+        avd_template_home=avd_template_home,
+        run_headless=run_headless,
+        planner_model=model,
+        planner_provider=planner_provider,
+        planner_timeout_seconds=planner_timeout_seconds,
+    )
+
+
+def _evaluate_device(
+    *,
+    bmoca_root: str | Path,
+    store_path: str | Path,
+    task_id: str,
+    environment_ids: Sequence[str],
+    android_sdk_root: str | Path,
+    android_avd_home: str | Path,
+    avd_template_home: str | Path,
+    run_headless: bool,
+    planner_model: str | None,
+    planner_provider: str,
+    planner_timeout_seconds: float,
+) -> dict[str, Any]:
+
     root = Path(bmoca_root).expanduser().resolve()
     store = Path(store_path).expanduser().resolve()
     sdk = Path(android_sdk_root).expanduser().resolve()
@@ -305,6 +370,9 @@ def evaluate_device_function_replay(
                 avd_home=avd_home,
                 template_home=template_home,
                 run_headless=run_headless,
+                planner_model=planner_model,
+                planner_provider=planner_provider,
+                planner_timeout_seconds=planner_timeout_seconds,
             )
         )
     successes = sum(item["official_success"] for item in results)
@@ -314,10 +382,21 @@ def evaluate_device_function_replay(
             "task_id": task_id,
             "environment_ids": list(environment_ids),
             "execution": "official_bmoca_device",
-            "function_replay": "direct_single_function",
+            "function_replay": (
+                "native_omniflow_e2e"
+                if planner_model is not None
+                else "direct_single_function"
+            ),
+            "planner_model": planner_model,
+            "planner_provider": planner_provider if planner_model else None,
+            "planner_timeout_seconds": (
+                planner_timeout_seconds if planner_model else None
+            ),
             "checker": "optional_function_step_via_omnitransfer",
             "dp": "disabled",
-            "vlm_model_calls": 0,
+            "runtime_vlm_scope": (
+                "planner_only" if planner_model else "disabled"
+            ),
             "fallback_steps_allowed": 0,
             "source_coordinate_fallback": "disabled",
             "episode_isolation": "restore_writable_avd_disks_from_template",
@@ -335,6 +414,19 @@ def evaluate_device_function_replay(
                 item["classification"] == "method_failure" for item in results
             ),
             "model_calls": sum(item["model_calls"] for item in results),
+            "planner_steps": sum(item["planner_steps"] for item in results),
+            "prompt_tokens": sum(
+                int(item["llm_usage"].get("prompt_tokens") or 0)
+                for item in results
+            ),
+            "completion_tokens": sum(
+                int(item["llm_usage"].get("completion_tokens") or 0)
+                for item in results
+            ),
+            "total_tokens": sum(
+                int(item["llm_usage"].get("total_tokens") or 0)
+                for item in results
+            ),
             "fallback_steps": sum(item["fallback_steps"] for item in results),
             "checker_steps_executed": sum(
                 decision.get("status") == "executed"
@@ -366,6 +458,9 @@ def _evaluate_episode(
     avd_home: Path,
     template_home: Path,
     run_headless: bool,
+    planner_model: str | None,
+    planner_provider: str,
+    planner_timeout_seconds: float,
 ) -> dict[str, Any]:
     started = time.monotonic()
     env = host = None
@@ -407,10 +502,20 @@ def _evaluate_episode(
                 duration=time.monotonic() - started,
             )
         states = load_transfer_state_catalog(store_path.parent / "transfer_states.json")
+        planner = (
+            VLMPlanner(
+                model=planner_model,
+                provider=planner_provider,
+                timeout=planner_timeout_seconds,
+                max_steps=episode.max_steps,
+            )
+            if planner_model is not None
+            else None
+        )
         flow = OmniFlow(
             store_path,
             host=_StateHost(host, states),
-            planner=None,
+            planner=planner,
             installed_apps={},
             config=OmniFlowConfig(
                 runtime=RuntimeSettings(
@@ -426,8 +531,12 @@ def _evaluate_episode(
         function = functions[0]
         if function.input_schema.get("required"):
             raise RuntimeError("function_replay_arguments_required")
-        result = flow.call_tool(ToolCall(function.id, {}))
-        if result.model_calls:
+        result = (
+            flow.run(episode.instruction)
+            if planner is not None
+            else flow.call_tool(ToolCall(function.id, {}))
+        )
+        if planner is None and result.model_calls:
             raise RuntimeError(
                 f"zero_model_execution_violated:{result.model_calls}"
             )
@@ -454,6 +563,12 @@ def _evaluate_episode(
             fallback_steps=result.fallback_steps,
             trace=list(result.detail.get("trace") or []),
             checker_decisions=list(result.detail.get("checker_decisions") or []),
+            planner_steps=int(result.detail.get("planner_steps") or 0),
+            llm_usage=dict(result.detail.get("llm_usage") or {}),
+            function_resolution=dict(
+                result.detail.get("function_resolution") or {}
+            ),
+            done_reason=str(result.detail.get("done_reason") or "") or None,
         )
     except Exception as error:  # noqa: BLE001 - result boundary
         return _episode_result(
@@ -488,6 +603,10 @@ def _episode_result(
     fallback_steps: int = 0,
     trace: list[dict[str, Any]] | None = None,
     checker_decisions: list[dict[str, Any]] | None = None,
+    planner_steps: int = 0,
+    llm_usage: dict[str, Any] | None = None,
+    function_resolution: dict[str, Any] | None = None,
+    done_reason: str | None = None,
 ) -> dict[str, Any]:
     return {
         "task_id": episode.task_id,
@@ -503,6 +622,10 @@ def _episode_result(
         "duration_seconds": duration,
         "trace": list(trace or []),
         "checker_decisions": list(checker_decisions or []),
+        "planner_steps": int(planner_steps),
+        "llm_usage": dict(llm_usage or {}),
+        "function_resolution": dict(function_resolution or {}),
+        "done_reason": done_reason,
     }
 
 
@@ -687,4 +810,7 @@ def _relative_coordinate(
     return numeric / 1000.0
 
 
-__all__ = ["evaluate_device_function_replay"]
+__all__ = [
+    "evaluate_device_function_replay",
+    "evaluate_device_omniflow_e2e",
+]

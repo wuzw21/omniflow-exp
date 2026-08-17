@@ -1,9 +1,9 @@
 """B-MoCA replay comparisons and official-device Function replay evaluation.
 
 Offline source/target trace pairs support the existing comparison suites.  The
-device-e2e suite invokes the real OmniFlow Function replay path on official
-B-MoCA snapshots, with model calls, fallback, and source-coordinate replay
-disabled.
+device-e2e invokes direct Function replay on official B-MoCA snapshots.
+omniflow-e2e invokes the native observe/recall/plan/act loop with the official
+B-MoCA validator.  Both keep DP and source-coordinate replay disabled.
 """
 
 from __future__ import annotations
@@ -2815,6 +2815,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "mock-e2e",
             "function-replay",
             "device-e2e",
+            "omniflow-e2e",
         ),
         default="function-replay",
     )
@@ -2837,13 +2838,20 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--android-avd-home", type=Path)
     parser.add_argument("--avd-template-home", type=Path)
     parser.add_argument("--run-with-head", action="store_true")
+    parser.add_argument("--planner-model")
+    parser.add_argument(
+        "--planner-provider",
+        choices=("openai", "openai_compatible"),
+        default="openai_compatible",
+    )
+    parser.add_argument("--planner-timeout-sec", type=float, default=60.0)
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     environments = tuple(args.target_environments or ("101", "105"))
-    if args.suite == "device-e2e":
+    if args.suite in {"device-e2e", "omniflow-e2e"}:
         required = {
             "bmoca_root": args.bmoca_root,
             "store_path": args.store_path,
@@ -2855,19 +2863,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         missing = [name for name, value in required.items() if not value]
         if missing:
             raise SystemExit("device_e2e_arguments_required:" + ",".join(missing))
+        if args.suite == "omniflow-e2e" and not str(args.planner_model or "").strip():
+            raise SystemExit("omniflow_e2e_planner_model_required")
         from src.experiment.bmoca_device_replay import (
             evaluate_device_function_replay,
+            evaluate_device_omniflow_e2e,
         )
 
-        report = evaluate_device_function_replay(
-            bmoca_root=args.bmoca_root,
-            store_path=args.store_path,
-            task_id=args.task_id,
-            environment_ids=tuple(args.target_environments or ("100", "101", "105")),
-            android_sdk_root=args.android_sdk_root,
-            android_avd_home=args.android_avd_home,
-            avd_template_home=args.avd_template_home,
-            run_headless=not args.run_with_head,
+        common = {
+            "bmoca_root": args.bmoca_root,
+            "store_path": args.store_path,
+            "task_id": args.task_id,
+            "environment_ids": tuple(
+                args.target_environments or ("100", "101", "105")
+            ),
+            "android_sdk_root": args.android_sdk_root,
+            "android_avd_home": args.android_avd_home,
+            "avd_template_home": args.avd_template_home,
+            "run_headless": not args.run_with_head,
+        }
+        report = (
+            evaluate_device_omniflow_e2e(
+                **common,
+                planner_model=str(args.planner_model),
+                planner_provider=args.planner_provider,
+                planner_timeout_seconds=float(args.planner_timeout_sec),
+            )
+            if args.suite == "omniflow-e2e"
+            else evaluate_device_function_replay(**common)
         )
         _write_report(args.output.expanduser().resolve(), report)
         print(json.dumps(report["summary"], ensure_ascii=False, indent=2))

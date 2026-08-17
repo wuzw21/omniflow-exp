@@ -193,3 +193,58 @@ def test_bmoca_snapshot_gate_waits_before_restarting_task_manager(monkeypatch) -
 
     assert environment._coordinator.load_snapshot("snapshot") == "loaded"
     assert events == ["stop", "load", "ready", "log_stream", "start"]
+
+
+def test_bmoca_native_e2e_uses_planner_mode_and_preserves_accounting(
+    monkeypatch,
+) -> None:
+    episode = bmoca_device_replay._Episode(
+        task_id="chrome/open_a_new_tab_in_Chrome",
+        task_path=bmoca_device_replay.Path("/bmoca/task.csv"),
+        instruction="Open a new tab in Chrome.",
+        max_steps=5,
+        env_id="100",
+        snapshot_id="test_env_100",
+        avd_name="pixel_3_test_00",
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(bmoca_device_replay, "_configure_runtime", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(bmoca_device_replay, "_episodes", lambda *_args, **_kwargs: (episode,))
+
+    def evaluate(_episode, **kwargs):
+        captured.update(kwargs)
+        return bmoca_device_replay._episode_result(
+            episode,
+            official_success=True,
+            classification="success",
+            error=None,
+            duration=1.0,
+            actions_executed=2,
+            model_calls=3,
+            planner_steps=3,
+            llm_usage={
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "total_tokens": 120,
+            },
+        )
+
+    monkeypatch.setattr(bmoca_device_replay, "_evaluate_episode", evaluate)
+
+    report = bmoca_device_replay.evaluate_device_omniflow_e2e(
+        bmoca_root="/bmoca",
+        store_path="/store/store.json",
+        task_id=episode.task_id,
+        planner_model="qwen3-vl-plus",
+        environment_ids=("100",),
+        android_sdk_root="/sdk",
+        android_avd_home="/avd",
+        avd_template_home="/templates",
+    )
+
+    assert captured["planner_model"] == "qwen3-vl-plus"
+    assert report["configuration"]["function_replay"] == "native_omniflow_e2e"
+    assert report["summary"]["official_success_count"] == 1
+    assert report["summary"]["model_calls"] == 3
+    assert report["summary"]["total_tokens"] == 120
