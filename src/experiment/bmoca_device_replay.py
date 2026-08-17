@@ -163,14 +163,17 @@ class _BMocaHost:
         if action.tool == "click":
             x = _relative_coordinate(action.args.get("x"), "x")
             y = _relative_coordinate(action.args.get("y"), "y")
-            return y, x, y, x
+            touch_y, touch_x = self._touch_point(x, y)
+            return touch_y, touch_x, touch_y, touch_x
         if action.tool == "swipe":
             keys = ("x1", "y1", "x2", "y2")
             if all(action.args.get(key) is not None for key in keys):
                 x1, y1, x2, y2 = (
                     _relative_coordinate(action.args[key], key) for key in keys
                 )
-                return y1, x1, y2, x2
+                touch_y1, touch_x1 = self._touch_point(x1, y1)
+                touch_y2, touch_x2 = self._touch_point(x2, y2)
+                return touch_y1, touch_x1, touch_y2, touch_x2
         key = str(
             action.args.get("key") or action.args.get("keycode") or ""
         ).upper().removeprefix("KEYCODE_")
@@ -179,8 +182,20 @@ class _BMocaHost:
         elif action.tool == "press_home":
             key = "HOME"
         if key in _NAVIGATION_GESTURES:
-            return _NAVIGATION_GESTURES[key]
+            gesture = list(_NAVIGATION_GESTURES[key])
+            if self._is_tablet():
+                gesture[1], gesture[3] = 1 - gesture[1], 1 - gesture[3]
+            return tuple(gesture)
         raise ValueError(f"bmoca_official_action_unsupported:{action.tool}")
+
+    def _touch_point(self, x: float, y: float) -> tuple[float, float]:
+        if self._is_tablet():
+            return 1.0 - x, y
+        return y, x
+
+    def _is_tablet(self) -> bool:
+        coordinator = getattr(self.env, "_coordinator", None)
+        return bool(getattr(coordinator, "_is_tablet", False))
 
     def _screen_size(self) -> tuple[int, int]:
         coordinator = getattr(self.env, "_coordinator", None)
@@ -188,7 +203,7 @@ class _BMocaHost:
         values = tuple(raw) if raw is not None else ()
         if len(values) != 2:
             raise RuntimeError("bmoca_screen_size_unavailable")
-        if bool(getattr(coordinator, "_is_tablet", False)):
+        if self._is_tablet():
             width, height = int(values[0]), int(values[1])
         else:
             height, width = int(values[0]), int(values[1])
