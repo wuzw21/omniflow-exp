@@ -511,14 +511,16 @@ def _validate_source_index(
     index_path: Path,
     *,
     source_root: Path,
-    expected_tasks: int,
+    expected_tasks: int | None,
     task_names: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     resolved_index = index_path.expanduser().resolve()
     payload = json.loads(resolved_index.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or len(payload) != expected_tasks:
+    if not isinstance(payload, dict):
+        raise ValueError("source_index_must_be_object")
+    if expected_tasks is not None and len(payload) != expected_tasks:
         raise ValueError(
-            f"source_index_task_count_invalid:{len(payload) if isinstance(payload, dict) else 0}/{expected_tasks}"
+            f"source_index_task_count_invalid:{len(payload)}/{expected_tasks}"
         )
     selected_tasks = tuple(dict.fromkeys(task_names))
     missing_tasks = [task for task in selected_tasks if task not in payload]
@@ -758,7 +760,7 @@ def main(argv: list[str] | None = None) -> int:
                 memory_root = demo_memory
     elif native_mode:
         memory_root = None
-        expected_tasks = args.expected_tasks or 116
+        expected_tasks = args.expected_tasks
         source_index_value = str(args.source_index or "").strip()
         if not source_index_value:
             add("source_index", False, "--source-index is required")
@@ -776,7 +778,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 add(
                     "source_index",
-                    source_validation["task_count"] == expected_tasks,
+                    expected_tasks is None
+                    or source_validation["task_count"] == expected_tasks,
                     json.dumps(
                         {
                             "tasks": source_validation["task_count"],

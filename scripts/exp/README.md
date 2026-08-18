@@ -16,6 +16,9 @@ modules are implementation seams and must not be invoked as alternate runners.
 | B-MoCA campaign | `run_androidworld.sh --environment bmoca --all-tasks [--tasks TASK1,TASK2]` |
 | Memory refresh | `run_androidworld.sh --refresh-memory` |
 
+Source refresh validates the selected task and its frozen source lineage; it
+does not require unrelated tasks to exist in the source index.
+
 Both B-MoCA methods use the same Function/checker/OmniTransfer executor. `ours`
 uses the Planner to select a Function; `script_replay` directly selects the
 single complete Function and makes no model call.

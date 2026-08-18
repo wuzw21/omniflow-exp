@@ -310,8 +310,6 @@ def ensure_source_device(
         source_serial,
         "--require-kvm",
         "--require-device",
-        "--expected-tasks",
-        "116",
         "--source-index",
         str(_resolve_reference(args.memory_index, pointer["source_index"])),
         "--source-task",

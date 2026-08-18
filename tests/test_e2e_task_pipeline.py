@@ -594,6 +594,7 @@ def test_source_device_is_cold_restarted_when_already_ready(
     assert ("-s", "emulator-5560", "emu", "kill") in adb_calls
     assert result["launched"] is True
     assert "--require-contacts-ready" not in preflight_commands[0]
+    assert "--expected-tasks" not in preflight_commands[0]
     assert preflight_commands[0][preflight_commands[0].index("--android-world-root") + 1] == str(
         args.android_world_root
     )
