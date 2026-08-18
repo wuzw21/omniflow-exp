@@ -2018,6 +2018,22 @@ def _patch_androidworld_adb_output_sanitizer(
     return controller_type, original
 
 
+def _patch_androidworld_app_launch(adb_utils: Any) -> Any:
+    """Restart mapped apps before their official AndroidWorld launch."""
+
+    original = getattr(adb_utils, "launch_app", None)
+    if not callable(original):
+        raise RuntimeError("androidworld_launch_app_unavailable")
+
+    def launch_app(app_name: str, controller: Any) -> Any:
+        if adb_utils.get_adb_activity(app_name) is not None:
+            adb_utils.close_app(app_name, controller)
+        return original(app_name, controller)
+
+    adb_utils.launch_app = launch_app
+    return original
+
+
 def _patch_androidworld_chcon_compat(setup_module: Any) -> Any | None:
     """Treat an unsupported external-filesystem ``chcon`` as non-fatal.
 
@@ -4110,12 +4126,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     env = None
     adb_output_patch: tuple[type[Any], Any] | None = None
+    original_launch_app: Any | None = None
     try:
         _add_android_world_path(android_world_root)
 
         from android_world import checkpointer as checkpointer_lib
         from android_world import registry, suite_utils
-        from android_world.env import env_launcher
+        from android_world.env import adb_utils, env_launcher
         from android_world.env.setup_device import setup as aw_setup
         task_registry = registry.TaskRegistry()
         selected_task_names = [
@@ -4166,6 +4183,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 setup_module=aw_setup,
                 setup_apps=setup_app_list,
             )
+        original_launch_app = _patch_androidworld_app_launch(adb_utils)
         _prepare_androidworld_snapshot_restore(env, setup_app_list or ())
         if task_params:
             if len(selected_task_names) != 1:
@@ -4835,6 +4853,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return runtime_integrity_exit_code
         return 0
     finally:
+        if original_launch_app is not None:
+            adb_utils.launch_app = original_launch_app
         if adb_output_patch is not None:
             controller_type, original_execute_adb_call = adb_output_patch
             controller_type.execute_adb_call = original_execute_adb_call

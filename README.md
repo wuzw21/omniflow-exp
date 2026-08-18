@@ -164,7 +164,8 @@ registry ledger; it does not generate a second master matrix or run-record table
 The AndroidWorld `ours` adapter invokes one complete, persistent OmniFlow cycle
 per task. AndroidWorld's outer episode step does not split that cycle or own a
 second planner budget, Function session, resume state, or fallback counter.
-RunLog `open_app` packages pass unchanged into AndroidWorld's official action
-path, so no adapter-owned app-name alias registry exists.
+RunLog `open_app` stores only the package. At execution, the adapter uses the
+pinned AndroidWorld registry and launcher, after closing any stale app task;
+there is no adapter-owned app registry or alternate launcher.
 
 No formal experiment is launched during code migration.

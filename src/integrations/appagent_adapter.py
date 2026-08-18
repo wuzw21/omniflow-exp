@@ -28,6 +28,7 @@ from src.experiment.protocol import (
     SOURCE_SEED as APPAGENT_SOURCE_SEED,
 )
 from src.integrations.android_world.accessibility import androidworld_forest_xml
+from src.integrations.android_world.apps import resolve_androidworld_app_name
 from src.integrations.android_world.host import (
     androidworld_elements_xml,
     make_agent_result,
@@ -854,10 +855,14 @@ class AppAgentTeacherAgent:
                 ).strip()
                 if not package_name:
                     raise ValueError("appagent_teacher_open_app_name_missing")
+                app_name = resolve_androidworld_app_name(
+                    package_name,
+                    getattr(self.env, "controller", None),
+                )
                 self.env.execute_action(
                     self._new_action(
                         action_type="open_app",
-                        app_name=package_name,
+                        app_name=app_name,
                     )
                 )
                 self.teacher_actions_consumed += 1

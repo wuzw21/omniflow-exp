@@ -23,6 +23,7 @@ from src.integrations.android_world.launch import (
     _ExperimentAgentAdapter,
     _patch_androidworld_adb_output_sanitizer,
     _patch_androidworld_apk_install_compat,
+    _patch_androidworld_app_launch,
     _patch_androidworld_chcon_compat,
     _patch_androidworld_directory_clear,
     _patch_androidworld_optional_setup_click,
@@ -1674,6 +1675,12 @@ def test_actions_dispatch_only_through_official_androidworld_api(monkeypatch) ->
 
     module = SimpleNamespace(JSONAction=JSONAction)
     monkeypatch.setattr(
+        "src.integrations.android_world.host.resolve_androidworld_app_name",
+        lambda package_name, controller: (
+            "settings" if package_name == "com.android.settings" else package_name
+        ),
+    )
+    monkeypatch.setattr(
         "src.integrations.android_world.host.importlib.import_module",
         lambda name: module if name == "android_world.env.json_action" else None,
     )
@@ -1693,5 +1700,38 @@ def test_actions_dispatch_only_through_official_androidworld_api(monkeypatch) ->
     assert open_result.success is True
     assert [(action.action_type, action.x, action.y, action.app_name) for action in actions] == [
         ("click", 360.0, 320.0, None),
-        ("open_app", None, None, "com.android.settings"),
+        ("open_app", None, None, "settings"),
+    ]
+
+
+def test_androidworld_app_launch_restarts_mapped_app_before_opening() -> None:
+    calls: list[tuple[str, str]] = []
+    controller = object()
+    adb_utils = SimpleNamespace(
+        get_adb_activity=lambda app_name: (
+            "com.android.settings/.Settings" if app_name == "settings" else None
+        ),
+        close_app=lambda app_name, actual_controller: calls.append(
+            ("close", app_name)
+        )
+        if actual_controller is controller
+        else pytest.fail("unexpected controller"),
+        launch_app=lambda app_name, actual_controller: calls.append(
+            ("launch", app_name)
+        )
+        if actual_controller is controller
+        else pytest.fail("unexpected controller"),
+    )
+
+    original = _patch_androidworld_app_launch(adb_utils)
+    try:
+        adb_utils.launch_app("settings", controller)
+        adb_utils.launch_app("com.example.app", controller)
+    finally:
+        adb_utils.launch_app = original
+
+    assert calls == [
+        ("close", "settings"),
+        ("launch", "settings"),
+        ("launch", "com.example.app"),
     ]

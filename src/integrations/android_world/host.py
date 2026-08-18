@@ -16,6 +16,7 @@ from src.integrations.android_world.accessibility import (
     xml_covers_screen,
     xml_with_screen_size,
 )
+from src.integrations.android_world.apps import resolve_androidworld_app_name
 from src.integrations.android_world.state import snapshot_androidworld_state
 
 
@@ -398,7 +399,8 @@ class AndroidWorldHost:
                 payload["action_type"] = "swipe"
         elif action_name == "open_app":
             package = str(params.get("package_name") or params.get("app_name") or "")
-            payload["app_name"] = package
+            controller = getattr(self.env, "controller", self.env)
+            payload["app_name"] = resolve_androidworld_app_name(package, controller)
         signature = inspect.signature(action_class)
         return action_class(
             **{key: value for key, value in payload.items() if key in signature.parameters}
