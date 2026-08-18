@@ -24,6 +24,7 @@ from src.experiment.e2e_task_pipeline import (
     _parse_source_device,
     _report,
     _resolve_args,
+    _run_bmoca_result,
     _run_bmoca_method_results,
     _save_bmoca_function_once,
     _source_device_ready,
@@ -305,6 +306,68 @@ def test_bmoca_source_replay_is_a_hard_gate(change, qualified) -> None:
         **change,
     }
     assert _bmoca_source_replay_qualified(row) is qualified
+
+
+def test_bmoca_started_episode_failure_is_method_failure(
+    tmp_path: Path,
+) -> None:
+    task_root = tmp_path / "task"
+
+    def runner(_command: list[str], **kwargs: object) -> dict[str, object]:
+        environment = dict(kwargs["environment"])
+        output = Path(environment["OMNIFLOW_BMOCA_OUTPUT_PATH"])
+        output.mkdir(parents=True)
+        target_run_log = output / "target.run_log.json"
+        target_run_log.write_text("{}", encoding="utf-8")
+        (output / "summary.json").write_text(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "official_success": False,
+                            "method_success": False,
+                            "error": "Appium could not launch the target package",
+                            "run_log_evidence": {
+                                "target_run_log_path": str(target_run_log)
+                            },
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        return {"returncode": 0, "wall_sec": 1.0, "process_pid": 1234}
+
+    row = _run_bmoca_result(
+        args=SimpleNamespace(
+            python_bin=tmp_path / "python",
+            repo=tmp_path / "repo",
+            script=tmp_path / "repo/scripts/exp/run_androidworld.sh",
+            omnitransfer_root=tmp_path / "OmniTransfer",
+            bmoca_root=tmp_path / "BMoCA",
+            bmoca_android_env_root=tmp_path / "AndroidEnv",
+            android_sdk_root=tmp_path / "sdk",
+            mobilegpt_root=tmp_path / "MobileGPT",
+            formal_model="GLM-5.1",
+        ),
+        task="calculator/input_1_plus_1",
+        method="skilldroid_replay",
+        environment_id="106",
+        store_path=tmp_path / "store.json",
+        memory_path=tmp_path / "macro.json",
+        task_root=task_root,
+        avd_home=tmp_path / "avd/env_106",
+        appium_port=4729,
+        appium_system_port=8206,
+        emulator_console_port=5612,
+        emulator_adb_port=5613,
+        emulator_grpc_port=8560,
+        timeout_sec=10,
+        command_runner=runner,
+    )
+
+    assert row["status"] == "method_failure"
+    assert row["official_success"] is False
 
 
 def test_bmoca_pipeline_stops_task_after_failed_ours_source_gate(

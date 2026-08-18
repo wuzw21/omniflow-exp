@@ -2460,15 +2460,18 @@ def _run_bmoca_result(
     episode = results[0] if len(results) == 1 and isinstance(results[0], dict) else {}
     official_success = episode.get("official_success") is True
     error = str(episode.get("error") or "").strip()
+    evidence = episode.get("run_log_evidence")
+    evidence = evidence if isinstance(evidence, dict) else {}
+    validator_ran = bool(str(evidence.get("target_run_log_path") or "").strip())
     if not summary:
         error = error or f"bmoca_child_exit_{result.get('returncode')}"
         status = "environment_failure"
+    elif validator_ran:
+        status = "success" if official_success else "method_failure"
     elif _bmoca_environment_failure(error):
         status = "environment_failure"
     else:
         status = "success" if official_success else "method_failure"
-    evidence = episode.get("run_log_evidence")
-    evidence = evidence if isinstance(evidence, dict) else {}
     return {
         "task": task,
         "method": method,
