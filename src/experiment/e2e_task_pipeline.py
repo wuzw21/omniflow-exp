@@ -2060,7 +2060,7 @@ def _clone_bmoca_avd_home(
     return target_home
 
 
-def _canonical_bmoca_enhancement_transport(
+def _function_enhancement_transport(
     *,
     model: str,
     timeout_sec: float,
@@ -2143,7 +2143,7 @@ def _save_bmoca_function_once(
             source_run_log,
             store_path,
             enhance=True,
-            complete_json=_canonical_bmoca_enhancement_transport(
+            complete_json=_function_enhancement_transport(
                 model=args.formal_model,
                 timeout_sec=float(args.enhancement_timeout_sec),
                 usage=usage,

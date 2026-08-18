@@ -16,7 +16,7 @@ from src.experiment.batch_outcomes import record_result_outcome
 from src.experiment.e2e_task_pipeline import (
     Deadline,
     PipelinePhaseError,
-    _canonical_bmoca_enhancement_transport,
+    _function_enhancement_transport,
     _fixed_replay_source_step_width,
     _function_replay_success,
     _max_live_bmoca_cells,
@@ -298,7 +298,7 @@ def test_bmoca_offline_enhancement_calls_only_canonical_save_once(
 
     monkeypatch.setattr("src.experiment.e2e_task_pipeline.save_function", writer)
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._canonical_bmoca_enhancement_transport",
+        "src.experiment.e2e_task_pipeline._function_enhancement_transport",
         lambda **_: (lambda _prompt, _tool: "{}"),
     )
     args = SimpleNamespace(formal_model="GLM-5.1", enhancement_timeout_sec=180)
@@ -333,7 +333,7 @@ def test_bmoca_enhancement_failure_preserves_stage_and_usage(
         return fail
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._canonical_bmoca_enhancement_transport",
+        "src.experiment.e2e_task_pipeline._function_enhancement_transport",
         transport,
     )
     monkeypatch.setattr(
@@ -415,7 +415,7 @@ def test_bmoca_enhancement_uses_the_shared_complete_bundle_tool(
         "total_tokens": 0,
     }
 
-    complete = _canonical_bmoca_enhancement_transport(
+    complete = _function_enhancement_transport(
         model="GLM-5.1",
         timeout_sec=180,
         usage=usage,
