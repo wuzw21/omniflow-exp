@@ -6,7 +6,7 @@ from pathlib import Path
 from src.experiment.batch_outcomes import (
     concluded_result_keys,
     record_result_outcome,
-    write_batch_report,
+    summarize_results,
 )
 from src.experiment.mobilegpt_contract import MOBILEGPT_SOURCE_METHOD
 from src.integrations.android_world.launch import _write_task_results_summary
@@ -71,7 +71,7 @@ def test_record_prep_failure_preserves_reason_tokens_and_time(tmp_path: Path) ->
     outcome_path = record_result_outcome(
         outcomes_root=tmp_path / "outcomes",
         task_name="ExpenseAddSingle",
-        method="mobilegpt_offline_retrieval",
+        method="mobilegpt",
         device="small5554",
         device_serial="emulator-5554",
         attempt_id="iteration_01-test",
@@ -127,7 +127,7 @@ def test_concluded_result_keys_skip_immutable_failure_on_resume(tmp_path: Path) 
     record_result_outcome(
         outcomes_root=tmp_path / "outcomes",
         task_name="BrowserDraw",
-        method="mobilegpt_offline_retrieval",
+        method="mobilegpt",
         device="fold5564",
         device_serial="emulator-5564",
         attempt_id="iteration_01-test",
@@ -140,13 +140,13 @@ def test_concluded_result_keys_skip_immutable_failure_on_resume(tmp_path: Path) 
     concluded = concluded_result_keys(
         outcomes_root=tmp_path / "outcomes",
         task_name="BrowserDraw",
-        methods=("mobilegpt_offline_retrieval",),
+        methods=("mobilegpt",),
         devices=("small5554", "fold5564"),
         source_seed=111,
         evaluation_seed=113,
     )
 
-    assert concluded == {("mobilegpt_offline_retrieval", "fold5564")}
+    assert concluded == {("mobilegpt", "fold5564")}
 
 
 def test_environment_repair_retry_ignores_prior_attempt_outcomes(
@@ -215,7 +215,7 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
                 "rows": [
                     {
                         "task_name": "BrowserDraw",
-                        "method": "mobilegpt_offline_retrieval",
+                        "method": "mobilegpt",
                         "device": "small5554",
                         "official_validator_used": True,
                         "official_validator_success": True,
@@ -237,7 +237,7 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
     result_cells.write_text(
         json.dumps(
             {
-                "BrowserDraw|mobilegpt_offline_retrieval|small5554|111|113": {
+                        "BrowserDraw|mobilegpt|small5554|111|113": {
                     "registered_result_object_path": str(registered_result),
                     "official_validator_success": True,
                 }
@@ -247,13 +247,13 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
     )
     memory_index = tmp_path / "current.json"
     memory_index.write_text(
-        json.dumps({"result_cells": str(result_cells)}),
+        json.dumps({"canonical": {"result_cells": json.loads(result_cells.read_text())}}),
         encoding="utf-8",
     )
     record_result_outcome(
         outcomes_root=tmp_path / "outcomes",
         task_name="BrowserDraw",
-        method="mobilegpt_offline_retrieval",
+        method="mobilegpt",
         device="fold5564",
         device_serial="emulator-5564",
         attempt_id="iteration_01-report",
@@ -264,13 +264,11 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
         outer_wall_sec=12.0,
     )
 
-    report = write_batch_report(
-        report_root=tmp_path / "report",
+    report = summarize_results(
         memory_index=memory_index,
         outcomes_root=tmp_path / "outcomes",
-        source_index=source_index,
         tasks=("BrowserDraw",),
-        methods=("mobilegpt_offline_retrieval",),
+        methods=("mobilegpt",),
         devices=("small5554", "fold5564"),
         source_seed=111,
         evaluation_seed=113,
@@ -286,25 +284,8 @@ def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> N
     }
     assert report["model_calls"] == 4
     assert report["total_tokens"] == 100
-    rows = [
-        json.loads(line)
-        for line in Path(report["results_jsonl"]).read_text(encoding="utf-8").splitlines()
-    ]
-    assert rows[0]["total_tokens"] == 100
-    assert rows[0]["episode_duration_sec"] == 9.5
-    assert rows[1]["error"] == (
-        "result_finished_without_registered_validator_result"
-    )
-    assert rows[1]["outer_wall_sec"] == 12.0
-    markdown = Path(report["results_markdown"]).read_text(encoding="utf-8")
-    assert "# AndroidWorld Result Comparison" in markdown
-    assert (
-        "| method | device | source_seed | evaluation_seed | status | "
-        "validator_success | model_calls | prompt_tokens | completion_tokens | "
-        "total_tokens | actions_executed | episode_duration_sec | outer_wall_sec | "
-        "error | evidence_paths |"
-    ) in markdown
-    assert "| BrowserDraw | mobilegpt_offline_retrieval | small5554 |" in markdown
+    assert report["episode_duration_sec"] == 9.5
+    assert report["outer_wall_sec"] == 23.0
 
 
 def test_run_summary_uses_canonical_usage_fields(tmp_path: Path) -> None:
@@ -356,7 +337,7 @@ def test_batch_report_uses_current_attempt_failure_outcome(tmp_path: Path) -> No
     result_cells.write_text("{}", encoding="utf-8")
     memory_index = tmp_path / "current.json"
     memory_index.write_text(
-        json.dumps({"result_cells": str(result_cells)}),
+        json.dumps({"canonical": {"result_cells": {}}}),
         encoding="utf-8",
     )
     outcomes_root = tmp_path / "outcomes"
@@ -378,11 +359,9 @@ def test_batch_report_uses_current_attempt_failure_outcome(tmp_path: Path) -> No
             outer_wall_sec=outer_wall_sec,
         )
 
-    report = write_batch_report(
-        report_root=tmp_path / "report",
+    report = summarize_results(
         memory_index=memory_index,
         outcomes_root=outcomes_root,
-        source_index=source_index,
         tasks=("BrowserDraw",),
         methods=("fixed_replay",),
         devices=("fold5564",),
@@ -391,12 +370,7 @@ def test_batch_report_uses_current_attempt_failure_outcome(tmp_path: Path) -> No
         attempt_id="iteration_02-environment-repair",
     )
 
-    row = json.loads(
-        Path(report["results_jsonl"]).read_text(encoding="utf-8").strip()
-    )
-    detail = json.loads(Path(report["details_jsonl"]).read_text(encoding="utf-8"))
-    assert detail["attempt_id"] == "iteration_02-environment-repair"
-    assert row["outer_wall_sec"] == 34.0
+    assert report["outer_wall_sec"] == 34.0
 
 
 def test_batch_report_current_attempt_failure_overrides_registered_result(
@@ -416,7 +390,7 @@ def test_batch_report_current_attempt_failure_overrides_registered_result(
                 "rows": [
                     {
                         "task_name": "BrowserDraw",
-                        "method": "mobilegpt_offline_retrieval",
+                        "method": "mobilegpt",
                         "device": "small5554",
                         "official_validator_used": True,
                         "official_validator_success": True,
@@ -431,7 +405,7 @@ def test_batch_report_current_attempt_failure_overrides_registered_result(
     result_cells.write_text(
         json.dumps(
             {
-                "BrowserDraw|mobilegpt_offline_retrieval|small5554|111|113": {
+                "BrowserDraw|mobilegpt|small5554|111|113": {
                     "registered_result_object_path": str(registered_result),
                     "official_validator_success": True,
                 }
@@ -441,13 +415,13 @@ def test_batch_report_current_attempt_failure_overrides_registered_result(
     )
     memory_index = tmp_path / "current.json"
     memory_index.write_text(
-        json.dumps({"result_cells": str(result_cells)}),
+        json.dumps({"canonical": {"result_cells": json.loads(result_cells.read_text())}}),
         encoding="utf-8",
     )
     record_result_outcome(
         outcomes_root=tmp_path / "outcomes",
         task_name="BrowserDraw",
-        method="mobilegpt_offline_retrieval",
+        method="mobilegpt",
         device="small5554",
         device_serial="emulator-5554",
         attempt_id="iteration_02-source-failure",
@@ -458,13 +432,11 @@ def test_batch_report_current_attempt_failure_overrides_registered_result(
         outer_wall_sec=4.0,
     )
 
-    report = write_batch_report(
-        report_root=tmp_path / "report",
+    report = summarize_results(
         memory_index=memory_index,
         outcomes_root=tmp_path / "outcomes",
-        source_index=source_index,
         tasks=("BrowserDraw",),
-        methods=("mobilegpt_offline_retrieval",),
+        methods=("mobilegpt",),
         devices=("small5554",),
         source_seed=111,
         evaluation_seed=113,
@@ -478,12 +450,7 @@ def test_batch_report_current_attempt_failure_overrides_registered_result(
         "non_validator_failure": 1,
         "pending": 0,
     }
-    row = json.loads(Path(report["results_jsonl"]).read_text(encoding="utf-8"))
-    details = json.loads(Path(report["details_jsonl"]).read_text(encoding="utf-8"))
-    assert details["attempt_id"] == "iteration_02-source-failure"
-    assert row["status"] == "prep_failed"
-    assert row["validator_success"] is None
-    assert row["outer_wall_sec"] == 4.0
+    assert report["outer_wall_sec"] == 4.0
 
 
 def test_batch_report_recovers_runlog_teacher_source_failure_accounting(
@@ -498,7 +465,7 @@ def test_batch_report_recovers_runlog_teacher_source_failure_accounting(
     result_cells.write_text("{}", encoding="utf-8")
     memory_index = tmp_path / "current.json"
     memory_index.write_text(
-        json.dumps({"result_cells": str(result_cells)}),
+        json.dumps({"canonical": {"result_cells": {}}}),
         encoding="utf-8",
     )
     source_attempt = tmp_path / "source_attempt"
@@ -550,7 +517,7 @@ def test_batch_report_recovers_runlog_teacher_source_failure_accounting(
     outcome_path = record_result_outcome(
         outcomes_root=tmp_path / "outcomes",
         task_name="BrowserDraw",
-        method="mobilegpt_offline_retrieval",
+        method="mobilegpt",
         device="small5554",
         device_serial="emulator-5554",
         attempt_id="iteration_01-report",
@@ -574,26 +541,17 @@ def test_batch_report_recovers_runlog_teacher_source_failure_accounting(
     )
     outcome_path.write_text(json.dumps(legacy_outcome), encoding="utf-8")
 
-    report = write_batch_report(
-        report_root=tmp_path / "report",
+    report = summarize_results(
         memory_index=memory_index,
         outcomes_root=tmp_path / "outcomes",
-        source_index=source_index,
         tasks=("BrowserDraw",),
-        methods=("mobilegpt_offline_retrieval",),
+        methods=("mobilegpt",),
         devices=("small5554",),
         source_seed=111,
         evaluation_seed=113,
         attempt_id="iteration_01-report",
     )
 
-    row = json.loads(Path(report["results_jsonl"]).read_text(encoding="utf-8"))
-    details = json.loads(Path(report["details_jsonl"]).read_text(encoding="utf-8"))
-    assert row["model_calls"] == 2
-    assert row["prompt_tokens"] == 98
-    assert row["completion_tokens"] == 10
-    assert row["total_tokens"] == 108
-    assert row["actions_executed"] == 1
-    assert row["episode_duration_sec"] == 7.5
-    assert details["accounting_recovered"] is True
-    assert details["accounting_evidence_path"] == str(source_attempt)
+    assert report["model_calls"] == 2
+    assert report["total_tokens"] == 108
+    assert report["episode_duration_sec"] == 7.5

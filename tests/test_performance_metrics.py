@@ -35,7 +35,7 @@ def test_metrics_keep_failed_calls_and_method_wall_time() -> None:
 def test_aggregate_performance_metrics_groups_methods() -> None:
     rows = [
         {
-            "method": "ours",
+            "method": "omniflow",
             "performance_metrics": {
                 "method_wall_sec": 2.0,
                 "timing": {
@@ -74,4 +74,4 @@ def test_aggregate_performance_metrics_groups_methods() -> None:
     assert summary["timing"]["observe"]["p50_ms"] == 20.0
     assert summary["energy"]["measurement_available_count"] == 1
     assert summary["energy"]["estimated_mwh_total"] == 3.0
-    assert summary["by_method"]["ours"]["method_wall_sec"]["p95_sec"] == 2.0
+    assert summary["by_method"]["omniflow"]["method_wall_sec"]["p95_sec"] == 2.0

@@ -388,7 +388,7 @@ def register_attempt_summary(
     summary_path: Path,
     attempt_manifest_path: Path,
     runs_root: Path,
-    artifact_memory_index: Path | None = None,
+    local_data_index: Path | None = None,
 ) -> dict[str, Any]:
     """Register compact public rows and one detailed evidence block."""
 
@@ -572,15 +572,15 @@ def register_attempt_summary(
 
         appended = _append_ledger_records(runs_root / "registry.jsonl", ledger_records)
 
-    artifact_memory_updated = False
-    if artifact_memory_index is not None:
-        from src.experiment.artifact_memory import refresh_artifact_memory_from_pointer
+    local_data_updated = False
+    if local_data_index is not None:
+        from src.experiment.local_data import refresh_local_data_from_pointer
 
-        refresh_artifact_memory_from_pointer(
-            memory_index=artifact_memory_index,
+        refresh_local_data_from_pointer(
+            memory_index=local_data_index,
             additional_result_roots=(runs_root,),
         )
-        artifact_memory_updated = True
+        local_data_updated = True
 
     return {
         "task_name": task_name,
@@ -588,7 +588,7 @@ def register_attempt_summary(
         "registered_results_count": len(registered_paths),
         "ledger_records_appended": appended,
         "registered_results": registered_paths,
-        "artifact_memory_updated": artifact_memory_updated,
+        "local_data_updated": local_data_updated,
     }
 
 

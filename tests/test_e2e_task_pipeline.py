@@ -170,7 +170,7 @@ def test_mobilegpt_preparation_is_an_internal_pipeline_phase(
     ]
     assert "bash" not in captured
     assert "--prepare-mobilegpt-memory" not in captured
-    assert str(source_index) in captured
+    assert str(args.memory_index) in captured
     assert memory_root == tmp_path / "registered-mobilegpt"
     assert phase["status"] == "created"
 
@@ -637,8 +637,7 @@ def test_bmoca_enhancement_uses_the_shared_draft_edit_tool(
                                             '{"complete_function":{'
                                             '"function_id":"open_item",'
                                             '"name":"Open item",'
-                                            '"description":"Open the visible item."},'
-                                            '"subsegments":[]}'
+                                            '"description":"Open the visible item."}'
                                         ),
                                     )
                                 )
@@ -1033,7 +1032,7 @@ def test_blocked_cells_do_not_duplicate_shared_prep_accounting(
         mobilegpt_memory=None,
         appagent_memory=None,
         blocked_methods={
-            "ours": ("prep_failed", "function_asset", str(tmp_path / "failure.json"))
+            "omniflow": ("prep_failed", "function_asset", str(tmp_path / "failure.json"))
         },
         command_runner=lambda *args, **kwargs: (
             completed.add(
@@ -1048,9 +1047,9 @@ def test_blocked_cells_do_not_duplicate_shared_prep_accounting(
         ),
     )
 
-    ours = [row for row in recorded if row["method"] == "ours"]
-    assert len(ours) == 2
-    assert all(row["artifact_root"] is None for row in ours)
+    omniflow = [row for row in recorded if row["method"] == "omniflow"]
+    assert len(omniflow) == 2
+    assert all(row["artifact_root"] is None for row in omniflow)
 
 
 def test_zero_remaining_deadline_does_not_launch_child(tmp_path: Path) -> None:
@@ -1895,9 +1894,7 @@ def test_pipeline_report_always_materializes_four_report_formats(tmp_path: Path)
     assert summary["counts"]["pending"] == 0
     assert summary["model_calls"] == 1
     assert summary["total_tokens"] == 7
-    for field in ("results_jsonl", "results_csv", "results_markdown", "pipeline_markdown"):
-        assert Path(summary[field]).is_file()
     assert (attempt_root / "pipeline_summary.json").is_file()
-    assert len(Path(summary["results_jsonl"]).read_text(encoding="utf-8").splitlines()) == 10
+    assert summary["result_summary"]["counts"]["non_validator_failure"] == 10
     assert "tool_calls" not in summary
     assert "tokens" not in summary

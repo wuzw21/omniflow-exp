@@ -20,7 +20,7 @@ from typing import Any, Callable, Sequence
 from omniflow.core.trajectory import require_complete_source_run_log
 from omniflow.functions.assets import save_function
 from omniflow.vlm.model_config import resolve_openai_compatible_config
-from src.experiment.androidworld import ArchivedRunLog, build_fixed_replay_command
+from src.experiment.androidworld import CanonicalRunLog, build_fixed_replay_command
 from src.experiment.local_data import (
     canonical_mobilegpt_memory_from_memory,
     load_local_data,
@@ -29,7 +29,7 @@ from src.experiment.local_data import (
 from src.experiment.batch_outcomes import (
     concluded_result_keys,
     record_result_outcome,
-    write_batch_report,
+    summarize_results,
 )
 from src.experiment.protocol import (
     BMOCA_RESULT_TIMEOUT_SEC,
@@ -292,7 +292,6 @@ def ensure_source_device(
         time.sleep(1)
     else:
         raise RuntimeError(f"source_emulator_not_ready:{source_serial}")
-    pointer = _read_object(args.memory_index)
     preflight_path = attempt_root / "preflight" / "source_native.json"
     environment = dict(os.environ)
     environment["PYTHONPATH"] = os.pathsep.join(
@@ -321,7 +320,7 @@ def ensure_source_device(
         "--require-kvm",
         "--require-device",
         "--source-index",
-        str(_resolve_reference(args.memory_index, pointer["source_index"])),
+        str(args.memory_index),
         "--source-task",
         args.task,
         *(["--source-only"] if getattr(args, "source_only", False) else []),
@@ -638,7 +637,7 @@ def collect_replayed_source(
 ) -> tuple[Path, dict[str, Any], dict[str, Any]]:
     phase_root = attempt_root / "source" / "fixed_replay_capture"
     source_label, source_serial, source_console_port = args.source_device
-    item = ArchivedRunLog(
+    item = CanonicalRunLog(
         task=args.task,
         goal=str(source_run_log["goal"]),
         params=dict(source_run_log["task_parameters"]),
@@ -896,8 +895,7 @@ def prepare_mobilegpt_memory(
             "memory_root": str(existing["memory_root"]),
         }
     output_root = attempt_root / "assets" / "mobilegpt"
-    pointer = _read_object(args.memory_index)
-    source_index = _resolve_reference(args.memory_index, pointer["source_index"])
+    source_index = args.memory_index
     result = run_logged_command(
         [
             str(args.python_bin),
@@ -971,14 +969,13 @@ def prepare_appagent_memory(
             "memory_root": str(root),
         }
     root = attempt_root / "assets" / "appagent"
-    memory_pointer = _read_object(args.memory_index)
     command = [
         str(args.python_bin),
         "-m",
         "src.experiment.appagent_source",
         "prepare",
         "--index",
-        str(_resolve_reference(args.memory_index, memory_pointer["source_index"])),
+        str(args.memory_index),
         "--task",
         args.task,
         "--appagent-root",
@@ -1001,7 +998,7 @@ def prepare_appagent_memory(
             f"appagent_memory_prep_failed:{result['returncode']}",
             {**result, "model_calls": 0, "total_tokens": 0},
         )
-    manifest = _read_object(root / "appagent_demo_manifest.json")
+    manifest = _read_object(root / "appagent_manifest.json")
     usage = manifest.get("doc_generation_usage")
     usage = usage if isinstance(usage, dict) else {}
     return root, {
@@ -1084,7 +1081,7 @@ def _result_environment(
             mobilegpt_memory
         )
     if appagent_memory is not None:
-        environment["OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT"] = str(appagent_memory)
+        environment["OMNIFLOW_APPAGENT_MEMORY_ROOT"] = str(appagent_memory)
     return environment
 
 
@@ -1264,67 +1261,6 @@ def _blocked_all(
             )
 
 
-def _markdown_cell(value: Any) -> str:
-    return str(value if value is not None else "").replace("|", "\\|").replace(
-        "\n", " "
-    )
-
-
-def _write_pipeline_markdown(
-    path: Path,
-    *,
-    task: str,
-    attempt_id: str,
-    status: str,
-    wall_sec: float,
-    model_calls: int,
-    total_tokens: int,
-    phases: dict[str, Any],
-    results_markdown: str,
-) -> Path:
-    lines = [
-        f"# AndroidWorld E2E Task: {task}",
-        "",
-        f"- Attempt: `{attempt_id}`",
-        f"- Status: `{status}`",
-        f"- Outer wall seconds: {wall_sec}",
-        f"- Model calls: {model_calls}",
-        f"- Total tokens: {total_tokens}",
-        f"- Result table: `{results_markdown}`",
-        "",
-        "| phase | status | model_calls | total_tokens | wall_sec | error | evidence |",
-        "|---|---|---:|---:|---:|---|---|",
-    ]
-    for name, raw_phase in phases.items():
-        phase = raw_phase if isinstance(raw_phase, dict) else {}
-        evidence = (
-            phase.get("preflight")
-            or phase.get("source_run_log")
-            or phase.get("store")
-            or phase.get("memory_root")
-            or phase.get("log_path")
-            or ""
-        )
-        lines.append(
-            "| "
-            + " | ".join(
-                _markdown_cell(value)
-                for value in (
-                    name,
-                    phase.get("status", ""),
-                    phase.get("model_calls", 0),
-                    phase.get("total_tokens", 0),
-                    phase.get("wall_sec", 0),
-                    phase.get("error", ""),
-                    evidence,
-                )
-            )
-            + " |"
-        )
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
-
-
 def _report(
     *,
     args: argparse.Namespace,
@@ -1387,12 +1323,9 @@ def _report(
         }
         _write_json(attempt_root / "pipeline_summary.json", summary)
         return summary
-    pointer = _read_object(args.memory_index)
-    target_report = write_batch_report(
-        report_root=attempt_root / "report",
+    result_summary = summarize_results(
         memory_index=args.memory_index,
         outcomes_root=outcomes_root,
-        source_index=_resolve_reference(args.memory_index, pointer["source_index"]),
         tasks=(args.task,),
         methods=METHODS,
         devices=tuple(device[0] for device in DEVICES),
@@ -1410,7 +1343,7 @@ def _report(
         for phase in phases.values()
         if isinstance(phase, dict)
     )
-    counts = target_report["counts"]
+    counts = result_summary["counts"]
     status = (
         "complete"
         if counts["pending"] == 0
@@ -1418,20 +1351,8 @@ def _report(
         if deadline.expired
         else "partial"
     )
-    total_model_calls = int(target_report["model_calls"]) + prep_model_calls
-    total_tokens = int(target_report["total_tokens"]) + prep_total_tokens
-    pipeline_markdown = attempt_root / "pipeline.md"
-    _write_pipeline_markdown(
-        pipeline_markdown,
-        task=args.task,
-        attempt_id=attempt_id,
-        status=status,
-        wall_sec=deadline.elapsed,
-        model_calls=total_model_calls,
-        total_tokens=total_tokens,
-        phases=phases,
-        results_markdown=target_report["results_markdown"],
-    )
+    total_model_calls = int(result_summary["model_calls"]) + prep_model_calls
+    total_tokens = int(result_summary["total_tokens"]) + prep_total_tokens
     summary = {
         "schema_version": "omniflow.androidworld.e2e-task-report.v2",
         "immutable": True,
@@ -1445,11 +1366,7 @@ def _report(
         "counts": counts,
         "model_calls": total_model_calls,
         "total_tokens": total_tokens,
-        "target_report": target_report["summary"],
-        "results_jsonl": target_report["results_jsonl"],
-        "results_csv": target_report["results_csv"],
-        "results_markdown": target_report["results_markdown"],
-        "pipeline_markdown": str(pipeline_markdown),
+        "result_summary": result_summary,
         "phases": phases,
     }
     _write_json(attempt_root / "pipeline_summary.json", summary)
@@ -1630,7 +1547,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     except Exception as error:
         failure_phase = getattr(error, "phase", {})
         failure = _write_json(
-            attempt_root / "assets" / "ours_failure.json",
+            attempt_root / "assets" / "omniflow_failure.json",
             {"error": f"{type(error).__name__}: {error}"},
         )
         phases["function"] = {
@@ -1640,7 +1557,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "total_tokens": int(failure_phase.get("total_tokens") or 0),
             "error": str(error),
         }
-        blocked_methods["ours"] = (
+        blocked_methods["omniflow"] = (
             "prep_failed",
             "function_asset",
             str(failure),
@@ -1675,7 +1592,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "total_tokens": 0,
             "error": "canonical_function_single_source_call_required",
         }
-        blocked_methods["ours"] = (
+        blocked_methods["omniflow"] = (
             "prep_failed",
             "source_qualification",
             str(failure),
@@ -1700,7 +1617,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             phases["source_qualification"] = qualification
             if not qualification["qualified"]:
                 failure = Path(str(qualification["log_path"])).resolve()
-                blocked_methods["ours"] = (
+                blocked_methods["omniflow"] = (
                     "prep_failed",
                     "source_qualification",
                     str(failure),
@@ -1721,7 +1638,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 "total_tokens": 0,
                 "error": str(error),
             }
-            blocked_methods["ours"] = (
+            blocked_methods["omniflow"] = (
                 "prep_failed",
                 "source_qualification",
                 str(failure),
@@ -1762,7 +1679,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "total_tokens": int(failure_phase.get("total_tokens") or 0),
             "error": str(error),
         }
-        blocked_methods["mobilegpt_offline_retrieval"] = (
+        blocked_methods["mobilegpt"] = (
             "prep_failed",
             "source_memory",
             str(failure),
@@ -1788,7 +1705,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "total_tokens": int(failure_phase.get("total_tokens") or 0),
             "error": str(error),
         }
-        blocked_methods["appagent_demo"] = (
+        blocked_methods["appagent"] = (
             "prep_failed",
             "source_memory",
             str(failure),
@@ -2678,7 +2595,6 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     _append_bmoca_progress_event(progress_jsonl, rows[key])
             _write_bmoca_progress(progress_csv, rows)
             continue
-        store_path = task_root / "function" / "store.json"
         method_assets: dict[str, Path] = {}
         method_prep_errors: dict[str, str] = {}
         try:
