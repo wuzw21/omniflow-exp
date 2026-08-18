@@ -61,6 +61,8 @@ Rules:
 - `stability_reason` is mandatory. It must explain why the source-state/action
   sequence is deterministic across environments and remains replayable after
   caller-varying content is parameterized.
+- Describe only effects caused by actions inside the selected range. Treat a
+  condition already true in the first state as a precondition, not an effect.
 - Do not select a range whose behavior depends on a transient dialog, task
   completion, validator state, target device, or task-specific coincidence.
 - Do not create isolated click or long-press fragments.
@@ -109,6 +111,8 @@ Rules:
 - Use `set_target` only when `source_target` is non-empty. Copy that label
   exactly into `value`; do not paraphrase it.
 - Declare caller-varying values already present after the validated action edit.
+- Bind only source values stated directly in the RunLog goal. A current page
+  value absent from the goal is source state, not caller input.
 - Do not return a binding path. The compiler derives `text` for `input_text`
   and `target_description` for a source-proven semantic click.
 - The source step must be inside the named Function range.

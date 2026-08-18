@@ -79,7 +79,9 @@ Caller-varying visible targets such as an hour or category bind
 `target_description`; typed content binds `text`. The compiler derives this
 path from the validated action; the Agent does not author it. Coordinates,
 packages, waits, and directions are never parameters. An invented or
-paraphrased target fails validation.
+paraphrased target fails validation. A bound source value must occur directly
+in the RunLog goal; a current page value absent from the goal is source state,
+not caller input.
 
 Before a saved B-MoCA bundle may run cross-environment, its complete Function
 must pass env100 `script_replay` with official success, method success,

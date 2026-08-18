@@ -445,6 +445,68 @@ def test_enhancer_binds_source_proven_semantic_target(tmp_path) -> None:
     ]
 
 
+def test_enhancer_rejects_source_state_value_as_parameter(tmp_path) -> None:
+    run_log = androidworld_run_log(
+        [{"action_type": "click", "x": 500, "y": 500}],
+        observations=[
+            androidworld_state(
+                "current-minute",
+                forest=(
+                    '<hierarchy><node text="27" clickable="true" '
+                    'bounds="[400,400][600,600]" /></hierarchy>'
+                ),
+            )
+        ],
+        goal="Create an alarm at 06:30.",
+    )
+
+    def complete(_prompt: str, tool: dict) -> str:
+        required = tool["function"]["parameters"]["required"]
+        if required == ["complete_function", "subsegments"]:
+            return json.dumps(
+                {
+                    "complete_function": {
+                        "function_id": "open_minute_picker",
+                        "name": "Open minute picker",
+                        "description": "Open the minute picker from its current value.",
+                    },
+                    "subsegments": [],
+                }
+            )
+        if required == ["action_edits", "bindings"]:
+            return json.dumps(
+                {
+                    "action_edits": [
+                        {
+                            "function_id": "open_minute_picker",
+                            "step_index": 0,
+                            "operation": "set_target",
+                            "value": "27",
+                        }
+                    ],
+                    "bindings": [
+                        {
+                            "function_id": "open_minute_picker",
+                            "step_index": 0,
+                            "name": "minute",
+                            "description": "Requested alarm minute",
+                        }
+                    ],
+                }
+            )
+        return json.dumps({"checker_steps": []})
+
+    with pytest.raises(
+        ValueError, match="function_parameter_value_not_requested:minute"
+    ):
+        save_function(
+            run_log,
+            tmp_path / "store.json",
+            enhance=True,
+            complete_json=complete,
+        )
+
+
 def test_enhancer_rejects_invented_action_semantics(tmp_path) -> None:
     def invalid(prompt: str, tool: dict) -> str:
         value = json.loads(_draft_enhancer(prompt, tool))

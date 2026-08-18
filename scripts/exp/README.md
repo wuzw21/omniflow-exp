@@ -80,6 +80,9 @@ bindings, and checker rules. Normal and enhanced saves share one validation and
 Store writer. One invalid stage edit gets one correction opportunity; a timeout
 or transport failure is not retried, and nothing is persisted until every
 compiled Function passes the same validator.
+Descriptions may claim only effects caused inside the selected source range.
+A bound value must appear directly in the RunLog goal; an unrequested current
+page value is source state rather than caller input.
 The compiler derives parameter paths from validated actions: `input_text`
 binds `text`, and a source-proven semantic click binds `target_description`.
 The Agent does not author a path.

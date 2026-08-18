@@ -1530,6 +1530,9 @@ def _validate_parameter_draft(
             raise ValueError(f"function_parameter_path_missing:{path}") from error
         if _json_type(source_value) is None:
             raise ValueError(f"function_parameter_type_invalid:{path}")
+        requested_value = str(source_value).strip().casefold()
+        if requested_value and requested_value not in str(facts["goal"]).casefold():
+            raise ValueError(f"function_parameter_value_not_requested:{name}")
         targets.add(target)
         bindings.append(
             {
@@ -1694,7 +1697,10 @@ def _draft_split_prompt(
         "be established from the shown evidence, return no subsegment for that range. "
         "Omit any uncertain "
         "candidate, transient-dialog sequence, task-ending suffix, or task-specific "
-        "fragment. Use inclusive start_step_index and exclusive end_step_index. Each "
+        "fragment. A subsegment description may claim only effects caused by actions "
+        "inside its range; a condition already true in its first source state is a "
+        "precondition, not an effect. Use inclusive start_step_index and exclusive "
+        "end_step_index. Each "
         "stability_reason must state the stable precondition and repeatable semantic "
         "effect, including which varying content must later be parameterized. Do not "
         "create one-click fragments. Do not return actions, "
@@ -1731,7 +1737,9 @@ def _draft_parameters_prompt(
         "A current source-state value clicked only to open a picker or "
         "menu is not a caller parameter. For example, clicking the currently displayed "
         "minute before selecting the requested minute may receive set_target grounding, "
-        "but only the requested minute is bound. Reusing one parameter name on multiple "
+        "but only the requested minute is bound. Every bound source value must appear "
+        "directly in the shown goal; a value absent from the goal is source state, not "
+        "caller input. Reusing one parameter name on multiple "
         "steps is valid only when every bound source value is equal. A time, query, "
         "contact, quantity, or selected visible label explicitly varying with the goal "
         "must be a parameter. Coordinates, packages, waits, and directions are not "

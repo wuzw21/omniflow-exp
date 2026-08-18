@@ -77,6 +77,9 @@ its stable precondition, repeatable semantic effect, and any varying content
 that must be parameterized. Uncertain, transient-dialog, task-ending, and
 task-specific fragments are omitted; the complete RunLog Function remains the
 fallback and is never replaced by forced segmentation.
+Subsegment descriptions may claim only effects caused inside their source
+range. A bound source value must appear directly in the RunLog goal; an
+unrequested current page value is a precondition, not an input parameter.
 Every output is grounded in the same successful RunLog and goes through the
 same validator and Store writer. A rejected stage edit receives one bounded
 correction; transport failures fail immediately and no partial Function is
