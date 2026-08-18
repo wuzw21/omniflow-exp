@@ -283,6 +283,31 @@ def test_stage_validation_error_gets_one_bounded_correction(tmp_path) -> None:
     assert "parameters_stage_changed_function_logic" in prompts[2]
 
 
+def test_split_rejects_single_click_function_fragments(tmp_path) -> None:
+    def complete_json(prompt: str, _tool: dict) -> str:
+        stage = _stage_from_prompt(prompt)
+        plan = json.loads(_semantic_plan(stage))
+        if stage == "split":
+            fragment = _function("dismiss_prompt")
+            fragment["name"] = "Dismiss prompt"
+            fragment["description"] = "Click the dismiss control."
+            fragment["steps"] = [plan["functions"][0]["steps"][0]]
+            plan["functions"].append(fragment)
+            plan["arguments"]["dismiss_prompt"] = {}
+        return json.dumps(plan)
+
+    with pytest.raises(
+        ValueError,
+        match="function_enhancement_single_click_fragment_forbidden",
+    ):
+        save_function(
+            _authoring_run_log(),
+            tmp_path / "store.json",
+            enhance=True,
+            complete_json=complete_json,
+        )
+
+
 def test_checker_stage_cannot_register_another_functions_action(tmp_path) -> None:
     def complete_json(prompt: str, _tool: dict) -> str:
         stage = _stage_from_prompt(prompt)

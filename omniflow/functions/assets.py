@@ -1511,6 +1511,7 @@ def _validate_agent_trajectory(
     stage: str,
 ) -> None:
     source_steps = list(facts["steps"])
+    full_trajectory_present = False
     for raw_function in bundle["functions"]:
         function = parse_function_artifact(raw_function)
         raw_calls = bundle["arguments"].get(function.id, {})
@@ -1526,8 +1527,22 @@ def _validate_agent_trajectory(
                 source_steps,
                 allow_semantic_relocation=False,
             ) == tuple(range(len(source_steps))):
-                return
-    raise ValueError(f"function_enhancement_full_trajectory_required:{stage}")
+                full_trajectory_present = True
+                break
+        if full_trajectory_present:
+            break
+    if not full_trajectory_present:
+        raise ValueError(f"function_enhancement_full_trajectory_required:{stage}")
+    if stage == "split" and len(source_steps) > 1:
+        for raw_function in bundle["functions"]:
+            function = parse_function_artifact(raw_function)
+            if (
+                len(function.steps) == 1
+                and function.steps[0].action.tool in {"click", "long_press"}
+            ):
+                raise ValueError(
+                    "function_enhancement_single_click_fragment_forbidden"
+                )
 
 
 def _authoring_prompt(
