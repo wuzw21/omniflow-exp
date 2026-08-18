@@ -21,6 +21,8 @@ state, AVD topology, and revisions have one source:
 `config/paper_androidworld.json`.
 For GLM-5.1, `model.env` contains only `LLMTHU_API_KEY`; the endpoint URL comes
 from that canonical protocol and is exported internally.
+The isolated source AVD uses the API-33 `small_phone` profile matching the
+retained 720x1280 source trajectories; target AVDs remain separate instances.
 
 Run a task-major slice:
 

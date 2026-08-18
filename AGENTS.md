@@ -142,6 +142,9 @@ model endpoint, fold state, and pinned revisions must not be copied elsewhere.
 Device serials, console ports, AVD names, API levels, and emulator profiles are
 part of those protocol device records; shell and source collection must derive
 them instead of naming an AVD locally.
+The source AVD uses the API-33 `small_phone` geometry recorded by the retained
+720x1280 source RunLogs; source collection must not scale those coordinates
+onto a different display profile.
 Development overrides must be explicit. Retired source/format/accept/first/limit
 selectors are historical reader fields, not active options.
 

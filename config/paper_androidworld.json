@@ -17,9 +17,9 @@
       "label": "source5560",
       "serial": "emulator-5560",
       "console_port": 5560,
-      "avd": "AndroidWorldAvd",
+      "avd": "OmniFlowSourceSmall",
       "api_level": 33,
-      "profile": "pixel_6"
+      "profile": "small_phone"
     },
     "source_seed": 111,
     "evaluation_seed": 113,
