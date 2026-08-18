@@ -369,16 +369,48 @@ def test_androidworld_adb_output_removes_grpc_fork_diagnostics() -> None:
             )
 
     controller = Controller()
-    controller_type, original = _patch_androidworld_adb_output_sanitizer(
-        controller
-    )
+    patches = _patch_androidworld_adb_output_sanitizer(controller)
     try:
         response = controller.execute_adb_call(object())
     finally:
-        controller_type.execute_adb_call = original
+        for controller_type, original in patches:
+            controller_type.execute_adb_call = original
 
     assert response.generic.output == b"1697412907\n"
     assert int(response.generic.output.strip()) == 1697412907
+
+
+def test_androidworld_adb_output_sanitizes_a11y_refresh_original_env() -> None:
+    class OriginalEnv:
+        def execute_adb_call(self, _request):
+            return SimpleNamespace(
+                generic=SimpleNamespace(
+                    output=(
+                        b"I0818 08:14:27.756116 11386938 "
+                        b"ev_poll_posix.cc:593] FD from fork parent still in poll list\n"
+                        b"com.google.androidenv.accessibilityforwarder/Service\n"
+                    )
+                )
+            )
+
+    class Controller:
+        def __init__(self) -> None:
+            self._original_env = OriginalEnv()
+
+        def execute_adb_call(self, request):
+            return self._original_env.execute_adb_call(request)
+
+    controller = Controller()
+    patches = _patch_androidworld_adb_output_sanitizer(controller)
+    try:
+        response = controller._original_env.execute_adb_call(object())
+    finally:
+        for controller_type, original in patches:
+            controller_type.execute_adb_call = original
+
+    assert response.generic.output == (
+        b"com.google.androidenv.accessibilityforwarder/Service\n"
+    )
 
 
 def test_androidworld_chcon_compat_only_normalizes_transport_endpoint_failure() -> None:

@@ -2003,38 +2003,53 @@ def _patch_androidworld_apk_install_compat(setup_module: Any) -> Any | None:
 
 def _patch_androidworld_adb_output_sanitizer(
     controller: Any,
-) -> tuple[type[Any], Any]:
+) -> tuple[tuple[type[Any], Any], ...]:
     """Remove gRPC fork diagnostics injected into AndroidWorld ADB stdout."""
 
-    controller_type = type(controller)
-    original = getattr(controller_type, "execute_adb_call", None)
-    if not callable(original):
-        raise RuntimeError("androidworld_execute_adb_call_unavailable")
+    patches: list[tuple[type[Any], Any]] = []
+    targets = (controller, getattr(controller, "_original_env", None))
+    for target in targets:
+        if target is None:
+            continue
+        controller_type = type(target)
+        if any(patched_type is controller_type for patched_type, _ in patches):
+            continue
+        original = getattr(controller_type, "execute_adb_call", None)
+        if not callable(original):
+            if target is controller:
+                raise RuntimeError("androidworld_execute_adb_call_unavailable")
+            continue
 
-    def execute_adb_call(instance: Any, *args: Any, **kwargs: Any) -> Any:
-        response = original(instance, *args, **kwargs)
-        generic = getattr(response, "generic", None)
-        output = getattr(generic, "output", None)
-        if isinstance(output, (bytes, str)):
-            binary = isinstance(output, bytes)
-            text = output.decode("utf-8", errors="replace") if binary else output
-            clean_lines = [
-                line
-                for line in text.splitlines(keepends=True)
-                if not (
-                    ("fork_posix.cc:" in line or "ev_poll_posix.cc:" in line)
-                    and (
-                        "Other threads are currently calling into gRPC" in line
-                        or "FD from fork parent still in poll list" in line
+        def execute_adb_call(
+            instance: Any,
+            *args: Any,
+            _original: Any = original,
+            **kwargs: Any,
+        ) -> Any:
+            response = _original(instance, *args, **kwargs)
+            generic = getattr(response, "generic", None)
+            output = getattr(generic, "output", None)
+            if isinstance(output, (bytes, str)):
+                binary = isinstance(output, bytes)
+                text = output.decode("utf-8", errors="replace") if binary else output
+                clean_lines = [
+                    line
+                    for line in text.splitlines(keepends=True)
+                    if not (
+                        ("fork_posix.cc:" in line or "ev_poll_posix.cc:" in line)
+                        and (
+                            "Other threads are currently calling into gRPC" in line
+                            or "FD from fork parent still in poll list" in line
+                        )
                     )
-                )
-            ]
-            clean = "".join(clean_lines)
-            generic.output = clean.encode("utf-8") if binary else clean
-        return response
+                ]
+                clean = "".join(clean_lines)
+                generic.output = clean.encode("utf-8") if binary else clean
+            return response
 
-    controller_type.execute_adb_call = execute_adb_call
-    return controller_type, original
+        controller_type.execute_adb_call = execute_adb_call
+        patches.append((controller_type, original))
+    return tuple(patches)
 
 
 def _patch_androidworld_app_launch(adb_utils: Any) -> Any:
@@ -4119,7 +4134,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         task_random_seed=int(args.task_random_seed),
     )
     env = None
-    adb_output_patch: tuple[type[Any], Any] | None = None
+    adb_output_patches: tuple[tuple[type[Any], Any], ...] = ()
     original_launch_app: Any | None = None
     try:
         _add_android_world_path(android_world_root)
@@ -4163,7 +4178,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             grpc_port=int(args.console_port) + 3000,
             install_a11y_forwarding_app=not reuse_a11y_forwarder,
         )
-        adb_output_patch = _patch_androidworld_adb_output_sanitizer(
+        adb_output_patches = _patch_androidworld_adb_output_sanitizer(
             env.controller
         )
         _wait_for_androidworld_a11y(env)
@@ -4849,8 +4864,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         if original_launch_app is not None:
             adb_utils.launch_app = original_launch_app
-        if adb_output_patch is not None:
-            controller_type, original_execute_adb_call = adb_output_patch
+        for controller_type, original_execute_adb_call in adb_output_patches:
             controller_type.execute_adb_call = original_execute_adb_call
         if env is not None:
             env.close()
