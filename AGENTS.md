@@ -47,9 +47,10 @@ successful RunLog before the only Store writer runs.
 
 Stage ownership is strict: split owns Function semantics and action segments;
 parameters may only add schemas, bindings, and source arguments whose bound
-actions reproduce the split output; checker review may only move selected
-source-state-dependent formal actions into `checker_rules` on that same
-Function. Every selected checker action must have a later unselected formal
+actions reproduce the split output; checker review may only move selected,
+safely optional source-state-dependent formal actions into `checker_rules` on
+that same Function. Every selected checker action must be safe to skip without
+breaking the remaining formal path and must have a later unselected formal
 action so runtime has a pending-action check point. Checker review may not
 rewrite Function meaning, parameters, arguments, or unselected actions.
 

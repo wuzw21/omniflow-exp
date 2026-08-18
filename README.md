@@ -64,11 +64,12 @@ same Function-bundle tool generated from the checked-in contracts. Its schema
 is narrowed for each stage: split cannot add parameters or checkers, parameter
 binding cannot change Function identity or action order, and checker review can
 select only exact actions already registered on that Function. Checker review
-may move a source-state-dependent navigation, setup, interruption, or recovery
-action from the formal path into that Function's checker list. It cannot move a
-terminal action with no later formal check point, rewrite Function meaning,
-parameters, arguments, or unselected actions, duplicate formal actions, or
-replace the complete Function with one-click fragments.
+may move a safely optional source-state-dependent setup, interruption, recovery,
+or alternate-path navigation action from the formal path into that Function's
+checker list. It cannot move required navigation or a terminal action with no
+later formal check point, rewrite Function meaning, parameters, arguments, or
+unselected actions, duplicate formal actions, or replace the complete Function
+with one-click fragments.
 
 A deterministically rejected stage output receives one explicit correction
 opportunity with the validator error. Model transport failures fail immediately;

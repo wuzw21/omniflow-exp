@@ -1555,9 +1555,10 @@ def _authoring_prompt(
             "description, visibility, source states, action tools, and step order."
         ),
         "checkers": (
-            "Select which existing formal actions should run only when their RunLog "
-            "source state and mapped target are both present. This may include "
-            "context-dependent navigation, setup, interruption dismissal, or recovery. "
+            "Select only optional existing formal actions that should run when their "
+            "RunLog source state and mapped target are both present and are safe to "
+            "skip without breaking the remaining formal path. This may include optional "
+            "setup, interruption dismissal, recovery, or alternate-path navigation. "
             "Move each selected action to checker_rules on that same Function. Every "
             "selected action must have a later unselected formal action, because rules "
             "are evaluated only before pending formal actions. Do not change Function "
@@ -1698,12 +1699,13 @@ and never invent target-device state, target coordinates,
 validator logic, task-specific gates, or source-coordinate fallback. One Function is a
 reusable semantic operation, not one click. A checker belongs only to its Function and
 contains exactly source_state_id and action; never add a trigger expression, step number,
-or condition object. During checker review, move only actions whose execution is conditional
-on their RunLog source state and mapped target out of formal steps and into checker_rules on
-the Function that needs them. This can include context-dependent navigation, setup,
-interruption dismissal, or recovery. Every checker must have a later unselected formal action
-that provides a runtime check point. Never duplicate a formal action as a checker, move the
-terminal action into checker_rules, or create a standalone Function merely to hold a checker.
+or condition object. During checker review, move only optional actions whose execution is
+conditional on their RunLog source state and mapped target and that are safe to skip without
+breaking the remaining formal path. This can include optional setup, interruption dismissal,
+recovery, or alternate-path navigation. Every checker must have a later unselected formal
+action that provides a runtime check point. Never move required navigation or the terminal
+action into checker_rules, duplicate a formal action as a checker, or create a standalone
+Function merely to hold a checker.
 Checker actions must be transferable click, input_text, or long_press actions. Parameters must have
 source arguments that reproduce the recorded source action after binding. Return the full
 bundle even when this stage makes no change. Do not add commentary or extra keys.

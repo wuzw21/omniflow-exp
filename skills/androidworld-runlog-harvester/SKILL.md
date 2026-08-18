@@ -100,14 +100,14 @@ The three internal stages have different permissions:
    and source `arguments`; binding those arguments must reproduce the original
    RunLog actions exactly. Keep `checker_rules` empty.
 3. `checkers`: keep Function identities, meanings, parameters, and arguments
-   unchanged. Move only actions whose execution depends on their RunLog source
-   state and mapped target from `steps` into `checker_rules` on that same
-   Function. This may include context-dependent navigation, setup,
-   interruption-dismissal, or recovery. Every selected action must have a later
-   unselected formal action, because runtime evaluates rules only before pending
-   formal actions. Reindex remaining formal steps and their binding targets. If
-   no action is conditional, return the unchanged Function with an empty checker
-   list.
+   unchanged. Move only optional actions whose execution depends on their RunLog
+   source state and mapped target and that are safe to skip without breaking the
+   remaining formal path. This may include optional setup,
+   interruption-dismissal, recovery, or alternate-path navigation. Every
+   selected action must have a later unselected formal action, because runtime
+   evaluates rules only before pending formal actions. Reindex remaining formal
+   steps and their binding targets. If no action is safely optional, return the
+   unchanged Function with an empty checker list.
 
 The split stage must return every reusable contiguous semantic subsegment that
 the successful RunLog supports. Do not emit a subsegment that is only one click
@@ -116,11 +116,12 @@ still mandatory even when several subsegments are returned.
 
 The split stage chooses the complete Function and reusable subsegments. The
 parameter stage binds task-varying values without losing trajectory coverage.
-The checker stage may move source-state-dependent navigation, setup,
-interruption, or recovery actions from formal steps into the checker list of the
-Function that needs them. It may not duplicate a formal action as a checker,
-move a terminal action with no later formal check point, or create a one-click
-Function merely to hold a checker.
+The checker stage may move safely optional source-state-dependent setup,
+interruption, recovery, or alternate-path navigation actions from formal steps
+into the checker list of the Function that needs them. It may not move required
+navigation, duplicate a formal action as a checker, move a terminal action with
+no later formal check point, or create a one-click Function merely to hold a
+checker.
 
 ## Checker rules
 
