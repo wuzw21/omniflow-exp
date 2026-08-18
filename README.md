@@ -69,9 +69,13 @@ The core validates those small edits against the RunLog, preserves action
 order, compiles bindings and checkers, and emits the complete Function plus
 reusable contiguous subsegments. Invented packages, paraphrased targets, and
 ungrounded action changes are rejected.
-Every subsegment must include the Agent's `stability_reason`: why the source
-state/action sequence is deterministic, does not rely on a transient dialog or
-task completion, and remains replayable when varying content is parameterized.
+Subsegments are optional and are emitted only when the Agent identifies the
+source-state/action sequence as independently and stably replayable from its
+own first state. Every emitted subsegment must include `stability_reason`, naming
+its stable precondition, repeatable semantic effect, and any varying content
+that must be parameterized. Uncertain, transient-dialog, task-ending, and
+task-specific fragments are omitted; the complete RunLog Function remains the
+fallback and is never replaced by forced segmentation.
 Every output is grounded in the same successful RunLog and goes through the
 same validator and Store writer. A rejected stage edit receives one bounded
 correction; transport failures fail immediately and no partial Function is

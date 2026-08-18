@@ -134,6 +134,9 @@ def test_enhancer_edits_one_draft_in_three_small_stages(tmp_path) -> None:
     ]
     assert len(prompts) == 3
     assert "Prefer one reusable text-entry operation." in prompts[0]
+    assert "Subsegments are optional" in prompts[0]
+    assert "Omit any uncertain candidate" in prompts[0]
+    assert "stable precondition and repeatable semantic effect" in prompts[0]
     assert all('"schema_version":"omniflow.function.v2"' not in p for p in prompts)
 
 

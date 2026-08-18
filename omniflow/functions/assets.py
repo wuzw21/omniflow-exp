@@ -102,7 +102,10 @@ def function_authoring_tool(
     }
     contracts = {
         "split": {
-            "description": "Set complete and reusable semantic Functions on the draft.",
+            "description": (
+                "Name the complete Function and include only Agent-identified stable, "
+                "independently replayable semantic subsegments."
+            ),
             "required": ["complete_function", "subsegments"],
             "properties": {
                 "complete_function": metadata,
@@ -1640,12 +1643,15 @@ def _draft_split_prompt(
     }
     return (
         "Edit only the semantic structure of one Function draft. Name and describe "
-        "the mandatory complete-RunLog Function. Add only independently reusable, "
-        "stable contiguous subsegments using inclusive start_step_index and exclusive "
-        "end_step_index. For each subsegment, explain why its state/action sequence is "
-        "deterministic, not dependent on a transient dialog or task completion, and can "
-        "be replayed with varying content parameterized. Do not create one-click "
-        "fragments. Do not return actions, "
+        "the mandatory complete-RunLog Function. Subsegments are optional: identify and "
+        "return one only when you judge that the contiguous source-state/action sequence "
+        "is independently and stably replayable from its own first state. Do not infer "
+        "stability merely because the complete RunLog succeeded. Omit any uncertain "
+        "candidate, transient-dialog sequence, task-ending suffix, or task-specific "
+        "fragment. Use inclusive start_step_index and exclusive end_step_index. Each "
+        "stability_reason must state the stable precondition and repeatable semantic "
+        "effect, including which varying content must later be parameterized. Do not "
+        "create one-click fragments. Do not return actions, "
         "parameters, checkers, bindings, or a complete Function.\n\nDraft input:\n"
         + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
     )

@@ -46,13 +46,14 @@ source target as `target_description`.
 `save_function` deterministically preserves source action order and states,
 validates every requested action edit against the before/after RunLog states,
 compiles parameter schemas and bindings, registers checkers, and emits one
-large Function covering the complete successful trajectory plus every reusable
-contiguous semantic subsegment identified by the Agent. A subsegment is valid
-only when the Agent explicitly supplies a non-empty `stability_reason` stating
-why the contiguous source-state/action sequence is deterministic, independent
-of transient dialogs and task completion, and replayable after caller-varying
-content is parameterized. Subsegments never replace the complete Function, and
-meaningless one-click fragments are not saved. A checker action may not also
+large Function covering the complete successful trajectory plus optional
+reusable contiguous semantic subsegments identified by the Agent. The Agent
+must omit uncertain, transient-dialog, task-ending, and task-specific candidates
+instead of forcing a split. Every emitted subsegment must supply a non-empty
+`stability_reason` naming its stable precondition, repeatable semantic effect,
+and caller-varying content that must be parameterized. Subsegments never
+replace the complete Function, and meaningless one-click fragments are not
+saved. A checker action may not also
 remain a formal action in the same Function.
 
 The single model-facing tool is `edit_function_draft`. Its three strict stage

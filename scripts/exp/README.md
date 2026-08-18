@@ -66,12 +66,14 @@ in exactly three model calls: semantic Function ranges, parameter declarations,
 plus source-proven action semantics, and Function-local checker registrations.
 The middle edit may convert a launcher click to `open_app` only with the exact
 RunLog after-state package, or attach only the exact visible source target for
-semantic grounding and parameter binding. Every reusable subsegment must carry
-a non-empty `stability_reason` explaining why it is a deterministic contiguous
-source-state/action sequence rather than a transient-dialog, task-completion,
-or one-click fragment. `save_function` preserves exact evidence and action
-order, rejects invented semantic edits, and deterministically compiles the
-complete Function plus accepted subsegments,
+semantic grounding and parameter binding. A reusable subsegment is optional
+and is emitted only when the Agent identifies it as independently and stably
+replayable from its own first source state. Its non-empty `stability_reason`
+must name the stable precondition, repeatable semantic effect, and varying
+content to parameterize. Uncertain, transient-dialog, task-ending, and
+task-specific fragments are omitted. `save_function` preserves exact evidence
+and action order, rejects invented semantic edits, and deterministically
+compiles the complete Function plus accepted subsegments,
 bindings, and checker rules. Normal and enhanced saves share one validation and
 Store writer. One invalid stage edit gets one correction opportunity; a timeout
 or transport failure is not retried, and nothing is persisted until every
