@@ -4,13 +4,15 @@ import hashlib
 import os
 from pathlib import Path
 import subprocess
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 import xml.etree.ElementTree as ET
 
 from PIL import Image
 import pytest
 
 from omniflow import Action
+from src.integrations.android_world.apps import resolve_androidworld_app_name
 from src.integrations.android_world.host import AndroidWorldHost
 from src.integrations.android_world.launch import (
     ANDROID_PERMISSION_DENY_RESOURCE_IDS,
@@ -1701,3 +1703,33 @@ def test_actions_dispatch_only_through_official_androidworld_api(monkeypatch) ->
         ("click", 360.0, 320.0, None),
         ("open_app", None, None, "settings"),
     ]
+
+
+def test_androidworld_app_name_prefers_package_leaf_entry(monkeypatch) -> None:
+    controller = object()
+    activities = {
+        "application settings": (
+            "com.android.settings/.applications.InstalledAppDetails"
+        ),
+        "settings|system settings": "com.android.settings/.Settings",
+        "wifi settings": "com.android.settings/.Settings$WifiSettingsActivity",
+    }
+    adb_utils = SimpleNamespace(
+        get_all_apps=lambda actual_controller: (
+            activities.keys()
+            if actual_controller is controller
+            else pytest.fail("unexpected controller")
+        ),
+        get_adb_activity=lambda app_name: activities[app_name],
+    )
+    android_world = ModuleType("android_world")
+    android_world_env = ModuleType("android_world.env")
+    android_world_env.adb_utils = adb_utils
+    android_world.env = android_world_env
+    monkeypatch.setitem(sys.modules, "android_world", android_world)
+    monkeypatch.setitem(sys.modules, "android_world.env", android_world_env)
+
+    assert (
+        resolve_androidworld_app_name("com.android.settings", controller)
+        == "settings|system settings"
+    )
