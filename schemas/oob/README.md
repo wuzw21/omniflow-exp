@@ -20,8 +20,9 @@ formal action, the latest OmniTransfer page embedding first matches each
 unexecuted rule's source state to the current page, then OmniTransfer maps the
 source action onto the current observation. Only a high-confidence page and
 action-target match executes. Nonmatching rules remain eligible before later
-formal actions. There is no per-rule condition, trigger DSL, step-index
-trigger, global checker list, or default recovery rule.
+formal actions. A checker action therefore has at least one later formal action
+that provides a check point. There is no per-rule condition, trigger DSL,
+step-index trigger, global checker list, or default recovery rule.
 
 The offline Agent may author complete semantic Functions through the internal
 split, parameter-binding, and checker-review stages. Every stage returns one

@@ -56,8 +56,10 @@ checker-review stages each return a complete Function bundle. Normal and
 enhanced saves share one validation and Store writer.
 Checker review only selects existing actions from each Function and moves them
 into that same Function's `checker_rules`; it cannot rewrite the Function or
-register another Function's action. The same model tool is narrowed at each
-stage so fields owned by earlier stages are structurally immutable.
+register another Function's action. A selected action must depend on its source
+state and mapped target and must have a later formal action that provides a
+runtime check point. The same model tool is narrowed at each stage so fields
+owned by earlier stages are structurally immutable.
 One deterministically invalid stage bundle gets one correction opportunity with
 the exact validator error. A timeout or transport failure is not retried, and
 nothing is persisted until all three stages pass the same validator.

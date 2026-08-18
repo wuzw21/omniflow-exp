@@ -291,6 +291,79 @@ def test_checker_action_cannot_duplicate_a_formal_action_in_the_same_function(
         )
 
 
+def test_checker_action_requires_a_later_formal_action(tmp_path: Path) -> None:
+    run_log = androidworld_run_log(
+        [
+            {"action_type": "click", "x": 250, "y": 250},
+            {"action_type": "click", "x": 750, "y": 750},
+        ],
+        observations=[androidworld_state("menu"), androidworld_state("item")],
+        goal="Open the menu and select the item.",
+    )
+    function = {
+        "schema_version": "omniflow.function.v2",
+        "function_id": "open_menu_item",
+        "name": "Open menu item",
+        "description": "Open the menu and select the item.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+        "bindings": [],
+        "steps": [
+            {
+                "step_index": 0,
+                "source_state_id": "menu",
+                "action": {"tool": "click", "args": {"x": 250, "y": 250}},
+            },
+            {
+                "step_index": 1,
+                "source_state_id": "item",
+                "action": {"tool": "click", "args": {"x": 750, "y": 750}},
+            },
+        ],
+        "checker_rules": [],
+        "agent_visible": True,
+    }
+    terminal_as_checker = {
+        **function,
+        "steps": [function["steps"][0]],
+        "checker_rules": [
+            {
+                "source_state_id": "item",
+                "action": {"tool": "click", "args": {"x": 750, "y": 750}},
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="checker_requires_later_formal_action"):
+        save_function(
+            run_log,
+            tmp_path / "store.json",
+            enhance=True,
+            complete_json=lambda prompt, _tool: json.dumps(
+                {
+                    "functions": [
+                        terminal_as_checker
+                        if "stage checkers" in prompt
+                        else function
+                    ],
+                    "arguments": {"open_menu_item": {}},
+                }
+            ),
+        )
+
+    with pytest.raises(ValueError, match="checker_requires_later_formal_action"):
+        save_function(
+            run_log,
+            tmp_path / "direct-store.json",
+            functions=[terminal_as_checker],
+            arguments={"open_menu_item": {}},
+        )
+
+
 def test_save_function_accepts_one_complete_bmoca_runlog_path(tmp_path: Path) -> None:
     trace = tmp_path / "traces" / "trace-demo"
     screenshots = trace / "screenshots"

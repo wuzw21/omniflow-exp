@@ -913,6 +913,14 @@ def save_function(
                 allow_semantic_relocation=False,
             )
             if exact_coverage is not None:
+                source_index_groups = _function_source_index_groups(
+                    bound,
+                    steps,
+                    allow_semantic_relocation=False,
+                )
+                if source_index_groups is None:
+                    raise AssertionError("exact_source_index_groups_missing")
+                _validate_checker_checkpoints(*source_index_groups)
                 exact_source_coverages.append(exact_coverage)
             saved_source_calls.append(
                 {
@@ -1107,6 +1115,23 @@ def _function_source_indices(
     *,
     allow_semantic_relocation: bool,
 ) -> tuple[int, ...] | None:
+    groups = _function_source_index_groups(
+        function,
+        source_steps,
+        allow_semantic_relocation=allow_semantic_relocation,
+    )
+    if groups is None:
+        return None
+    formal_indices, checker_indices = groups
+    return tuple(sorted((*formal_indices, *checker_indices)))
+
+
+def _function_source_index_groups(
+    function: Any,
+    source_steps: list[dict[str, Any]],
+    *,
+    allow_semantic_relocation: bool,
+) -> tuple[tuple[int, ...], tuple[int, ...]] | None:
     formal_indices: list[int] = []
     cursor = 0
     for expected_step in function.steps:
@@ -1161,7 +1186,20 @@ def _function_source_indices(
         return None
     if coverage != tuple(range(coverage[0], coverage[-1] + 1)):
         return None
-    return coverage
+    return tuple(formal_indices), tuple(checker_indices)
+
+
+def _validate_checker_checkpoints(
+    formal_indices: tuple[int, ...] | list[int],
+    checker_indices: tuple[int, ...] | list[int],
+) -> None:
+    if any(
+        not any(
+            formal_index > checker_index for formal_index in formal_indices
+        )
+        for checker_index in checker_indices
+    ):
+        raise ValueError("checker_requires_later_formal_action")
 
 
 def _grounded_action_matches(
@@ -1418,6 +1456,7 @@ def _validate_agent_stage_contract(
                 for index in range(len(previous["steps"]))
                 if index not in selected
             ]
+            _validate_checker_checkpoints(remaining_indices, selected_indices)
             expected_steps = [
                 {**previous["steps"][old_index], "step_index": new_index}
                 for new_index, old_index in enumerate(remaining_indices)
@@ -1516,11 +1555,14 @@ def _authoring_prompt(
             "description, visibility, source states, action tools, and step order."
         ),
         "checkers": (
-            "Select only which existing formal actions are optional setup, "
-            "interruption dismissal, or recovery checkers. Move each selected action "
-            "to checker_rules on that same Function. Do not change Function meaning, "
-            "identity, order, parameters, arguments, or any unselected action. Copy "
-            "the complete Function set; checker_rules may contain only exact "
+            "Select which existing formal actions should run only when their RunLog "
+            "source state and mapped target are both present. This may include "
+            "context-dependent navigation, setup, interruption dismissal, or recovery. "
+            "Move each selected action to checker_rules on that same Function. Every "
+            "selected action must have a later unselected formal action, because rules "
+            "are evaluated only before pending formal actions. Do not change Function "
+            "meaning, identity, order, parameters, arguments, or any unselected action. "
+            "Copy the complete Function set; checker_rules may contain only exact "
             "source-state/action pairs moved from that same Function."
         ),
     }[stage]
@@ -1656,12 +1698,13 @@ and never invent target-device state, target coordinates,
 validator logic, task-specific gates, or source-coordinate fallback. One Function is a
 reusable semantic operation, not one click. A checker belongs only to its Function and
 contains exactly source_state_id and action; never add a trigger expression, step number,
-or condition object. During checker review, move only genuinely optional setup,
-interruption-dismissal, or recovery actions out of formal steps and into checker_rules on
-the Function that needs them. Never duplicate a formal action as a checker, never turn
-normal navigation or the task's final action into a checker, and never create a standalone
-Function merely to hold a checker. Checker actions must be transferable click, input_text,
-or long_press actions. Parameters must have
+or condition object. During checker review, move only actions whose execution is conditional
+on their RunLog source state and mapped target out of formal steps and into checker_rules on
+the Function that needs them. This can include context-dependent navigation, setup,
+interruption dismissal, or recovery. Every checker must have a later unselected formal action
+that provides a runtime check point. Never duplicate a formal action as a checker, move the
+terminal action into checker_rules, or create a standalone Function merely to hold a checker.
+Checker actions must be transferable click, input_text, or long_press actions. Parameters must have
 source arguments that reproduce the recorded source action after binding. Return the full
 bundle even when this stage makes no change. Do not add commentary or extra keys.
 
