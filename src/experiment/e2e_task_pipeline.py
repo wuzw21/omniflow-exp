@@ -342,6 +342,8 @@ def ensure_source_device(
 def _canonical_source(
     memory_index: Path,
     task: str,
+    *,
+    require_protocol_seed: bool = True,
 ) -> tuple[dict[str, Any], Path, dict[str, Any]]:
     registry = load_artifact_memory(memory_index)
     record = registry.get("canonical", {}).get("source_run_logs", {}).get(task)
@@ -353,7 +355,7 @@ def _canonical_source(
     run_log = require_complete_source_run_log(_read_object(path))
     if run_log["task_name"] != task:
         raise ValueError(f"canonical_source_task_mismatch:{task}")
-    if run_log["seed"] != SOURCE_SEED:
+    if require_protocol_seed and run_log["seed"] != SOURCE_SEED:
         raise ValueError(f"canonical_source_seed_mismatch:{task}:{run_log['seed']}")
     if run_log["success"] is not True:
         raise ValueError(f"canonical_source_not_successful:{task}")
@@ -538,7 +540,7 @@ def _captured_source_run_log(
             "task_name": source_run_log["task_name"],
             "goal": source_run_log["goal"],
             "task_parameters": dict(source_run_log["task_parameters"]),
-            "seed": source_run_log["seed"],
+            "seed": SOURCE_SEED,
             "status": "succeeded",
             "success": True,
             "validator": {
@@ -1593,6 +1595,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             _, source_path, run_log = _canonical_source(
                 args.memory_index,
                 args.task,
+                require_protocol_seed=False,
             )
             source_path, run_log, source_phase = collect_replayed_source(
                 args=args,

@@ -18,6 +18,9 @@ modules are implementation seams and must not be invoked as alternate runners.
 
 Source refresh validates the selected task and its frozen source lineage; it
 does not require unrelated tasks to exist in the source index.
+The historical successful RunLog supplies only the fixed action template. The
+new capture runs at source seed 111, records screenshots, makes zero model
+calls, and must pass the official validator before it is reported as collected.
 
 Both B-MoCA methods use the same Function/checker/OmniTransfer executor. `ours`
 uses the Planner to select a Function; `script_replay` directly selects the

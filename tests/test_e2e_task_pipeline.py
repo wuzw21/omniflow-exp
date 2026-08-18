@@ -783,6 +783,7 @@ def test_collect_replayed_source_uses_fixed_replay_and_captures_screenshots(
         [{"action_type": "click", "x": 50, "y": 50}],
         task_name=args.task,
     )
+    source["seed"] = 999
     source_path.write_text(json.dumps(source), encoding="utf-8")
     screenshot = tmp_path / "screen.png"
     screenshot.write_bytes(b"captured-screen")
@@ -884,6 +885,7 @@ def test_collect_replayed_source_uses_fixed_replay_and_captures_screenshots(
 
     assert captured_path.is_file()
     assert captured["steps"][0]["action"] == source["steps"][0]["action"]
+    assert captured["seed"] == SOURCE_SEED
     assert captured["steps"][0]["observation"]["pixels"]["sha256"] == screenshot_hash
     assert phase["model_calls"] == 0
     assert phase["total_tokens"] == 0
@@ -1015,7 +1017,7 @@ def test_source_only_pipeline_collects_replayed_source_and_stops(
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline._canonical_source",
-        lambda *_: ({}, source_path, {"task_name": args.task}),
+        lambda *_, **__: ({}, source_path, {"task_name": args.task}),
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.collect_replayed_source",
@@ -1058,7 +1060,7 @@ def test_pipeline_stops_when_canonical_function_store_is_missing(
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline._canonical_source",
-        lambda *_: ({}, source_path, {}),
+        lambda *_, **__: ({}, source_path, {}),
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.prepare_function_asset",
