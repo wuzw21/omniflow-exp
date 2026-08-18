@@ -2635,7 +2635,7 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             _write_bmoca_progress(progress_csv, rows)
             continue
 
-        ours_gate_passed = False
+        omniflow_gate_passed = False
         if "ours_replay" in method_assets and "100" not in avd_homes and "100" not in avd_failures:
             try:
                 avd_homes["100"] = _clone_bmoca_avd_home(
@@ -2681,8 +2681,8 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     _max_live_bmoca_results(gate_rows),
                 )
         gate_row = rows[gate_key]
-        ours_gate_passed = _bmoca_source_replay_qualified(gate_row)
-        if "ours_replay" in method_assets and not ours_gate_passed:
+        omniflow_gate_passed = _bmoca_source_replay_qualified(gate_row)
+        if "ours_replay" in method_assets and not omniflow_gate_passed:
             gate_error = (
                 "bmoca_source_replay_gate_failed:"
                 f"status={gate_row.get('status')},"
@@ -2758,7 +2758,7 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         for method in _BMOCA_METHODS:
             if method not in method_assets:
                 continue
-            if method == "ours_replay" and not ours_gate_passed:
+            if method == "ours_replay" and not omniflow_gate_passed:
                 continue
             method_environment_ids = (
                 tuple(

@@ -126,7 +126,6 @@ production-file map; tests mirror the module they exercise.
 | `androidworld.py` | one AndroidWorld result and source evidence |
 | `appagent_source.py` | AppAgent source-memory preparation |
 | `batch_outcomes.py` | in-memory result summarization |
-| `classify_result.py` | removed; result classification belongs to registration |
 | `development_emulator.py` | bounded emulator development preflight |
 | `e2e_task_pipeline.py` | only task/method/device scheduler |
 | `emulator_processes.py` | emulator process inspection |

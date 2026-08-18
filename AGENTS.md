@@ -317,9 +317,8 @@ the exact protocol/reuse method or `function_authoring` for shared authoring.
 Source and shared Function evidence still use the real source device and
 `function_authoring`, so every item is addressable as task + device + category
 (`task_device_c`) and method-bearing evidence never loses its method dimension.
-The five AndroidWorld methods are `fixed_replay`, `omniflow`,
-`mobilegpt`, `appagent`, and `t3a_hint`; B-MoCA reuse
-methods remain `ours_replay`, `mobilegpt_replay`, and `skilldroid_replay`.
+B-MoCA method selectors are a separate external contract documented only in
+`scripts/exp/README.md`; do not copy them into AndroidWorld method code.
 
 The inline `current.json` record carries the bundle classification, lineage,
 and hashes; do not create a second manifest, provenance registry, checker file,

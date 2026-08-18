@@ -54,6 +54,12 @@ def test_default_registry_preserves_unknown_selector_error() -> None:
         default_method_adapter_registry().build(_context("unknown"))
 
 
+def test_default_registry_uses_canonical_omniflow_owner_name() -> None:
+    registry = default_method_adapter_registry()
+
+    assert registry._adapters[0].name == "omniflow"
+
+
 def test_reuse_metrics_counts_function_actions_from_trace() -> None:
     metrics = reuse_metrics(
         "omniflow",

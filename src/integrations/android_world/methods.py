@@ -274,9 +274,9 @@ def default_method_adapter_registry() -> MethodAdapterRegistry:
     return MethodAdapterRegistry(
         (
             MethodAdapter(
-                name="ours_replay",
+                name="omniflow",
                 accepts=lambda selector: selector in {"omniflow", "fixed_replay"},
-                build=_build_omniflow_replay,
+                build=_build_omniflow,
             ),
             MethodAdapter(
                 name="mobilegpt",
@@ -297,7 +297,7 @@ def default_method_adapter_registry() -> MethodAdapterRegistry:
     )
 
 
-def _build_omniflow_replay(context: MethodAdapterContext) -> Any:
+def _build_omniflow(context: MethodAdapterContext) -> Any:
     build_agent = _required_dependency(
         context.build_omniflow_agent,
         "build_omniflow_agent",

@@ -12,10 +12,10 @@ from omniflow.core.model import (
     Observation,
     TransferResult,
 )
+from omniflow.runtime.core import prepare_action
 from omniflow.runtime.execution import (
     execute_function,
     execute_robust_action,
-    prepare_action,
 )
 
 

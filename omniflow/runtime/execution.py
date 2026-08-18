@@ -16,7 +16,6 @@ from omniflow.core.config import (
 )
 from omniflow.core.model import (
     Action,
-    ActionDecision,
     ActionResult,
     Function,
     Host,
@@ -246,7 +245,7 @@ async def execute_checker_step(
             ),
             {"status": "skipped", "reason": "checker_source_state_missing"},
         )
-    decision = await prepare_action(
+    decision = await prepare_core_action(
         action,
         observation=observation,
         plugins=plugins,
@@ -350,7 +349,7 @@ async def execute_robust_action(
     transfer_source_state = source_state
     if semantic_detail is not None and semantic_detail.get("status") == "resolved":
         transfer_source_state = None
-    decision = await prepare_action(
+    decision = await prepare_core_action(
         action,
         observation=observation,
         plugins=plugins,
@@ -379,21 +378,6 @@ async def execute_robust_action(
         detail=_merge_action_detail(decision.detail, semantic_detail),
     )
     return result
-
-
-async def prepare_action(
-    action: Action,
-    *,
-    observation: Observation,
-    plugins: PluginSet,
-    source_state: Observation | None = None,
-) -> ActionDecision:
-    return await prepare_core_action(
-        action,
-        observation=observation,
-        plugins=plugins,
-        source_state=source_state,
-    )
 
 
 def _merge_action_detail(

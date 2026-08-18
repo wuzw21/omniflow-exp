@@ -307,7 +307,7 @@ def test_bmoca_source_replay_is_a_hard_gate(change, qualified) -> None:
     assert _bmoca_source_replay_qualified(row) is qualified
 
 
-def test_bmoca_pipeline_stops_task_after_failed_ours_source_gate(
+def test_bmoca_pipeline_stops_task_after_failed_omniflow_source_gate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
