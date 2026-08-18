@@ -34,6 +34,7 @@ from src.experiment.batch_outcomes import (
 from src.experiment.protocol import (
     DEVICES,
     FORMAL_MODEL,
+    FORMAL_MODEL_BASE_URL,
     MAX_FALLBACK_STEPS,
     MAX_STEPS,
     METHODS,
@@ -2065,7 +2066,10 @@ def _canonical_bmoca_enhancement_transport(
         from openai import OpenAI
     except ImportError as error:
         raise RuntimeError("Install omniflow[llm] for Function enhancement") from error
-    api_key, base_url = resolve_openai_compatible_config(profile="llmthu")
+    api_key, base_url = resolve_openai_compatible_config(
+        profile="llmthu",
+        base_url=FORMAL_MODEL_BASE_URL,
+    )
     client = OpenAI(
         api_key=api_key or "not-required",
         base_url=base_url,

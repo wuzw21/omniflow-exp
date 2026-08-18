@@ -366,6 +366,7 @@ def test_bmoca_enhancement_uses_the_shared_complete_bundle_tool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, object] = {}
+    endpoint: dict[str, object] = {}
 
     class Completions:
         def create(self, **kwargs: object) -> SimpleNamespace:
@@ -397,9 +398,14 @@ def test_bmoca_enhancement_uses_the_shared_complete_bundle_tool(
             self.chat = SimpleNamespace(completions=Completions())
 
     monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=OpenAI))
+
+    def resolve_endpoint(**kwargs: object) -> tuple[str, str]:
+        endpoint.update(kwargs)
+        return "key", "https://example.invalid/v1"
+
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.resolve_openai_compatible_config",
-        lambda **_: ("key", "https://example.invalid/v1"),
+        resolve_endpoint,
     )
     usage = {
         "model_calls": 0,
@@ -416,6 +422,10 @@ def test_bmoca_enhancement_uses_the_shared_complete_bundle_tool(
     tool = function_authoring_tool(stage="split", current_bundle=None)
 
     assert complete("Return the bundle", tool) == '{"functions":[],"arguments":{}}'
+    assert endpoint == {
+        "profile": "llmthu",
+        "base_url": "https://llmapi.paratera.com/v1",
+    }
     assert captured["tools"] == [tool]
     assert captured["tool_choice"] == {
         "type": "function",
