@@ -144,6 +144,9 @@ def test_enhancer_edits_one_draft_in_three_small_stages(tmp_path) -> None:
         '"goal":"Dismiss an optional prompt and enter meeting notes."' in prompt
         for prompt in prompts
     )
+    assert any(
+        '"eligible_parameter_step_indices":[0,1]' in prompt for prompt in prompts
+    )
     assert all('"schema_version":"omniflow.function.v2"' not in p for p in prompts)
 
 

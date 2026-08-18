@@ -1271,10 +1271,16 @@ def _authoring_correction_prompt(
     stage_prompt: str,
     error: Exception,
 ) -> str:
+    correction = ""
+    if str(error).startswith("function_parameter_value_not_requested:"):
+        correction = (
+            " Remove that binding. A source-state value absent from the goal may "
+            "keep a source-proven action edit, but it cannot be an input parameter."
+        )
     return (
         f"{stage_prompt}\n\n"
         "The previous small decision was rejected: "
-        f"{type(error).__name__}: {error}. Correct only this decision and return "
+        f"{type(error).__name__}: {error}.{correction} Correct only this decision and return "
         "the same small schema once."
     )
 
@@ -1714,12 +1720,28 @@ def _draft_parameters_prompt(
     plan: dict[str, Any],
 ) -> str:
     source_indices = _function_indices(plan, len(facts["steps"]))
+    source_actions = [
+        _compact_source_actions(facts)[index] for index in source_indices
+    ]
+    goal = str(facts["goal"]).casefold()
+    eligible_parameter_indices: list[int] = []
+    for action in source_actions:
+        source_action = action["action"]
+        value = (
+            (source_action.get("args") or {}).get("text")
+            if source_action.get("tool") == "input_text"
+            else action.get("source_target")
+            if source_action.get("tool") == "click"
+            else ""
+        )
+        normalized_value = str(value or "").strip().casefold()
+        if normalized_value and normalized_value in goal:
+            eligible_parameter_indices.append(action["step_index"])
     evidence = {
         "goal": facts["goal"],
         "function": plan,
-        "source_actions": [
-            _compact_source_actions(facts)[index] for index in source_indices
-        ],
+        "eligible_parameter_step_indices": eligible_parameter_indices,
+        "source_actions": source_actions,
     }
     return (
         "Edit only source-proven action semantics and parameter declarations on the "
@@ -1739,7 +1761,10 @@ def _draft_parameters_prompt(
         "minute before selecting the requested minute may receive set_target grounding, "
         "but only the requested minute is bound. Every bound source value must appear "
         "directly in the shown goal; a value absent from the goal is source state, not "
-        "caller input. Reusing one parameter name on multiple "
+        "caller input. Return bindings only for eligible_parameter_step_indices "
+        f"{eligible_parameter_indices}; an empty list means no binding is allowed. A "
+        "step outside that list may still receive a source-proven action edit. Reusing "
+        "one parameter name on multiple "
         "steps is valid only when every bound source value is equal. A time, query, "
         "contact, quantity, or selected visible label explicitly varying with the goal "
         "must be a parameter. Coordinates, packages, waits, and directions are not "
