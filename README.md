@@ -113,6 +113,11 @@ There are no per-rule thresholds, step-number triggers, trigger DSLs, global
 checker pool, or source-coordinate passthrough. Checker actions are limited to
 transferable `click`, `input_text`, and `long_press` actions.
 
+Formal Function actions are page-bound too: before any state-dependent action,
+the same canonical page embedding threshold must match its RunLog source state.
+On mismatch, the Function fails back to the Planner without attempting target
+ranking. `open_app` and `wait` are the only state-independent actions.
+
 ## OmniTransfer
 
 All page identity and action transfer use the canonical

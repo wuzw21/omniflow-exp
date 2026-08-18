@@ -104,6 +104,12 @@ in the `protocol.checker` block of `config/paper_androidworld.json`. Pair
 confidence is evidence, not a trigger. Per-rule thresholds and condition
 switches are forbidden because they recreate a trigger language.
 
+Every source-state-dependent formal Function action uses the same canonical
+page-similarity threshold before action transfer. `open_app` and `wait` are the
+only state-independent exceptions. A page mismatch fails the Function and
+returns control to the normal Planner fallback; it must never send the source
+action to OmniTransfer on an unrelated page.
+
 Function success is an ordinary Planner tool result, not AndroidWorld task
 completion. The Planner may call more Functions or GUI actions before it
 explicitly finishes.

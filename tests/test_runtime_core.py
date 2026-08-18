@@ -787,6 +787,52 @@ def test_function_without_registered_checker_executes_no_checker(monkeypatch) ->
     assert host.actions == [Action("wait", {"duration_ms": 0})]
 
 
+def test_function_action_requires_its_source_page_before_transfer() -> None:
+    current = Observation(xml="<wrong-page/>", package_name="com.example")
+    source = Observation(xml="<source-page/>", package_name="com.example")
+    host = RecordingHost(current)
+    function = Function(
+        function_id="page_bound_action",
+        name="Page-bound action",
+        description="Execute one action only on its RunLog source page.",
+        steps=(
+            FunctionStep(
+                0,
+                Action("click", {"x": 100, "y": 200}),
+                "source-page",
+            ),
+        ),
+    )
+
+    async def transfer(*_args, **_kwargs):
+        raise AssertionError("transfer must not run on the wrong page")
+
+    result = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=current,
+            state_loader=lambda _state_id: source,
+            page_encoder=PageEncoder(
+                {
+                    "<wrong-page/>": (1.0, 0.0),
+                    "<source-page/>": (0.0, 1.0),
+                }
+            ),
+        )
+    )
+
+    assert result.success is False
+    assert result.error == "function_page_similarity_too_low"
+    assert result.actions_executed == 0
+    assert result.detail["page"] == {
+        "similarity": 0.0,
+        "minimum_similarity": 0.9,
+    }
+    assert host.actions == []
+
+
 def test_checker_rules_reject_actions_without_transferable_targets() -> None:
     from omniflow.runtime.checker import validate_checker_rule
 

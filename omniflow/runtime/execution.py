@@ -79,10 +79,10 @@ async def execute_function(
     checker_decisions: list[dict[str, Any]] = []
     completed_checker_rules: set[int] = set()
     checker_source_states: dict[str, Observation | None] = {}
-    checker_source_pages: dict[str, PageEmbedding] = {}
-    checker_encoder = page_encoder
-    checker_current_state: Observation | None = None
-    checker_current_page: PageEmbedding | None = None
+    source_pages: dict[str, PageEmbedding] = {}
+    runtime_page_encoder = page_encoder
+    embedded_current_state: Observation | None = None
+    current_page: PageEmbedding | None = None
     resume_metadata_pending = dict(resume_metadata or {})
     for function_step in steps:
         for rule_index, raw_rule in enumerate(function.checker_rules):
@@ -101,20 +101,20 @@ async def execute_function(
                 if checker_source is None:
                     page_similarity = None
                 else:
-                    if checker_encoder is None:
-                        checker_encoder = OmniTransferPageEncoder()
-                    if source_state_id not in checker_source_pages:
-                        checker_source_pages[source_state_id] = checker_encoder.embed(
+                    if runtime_page_encoder is None:
+                        runtime_page_encoder = OmniTransferPageEncoder()
+                    if source_state_id not in source_pages:
+                        source_pages[source_state_id] = runtime_page_encoder.embed(
                             checker_source
                         )
-                    if checker_current_state is not current:
-                        checker_current_page = checker_encoder.embed(current)
-                        checker_current_state = current
-                    if checker_current_page is None:
+                    if embedded_current_state is not current:
+                        current_page = runtime_page_encoder.embed(current)
+                        embedded_current_state = current
+                    if current_page is None:
                         raise RuntimeError("checker_current_page_embedding_missing")
-                    page_similarity = checker_source_pages[
-                        source_state_id
-                    ].similarity(checker_current_page)
+                    page_similarity = source_pages[source_state_id].similarity(
+                        current_page
+                    )
                 checker_step, decision = await execute_checker_step(
                     Action.from_value(rule["action"]),
                     observation=current,
@@ -177,6 +177,69 @@ async def execute_function(
             function_step.source_state_id,
             state_loader=state_loader,
         )
+        source_page_evidence: dict[str, float] | None = None
+        if action.tool not in {"open_app", "wait"}:
+            if source_state is None:
+                return RunResult(
+                    False,
+                    function.id,
+                    executed,
+                    error="function_source_state_missing",
+                    final_state=current,
+                    detail={
+                        "trace": trace,
+                        "checker_decisions": checker_decisions,
+                        "failed_step_index": function_step.step_index,
+                        "next_step_index": function_step.step_index,
+                    },
+                )
+            try:
+                if runtime_page_encoder is None:
+                    runtime_page_encoder = OmniTransferPageEncoder()
+                source_state_id = function_step.source_state_id
+                if source_state_id not in source_pages:
+                    source_pages[source_state_id] = runtime_page_encoder.embed(
+                        source_state
+                    )
+                if embedded_current_state is not current:
+                    current_page = runtime_page_encoder.embed(current)
+                    embedded_current_state = current
+                if current_page is None:
+                    raise RuntimeError("function_current_page_embedding_missing")
+                page_similarity = source_pages[source_state_id].similarity(current_page)
+            except Exception as error:  # noqa: BLE001
+                return RunResult(
+                    False,
+                    function.id,
+                    executed,
+                    error=f"function_page_check_failed:{error}",
+                    final_state=current,
+                    detail={
+                        "trace": trace,
+                        "checker_decisions": checker_decisions,
+                        "failed_step_index": function_step.step_index,
+                        "next_step_index": function_step.step_index,
+                    },
+                )
+            source_page_evidence = {
+                "similarity": float(page_similarity),
+                "minimum_similarity": float(checker_page_threshold),
+            }
+            if page_similarity < float(checker_page_threshold):
+                return RunResult(
+                    False,
+                    function.id,
+                    executed,
+                    error="function_page_similarity_too_low",
+                    final_state=current,
+                    detail={
+                        "trace": trace,
+                        "checker_decisions": checker_decisions,
+                        "failed_step_index": function_step.step_index,
+                        "next_step_index": function_step.step_index,
+                        "page": source_page_evidence,
+                    },
+                )
         step = await execute_robust_action(
             action,
             observation=current,
@@ -194,9 +257,19 @@ async def execute_function(
                 trace_start_index=int(trace_start_index) + len(trace),
                 metadata={"function_step_index": function_step.step_index},
                 first_metadata=(
-                    {"function_alignment": dict(resume_metadata_pending)}
-                    if resume_metadata_pending
-                    else None
+                    {
+                        **(
+                            {"function_alignment": dict(resume_metadata_pending)}
+                            if resume_metadata_pending
+                            else {}
+                        ),
+                        **(
+                            {"source_page": source_page_evidence}
+                            if source_page_evidence is not None
+                            else {}
+                        ),
+                    }
+                    or None
                 ),
             )
         )

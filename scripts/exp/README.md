@@ -125,6 +125,11 @@ contains only `source_state_id` and `action`; a failed condition skips it and
 keeps it eligible for a later formal action. Pair confidence is not a trigger.
 Source coordinates are evidence only and never execute on a target.
 
+The same page threshold gates every source-state-dependent formal Function
+action before transfer. `open_app` and `wait` are state-independent. A mismatch
+fails the Function into the normal Planner fallback instead of ranking targets
+on the wrong page.
+
 ## Configuration ownership
 
 The `protocol` block in `config/paper_androidworld.json` owns methods, devices,
