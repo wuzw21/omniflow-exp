@@ -597,6 +597,13 @@ def test_function_authoring_tool_is_three_small_draft_edits() -> None:
         function_authoring_tool(stage=stage)["function"]["name"]
         for stage in ("split", "parameters", "checkers")
     } == {"edit_function_draft"}
+    parameter_schema = function_authoring_tool(stage="parameters")["function"][
+        "parameters"
+    ]["properties"]["bindings"]["items"]["properties"]["argument_path"]
+    assert parameter_schema == {
+        "type": "string",
+        "enum": ["text", "target_description"],
+    }
 
 
 def test_save_function_reports_the_failed_stage(tmp_path) -> None:

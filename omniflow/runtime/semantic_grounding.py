@@ -59,6 +59,13 @@ def resolve_semantic_action(
             parent_by_child,
             tool=action.tool,
         )
+        if (
+            actionable is None
+            and action.tool == "click"
+            and element.attrib.get("visible", "true").lower() != "false"
+            and element.attrib.get("enabled", "true").lower() != "false"
+        ):
+            actionable = element
         if actionable is None:
             continue
         bounds = _parse_bounds(actionable.attrib.get("bounds"))
@@ -112,9 +119,13 @@ def semantic_target_at_point(
         root = ET.fromstring(str(xml or ""))
     except ET.ParseError:
         return ""
-    candidates: list[tuple[float, ET.Element]] = []
+    candidates: list[tuple[int, float, ET.Element]] = []
     for element in root.iter():
-        if not _eligible(element, "click"):
+        attributes = element.attrib
+        if (
+            attributes.get("visible", "true").lower() == "false"
+            or attributes.get("enabled", "true").lower() == "false"
+        ):
             continue
         bounds = _parse_bounds(element.attrib.get("bounds"))
         if bounds is None or not (
@@ -122,8 +133,9 @@ def semantic_target_at_point(
         ):
             continue
         area = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])
-        candidates.append((area, element))
-    for _, element in sorted(candidates, key=lambda item: item[0]):
+        actionable_rank = 0 if _eligible(element, "click") else 1
+        candidates.append((actionable_rank, area, element))
+    for _, _, element in sorted(candidates, key=lambda item: (item[0], item[1])):
         labels = _element_labels(element)
         if len(labels) == 1:
             return labels[0]

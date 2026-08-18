@@ -110,7 +110,8 @@ Rules:
 - Use `set_target` only when `source_target` is non-empty. Copy that label
   exactly into `value`; do not paraphrase it.
 - Declare caller-varying values already present after the validated action edit.
-- `argument_path` is relative to `action.args`.
+- `argument_path` is exactly `text` or `target_description`; no other value is
+  accepted.
 - The source step must be inside the named Function range.
 - A varying visible selection such as an hour or category may bind
   `target_description` after `set_target`.

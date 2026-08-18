@@ -81,6 +81,9 @@ Every output is grounded in the same successful RunLog and goes through the
 same validator and Store writer. A rejected stage edit receives one bounded
 correction; transport failures fail immediately and no partial Function is
 saved.
+Agent-authored parameters bind only `text` or `target_description`; the tool
+schema cannot return coordinate, package, wait, direction, or arbitrary nested
+bindings.
 
 The retained bridge tools are:
 

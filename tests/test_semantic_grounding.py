@@ -4,7 +4,10 @@ import pytest
 
 from omniflow.core.model import Action, Observation
 from omniflow.core.schemas import vlm_action_tools
-from omniflow.runtime.semantic_grounding import resolve_semantic_action
+from omniflow.runtime.semantic_grounding import (
+    resolve_semantic_action,
+    semantic_target_at_point,
+)
 
 
 def observation(xml: str) -> Observation:
@@ -57,6 +60,31 @@ def test_unique_content_description_match_resolves_clickable_parent() -> None:
     assert result.action.args["x"] == pytest.approx(900 / 1080 * 1000)
     assert result.action.args["y"] == pytest.approx(1900 / 2400 * 1000)
     assert result.action.args["node_id"] == "parent"
+
+
+def test_unique_virtual_target_resolves_to_its_current_bounds() -> None:
+    result = resolve_semantic_action(
+        Action("click", {"target_description": "30", "x": 1, "y": 1}),
+        observation(
+            '<hierarchy><node id="minute-30" content-desc="30" '
+            'bounds="[485,1201][595,1311]" clickable="false" '
+            'enabled="true" visible="true"/></hierarchy>'
+        ),
+    )
+
+    assert result.action.args["x"] == pytest.approx(540 / 1080 * 1000)
+    assert result.action.args["y"] == pytest.approx(1256 / 2400 * 1000)
+    assert result.action.args["node_id"] == "minute-30"
+    assert result.detail and result.detail["status"] == "resolved"
+
+
+def test_source_point_reads_a_visible_virtual_target_label() -> None:
+    xml = (
+        '<hierarchy><node content-desc="30" bounds="[485,1201][595,1311]" '
+        'clickable="false" enabled="true" visible="true"/></hierarchy>'
+    )
+
+    assert semantic_target_at_point(xml, 540, 1256) == "30"
 
 
 def test_ambiguous_match_preserves_model_coordinates() -> None:

@@ -76,8 +76,9 @@ requires a source launcher page and a different non-empty package in the
 RunLog after-state; its value must equal that package. `set_target` requires an
 exact visible label at the source action point; its value must equal that label.
 Caller-varying visible targets such as an hour or category may bind
-`target_description`. Coordinates, packages, waits, and directions are never
-parameters. An invented or paraphrased target fails validation.
+`target_description`; typed content binds `text`. These are the only two
+Agent-authored parameter paths. Coordinates, packages, waits, and directions
+are never parameters. An invented or paraphrased target fails validation.
 
 Before a saved B-MoCA bundle may run cross-environment, its complete Function
 must pass env100 `script_replay` with official success, method success,

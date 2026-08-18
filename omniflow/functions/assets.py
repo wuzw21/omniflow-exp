@@ -76,10 +76,7 @@ def function_authoring_tool(
             "description": {"type": "string", "minLength": 1},
             "argument_path": {
                 "type": "string",
-                "pattern": (
-                    "^[A-Za-z_][A-Za-z0-9_]*"
-                    "(?:\\.[A-Za-z_][A-Za-z0-9_]*|\\[[0-9]+\\])*$"
-                ),
+                "enum": ["text", "target_description"],
             },
         },
     }
@@ -1515,19 +1512,7 @@ def _validate_parameter_draft(
             raise ValueError("function_parameter_name_invalid")
         if not description:
             raise ValueError("function_parameter_description_required")
-        if re.fullmatch(
-            r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])*",
-            path,
-        ) is None:
-            raise ValueError("function_parameter_path_invalid")
-        root = path.split(".", 1)[0].split("[", 1)[0]
-        if root in {
-            "x",
-            "y",
-            "package_name",
-            "duration_ms",
-            "direction",
-        }:
+        if path not in {"text", "target_description"}:
             raise ValueError(f"function_parameter_path_forbidden:{path}")
         target = (function_id, int(step_index), path)
         if target in targets:
