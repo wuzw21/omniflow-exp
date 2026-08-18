@@ -103,6 +103,10 @@ AndroidWorld ADB response payloads before official task code parses them, and
 retries APK installation without `--bypass-low-target-sdk-block` only when the
 emulator explicitly reports that option as unknown.
 
+`open_app` keeps the RunLog package name unchanged. Adapters do not maintain a
+second package-to-app-name mapping; the pinned AndroidWorld package launch path
+restarts stale app tasks and opens the package entry activity.
+
 For `ours`, the AndroidWorld Method Adapter invokes one complete
 `OmniFlow.run()` cycle on the task. The official episode runner contributes the
 native lifecycle and may lower the canonical step budget; it does not split the

@@ -212,3 +212,8 @@ through explicit absolute paths and indexed by exact SHA-256 outside the repo.
 
 `tools/manual_androidworld_harness.py` is human-only diagnosis. It cannot create
 formal results, refresh canonical memory, or replace the unified shell entry.
+
+RunLog `open_app` actions keep their canonical package name unchanged through
+every AndroidWorld adapter. Do not translate packages into AndroidWorld app-name
+aliases: the pinned official package path restarts a stale app task before
+launching its entry activity.

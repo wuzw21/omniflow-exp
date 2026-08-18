@@ -4,15 +4,13 @@ import hashlib
 import os
 from pathlib import Path
 import subprocess
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 import xml.etree.ElementTree as ET
 
 from PIL import Image
 import pytest
 
 from omniflow import Action
-from src.integrations.android_world.apps import resolve_androidworld_app_name
 from src.integrations.android_world.host import AndroidWorldHost
 from src.integrations.android_world.launch import (
     ANDROID_PERMISSION_DENY_RESOURCE_IDS,
@@ -1676,12 +1674,6 @@ def test_actions_dispatch_only_through_official_androidworld_api(monkeypatch) ->
 
     module = SimpleNamespace(JSONAction=JSONAction)
     monkeypatch.setattr(
-        "src.integrations.android_world.host.resolve_androidworld_app_name",
-        lambda package_name, controller: (
-            "settings" if package_name == "com.android.settings" else package_name
-        ),
-    )
-    monkeypatch.setattr(
         "src.integrations.android_world.host.importlib.import_module",
         lambda name: module if name == "android_world.env.json_action" else None,
     )
@@ -1701,35 +1693,5 @@ def test_actions_dispatch_only_through_official_androidworld_api(monkeypatch) ->
     assert open_result.success is True
     assert [(action.action_type, action.x, action.y, action.app_name) for action in actions] == [
         ("click", 360.0, 320.0, None),
-        ("open_app", None, None, "settings"),
+        ("open_app", None, None, "com.android.settings"),
     ]
-
-
-def test_androidworld_app_name_prefers_package_leaf_entry(monkeypatch) -> None:
-    controller = object()
-    activities = {
-        "application settings": (
-            "com.android.settings/.applications.InstalledAppDetails"
-        ),
-        "settings|system settings": "com.android.settings/.Settings",
-        "wifi settings": "com.android.settings/.Settings$WifiSettingsActivity",
-    }
-    adb_utils = SimpleNamespace(
-        get_all_apps=lambda actual_controller: (
-            activities.keys()
-            if actual_controller is controller
-            else pytest.fail("unexpected controller")
-        ),
-        get_adb_activity=lambda app_name: activities[app_name],
-    )
-    android_world = ModuleType("android_world")
-    android_world_env = ModuleType("android_world.env")
-    android_world_env.adb_utils = adb_utils
-    android_world.env = android_world_env
-    monkeypatch.setitem(sys.modules, "android_world", android_world)
-    monkeypatch.setitem(sys.modules, "android_world.env", android_world_env)
-
-    assert (
-        resolve_androidworld_app_name("com.android.settings", controller)
-        == "settings|system settings"
-    )
