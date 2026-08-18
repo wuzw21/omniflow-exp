@@ -157,7 +157,9 @@ def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> 
         goal="Dismiss an optional dialog, search for a museum, and show results.",
     )
 
-    stage_calls: list[tuple[tuple[str, ...], str, tuple[int, ...]]] = []
+    stage_calls: list[
+        tuple[tuple[str, ...], str, tuple[int, ...], tuple[int, ...]]
+    ] = []
 
     def complete(prompt: str, tool: dict) -> str:
         required = tool["function"]["parameters"]["required"]
@@ -182,16 +184,6 @@ def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> 
                             "start_step_index": 1,
                             "end_step_index": 3,
                         },
-                        {
-                            "function_id": "submit_search",
-                            "name": "Submit a search",
-                            "description": "Submit the query and wait for results.",
-                            "stability_reason": (
-                                "Submission and result loading form a stable sequence."
-                            ),
-                            "start_step_index": 2,
-                            "end_step_index": 4,
-                        },
                     ],
                 }
             )
@@ -200,7 +192,12 @@ def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> 
         source_indices = tuple(
             action["step_index"] for action in draft["source_actions"]
         )
-        stage_calls.append((tuple(required), function_id, source_indices))
+        eligible_checker_indices = tuple(
+            draft.get("eligible_checker_step_indices", [])
+        )
+        stage_calls.append(
+            (tuple(required), function_id, source_indices, eligible_checker_indices)
+        )
         if required == ["action_edits", "bindings"]:
             return json.dumps(
                 {
@@ -238,22 +235,18 @@ def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> 
     assert result["function_ids"] == [
         "search_for_a_place",
         "enter_search_query",
-        "submit_search",
     ]
     store = FunctionStore(store_path)
     assert len(store.get_function("search_for_a_place").checker_rules) == 1
     assert store.get_function("enter_search_query").checker_rules == ()
-    assert store.get_function("submit_search").checker_rules == ()
     assert store.get_function("enter_search_query").input_schema["required"] == [
         "query"
     ]
     assert stage_calls == [
-        (("action_edits", "bindings"), "search_for_a_place", (0, 1, 2, 3)),
-        (("action_edits", "bindings"), "enter_search_query", (1, 2)),
-        (("action_edits", "bindings"), "submit_search", (2, 3)),
-        (("checker_steps",), "search_for_a_place", (0, 1, 2, 3)),
-        (("checker_steps",), "enter_search_query", (1, 2)),
-        (("checker_steps",), "submit_search", (2, 3)),
+        (("action_edits", "bindings"), "search_for_a_place", (0, 1, 2, 3), ()),
+        (("action_edits", "bindings"), "enter_search_query", (1, 2), ()),
+        (("checker_steps",), "search_for_a_place", (0, 1, 2, 3), (0, 2)),
+        (("checker_steps",), "enter_search_query", (1, 2), ()),
     ]
 
 

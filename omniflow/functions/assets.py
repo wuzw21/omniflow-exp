@@ -1744,6 +1744,20 @@ def _draft_checkers_prompt(
 ) -> str:
     source_indices = _function_indices(plan, len(facts["steps"]))
     function_id = plan["function_id"]
+    unavailable_indices = {
+        item["step_index"]
+        for key in ("bindings", "action_edits")
+        for item in parameters[key]
+        if item["function_id"] == function_id
+    }
+    eligible_indices = [
+        index
+        for index in source_indices
+        if index not in unavailable_indices
+        and facts["steps"][index]["action"]["tool"]
+        in {"click", "input_text", "long_press"}
+        and any(later > index for later in source_indices)
+    ]
     evidence = {
         "function": plan,
         "bindings": [
@@ -1751,6 +1765,12 @@ def _draft_checkers_prompt(
             for item in parameters["bindings"]
             if item["function_id"] == function_id
         ],
+        "action_edits": [
+            item
+            for item in parameters["action_edits"]
+            if item["function_id"] == function_id
+        ],
+        "eligible_checker_step_indices": eligible_indices,
         "source_actions": [
             _compact_source_actions(facts)[index] for index in source_indices
         ],
@@ -1759,7 +1779,9 @@ def _draft_checkers_prompt(
         "Edit only checker registrations for the one Function shown below. Every "
         "returned function_id must exactly match the shown function_id. step_index is "
         "the original RunLog source index and must be one of "
-        f"{list(source_indices)}. Select "
+        f"{list(source_indices)}. Select only from eligible_checker_step_indices "
+        f"{eligible_indices}; bound actions, edited actions, unsupported actions, and "
+        "actions without a later formal step have already been excluded. Select "
         "an existing source step only when it is optional, safe to skip, has a later "
         "formal action in that Function, and is a transferable click, input_text, or "
         "long_press. Required navigation and terminal actions are not checkers. Do not "
