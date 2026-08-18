@@ -1301,6 +1301,11 @@ def _authoring_correction_prompt(
             " Remove every one-click subsegment from this decision. Keep the complete "
             "Function metadata and any other independently replayable subsegments."
         )
+    elif str(error).startswith("function_parameter_source_value_conflict:"):
+        correction = (
+            " Bind different source values with distinct parameter names. Reuse one "
+            "parameter name only when every bound source value is exactly equal."
+        )
     return (
         f"{stage_prompt}\n\n"
         "The previous small decision was rejected: "
@@ -1424,7 +1429,7 @@ def _validate_split_draft(value: Any, facts: dict[str, Any]) -> dict[str, Any]:
             end - start == 1
             and facts["steps"][start]["action"]["tool"] in {"click", "long_press"}
         ):
-            raise ValueError("function_enhancement_single_click_fragment_forbidden")
+            continue
         ids.add(metadata["function_id"])
         ranges.add((start, end))
         segments.append(
@@ -1510,6 +1515,7 @@ def _validate_parameter_draft(
         )
     bindings: list[dict[str, Any]] = []
     targets: set[tuple[str, int, str]] = set()
+    parameter_values: dict[tuple[str, str], Any] = {}
     for raw in raw_bindings:
         expected = {
             "function_id",
@@ -1560,9 +1566,16 @@ def _validate_parameter_draft(
             raise ValueError(f"function_parameter_path_missing:{path}") from error
         if _json_type(source_value) is None:
             raise ValueError(f"function_parameter_type_invalid:{path}")
+        parameter_key = (function_id, name)
+        if (
+            parameter_key in parameter_values
+            and parameter_values[parameter_key] != source_value
+        ):
+            raise ValueError(f"function_parameter_source_value_conflict:{name}")
         requested_value = str(source_value).strip().casefold()
         if requested_value and requested_value not in str(facts["goal"]).casefold():
             raise ValueError(f"function_parameter_value_not_requested:{name}")
+        parameter_values[parameter_key] = _copy_value(source_value)
         targets.add(target)
         bindings.append(
             {

@@ -309,7 +309,7 @@ def test_stage_validation_allows_three_bounded_attempts(tmp_path) -> None:
     assert split_calls == 3
 
 
-def test_single_click_subsegment_correction_requests_omission(tmp_path) -> None:
+def test_single_click_subsegment_is_deterministically_omitted(tmp_path) -> None:
     prompts: list[str] = []
     split_calls = 0
 
@@ -319,28 +319,27 @@ def test_single_click_subsegment_correction_requests_omission(tmp_path) -> None:
         if required == ["complete_function", "subsegments"]:
             prompts.append(prompt)
             split_calls += 1
-            if split_calls == 1:
-                return json.dumps(
-                    {
-                        "complete_function": {
-                            "function_id": "complete_note_entry",
-                            "name": "Complete note entry",
-                            "description": "Enter text and wait.",
-                        },
-                        "subsegments": [
-                            {
-                                "function_id": "dismiss_dialog",
-                                "name": "Dismiss dialog",
-                                "description": "Dismiss a dialog.",
-                                "stability_reason": (
-                                    "A dialog is visible and clicking dismiss closes it."
-                                ),
-                                "start_step_index": 0,
-                                "end_step_index": 1,
-                            }
-                        ],
-                    }
-                )
+            return json.dumps(
+                {
+                    "complete_function": {
+                        "function_id": "complete_note_entry",
+                        "name": "Complete note entry",
+                        "description": "Enter text and wait.",
+                    },
+                    "subsegments": [
+                        {
+                            "function_id": "dismiss_dialog",
+                            "name": "Dismiss dialog",
+                            "description": "Dismiss a dialog.",
+                            "stability_reason": (
+                                "A dialog is visible and clicking dismiss closes it."
+                            ),
+                            "start_step_index": 0,
+                            "end_step_index": 1,
+                        }
+                    ],
+                }
+            )
         return _draft_enhancer(prompt, tool)
 
     save_function(
@@ -349,8 +348,77 @@ def test_single_click_subsegment_correction_requests_omission(tmp_path) -> None:
         enhance=True,
         complete_json=complete,
     )
-    assert split_calls == 2
-    assert "Remove every one-click subsegment" in prompts[1]
+    assert split_calls == 1
+    assert [
+        item.id
+        for item in FunctionStore(tmp_path / "store.json").list_functions()
+    ] == ["complete_note_entry"]
+
+
+def test_conflicting_parameter_values_receive_stage_correction(tmp_path) -> None:
+    run_log = androidworld_run_log(
+        [
+            {"action_type": "input_text", "text": "10"},
+            {"action_type": "input_text", "text": "2"},
+            {"action_type": "wait"},
+        ],
+        observations=[
+            androidworld_state("state-first"),
+            androidworld_state("state-second"),
+            androidworld_state("state-ready"),
+        ],
+        goal="Enter 10 and then 2.",
+    )
+    parameter_prompts: list[str] = []
+
+    def complete(prompt: str, tool: dict) -> str:
+        required = tool["function"]["parameters"]["required"]
+        if required == ["complete_function", "subsegments"]:
+            return json.dumps(
+                {
+                    "complete_function": {
+                        "function_id": "enter_two_numbers",
+                        "name": "Enter two numbers",
+                        "description": "Enter two requested numbers in order.",
+                    },
+                    "subsegments": [],
+                }
+            )
+        if required == ["action_edits", "bindings"]:
+            parameter_prompts.append(prompt)
+            names = (
+                ("first_number", "second_number")
+                if len(parameter_prompts) > 1
+                else ("number", "number")
+            )
+            return json.dumps(
+                {
+                    "action_edits": [],
+                    "bindings": [
+                        {
+                            "function_id": "enter_two_numbers",
+                            "step_index": index,
+                            "name": names[index],
+                            "description": "Requested number",
+                        }
+                        for index in range(2)
+                    ],
+                }
+            )
+        return json.dumps({"checker_steps": []})
+
+    save_function(
+        run_log,
+        tmp_path / "store.json",
+        enhance=True,
+        complete_json=complete,
+    )
+
+    assert len(parameter_prompts) == 2
+    assert (
+        "Bind different source values with distinct parameter names"
+        in parameter_prompts[1]
+    )
 
 
 def test_enhancer_rejects_subsegment_without_stability_reason(tmp_path) -> None:
