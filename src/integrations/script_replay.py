@@ -43,6 +43,14 @@ def run_script_replay(
     if len(complete) != 1:
         ids = ",".join(sorted(function.id for function in complete))
         raise ValueError(f"script_replay_full_function_ambiguous:{ids}")
+    source_calls = [
+        call for call in store.source_calls if call["function_id"] == complete[0].id
+    ]
+    if len(source_calls) > 1:
+        raise ValueError(
+            f"script_replay_source_call_ambiguous:{complete[0].id}"
+        )
+    arguments = source_calls[0]["arguments"] if source_calls else {}
 
     flow = OmniFlow(
         store_path,
@@ -53,7 +61,7 @@ def run_script_replay(
         ),
     )
     return flow.call_tool(
-        ToolCall(complete[0].id, {}),
+        ToolCall(complete[0].id, arguments),
         experiment=Experiment(name="bmoca"),
     )
 

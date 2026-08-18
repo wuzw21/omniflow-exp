@@ -52,7 +52,11 @@ def _function(*, function_id: str, steps: int) -> dict[str, object]:
     }
 
 
-def _store(path: Path, *functions: dict[str, object]) -> Path:
+def _store(
+    path: Path,
+    *functions: dict[str, object],
+    source_calls: list[dict[str, object]] | None = None,
+) -> Path:
     path.write_text(
         json.dumps(
             {
@@ -61,6 +65,7 @@ def _store(path: Path, *functions: dict[str, object]) -> Path:
                     str(function["function_id"]): function
                     for function in functions
                 },
+                "source_calls": source_calls or [],
             }
         ),
         encoding="utf-8",
@@ -72,6 +77,19 @@ def test_script_replay_selects_full_function_and_uses_core_transfer(
     tmp_path: Path, monkeypatch
 ) -> None:
     complete = _function(function_id="complete_task", steps=2)
+    complete["input_schema"] = {
+        "type": "object",
+        "properties": {"target": {"type": "string"}},
+        "required": ["target"],
+        "additionalProperties": False,
+    }
+    complete["bindings"] = [
+        {
+            "source": "$.arguments.target",
+            "target": "$.steps[0].action.args.target_description",
+        }
+    ]
+    complete["steps"][0]["action"]["args"]["target_description"] = ""
     complete["checker_rules"] = [
         {
             "source_state_id": "checker-source",
@@ -82,6 +100,9 @@ def test_script_replay_selects_full_function_and_uses_core_transfer(
         tmp_path / "store.json",
         complete,
         _function(function_id="reusable_part", steps=2),
+        source_calls=[
+            {"function_id": "complete_task", "arguments": {"target": "Alarm"}}
+        ],
     )
     source_states = {
         f"source-{index}": Observation(xml="<page/>", package_name="com.example")
@@ -92,8 +113,10 @@ def test_script_replay_selects_full_function_and_uses_core_transfer(
     )
     host = _Host(source_states)
     transferred_sources: list[Observation | None] = []
+    transferred_actions: list[Action] = []
 
     async def transfer(action, observation, source_state):
+        transferred_actions.append(action)
         transferred_sources.append(source_state)
         return TransferResult(
             Action("click", {"x": 100 + len(transferred_sources), "y": 200}),
@@ -132,6 +155,7 @@ def test_script_replay_selects_full_function_and_uses_core_transfer(
         source_states["source-0"],
         source_states["source-1"],
     ]
+    assert transferred_actions[1].args["target_description"] == "Alarm"
     assert host.actions == [
         Action("click", {"x": 101, "y": 200}),
         Action("click", {"x": 102, "y": 200}),

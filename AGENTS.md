@@ -223,8 +223,8 @@ not invoke experiment methods or register formal results.
 Use AndroidWorld native state/action and its official validator. B-MoCA is an
 environment adapter using the same OmniFlow Function/checker/OmniTransfer
 runtime and official B-MoCA reward. `ours` lets the Planner select Functions;
-`script_replay` selects the one complete Function directly, but may not own a
-second action mapper or executor.
+`script_replay` selects the one complete Function directly with its saved
+source-call arguments, but may not own a second action mapper or executor.
 
 The AndroidWorld `ours` adapter runs exactly one persistent `OmniFlow.run()`
 cycle per task. The official episode runner's outer `step()` call is only an

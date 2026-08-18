@@ -28,7 +28,8 @@ pipeline; an emulator process that exits during boot is an immediate failure.
 
 Both B-MoCA methods use the same Function/checker/OmniTransfer executor. `ours`
 uses the Planner to select a Function; `script_replay` directly selects the
-single complete Function and makes no model call.
+single complete Function with its Store source-call arguments and makes no
+model call.
 
 One formal result is one task, one method, and one device. The E2E pipeline is
 the only method/device scheduler. Direct `--method` and `--device` options are
