@@ -11,7 +11,7 @@ from PIL import Image
 import pytest
 from runlog_fixtures import androidworld_run_log
 
-from src.experiment.artifact_memory import refresh_artifact_memory
+from src.experiment.local_data import refresh_local_data
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_MEMORY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
@@ -21,6 +21,7 @@ from src.experiment.preflight import (
     REQUIRED_DISTRIBUTION_VERSIONS,
     _valid_appagent_demo_manifest,
 )
+from src.experiment.protocol import DROIDRUN_VERSION
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "exp" / "run_androidworld.sh"
@@ -41,9 +42,20 @@ def test_android_env_version_is_locked_and_preflight_enforced() -> None:
     )
     lock_text = (REPO / "uv.lock").read_text(encoding="utf-8")
     assert 'name = "android-env"\nversion = "1.2.3"' in lock_text
+    assert f'name = "droidrun"\nversion = "{DROIDRUN_VERSION}"' in lock_text
     assert '"android_world.registry"' in (
         REPO / "src" / "experiment" / "preflight.py"
     ).read_text(encoding="utf-8")
+
+
+def test_bmoca_skilldroid_uses_pinned_droidrun_runtime() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+    assert "from src.experiment.protocol import DROIDRUN_VERSION" in script_text
+    assert 'version("droidrun")' in script_text
+    assert "load_official_droidrun_macro_player" in script_text
+    assert '[[ -z "$selected_method_arg" || "$selected_method_arg" == "skilldroid_replay" ]]' in script_text
+    assert 'uv sync --extra bmoca' in script_text
+    assert "B-MoCA campaign requires the official env100 source AVD" in script_text
 
 
 def test_preflight_accepts_offline_appagent_memory() -> None:
@@ -132,16 +144,13 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert completed.stderr == ""
     script_text = SCRIPT.read_text(encoding="utf-8")
     assert 'workspace_root="$(cd "$repo/.." && pwd)"' in script_text
-    assert 'default_asset_root="$workspace_root/OmniFlow"' in script_text
-    assert 'default_python="$workspace_root/OmniFlow/.venv/bin/python"' in script_text
+    assert 'default_asset_root="$repo/data"' in script_text
+    assert 'default_python="$repo/.venv/bin/python"' in script_text
     assert "miniconda3/envs/omniflow-py31113" not in script_text
     assert 'python_bin="${PYTHON_BIN:-$default_python}"' in script_text
     assert "validate_page_encoder_runtime" in script_text
     assert "OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS" not in script_text
-    assert (
-        'default_memory_root="$workspace_root/assets/'
-        'androidworld-experiment-memory-v1"' in script_text
-    )
+    assert 'default_memory_root="$repo/data"' in script_text
     assert "validate_model_endpoint_auth" in script_text
     assert 'f\"{base_url}/models\"' in script_text
     assert 'omnitransfer_root="${OMNITRANSFER_ROOT:-$workspace_root/OmniTransfer}"' in (
@@ -264,7 +273,7 @@ def test_androidworld_defaults_to_pinned_immutable_release_without_fallback(
     )
 
     expected_release = (
-        tmp_path
+        REPO.parent
         / "releases"
         / "android-world-632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"
     )
@@ -912,7 +921,7 @@ def test_check_only_is_read_only_before_any_runtime_output(
     fake_java.chmod(0o755)
     results = tmp_path / "results-never-created"
     memory_root = tmp_path / "memory"
-    refresh_artifact_memory(
+    refresh_local_data(
         memory_root=memory_root,
         source_index=source_index,
         function_catalogs=(),
@@ -1019,7 +1028,7 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
     assert completed.returncode == 0, completed.stderr
     assert captured.read_text(encoding="utf-8").splitlines() == [
         "-m",
-        "src.experiment.artifact_memory",
+        "src.experiment.local_data",
         "refresh",
         "--memory-root",
         str(memory_root),
@@ -1046,7 +1055,7 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
     assert without_catalog.returncode == 0, without_catalog.stderr
     assert captured.read_text(encoding="utf-8").splitlines() == [
         "-m",
-        "src.experiment.artifact_memory",
+        "src.experiment.local_data",
         "refresh",
         "--memory-root",
         str(memory_root),
@@ -1073,7 +1082,7 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
     assert from_existing_memory.returncode == 0, from_existing_memory.stderr
     assert captured.read_text(encoding="utf-8").splitlines() == [
         "-m",
-        "src.experiment.artifact_memory",
+        "src.experiment.local_data",
         "refresh",
         "--memory-root",
         str(memory_root),

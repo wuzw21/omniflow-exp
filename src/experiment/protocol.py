@@ -61,6 +61,11 @@ FORMAL_MODEL_ENDPOINT_PROFILE = str(
 )
 FORMAL_MODEL_BASE_URL = str(ANDROIDWORLD_PROTOCOL["model_base_url"])
 ANDROIDWORLD_REVISION = str(ANDROIDWORLD_PROTOCOL["androidworld_revision"])
+_DROIDRUN = ANDROIDWORLD_PROTOCOL["droidrun"]
+DROIDRUN_VERSION = str(_DROIDRUN["version"])
+DROIDRUN_COMMIT = str(_DROIDRUN["commit"])
+DROIDRUN_PORTAL_VERSION = str(_DROIDRUN["portal_version"])
+DROIDRUN_PORTAL_COMMIT = str(_DROIDRUN["portal_commit"])
 
 # Active result vocabulary. The registry reads the old one_task names only for
 # immutable historical attempts and never writes them again.

@@ -12,7 +12,7 @@ modules are implementation seams and must not be invoked as alternate runners.
 | Read-only static gate | `run_androidworld.sh --check-only [--all-tasks]` |
 | Bounded `ours` development | `run_androidworld.sh --development-run --tasks TASK` |
 | Source refresh | `run_androidworld.sh --collect-source --tasks TASK` |
-| B-MoCA one method | `run_androidworld.sh --environment bmoca --method ours\|script_replay --tasks TASK` |
+| B-MoCA one reuse method | `run_androidworld.sh --environment bmoca --method ours_replay\|mobilegpt_replay\|skilldroid_replay --tasks TASK` |
 | B-MoCA campaign | `run_androidworld.sh --environment bmoca --all-tasks [--tasks TASK1,TASK2]` |
 | Memory refresh | `run_androidworld.sh --refresh-memory` |
 
@@ -26,28 +26,42 @@ recorded 720x1280 action contract is replayed at its original geometry.
 The shell provisions the configured source AVD before handing control to the
 pipeline; an emulator process that exits during boot is an immediate failure.
 
-Both B-MoCA methods use the same Function/checker/OmniTransfer executor. `ours`
-uses the Planner to select a Function; `script_replay` directly selects the
-single complete Function with its Store source-call arguments and makes no
-model call.
+The B-MoCA campaign measures oracle-memory-hit reuse rather than retrieval.
+`ours_replay` directly invokes the complete Function with its saved source-call
+arguments and canonical checker/OmniTransfer runtime. `mobilegpt_replay` uses
+MobileGPT's native task memory and parameter-filling reuse path with exploration
+disabled. `skilldroid_replay` compiles the env100 RunLog into DroidRun v0.5.6's
+official `macro.json` format and replays it through DroidRun's native
+`MacroPlayer`, with every model fallback disabled. Its B-MoCA `DeviceDriver`
+adapter preserves official benchmark action/reward recording while keeping the
+macro's source absolute pixels unchanged; DroidRun macro replay performs no
+locator lookup or state verification.
 
 One formal result is one task, one method, and one device. The E2E pipeline is
 the only method/device scheduler. Direct `--method` and `--device` options are
 internal single-result controls and cannot be combined with matrix modes.
 
-## Required external roots
+## Required roots
 
 ```bash
-export OMNIFLOW_EXP_ASSET_ROOT=/absolute/assets
-export OMNIFLOW_EXP_RESULTS_ROOT=/absolute/results
-export OMNIFLOW_EXP_MEMORY_ROOT=/absolute/memory
+export OMNIFLOW_EXP_ASSET_ROOT=/Users/wuzewen/Projects/Omni/OmniFlow-exp/data
+export OMNIFLOW_EXP_RESULTS_ROOT=/Users/wuzewen/Projects/Omni/OmniFlow-exp/data
+export OMNIFLOW_EXP_MEMORY_ROOT=/Users/wuzewen/Projects/Omni/OmniFlow-exp/data
 export OMNIFLOW_ENV_FILE=/absolute/model.env
 export OMNITRANSFER_ROOT="$HOME/Projects/Omni/OmniTransfer"
 ```
 
-The launcher uses the single runtime at `../OmniFlow/.venv/bin/python` by
-default. Set `PYTHON_BIN` only when that canonical workspace runtime lives at a
-different absolute path. Development preflight loads the canonical
+The launcher uses the single runtime at `OmniFlow-exp/.venv/bin/python` by
+default. Set `PYTHON_BIN` only for an explicitly provisioned equivalent test
+runtime; the formal experiment must use the repository-local environment.
+Install the B-MoCA baseline runtime with `uv sync --extra bmoca`; the launcher
+checks the installed DroidRun version against the protocol-pinned v0.5.6 before
+running a B-MoCA campaign or a direct `skilldroid_replay` result.
+The campaign also requires the env100 source AVD produced by B-MoCA's official
+environment installer before Function enhancement begins. This is a read-only
+asset gate: the E2E scheduler still creates its isolated env100 clone only after
+enhancement succeeds, and it does not clone env101--109 until env100 qualifies.
+Development preflight loads the canonical
 OmniTransfer page encoder before starting an emulator, so a broken Torch or
 checkpoint installation fails without consuming an episode.
 
@@ -55,31 +69,29 @@ AndroidWorld, MobileGPT, and AppAgent checkouts may be supplied through their
 documented absolute root variables. Credentials remain in `OMNIFLOW_ENV_FILE`.
 Formal protocol values are not environment configuration: they come only from
 `config/paper_androidworld.json`.
-The GLM-5.1 credential name is `LLMTHU_API_KEY`; do not duplicate the canonical
-endpoint as `LLMTHU_BASE_URL` in the environment file.
+The GLM-5.1 credential name is `LLMTHU_API_KEY`; the endpoint is read only from
+the protocol configuration.
 
 ## Function preparation
 
 Function authoring does not run through a shell conversion mode. Use the bridge
-`save_function` API with one successful RunLog. Callers may submit complete
-Functions, or set `enhance=true` so the Agent edits one in-memory Function draft
-through three stages: semantic Function ranges once, then parameter declarations
-plus source-proven action semantics and Function-local checker registrations
-separately for each identified Function.
-The middle edit may convert a launcher click to `open_app` only with the exact
-RunLog after-state package, or attach only the exact visible source target for
-semantic grounding and parameter binding. A reusable subsegment is optional
-and is emitted only when the Agent identifies it as independently and stably
-replayable from its own first source state. Its non-empty `stability_reason`
-must name the stable precondition, repeatable semantic effect, and varying
-content to parameterize. Uncertain, transient-dialog, task-ending, and
-task-specific fragments are omitted. `save_function` preserves exact evidence
-and action order, rejects invented semantic edits, and deterministically
-compiles the complete Function plus accepted subsegments,
+`save_function` API with one successful RunLog. The Store contains exactly one
+complete Function; set `enhance=true` so the Agent edits one in-memory draft
+through three stages: name the complete trajectory, edit source actions plus
+parameter declarations, then register Function-local checkers.
+The middle edit may mark an eligible launcher click as `open_app`, an eligible
+visible click as `set_target`, or return a direct action copied from the shown
+RunLog source step for exploration. The compiler copies or validates the exact
+RunLog package, target, coordinates, and action; ungrounded direct actions are
+rejected. `save_function` preserves exact evidence and action order, rejects
+invented semantic edits, and deterministically compiles the complete Function,
 bindings, and checker rules. Normal and enhanced saves share one validation and
-Store writer. One invalid stage edit gets one correction opportunity; a timeout
-or transport failure is not retried, and nothing is persisted until every
-compiled Function passes the same validator.
+Store writer. Each stage gets at most three model attempts; a rejected decision
+receives only that stage's deterministic validation error before revising the
+same in-memory draft. A timeout or transport failure is not retried, and nothing
+is persisted until the complete Function passes the same validator.
+For an enhanced Store, `source_calls` contains exactly the complete Function
+call that reproduces the successful RunLog.
 Descriptions may claim only effects caused inside the selected source range.
 A bound value must appear directly in the RunLog goal; an unrequested current
 page value is source state rather than caller input.
@@ -88,14 +100,16 @@ binds `text`, and a source-proven semantic click binds `target_description`.
 The Agent does not author a path.
 
 The explicit B-MoCA campaign is the only launcher-owned preparation path: for
-each corpus task it calls that same `save_function(enhance=true)` writer once.
-It then runs only `script_replay` on env100 and requires official success,
-method success, `model_calls=0`, and `fallback_steps=0`. A failed source gate
-ends that task without launching env101--109. A passing gate unlocks
-Planner-selected `ours` on env100--109 and the remaining zero-model
-`script_replay` results on env101--109 through the same OmniFlow runtime. The
-scheduler creates no AVD clone before enhancement succeeds, clones env100 for
-the source gate, and clones env101--109 only after that gate passes. It writes
+each corpus task it calls that same `save_function(enhance=true)` writer once,
+then qualifies `ours_replay` on env100 with official success, method success,
+`model_calls=0`, and `fallback_steps=0`. A failed source gate ends that task
+without launching env101--109. A passing gate compiles the MobileGPT and
+DroidRun memories from the same env100 RunLog, then runs `ours_replay` on
+env101--109 and both baselines on env100--109. DroidRun memory conversion writes
+the official `macro.json` plus a provenance sidecar; it does not invoke a model
+or a second action mapper. The scheduler creates no AVD
+clone before enhancement succeeds, clones env100 for the source gate, and
+clones env101--109 only after that gate passes. It writes
 `progress.csv`,
 `progress.jsonl`, per-attempt RunLogs, and the terminal
 `campaign_summary.json` under the new output root.
@@ -127,8 +141,10 @@ The shared lifecycle seam keeps AndroidWorld directory cleanup idempotent when
 host gRPC diagnostics pollute ADB stdout. It accepts Markor's absent final `OK`
 only after the Markor main activity is already foregrounded; every other setup
 error remains a failure. When official Contacts setup is blocked by Android's
-`Open with` chooser, the seam selects `Contacts` and `Just once`, then resumes
-the official onboarding `Skip`; any other chooser state remains a failure. The
+chooser, the seam requires `Just once` and accepts either `Open with` plus a
+visible `Contacts` choice or the already-selected title `Open with Contacts`.
+It selects only the missing choice, confirms `Just once`, then resumes the
+official onboarding `Skip`; any other chooser state remains a failure. The
 same seam removes only gRPC fork diagnostics from
 AndroidWorld ADB response payloads before official task code parses them, and
 retries APK installation without `--bypass-low-target-sdk-block` only when the
@@ -192,7 +208,8 @@ command or metadata emits them.
 
 ## Long-term memory
 
-`OMNIFLOW_EXP_MEMORY_ROOT/current.json` is the sole runtime index. Refresh it
+`OMNIFLOW_EXP_MEMORY_ROOT/current.json` is the sole runtime index. The default
+root is `../OmniFlow-exp/data`; refresh it
 with:
 
 ```bash
@@ -214,6 +231,13 @@ attempt evidence. Registration writes those compact rows, their single details
 block, and one immutable ledger. It does not maintain parallel master-progress
 tables. Formal attempts and validator conclusions are immutable.
 
+Performance measurement is an explicit side channel. The launcher option
+`--collect-performance` writes one `performance_sidecar.json` beside the
+episode artifacts. It reports Host/native `observe`/`act` timing and optional
+ADB energy diagnostics, but does not modify task results, batch details, or the
+public result rows. ADB charge-counter estimates are diagnostic only and are
+not a replacement for hardware power-analyzer measurements.
+
 ## Development example
 
 ```bash
@@ -227,3 +251,11 @@ bash scripts/exp/run_androidworld.sh \
 
 Development is unregistered and bounded. It must not change frozen prompts,
 baseline policies, official validation, or the formal protocol.
+
+For an explicitly requested OOB control-side experiment, set
+`OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND=oob`. This changes only the OmniFlow
+agent's observe/act transport: the AndroidWorld state contract remains
+`pixels / forest / ui_elements / auxiliaries`, XML is retained in `forest`,
+and actions still use the canonical normalized action schema. The default
+backend remains AndroidWorld native; this option is not part of formal result
+registration.

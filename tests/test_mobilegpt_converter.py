@@ -73,6 +73,92 @@ def test_conversion_uses_first_open_app_as_task_app(tmp_path: Path) -> None:
     assert len(trajectory["transitions"]) == 1
 
 
+def test_preflight_accepts_compact_bmoca_runlog_with_state_catalog(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "runlog.json"
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.canonical_run_log.v1",
+                "run_id": "bmoca-source",
+                "goal": "Save the item",
+                "status": "succeeded",
+                "success": True,
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "before_state_id": "before",
+                        "action": {
+                            "tool": "click",
+                            "args": {"x": 999, "y": 999},
+                        },
+                        "result": {"success": True},
+                        "after_state_id": "before",
+                    },
+                    {
+                        "step_index": 1,
+                        "before_state_id": "before",
+                        "action": {
+                            "tool": "click",
+                            "args": {"x": 500, "y": 250},
+                        },
+                        "result": {"success": True},
+                        "after_state_id": "after",
+                    }
+                ],
+                "diagnostics": {
+                    "official_success": True,
+                    "task_id": "example/save_item",
+                },
+                "final_state_id": "after",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "transfer_states.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.transfer-state-catalog.v1",
+                "run_id": "bmoca-source",
+                "states": {
+                    "before": {
+                        "state_id": "before",
+                        "xml": (
+                            '<hierarchy bounds="[0,0][200,400]">'
+                            '<node package="com.example" clickable="true" '
+                            'bounds="[80,80][120,120]" /></hierarchy>'
+                        ),
+                        "package_name": "com.example",
+                        "activity_name": ".MainActivity",
+                        "display": {"width": 200, "height": 400},
+                    },
+                    "after": {
+                        "state_id": "after",
+                        "xml": '<hierarchy bounds="[0,0][200,400]" />',
+                        "package_name": "com.example",
+                        "activity_name": ".MainActivity",
+                        "display": {"width": 200, "height": 400},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = preflight_runlog_conversion(source)
+    trajectory = _load_runlog_trajectory(source)
+
+    assert report["ready"] is True
+    assert report["transition_count"] == 1
+    assert trajectory["task_name"] == "example/save_item"
+    assert trajectory["transitions"][0].action == {
+        "action_type": "click",
+        "x": 100,
+        "y": 100,
+    }
+
+
 def test_open_app_only_conversion_uses_final_observation_as_finish_page(
     tmp_path: Path,
 ) -> None:

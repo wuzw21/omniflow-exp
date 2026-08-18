@@ -31,11 +31,20 @@ import urllib.request
 
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import token_usage_status
+from omniflow.core.model import ToolCall
 from src.experiment.observation_evidence import (
     persist_target_run_evidence,
     transfer_state_coverage_audit,
 )
-from src.experiment.protocol import MAX_STEPS
+from src.experiment.performance_metrics import (
+    PerformanceMetrics,
+    write_performance_metrics,
+)
+from src.experiment.protocol import (
+    FORMAL_MODEL_BASE_URL,
+    FORMAL_MODEL_ENDPOINT_PROFILE,
+    MAX_STEPS,
+)
 from src.experiment.result_registry import (
     mobilegpt_runtime_integrity_error as _mobilegpt_runtime_integrity_error,
 )
@@ -58,6 +67,7 @@ from src.integrations.runlog import import_run_log, project_androidworld_step_ac
 OMNIFLOW_ROOT = Path(__file__).resolve().parents[3]
 SOURCE_RUNLOG_POOL_DIR = (
     OMNIFLOW_ROOT
+    / "data"
     / "runtime"
     / "evals"
     / "androidworld_validator"
@@ -120,6 +130,43 @@ def _app_chooser_clicks(
     if "Open with" not in labels or normalized_app_label not in labels:
         return ()
     return (normalized_app_label, "Just once")
+
+
+def _raw_replay_visible_setup_recovery(
+    agent: Any,
+    *,
+    goal_text: str,
+) -> str | None:
+    if "chrome" not in goal_text.casefold():
+        return None
+    environment = getattr(agent, "env", None)
+    controller = getattr(environment, "controller", None)
+    get_ui_elements = getattr(controller, "get_ui_elements", None)
+    if not callable(get_ui_elements):
+        return None
+    elements = get_ui_elements() or []
+    chooser_clicks = _app_chooser_clicks(elements, app_label="Chrome")
+    labels = {
+        _normalize_androidworld_setup_label(str(label or "").strip())
+        for element in elements
+        for label in (
+            getattr(element, "text", None),
+            getattr(element, "content_description", None),
+        )
+        if str(label or "").strip()
+    }
+    if not chooser_clicks and not (
+        {"Keep Google", "OK", "Search with Sogou"}.issubset(labels)
+    ):
+        return None
+    tools_module = importlib.import_module("android_world.env.tools")
+    tool_controller = tools_module.AndroidToolController(controller)
+    if chooser_clicks:
+        for label in chooser_clicks:
+            tool_controller.click_element(label)
+        return "android_app_chooser:Chrome"
+    tool_controller.click_element("OK")
+    return "chrome_first_run:OK"
 
 
 def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
@@ -1794,6 +1841,27 @@ def _repair_androidworld_chrome_first_run(
     controller = tools.AndroidToolController(env=env.controller)
     adb_utils = setup_module.adb_utils
     adb_utils.launch_app("chrome", env.controller)
+    get_ui_elements = getattr(controller, "get_ui_elements", None)
+    if callable(get_ui_elements):
+        visible_labels = {
+            str(value or "").strip().casefold()
+            for element in get_ui_elements() or ()
+            for value in (
+                getattr(element, "text", None),
+                getattr(element, "content_description", None),
+            )
+            if str(value or "").strip()
+        }
+        onboarding_labels = {
+            "accept & continue",
+            "no thanks",
+            "next",
+            "skip",
+            "use chrome without an account",
+        }
+        if not visible_labels.intersection(onboarding_labels):
+            adb_utils.close_app("chrome", env.controller)
+            return
     try:
         try:
             controller.click_resource_id(
@@ -2365,6 +2433,23 @@ def _prepare_androidworld_snapshot_restore(
                 adb_utils.issue_generic_request(arguments, env.controller),
                 message,
             )
+
+
+def _reset_androidworld_file_picker_state(
+    env: Any,
+    *,
+    setup_module: Any,
+    setup_apps: Sequence[Any],
+) -> None:
+    if not any(
+        str(getattr(app, "app_name", "") or "").strip().casefold() == "chrome"
+        for app in setup_apps
+    ):
+        return
+    setup_module.adb_utils.clear_app_data(
+        "com.google.android.documentsui",
+        env.controller,
+    )
 
 
 def _wait_for_androidworld_a11y(env: Any, *, attempts: int = 6) -> None:
@@ -3478,12 +3563,24 @@ def _apply_fixed_replay(
                 break
             try:
                 assert payload is not None
-                _execute_payload(
-                    payload,
-                    target_size=action_target_size,
-                )
+                semantic_recovery = None
+                if payload.get("action_type") in {"click", "long_press"}:
+                    semantic_recovery = _raw_replay_visible_setup_recovery(
+                        agent,
+                        goal_text=goal_text,
+                    )
+                if semantic_recovery:
+                    step_record["semantic_recovery"] = semantic_recovery
+                    step_record["parameter_source"] = "semantic_visible_text"
+                else:
+                    _execute_payload(
+                        payload,
+                        target_size=action_target_size,
+                    )
                 actions_executed += 1
-                if parameter_source == "recorded_coordinate":
+                if semantic_recovery:
+                    direct_actions += 1
+                elif parameter_source == "recorded_coordinate":
                     recorded_coordinate_actions += 1
                 else:
                     direct_actions += 1
@@ -3698,6 +3795,9 @@ def _build_launch_agent(
     appagent_output_root: str = "",
     task_seed: int | None = None,
     evidence_root: str = "",
+    performance_metrics: PerformanceMetrics | None = None,
+    direct_function_id: str = "",
+    direct_function_arguments: dict[str, Any] | None = None,
 ) -> Any:
     """Build the launcher-facing AndroidWorld agent for one explicit selector.
 
@@ -3716,7 +3816,7 @@ def _build_launch_agent(
     """
 
     resolved_agent = str(agent or MODE_OMNIFLOW).strip() or MODE_OMNIFLOW
-    return default_method_adapter_registry().build(
+    agent_instance = default_method_adapter_registry().build(
         MethodAdapterContext(
             selector=resolved_agent,
             env=env,
@@ -3737,11 +3837,28 @@ def _build_launch_agent(
             appagent_output_root=appagent_output_root,
             task_seed=task_seed,
             evidence_root=evidence_root,
+            performance_metrics=performance_metrics,
             build_omniflow_agent=build_agent,
             apply_fixed_replay=_apply_fixed_replay,
             build_official_agent=_build_official_androidworld_agent,
         )
     )
+    if direct_function_id:
+        function_id = str(direct_function_id).strip()
+        arguments = dict(direct_function_arguments or {})
+        if not function_id or not hasattr(agent_instance, "call_tool"):
+            raise ValueError("direct_function_requires_omniflow_agent")
+        if agent_instance.store.get_function(function_id) is None:
+            raise ValueError(f"direct_function_not_found:{function_id}")
+
+        def run_complete_function(_goal: str, *, experiment: Any = None) -> Any:
+            return agent_instance.call_tool(
+                ToolCall(function_id, dict(arguments)),
+                experiment=experiment,
+            )
+
+        agent_instance.run = run_complete_function
+    return agent_instance
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -3813,14 +3930,32 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-path",
         default=str(
-            (OMNIFLOW_ROOT / "runtime" / "logs" / "androidworld_runs").resolve()
+            (OMNIFLOW_ROOT / "data" / "androidworld").resolve()
+        ),
+    )
+    parser.add_argument(
+        "--collect-performance",
+        action="store_true",
+        help=(
+            "Opt in to the standalone performance sidecar; it does not modify "
+            "task results or batch summaries."
         ),
     )
     parser.add_argument(
         "--store-path",
         dest="store_path",
-        default=str((OMNIFLOW_ROOT / "runtime" / "omniflow" / "store.json").resolve()),
+        default="",
         help="Function Store path.",
+    )
+    parser.add_argument(
+        "--reuse-memory-path",
+        default="",
+        help="Oracle-selected task-local memory for a reuse-only method.",
+    )
+    parser.add_argument(
+        "--mobilegpt-root",
+        default=os.environ.get("OMNIFLOW_MOBILEGPT_ROOT") or "",
+        help="Pinned upstream MobileGPT checkout used by mobilegpt_replay.",
     )
     parser.add_argument(
         "--raw-replay-run-log",
@@ -3870,7 +4005,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model-endpoint-profile",
         choices=("auto", "openai", "llmthu"),
-        default=os.environ.get("OMNIFLOW_MODEL_ENDPOINT_PROFILE") or "auto",
+        default=FORMAL_MODEL_ENDPOINT_PROFILE,
         help="Credential and endpoint profile for the selected model.",
     )
     parser.add_argument(
@@ -3879,16 +4014,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=float(os.environ.get("OMNIFLOW_PLANNER_TIMEOUT_SEC") or 60.0),
         help="Per-call timeout in seconds for the online OmniFlow planner.",
     )
+    parser.add_argument("--function-id", default="")
+    parser.add_argument("--function-arguments-json", default="{}")
     return parser
 
 
 def _run_bmoca_e2e(args: argparse.Namespace) -> int:
     """Use the normal OmniFlow runtime against the B-MoCA Host adapter."""
 
-    from omniflow import OmniFlow, OmniFlowConfig, RuntimeSettings
-    from omniflow.core.config import Experiment
     from omniflow.transfer.runtime import load_transfer_state_catalog
-    from omniflow.vlm.planner import VLMPlanner
     from src.experiment.observation_evidence import persist_target_run_evidence
     from src.integrations.bmoca import (
         BMocaEnvironmentConfig,
@@ -3897,25 +4031,32 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
     )
 
     method = str(args.agent or "").strip()
-    if method not in {"ours", "script_replay"}:
+    if method not in {
+        "ours_replay",
+        "mobilegpt_replay",
+        "skilldroid_replay",
+    }:
         raise ValueError(f"bmoca_method_unsupported:{method}")
     selected_tasks = [item.strip() for item in str(args.tasks).split(",") if item.strip()]
     if len(selected_tasks) != 1:
         raise ValueError("bmoca_e2e_requires_exactly_one_task")
-    model = str(args.model or "").strip()
-    if method == "ours":
-        if model != "GLM-5.1":
-            raise ValueError("bmoca_e2e_requires_GLM-5.1")
-        if str(args.model_endpoint_profile or "").strip() != "llmthu":
-            raise ValueError("bmoca_e2e_requires_llmthu_endpoint_profile")
     store_path = Path(args.store_path).expanduser().resolve()
-    if not store_path.is_file():
-        raise FileNotFoundError(f"bmoca_function_store_missing:{store_path}")
+    reuse_memory_path = Path(args.reuse_memory_path).expanduser().resolve()
     transfer_state_path = store_path.with_name("transfer_states.json")
-    if not transfer_state_path.is_file():
+    if method == "ours_replay":
+        if not store_path.is_file():
+            raise FileNotFoundError(f"bmoca_function_store_missing:{store_path}")
+        if not transfer_state_path.is_file():
+            raise FileNotFoundError(
+                f"bmoca_transfer_state_catalog_missing:{transfer_state_path}"
+            )
+    elif not reuse_memory_path.exists():
         raise FileNotFoundError(
-            f"bmoca_transfer_state_catalog_missing:{transfer_state_path}"
+            f"bmoca_reuse_memory_missing:{reuse_memory_path}"
         )
+    mobilegpt_root = Path(args.mobilegpt_root).expanduser().resolve()
+    if method == "mobilegpt_replay" and not (mobilegpt_root / "Server").is_dir():
+        raise FileNotFoundError(f"bmoca_mobilegpt_root_missing:{mobilegpt_root}")
     environment_ids = tuple(
         item.strip() for item in str(args.environment_ids).split(",") if item.strip()
     )
@@ -3956,12 +4097,11 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
         task_id=selected_tasks[0],
         environment_ids=environment_ids,
     )
-    source_states = load_transfer_state_catalog(transfer_state_path)
-    planner_api_key = planner_base_url = ""
-    if method == "ours":
-        planner_api_key, planner_base_url = resolve_openai_compatible_config(
-            profile="llmthu"
-        )
+    source_states = (
+        load_transfer_state_catalog(transfer_state_path)
+        if method == "ours_replay"
+        else {}
+    )
     output_dir = Path(args.output_path).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / "summary.json"
@@ -3986,36 +4126,36 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                 result = None
                 run_error: Exception | None = None
                 try:
-                    if method == "script_replay":
+                    if method == "ours_replay":
                         from src.integrations.script_replay import run_script_replay
 
                         result = run_script_replay(
                             store_path=store_path,
                             host=host,
                         )
-                    else:
-                        planner = VLMPlanner(
-                            provider="openai_compatible",
-                            model=model,
-                            api_key=planner_api_key,
-                            base_url=planner_base_url,
-                            timeout=float(args.planner_timeout_sec or 60.0),
+                    elif method == "skilldroid_replay":
+                        from src.integrations.skilldroid_replay import (
+                            run_droidrun_macro_replay,
                         )
-                        flow = OmniFlow(
-                            store_path,
+
+                        result = run_droidrun_macro_replay(
+                            memory_path=reuse_memory_path,
                             host=host,
-                            planner=planner,
-                            installed_apps={},
-                            config=OmniFlowConfig(
-                                runtime=RuntimeSettings(
-                                    max_steps=episode.max_steps,
-                                    max_fallback_steps=0,
-                                )
-                            ),
                         )
-                        result = flow.run(
-                            episode.goal,
-                            experiment=Experiment(name="bmoca"),
+                    else:
+                        from src.integrations.android_world.mobilegpt_agent import (
+                            run_mobilegpt_replay,
+                        )
+
+                        result = run_mobilegpt_replay(
+                            host=host,
+                            goal=episode.goal,
+                            memory_root=reuse_memory_path,
+                            mobilegpt_root=mobilegpt_root,
+                            server_port=12000 + int(episode.environment_id) - 100,
+                            max_steps=episode.max_steps,
+                            stats_path=episode_root / "mobilegpt.stats.jsonl",
+                            server_log_path=episode_root / "mobilegpt.server.log",
                         )
                 except Exception as error:  # noqa: BLE001 - seal failed episodes too
                     run_error = error
@@ -4031,11 +4171,11 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                         ),
                         **(
                             {
-                                "script_replay_trace": list(
+                                "reuse_replay_trace": list(
                                     result.detail.get("trace") or []
                                 )
                             }
-                            if method == "script_replay" and result is not None
+                            if result is not None
                             else {}
                         ),
                     },
@@ -4069,6 +4209,9 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                     "checker_decisions": list(
                         result.detail.get("checker_decisions") or []
                     ),
+                    "embedding_calls": int(
+                        result.detail.get("embedding_calls") or 0
+                    ),
                     "trace": list(result.detail.get("trace") or []),
                     "run_log_evidence": run_evidence,
                     "observation_evidence": observation_evidence,
@@ -4089,6 +4232,7 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                 "error": str(error),
                 "actions_executed": 0,
                 "model_calls": 0,
+                "embedding_calls": 0,
                 "fallback_steps": 0,
                 "run_log_evidence": run_evidence,
                 "observation_evidence": observation_evidence,
@@ -4117,6 +4261,9 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
         "official_success_rate": official_successes / len(rows) if rows else 0.0,
         "actions_executed": sum(int(row.get("actions_executed") or 0) for row in rows),
         "model_calls": sum(int(row.get("model_calls") or 0) for row in rows),
+        "embedding_calls": sum(
+            int(row.get("embedding_calls") or 0) for row in rows
+        ),
         "fallback_steps": sum(int(row.get("fallback_steps") or 0) for row in rows),
         "results": rows,
     }
@@ -4167,6 +4314,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.task_params_json,
         task_random_seed=int(args.task_random_seed),
     )
+    direct_function_arguments = json.loads(args.function_arguments_json or "{}")
+    if not isinstance(direct_function_arguments, dict):
+        raise ValueError("--function-arguments-json must decode to an object")
     env = None
     adb_output_patches: tuple[tuple[type[Any], Any], ...] = ()
     original_launch_app: Any | None = None
@@ -4228,6 +4378,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         original_launch_app = _patch_androidworld_app_launch(adb_utils)
         _prepare_androidworld_snapshot_restore(env, setup_app_list or ())
+        _reset_androidworld_file_picker_state(
+            env,
+            setup_module=aw_setup,
+            setup_apps=setup_app_list,
+        )
         if task_params:
             if len(selected_task_names) != 1:
                 raise ValueError("--task-params-json requires exactly one selected task")
@@ -4252,9 +4407,29 @@ def main(argv: Sequence[str] | None = None) -> int:
             str(run_output_dir / "relocation_failures"),
         )
 
+        collect_performance = bool(getattr(args, "collect_performance", False)) or (
+            str(os.environ.get("OMNIFLOW_COLLECT_PERFORMANCE") or "")
+            .strip()
+            .lower()
+            in {"1", "true", "yes", "on"}
+        )
+        performance_metrics = (
+            PerformanceMetrics(
+                adb_path=str(args.adb_path or ""),
+                adb_serial=str(
+                    os.environ.get("ANDROID_SERIAL")
+                    or f"emulator-{int(args.console_port)}"
+                ).strip(),
+            )
+            if collect_performance
+            else None
+        )
         experiment_environment = AndroidWorldExperimentEnvironment(
             env,
-            AndroidWorldEnvironmentConfig(evidence_root=run_output_dir),
+            AndroidWorldEnvironmentConfig(
+                evidence_root=run_output_dir,
+                performance_metrics=performance_metrics,
+            ),
         )
         recording_session = experiment_environment.install_episode_recorder()
         agent = _build_launch_agent(
@@ -4279,6 +4454,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             appagent_output_root=str(run_output_dir / "appagent_runtime"),
             task_seed=int(args.task_random_seed),
             evidence_root=str(run_output_dir),
+            performance_metrics=performance_metrics,
+            direct_function_id=str(args.function_id or "").strip(),
+            direct_function_arguments=direct_function_arguments,
         )
         checkpoint_dir = (
             str(Path(args.checkpoint_dir).expanduser().resolve())
@@ -4333,6 +4511,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         started_at = utc_now_iso()
         started_perf = perf_counter()
+        if performance_metrics is not None:
+            performance_metrics.start()
         result: dict[str, Any] | None = None
         mainline_name = selected_agent
         instrumented_agent = _ExperimentAgentAdapter(
@@ -4477,6 +4657,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                         recording_session.persist_observations()
                     )
                     episode_recorder_error = recording_session.error
+                if performance_metrics is not None:
+                    performance_metrics.finish(
+                        method_wall_sec=perf_counter() - started_perf,
+                    )
+                    write_performance_metrics(
+                        performance_metrics.to_dict(),
+                        run_output_dir / "performance_sidecar.json",
+                    )
                 mobilegpt_agent_result: dict[str, Any] = {}
                 mobilegpt_agent_error = ""
                 runtime_integrity_error = None

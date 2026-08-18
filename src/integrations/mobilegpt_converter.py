@@ -24,6 +24,8 @@ from src.integrations.android_world.host import (
 )
 from src.integrations.mobilegpt_runtime import mobilegpt_compatible_xml
 from src.integrations.runlog import import_run_log, infer_input_text_target
+from omniflow.core.model import Action
+from omniflow.transfer.runtime import load_transfer_state_catalog
 
 CONVERSION_SOURCE_SCHEMA = "omniflow.mobilegpt-runlog-conversion-source.v1"
 CONVERSION_MODE_DIRECT = "runlog_direct"
@@ -306,7 +308,15 @@ def _load_runlog_trajectory(
     """Load one successful canonical RunLog for deterministic offline compilation."""
 
     path = Path(source_run_log).expanduser().resolve()
-    payload = import_run_log(json.loads(path.read_text(encoding="utf-8")))
+    raw_payload = json.loads(path.read_text(encoding="utf-8"))
+    if raw_payload.get("schema_version") == "omniflow.canonical_run_log.v1":
+        return _load_compact_runlog_trajectory(
+            path,
+            raw_payload,
+            target_package=target_package,
+            target_app=target_app,
+        )
+    payload = import_run_log(raw_payload)
     if payload.get("status") != "succeeded" or payload.get("success") is not True:
         raise MobileGPTConversionError("source_runlog_not_successful", path=str(path))
 
@@ -454,6 +464,252 @@ def _load_runlog_trajectory(
             "validator": dict(payload.get("validator") or {}),
         },
     }
+
+
+def _load_compact_runlog_trajectory(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    target_package: str,
+    target_app: str,
+) -> dict[str, Any]:
+    """Hydrate the canonical compact trace without changing its source file."""
+
+    if payload.get("status") != "succeeded" or payload.get("success") is not True:
+        raise MobileGPTConversionError("source_runlog_not_successful", path=str(path))
+    diagnostics = payload.get("diagnostics")
+    if not isinstance(diagnostics, dict) or diagnostics.get("official_success") is not True:
+        raise MobileGPTConversionError("source_runlog_not_official", path=str(path))
+    catalog_path = path.with_name("transfer_states.json")
+    states = load_transfer_state_catalog(catalog_path)
+    transitions: list[_RunLogTransition] = []
+    skipped: list[dict[str, Any]] = []
+    packages: list[str] = []
+    launch_action: dict[str, Any] | None = None
+    launch_step_index = -1
+    steps = payload.get("steps")
+    if not isinstance(steps, list) or not steps:
+        raise MobileGPTConversionError("source_trajectory_empty")
+    for ordinal, raw_step in enumerate(steps):
+        if not isinstance(raw_step, dict) or raw_step.get("step_index") != ordinal:
+            raise MobileGPTConversionError(
+                "source_step_invalid",
+                step_index=ordinal,
+            )
+        result = raw_step.get("result")
+        if not isinstance(result, dict) or result.get("success") is not True:
+            skipped.append(
+                {"step_index": ordinal, "action_type": "unsuccessful"}
+            )
+            continue
+        before_state_id = str(raw_step.get("before_state_id") or "").strip()
+        after_state_id = str(raw_step.get("after_state_id") or "").strip()
+        before = states.get(before_state_id)
+        after = states.get(after_state_id)
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            raise MobileGPTConversionError(
+                "source_observation_missing",
+                step_index=ordinal,
+            )
+        if before_state_id and before_state_id == after_state_id:
+            skipped.append(
+                {"step_index": ordinal, "action_type": "no_state_change"}
+            )
+            continue
+        package_name = str(before.get("package_name") or "").strip()
+        if package_name:
+            packages.append(package_name)
+        after_package = str(after.get("package_name") or "").strip()
+        if after_package:
+            packages.append(after_package)
+        action = _compact_action_to_androidworld(
+            Action.from_value(raw_step.get("action")),
+            state=before,
+            step_index=ordinal,
+        )
+        action_type = _action_type(action)
+        observation = _compact_observation(before)
+        if (
+            action_type == "click"
+            and package_name
+            in {
+                "com.google.android.apps.nexuslauncher",
+                "com.android.launcher3",
+            }
+            and after_package
+            and after_package != package_name
+            and after_package != "com.android.systemui"
+        ):
+            launch_action = {
+                "action_type": "open_app",
+                "app_name": after_package,
+            }
+            launch_step_index = ordinal
+            skipped.append(
+                {"step_index": ordinal, "action_type": "open_app"}
+            )
+            continue
+        if action_type == "open_app":
+            app_name = str(action.get("app_name") or "").strip()
+            if app_name:
+                packages.append(app_name)
+                launch_action = action
+                launch_step_index = ordinal
+        if action_type in _SKIPPED_ACTION_TYPES:
+            skipped.append({"step_index": ordinal, "action_type": action_type})
+            continue
+        if action_type not in _SUPPORTED_ACTION_TYPES:
+            raise MobileGPTConversionError(
+                "source_action_unsupported",
+                step_index=ordinal,
+                action_type=action_type or "missing",
+            )
+        forest = str(before.get("xml") or "").strip()
+        next_forest = str(after.get("xml") or "").strip()
+        try:
+            ET.fromstring(forest)
+        except ET.ParseError as error:
+            raise MobileGPTConversionError(
+                "source_observation_invalid_xml",
+                step_index=ordinal,
+                error=str(error),
+            ) from error
+        transitions.append(
+            _RunLogTransition(
+                step_index=ordinal,
+                action=action,
+                observation=observation,
+                forest=forest,
+                next_forest=next_forest,
+            )
+        )
+
+    package_names = sorted(
+        {
+            value
+            for value in packages
+            if value
+            not in {
+                "android",
+                "com.android.systemui",
+                "com.google.android.apps.nexuslauncher",
+            }
+        }
+    )
+    resolved_target_package = str(target_package or "").strip()
+    if not resolved_target_package and isinstance(launch_action, dict):
+        resolved_target_package = str(launch_action.get("app_name") or "").strip()
+    if not resolved_target_package:
+        resolved_target_package = package_names[0] if len(package_names) == 1 else ""
+    if not resolved_target_package:
+        raise MobileGPTConversionError(
+            "source_target_package_unresolved",
+            packages=package_names,
+        )
+    resolved_target_app = str(target_app or resolved_target_package).strip()
+    final_state_id = str(payload.get("final_state_id") or "").strip()
+    terminal = states.get(final_state_id) if final_state_id else None
+    task_name = str(
+        diagnostics.get("task_id")
+        or diagnostics.get("task_name")
+        or path.parent.name
+    ).strip()
+    return {
+        "schema_version": CONVERSION_SOURCE_SCHEMA,
+        "source_run_log": str(path),
+        "run_id": str(payload.get("run_id") or ""),
+        "task_name": task_name,
+        "instruction": str(payload.get("goal") or ""),
+        "task_parameters": dict(payload.get("task_parameters") or {}),
+        "source_seed": payload.get("seed"),
+        "target_package": resolved_target_package,
+        "target_app": resolved_target_app,
+        "transitions": transitions,
+        "skipped_actions": skipped,
+        "launch_only": not transitions and launch_action is not None,
+        "launch_action": launch_action,
+        "launch_step_index": launch_step_index,
+        "terminal_observation": (
+            _compact_observation(terminal) if isinstance(terminal, dict) else None
+        ),
+        "terminal_forest": (
+            str(terminal.get("xml") or "") if isinstance(terminal, dict) else ""
+        ),
+        "source_success_boundary": {
+            "status": payload.get("status"),
+            "success": payload.get("success"),
+            "validator": {"official": True, "success": True},
+        },
+    }
+
+
+def _compact_observation(state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "forest": str(state.get("xml") or ""),
+        "ui_elements": [],
+        "auxiliaries": {
+            "package_name": str(state.get("package_name") or ""),
+            "activity_name": str(state.get("activity_name") or ""),
+            "display": dict(state.get("display") or {}),
+        },
+    }
+
+
+def _compact_action_to_androidworld(
+    action: Action,
+    *,
+    state: dict[str, Any],
+    step_index: int,
+) -> dict[str, Any]:
+    args = dict(action.args)
+    if action.tool in {"click", "double_tap", "input_text", "long_press"}:
+        display = state.get("display")
+        if not isinstance(display, dict):
+            raise MobileGPTConversionError(
+                "source_observation_display_missing",
+                step_index=step_index,
+            )
+        width, height = display.get("width"), display.get("height")
+        try:
+            x = float(args["x"]) * float(width) / 1000.0
+            y = float(args["y"]) * float(height) / 1000.0
+        except (KeyError, TypeError, ValueError) as error:
+            raise MobileGPTConversionError(
+                "source_action_point_invalid",
+                step_index=step_index,
+            ) from error
+        converted: dict[str, Any] = {
+            "action_type": action.tool,
+            "x": int(round(x)),
+            "y": int(round(y)),
+        }
+        if action.tool == "input_text":
+            converted["text"] = str(args.get("text") or "")
+            converted["clear_text"] = bool(args.get("clear_text", True))
+        return converted
+    if action.tool == "swipe":
+        return {
+            "action_type": "swipe",
+            "direction": str(args.get("direction") or "").strip().lower(),
+        }
+    if action.tool in {"press_back", "navigate_back"}:
+        return {"action_type": "navigate_back"}
+    if action.tool in {"press_home", "navigate_home"}:
+        return {"action_type": "navigate_home"}
+    if action.tool == "press_key":
+        key = str(args.get("key") or args.get("keycode") or "").strip().lower()
+        if key.removeprefix("keycode_") == "back":
+            return {"action_type": "navigate_back"}
+        if key.removeprefix("keycode_") == "home":
+            return {"action_type": "navigate_home"}
+    if action.tool == "open_app":
+        return {
+            "action_type": "open_app",
+            "app_name": str(
+                args.get("package_name") or args.get("app_name") or ""
+            ).strip(),
+        }
+    return {"action_type": action.tool}
 
 
 def preflight_runlog_conversion(

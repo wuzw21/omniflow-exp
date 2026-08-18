@@ -29,11 +29,10 @@ fails immediately if its emulator process exits during boot.
 Run a task-major slice:
 
 ```bash
-OMNIFLOW_EXP_ASSET_ROOT=/absolute/assets \
-OMNIFLOW_EXP_RESULTS_ROOT=/absolute/results \
-OMNIFLOW_EXP_MEMORY_ROOT=/absolute/memory \
+OMNIFLOW_EXP_ASSET_ROOT=/Users/wuzewen/Projects/Omni/OmniFlow-exp/data \
+OMNIFLOW_EXP_RESULTS_ROOT=/Users/wuzewen/Projects/Omni/OmniFlow-exp/data \
+OMNIFLOW_EXP_MEMORY_ROOT=/Users/wuzewen/Projects/Omni/OmniFlow-exp/data \
 OMNIFLOW_ENV_FILE=/absolute/model.env \
-PYTHON_BIN=/absolute/python \
 OMNITRANSFER_ROOT="$HOME/Projects/Omni/OmniTransfer" \
 bash scripts/exp/run_androidworld.sh --tasks AudioRecorderRecordAudio
 ```
@@ -41,8 +40,15 @@ bash scripts/exp/run_androidworld.sh --tasks AudioRecorderRecordAudio
 Run all indexed tasks with `--all-tasks`; validate existing assets without
 starting emulators with `--check-only --all-tasks`. B-MoCA uses the same public
 launcher with `--environment bmoca --tasks TASK` for one method, or
-`--environment bmoca --all-tasks` for the two-method corpus campaign. See
+`--environment bmoca --all-tasks` for the three-method reuse campaign. See
 [`scripts/exp/README.md`](scripts/exp/README.md) for the command contract.
+
+Install the B-MoCA replay dependency with `uv sync --extra bmoca`. The protocol
+pins DroidRun v0.5.6. `skilldroid_replay` converts the qualified env100 RunLog to
+DroidRun's official `macro.json` and executes it with the native `MacroPlayer`
+through a B-MoCA `DeviceDriver` adapter, preserving official reward and RunLog
+recording. This baseline is absolute-coordinate macro replay; it does not add a
+locator, state verification, or model fallback.
 
 ## One Function lifecycle
 
@@ -57,33 +63,30 @@ successful RunLog
   -> Function Store
 ```
 
-One RunLog may save multiple semantic Functions in one call. `enhance=true` does
-not open another path: the Agent edits one in-memory draft through three small
-stages—semantic Function ranges once, then source-proven action semantics plus
-parameter declarations and checker registrations separately for each Function.
-The middle stage may request an action edit: a launcher click to the exact
-after-state package becomes `open_app`, or a visible source target becomes
-`target_description`. It never writes complete actions, states, bindings,
-checker rules, or a Store.
+One RunLog saves exactly one semantic Function. `enhance=true` does not open
+another path: the Agent edits one in-memory draft through three small stages—
+name the complete Function, then source-proven actions plus parameter
+declarations, then checker registrations. The middle
+stage may request `open_app`/`set_target` semantics or return direct actions
+indexed to the RunLog for exploration. The compiler copies or validates every
+package, target, coordinate, state, binding, and checker against source
+evidence; nothing is persisted outside the canonical writer.
 
 The core validates those small edits against the RunLog, preserves action
-order, compiles bindings and checkers, and emits the complete Function plus
-reusable contiguous subsegments. Invented packages, paraphrased targets, and
-ungrounded action changes are rejected.
-Subsegments are optional and are emitted only when the Agent identifies the
-source-state/action sequence as independently and stably replayable from its
-own first state. Every emitted subsegment must include `stability_reason`, naming
-its stable precondition, repeatable semantic effect, and any varying content
-that must be parameterized. Uncertain, transient-dialog, task-ending, and
-task-specific fragments are omitted; the complete RunLog Function remains the
-fallback and is never replaced by forced segmentation.
-Subsegment descriptions may claim only effects caused inside their source
-range. A bound source value must appear directly in the RunLog goal; an
+order, compiles bindings and checkers, and emits the one complete Function. The action stage may also return direct
+source-indexed actions for exploration; each must match the shown RunLog action
+or a source-proven semantic edit, otherwise it is rejected. Packages, targets,
+coordinates, and other evidence are copied or validated by the compiler rather
+than trusted from free-form Agent output.
+The complete RunLog Function is always the only recall candidate. The enhanced
+Store's `source_calls` contains exactly one call to that Function.
+An optional parameter must be grounded in the source RunLog goal; an
 unrequested current page value is a precondition, not an input parameter.
 Every output is grounded in the same successful RunLog and goes through the
-same validator and Store writer. A rejected stage edit receives one bounded
-correction; transport failures fail immediately and no partial Function is
-saved.
+same validator and Store writer. Each small stage gets at most three model
+attempts; after a rejection the Agent sees only that stage's deterministic
+validation error and revises the same in-memory draft. Transport failures fail
+immediately and no partial Function is saved.
 Agent-authored parameters bind only `text` or `target_description`; the tool
 schema cannot return coordinate, package, wait, direction, or arbitrary nested
 bindings.
@@ -128,8 +131,9 @@ the following hold:
 Each rule contains exactly `source_state_id` and `action`; registration on the
 Function is the rule-to-Function relationship. Otherwise the rule is skipped
 and may be checked again before a later formal action. The target threshold is
-configured once in `config/paper_androidworld.json`. Pair confidence and
-page-embedding similarity cannot compensate for an ambiguous target ranking.
+configured once in `config/paper_androidworld.json`. Page-embedding similarity
+is not used for Function recall or checker triggering; an ambiguous target
+ranking is skipped.
 There are no per-rule thresholds, step-number triggers, trigger DSLs, global
 checker pool, or source-coordinate passthrough. Checker actions are limited to
 transferable `click`, `input_text`, and `long_press` actions.
@@ -160,9 +164,16 @@ normal VLM fallback.
 
 ## Results and memory
 
-`OMNIFLOW_EXP_MEMORY_ROOT/current.json` is the canonical index for source
-RunLogs, Function Stores, method-native memory, and registered results. Existing
-official-validator conclusions are immutable and skipped.
+`~/Projects/Omni/OmniFlow-exp/data/current.json`
+is the default canonical index for source RunLogs, Function Stores, method-native
+memory, and registered results. Every bundle uses the
+`<environment>/<task>/<device>/<category>/<method>/<attempt_id>` classification
+defined in `AGENTS.md`. Set `OMNIFLOW_EXP_MEMORY_ROOT` explicitly only for a
+read-only migration input. Existing official-validator conclusions are
+immutable and skipped.
+
+The former external memory locations are one-time migration inputs only; the
+launcher does not select them after the local `data/current.json` is built.
 
 Public result rows contain only:
 
@@ -176,6 +187,28 @@ Preparation, reuse, and component diagnostics are recorded once in the
 attempt's `details` evidence instead of being repeated in every result row.
 Registration preserves that same two-level shape and appends one immutable
 registry ledger; it does not generate a second master matrix or run-record table.
+Timing and energy measurement is an explicit side channel enabled with
+`--collect-performance`; it writes `performance_sidecar.json` without changing
+task results or public rows. Host/native AndroidWorld I/O expose mean/P50/P95
+latency, while ADB battery estimates are diagnostic rather than hardware power
+measurements.
+
+## Temporary known issues (2026-08-18)
+
+Recent runtime changes pass the repository regression suite (`617 passed, 1
+skipped`). The remaining gap is historical acceptance data: the current local
+index has three active AndroidWorld Function Stores
+(`CameraTakePhoto`, `MarkorCreateNote`, and
+`TurnOffWifiAndTurnOnBluetooth`), while the requested ten-task conversion is
+not complete. Ten older task-local directories under `data/` have no immutable
+`manifest.json`; they are not indexed or executable and are retained only as
+unfinished migration evidence. Do not count them as successful Functions.
+
+The current `--check-only` path validates configuration and source lineage but
+does not prove the ten-task emulator E2E acceptance. Complete the remaining
+conversions and real source/target E2E runs before removing this note. Recent
+code changes are not treated as historical failures; this note tracks only the
+unfinished old evidence and acceptance coverage.
 
 ## Repository layout
 
@@ -198,7 +231,9 @@ pinned AndroidWorld registry when it has a launcher name and otherwise lets the
 same official launcher use its package fallback, after closing any stale app
 task. There is no adapter-owned app registry, pre-launch gate, or alternate
 launcher.
-Official Contacts setup may resolve Android's `Open with` chooser by selecting
-`Contacts` and `Just once` before resuming the official onboarding `Skip`.
+Official Contacts setup may resolve Android's chooser when `Just once` is
+visible and either `Open with` plus `Contacts`, or the already-selected title
+`Open with Contacts`, is visible. It selects only the missing choice, confirms
+`Just once`, then resumes the official onboarding `Skip`.
 
 No formal experiment is launched during code migration.

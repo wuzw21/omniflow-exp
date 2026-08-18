@@ -21,9 +21,9 @@ from omniflow.core.trajectory import require_complete_source_run_log
 from omniflow.functions.assets import save_function
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from src.experiment.androidworld import ArchivedRunLog, build_fixed_replay_command
-from src.experiment.artifact_memory import (
+from src.experiment.local_data import (
     canonical_mobilegpt_memory_from_memory,
-    load_artifact_memory,
+    load_local_data,
     registered_result_plan_from_memory,
 )
 from src.experiment.batch_outcomes import (
@@ -48,7 +48,11 @@ from src.experiment.protocol import (
     TASK_DEADLINE_SEC,
     TASK_SEED,
 )
+from src.integrations.mobilegpt_converter import (
+    convert_runlog_to_mobilegpt_memory,
+)
 from src.integrations.runlog import project_androidworld_step_actions
+from src.integrations.skilldroid_replay import compile_droidrun_macro
 
 
 def _sha256(path: Path) -> str:
@@ -320,6 +324,7 @@ def ensure_source_device(
         str(_resolve_reference(args.memory_index, pointer["source_index"])),
         "--source-task",
         args.task,
+        *(["--source-only"] if getattr(args, "source_only", False) else []),
         "--json-out",
         str(preflight_path),
     ]
@@ -351,21 +356,75 @@ def _canonical_source(
     *,
     require_protocol_seed: bool = True,
 ) -> tuple[dict[str, Any], Path, dict[str, Any]]:
-    registry = load_artifact_memory(memory_index)
+    registry = load_local_data(memory_index)
     record = registry.get("canonical", {}).get("source_run_logs", {}).get(task)
     if not isinstance(record, dict):
         raise ValueError(f"canonical_source_missing:{task}")
+    if not require_protocol_seed and record.get("latest_official_success_source") is not True:
+        fallback = _audited_historical_source(memory_index, task)
+        if fallback is not None:
+            return registry, fallback[0], fallback[1]
     path = Path(str(record.get("object_path") or "")).expanduser().resolve()
-    if not path.is_file() or _sha256(path) != str(record.get("sha256") or ""):
-        raise ValueError(f"canonical_source_object_invalid:{task}:{path}")
-    run_log = require_complete_source_run_log(_read_object(path))
-    if run_log["task_name"] != task:
-        raise ValueError(f"canonical_source_task_mismatch:{task}")
-    if require_protocol_seed and run_log["seed"] != SOURCE_SEED:
-        raise ValueError(f"canonical_source_seed_mismatch:{task}:{run_log['seed']}")
-    if run_log["success"] is not True:
-        raise ValueError(f"canonical_source_not_successful:{task}")
-    return registry, path, run_log
+    try:
+        if not path.is_file() or _sha256(path) != str(record.get("sha256") or ""):
+            raise ValueError(f"canonical_source_object_invalid:{task}:{path}")
+        run_log = require_complete_source_run_log(_read_object(path))
+        if run_log["task_name"] != task:
+            raise ValueError(f"canonical_source_task_mismatch:{task}")
+        if require_protocol_seed and run_log["seed"] != SOURCE_SEED:
+            raise ValueError(f"canonical_source_seed_mismatch:{task}:{run_log['seed']}")
+        if run_log["success"] is not True:
+            raise ValueError(f"canonical_source_not_successful:{task}")
+        return registry, path, run_log
+    except (FileNotFoundError, TypeError, ValueError):
+        if require_protocol_seed:
+            raise
+        fallback = _audited_historical_source(memory_index, task)
+        if fallback is None:
+            raise
+        return registry, fallback[0], fallback[1]
+
+
+def _audited_historical_source(
+    memory_index: Path,
+    task: str,
+) -> tuple[Path, dict[str, Any]] | None:
+    task_root = memory_index.parent / task
+    qualification_path = task_root / "source_qualification.json"
+    if not qualification_path.is_file():
+        return None
+    qualification = _read_object(qualification_path)
+    latest = qualification.get("latest_attempt")
+    if not isinstance(latest, dict):
+        return None
+    if (
+        latest.get("mature") is not True
+        or latest.get("official_validator_success") is not True
+        or latest.get("replay_status") != "succeeded"
+        or int(latest.get("model_calls") or 0) != 0
+        or int(latest.get("fallback_steps") or 0) != 0
+    ):
+        return None
+    attempt_id = str(latest.get("attempt_id") or "").strip()
+    if not attempt_id:
+        return None
+    candidates = sorted(
+        path
+        for path in (task_root / "source_attempts").glob("*/" + attempt_id + "/**/target.run_log.json")
+        if path.is_file()
+    )
+    for candidate in candidates:
+        try:
+            run_log = require_complete_source_run_log(_read_object(candidate))
+        except (TypeError, ValueError):
+            continue
+        if (
+            run_log["task_name"] == task
+            and run_log["seed"] == SOURCE_SEED
+            and run_log["success"] is True
+        ):
+            return candidate.resolve(), run_log
+    return None
 
 
 def _resolve_reference(index_path: Path, value: Any) -> Path:
@@ -676,7 +735,7 @@ def _canonical_function_store(
     memory_index: Path,
     task: str,
 ) -> dict[str, Any] | None:
-    registry = load_artifact_memory(memory_index)
+    registry = load_local_data(memory_index)
     record = registry.get("canonical", {}).get("function_stores", {}).get(task)
     return dict(record) if isinstance(record, dict) else None
 
@@ -698,7 +757,7 @@ def prepare_function_asset(
     source_calls = existing.get("source_calls")
     if (
         not isinstance(source_calls, list)
-        or not source_calls
+        or len(source_calls) != 1
         or any(
             not isinstance(source_call, dict)
             or not str(source_call.get("function_id") or "").strip()
@@ -732,14 +791,11 @@ def qualify_source_function(
     command = [
         str(args.python_bin),
         "-m",
-        "src.experiment.direct_function_launch",
-        "--repo",
-        str(args.repo),
+        "src.integrations.android_world.launch",
         "--function-id",
         str(source_call["function_id"]),
         "--function-arguments-json",
         json.dumps(source_call["arguments"], ensure_ascii=False),
-        "--",
         "--android-world-root",
         str(args.android_world_root),
         "--tasks",
@@ -778,7 +834,6 @@ def qualify_source_function(
         "OPENAI_API_KEY",
         "OPENAI_BASE_URL",
         "LLMTHU_API_KEY",
-        "LLMTHU_BASE_URL",
         "ANTHROPIC_API_KEY",
         "GOOGLE_API_KEY",
     ):
@@ -810,108 +865,6 @@ def qualify_source_function(
                 function_store.get("transfer_states_sha256") or ""
             ),
             "source_call": source_call,
-        }
-    )
-    result["qualified"] = bool(
-        result["returncode"] == 0
-        and result["function_replay_success"]
-        and result["model_calls"] == 0
-        and result["fallback_steps"] == 0
-    )
-    _write_json(output_root.parent / "qualification.json", result)
-    return result
-
-
-def qualify_source_functions(
-    *,
-    args: argparse.Namespace,
-    source_path: Path,
-    run_log: dict[str, Any],
-    function_store: dict[str, Any],
-    source_calls: list[dict[str, Any]],
-    attempt_root: Path,
-    deadline: Deadline,
-) -> dict[str, Any]:
-    output_root = attempt_root / "source_qualification" / "ordered_sequence"
-    store_path = Path(str(function_store["store_path"])).resolve()
-    command = [
-        str(args.python_bin),
-        "-m",
-        "src.experiment.direct_function_launch",
-        "--repo",
-        str(args.repo),
-        "--function-calls-json",
-        json.dumps(source_calls, ensure_ascii=False),
-        "--",
-        "--android-world-root",
-        str(args.android_world_root),
-        "--tasks",
-        args.task,
-        "--task-random-seed",
-        str(SOURCE_SEED),
-        "--n-task-combinations",
-        "1",
-        "--console-port",
-        str(args.source_device[2]),
-        "--agent",
-        "omniflow",
-        "--max-steps",
-        str(max(SOURCE_MAX_STEPS, len(source_calls))),
-        "--output-path",
-        str(output_root),
-        "--store-path",
-        str(store_path),
-        "--task-params-json",
-        json.dumps(run_log["task_parameters"], ensure_ascii=False),
-        "--fixed-task-seed",
-        "--perform-emulator-setup",
-        "--adb-path",
-        str(args.adb_path),
-    ]
-    environment = dict(os.environ)
-    environment.update(
-        {
-            "ANDROID_SERIAL": args.source_device[1],
-            "OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS": "0",
-            "OMNITRANSFER_ROOT": str(args.omnitransfer_root),
-            "PYTHONPATH": f"{args.repo}:{args.repo / 'src'}:{args.android_world_root}",
-        }
-    )
-    for key in (
-        "OPENAI_API_KEY",
-        "OPENAI_BASE_URL",
-        "LLMTHU_API_KEY",
-        "LLMTHU_BASE_URL",
-        "ANTHROPIC_API_KEY",
-        "GOOGLE_API_KEY",
-    ):
-        environment.pop(key, None)
-    result = run_logged_command(
-        command,
-        cwd=args.repo,
-        environment=environment,
-        log_path=output_root.parent / "qualification.log",
-        timeout_sec=deadline.remaining(TASK_DEADLINE_SEC),
-    )
-    row = _last_jsonl_row(output_root / "task_results.jsonl")
-    canonical = row.get("canonical_run")
-    canonical = canonical if isinstance(canonical, dict) else {}
-    result.update(
-        {
-            "qualification_scope": "ordered_function_sequence_replay",
-            "official_validator_success": _official_success(row),
-            "function_replay_success": _function_replay_success(row),
-            "model_calls": int(row.get("model_calls") or 0),
-            "fallback_steps": int(row.get("fallback_steps") or 0),
-            "task_run_status": str(canonical.get("status") or ""),
-            "source_run_log": str(source_path),
-            "source_run_log_sha256": _sha256(source_path),
-            "store_path": str(store_path),
-            "store_sha256": _sha256(store_path),
-            "transfer_states_sha256": str(
-                function_store.get("transfer_states_sha256") or ""
-            ),
-            "source_calls": source_calls,
         }
     )
     result["qualified"] = bool(
@@ -1513,7 +1466,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     attempt_root = args.output_root / _safe_component(args.task) / attempt_id
     outcomes_root = args.results_root / "androidworld_validator" / "result_outcomes"
     if args.dry_run:
-        registry = load_artifact_memory(args.memory_index)
+        registry = load_local_data(args.memory_index)
         plan = registered_result_plan_from_memory(
             memory_index=args.memory_index,
             task_name=args.task,
@@ -1711,16 +1664,16 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         )
 
     source_calls = phases["function"].get("source_calls")
-    if not isinstance(source_calls, list) or not source_calls:
+    if not isinstance(source_calls, list) or len(source_calls) != 1:
         failure = _write_json(
             attempt_root / "source_qualification" / "failure.json",
-            {"error": "canonical_function_source_calls_missing"},
+            {"error": "canonical_function_single_source_call_required"},
         )
         phases["source_qualification"] = {
             "status": "failed",
             "model_calls": 0,
             "total_tokens": 0,
-            "error": "canonical_function_source_calls_missing",
+            "error": "canonical_function_single_source_call_required",
         }
         blocked_methods["ours"] = (
             "prep_failed",
@@ -1734,14 +1687,15 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         )
     else:
         try:
-            qualification = qualify_source_functions(
+            qualification = qualify_source_function(
                 args=args,
                 source_path=source_path,
                 run_log=run_log,
                 function_store=function_store,
-                source_calls=source_calls,
+                source_call=source_calls[0],
                 attempt_root=attempt_root,
                 deadline=deadline,
+                round_index=1,
             )
             phases["source_qualification"] = qualification
             if not qualification["qualified"]:
@@ -1912,7 +1866,11 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
 
 
 _BMOCA_ENVIRONMENT_IDS = tuple(str(value) for value in range(100, 110))
-_BMOCA_METHODS = ("ours", "script_replay")
+_BMOCA_METHODS = (
+    "ours_replay",
+    "mobilegpt_replay",
+    "skilldroid_replay",
+)
 _BMOCA_PROGRESS_FIELDS = (
     "task",
     "method",
@@ -1922,7 +1880,11 @@ _BMOCA_PROGRESS_FIELDS = (
     "method_success",
     "actions_executed",
     "model_calls",
+    "embedding_calls",
     "fallback_steps",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
     "error",
     "started_at",
     "finished_at",
@@ -1936,6 +1898,7 @@ _BMOCA_PROGRESS_FIELDS = (
     "emulator_grpc_port",
     "avd_home",
     "store_path",
+    "memory_path",
     "summary_path",
     "run_log_path",
     "log_path",
@@ -1944,7 +1907,6 @@ _MODEL_ENVIRONMENT_KEYS = (
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
     "LLMTHU_API_KEY",
-    "LLMTHU_BASE_URL",
     "ANTHROPIC_API_KEY",
     "GOOGLE_API_KEY",
     "OPENAI_MODEL",
@@ -2133,7 +2095,27 @@ def _save_bmoca_function_once(
     source_run_log: Path,
     task_root: Path,
 ) -> tuple[Path, dict[str, Any]]:
-    store_path = task_root / "function" / "store.json"
+    attempt_id = _safe_component(
+        str(
+            getattr(args, "attempt_id", "")
+            or getattr(getattr(args, "output_root", None), "name", "")
+            or task_root.name
+        )
+    )
+    repository_root = Path(
+        getattr(args, "repo", task_root.parent)
+    ).expanduser().resolve()
+    store_path = (
+        repository_root
+        / "data"
+        / "bmoca"
+        / _safe_component(task)
+        / "env100"
+        / "function"
+        / "function_authoring"
+        / attempt_id
+        / "function_store.json"
+    )
     if store_path.exists():
         raise FileExistsError(f"bmoca_function_store_already_exists:{store_path}")
     usage = {
@@ -2188,6 +2170,141 @@ def _save_bmoca_function_once(
     return store_path, enhancement
 
 
+def _prepare_bmoca_skilldroid_memory(
+    *,
+    task: str,
+    source_run_log: Path,
+    task_root: Path,
+) -> tuple[Path, dict[str, Any]]:
+    memory_path = task_root / "memory" / "skilldroid" / "macro.json"
+    started = time.monotonic()
+    try:
+        report = compile_droidrun_macro(
+            source_run_log=source_run_log,
+            source_state_catalog=source_run_log.with_name("transfer_states.json"),
+            output_path=memory_path,
+        )
+    except Exception as error:
+        failure = {
+            "schema_version": "omniflow.bmoca-reuse-memory.v1",
+            "status": "failed",
+            "task": task,
+            "method": "skilldroid_replay",
+            "source_run_log": str(source_run_log),
+            "wall_sec": round(time.monotonic() - started, 6),
+            "error": f"{type(error).__name__}: {error}",
+        }
+        _write_json(task_root / "skilldroid_memory_failure.json", failure)
+        raise
+    prepared = {
+        **report,
+        "status": "prepared",
+        "task": task,
+        "method": "skilldroid_replay",
+        "source_run_log": str(source_run_log),
+        "memory_sha256": _sha256(memory_path),
+        "wall_sec": round(time.monotonic() - started, 6),
+    }
+    _write_json(task_root / "skilldroid_memory.json", prepared)
+    return memory_path, prepared
+
+
+def _prepare_bmoca_mobilegpt_memory(
+    *,
+    args: argparse.Namespace,
+    task: str,
+    source_run_log: Path,
+    task_root: Path,
+) -> tuple[Path, dict[str, Any]]:
+    root = task_root / "memory" / "mobilegpt"
+    memory_path = root / "memory"
+    stats_path = root / "conversion.stats.jsonl"
+    audit_path = root / "conversion.audit.json"
+    started = time.monotonic()
+    embedding_model = str(
+        os.environ.get("MOBILEGPT_EMBEDDING_MODEL") or "text-embedding-v4"
+    ).strip()
+    embedding_api_key = str(
+        os.environ.get("MOBILEGPT_EMBEDDING_API_KEY") or ""
+    ).strip()
+    embedding_base_url = str(
+        os.environ.get("MOBILEGPT_EMBEDDING_BASE_URL") or ""
+    ).strip()
+    if not embedding_api_key or not embedding_base_url:
+        error = ValueError("mobilegpt_embedding_endpoint_required")
+        _write_json(
+            task_root / "mobilegpt_memory_failure.json",
+            {
+                "schema_version": "omniflow.bmoca-reuse-memory.v1",
+                "status": "failed",
+                "task": task,
+                "method": "mobilegpt_replay",
+                "source_run_log": str(source_run_log),
+                "wall_sec": round(time.monotonic() - started, 6),
+                "embedding_calls": 0,
+                "error": f"ValueError: {error}",
+            },
+        )
+        raise error
+    from openai import OpenAI
+
+    embedding_client = OpenAI(
+        api_key=embedding_api_key,
+        base_url=embedding_base_url,
+        max_retries=0,
+        timeout=60.0,
+    )
+    embedding_calls = 0
+
+    def embed(screen: str) -> list[float]:
+        nonlocal embedding_calls
+        embedding_calls += 1
+        response = embedding_client.embeddings.create(
+            model=embedding_model,
+            input=[screen],
+        )
+        return [float(value) for value in response.data[0].embedding]
+
+    try:
+        report = convert_runlog_to_mobilegpt_memory(
+            source_run_log=source_run_log,
+            mobilegpt_root=args.mobilegpt_root,
+            memory_root=memory_path,
+            stats_path=stats_path,
+            audit_path=audit_path,
+            model=args.formal_model,
+            embedding_model=embedding_model,
+            embedding_provider=embed,
+        )
+    except Exception as error:
+        failure = {
+            "schema_version": "omniflow.bmoca-reuse-memory.v1",
+            "status": "failed",
+            "task": task,
+            "method": "mobilegpt_replay",
+            "source_run_log": str(source_run_log),
+            "wall_sec": round(time.monotonic() - started, 6),
+            "embedding_calls": embedding_calls,
+            "error": f"{type(error).__name__}: {error}",
+        }
+        _write_json(task_root / "mobilegpt_memory_failure.json", failure)
+        raise
+    prepared = {
+        "schema_version": "omniflow.bmoca-reuse-memory.v1",
+        "status": "prepared",
+        "task": task,
+        "method": "mobilegpt_replay",
+        "source_run_log": str(source_run_log),
+        "memory_path": str(memory_path),
+        "embedding_model": embedding_model,
+        "transition_count": int(report.get("transition_count") or 0),
+        "embedding_calls": embedding_calls,
+        "wall_sec": round(time.monotonic() - started, 6),
+    }
+    _write_json(task_root / "mobilegpt_memory.json", prepared)
+    return memory_path, prepared
+
+
 def _write_bmoca_progress(
     path: Path,
     rows: dict[tuple[str, str, str], dict[str, Any]],
@@ -2217,6 +2334,7 @@ def _bmoca_result_environment(
     method: str,
     environment_id: str,
     store_path: Path,
+    memory_path: Path | None,
     output_path: Path,
     avd_home: Path,
     appium_port: int,
@@ -2254,7 +2372,12 @@ def _bmoca_result_environment(
             "OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS": "0",
         }
     )
-    if method == "script_replay":
+    if memory_path is not None:
+        environment["OMNIFLOW_BMOCA_REUSE_MEMORY_PATH"] = str(memory_path)
+    if method == "mobilegpt_replay":
+        environment["OMNIFLOW_MOBILEGPT_ROOT"] = str(args.mobilegpt_root)
+        environment["MOBILEGPT_CHAT_MODEL"] = str(args.formal_model)
+    else:
         for key in (*_MODEL_ENVIRONMENT_KEYS, "OMNIFLOW_ENV_FILE"):
             environment.pop(key, None)
     return environment
@@ -2286,6 +2409,7 @@ def _run_bmoca_result(
     method: str,
     environment_id: str,
     store_path: Path,
+    memory_path: Path | None,
     task_root: Path,
     avd_home: Path,
     appium_port: int,
@@ -2318,6 +2442,7 @@ def _run_bmoca_result(
             method=method,
             environment_id=environment_id,
             store_path=store_path,
+            memory_path=memory_path,
             output_path=result_root,
             avd_home=avd_home,
             appium_port=appium_port,
@@ -2353,7 +2478,11 @@ def _run_bmoca_result(
         "method_success": episode.get("method_success") is True,
         "actions_executed": int(episode.get("actions_executed") or 0),
         "model_calls": int(episode.get("model_calls") or 0),
+        "embedding_calls": int(episode.get("embedding_calls") or 0),
         "fallback_steps": int(episode.get("fallback_steps") or 0),
+        "prompt_tokens": int(episode.get("prompt_tokens") or 0),
+        "completion_tokens": int(episode.get("completion_tokens") or 0),
+        "total_tokens": int(episode.get("total_tokens") or 0),
         "error": error,
         "started_at": str(result.get("started_at") or ""),
         "finished_at": str(result.get("finished_at") or ""),
@@ -2367,6 +2496,7 @@ def _run_bmoca_result(
         "emulator_grpc_port": emulator_grpc_port,
         "avd_home": str(avd_home),
         "store_path": str(store_path),
+        "memory_path": str(memory_path) if memory_path is not None else "",
         "summary_path": str(summary_path) if summary_path.is_file() else "",
         "run_log_path": str(evidence.get("target_run_log_path") or ""),
         "log_path": str(log_path),
@@ -2395,6 +2525,7 @@ def _run_bmoca_method_results(
     task: str,
     method: str,
     store_path: Path,
+    memory_path: Path | None = None,
     task_root: Path,
     avd_homes: dict[str, Path],
     environment_ids: Sequence[str] = _BMOCA_ENVIRONMENT_IDS,
@@ -2416,6 +2547,7 @@ def _run_bmoca_method_results(
                 method=method,
                 environment_id=environment_id,
                 store_path=store_path,
+                memory_path=memory_path,
                 task_root=task_root,
                 avd_home=avd_homes[environment_id],
                 timeout_sec=float(BMOCA_RESULT_TIMEOUT_SEC),
@@ -2432,10 +2564,15 @@ def _run_bmoca_method_results(
                 "method_success": False,
                 "actions_executed": 0,
                 "model_calls": 0,
+                "embedding_calls": 0,
                 "fallback_steps": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
                 "error": f"{type(error).__name__}: {error}",
                 "avd_home": str(avd_homes[environment_id]),
                 "store_path": str(store_path),
+                "memory_path": str(memory_path) if memory_path is not None else "",
                 "log_path": str(
                     task_root / "logs" / method / f"env_{environment_id}.log"
                 ),
@@ -2512,7 +2649,11 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     "method_success": "",
                     "actions_executed": 0,
                     "model_calls": 0,
+                    "embedding_calls": 0,
                     "fallback_steps": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
                     "error": "",
                 }
     _write_bmoca_progress(progress_csv, rows)
@@ -2522,6 +2663,7 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     avd_failures: dict[str, str] = {}
     observed_max_concurrency = 0
     enhancement_reports: list[dict[str, Any]] = []
+    memory_reports: list[dict[str, Any]] = []
     for task in tasks:
         task_root = campaign_root / "tasks" / _safe_component(task)
         source_run_log = source_run_logs.get(task)
@@ -2536,6 +2678,9 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     _append_bmoca_progress_event(progress_jsonl, rows[key])
             _write_bmoca_progress(progress_csv, rows)
             continue
+        store_path = task_root / "function" / "store.json"
+        method_assets: dict[str, Path] = {}
+        method_prep_errors: dict[str, str] = {}
         try:
             store_path, enhancement = _save_bmoca_function_once(
                 args=args,
@@ -2544,7 +2689,8 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 task_root=task_root,
             )
             enhancement_reports.append(enhancement)
-        except Exception as error:  # noqa: BLE001 - advance to the next task
+            method_assets["ours_replay"] = store_path
+        except Exception as error:  # noqa: BLE001 - preserve other methods
             failure_path = task_root / "enhancement_failure.json"
             failure = (
                 _read_object(failure_path)
@@ -2561,14 +2707,20 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             if not failure_path.is_file():
                 _write_json(failure_path, failure)
             enhancement_reports.append(failure)
+            method_prep_errors["ours_replay"] = str(failure["error"])
+
+        if "ours_replay" not in method_assets:
+            error = method_prep_errors["ours_replay"]
             for method in _BMOCA_METHODS:
                 for environment_id in _BMOCA_ENVIRONMENT_IDS:
                     key = (task, method, environment_id)
-                    rows[key].update(status="prep_failed", error=failure["error"])
+                    rows[key].update(status="prep_failed", error=error)
                     _append_bmoca_progress_event(progress_jsonl, rows[key])
             _write_bmoca_progress(progress_csv, rows)
             continue
-        if "100" not in avd_homes and "100" not in avd_failures:
+
+        ours_gate_passed = False
+        if "ours_replay" in method_assets and "100" not in avd_homes and "100" not in avd_failures:
             try:
                 avd_homes["100"] = _clone_bmoca_avd_home(
                     source_home=args.bmoca_avd_home,
@@ -2577,8 +2729,10 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 )
             except Exception as error:  # noqa: BLE001 - preserve the campaign table
                 avd_failures["100"] = f"{type(error).__name__}: {error}"
-        gate_key = (task, "script_replay", "100")
-        if "100" not in avd_homes:
+        gate_key = (task, "ours_replay", "100")
+        if "ours_replay" not in method_assets:
+            gate_rows = []
+        elif "100" not in avd_homes:
             rows[gate_key].update(
                 status="environment_failure",
                 error=avd_failures.get("100", "bmoca_env100_avd_unavailable"),
@@ -2592,7 +2746,7 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             gate_rows = _run_bmoca_method_results(
                 args=args,
                 task=task,
-                method="script_replay",
+                method="ours_replay",
                 store_path=store_path,
                 task_root=task_root,
                 avd_homes={"100": avd_homes["100"]},
@@ -2611,7 +2765,8 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     _max_live_bmoca_results(gate_rows),
                 )
         gate_row = rows[gate_key]
-        if not _bmoca_source_replay_qualified(gate_row):
+        ours_gate_passed = _bmoca_source_replay_qualified(gate_row)
+        if "ours_replay" in method_assets and not ours_gate_passed:
             gate_error = (
                 "bmoca_source_replay_gate_failed:"
                 f"status={gate_row.get('status')},"
@@ -2621,11 +2776,54 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 f"fallback_steps={gate_row.get('fallback_steps')}"
             )
             for key, row in rows.items():
-                if key[0] == task and key != gate_key and row["status"] == "pending":
+                if (
+                    key[0] == task
+                    and key != gate_key
+                    and row["status"] == "pending"
+                ):
                     row.update(status="prep_failed", error=gate_error)
                     _append_bmoca_progress_event(progress_jsonl, row)
             _write_bmoca_progress(progress_csv, rows)
             continue
+
+        for method, prepare in (
+            ("mobilegpt_replay", _prepare_bmoca_mobilegpt_memory),
+            ("skilldroid_replay", _prepare_bmoca_skilldroid_memory),
+        ):
+            try:
+                prepared_path, prepared = prepare(
+                    **(
+                        {"args": args}
+                        if method == "mobilegpt_replay"
+                        else {}
+                    ),
+                    task=task,
+                    source_run_log=source_run_log,
+                    task_root=task_root,
+                )
+                method_assets[method] = prepared_path
+                memory_reports.append(prepared)
+            except Exception as error:  # noqa: BLE001 - one immutable prep
+                failure_path = task_root / f"{method.removesuffix('_replay')}_memory_failure.json"
+                failure = (
+                    _read_object(failure_path)
+                    if failure_path.is_file()
+                    else {
+                        "status": "failed",
+                        "task": task,
+                        "method": method,
+                        "error": f"{type(error).__name__}: {error}",
+                    }
+                )
+                memory_reports.append(failure)
+                method_prep_errors[method] = str(failure["error"])
+
+        for method, error in method_prep_errors.items():
+            for environment_id in _BMOCA_ENVIRONMENT_IDS:
+                key = (task, method, environment_id)
+                rows[key].update(status="prep_failed", error=error)
+                _append_bmoca_progress_event(progress_jsonl, rows[key])
+        _write_bmoca_progress(progress_csv, rows)
 
         for environment_id in _BMOCA_ENVIRONMENT_IDS:
             if environment_id in avd_homes or environment_id in avd_failures:
@@ -2642,30 +2840,42 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 avd_failures[environment_id] = f"{type(error).__name__}: {error}"
 
         for method in _BMOCA_METHODS:
+            if method not in method_assets:
+                continue
+            if method == "ours_replay" and not ours_gate_passed:
+                continue
             method_environment_ids = (
                 tuple(
                     environment_id
                     for environment_id in _BMOCA_ENVIRONMENT_IDS
                     if environment_id != "100"
                 )
-                if method == "script_replay"
+                if method == "ours_replay"
                 else _BMOCA_ENVIRONMENT_IDS
             )
-            runnable_homes = dict(avd_homes)
             for environment_id, error in avd_failures.items():
                 if environment_id not in method_environment_ids:
                     continue
                 key = (task, method, environment_id)
-                rows[key].update(status="environment_failure", error=error)
-                _append_bmoca_progress_event(progress_jsonl, rows[key])
+                if rows[key]["status"] == "pending":
+                    rows[key].update(status="environment_failure", error=error)
+                    _append_bmoca_progress_event(progress_jsonl, rows[key])
             runnable_homes = {
                 environment_id: home
-                for environment_id, home in runnable_homes.items()
+                for environment_id, home in avd_homes.items()
                 if environment_id in method_environment_ids
+                and rows[(task, method, environment_id)]["status"] == "pending"
             }
+            memory_path = (
+                None if method == "ours_replay" else method_assets[method]
+            )
             for environment_id in runnable_homes:
                 key = (task, method, environment_id)
-                rows[key].update(status="running", store_path=str(store_path))
+                rows[key].update(
+                    status="running",
+                    store_path=str(store_path),
+                    memory_path=(str(memory_path) if memory_path is not None else ""),
+                )
                 _append_bmoca_progress_event(progress_jsonl, rows[key])
             _write_bmoca_progress(progress_csv, rows)
             method_rows = _run_bmoca_method_results(
@@ -2673,6 +2883,7 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 task=task,
                 method=method,
                 store_path=store_path,
+                memory_path=memory_path,
                 task_root=task_root,
                 avd_homes=runnable_homes,
                 environment_ids=method_environment_ids,
@@ -2691,6 +2902,74 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     for row in rows.values():
         status = str(row.get("status") or "unknown")
         status_counts[status] = status_counts.get(status, 0) + 1
+    method_summaries: dict[str, dict[str, Any]] = {}
+    for method in _BMOCA_METHODS:
+        selected = [row for row in rows.values() if row["method"] == method]
+        cross_device = [
+            row for row in selected if str(row["environment_id"]) != "100"
+        ]
+        method_summaries[method] = {
+            "result_count": len(selected),
+            "official_success_count": sum(
+                row.get("official_success") is True for row in selected
+            ),
+            "official_success_rate": (
+                sum(row.get("official_success") is True for row in selected)
+                / len(selected)
+                if selected
+                else 0.0
+            ),
+            "cross_device_result_count": len(cross_device),
+            "cross_device_official_success_count": sum(
+                row.get("official_success") is True for row in cross_device
+            ),
+            "cross_device_official_success_rate": (
+                sum(
+                    row.get("official_success") is True
+                    for row in cross_device
+                )
+                / len(cross_device)
+                if cross_device
+                else 0.0
+            ),
+            "actions_executed": sum(
+                int(row.get("actions_executed") or 0) for row in selected
+            ),
+            "model_calls": sum(
+                int(row.get("model_calls") or 0) for row in selected
+            ),
+            "embedding_calls": sum(
+                int(row.get("embedding_calls") or 0) for row in selected
+            ),
+            "fallback_steps": sum(
+                int(row.get("fallback_steps") or 0) for row in selected
+            ),
+            "prompt_tokens": sum(
+                int(row.get("prompt_tokens") or 0) for row in selected
+            ),
+            "completion_tokens": sum(
+                int(row.get("completion_tokens") or 0) for row in selected
+            ),
+            "total_tokens": sum(
+                int(row.get("total_tokens") or 0) for row in selected
+            ),
+        }
+    environment_summaries: dict[str, dict[str, Any]] = {}
+    for environment_id in _BMOCA_ENVIRONMENT_IDS:
+        environment_summaries[environment_id] = {}
+        for method in _BMOCA_METHODS:
+            selected = [
+                row
+                for row in rows.values()
+                if row["method"] == method
+                and row["environment_id"] == environment_id
+            ]
+            environment_summaries[environment_id][method] = {
+                "result_count": len(selected),
+                "official_success_count": sum(
+                    row.get("official_success") is True for row in selected
+                ),
+            }
     summary = {
         "schema_version": "omniflow.bmoca-e2e-campaign-summary.v1",
         "status": "complete",
@@ -2704,11 +2983,17 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         "official_success_count": sum(
             row.get("official_success") is True for row in rows.values()
         ),
+        "methods": method_summaries,
+        "environments": environment_summaries,
         "observed_max_live_results": observed_max_concurrency,
         "process_overlap_proven": observed_max_concurrency > 1,
         "enhancement_count": len(enhancement_reports),
         "enhancement_success_count": sum(
             report.get("enhanced") is True for report in enhancement_reports
+        ),
+        "memory_preparation_count": len(memory_reports),
+        "memory_preparation_success_count": sum(
+            report.get("status") == "prepared" for report in memory_reports
         ),
         "progress_csv": str(progress_csv),
         "progress_jsonl": str(progress_jsonl),
@@ -2793,8 +3078,9 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
         raise FileNotFoundError("required_script_or_python_missing")
     if args.omnitransfer_root != (Path.home() / "Projects/Omni/OmniTransfer").resolve():
         raise ValueError("canonical_omnitransfer_root_required")
-    if args.output_root == args.repo or args.repo in args.output_root.parents:
-        raise ValueError("external_output_root_required")
+    local_data_root = (args.repo / "data").resolve()
+    if args.output_root != local_data_root and local_data_root not in args.output_root.parents:
+        raise ValueError("local_data_output_root_required")
     if getattr(args, "environment", "androidworld") == "bmoca":
         for field in (
             "bmoca_root",
@@ -2802,6 +3088,7 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
             "bmoca_avd_home",
             "bmoca_android_env_root",
             "android_sdk_root",
+            "mobilegpt_root",
         ):
             value = getattr(args, field)
             if value is None:
@@ -2816,6 +3103,7 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
             "bmoca_avd_home",
             "bmoca_android_env_root",
             "android_sdk_root",
+            "mobilegpt_root",
         ):
             if not getattr(args, field).is_dir():
                 raise FileNotFoundError(
@@ -2854,11 +3142,17 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
     ):
         if not getattr(args, field).is_file():
             raise FileNotFoundError(f"required_file_missing:{field}:{getattr(args, field)}")
-    for field in ("asset_root", "results_root", "output_root"):
+    if args.asset_root != local_data_root:
+        raise ValueError("local_asset_root_required")
+    for field in ("results_root", "output_root"):
         path = getattr(args, field)
-        if path == args.repo or args.repo in path.parents:
-            raise ValueError(f"external_{field}_required")
-    if args.memory_index == args.repo or args.repo in args.memory_index.parents:
+        if path != local_data_root and local_data_root not in path.parents:
+            raise ValueError(f"local_{field}_required")
+    local_data_index = local_data_root / "current.json"
+    if args.memory_index == args.repo or (
+        args.repo in args.memory_index.parents
+        and args.memory_index != local_data_index
+    ):
         raise ValueError("external_memory_index_required")
     return args
 
@@ -2871,6 +3165,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if result.get("status") == "complete" else 1
     if args.dry_run:
         return 0
+    if args.source_only:
+        return 0 if result.get("status") == "collected" else 1
+    if args.source_qualification_only:
+        return 0 if result.get("status") == "qualified" else 1
     counts = result.get("counts") if isinstance(result, dict) else None
     return 0 if isinstance(counts, dict) and counts.get("pending") == 0 else 1
 

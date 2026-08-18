@@ -32,7 +32,6 @@ from src.experiment.e2e_task_pipeline import (
     ensure_source_device,
     prepare_mobilegpt_memory,
     qualify_source_function,
-    qualify_source_functions,
     run_logged_command,
     run_bmoca_pipeline,
     run_pipeline,
@@ -63,12 +62,12 @@ def _args(tmp_path: Path) -> SimpleNamespace:
         max_steps=MAX_STEPS,
         max_fallback_steps=MAX_FALLBACK_STEPS,
         attempt_id="attempt-test",
-        output_root=tmp_path / "output",
-        results_root=tmp_path / "results",
-        memory_index=tmp_path / "memory" / "current.json",
         repo=tmp_path / "repo",
+        output_root=tmp_path / "repo" / "data" / "output",
+        results_root=tmp_path / "repo" / "data",
+        memory_index=tmp_path / "repo" / "data" / "current.json",
         script=tmp_path / "repo" / "scripts" / "exp" / "run_androidworld.sh",
-        asset_root=tmp_path / "assets",
+        asset_root=tmp_path / "repo" / "data",
         android_world_root=tmp_path / "android_world",
         omnitransfer_root=tmp_path / "OmniTransfer",
         mobilegpt_root=tmp_path / "MobileGPT",
@@ -90,7 +89,7 @@ def test_dry_run_has_fixed_task_method_device_schedule(
     args = _args(tmp_path)
     args.dry_run = True
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.load_artifact_memory",
+        "src.experiment.e2e_task_pipeline.load_local_data",
         lambda _: {"canonical": {"source_run_logs": {}, "function_stores": {}}},
     )
     monkeypatch.setattr(
@@ -263,8 +262,9 @@ def test_bmoca_method_launches_ten_isolated_overlapping_results(
     rows = _run_bmoca_method_results(
         args=args,
         task="clock/create_alarm_at_06:30_am",
-        method="script_replay",
+        method="skilldroid_replay",
         store_path=tmp_path / "store.json",
+        memory_path=tmp_path / "skilldroid-memory.json",
         task_root=tmp_path / "task",
         avd_homes={
             str(value): tmp_path / f"avd/env_{value}" for value in range(100, 110)
@@ -307,7 +307,7 @@ def test_bmoca_source_replay_is_a_hard_gate(change, qualified) -> None:
     assert _bmoca_source_replay_qualified(row) is qualified
 
 
-def test_bmoca_pipeline_stops_task_after_failed_env100_source_replay(
+def test_bmoca_pipeline_stops_task_after_failed_ours_source_gate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -334,14 +334,39 @@ def test_bmoca_pipeline_stops_task_after_failed_env100_source_replay(
         "src.experiment.e2e_task_pipeline._save_bmoca_function_once",
         lambda **_: (store, {"enhanced": True}),
     )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._prepare_bmoca_mobilegpt_memory",
+        lambda **_: (tmp_path / "mobilegpt", {"status": "prepared"}),
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._prepare_bmoca_skilldroid_memory",
+        lambda **_: (tmp_path / "skilldroid.json", {"status": "prepared"}),
+    )
 
     def run_results(**kwargs: object) -> list[dict[str, object]]:
+        method = str(kwargs["method"])
         environments = tuple(kwargs["environment_ids"])
-        calls.append((str(kwargs["method"]), environments))
+        calls.append((method, environments))
+        if method != "ours_replay":
+            return [
+                {
+                    "task": task,
+                    "method": method,
+                    "environment_id": environment_id,
+                    "status": "success",
+                    "official_success": True,
+                    "method_success": True,
+                    "actions_executed": 1,
+                    "model_calls": 0,
+                    "fallback_steps": 0,
+                    "error": "",
+                }
+                for environment_id in environments
+            ]
         return [
             {
                 "task": task,
-                "method": "script_replay",
+                "method": method,
                 "environment_id": "100",
                 "status": "method_failure",
                 "official_success": False,
@@ -367,11 +392,13 @@ def test_bmoca_pipeline_stops_task_after_failed_env100_source_replay(
         )
     )
 
-    assert calls == [("script_replay", ("100",))]
+    assert calls == [
+        ("ours_replay", ("100",)),
+    ]
     assert cloned == ["env100"]
     assert summary["status_counts"] == {
         "method_failure": 1,
-        "prep_failed": 19,
+        "prep_failed": 29,
     }
 
 
@@ -415,7 +442,7 @@ def test_bmoca_pipeline_does_not_clone_avds_before_enhancement_succeeds(
     )
 
     assert cloned == []
-    assert summary["status_counts"] == {"prep_failed": 20}
+    assert summary["status_counts"] == {"prep_failed": 30}
 
 
 def test_bmoca_pipeline_runs_remaining_results_only_after_source_gate(
@@ -443,6 +470,14 @@ def test_bmoca_pipeline_runs_remaining_results_only_after_source_gate(
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline._save_bmoca_function_once",
         lambda **_: (tmp_path / "store.json", {"enhanced": True}),
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._prepare_bmoca_mobilegpt_memory",
+        lambda **_: (tmp_path / "mobilegpt", {"status": "prepared"}),
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._prepare_bmoca_skilldroid_memory",
+        lambda **_: (tmp_path / "skilldroid.json", {"status": "prepared"}),
     )
 
     def run_results(**kwargs: object) -> list[dict[str, object]]:
@@ -480,12 +515,13 @@ def test_bmoca_pipeline_runs_remaining_results_only_after_source_gate(
     )
 
     assert calls == [
-        ("script_replay", ("100",)),
-        ("ours", tuple(str(value) for value in range(100, 110))),
-        ("script_replay", tuple(str(value) for value in range(101, 110))),
+        ("ours_replay", ("100",)),
+        ("ours_replay", tuple(str(value) for value in range(101, 110))),
+        ("mobilegpt_replay", tuple(str(value) for value in range(100, 110))),
+        ("skilldroid_replay", tuple(str(value) for value in range(100, 110))),
     ]
     assert cloned == [f"env{value}" for value in range(100, 110)]
-    assert summary["status_counts"] == {"success": 20}
+    assert summary["status_counts"] == {"success": 30}
 
 
 def test_bmoca_offline_enhancement_calls_only_canonical_save_once(
@@ -1308,6 +1344,39 @@ def test_source_only_pipeline_collects_replayed_source_and_stops(
     assert report["phases"]["source"]["source_run_log"] == str(source_path)
 
 
+@pytest.mark.parametrize(
+    ("source_only", "source_qualification_only", "report_status"),
+    ((True, False, "collected"), (False, True, "qualified")),
+)
+def test_source_mode_success_returns_zero_exit_status(
+    monkeypatch: pytest.MonkeyPatch,
+    source_only: bool,
+    source_qualification_only: bool,
+    report_status: str,
+) -> None:
+    from src.experiment import e2e_task_pipeline
+
+    args = SimpleNamespace(
+        environment="androidworld",
+        dry_run=False,
+        source_only=source_only,
+        source_qualification_only=source_qualification_only,
+    )
+    monkeypatch.setattr(
+        e2e_task_pipeline,
+        "build_parser",
+        lambda: SimpleNamespace(parse_args=lambda _argv: args),
+    )
+    monkeypatch.setattr(e2e_task_pipeline, "_resolve_args", lambda value: value)
+    monkeypatch.setattr(
+        e2e_task_pipeline,
+        "run_pipeline",
+        lambda _args: {"status": report_status},
+    )
+
+    assert e2e_task_pipeline.main([]) == 0
+
+
 def test_pipeline_stops_when_canonical_function_store_is_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1360,7 +1429,7 @@ def test_pipeline_stops_when_canonical_function_store_is_missing(
     assert mobilegpt_called is False
 
 
-def test_pipeline_qualifies_ordered_source_calls_before_target_workers(
+def test_pipeline_qualifies_one_source_function_before_target_workers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1369,10 +1438,7 @@ def test_pipeline_qualifies_ordered_source_calls_before_target_workers(
     source_path.write_text("{}", encoding="utf-8")
     store_path = tmp_path / "store.json"
     store_path.write_text("{}", encoding="utf-8")
-    source_calls = [
-        {"function_id": "create_note", "arguments": {"name": "note"}},
-        {"function_id": "save_note", "arguments": {"text": "body"}},
-    ]
+    source_call = {"function_id": "create_note", "arguments": {"name": "note"}}
     events: list[str] = []
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.ensure_source_device",
@@ -1390,14 +1456,14 @@ def test_pipeline_qualifies_ordered_source_calls_before_target_workers(
                 "status": "reused",
                 "model_calls": 0,
                 "total_tokens": 0,
-                "source_calls": source_calls,
+                "source_calls": [source_call],
             },
         ),
     )
 
     def qualify(**kwargs: object) -> dict[str, object]:
         events.append("qualify")
-        assert kwargs["source_calls"] == source_calls
+        assert kwargs["source_call"] == source_call
         return {
             "status": "qualified",
             "qualified": True,
@@ -1406,7 +1472,7 @@ def test_pipeline_qualifies_ordered_source_calls_before_target_workers(
         }
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.qualify_source_functions",
+        "src.experiment.e2e_task_pipeline.qualify_source_function",
         qualify,
     )
     monkeypatch.setattr(
@@ -1471,7 +1537,7 @@ def test_source_qualification_only_stops_before_baselines_and_targets(
         ),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.qualify_source_functions",
+        "src.experiment.e2e_task_pipeline.qualify_source_function",
         lambda **_: {
             "status": "qualified",
             "qualified": True,
@@ -1625,10 +1691,10 @@ def test_source_function_qualification_does_not_require_whole_task_validator(
 
     assert result["official_validator_success"] is False
     assert result["function_replay_success"] is True
-    assert result["qualified"] is True
+    assert result["qualified"] is False
 
 
-def test_source_function_sequence_qualification_uses_one_ordered_episode(
+def test_source_function_qualification_uses_one_complete_function(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1675,12 +1741,9 @@ def test_source_function_sequence_qualification_uses_one_ordered_episode(
         "src.experiment.e2e_task_pipeline.run_logged_command",
         runner,
     )
-    source_calls = [
-        {"function_id": "create_note", "arguments": {"name": "note"}},
-        {"function_id": "save_note", "arguments": {"text": "body"}},
-    ]
+    source_call = {"function_id": "create_note", "arguments": {"name": "note"}}
 
-    result = qualify_source_functions(
+    result = qualify_source_function(
         args=args,
         source_path=source,
         run_log={"task_parameters": {}},
@@ -1688,21 +1751,22 @@ def test_source_function_sequence_qualification_uses_one_ordered_episode(
             "store_path": str(store),
             "transfer_states_sha256": "a" * 64,
         },
-        source_calls=source_calls,
+        source_call=source_call,
         attempt_root=tmp_path / "attempt",
         deadline=Deadline(10),
+        round_index=1,
     )
 
     assert result["qualified"] is True
-    assert result["qualification_scope"] == "ordered_function_sequence_replay"
-    assert result["source_calls"] == source_calls
+    assert result["qualification_scope"] == "atomic_function_replay"
+    assert result["source_call"] == source_call
     assert len(captured) == 1
     command = captured[0]
-    calls_index = command.index("--function-calls-json") + 1
-    assert json.loads(command[calls_index]) == source_calls
+    call_index = command.index("--function-id") + 1
+    assert command[call_index] == source_call["function_id"]
 
 
-def test_ordered_source_qualification_requires_official_validator(
+def test_source_qualification_requires_official_validator(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1744,7 +1808,7 @@ def test_ordered_source_qualification_requires_official_validator(
         "src.experiment.e2e_task_pipeline.run_logged_command",
         runner,
     )
-    result = qualify_source_functions(
+    result = qualify_source_function(
         args=args,
         source_path=source,
         run_log={"task_parameters": {}},
@@ -1752,9 +1816,10 @@ def test_ordered_source_qualification_requires_official_validator(
             "store_path": str(store),
             "transfer_states_sha256": "a" * 64,
         },
-        source_calls=[{"function_id": "create_note", "arguments": {}}],
+        source_call={"function_id": "create_note", "arguments": {}},
         attempt_root=tmp_path / "attempt",
         deadline=Deadline(10),
+        round_index=1,
     )
 
     assert result["function_replay_success"] is True

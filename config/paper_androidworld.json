@@ -30,6 +30,12 @@
     "checker": {
       "target_probability_threshold": 0.9
     },
+    "droidrun": {
+      "version": "0.5.6",
+      "commit": "f726708fed2af56ef9311981effd74658fbf77c7",
+      "portal_version": "0.6.1",
+      "portal_commit": "db73fc7c2ff617e47e8952b2872674358da6c694"
+    },
     "function_enhancement_timeout_sec": 300,
     "bmoca_result_timeout_sec": 600,
     "task_deadline_sec": 1800,

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import base64
+from contextlib import nullcontext
 import importlib
 import inspect
 import io
+import os
 from pathlib import Path
+import time
 from types import SimpleNamespace
 from typing import Any
 import xml.etree.ElementTree as ET
@@ -16,7 +19,12 @@ from omniflow.core.androidworld_accessibility import (
     xml_covers_screen,
     xml_with_screen_size,
 )
+from src.experiment.performance_metrics import PerformanceMetrics
 from src.integrations.android_world.apps import resolve_androidworld_app_name
+from src.integrations.android_world.oob_control import (
+    OobControlClient,
+    oob_state_from_payload,
+)
 from src.integrations.android_world.state import snapshot_androidworld_state
 
 
@@ -228,15 +236,40 @@ class AndroidWorldHost:
         post_action_wait_seconds: float = 0.0,
         open_app_ready_timeout_seconds: float | None = None,
         evidence_root: str | Path | None = None,
+        performance_metrics: PerformanceMetrics | None = None,
+        control_backend: str = "androidworld",
     ):
         self.env = env
+        self.recorder = getattr(env, "_recorder", None)
         self.evidence_root = (
             Path(evidence_root).expanduser().resolve()
             if evidence_root is not None
             else None
         )
-        self.observe_backend = "androidworld"
-        self.act_backend = "androidworld"
+        normalized_backend = str(control_backend or "androidworld").strip().lower()
+        if normalized_backend in {"oob", "omniflow", "oob_control"}:
+            self.observe_backend = "oob_control"
+            self.act_backend = "oob_control"
+            self.control_client = OobControlClient(
+                env,
+                adb_serial=adb_serial,
+                adb_path=adb_path,
+                package_name=str(
+                    os.environ.get("OMNIFLOW_OOB_PACKAGE", "")
+                    or "cn.com.omnimind.bot.debug"
+                ),
+                receiver=str(
+                    os.environ.get("OMNIFLOW_OOB_CONTROL_RECEIVER", "")
+                    or ".DebugOmniFlowControlReceiver"
+                ),
+            )
+        elif normalized_backend in {"androidworld", "native"}:
+            self.observe_backend = "androidworld"
+            self.act_backend = "androidworld"
+            self.control_client = None
+        else:
+            raise ValueError(f"androidworld_control_backend_invalid:{control_backend}")
+        self.performance_metrics = performance_metrics
 
     def installed_packages(self) -> set[str]:
         setup = importlib.import_module("android_world.env.setup_device.setup")
@@ -250,11 +283,66 @@ class AndroidWorldHost:
         app_info: bool = True,
         **_: Any,
     ) -> Observation:
-        state = self.env.get_state(wait_to_stabilize=True)
-        official_state = snapshot_androidworld_state(
-            state,
-            evidence_root=self.evidence_root,
-        )
+        if self.performance_metrics is None:
+            return self._observe_impl(
+                xml=xml,
+                screenshot=screenshot,
+                app_info=app_info,
+            )
+        started_ns = time.perf_counter_ns()
+        success = False
+        try:
+            observation = self._observe_impl(
+                xml=xml,
+                screenshot=screenshot,
+                app_info=app_info,
+            )
+            success = True
+            return observation
+        finally:
+            self.performance_metrics.record(
+                "observe",
+                (time.perf_counter_ns() - started_ns) / 1_000_000.0,
+                success=success,
+            )
+
+    def _observe_impl(
+        self,
+        *,
+        xml: bool,
+        screenshot: bool,
+        app_info: bool,
+    ) -> Observation:
+        metrics = self.performance_metrics
+        with (
+            metrics.timed("observe_get_state")
+            if metrics is not None
+            else nullcontext()
+        ):
+            if self.control_client is not None:
+                state = oob_state_from_payload(
+                    self.control_client.observe(),
+                    fallback_screen_size=tuple(
+                        int(value) for value in self._screen_size()
+                    ),
+                )
+            else:
+                state = self.env.get_state(wait_to_stabilize=True)
+        if self.control_client is not None:
+            record_observation = getattr(
+                self.recorder, "record_host_observation", None
+            )
+            if callable(record_observation):
+                record_observation(state)
+        with (
+            metrics.timed("observe_snapshot")
+            if metrics is not None
+            else nullcontext()
+        ):
+            official_state = snapshot_androidworld_state(
+                state,
+                evidence_root=self.evidence_root,
+            )
         elements = list(getattr(state, "ui_elements", ()) or ())
         auxiliaries = getattr(state, "auxiliaries", None)
         activity = str(
@@ -275,51 +363,69 @@ class AndroidWorldHost:
             or ""
         )
         package = package or (activity.split("/", 1)[0] if activity else "")
-        display_width, display_height = self._screen_size()
-        xml_text = ""
-        graph_source = ""
-        forest = getattr(state, "forest", None)
-        forest_xml = ""
-        if xml and forest is not None:
-            forest_xml = androidworld_forest_xml(
-                forest,
-                screen_size=(display_width, display_height),
-            )
-        elements_xml = _elements_xml(elements) if xml and elements else ""
-        if forest_xml and (
-            not elements_xml
-            or _xml_semantic_score(forest_xml) >= _xml_semantic_score(elements_xml)
+        with (
+            metrics.timed("observe_xml_transform")
+            if metrics is not None
+            else nullcontext()
         ):
-            xml_text = forest_xml
-            graph_source = "androidworld_state_forest"
-        elif elements_xml:
-            xml_text = elements_xml
-            graph_source = "androidworld_state_ui_elements"
-        package = package or _package_from_xml(xml_text)
-        graph_complete = bool(xml_text) and (
-            xml_covers_screen(
-                xml_text,
-                package_name=package,
-                screen_size=(display_width, display_height),
+            display_width, display_height = self._screen_size()
+            xml_text = ""
+            graph_source = ""
+            forest = getattr(state, "forest", None)
+            forest_xml = ""
+            if xml and isinstance(forest, str):
+                forest_xml = forest
+            elif xml and forest is not None:
+                forest_xml = androidworld_forest_xml(
+                    forest,
+                    screen_size=(display_width, display_height),
+                )
+            elements_xml = _elements_xml(elements) if xml and elements else ""
+            if forest_xml and (
+                not elements_xml
+                or _xml_semantic_score(forest_xml) >= _xml_semantic_score(elements_xml)
+            ):
+                xml_text = forest_xml
+                graph_source = "androidworld_state_forest"
+            elif elements_xml:
+                xml_text = elements_xml
+                graph_source = "androidworld_state_ui_elements"
+            package = package or _package_from_xml(xml_text)
+            graph_complete = bool(xml_text) and (
+                xml_covers_screen(
+                    xml_text,
+                    package_name=package,
+                    screen_size=(display_width, display_height),
+                )
+                or (
+                    not isinstance(forest, str)
+                    and forest_has_complete_active_application_window(
+                        forest,
+                        package_name=package,
+                    )
+                )
             )
-            or forest_has_complete_active_application_window(
-                forest,
-                package_name=package,
+            if xml and xml_text and not graph_complete:
+                xml_text = xml_with_screen_size(
+                    xml_text,
+                    screen_size=(display_width, display_height),
+                )
+                graph_source = f"{graph_source}_partial"
+        with (
+            metrics.timed("observe_image_encode")
+            if metrics is not None
+            else nullcontext()
+        ):
+            image_base64 = (
+                _image_base64(getattr(state, "pixels", None)) if screenshot else None
             )
-        )
-        if xml and xml_text and not graph_complete:
-            xml_text = xml_with_screen_size(
-                xml_text,
-                screen_size=(display_width, display_height),
-            )
-            graph_source = f"{graph_source}_partial"
         return Observation(
             xml=xml_text or None if xml else None,
             package_name=package or None if app_info else None,
             activity_name=activity or None if app_info else None,
-            image_base64=_image_base64(getattr(state, "pixels", None)) if screenshot else None,
+            image_base64=image_base64,
             extra={
-                "observe_backend": "androidworld",
+                "observe_backend": self.observe_backend,
                 "androidworld_state": official_state,
                 "ui_element_count": len(elements),
                 "ui_graph_source": graph_source,
@@ -407,16 +513,55 @@ class AndroidWorldHost:
         )
 
     def act(self, value: Action | dict[str, Any], **_: Any) -> ActionResult:
+        if self.performance_metrics is None:
+            return self._act_impl(value)
+        started_ns = time.perf_counter_ns()
+        result: ActionResult | None = None
+        try:
+            result = self._act_impl(value)
+            return result
+        finally:
+            self.performance_metrics.record(
+                "act",
+                (time.perf_counter_ns() - started_ns) / 1_000_000.0,
+                success=result is not None and result.success,
+            )
+
+    def _act_impl(self, value: Action | dict[str, Any]) -> ActionResult:
         action = Action.from_value(value)
         if action.tool == "finished":
             return ActionResult(True)
         try:
+            if self.control_client is not None:
+                def execute() -> dict[str, Any]:
+                    return self.control_client.act(action.to_dict())
+
+                execute_host_action = getattr(
+                    self.recorder, "execute_host_action", None
+                )
+                if callable(execute_host_action):
+                    return ActionResult.from_value(
+                        execute_host_action(
+                            action,
+                            execute=execute,
+                            project=self._json_action,
+                            after_observation=lambda: oob_state_from_payload(
+                                self.control_client.observe(),
+                                fallback_screen_size=tuple(
+                                    int(value) for value in self._screen_size()
+                                ),
+                            ),
+                        )
+                    )
+                return ActionResult.from_value(execute())
             self.env.execute_action(self._json_action(action))
             return ActionResult(True)
         except Exception as error:
             return ActionResult(False, str(error))
 
     def reset(self, go_home: bool = False) -> None:
+        if self.control_client is not None:
+            self.control_client.reset()
         reset = getattr(self.env, "reset", None)
         if callable(reset):
             reset(go_home=go_home)

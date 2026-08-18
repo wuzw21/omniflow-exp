@@ -7,11 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from src.experiment.observation_evidence import AndroidWorldEpisodeRecorder
+from src.experiment.performance_metrics import PerformanceMetrics
 
 
 @dataclass(frozen=True)
 class AndroidWorldEnvironmentConfig:
     evidence_root: str | Path
+    performance_metrics: PerformanceMetrics | None = None
 
 
 class AndroidWorldExperimentEnvironment:
@@ -57,6 +59,7 @@ class EpisodeRecordingSession:
                 get_state,
                 execute_action,
                 evidence_root=owner.config.evidence_root,
+                performance_metrics=owner.config.performance_metrics,
             )
             self.env = _RecordingEnvironmentProxy(owner.env, self.recorder)
         except Exception as exc:  # noqa: BLE001
@@ -92,6 +95,10 @@ class EpisodeRecordingSession:
             return
         self.closed = True
         self._owner._release(self)
+
+    @property
+    def performance_metrics(self) -> PerformanceMetrics | None:
+        return self.recorder.performance_metrics if self.recorder is not None else None
 
 
 class _RecordingEnvironmentProxy:
