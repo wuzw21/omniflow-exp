@@ -36,11 +36,15 @@ same validation and Store writer as a normal save.
 
 Enhanced authoring uses exactly three bounded Agent edits to one in-memory
 draft, not one JSON call per RunLog action. The edits are: semantic Function
-ranges, parameter declarations, and checker registrations. The Agent never
-returns complete Functions, source states, actions, bindings, checker rules,
-Stores, or authoring manifests.
+ranges; source-proven action semantics plus parameter declarations; and checker
+registrations. The Agent never returns complete Functions, source states,
+bindings, checker rules, Stores, or authoring manifests. It may request only
+the two action edits defined by the shared schema: replace a launcher click
+with the exact after-state package as `open_app`, or attach the exact visible
+source target as `target_description`.
 
-`save_function` deterministically copies exact source actions and states,
+`save_function` deterministically preserves source action order and states,
+validates every requested action edit against the before/after RunLog states,
 compiles parameter schemas and bindings, registers checkers, and emits one
 large Function covering the complete successful trajectory plus every reusable
 contiguous semantic subsegment identified by the Agent. A subsegment is valid
@@ -52,8 +56,9 @@ meaningless one-click fragments are not saved. A checker action may not also
 remain a formal action in the same Function.
 
 The single model-facing tool is `edit_function_draft`. Its three strict stage
-schemas return only: `complete_function + subsegments`, `bindings`, then
-`checker_steps`. A subsegment contains Function metadata,
+schemas return only: `complete_function + subsegments`, `action_edits +
+bindings`, then `checker_steps`. An action edit contains only `function_id`,
+`step_index`, `operation`, and `value`. A subsegment contains Function metadata,
 `stability_reason`, and an inclusive/exclusive source step range. Bridge and
 experiment adapters import these schemas and select the supplied tool name
 instead of defining another authoring contract. One deterministically invalid
@@ -61,6 +66,14 @@ stage edit gets one correction opportunity. Transport failures, missing
 evidence, or a second invalid edit fail immediately. Nothing is persisted
 until all three edits compile and all Functions pass the same authoritative
 validation and sole Store writer.
+
+Action semantics are source evidence, not free-form generation. `open_app`
+requires a source launcher page and a different non-empty package in the
+RunLog after-state; its value must equal that package. `set_target` requires an
+exact visible label at the source action point; its value must equal that label.
+Caller-varying visible targets such as an hour or category may bind
+`target_description`. Coordinates, packages, waits, and directions are never
+parameters. An invented or paraphrased target fails validation.
 
 Before a saved B-MoCA bundle may run cross-environment, its complete Function
 must pass env100 `script_replay` with official success, method success,

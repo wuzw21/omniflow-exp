@@ -110,9 +110,31 @@ def function_authoring_tool(
             },
         },
         "parameters": {
-            "description": "Add caller-varying action arguments to the draft.",
-            "required": ["bindings"],
+            "description": "Add source-proven action semantics and parameters.",
+            "required": ["action_edits", "bindings"],
             "properties": {
+                "action_edits": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": [
+                            "function_id",
+                            "step_index",
+                            "operation",
+                            "value",
+                        ],
+                        "properties": {
+                            "function_id": metadata["properties"]["function_id"],
+                            "step_index": {"type": "integer", "minimum": 0},
+                            "operation": {
+                                "type": "string",
+                                "enum": ["open_app", "set_target"],
+                            },
+                            "value": {"type": "string", "minLength": 1},
+                        },
+                    },
+                },
                 "bindings": {
                     "type": "array",
                     "items": {
@@ -698,6 +720,11 @@ def save_function(
                 continue
             projected_actions = project_androidworld_step_actions(step)
             source_page = _source_page_summary(observation)
+            after_page = _source_page_summary(
+                next_observation
+                if isinstance(next_observation, dict)
+                else observation
+            )
         else:
             before_state_id = str(step.get("before_state_id") or "").strip()
             after_state_id = str(step.get("after_state_id") or "").strip()
@@ -713,21 +740,23 @@ def save_function(
                 if str(error).startswith("canonical_action_tool_not_replayable:"):
                     continue
                 raise
-            source_page = _source_transfer_state_summary(
-                source_catalog["states"].get(before_state_id)
-            )
+            before_state = source_catalog["states"].get(before_state_id)
+            after_state = source_catalog["states"].get(after_state_id)
+            source_page = _source_transfer_state_summary(before_state)
+            after_page = _source_transfer_state_summary(after_state)
         action_metadata = {
             key: metadata[key]
             for key in ("summary", "thinking", "action_description")
             if str(metadata.get(key) or "").strip()
         }
         action_metadata["source_page"] = source_page
+        action_metadata["after_page"] = after_page
         for action in projected_actions:
             step_metadata = dict(action_metadata)
             semantic_target = (
                 _projected_semantic_target(action, observation)
                 if isinstance(observation, dict)
-                else ""
+                else _transfer_state_semantic_target(action, before_state)
             )
             if semantic_target:
                 step_metadata["semantic_target"] = semantic_target
@@ -1104,6 +1133,23 @@ def _grounded_action_matches(
     source_action = source_step["action"]
     if source_action == expected_action:
         return True
+    metadata = source_step.get("metadata")
+    if (
+        expected_action.get("tool") == "open_app"
+        and source_action.get("tool") == "click"
+        and isinstance(metadata, dict)
+    ):
+        source_page = metadata.get("source_page") or {}
+        after_page = metadata.get("after_page") or {}
+        expected_package = str(
+            (expected_action.get("args") or {}).get("package_name") or ""
+        ).strip()
+        return bool(
+            source_page.get("is_launcher") is True
+            and expected_package
+            and expected_package == str(after_page.get("package") or "").strip()
+            and expected_package != str(source_page.get("package") or "").strip()
+        )
     if expected_action.get("tool") != "click" or source_action.get("tool") != "click":
         return False
     expected_args = expected_action.get("args")
@@ -1111,7 +1157,6 @@ def _grounded_action_matches(
     if not isinstance(expected_args, dict) or not isinstance(source_args, dict):
         return False
     target = str(expected_args.get("target_description") or "").strip()
-    metadata = source_step.get("metadata")
     if (
         not target
         or not isinstance(metadata, dict)
@@ -1350,15 +1395,71 @@ def _validate_parameter_draft(
     facts: dict[str, Any],
     split: dict[str, Any],
 ) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {"bindings"}:
+    if not isinstance(value, dict) or set(value) != {"action_edits", "bindings"}:
         raise ValueError("function_parameters_contract_invalid")
+    raw_edits = value["action_edits"]
     raw_bindings = value["bindings"]
-    if not isinstance(raw_bindings, list):
+    if not isinstance(raw_edits, list) or not isinstance(raw_bindings, list):
         raise ValueError("function_parameters_invalid")
     functions = {
         item["function_id"]: _function_indices(item, len(facts["steps"]))
         for item in _draft_functions(split)
     }
+    action_edits: list[dict[str, Any]] = []
+    edited_steps: set[tuple[str, int]] = set()
+    for raw in raw_edits:
+        if not isinstance(raw, dict) or set(raw) != {
+            "function_id",
+            "step_index",
+            "operation",
+            "value",
+        }:
+            raise ValueError("function_action_edit_contract_invalid")
+        function_id = str(raw.get("function_id") or "").strip()
+        step_index = raw.get("step_index")
+        operation = str(raw.get("operation") or "").strip()
+        edit_value = str(raw.get("value") or "").strip()
+        if function_id not in functions:
+            raise ValueError("function_action_edit_unknown_function")
+        if (
+            not isinstance(step_index, int)
+            or isinstance(step_index, bool)
+            or step_index not in functions[function_id]
+        ):
+            raise ValueError("function_action_edit_step_not_in_function")
+        key = (function_id, step_index)
+        if key in edited_steps:
+            raise ValueError("function_action_edit_duplicate")
+        source_step = facts["steps"][step_index]
+        source_action = source_step["action"]
+        metadata = source_step.get("metadata") or {}
+        if operation == "set_target":
+            source_target = str(metadata.get("semantic_target") or "").strip()
+            if source_action["tool"] != "click" or edit_value != source_target:
+                raise ValueError("function_action_target_not_source_proven")
+        elif operation == "open_app":
+            source_page = metadata.get("source_page") or {}
+            after_page = metadata.get("after_page") or {}
+            after_package = str(after_page.get("package") or "").strip()
+            if (
+                source_action["tool"] != "click"
+                or source_page.get("is_launcher") is not True
+                or not after_package
+                or edit_value != after_package
+                or after_package == str(source_page.get("package") or "").strip()
+            ):
+                raise ValueError("function_open_app_not_source_proven")
+        else:
+            raise ValueError("function_action_edit_operation_invalid")
+        edited_steps.add(key)
+        action_edits.append(
+            {
+                "function_id": function_id,
+                "step_index": step_index,
+                "operation": operation,
+                "value": edit_value,
+            }
+        )
     bindings: list[dict[str, Any]] = []
     targets: set[tuple[str, int, str]] = set()
     for raw in raw_bindings:
@@ -1378,7 +1479,11 @@ def _validate_parameter_draft(
         path = str(raw.get("argument_path") or "").strip()
         if function_id not in functions:
             raise ValueError("function_parameter_unknown_function")
-        if step_index not in functions[function_id]:
+        if (
+            not isinstance(step_index, int)
+            or isinstance(step_index, bool)
+            or step_index not in functions[function_id]
+        ):
             raise ValueError("function_parameter_step_not_in_function")
         if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", name) is None:
             raise ValueError("function_parameter_name_invalid")
@@ -1396,7 +1501,6 @@ def _validate_parameter_draft(
             "package_name",
             "duration_ms",
             "direction",
-            "target_description",
         }:
             raise ValueError(f"function_parameter_path_forbidden:{path}")
         target = (function_id, int(step_index), path)
@@ -1404,7 +1508,12 @@ def _validate_parameter_draft(
             raise ValueError("function_parameter_target_duplicate")
         try:
             source_value = _read_path(
-                facts["steps"][step_index]["action"]["args"],
+                _draft_action(
+                    facts,
+                    action_edits,
+                    function_id=function_id,
+                    step_index=step_index,
+                )["args"],
                 _tokens("." + path),
             )
         except (IndexError, KeyError, TypeError) as error:
@@ -1421,7 +1530,32 @@ def _validate_parameter_draft(
                 "argument_path": path,
             }
         )
-    return {"bindings": bindings}
+    return {"action_edits": action_edits, "bindings": bindings}
+
+
+def _draft_action(
+    facts: dict[str, Any],
+    action_edits: list[dict[str, Any]],
+    *,
+    function_id: str,
+    step_index: int,
+) -> dict[str, Any]:
+    action = _copy_value(facts["steps"][step_index]["action"])
+    edit = next(
+        (
+            item
+            for item in action_edits
+            if item["function_id"] == function_id
+            and item["step_index"] == step_index
+        ),
+        None,
+    )
+    if edit is None:
+        return action
+    if edit["operation"] == "open_app":
+        return {"tool": "open_app", "args": {"package_name": edit["value"]}}
+    action["args"]["target_description"] = edit["value"]
+    return action
 
 
 def _validate_checker_draft(
@@ -1443,6 +1577,10 @@ def _validate_checker_draft(
         (item["function_id"], item["step_index"])
         for item in parameters["bindings"]
     }
+    edited_steps = {
+        (item["function_id"], item["step_index"])
+        for item in parameters["action_edits"]
+    }
     checker_steps: list[dict[str, Any]] = []
     seen: set[tuple[str, int]] = set()
     for raw in raw_checkers:
@@ -1459,6 +1597,8 @@ def _validate_checker_draft(
             raise ValueError("function_checker_selection_duplicate")
         if key in parameter_steps:
             raise ValueError("checker_action_cannot_use_parameter_binding")
+        if key in edited_steps:
+            raise ValueError("checker_action_cannot_use_action_edit")
         action = facts["steps"][step_index]["action"]
         if action["tool"] not in {"click", "input_text", "long_press"}:
             raise ValueError(f"checker_action_not_transferable:{step_index}")
@@ -1477,6 +1617,10 @@ def _compact_source_actions(facts: dict[str, Any]) -> list[dict[str, Any]]:
             "step_index": index,
             "action": step["action"],
             "source_page": step.get("metadata", {}).get("source_page", {}),
+            "after_page": step.get("metadata", {}).get("after_page", {}),
+            "source_target": str(
+                step.get("metadata", {}).get("semantic_target") or ""
+            ),
         }
         for index, step in enumerate(facts["steps"])
     ]
@@ -1516,11 +1660,20 @@ def _draft_parameters_prompt(
         "source_actions": _compact_source_actions(facts),
     }
     return (
-        "Edit only parameter declarations on the current Function draft. Return "
-        "caller-varying values already present in action.args. Each declaration must "
-        "name its Function, source step, and argument_path relative to action.args. "
-        "Do not parameterize coordinates, packages, waits, directions, or target "
-        "evidence. Return an empty bindings list when none are needed.\n\nDraft input:\n"
+        "Edit only source-proven action semantics and parameter declarations on the "
+        "current Function draft. For a launcher click whose after_page.package is a "
+        "different app, use operation=open_app with exactly that package. For a stable "
+        "visible source_target, use operation=set_target with exactly that label. "
+        "Never invent or paraphrase either value. Bind caller-varying values already "
+        "present after those edits; argument_path is relative to action.args. A time, "
+        "query, contact, quantity, or selected visible label that varies by request "
+        "must be a parameter. Coordinates, packages, waits, and directions are not "
+        "parameters. Example: a launcher click from package containing 'launcher' to "
+        "after_page.package='com.example.app' becomes an open_app edit; a source_target "
+        "'6' selected for an alarm can become set_target plus a binding from "
+        "target_description to parameter hour. Return empty lists only when source "
+        "evidence proves no edit and the operation has no caller-varying value.\n\n"
+        "Draft input:\n"
         + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
     )
 
@@ -1562,6 +1715,11 @@ def _compile_function_draft(
                 key: plan[key] for key in ("function_id", "name", "description")
             },
             source_indices=_function_indices(plan, len(facts["steps"])),
+            action_edits=[
+                item
+                for item in parameters["action_edits"]
+                if item["function_id"] == function_id
+            ],
             parameter_bindings=[
                 item
                 for item in parameters["bindings"]
@@ -1583,6 +1741,7 @@ def _compile_draft_function(
     *,
     metadata: dict[str, str],
     source_indices: tuple[int, ...],
+    action_edits: list[dict[str, Any]],
     parameter_bindings: list[dict[str, Any]],
     checker_indices: list[int],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1597,7 +1756,12 @@ def _compile_draft_function(
         {
             "step_index": local_index[source_index],
             "source_state_id": facts["steps"][source_index]["before_state_id"],
-            "action": _copy_value(facts["steps"][source_index]["action"]),
+            "action": _draft_action(
+                facts,
+                action_edits,
+                function_id=metadata["function_id"],
+                step_index=source_index,
+            ),
         }
         for source_index in formal_indices
     ]
@@ -1609,7 +1773,12 @@ def _compile_draft_function(
         name = binding["name"]
         path = binding["argument_path"]
         value = _read_path(
-            facts["steps"][source_index]["action"]["args"],
+            _draft_action(
+                facts,
+                action_edits,
+                function_id=metadata["function_id"],
+                step_index=source_index,
+            )["args"],
             _tokens("." + path),
         )
         value_type = _json_type(value)
@@ -1720,9 +1889,11 @@ def _source_page_summary(observation: dict[str, Any]) -> dict[str, Any]:
                             break
                 if len(labels) == 20:
                     break
+    package = str(auxiliaries.get("package_name") or "")
     return {
-        "package": str(auxiliaries.get("package_name") or ""),
+        "package": package,
         "activity": str(auxiliaries.get("activity_name") or ""),
+        "is_launcher": "launcher" in package.casefold(),
         "visible_labels": labels,
         "screenshot": (
             observation.get("pixels", {}).get("path")
@@ -1751,9 +1922,11 @@ def _source_transfer_state_summary(value: Any) -> dict[str, Any]:
                             break
                 if len(labels) == 20:
                     break
+    package = str(state.get("package_name") or "")
     return {
-        "package": str(state.get("package_name") or ""),
+        "package": package,
         "activity": str(state.get("activity_name") or ""),
+        "is_launcher": "launcher" in package.casefold(),
         "visible_labels": labels,
         "screenshot": state.get("screenshot_path"),
     }
@@ -1793,6 +1966,28 @@ def _projected_semantic_target(
     except (KeyError, TypeError, ValueError):
         return ""
     return semantic_target_at_point(observation_xml(observation), x, y)
+
+
+def _transfer_state_semantic_target(
+    action: dict[str, Any],
+    value: Any,
+) -> str:
+    if action.get("tool") != "click" or not isinstance(value, dict):
+        return ""
+    args = action.get("args")
+    display = value.get("display")
+    if not isinstance(args, dict) or not isinstance(display, dict):
+        return ""
+    try:
+        width = float(display["width"])
+        height = float(display["height"])
+        x = float(args["x"]) / 1000.0 * width
+        y = float(args["y"]) / 1000.0 * height
+    except (KeyError, TypeError, ValueError):
+        return ""
+    if width <= 0 or height <= 0:
+        return ""
+    return semantic_target_at_point(str(value.get("xml") or ""), x, y)
 
 
 def _json_object(raw: str) -> dict[str, Any]:

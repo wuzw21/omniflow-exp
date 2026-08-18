@@ -59,8 +59,8 @@ def _enhancer(
             return json.dumps(
                 {"complete_function": metadata, "subsegments": []}
             )
-        if required == ["bindings"]:
-            return json.dumps({"bindings": []})
+        if required == ["action_edits", "bindings"]:
+            return json.dumps({"action_edits": [], "bindings": []})
         return json.dumps(
             {
                 "checker_steps": [

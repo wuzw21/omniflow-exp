@@ -76,9 +76,11 @@ def _draft_enhancer(prompt: str, tool: dict) -> str:
                 "subsegments": [],
             }
         )
-    if required == ["bindings"]:
+
+    if required == ["action_edits", "bindings"]:
         return json.dumps(
             {
+                "action_edits": [],
                 "bindings": [
                     {
                         "function_id": "complete_note_entry",
@@ -186,9 +188,10 @@ def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> 
                     ],
                 }
             )
-        if required == ["bindings"]:
+        if required == ["action_edits", "bindings"]:
             return json.dumps(
                 {
+                    "action_edits": [],
                     "bindings": [
                         {
                             "function_id": function_id,
@@ -291,6 +294,157 @@ def test_enhancer_rejects_subsegment_without_stability_reason(tmp_path) -> None:
             tmp_path / "store.json",
             enhance=True,
             complete_json=complete,
+        )
+
+
+def test_enhancer_compiles_source_proven_launcher_click_to_open_app(tmp_path) -> None:
+    run_log = androidworld_run_log(
+        [{"action_type": "click", "x": 500, "y": 500}],
+        observations=[
+            androidworld_state(
+                "launcher",
+                package_name="com.example.launcher",
+                forest=(
+                    '<hierarchy><node text="Clock" clickable="true" '
+                    'bounds="[400,400][600,600]" /></hierarchy>'
+                ),
+            )
+        ],
+        goal="Open Clock.",
+    )
+    run_log["steps"][0]["next_observation"] = androidworld_state(
+        "clock",
+        package_name="com.example.clock",
+    )
+
+    def complete(_prompt: str, tool: dict) -> str:
+        required = tool["function"]["parameters"]["required"]
+        if required == ["complete_function", "subsegments"]:
+            return json.dumps(
+                {
+                    "complete_function": {
+                        "function_id": "open_clock",
+                        "name": "Open Clock",
+                        "description": "Open the Clock application.",
+                    },
+                    "subsegments": [],
+                }
+            )
+        if required == ["action_edits", "bindings"]:
+            return json.dumps(
+                {
+                    "action_edits": [
+                        {
+                            "function_id": "open_clock",
+                            "step_index": 0,
+                            "operation": "open_app",
+                            "value": "com.example.clock",
+                        }
+                    ],
+                    "bindings": [],
+                }
+            )
+        return json.dumps({"checker_steps": []})
+
+    store_path = tmp_path / "store.json"
+    save_function(run_log, store_path, enhance=True, complete_json=complete)
+    function = FunctionStore(store_path).get_function("open_clock")
+    assert function is not None
+    assert function.steps[0].action.to_dict() == {
+        "tool": "open_app",
+        "args": {"package_name": "com.example.clock"},
+    }
+
+
+def test_enhancer_binds_source_proven_semantic_target(tmp_path) -> None:
+    run_log = androidworld_run_log(
+        [{"action_type": "click", "x": 500, "y": 500}],
+        observations=[
+            androidworld_state(
+                "picker",
+                forest=(
+                    '<hierarchy><node text="6" clickable="true" '
+                    'bounds="[400,400][600,600]" /></hierarchy>'
+                ),
+            )
+        ],
+        goal="Select hour 6.",
+    )
+
+    def complete(_prompt: str, tool: dict) -> str:
+        required = tool["function"]["parameters"]["required"]
+        if required == ["complete_function", "subsegments"]:
+            return json.dumps(
+                {
+                    "complete_function": {
+                        "function_id": "select_hour",
+                        "name": "Select an hour",
+                        "description": "Select a caller-provided visible hour.",
+                    },
+                    "subsegments": [],
+                }
+            )
+        if required == ["action_edits", "bindings"]:
+            return json.dumps(
+                {
+                    "action_edits": [
+                        {
+                            "function_id": "select_hour",
+                            "step_index": 0,
+                            "operation": "set_target",
+                            "value": "6",
+                        }
+                    ],
+                    "bindings": [
+                        {
+                            "function_id": "select_hour",
+                            "step_index": 0,
+                            "name": "hour",
+                            "description": "Visible hour to select",
+                            "argument_path": "target_description",
+                        }
+                    ],
+                }
+            )
+        return json.dumps({"checker_steps": []})
+
+    store_path = tmp_path / "store.json"
+    save_function(run_log, store_path, enhance=True, complete_json=complete)
+    store = FunctionStore(store_path)
+    function = store.get_function("select_hour")
+    assert function is not None
+    assert function.input_schema["required"] == ["hour"]
+    assert function.bindings == (
+        {
+            "source": "$.arguments.hour",
+            "target": "$.steps[0].action.args.target_description",
+        },
+    )
+    assert store.source_calls == [
+        {"function_id": "select_hour", "arguments": {"hour": "6"}}
+    ]
+
+
+def test_enhancer_rejects_invented_action_semantics(tmp_path) -> None:
+    def invalid(prompt: str, tool: dict) -> str:
+        value = json.loads(_draft_enhancer(prompt, tool))
+        if "action_edits" in value:
+            value["action_edits"] = [
+                {
+                    "function_id": "complete_note_entry",
+                    "step_index": 0,
+                    "operation": "set_target",
+                    "value": "Invented target",
+                }
+            ]
+        return json.dumps(value)
+
+    with pytest.raises(ValueError, match="function_action_target_not_source_proven"):
+        save_function(
+            _authoring_run_log(),
+            tmp_path / "store.json",
+            enhance=True,
+            complete_json=invalid,
         )
 
 
@@ -401,7 +555,7 @@ def test_bridge_enhancement_edits_one_draft_in_three_stages(tmp_path) -> None:
     assert result["success"] is True
     assert required_fields == [
         ["complete_function", "subsegments"],
-        ["bindings"],
+        ["action_edits", "bindings"],
         ["checker_steps"],
     ]
 
@@ -412,7 +566,7 @@ def test_function_authoring_tool_is_three_small_draft_edits() -> None:
     ] == ["complete_function", "subsegments"]
     assert function_authoring_tool(stage="parameters")["function"]["parameters"][
         "required"
-    ] == ["bindings"]
+    ] == ["action_edits", "bindings"]
     assert function_authoring_tool(stage="checkers")["function"]["parameters"][
         "required"
     ] == ["checker_steps"]

@@ -59,12 +59,16 @@ successful RunLog
 
 One RunLog may save multiple semantic Functions in one call. `enhance=true` does
 not open another path: the Agent edits one in-memory draft in exactly three
-small stages—semantic Function ranges, parameter declarations, and checker
-registrations. It never writes actions, states, bindings, checker rules, or a
-Store.
+small stages—semantic Function ranges, source-proven action semantics plus
+parameter declarations, and checker registrations. The middle stage may request a
+action edit: a launcher click to the exact after-state package becomes
+`open_app`, or a visible source target becomes `target_description`. It never
+writes complete actions, states, bindings, checker rules, or a Store.
 
-The core deterministically copies source evidence, compiles bindings and
-checkers, and emits the complete Function plus reusable contiguous subsegments.
+The core validates those small edits against the RunLog, preserves action
+order, compiles bindings and checkers, and emits the complete Function plus
+reusable contiguous subsegments. Invented packages, paraphrased targets, and
+ungrounded action changes are rejected.
 Every subsegment must include the Agent's `stability_reason`: why the source
 state/action sequence is deterministic, does not rely on a transient dialog or
 task completion, and remains replayable when varying content is parameterized.

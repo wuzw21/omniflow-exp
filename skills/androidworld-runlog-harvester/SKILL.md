@@ -22,7 +22,7 @@ reusable subsegment Functions atomically.
 
 The Agent edits one in-memory draft in exactly three stages. It does not make
 one model call per action and never writes complete Function artifacts, source
-states, source actions, bindings, checker rules, or Store entries.
+states, complete source actions, bindings, checker rules, or Store entries.
 
 Return only the strict schema supplied for the current
 `edit_function_draft` call.
@@ -65,12 +65,26 @@ Rules:
 - Do not create isolated click or long-press fragments.
 - Return an empty `subsegments` list when no stable reusable range exists.
 
-### Stage 2: parameters
+### Stage 2: source-proven actions and parameters
 
 Return:
 
 ```json
 {
+  "action_edits": [
+    {
+      "function_id": "search_for_a_place",
+      "step_index": 0,
+      "operation": "open_app",
+      "value": "com.example.maps"
+    },
+    {
+      "function_id": "enter_search_query",
+      "step_index": 2,
+      "operation": "set_target",
+      "value": "Search"
+    }
+  ],
   "bindings": [
     {
       "function_id": "enter_search_query",
@@ -85,12 +99,20 @@ Return:
 
 Rules:
 
-- Declare only caller-varying values already present in that source action.
+- `action_edits` may contain only `open_app` and `set_target`.
+- Use `open_app` only for a launcher click whose `after_page.package` is a
+  different non-empty package. Copy that package exactly into `value`.
+- Use `set_target` only when `source_target` is non-empty. Copy that label
+  exactly into `value`; do not paraphrase it.
+- Declare caller-varying values already present after the validated action edit.
 - `argument_path` is relative to `action.args`.
 - The source step must be inside the named Function range.
-- Never parameterize coordinates, package names, waits, directions,
-  `target_description`, source states, or transfer evidence.
-- Return an empty `bindings` list when no parameter is needed.
+- A varying visible selection such as an hour or category may bind
+  `target_description` after `set_target`.
+- Never parameterize coordinates, package names, waits, directions, source
+  states, or transfer evidence.
+- Return empty `action_edits` or `bindings` lists when that decision has no
+  source-proven entry.
 
 ### Stage 3: checkers
 
@@ -120,10 +142,11 @@ Rules:
 
 ## Deterministic compilation
 
-`save_function` copies exact actions and source states from the successful
-RunLog, removes registered checker actions from formal steps, creates parameter
-schemas and bindings, validates every Function, and writes the Store atomically.
-The Agent supplies decisions only; it cannot modify source evidence.
+`save_function` preserves source order and source states from the successful
+RunLog, verifies action edits against exact before/after evidence, removes
+registered checker actions from formal steps, creates parameter schemas and
+bindings, validates every Function, and writes the Store atomically. The Agent
+supplies decisions only; it cannot invent or modify source evidence.
 
 A rejected stage edit receives at most one correction of that same stage.
 Transport failure, missing source evidence, or a second invalid edit fails the
