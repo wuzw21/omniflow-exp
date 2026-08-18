@@ -128,6 +128,8 @@ page-embedding similarity cannot compensate for an ambiguous target ranking.
 There are no per-rule thresholds, step-number triggers, trigger DSLs, global
 checker pool, or source-coordinate passthrough. Checker actions are limited to
 transferable `click`, `input_text`, and `long_press` actions.
+Any source target named by the task goal or Function semantics is task progress
+and is rejected as a checker.
 
 Formal Function actions use canonical OmniTransfer target mapping directly.
 Missing or rejected mappings fail back to the Planner without source-coordinate

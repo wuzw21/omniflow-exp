@@ -1605,9 +1605,10 @@ def _validate_checker_draft(
     raw_checkers = value["checker_steps"]
     if not isinstance(raw_checkers, list):
         raise ValueError("function_checkers_invalid")
+    plans = {item["function_id"]: item for item in _draft_functions(split)}
     functions = {
-        item["function_id"]: _function_indices(item, len(facts["steps"]))
-        for item in _draft_functions(split)
+        function_id: _function_indices(item, len(facts["steps"]))
+        for function_id, item in plans.items()
     }
     parameter_steps = {
         (item["function_id"], item["step_index"])
@@ -1635,9 +1636,22 @@ def _validate_checker_draft(
             raise ValueError("checker_action_cannot_use_parameter_binding")
         if key in edited_steps:
             raise ValueError("checker_action_cannot_use_action_edit")
-        action = facts["steps"][step_index]["action"]
+        source_step = facts["steps"][step_index]
+        action = source_step["action"]
         if action["tool"] not in {"click", "input_text", "long_press"}:
             raise ValueError(f"checker_action_not_transferable:{step_index}")
+        source_target = str(
+            (source_step.get("metadata") or {}).get("semantic_target") or ""
+        ).strip()
+        task_progress = " ".join(
+            (
+                str(facts["goal"]),
+                str(plans[function_id]["name"]),
+                str(plans[function_id]["description"]),
+            )
+        ).casefold()
+        if source_target and source_target.casefold() in task_progress:
+            raise ValueError("checker_action_is_task_progress")
         formal = [index for index in functions[function_id] if index != step_index]
         _validate_checker_checkpoints(formal, [int(step_index)])
         seen.add(key)
@@ -1705,7 +1719,9 @@ def _draft_split_prompt(
         "candidate, transient-dialog sequence, task-ending suffix, or task-specific "
         "fragment. A subsegment description may claim only effects caused by actions "
         "inside its range; a condition already true in its first source state is a "
-        "precondition, not an effect. Use inclusive start_step_index and exclusive "
+        "precondition, not an effect. Function names and descriptions contain only "
+        "task-progress effects, never optional obstruction-clearing checker effects. "
+        "Use inclusive start_step_index and exclusive "
         "end_step_index. Each "
         "stability_reason must state the stable precondition and repeatable semantic "
         "effect, including which varying content must later be parameterized. Do not "
@@ -1791,14 +1807,23 @@ def _draft_checkers_prompt(
         for item in parameters[key]
         if item["function_id"] == function_id
     }
-    eligible_indices = [
-        index
-        for index in source_indices
-        if index not in unavailable_indices
-        and facts["steps"][index]["action"]["tool"]
-        in {"click", "input_text", "long_press"}
-        and any(later > index for later in source_indices)
-    ]
+    task_progress = " ".join(
+        (str(facts["goal"]), str(plan["name"]), str(plan["description"]))
+    ).casefold()
+    eligible_indices = []
+    for index in source_indices:
+        source_step = facts["steps"][index]
+        source_target = str(
+            (source_step.get("metadata") or {}).get("semantic_target") or ""
+        ).strip()
+        if (
+            index not in unavailable_indices
+            and source_step["action"]["tool"]
+            in {"click", "input_text", "long_press"}
+            and any(later > index for later in source_indices)
+            and not (source_target and source_target.casefold() in task_progress)
+        ):
+            eligible_indices.append(index)
     evidence = {
         "function": plan,
         "bindings": [
@@ -1822,7 +1847,8 @@ def _draft_checkers_prompt(
         "the original RunLog source index and must be one of "
         f"{list(source_indices)}. Select only from eligible_checker_step_indices "
         f"{eligible_indices}; bound actions, edited actions, unsupported actions, and "
-        "actions without a later formal step have already been excluded. Select "
+        "actions without a later formal step or whose target names task progress have "
+        "already been excluded. Select "
         "an existing source step only when it is optional, safe to skip, has a later "
         "formal action in that Function, and is a transferable click, input_text, or "
         "long_press. Required navigation and terminal actions are not checkers. Do not "

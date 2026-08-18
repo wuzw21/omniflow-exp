@@ -118,6 +118,8 @@ invocation resumes after a formal-action failure. A new Function invocation
 starts a new checker session. Allowed checker actions are `click`, `input_text`,
 and `long_press` with source target coordinates used only as OmniTransfer evidence.
 Never execute source-device coordinates on the target.
+An action whose visible source target names progress stated in the RunLog goal
+or Function name/description is a formal action and cannot be a checker.
 
 The global target-probability threshold is defined only in the
 `protocol.checker` block of `config/paper_androidworld.json`. Pair confidence

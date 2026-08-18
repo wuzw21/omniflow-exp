@@ -151,6 +151,8 @@ Rules:
 - A parameterized action cannot be a checker.
 - Required navigation, terminal actions, waits, app launches, key presses, and
   swipes are not checkers.
+- A source target named by the RunLog goal or Function name/description is task
+  progress and cannot be a checker.
 - Return an empty `checker_steps` list when no checker is safe.
 
 ## Deterministic compilation

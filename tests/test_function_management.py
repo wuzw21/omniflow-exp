@@ -55,7 +55,7 @@ def _authoring_run_log() -> dict:
             androidworld_state("state-input"),
             androidworld_state("state-ready"),
         ],
-        goal="Dismiss an optional prompt and enter meeting notes.",
+        goal="Enter meeting notes.",
     )
 
 
@@ -71,7 +71,7 @@ def _draft_enhancer(prompt: str, tool: dict) -> str:
                 "complete_function": {
                     "function_id": "complete_note_entry",
                     "name": "Complete note entry",
-                    "description": "Dismiss an optional prompt, enter text, and wait.",
+                    "description": "Enter text and wait.",
                 },
                 "subsegments": [],
             }
@@ -141,11 +141,11 @@ def test_enhancer_edits_one_draft_in_three_small_stages(tmp_path) -> None:
         for prompt in prompts
     )
     assert any(
-        '"goal":"Dismiss an optional prompt and enter meeting notes."' in prompt
+        '"goal":"Enter meeting notes."' in prompt
         for prompt in prompts
     )
     assert any(
-        '"eligible_parameter_step_indices":[0,1]' in prompt for prompt in prompts
+        '"eligible_parameter_step_indices":[1]' in prompt for prompt in prompts
     )
     assert all('"schema_version":"omniflow.function.v2"' not in p for p in prompts)
 
@@ -562,6 +562,57 @@ def test_checker_registration_is_function_local(tmp_path) -> None:
             tmp_path / "store.json",
             enhance=True,
             complete_json=invalid,
+        )
+
+
+def test_checker_cannot_replace_a_task_progress_action(tmp_path) -> None:
+    run_log = androidworld_run_log(
+        [
+            {"action_type": "click", "x": 500, "y": 500},
+            {"action_type": "wait"},
+        ],
+        observations=[
+            androidworld_state(
+                "alarm-page",
+                forest=(
+                    '<hierarchy><node text="Add alarm" clickable="true" '
+                    'bounds="[400,400][600,600]" /></hierarchy>'
+                ),
+            ),
+            androidworld_state("alarm-picker"),
+        ],
+        goal="Add an alarm.",
+    )
+
+    def complete(_prompt: str, tool: dict) -> str:
+        required = tool["function"]["parameters"]["required"]
+        if required == ["complete_function", "subsegments"]:
+            return json.dumps(
+                {
+                    "complete_function": {
+                        "function_id": "add_alarm",
+                        "name": "Add alarm",
+                        "description": "Open the Add alarm picker.",
+                    },
+                    "subsegments": [],
+                }
+            )
+        if required == ["action_edits", "bindings"]:
+            return json.dumps({"action_edits": [], "bindings": []})
+        return json.dumps(
+            {
+                "checker_steps": [
+                    {"function_id": "add_alarm", "step_index": 0}
+                ]
+            }
+        )
+
+    with pytest.raises(ValueError, match="checker_action_is_task_progress"):
+        save_function(
+            run_log,
+            tmp_path / "store.json",
+            enhance=True,
+            complete_json=complete,
         )
 
 
