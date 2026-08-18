@@ -63,6 +63,7 @@ async def execute_function(
     page_encoder: OmniTransferPageEncoder | None = None,
     checker_page_threshold: float = DEFAULT_CHECKER_PAGE_THRESHOLD,
     checker_target_threshold: float = DEFAULT_CHECKER_TARGET_THRESHOLD,
+    executed_checker_rules: set[int] | None = None,
 ) -> RunResult:
     if not 0.0 <= float(checker_page_threshold) <= 1.0:
         raise ValueError("checker_page_threshold_invalid")
@@ -77,7 +78,8 @@ async def execute_function(
     executed = 0
     trace: list[dict[str, Any]] = []
     checker_decisions: list[dict[str, Any]] = []
-    completed_checker_rules: set[int] = set()
+    if executed_checker_rules is None:
+        executed_checker_rules = set()
     checker_source_states: dict[str, Observation | None] = {}
     source_pages: dict[str, PageEmbedding] = {}
     runtime_page_encoder = page_encoder
@@ -86,7 +88,7 @@ async def execute_function(
     resume_metadata_pending = dict(resume_metadata or {})
     for function_step in steps:
         for rule_index, raw_rule in enumerate(function.checker_rules):
-            if rule_index in completed_checker_rules:
+            if rule_index in executed_checker_rules:
                 continue
             try:
                 rule = validate_checker_rule(raw_rule)
@@ -147,7 +149,7 @@ async def execute_function(
                 }
             )
             if checker_step.actions_executed:
-                completed_checker_rules.add(rule_index)
+                executed_checker_rules.add(rule_index)
                 executed += checker_step.actions_executed
                 trace.extend(
                     await record_execution(

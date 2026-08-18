@@ -44,6 +44,7 @@ class _FunctionSession:
     failed_step_index: int | None = None
     completed: Function | None = None
     resume_events: list[dict[str, Any]] = field(default_factory=list)
+    executed_checker_rules: set[int] = field(default_factory=set)
 
     @property
     def failed_id(self) -> str | None:
@@ -209,6 +210,7 @@ class OmniFlow:
                     checker_target_threshold=(
                         self.config.runtime.checker_target_threshold
                     ),
+                    executed_checker_rules=function_session.executed_checker_rules,
                 )
             actions_executed += replay.actions_executed
             trace.extend(replay.detail.get("trace") or ())
@@ -490,6 +492,8 @@ class OmniFlow:
                     continue
                 if previous_bound != bound_function:
                     retry_step_index = None
+                if retry_step_index is None:
+                    function_session.executed_checker_rules.clear()
                 function_session.selected_id = selected_function.id
                 function_session.bound = bound_function
                 retry_metadata = None
@@ -535,6 +539,7 @@ class OmniFlow:
                     checker_target_threshold=(
                         self.config.runtime.checker_target_threshold
                     ),
+                    executed_checker_rules=function_session.executed_checker_rules,
                 )
                 actions_executed += replay.actions_executed
                 replay_trace = list(replay.detail.get("trace") or ())

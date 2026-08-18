@@ -1465,7 +1465,7 @@ def test_refresh_keeps_validator_conclusion_with_method_error(
     }
 
 
-def test_refresh_freezes_only_validator_cells_from_authoritative_batch_report(
+def test_refresh_freezes_only_validator_results_from_authoritative_batch_report(
     tmp_path: Path,
 ) -> None:
     source = _write_source_run_log(tmp_path)
@@ -1490,7 +1490,7 @@ def test_refresh_freezes_only_validator_cells_from_authoritative_batch_report(
     )
 
     assert report["counts"]["baseline_batch_reports"] == 1
-    assert report["counts"]["baseline_validator_cells"] == 1
+    assert report["counts"]["baseline_validator_results"] == 1
     assert report["counts"]["canonical_result_cells"] == 1
     result = report["canonical"]["result_cells"][
         "RecordWithName|mobilegpt_offline_retrieval|small5554|111|113"

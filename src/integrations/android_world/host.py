@@ -10,7 +10,7 @@ from typing import Any
 import xml.etree.ElementTree as ET
 
 from omniflow import Action, ActionResult, Observation
-from src.integrations.android_world.accessibility import (
+from omniflow.core.androidworld_accessibility import (
     androidworld_forest_xml,
     forest_has_complete_active_application_window,
     xml_covers_screen,

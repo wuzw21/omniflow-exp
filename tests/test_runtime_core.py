@@ -314,6 +314,9 @@ def test_checker_step_executes_when_omnitransfer_target_is_present(monkeypatch) 
     assert result.actions_executed == 2
     assert host.actions[0] == mapped_action
     assert result.detail["checker_decisions"][0]["status"] == "executed"
+    assert result.execution_summary["checker_decisions"] == result.detail[
+        "checker_decisions"
+    ]
     assert result.detail["checker_decisions"][0]["function_id"] == (
         "optional_checker"
     )
@@ -584,6 +587,67 @@ def test_low_confidence_checker_is_checked_again_before_the_next_action(
     assert host.actions.count(mapped_checker_action) == 1
 
 
+def test_executed_checker_is_not_repeated_when_a_function_resumes(monkeypatch) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    current = Observation(xml="<page/>", package_name="com.example")
+    source = Observation(xml="<source/>", package_name="com.example")
+    host = RecordingHost(current)
+    checker_action = Action("click", {"x": 100, "y": 200})
+    mapped_checker_action = Action("click", {"x": 300, "y": 400})
+    executed_checker_rules: set[int] = set()
+
+    async def transfer(action, _observation, _source_state):
+        if action == checker_action:
+            return TransferResult(
+                mapped_checker_action,
+                detail={"candidates": [{"score": 0.99}]},
+            )
+        return TransferResult(action)
+
+    function = Function(
+        function_id="resumed_checker",
+        name="Resumed checker",
+        description="Do not repeat a checker after a later formal action fails.",
+        steps=(
+            FunctionStep(0, Action("wait", {"duration_ms": 0}), "main-0"),
+            FunctionStep(1, Action("wait", {"duration_ms": 0}), "main-1"),
+        ),
+        checker_rules=(
+            {"source_state_id": "checker", "action": checker_action.to_dict()},
+        ),
+    )
+
+    first = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=current,
+            state_loader=lambda _state_id: source,
+            page_encoder=matching_page_encoder("<page/>", "<source/>"),
+            executed_checker_rules=executed_checker_rules,
+        )
+    )
+    resumed = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=first.final_state,
+            start_step_index=1,
+            state_loader=lambda _state_id: source,
+            page_encoder=matching_page_encoder("<page/>", "<source/>"),
+            executed_checker_rules=executed_checker_rules,
+        )
+    )
+
+    assert first.success is True
+    assert resumed.success is True
+    assert executed_checker_rules == {0}
+    assert resumed.detail["checker_decisions"] == []
+    assert host.actions.count(mapped_checker_action) == 1
+
+
 def test_checker_requires_page_match_before_action_transfer(monkeypatch) -> None:
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     current = Observation(xml="<unrelated/>", package_name="com.example")
@@ -784,6 +848,7 @@ def test_function_without_registered_checker_executes_no_checker(monkeypatch) ->
 
     assert result.success is True
     assert result.detail["checker_decisions"] == []
+    assert result.execution_summary["checker_decisions"] == []
     assert host.actions == [Action("wait", {"duration_ms": 0})]
 
 

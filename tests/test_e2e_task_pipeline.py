@@ -19,11 +19,11 @@ from src.experiment.e2e_task_pipeline import (
     _function_enhancement_transport,
     _fixed_replay_source_step_width,
     _function_replay_success,
-    _max_live_bmoca_cells,
+    _max_live_bmoca_results,
     _parse_source_device,
     _report,
     _resolve_args,
-    _run_bmoca_method_cells,
+    _run_bmoca_method_results,
     _save_bmoca_function_once,
     _source_device_ready,
     build_parser,
@@ -37,8 +37,10 @@ from src.experiment.e2e_task_pipeline import (
     run_target_workers,
 )
 from src.experiment.protocol import (
+    BMOCA_RESULT_TIMEOUT_SEC,
     DEVICES,
     EPISODE_TIMEOUT_SEC,
+    FUNCTION_ENHANCEMENT_TIMEOUT_SEC,
     MAX_FALLBACK_STEPS,
     MAX_STEPS,
     METHODS,
@@ -174,9 +176,14 @@ def test_mobilegpt_preparation_is_an_internal_pipeline_phase(
 
 def test_source_device_uses_protocol_avd() -> None:
     parser = build_parser()
+    destinations = {action.dest for action in parser._actions}
 
     assert parser.get_default("source_avd") == SOURCE_AVD
     assert parser.get_default("source_device") == SOURCE_DEVICE
+    assert "bmoca_cell_timeout_sec" not in destinations
+    assert "enhancement_timeout_sec" not in destinations
+    assert BMOCA_RESULT_TIMEOUT_SEC == 600
+    assert FUNCTION_ENHANCEMENT_TIMEOUT_SEC == 300
 
 
 def test_source_device_accepts_an_isolated_console_port() -> None:
@@ -187,7 +194,7 @@ def test_source_device_accepts_an_isolated_console_port() -> None:
     )
 
 
-def test_bmoca_method_launches_ten_isolated_overlapping_subprocess_cells(
+def test_bmoca_method_launches_ten_isolated_overlapping_results(
     tmp_path: Path,
 ) -> None:
     lock = threading.Lock()
@@ -250,9 +257,8 @@ def test_bmoca_method_launches_ten_isolated_overlapping_subprocess_cells(
         bmoca_root=tmp_path / "BMoCA",
         bmoca_android_env_root=tmp_path / "AndroidEnv",
         android_sdk_root=tmp_path / "sdk",
-        bmoca_cell_timeout_sec=600,
     )
-    rows = _run_bmoca_method_cells(
+    rows = _run_bmoca_method_results(
         args=args,
         task="clock/create_alarm_at_06:30_am",
         method="script_replay",
@@ -266,7 +272,7 @@ def test_bmoca_method_launches_ten_isolated_overlapping_subprocess_cells(
 
     assert len(rows) == 10
     assert maximum == 10
-    assert _max_live_bmoca_cells(rows) == 10
+    assert _max_live_bmoca_results(rows) == 10
     assert len({row["process_pid"] for row in rows}) == 10
     assert len({env["OMNIFLOW_BMOCA_AVD_HOME"] for env in environments}) == 10
     assert len({env["OMNIFLOW_BMOCA_APPIUM_PORT"] for env in environments}) == 10
@@ -301,7 +307,7 @@ def test_bmoca_offline_enhancement_calls_only_canonical_save_once(
         "src.experiment.e2e_task_pipeline._function_enhancement_transport",
         lambda **_: (lambda _prompt, _tool: "{}"),
     )
-    args = SimpleNamespace(formal_model="GLM-5.1", enhancement_timeout_sec=180)
+    args = SimpleNamespace(formal_model="GLM-5.1")
 
     _, report = _save_bmoca_function_once(
         args=args,
@@ -343,7 +349,7 @@ def test_bmoca_enhancement_failure_preserves_stage_and_usage(
             function_authoring_tool(stage="split", current_bundle=None),
         ),
     )
-    args = SimpleNamespace(formal_model="GLM-5.1", enhancement_timeout_sec=180)
+    args = SimpleNamespace(formal_model="GLM-5.1")
     task_root = tmp_path / "task"
 
     with pytest.raises(TimeoutError, match="endpoint did not answer"):

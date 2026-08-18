@@ -1452,22 +1452,22 @@ def _load_baseline_batch_reports(
             or summary.get("immutable") is not True
         ):
             raise ValueError(f"baseline_batch_report_invalid:{summary_path}")
-        cells_path = Path(str(summary.get("results_jsonl") or "")).expanduser()
-        if not cells_path.is_absolute():
-            cells_path = (summary_path.parent / cells_path).resolve()
+        results_path = Path(str(summary.get("results_jsonl") or "")).expanduser()
+        if not results_path.is_absolute():
+            results_path = (summary_path.parent / results_path).resolve()
         else:
-            cells_path = cells_path.resolve()
-        if not cells_path.is_file():
+            results_path = results_path.resolve()
+        if not results_path.is_file():
             raise FileNotFoundError(
-                f"baseline_batch_cells_missing:{summary_path}:{cells_path}"
+                f"baseline_batch_results_missing:{summary_path}:{results_path}"
             )
         rows = [
             json.loads(line)
-            for line in cells_path.read_text(encoding="utf-8").splitlines()
+            for line in results_path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
         if not all(isinstance(row, dict) for row in rows):
-            raise ValueError(f"baseline_batch_cells_invalid:{cells_path}")
+            raise ValueError(f"baseline_batch_results_invalid:{results_path}")
         expected_source_seed = summary.get("source_seed")
         expected_evaluation_seed = summary.get("evaluation_seed")
         actual_counts = {
@@ -1477,8 +1477,8 @@ def _load_baseline_batch_reports(
             "non_validator_failure": 0,
             "pending": 0,
         }
-        report_cells: set[str] = set()
-        validator_cell_count = 0
+        report_results: set[str] = set()
+        validator_result_count = 0
         for row in rows:
             task = str(row.get("task_name") or "")
             method = str(row.get("method") or "")
@@ -1505,11 +1505,11 @@ def _load_baseline_batch_reports(
                     f"baseline_batch_seed_mismatch:{summary_path}:{task}:{device}"
                 )
             result = f"{task}|{method}|{device}|{source_seed}|{evaluation_seed}"
-            if result in report_cells:
+            if result in report_results:
                 raise ValueError(
-                    f"baseline_batch_duplicate_cell:{summary_path}:{result}"
+                    f"baseline_batch_duplicate_result:{summary_path}:{result}"
                 )
-            report_cells.add(result)
+            report_results.add(result)
             conclusion = str(row.get("conclusion") or "")
             if conclusion not in actual_counts or conclusion == "planned":
                 raise ValueError(
@@ -1532,7 +1532,7 @@ def _load_baseline_batch_reports(
                     f"baseline_batch_validator_conclusion_mismatch:"
                     f"{summary_path}:{result}"
                 )
-            validator_cell_count += 1
+            validator_result_count += 1
             row_payload = _json_bytes({"rows": [row]})
             row_digest = hashlib.sha256(row_payload).hexdigest()
             row_object = _materialize_content(
@@ -1550,14 +1550,14 @@ def _load_baseline_batch_reports(
                 "official_validator_success": success,
                 "registered_result_sha256": row_digest,
                 "registered_result_object_path": str(row_object),
-                "registered_result_aliases": [str(cells_path)],
+                "registered_result_aliases": [str(results_path)],
                 "selection_reason": BASELINE_BATCH_REPORT_SELECTION,
                 "baseline_batch_report": str(summary_path),
-                "baseline_batch_cells": str(cells_path),
+                "baseline_batch_results": str(results_path),
             }
             existing = results.get(result)
             if existing is not None and existing != candidate:
-                raise ValueError(f"conflicting_baseline_batch_cell:{result}")
+                raise ValueError(f"conflicting_baseline_batch_result:{result}")
             results[result] = candidate
         summary_counts = summary.get("counts")
         if not isinstance(summary_counts, dict) or any(
@@ -1569,7 +1569,7 @@ def _load_baseline_batch_reports(
                 f"expected={summary_counts}:actual={actual_counts}"
             )
         summary_digest = _sha256(summary_path)
-        cells_digest = _sha256(cells_path)
+        results_digest = _sha256(results_path)
         records[summary_digest] = {
             "attempt_id": str(summary.get("attempt_id") or ""),
             "summary_sha256": summary_digest,
@@ -1577,13 +1577,13 @@ def _load_baseline_batch_reports(
             "summary_object_path": str(
                 _materialize_object(memory_root, summary_path, summary_digest)
             ),
-            "cells_sha256": cells_digest,
-            "cells_alias": str(cells_path),
-            "cells_object_path": str(
-                _materialize_object(memory_root, cells_path, cells_digest)
+            "results_sha256": results_digest,
+            "results_alias": str(results_path),
+            "results_object_path": str(
+                _materialize_object(memory_root, results_path, results_digest)
             ),
-            "planned_cells": len(rows),
-            "validator_cells": validator_cell_count,
+            "planned_results": len(rows),
+            "validator_results": validator_result_count,
         }
     return records, results
 
@@ -1927,7 +1927,7 @@ def _refresh_artifact_memory_unlocked(
             ),
             "canonical_result_cells": len(canonical_result_cells),
             "baseline_batch_reports": len(baseline_report_records),
-            "baseline_validator_cells": len(baseline_result_cells),
+            "baseline_validator_results": len(baseline_result_cells),
             "unique_mobilegpt_memories": len(mobilegpt_memory_records),
             "mobilegpt_memory_tasks": len(canonical_mobilegpt_memories),
         },

@@ -95,8 +95,10 @@ hold:
    high-confidence threshold.
 
 A failed condition skips the checker and leaves it eligible before a later
-formal action. Allowed checker actions are `click`, `input_text`, and
-`long_press` with source target coordinates used only as OmniTransfer evidence.
+formal action. A checker that executed stays complete if the same Function
+invocation resumes after a formal-action failure. A new Function invocation
+starts a new checker session. Allowed checker actions are `click`, `input_text`,
+and `long_press` with source target coordinates used only as OmniTransfer evidence.
 Never execute source-device coordinates on the target.
 
 The global page-similarity and target-probability thresholds are defined only
@@ -198,7 +200,7 @@ for official Contacts setup only when `Open with`, `Contacts`, and `Just once`
 are all visible; it selects `Contacts` and `Just once`, then resumes the
 official onboarding `Skip`. Other chooser states remain setup failures.
 
-For explicitly authorized source-data collection only, a one-task direct
+For explicitly authorized source-data collection only, a single-task direct
 AndroidWorld collector may use the pinned checkout's native emulator,
 `env_launcher`, `TaskRegistry`, `get_state()`, `execute_action()`, and the
 official task validator. This mode is limited to immutable successful seed-111

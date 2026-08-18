@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 from typing import Any
 
+from omniflow.core.androidworld_accessibility import androidworld_forest_xml
 from omniflow.core.schemas import load_omniflow_run_log_schema
 
 OMNIFLOW_RUN_LOG_SCHEMA_VERSION = "omniflow.run_log.v1"
@@ -163,7 +164,12 @@ def observation_display(observation: dict[str, Any]) -> tuple[int, int] | None:
 
 def observation_xml(observation: dict[str, Any]) -> str:
     value = observation.get("forest")
-    return value if isinstance(value, str) else ""
+    if isinstance(value, str):
+        return value
+    display = observation_display(observation)
+    if value is None or display is None:
+        return ""
+    return androidworld_forest_xml(value, screen_size=display)
 
 
 def _validate_screenshot_reference(value: Any) -> None:

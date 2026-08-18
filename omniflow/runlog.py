@@ -476,9 +476,25 @@ def _transfer_state(observation: dict[str, Any]) -> dict[str, Any]:
         for key in ("package_name", "activity_name"):
             if auxiliaries.get(key) not in (None, ""):
                 state[key] = str(auxiliaries[key])
-        display = auxiliaries.get("display")
-        if isinstance(display, dict) and set(display) == {"width", "height"}:
-            state["display"] = dict(display)
+    display = observation_display(observation)
+    if display is not None:
+        state["display"] = {"width": display[0], "height": display[1]}
+    if xml and "package_name" not in state:
+        try:
+            root = ET.fromstring(xml)
+        except ET.ParseError:
+            root = None
+        if root is not None:
+            package_name = next(
+                (
+                    str(element.attrib.get("package") or "").strip()
+                    for element in root.iter()
+                    if str(element.attrib.get("package") or "").strip()
+                ),
+                "",
+            )
+            if package_name:
+                state["package_name"] = package_name
     return state
 
 

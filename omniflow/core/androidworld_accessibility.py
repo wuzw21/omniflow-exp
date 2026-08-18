@@ -1,3 +1,5 @@
+"""Canonical AndroidWorld accessibility-state conversion shared by all paths."""
+
 from __future__ import annotations
 
 import re

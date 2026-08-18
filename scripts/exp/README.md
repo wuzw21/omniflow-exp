@@ -136,7 +136,8 @@ embedding first matches each unexecuted rule's source state to the current
 page. OmniTransfer then maps that rule's source action onto the current
 observation. It executes only when both configured thresholds pass. A rule
 contains only `source_state_id` and `action`; a failed condition skips it and
-keeps it eligible for a later formal action. Pair confidence is not a trigger.
+keeps it eligible for a later formal action. An executed rule remains complete
+if that Function invocation resumes. Pair confidence is not a trigger.
 Source coordinates are evidence only and never execute on a target.
 
 The same page threshold gates every source-state-dependent formal Function

@@ -174,6 +174,59 @@ def test_production_import_keeps_androidworld_state_and_action() -> None:
     }
 
 
+def test_production_import_converts_official_forest_to_transfer_xml() -> None:
+    forest = {
+        "windows": [
+            {
+                "id": 7,
+                "tree": {
+                    "nodes": [
+                        {
+                            "unique_id": 1,
+                            "bounds_in_screen": {
+                                "left": 0,
+                                "top": 0,
+                                "right": 720,
+                                "bottom": 1280,
+                            },
+                            "class_name": "android.widget.FrameLayout",
+                            "package_name": "com.android.settings",
+                            "text": "Bluetooth",
+                            "is_visible_to_user": True,
+                            "is_enabled": True,
+                        }
+                    ]
+                },
+            }
+        ]
+    }
+    payload = androidworld_run_log(
+        [{"action_type": "click", "x": 360, "y": 640}],
+        observations=[
+            androidworld_state(
+                "official-forest",
+                forest=forest,
+                package_name="com.android.settings",
+                width=720,
+                height=1280,
+                with_pixels=True,
+            )
+        ],
+    )
+    payload["steps"][0]["observation"]["auxiliaries"] = {
+        "state_id": "official-forest"
+    }
+
+    _, source_states = import_run_log_evidence(payload)
+
+    state = source_states["states"]["official-forest"]
+    assert state["xml"].startswith('<hierarchy width="720" height="1280">')
+    assert 'text="Bluetooth"' in state["xml"]
+    assert 'package="com.android.settings"' in state["xml"]
+    assert state["package_name"] == "com.android.settings"
+    assert state["display"] == {"width": 720, "height": 1280}
+
+
 def test_runlog_import_prefers_action_source_screenshot_over_transition_alias() -> None:
     source = androidworld_state("source", with_pixels=True)
     source["pixels"]["path"] = "/evidence/source.jpg"

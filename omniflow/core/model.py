@@ -221,6 +221,12 @@ class RunResult:
     def execution_summary(self) -> dict[str, Any]:
         usage = self.detail.get("llm_usage")
         usage = usage if isinstance(usage, dict) else {}
+        checker_decisions = self.detail.get("checker_decisions")
+        checker_decisions = (
+            [dict(value) for value in checker_decisions if isinstance(value, dict)]
+            if isinstance(checker_decisions, list)
+            else []
+        )
         prompt_tokens = max(0, _coerce_int(usage.get("prompt_tokens")))
         completion_tokens = max(0, _coerce_int(usage.get("completion_tokens")))
         total_tokens = max(0, _coerce_int(usage.get("total_tokens")))
@@ -242,6 +248,7 @@ class RunResult:
                 usage.get("token_usage_status") or "not_applicable"
             ),
             "failure_reason": self.error,
+            "checker_decisions": checker_decisions,
         }
 
 

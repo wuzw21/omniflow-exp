@@ -27,7 +27,7 @@ from src.experiment.protocol import (
 from src.experiment.protocol import (
     SOURCE_SEED as APPAGENT_SOURCE_SEED,
 )
-from src.integrations.android_world.accessibility import androidworld_forest_xml
+from omniflow.core.androidworld_accessibility import androidworld_forest_xml
 from src.integrations.android_world.apps import resolve_androidworld_app_name
 from src.integrations.android_world.host import (
     androidworld_elements_xml,

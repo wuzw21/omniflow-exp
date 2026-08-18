@@ -32,9 +32,11 @@ from src.experiment.batch_outcomes import (
     write_batch_report,
 )
 from src.experiment.protocol import (
+    BMOCA_RESULT_TIMEOUT_SEC,
     DEVICES,
     FORMAL_MODEL,
     FORMAL_MODEL_BASE_URL,
+    FUNCTION_ENHANCEMENT_TIMEOUT_SEC,
     MAX_FALLBACK_STEPS,
     MAX_STEPS,
     METHODS,
@@ -2145,7 +2147,7 @@ def _save_bmoca_function_once(
             enhance=True,
             complete_json=_function_enhancement_transport(
                 model=args.formal_model,
-                timeout_sec=float(args.enhancement_timeout_sec),
+                timeout_sec=float(FUNCTION_ENHANCEMENT_TIMEOUT_SEC),
                 usage=usage,
             ),
         )
@@ -2205,7 +2207,7 @@ def _append_bmoca_progress_event(path: Path, row: dict[str, Any]) -> None:
         stream.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
 
 
-def _bmoca_cell_environment(
+def _bmoca_result_environment(
     *,
     args: argparse.Namespace,
     task: str,
@@ -2274,7 +2276,7 @@ def _bmoca_environment_failure(error: str) -> bool:
     )
 
 
-def _run_bmoca_cell(
+def _run_bmoca_result(
     *,
     args: argparse.Namespace,
     task: str,
@@ -2291,8 +2293,8 @@ def _run_bmoca_cell(
     timeout_sec: float,
     command_runner: Callable[..., dict[str, Any]] = run_logged_command,
 ) -> dict[str, Any]:
-    cell_root = task_root / "attempts" / method / f"env_{environment_id}"
-    summary_path = cell_root / "summary.json"
+    result_root = task_root / "attempts" / method / f"env_{environment_id}"
+    summary_path = result_root / "summary.json"
     log_path = task_root / "logs" / method / f"env_{environment_id}.log"
     live_started = time.monotonic()
     result = command_runner(
@@ -2307,13 +2309,13 @@ def _run_bmoca_cell(
             task,
         ],
         cwd=args.repo,
-        environment=_bmoca_cell_environment(
+        environment=_bmoca_result_environment(
             args=args,
             task=task,
             method=method,
             environment_id=environment_id,
             store_path=store_path,
-            output_path=cell_root,
+            output_path=result_root,
             avd_home=avd_home,
             appium_port=appium_port,
             appium_system_port=appium_system_port,
@@ -2370,7 +2372,7 @@ def _run_bmoca_cell(
     }
 
 
-def _max_live_bmoca_cells(rows: Sequence[dict[str, Any]]) -> int:
+def _max_live_bmoca_results(rows: Sequence[dict[str, Any]]) -> int:
     events: list[tuple[float, int]] = []
     for row in rows:
         started = row.get("_live_started")
@@ -2384,7 +2386,7 @@ def _max_live_bmoca_cells(rows: Sequence[dict[str, Any]]) -> int:
     return maximum
 
 
-def _run_bmoca_method_cells(
+def _run_bmoca_method_results(
     *,
     args: argparse.Namespace,
     task: str,
@@ -2404,7 +2406,7 @@ def _run_bmoca_method_cells(
             "emulator_grpc_port": 8554 + offset,
         }
         try:
-            return _run_bmoca_cell(
+            return _run_bmoca_result(
                 args=args,
                 task=task,
                 method=method,
@@ -2412,11 +2414,11 @@ def _run_bmoca_method_cells(
                 store_path=store_path,
                 task_root=task_root,
                 avd_home=avd_homes[environment_id],
-                timeout_sec=float(args.bmoca_cell_timeout_sec),
+                timeout_sec=float(BMOCA_RESULT_TIMEOUT_SEC),
                 command_runner=command_runner,
                 **ports,
             )
-        except Exception as error:  # noqa: BLE001 - conclude this immutable cell
+        except Exception as error:  # noqa: BLE001 - conclude this immutable result
             return {
                 "task": task,
                 "method": method,
@@ -2565,7 +2567,7 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 rows[key].update(status="running", store_path=str(store_path))
                 _append_bmoca_progress_event(progress_jsonl, rows[key])
             _write_bmoca_progress(progress_csv, rows)
-            method_rows = _run_bmoca_method_cells(
+            method_rows = _run_bmoca_method_results(
                 args=args,
                 task=task,
                 method=method,
@@ -2575,7 +2577,7 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             )
             observed_max_concurrency = max(
                 observed_max_concurrency,
-                _max_live_bmoca_cells(method_rows),
+                _max_live_bmoca_results(method_rows),
             )
             for row in method_rows:
                 key = (task, method, str(row["environment_id"]))
@@ -2595,12 +2597,12 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         "task_count": len(tasks),
         "method_count": len(_BMOCA_METHODS),
         "environment_count": len(_BMOCA_ENVIRONMENT_IDS),
-        "cell_count": len(rows),
+        "result_count": len(rows),
         "status_counts": status_counts,
         "official_success_count": sum(
             row.get("official_success") is True for row in rows.values()
         ),
-        "observed_max_live_cells": observed_max_concurrency,
+        "observed_max_live_results": observed_max_concurrency,
         "process_overlap_proven": observed_max_concurrency > 1,
         "enhancement_count": len(enhancement_reports),
         "enhancement_success_count": sum(
@@ -2664,8 +2666,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bmoca-avd-home", type=Path)
     parser.add_argument("--bmoca-android-env-root", type=Path)
     parser.add_argument("--android-sdk-root", type=Path)
-    parser.add_argument("--bmoca-cell-timeout-sec", type=int, default=600)
-    parser.add_argument("--enhancement-timeout-sec", type=float, default=180.0)
     parser.add_argument("--attempt-id", default="")
     parser.add_argument("--source-qualification-only", action="store_true")
     parser.add_argument("--source-only", action="store_true")
@@ -2723,8 +2723,6 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
             raise ValueError("bmoca_campaign_requires_GLM-5.1")
         if args.max_fallback_steps != 0:
             raise ValueError("bmoca_campaign_fallback_must_be_zero")
-        if args.bmoca_cell_timeout_sec <= 0 or args.enhancement_timeout_sec <= 0:
-            raise ValueError("bmoca_timeouts_must_be_positive")
         return args
     for field in (
         "memory_index",

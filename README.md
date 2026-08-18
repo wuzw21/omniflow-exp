@@ -107,7 +107,8 @@ the following hold:
    observation;
 3. the selected target's OmniTransfer rank probability reaches the configured
    high-confidence threshold; and
-4. the rule has not already executed in this Function call.
+4. the rule has not already executed in this Function invocation, including a
+   resumed invocation after a later formal-action failure.
 
 Each rule contains exactly `source_state_id` and `action`; registration on the
 Function is the rule-to-Function relationship. Otherwise the rule is skipped
