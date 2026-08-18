@@ -89,8 +89,10 @@ It then runs only `script_replay` on env100 and requires official success,
 method success, `model_calls=0`, and `fallback_steps=0`. A failed source gate
 ends that task without launching env101--109. A passing gate unlocks
 Planner-selected `ours` on env100--109 and the remaining zero-model
-`script_replay` results on env101--109 through the same OmniFlow runtime. It
-writes `progress.csv`,
+`script_replay` results on env101--109 through the same OmniFlow runtime. The
+scheduler creates no AVD clone before enhancement succeeds, clones env100 for
+the source gate, and clones env101--109 only after that gate passes. It writes
+`progress.csv`,
 `progress.jsonl`, per-attempt RunLogs, and the terminal
 `campaign_summary.json` under the new output root.
 

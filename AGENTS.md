@@ -84,7 +84,9 @@ paraphrased target fails validation.
 Before a saved B-MoCA bundle may run cross-environment, its complete Function
 must pass env100 `script_replay` with official success, method success,
 `model_calls=0`, and `fallback_steps=0`. A failed source gate ends that task;
-never launch env101--109 or `ours` for an unqualified Function.
+never prepare or launch env101--109 or `ours` for an unqualified Function. Do
+not clone any B-MoCA AVD before Function enhancement succeeds; prepare env100
+for the source gate first and the remaining AVDs only after that gate passes.
 
 Checker rules are registered on one Function through that Function's
 `checker_rules`; there is no global checker pool. A rule belongs only to the

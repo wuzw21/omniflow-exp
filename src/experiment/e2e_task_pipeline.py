@@ -2520,16 +2520,6 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     avd_names = _bmoca_avd_names(args.bmoca_root)
     avd_homes: dict[str, Path] = {}
     avd_failures: dict[str, str] = {}
-    for environment_id in _BMOCA_ENVIRONMENT_IDS:
-        try:
-            avd_homes[environment_id] = _clone_bmoca_avd_home(
-                source_home=args.bmoca_avd_home,
-                target_home=campaign_root / "runtime" / "avd" / f"env_{environment_id}",
-                avd_name=avd_names[environment_id],
-            )
-        except Exception as error:  # noqa: BLE001 - preserve the campaign table
-            avd_failures[environment_id] = f"{type(error).__name__}: {error}"
-
     observed_max_concurrency = 0
     enhancement_reports: list[dict[str, Any]] = []
     for task in tasks:
@@ -2578,6 +2568,15 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     _append_bmoca_progress_event(progress_jsonl, rows[key])
             _write_bmoca_progress(progress_csv, rows)
             continue
+        if "100" not in avd_homes and "100" not in avd_failures:
+            try:
+                avd_homes["100"] = _clone_bmoca_avd_home(
+                    source_home=args.bmoca_avd_home,
+                    target_home=campaign_root / "runtime" / "avd" / "env_100",
+                    avd_name=avd_names["100"],
+                )
+            except Exception as error:  # noqa: BLE001 - preserve the campaign table
+                avd_failures["100"] = f"{type(error).__name__}: {error}"
         gate_key = (task, "script_replay", "100")
         if "100" not in avd_homes:
             rows[gate_key].update(
@@ -2627,6 +2626,20 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     _append_bmoca_progress_event(progress_jsonl, row)
             _write_bmoca_progress(progress_csv, rows)
             continue
+
+        for environment_id in _BMOCA_ENVIRONMENT_IDS:
+            if environment_id in avd_homes or environment_id in avd_failures:
+                continue
+            try:
+                avd_homes[environment_id] = _clone_bmoca_avd_home(
+                    source_home=args.bmoca_avd_home,
+                    target_home=(
+                        campaign_root / "runtime" / "avd" / f"env_{environment_id}"
+                    ),
+                    avd_name=avd_names[environment_id],
+                )
+            except Exception as error:  # noqa: BLE001 - preserve the campaign table
+                avd_failures[environment_id] = f"{type(error).__name__}: {error}"
 
         for method in _BMOCA_METHODS:
             method_environment_ids = (

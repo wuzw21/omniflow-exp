@@ -315,6 +315,7 @@ def test_bmoca_pipeline_stops_task_after_failed_env100_source_replay(
     source = tmp_path / "source.run_log.json"
     source.write_text("{}", encoding="utf-8")
     calls: list[tuple[str, tuple[str, ...]]] = []
+    cloned: list[str] = []
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline._bmoca_manifest_tasks",
         lambda *_: ([task], {task: source}),
@@ -325,7 +326,8 @@ def test_bmoca_pipeline_stops_task_after_failed_env100_source_replay(
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline._clone_bmoca_avd_home",
-        lambda **kwargs: kwargs["target_home"],
+        lambda **kwargs: cloned.append(kwargs["avd_name"])
+        or kwargs["target_home"],
     )
     store = tmp_path / "store.json"
     monkeypatch.setattr(
@@ -366,20 +368,21 @@ def test_bmoca_pipeline_stops_task_after_failed_env100_source_replay(
     )
 
     assert calls == [("script_replay", ("100",))]
+    assert cloned == ["env100"]
     assert summary["status_counts"] == {
         "method_failure": 1,
         "prep_failed": 19,
     }
 
 
-def test_bmoca_pipeline_runs_remaining_results_only_after_source_gate(
+def test_bmoca_pipeline_does_not_clone_avds_before_enhancement_succeeds(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     task = "clock/create_alarm_at_06:30_am"
     source = tmp_path / "source.run_log.json"
     source.write_text("{}", encoding="utf-8")
-    calls: list[tuple[str, tuple[str, ...]]] = []
+    cloned: list[str] = []
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline._bmoca_manifest_tasks",
         lambda *_: ([task], {task: source}),
@@ -390,7 +393,52 @@ def test_bmoca_pipeline_runs_remaining_results_only_after_source_gate(
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline._clone_bmoca_avd_home",
-        lambda **kwargs: kwargs["target_home"],
+        lambda **kwargs: cloned.append(kwargs["avd_name"]),
+    )
+
+    def fail_enhancement(**_: object) -> None:
+        raise ValueError("invalid enhancement")
+
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._save_bmoca_function_once",
+        fail_enhancement,
+    )
+
+    summary = run_bmoca_pipeline(
+        SimpleNamespace(
+            bmoca_corpus_manifest=tmp_path / "manifest.json",
+            task="all",
+            output_root=tmp_path / "campaign",
+            bmoca_root=tmp_path / "BMoCA",
+            bmoca_avd_home=tmp_path / "avd",
+        )
+    )
+
+    assert cloned == []
+    assert summary["status_counts"] == {"prep_failed": 20}
+
+
+def test_bmoca_pipeline_runs_remaining_results_only_after_source_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = "clock/create_alarm_at_06:30_am"
+    source = tmp_path / "source.run_log.json"
+    source.write_text("{}", encoding="utf-8")
+    calls: list[tuple[str, tuple[str, ...]]] = []
+    cloned: list[str] = []
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._bmoca_manifest_tasks",
+        lambda *_: ([task], {task: source}),
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._bmoca_avd_names",
+        lambda *_: {str(value): f"env{value}" for value in range(100, 110)},
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._clone_bmoca_avd_home",
+        lambda **kwargs: cloned.append(kwargs["avd_name"])
+        or kwargs["target_home"],
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline._save_bmoca_function_once",
@@ -436,6 +484,7 @@ def test_bmoca_pipeline_runs_remaining_results_only_after_source_gate(
         ("ours", tuple(str(value) for value in range(100, 110))),
         ("script_replay", tuple(str(value) for value in range(101, 110))),
     ]
+    assert cloned == [f"env{value}" for value in range(100, 110)]
     assert summary["status_counts"] == {"success": 20}
 
 
