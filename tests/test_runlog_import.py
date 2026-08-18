@@ -1517,6 +1517,34 @@ def test_fixed_replay_opens_packages_through_androidworld_launcher(
     ]
 
 
+def test_fixed_replay_delegates_unmapped_package_to_shared_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = object()
+    calls: list[dict[str, object]] = []
+    adb_utils = SimpleNamespace(
+        get_all_apps=lambda _controller: [],
+        get_adb_activity=lambda _app: None,
+        extract_package_name=lambda activity: activity.split("/", 1)[0],
+    )
+    android_world = ModuleType("android_world")
+    android_world_env = ModuleType("android_world.env")
+    android_world_env.adb_utils = adb_utils
+    android_world.env = android_world_env
+    monkeypatch.setitem(sys.modules, "android_world", android_world)
+    monkeypatch.setitem(sys.modules, "android_world.env", android_world_env)
+
+    host = SimpleNamespace(
+        env=SimpleNamespace(controller=controller),
+        act=lambda action: calls.append(action) or SimpleNamespace(success=True),
+    )
+    _launch_raw_replay_app("com.android.settings", host)
+
+    assert calls == [
+        {"tool": "open_app", "args": {"package_name": "com.android.settings"}},
+    ]
+
+
 def test_fixed_replay_waits_for_open_app_before_recorded_click(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

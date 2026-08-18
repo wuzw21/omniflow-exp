@@ -113,9 +113,10 @@ retries APK installation without `--bypass-low-target-sdk-block` only when the
 emulator explicitly reports that option as unknown.
 
 `open_app` keeps the RunLog package as its stored contract. The adapters derive
-the official launcher name from the pinned AndroidWorld registry, close a stale
-task through AndroidWorld's own ADB helper, and then use the official action.
-There is no local app registry or second launcher.
+the official launcher name from the pinned AndroidWorld registry when present;
+otherwise the same official launcher receives the package and uses its package
+fallback. AndroidWorld's own ADB helper closes stale tasks. There is no local
+app registry, pre-launch gate, or second launcher.
 
 For `ours`, the AndroidWorld Method Adapter invokes one complete
 `OmniFlow.run()` cycle on the task. The official episode runner contributes the

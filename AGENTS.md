@@ -235,7 +235,7 @@ through explicit absolute paths and indexed by exact SHA-256 outside the repo.
 formal results, refresh canonical memory, or replace the unified shell entry.
 
 RunLog `open_app` actions keep the canonical package as their stored contract.
-At execution, adapters resolve it only through the pinned AndroidWorld app
-registry, close a stale task through AndroidWorld's own ADB helper, and then use
-the official `open_app` action. Do not add a local app mapping or another
-launcher.
+At execution, the shared AndroidWorld host resolves a registered launcher name
+when one exists and otherwise preserves the package for AndroidWorld's official
+package-launch fallback. AndroidWorld's own ADB helper closes stale tasks. Do
+not add a local app mapping, a pre-launch registry gate, or another launcher.

@@ -3209,37 +3209,12 @@ def _launch_raw_replay_app(
     app_identifier: str,
     host: Any,
 ) -> None:
-    from android_world.env import adb_utils
-
     identifier = str(app_identifier or "").strip()
     if not identifier:
         raise ValueError("raw_replay_open_app_identifier_required")
-    env = host.env
-    package_name = ""
-    if "." in identifier:
-        package_name = identifier
-        matches = []
-        for app_name in adb_utils.get_all_apps(env.controller):
-            activity = adb_utils.get_adb_activity(app_name)
-            if activity and adb_utils.extract_package_name(activity) == identifier:
-                matches.append(app_name)
-        if len(matches) != 1:
-            raise RuntimeError(
-                f"raw_replay_app_package_unresolved:{identifier}:{len(matches)}"
-            )
-        identifier = matches[0]
-    else:
-        activity = adb_utils.get_adb_activity(identifier)
-        if activity:
-            package_name = str(
-                adb_utils.extract_package_name(activity) or ""
-            ).strip()
-    action_args = (
-        {"package_name": package_name}
-        if package_name
-        else {"app_name": identifier}
+    result = host.act(
+        {"tool": "open_app", "args": {"package_name": identifier}}
     )
-    result = host.act({"tool": "open_app", "args": action_args})
     if getattr(result, "success", False) is not True:
         raise RuntimeError(
             str(getattr(result, "error", "") or "raw replay open_app failed")

@@ -171,8 +171,10 @@ The AndroidWorld `ours` adapter invokes one complete, persistent OmniFlow cycle
 per task. AndroidWorld's outer episode step does not split that cycle or own a
 second planner budget, Function session, resume state, or fallback counter.
 RunLog `open_app` stores only the package. At execution, the adapter uses the
-pinned AndroidWorld registry and launcher, after closing any stale app task;
-there is no adapter-owned app registry or alternate launcher.
+pinned AndroidWorld registry when it has a launcher name and otherwise lets the
+same official launcher use its package fallback, after closing any stale app
+task. There is no adapter-owned app registry, pre-launch gate, or alternate
+launcher.
 Official Contacts setup may resolve Android's `Open with` chooser by selecting
 `Contacts` and `Just once` before resuming the official onboarding `Skip`.
 
