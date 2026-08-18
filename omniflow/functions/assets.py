@@ -67,17 +67,13 @@ def function_authoring_tool(
     parameter = {
         "type": "object",
         "additionalProperties": False,
-        "required": ["name", "description", "argument_path"],
+        "required": ["name", "description"],
         "properties": {
             "name": {
                 "type": "string",
                 "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
             },
             "description": {"type": "string", "minLength": 1},
-            "argument_path": {
-                "type": "string",
-                "enum": ["text", "target_description"],
-            },
         },
     }
     segment = {
@@ -144,7 +140,6 @@ def function_authoring_tool(
                             "step_index",
                             "name",
                             "description",
-                            "argument_path",
                         ],
                         "properties": {
                             "function_id": metadata["properties"]["function_id"],
@@ -1491,7 +1486,6 @@ def _validate_parameter_draft(
             "step_index",
             "name",
             "description",
-            "argument_path",
         }
         if not isinstance(raw, dict) or set(raw) != expected:
             raise ValueError("function_parameter_contract_invalid")
@@ -1499,7 +1493,6 @@ def _validate_parameter_draft(
         step_index = raw.get("step_index")
         name = str(raw.get("name") or "").strip()
         description = str(raw.get("description") or "").strip()
-        path = str(raw.get("argument_path") or "").strip()
         if function_id not in functions:
             raise ValueError("function_parameter_unknown_function")
         if (
@@ -1512,19 +1505,25 @@ def _validate_parameter_draft(
             raise ValueError("function_parameter_name_invalid")
         if not description:
             raise ValueError("function_parameter_description_required")
-        if path not in {"text", "target_description"}:
-            raise ValueError(f"function_parameter_path_forbidden:{path}")
+        draft_action = _draft_action(
+            facts,
+            action_edits,
+            function_id=function_id,
+            step_index=step_index,
+        )
+        args = draft_action["args"]
+        if draft_action["tool"] == "input_text" and "text" in args:
+            path = "text"
+        elif draft_action["tool"] == "click" and "target_description" in args:
+            path = "target_description"
+        else:
+            raise ValueError("function_parameter_target_unavailable")
         target = (function_id, int(step_index), path)
         if target in targets:
             raise ValueError("function_parameter_target_duplicate")
         try:
             source_value = _read_path(
-                _draft_action(
-                    facts,
-                    action_edits,
-                    function_id=function_id,
-                    step_index=step_index,
-                )["args"],
+                args,
                 _tokens("." + path),
             )
         except (IndexError, KeyError, TypeError) as error:
@@ -1726,8 +1725,10 @@ def _draft_parameters_prompt(
         "visible source_target, use operation=set_target with exactly that label. "
         "Never invent or paraphrase either value. Bind caller-varying values already "
         "present after those edits only when the value is requested by the goal and "
-        "replacing it changes the requested outcome; argument_path is relative to "
-        "action.args. A current source-state value clicked only to open a picker or "
+        "replacing it changes the requested outcome. The compiler derives the binding "
+        "target from the validated action: input_text binds text, while a click with a "
+        "source-proven set_target edit binds target_description. Do not return a path. "
+        "A current source-state value clicked only to open a picker or "
         "menu is not a caller parameter. For example, clicking the currently displayed "
         "minute before selecting the requested minute may receive set_target grounding, "
         "but only the requested minute is bound. Reusing one parameter name on multiple "

@@ -95,8 +95,7 @@ Return:
       "function_id": "enter_search_query",
       "step_index": 2,
       "name": "query",
-      "description": "Place query to enter",
-      "argument_path": "text"
+      "description": "Place query to enter"
     }
   ]
 }
@@ -110,8 +109,8 @@ Rules:
 - Use `set_target` only when `source_target` is non-empty. Copy that label
   exactly into `value`; do not paraphrase it.
 - Declare caller-varying values already present after the validated action edit.
-- `argument_path` is exactly `text` or `target_description`; no other value is
-  accepted.
+- Do not return a binding path. The compiler derives `text` for `input_text`
+  and `target_description` for a source-proven semantic click.
 - The source step must be inside the named Function range.
 - A varying visible selection such as an hour or category may bind
   `target_description` after `set_target`.

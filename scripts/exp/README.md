@@ -79,7 +79,9 @@ bindings, and checker rules. Normal and enhanced saves share one validation and
 Store writer. One invalid stage edit gets one correction opportunity; a timeout
 or transport failure is not retried, and nothing is persisted until every
 compiled Function passes the same validator.
-Agent-authored parameter paths are exactly `text` and `target_description`.
+The compiler derives parameter paths from validated actions: `input_text`
+binds `text`, and a source-proven semantic click binds `target_description`.
+The Agent does not author a path.
 
 The explicit B-MoCA campaign is the only launcher-owned preparation path: for
 each corpus task it calls that same `save_function(enhance=true)` writer once.

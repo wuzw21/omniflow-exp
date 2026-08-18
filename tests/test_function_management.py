@@ -87,7 +87,6 @@ def _draft_enhancer(prompt: str, tool: dict) -> str:
                         "step_index": 1,
                         "name": "note",
                         "description": "Note text to enter",
-                        "argument_path": "text",
                     }
                 ]
             }
@@ -217,7 +216,6 @@ def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> 
                                 "step_index": 1,
                                 "name": "query",
                                 "description": "Place query to enter",
-                                "argument_path": "text",
                             }
                         ]
                         if function_id in {
@@ -424,7 +422,6 @@ def test_enhancer_binds_source_proven_semantic_target(tmp_path) -> None:
                             "step_index": 0,
                             "name": "hour",
                             "description": "Visible hour to select",
-                            "argument_path": "target_description",
                         }
                     ],
                 }
@@ -597,13 +594,16 @@ def test_function_authoring_tool_is_three_small_draft_edits() -> None:
         function_authoring_tool(stage=stage)["function"]["name"]
         for stage in ("split", "parameters", "checkers")
     } == {"edit_function_draft"}
-    parameter_schema = function_authoring_tool(stage="parameters")["function"][
+    binding_schema = function_authoring_tool(stage="parameters")["function"][
         "parameters"
-    ]["properties"]["bindings"]["items"]["properties"]["argument_path"]
-    assert parameter_schema == {
-        "type": "string",
-        "enum": ["text", "target_description"],
-    }
+    ]["properties"]["bindings"]["items"]
+    assert binding_schema["required"] == [
+        "function_id",
+        "step_index",
+        "name",
+        "description",
+    ]
+    assert "argument_path" not in binding_schema["properties"]
 
 
 def test_save_function_reports_the_failed_stage(tmp_path) -> None:
