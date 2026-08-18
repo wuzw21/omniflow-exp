@@ -11,6 +11,10 @@ def resolve_androidworld_app_name(package_name: str, controller: object) -> str:
         activity = str(adb_utils.get_adb_activity(app_name) or "").strip()
         if activity.split("/", 1)[0].strip() == package:
             return str(app_name)
+    registry = getattr(adb_utils, "_PATTERN_TO_ACTIVITY", {})
+    for pattern, activity in registry.items():
+        if str(activity).split("/", 1)[0].strip() == package:
+            return str(pattern).split("|", 1)[0].strip()
     return package
 
 

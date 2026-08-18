@@ -4,13 +4,16 @@ import hashlib
 import os
 from pathlib import Path
 import subprocess
+import sys
 from types import SimpleNamespace
+from types import ModuleType
 import xml.etree.ElementTree as ET
 
 from PIL import Image
 import pytest
 
 from omniflow import Action
+from src.integrations.android_world.apps import resolve_androidworld_app_name
 from src.integrations.android_world.host import AndroidWorldHost
 from src.integrations.android_world.launch import (
     ANDROID_PERMISSION_DENY_RESOURCE_IDS,
@@ -34,6 +37,31 @@ from src.integrations.android_world.launch import (
     _runtime_execution_trace,
     _wait_for_androidworld_a11y,
 )
+
+
+def test_system_package_resolves_from_official_registry_when_not_enumerated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adb_utils = SimpleNamespace(
+        get_all_apps=lambda _controller: [],
+        get_adb_activity=lambda app_name: (
+            "com.android.settings/.Settings" if app_name == "settings" else None
+        ),
+        _PATTERN_TO_ACTIVITY={
+            "settings|system settings": "com.android.settings/.Settings"
+        },
+    )
+    android_world = ModuleType("android_world")
+    android_world_env = ModuleType("android_world.env")
+    android_world_env.adb_utils = adb_utils
+    android_world.env = android_world_env
+    monkeypatch.setitem(sys.modules, "android_world", android_world)
+    monkeypatch.setitem(sys.modules, "android_world.env", android_world_env)
+
+    assert (
+        resolve_androidworld_app_name("com.android.settings", object())
+        == "settings"
+    )
 
 
 def test_androidworld_setup_skips_only_already_settled_notification_permission(
