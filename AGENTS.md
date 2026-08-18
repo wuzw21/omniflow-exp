@@ -120,6 +120,8 @@ and `long_press` with source target coordinates used only as OmniTransfer eviden
 Never execute source-device coordinates on the target.
 An action whose visible source target names progress stated in the RunLog goal
 or Function name/description is a formal action and cannot be a checker.
+One RunLog action may not be a checker in one emitted Function and a formal
+step in another; conflicting roles reject the entire atomic save.
 
 The global target-probability threshold is defined only in the
 `protocol.checker` block of `config/paper_androidworld.json`. Pair confidence

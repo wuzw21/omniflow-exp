@@ -1250,7 +1250,12 @@ def _author_functions(
         function_id = plan["function_id"]
         decision = _request_authoring_decision(
             complete_json,
-            prompt=_draft_checkers_prompt(facts, plan, parameters),
+            prompt=_draft_checkers_prompt(
+                facts,
+                plan,
+                parameters,
+                all_plans=plans,
+            ),
             tool=function_authoring_tool(stage="checkers"),
             label=f"checkers:{function_id}",
             validate=lambda value, expected=function_id: (
@@ -1264,6 +1269,19 @@ def _author_functions(
             ),
         )
         checkers["checker_steps"].extend(decision["checker_steps"])
+    selected_checkers = {
+        (item["function_id"], item["step_index"])
+        for item in checkers["checker_steps"]
+    }
+    for item in checkers["checker_steps"]:
+        for plan in plans:
+            if (
+                item["step_index"]
+                in _function_indices(plan, len(facts["steps"]))
+                and (plan["function_id"], item["step_index"])
+                not in selected_checkers
+            ):
+                raise ValueError("checker_action_role_inconsistent_across_functions")
     return _compile_function_draft(facts, split, parameters, checkers)
 
 
@@ -1798,6 +1816,8 @@ def _draft_checkers_prompt(
     facts: dict[str, Any],
     plan: dict[str, Any],
     parameters: dict[str, Any],
+    *,
+    all_plans: list[dict[str, Any]],
 ) -> str:
     source_indices = _function_indices(plan, len(facts["steps"]))
     function_id = plan["function_id"]
@@ -1810,6 +1830,12 @@ def _draft_checkers_prompt(
     task_progress = " ".join(
         (str(facts["goal"]), str(plan["name"]), str(plan["description"]))
     ).casefold()
+    shared_formal_indices = {
+        index
+        for other in all_plans
+        if other["function_id"] != function_id
+        for index in _function_indices(other, len(facts["steps"]))
+    }
     eligible_indices = []
     for index in source_indices:
         source_step = facts["steps"][index]
@@ -1822,6 +1848,7 @@ def _draft_checkers_prompt(
             in {"click", "input_text", "long_press"}
             and any(later > index for later in source_indices)
             and not (source_target and source_target.casefold() in task_progress)
+            and index not in shared_formal_indices
         ):
             eligible_indices.append(index)
     evidence = {
@@ -1848,7 +1875,9 @@ def _draft_checkers_prompt(
         f"{list(source_indices)}. Select only from eligible_checker_step_indices "
         f"{eligible_indices}; bound actions, edited actions, unsupported actions, and "
         "actions without a later formal step or whose target names task progress have "
-        "already been excluded. Select "
+        "already been excluded. A source action used as a formal step by another "
+        "Function has also been excluded because one RunLog action cannot have "
+        "conflicting roles. Select "
         "an existing source step only when it is optional, safe to skip, has a later "
         "formal action in that Function, and is a transferable click, input_text, or "
         "long_press. Required navigation and terminal actions are not checkers. Do not "

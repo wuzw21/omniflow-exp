@@ -164,6 +164,8 @@ formal action. A Function with no registered rules performs no checker
 evaluation, and rules registered on another Function are never considered.
 An action whose source target is named by the task goal or Function semantics
 is task progress and cannot be registered as a checker.
+The same RunLog action cannot have checker and formal roles across two emitted
+Functions.
 
 Formal Function actions use canonical OmniTransfer target mapping directly.
 A missing or rejected mapping fails the Function into the normal Planner

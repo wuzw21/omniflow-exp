@@ -254,7 +254,7 @@ def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> 
     assert stage_calls == [
         (("action_edits", "bindings"), "search_for_a_place", (0, 1, 2, 3), ()),
         (("action_edits", "bindings"), "enter_search_query", (1, 2), ()),
-        (("checker_steps",), "search_for_a_place", (0, 1, 2, 3), (0, 2)),
+        (("checker_steps",), "search_for_a_place", (0, 1, 2, 3), (0,)),
         (("checker_steps",), "enter_search_query", (1, 2), ()),
     ]
 
@@ -610,6 +610,58 @@ def test_checker_cannot_replace_a_task_progress_action(tmp_path) -> None:
     with pytest.raises(ValueError, match="checker_action_is_task_progress"):
         save_function(
             run_log,
+            tmp_path / "store.json",
+            enhance=True,
+            complete_json=complete,
+        )
+
+
+def test_same_source_action_cannot_be_checker_and_formal_across_functions(
+    tmp_path,
+) -> None:
+    def complete(prompt: str, tool: dict) -> str:
+        required = tool["function"]["parameters"]["required"]
+        if required == ["complete_function", "subsegments"]:
+            return json.dumps(
+                {
+                    "complete_function": {
+                        "function_id": "complete_note_entry",
+                        "name": "Complete note entry",
+                        "description": "Enter meeting notes.",
+                    },
+                    "subsegments": [
+                        {
+                            "function_id": "enter_note",
+                            "name": "Enter note",
+                            "description": "Enter meeting notes.",
+                            "stability_reason": (
+                                "The note field is stable and the text is parameterized."
+                            ),
+                            "start_step_index": 0,
+                            "end_step_index": 2,
+                        }
+                    ],
+                }
+            )
+        draft = _draft_input(prompt)
+        function_id = draft["function"]["function_id"]
+        if required == ["action_edits", "bindings"]:
+            return json.dumps({"action_edits": [], "bindings": []})
+        return json.dumps(
+            {
+                "checker_steps": (
+                    [{"function_id": function_id, "step_index": 0}]
+                    if function_id == "complete_note_entry"
+                    else []
+                )
+            }
+        )
+
+    with pytest.raises(
+        ValueError, match="checker_action_role_inconsistent_across_functions"
+    ):
+        save_function(
+            _authoring_run_log(),
             tmp_path / "store.json",
             enhance=True,
             complete_json=complete,

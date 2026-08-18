@@ -153,6 +153,8 @@ Rules:
   swipes are not checkers.
 - A source target named by the RunLog goal or Function name/description is task
   progress and cannot be a checker.
+- One source action cannot be a checker in one emitted Function and a formal
+  step in another.
 - Return an empty `checker_steps` list when no checker is safe.
 
 ## Deterministic compilation
