@@ -18,7 +18,6 @@ import pickle
 import random
 import re
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -240,14 +239,6 @@ def utc_now_iso() -> str:
 def read_env_text(name: str) -> str | None:
     value = str(os.environ.get(name) or "").strip()
     return value or None
-
-
-def read_env_int(name: str, default: int, *, minimum: int = 0) -> int:
-    try:
-        value = int(read_env_text(name) or default)
-    except ValueError:
-        value = default
-    return max(minimum, value)
 
 
 def to_serializable(value: Any) -> Any:
@@ -843,142 +834,6 @@ class _OpenAICompatibleMultimodalWrapper:
         return summary
 
 
-def _valid_reason_action_output(output: object) -> bool:
-    text = str(output or "").strip()
-    if not text:
-        return False
-    try:
-        from android_world.agents import agent_utils, m3a_utils
-
-        reason, action_text = m3a_utils.parse_reason_action_output(text)
-        return bool(reason and action_text and agent_utils.extract_json(action_text))
-    except Exception:
-        return False
-
-
-def _candidate_action(text: object) -> dict[str, Any] | None:
-    match = re.search(r"Action:\s*(\{.*\})", str(text or "").strip(), flags=re.DOTALL)
-    if not match:
-        return None
-    try:
-        action = json.loads(match.group(1))
-    except json.JSONDecodeError:
-        return None
-    return action if isinstance(action, dict) else None
-
-
-def _last_prompt_action(text_prompt: str) -> dict[str, Any] | None:
-    matches = re.findall(r"Action selected:\s*(\{[^\n]*\})", str(text_prompt or ""))
-    for value in reversed(matches):
-        try:
-            action = json.loads(value)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(action, dict):
-            return action
-    return None
-
-
-def _keyboard_visible_in_prompt(text_prompt: str) -> bool:
-    prompt = str(text_prompt or "").lower()
-    markers = (
-        "switch input method",
-        "emoji button",
-        "symbol keyboard",
-        "voice input",
-        "gif keyboard",
-    )
-    return sum(marker in prompt for marker in markers) >= 2
-
-
-def _keyboard_obstruction_guard_applies(text_prompt: str, proposed: object) -> bool:
-    action = _candidate_action(proposed)
-    last_action = _last_prompt_action(text_prompt)
-    return bool(
-        action
-        and action.get("action_type") == "scroll"
-        and last_action
-        and last_action.get("action_type") == "input_text"
-        and _keyboard_visible_in_prompt(text_prompt)
-    )
-
-
-class _ActionConsistencyLlmWrapper:
-    """Candidate-only second-pass action review over the same multimodal prefix."""
-
-    def __init__(self, delegate: Any, policy: dict[str, Any]) -> None:
-        self.delegate = delegate
-        self.policy = dict(policy)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self.delegate, name)
-
-    def predict(self, text_prompt: str) -> tuple[str, bool | None, Any]:
-        return self.predict_mm(text_prompt, [])
-
-    def predict_mm(
-        self,
-        text_prompt: str,
-        images: list[Any],
-    ) -> tuple[str, bool | None, Any]:
-        proposed, is_safe, raw_response = self.delegate.predict_mm(text_prompt, images)
-        if "Your Answer:" not in str(text_prompt):
-            return proposed, is_safe, raw_response
-        mode = str(self.policy.get("mode") or "always")
-        if mode == "keyboard_obstruction_guard":
-            if not _keyboard_obstruction_guard_applies(text_prompt, proposed):
-                return proposed, is_safe, raw_response
-            return (
-                "Reason: The software keyboard is still open after text entry and "
-                "obscures the form, so dismiss it before viewport navigation.\n"
-                'Action: {"action_type":"navigate_back"}',
-                is_safe,
-                {
-                    "first_pass": raw_response,
-                    "action_consistency_applied": True,
-                    "action_consistency_mode": mode,
-                },
-            )
-        instruction = str(self.policy.get("instruction") or "").strip()
-        review_prompt = (
-            f"{text_prompt}\n\n"
-            "SkyMark action-consistency review\n"
-            "The first-pass candidate action was:\n"
-            f"{proposed}\n\n"
-            f"{instruction}\n"
-            "Return one final answer in exactly the original Reason/Action format. "
-            "Do not discuss the review and do not emit multiple actions.\n\n"
-            "Final Answer:\n"
-        )
-        reviewed, reviewed_safe, reviewed_raw = self.delegate.predict_mm(
-            review_prompt,
-            images,
-        )
-        if _valid_reason_action_output(reviewed):
-            return reviewed, reviewed_safe, {
-                "first_pass": raw_response,
-                "review_pass": reviewed_raw,
-                "action_consistency_applied": True,
-            }
-        return proposed, is_safe, {
-            "first_pass": raw_response,
-            "review_pass": reviewed_raw,
-            "action_consistency_applied": False,
-            "fallback_reason": "review_output_parse_failed",
-        }
-
-
-_LLM_USAGE_COUNTER_KEYS = (
-    "model_calls",
-    "prompt_tokens",
-    "completion_tokens",
-    "total_tokens",
-    "responses_with_usage",
-    "responses_without_usage",
-    "failed_calls",
-)
-
-
 def _get_agent_llm_usage(agent: Any) -> dict[str, Any]:
     tracker = getattr(agent, "_omniflow_llm_usage_tracker", None)
     if tracker is None:
@@ -1159,11 +1014,6 @@ def _rate(numerator: float, denominator: float) -> float:
     if denominator <= 0:
         return 0.0
     return round(float(numerator) / float(denominator), 6)
-
-
-def _safe_slug(value: Any, max_len: int = 120) -> str:
-    text = re.sub(r"[^A-Za-z0-9]+", "_", str(value or "")).strip("_").lower()
-    return (text[:max_len].strip("_") or "unknown")
 
 
 def _stable_hash(payload: Any) -> str:
@@ -1431,108 +1281,6 @@ def _rehydrate_task_params(
         if isinstance(rows, list):
             hydrated[key] = [hydrate_row(row) for row in rows]
     return hydrated
-
-
-def _assert_existing_emulator_ready(
-    *,
-    console_port: int,
-    adb_path: str,
-    grpc_port: int,
-) -> None:
-    """Fail fast when the target AndroidWorld emulator is not attachable.
-
-    Args:
-        console_port: Android emulator console port selected by the launcher.
-            The matching adb serial must already exist as `emulator-<port>`.
-        adb_path: Resolved adb binary path. Empty values fall back to `adb`
-            from PATH so local shells keep working.
-        grpc_port: Emulator gRPC port expected by AndroidWorld / AndroidEnv.
-            The launcher only attaches to an existing endpoint on this port.
-
-    Raises:
-        RuntimeError: The target emulator is missing/offline or the expected
-            emulator gRPC endpoint is not reachable.
-    """
-
-    normalized_console_port = int(console_port)
-    normalized_grpc_port = int(grpc_port)
-    serial = f"emulator-{normalized_console_port}"
-    adb_bin = os.path.expanduser(str(adb_path or "").strip()) or "adb"
-    retry_sec = float(os.environ.get("OMNIFLOW_ANDROIDWORLD_ADB_READY_RETRY_SEC", "20"))
-    deadline = time.monotonic() + max(0.0, retry_sec)
-    adb_result: subprocess.CompletedProcess[str] | None = None
-    device_state = ""
-    current_devices: list[str] = []
-    while True:
-        try:
-            adb_result = subprocess.run(
-                [adb_bin, "devices"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-        except FileNotFoundError as exc:
-            raise RuntimeError(
-                f"adb binary not found for AndroidWorld launcher preflight: {adb_bin}"
-            ) from exc
-
-        device_state = ""
-        current_devices = []
-        if adb_result.returncode == 0:
-            for raw_line in str(adb_result.stdout or "").splitlines()[1:]:
-                parts = raw_line.strip().split()
-                if len(parts) < 2:
-                    continue
-                current_devices.append(f"{parts[0]}={parts[1]}")
-                if parts[0] == serial:
-                    device_state = parts[1]
-        if adb_result.returncode == 0 and device_state == "device":
-            break
-
-        retryable = (
-            adb_result.returncode != 0
-            or not current_devices
-            or device_state in {"offline", "unauthorized"}
-        )
-        if not retryable or time.monotonic() >= deadline:
-            break
-        time.sleep(0.5)
-
-    if adb_result is None or adb_result.returncode != 0:
-        stderr_text = str(
-            (adb_result.stderr if adb_result else "")
-            or (adb_result.stdout if adb_result else "")
-            or ""
-        ).strip()
-        returncode = adb_result.returncode if adb_result else "missing"
-        raise RuntimeError(
-            "AndroidWorld launcher failed before env attach because `adb devices` "
-            f"returned {returncode}: {stderr_text or 'unknown adb error'}"
-        )
-
-    if device_state != "device":
-        summarized_devices = ", ".join(current_devices) or "none"
-        missing_reason = device_state or "missing"
-        raise RuntimeError(
-            "AndroidWorld launcher only attaches to an existing emulator. "
-            f"Required emulator not ready: {serial} (state={missing_reason}). "
-            f"Current adb devices: {summarized_devices}. "
-            "Start the target emulator first, then rerun the launcher."
-        )
-
-    try:
-        with socket.create_connection(
-            ("127.0.0.1", normalized_grpc_port),
-            timeout=1.0,
-        ):
-            pass
-    except OSError as exc:
-        raise RuntimeError(
-            "AndroidWorld launcher only attaches to an existing emulator gRPC "
-            f"endpoint. Expected {serial} to expose 127.0.0.1:{normalized_grpc_port}. "
-            f"Launch the emulator with `-grpc {normalized_grpc_port}` before rerunning."
-        ) from exc
 
 
 def _androidworld_a11y_forwarder_installed(

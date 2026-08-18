@@ -29,25 +29,11 @@ omniflow/bridge.py
 `src/experiment/e2e_task_pipeline.py` is allowed to call `save_function` for
 the B-MoCA source gate. It must not implement another compiler or executor.
 
-## Ownership rules
+The single detailed edit guide is [`docs/FILE_EDIT_GUIDE.md`](FILE_EDIT_GUIDE.md).
+This document records the architecture; ownership changes belong in that guide.
 
-| Concern | Owner | Change here |
-| --- | --- | --- |
-| Public experiment entry | `scripts/exp/run_androidworld.sh` | flags and environment roots only |
-| Task/method/device scheduling | `src/experiment/e2e_task_pipeline.py` | phase order and result dispatch |
-| One AndroidWorld task | `src/experiment/androidworld.py` | native episode preparation and result collection |
-| Native AndroidWorld lifecycle | `src/integrations/android_world/launch.py` | setup, reset, and official runner integration |
-| Method construction | `src/integrations/android_world/methods.py` | adapters only; never lifecycle |
-| Function validation and writing | `omniflow/functions/assets.py` | the only Function persistence path |
-| Function selection | `omniflow/functions/recall.py` | recall policy only |
-| Planner/runtime loop | `omniflow/runtime/engine.py` | one persistent OmniFlow run |
-| Action execution and transfer | `omniflow/runtime/execution.py` | canonical mapping and fallback |
-| Canonical local data | `src/experiment/local_data.py` | `data/current.json` only |
-| Registered result ledger | `src/experiment/result_registry.py` | one immutable registration record |
-| External JSON-line interface | `omniflow/bridge.py` | management tools and `run_gui` |
-| Frozen protocol | `config/paper_androidworld.json` | methods, devices, seeds, budgets, revisions |
-
-The same map is enforced in `AGENTS.md`. Do not add a second owner for a row.
+Ownership and edit locations are maintained only in
+[`docs/FILE_EDIT_GUIDE.md`](FILE_EDIT_GUIDE.md).
 
 ## Method names
 
@@ -71,8 +57,9 @@ contracts; they are not alternate Function registries.
 
 ## File map
 
-The directory READMEs are the local edit guides. The following is the complete
-production-file map; tests mirror the module they exercise.
+Directory READMEs describe local usage only. The following production-file map
+is architectural context; edit ownership is maintained only in
+`docs/FILE_EDIT_GUIDE.md`.
 
 ### `omniflow/`
 

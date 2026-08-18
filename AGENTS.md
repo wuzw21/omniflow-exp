@@ -1,26 +1,13 @@
 # OmniFlow-exp Rules
 
-## Single-owner edit map
-
-Change each concern only in its owner file; other files may call the owner but
-must not redefine its interface or lifecycle:
-
-- public experiment entry: `scripts/exp/run_androidworld.sh`
-- experiment scheduler: `src/experiment/e2e_task_pipeline.py`
-- one task/device runner: `src/experiment/androidworld.py`
-- Function authoring and Store writer: `omniflow/functions/assets.py`
-- canonical local index: `src/experiment/local_data.py`
-- AndroidWorld native host: `src/integrations/android_world/host.py`
-- method selection adapters: `src/integrations/android_world/methods.py`
-- external JSON-line interface: `omniflow/bridge.py`
-
-If a change appears to need a second owner, remove the duplicate or make it a
-private adapter that forwards to the owner.
-
 This repository contains only the paper's AndroidWorld experiment and the
 B-MoCA validation of the same OmniFlow method. Do not add product features,
 historical campaigns, ablations, raw assets, compatibility layers, or alternate
 runners.
+
+The single file-ownership and edit guide is `docs/FILE_EDIT_GUIDE.md`. Keep
+ownership decisions there; do not create another per-directory or per-feature
+edit map.
 
 Before changing or running this repository, read this file, `README.md`, and
 `scripts/exp/README.md`. Keep them consistent.

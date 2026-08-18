@@ -24,9 +24,6 @@ from src.integrations.runlog import (
     project_androidworld_step_actions,
 )
 
-FUNCTION_SOURCE_LINEAGE_SCHEMA = "omniflow.function-store-source-lineage.v1"
-
-
 def select_source_asset_revision(
     base_root: str | Path,
     *,
@@ -1203,102 +1200,6 @@ def build_grounded_teacher_run_log_from_canonical_item(
         source_run_log=item.source_run_log,
         expected_source_run_log_sha256=indexed_source_sha256,
     )
-
-
-def resolve_store_source_run_log(
-    store_index_path: str | Path,
-    *,
-    task_name: str,
-) -> tuple[Path, str]:
-    index_path = Path(store_index_path).expanduser().resolve()
-    payload = json.loads(index_path.read_text(encoding="utf-8"))
-    row = payload.get(str(task_name)) if isinstance(payload, dict) else None
-    if not isinstance(row, dict):
-        raise ValueError(f"store_index_task_missing:{task_name}")
-    source_path = _require_frozen_file(
-        row.get("source_run_log_path"),
-        expected_sha256=str(row.get("source_run_log_sha256") or ""),
-        label=f"store_source_run_log:{task_name}",
-    )
-    return source_path, str(row["source_run_log_sha256"])
-
-
-def store_source_run_log_sha256s(
-    store_index_path: str | Path,
-    *,
-    task_name: str,
-) -> tuple[str, ...]:
-    index_path = Path(store_index_path).expanduser().resolve()
-    payload = json.loads(index_path.read_text(encoding="utf-8"))
-    row = payload.get(str(task_name)) if isinstance(payload, dict) else None
-    if not isinstance(row, dict):
-        raise ValueError(f"store_index_task_missing:{task_name}")
-    _, canonical_sha256 = resolve_store_source_run_log(
-        index_path,
-        task_name=task_name,
-    )
-    lineage = row.get("source_run_log_lineage")
-    if lineage is None:
-        return (canonical_sha256,)
-    if (
-        not isinstance(lineage, dict)
-        or lineage.get("schema_version") != FUNCTION_SOURCE_LINEAGE_SCHEMA
-        or str(lineage.get("output_sha256") or "") != canonical_sha256
-        or str(lineage.get("output_path") or "")
-        != str(Path(row["source_run_log_path"]).expanduser().resolve())
-    ):
-        raise ValueError(f"store_source_run_log_lineage_invalid:{task_name}")
-    source_sha256 = str(lineage.get("source_sha256") or "").strip().lower()
-    if not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
-        raise ValueError(f"store_source_run_log_lineage_invalid:{task_name}")
-    source_path = _require_frozen_file(
-        lineage.get("source_path"),
-        expected_sha256=source_sha256,
-        label=f"store_source_run_log_lineage:{task_name}",
-    )
-    if (
-        source_path == Path(row["source_run_log_path"]).expanduser().resolve()
-        and source_sha256 != canonical_sha256
-    ):
-        raise ValueError(f"store_source_run_log_lineage_invalid:{task_name}")
-    return tuple(dict.fromkeys((canonical_sha256, source_sha256)))
-
-
-def build_grounded_teacher_run_log_from_store_index(
-    *,
-    store_index_path: str | Path,
-    task_name: str,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Ground one teacher from the canonical Function Store in memory."""
-
-    index_path = Path(store_index_path).expanduser().resolve()
-    payload = json.loads(index_path.read_text(encoding="utf-8"))
-    row = payload.get(str(task_name)) if isinstance(payload, dict) else None
-    if not isinstance(row, dict):
-        raise ValueError(f"store_index_task_missing:{task_name}")
-    source_path = _require_frozen_file(
-        row.get("source_run_log_path"),
-        expected_sha256=str(row.get("source_run_log_sha256") or ""),
-        label=f"store_source_run_log:{task_name}",
-    )
-    state_catalog_path = _require_frozen_file(
-        row.get("transfer_states_path"),
-        expected_sha256=str(row.get("transfer_states_sha256") or ""),
-        label="source_state_catalog",
-    )
-    grounded, audit = _build_grounded_teacher_run_log_from_canonical_source(
-        source_run_log=source_path,
-        expected_source_run_log_sha256=str(
-            row.get("source_run_log_sha256") or ""
-        ),
-    )
-    audit.update(
-        {
-            "function_store_state_catalog": str(state_catalog_path),
-            "function_store_state_catalog_sha256": _sha256(state_catalog_path),
-        }
-    )
-    return grounded, audit
 
 
 def convert_runlog_memory(
