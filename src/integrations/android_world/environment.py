@@ -108,8 +108,18 @@ class _RecordingEnvironmentProxy:
         setattr(self._env, name, value)
 
     def get_state(self, *args: Any, **kwargs: Any) -> Any:
+        return self._with_accessibility_recovery(
+            lambda: self._recorder.get_state(*args, **kwargs)
+        )
+
+    def reset(self, *args: Any, **kwargs: Any) -> Any:
+        return self._with_accessibility_recovery(
+            lambda: self._env.reset(*args, **kwargs)
+        )
+
+    def _with_accessibility_recovery(self, operation: Any) -> Any:
         try:
-            return self._recorder.get_state(*args, **kwargs)
+            return operation()
         except RuntimeError as error:
             if not _is_stale_accessibility_state_error(error):
                 raise
@@ -120,7 +130,7 @@ class _RecordingEnvironmentProxy:
                     "androidworld_accessibility_restart_unavailable"
                 ) from error
             restart()
-            return self._recorder.get_state(*args, **kwargs)
+            return operation()
 
     def execute_action(self, action: Any, *args: Any, **kwargs: Any) -> Any:
         return self._recorder.execute_action(action, *args, **kwargs)

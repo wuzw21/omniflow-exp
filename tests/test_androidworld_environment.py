@@ -143,6 +143,43 @@ def test_shared_environment_recovers_stale_accessibility_state_once(tmp_path) ->
     assert calls == ["restart"]
 
 
+def test_shared_environment_recovers_stale_accessibility_reset_once(tmp_path) -> None:
+    calls: list[str] = []
+    resets = iter(
+        [
+            RuntimeError("Could not get a11y tree after 5 attempts."),
+            "recovered",
+        ]
+    )
+
+    def reset(*, go_home: bool = False):
+        calls.append(f"reset:{go_home}")
+        value = next(resets)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    controller = SimpleNamespace(
+        restart_accessibility_forwarder=lambda: calls.append("restart"),
+    )
+    env = SimpleNamespace(
+        controller=controller,
+        get_state=lambda: _state("state"),
+        execute_action=lambda _: None,
+        reset=reset,
+    )
+    experiment_environment = AndroidWorldExperimentEnvironment(
+        env,
+        AndroidWorldEnvironmentConfig(evidence_root=tmp_path),
+    )
+
+    with experiment_environment.install_episode_recorder() as session:
+        result = session.env.reset(go_home=True)
+
+    assert result == "recovered"
+    assert calls == ["reset:True", "restart", "reset:True"]
+
+
 def test_shared_environment_does_not_recover_unrelated_state_errors(tmp_path) -> None:
     calls: list[str] = []
     controller = SimpleNamespace(
