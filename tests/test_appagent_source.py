@@ -666,7 +666,7 @@ def _write_source_index(root: Path) -> Path:
                     "replay_seed": 111,
                     "step_count": 1,
                     "retained_source_run_log": str(source_run_log),
-                    "method": "ours",
+                    "method": "omniflow",
                     "latest_official_success_source": True,
                     "source_kind": (
                         "androidworld_validator_success_source_runlog"
@@ -767,7 +767,7 @@ def test_appagent_source_generation_is_offline_conversion(
         convert,
     )
 
-    result = appagent_source.prepare_appagent_demo_memory(
+    result = appagent_source.prepare_appagent_memory(
         index_path=index,
         task_name="SystemBluetoothTurnOn",
         appagent_root=tmp_path / "appagent",
@@ -777,16 +777,16 @@ def test_appagent_source_generation_is_offline_conversion(
         evidence_roots=[tmp_path / "unused-old-evidence"],
     )
 
-    assert captured["method"] == "appagent_demo"
-    assert captured["source_method"] == "ours"
+    assert captured["method"] == "appagent"
+    assert captured["source_method"] == "omniflow"
     assert captured["upstream_root"] == tmp_path / "appagent"
     assert captured["output_root"] == bundle
-    assert result["source_method"] == "ours"
+    assert result["source_method"] == "omniflow"
     assert result["source_emulator_used"] is False
     assert result["native_memory_evidence"] is None
 
 
-def test_convert_runlog_memory_builds_native_appagent_demo(
+def test_convert_runlog_memory_builds_native_appagent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -892,7 +892,7 @@ def test_convert_runlog_memory_builds_native_appagent_demo(
     )
 
     result = convert_runlog_memory(
-        "appagent_demo",
+        "appagent",
         source_run_log=source,
         output_root=tmp_path / "bundle",
         upstream_root=tmp_path / "appagent",
@@ -939,7 +939,7 @@ def test_convert_runlog_memory_reports_missing_appagent_screenshot(
         match="appagent_source_screenshot_missing:0:before",
     ):
         convert_runlog_memory(
-            "appagent_demo",
+        "appagent",
             source_run_log=source,
             output_root=tmp_path / "bundle",
             upstream_root=tmp_path / "appagent",
@@ -1089,7 +1089,7 @@ def test_native_memory_evidence_accepts_shared_runlog_provenance(
         json.dumps({"model": "qwen3-vl-plus"}) + "\n",
         encoding="utf-8",
     )
-    manifest = evidence / "appagent_demo_manifest.json"
+    manifest = evidence / "appagent_manifest.json"
     manifest.write_text(
         json.dumps(
             {
@@ -1360,7 +1360,7 @@ def test_appagent_teacher_waits_for_stable_androidworld_observation(
     assert actions == [{"action_type": "click", "x": 120, "y": 55}]
 
 
-def test_appagent_demo_memory_rejects_manifest_teacher_count_mismatch(
+def test_appagent_memory_rejects_manifest_teacher_count_mismatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1381,7 +1381,7 @@ def test_appagent_demo_memory_rejects_manifest_teacher_count_mismatch(
     monkeypatch.setattr(appagent_adapter, "_validate_demo_artifacts", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(appagent_adapter, "_validate_demo_docs", lambda *_args: 1)
     manifest = {
-        "schema_version": appagent_adapter.APPAGENT_DEMO_MEMORY_SCHEMA,
+        "schema_version": appagent_adapter.APPAGENT_MEMORY_SCHEMA,
         "official_appagent_revision": appagent_adapter.APPAGENT_OFFICIAL_REVISION,
         "task_name": "BrowserDraw",
         "source_seed": 111,
@@ -1431,16 +1431,16 @@ def test_appagent_demo_memory_rejects_manifest_teacher_count_mismatch(
             source_run_log.read_bytes()
         ).hexdigest(),
     }
-    (tmp_path / appagent_adapter.APPAGENT_DEMO_MANIFEST).write_text(
+    (tmp_path / appagent_adapter.APPAGENT_MANIFEST).write_text(
         json.dumps(manifest),
         encoding="utf-8",
     )
 
     with pytest.raises(
         ValueError,
-        match="appagent_demo_memory_teacher_action_count_mismatch",
+        match="appagent_memory_teacher_action_count_mismatch",
     ):
-        appagent_adapter.validate_appagent_demo_memory(
+        appagent_adapter.validate_appagent_memory(
             tmp_path,
             task_name="BrowserDraw",
             source_run_log=source_run_log,
@@ -1465,7 +1465,7 @@ def test_appagent_warm_command_mounts_native_docs_memory(
         "build_e2e_command",
         lambda *_args, **_kwargs: base_spec,
     )
-    item = pipeline.ArchivedRunLog(
+    item = pipeline.CanonicalRunLog(
         task="BrowserDraw",
         goal="Open task.html and draw.",
         params={},
@@ -1477,7 +1477,7 @@ def test_appagent_warm_command_mounts_native_docs_memory(
 
     spec = pipeline.build_appagent_androidworld_command(
         item,
-        method_name="appagent_demo",
+        method_name="appagent",
         target=pipeline.DeviceTarget("small5554", "emulator-5554", 5554),
         android_world_root=tmp_path / "android_world",
         output_root=tmp_path / "output",

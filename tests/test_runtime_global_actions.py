@@ -339,7 +339,10 @@ def test_open_app_waits_for_cold_launch_target_package(monkeypatch) -> None:
         def __init__(self) -> None:
             self.observations = [
                 Observation(package_name="com.android.launcher"),
-                Observation(package_name="com.sankuai.meituan"),
+                Observation(
+                    package_name="com.sankuai.meituan",
+                    xml="<hierarchy />",
+                ),
             ]
             self.observe_calls = 0
 

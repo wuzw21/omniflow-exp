@@ -513,6 +513,37 @@ def test_mobilegpt_executes_repeat_click_as_multiple_androidworld_clicks(
     assert [(action.x, action.y) for action in env.actions] == [(20, 40), (20, 40)]
 
 
+def test_mobilegpt_can_execute_native_hit_through_canonical_host() -> None:
+    from omniflow.core.model import Action, ActionResult, Observation
+
+    class CanonicalHost:
+        def __init__(self) -> None:
+            self.actions: list[Action] = []
+
+        def observe(self, **_: object) -> Observation:
+            return Observation()
+
+        def act(self, action: Action) -> ActionResult:
+            self.actions.append(action)
+            return ActionResult(True)
+
+    host = CanonicalHost()
+    agent = build_mobilegpt_agent(host=host)
+
+    should_continue, answer = agent._execute_server_action(
+        {"name": "click", "parameters": {"index": 0}},
+        xml_text=(
+            '<hierarchy bounds="[0,0][200,400]">'
+            '<node index="0" clickable="true" '
+            'bounds="[80,80][120,120]" /></hierarchy>'
+        ),
+    )
+
+    assert should_continue is True
+    assert answer == ""
+    assert host.actions == [Action("click", {"x": 500, "y": 250})]
+
+
 def test_mobilegpt_executes_server_click_through_androidworld_state_and_action(
     tmp_path: Path,
     monkeypatch,
@@ -921,7 +952,7 @@ def test_mobilegpt_episode_command_declares_native_androidworld_io(
 ) -> None:
     source_run_log = tmp_path / "source.run_log.json"
     source_run_log.write_text("{}", encoding="utf-8")
-    item = pipeline.ArchivedRunLog(
+    item = pipeline.CanonicalRunLog(
         task="AudioRecorderRecordAudio",
         goal="Record and save audio",
         params={},
@@ -933,7 +964,7 @@ def test_mobilegpt_episode_command_declares_native_androidworld_io(
 
     spec = pipeline.build_mobilegpt_androidworld_command(
         item,
-        method_name="mobilegpt_offline_retrieval",
+        method_name="mobilegpt",
         target=pipeline.DeviceTarget("fold5564", "emulator-5564", 5564),
         android_world_root=tmp_path / "androidworld",
         output_root=tmp_path / "results",

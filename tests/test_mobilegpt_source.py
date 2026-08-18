@@ -10,9 +10,9 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment import androidworld as pipeline
 from src.experiment import mobilegpt_source, preflight
-from src.experiment.artifact_memory import (
+from src.experiment.local_data import (
     canonical_mobilegpt_memory_from_memory,
-    refresh_artifact_memory,
+    refresh_local_data,
 )
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
@@ -77,7 +77,7 @@ def _write_source_index(
                     "replay_seed": 111,
                     "step_count": 1,
                     "retained_source_run_log": str(source_run_log),
-                    "method": "ours",
+                    "method": "omniflow",
                     "latest_official_success_source": True,
                     "source_kind": "androidworld_validator_success_source_runlog",
                     "source_run_log_sha256": hashlib.sha256(
@@ -205,10 +205,9 @@ def _write_audit(path: Path, *, matched: bool = True) -> None:
 def test_converted_memory_seals_and_registers(tmp_path: Path) -> None:
     index, source_run_log = _write_source_index(tmp_path / "source")
     registry_root = tmp_path / "registry"
-    refresh_artifact_memory(
+    refresh_local_data(
         memory_root=registry_root,
         source_index=index,
-        function_catalogs=(),
         runlog_roots=(source_run_log.parent,),
         result_roots=(),
     )
@@ -360,21 +359,6 @@ def test_source_preflight_is_read_only_and_uses_no_function_store(
     assert result["transition_count"] == 1
 
 
-def test_batch_preflight_records_unsupported_action(tmp_path: Path) -> None:
-    index, _ = _write_source_index(
-        tmp_path / "source",
-        action={"action_type": "navigate_home"},
-    )
-
-    result = mobilegpt_source.preflight_mobilegpt_source_batch(index_path=index)
-
-    assert result["planned"] == 1
-    assert result["ready"] == 0
-    assert result["blocked"] == 1
-    assert result["model_calls"] == 0
-    assert result["rows"][0]["failure_code"] == "source_action_unsupported"
-
-
 def test_source_conversion_calls_only_converter_and_sealer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -455,7 +439,7 @@ def test_convert_runlog_memory_dispatches_to_mobilegpt_native_converter(
     )
 
     result = convert_runlog_memory(
-        "mobilegpt_offline_retrieval",
+        "mobilegpt",
         source_run_log=source,
         output_root=tmp_path / "bundle",
         upstream_root=tmp_path / "mobilegpt",

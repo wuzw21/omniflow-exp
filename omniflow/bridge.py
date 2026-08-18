@@ -72,13 +72,6 @@ class JsonLineBridge:
             if request is not None and self._serve_request(request):
                 return
 
-    def serve_once(self) -> None:
-        for line in self.reader:
-            request = self._parse(line)
-            if request is not None:
-                self._serve_request(request)
-                return
-
     def _serve_request(self, request: dict[str, Any]) -> bool:
         request_id = request.get("id")
         try:
@@ -1051,7 +1044,6 @@ def main(argv: list[str] | None = None) -> int:
         "--catalog",
         help="Catalog release directory, or 'default' for the packaged release.",
     )
-    parser.add_argument("--once", action="store_true")
     parser.add_argument("--self-test", action="store_true")
     arguments = parser.parse_args(argv)
     if arguments.self_test:
@@ -1066,10 +1058,7 @@ def main(argv: list[str] | None = None) -> int:
             else load_catalog(arguments.catalog)
         )
     bridge = JsonLineBridge(arguments.store, catalog=catalog)
-    if arguments.once:
-        bridge.serve_once()
-    else:
-        bridge.serve_forever()
+    bridge.serve_forever()
     return 0
 
 

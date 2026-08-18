@@ -24,7 +24,7 @@ def test_public_result_row_is_compact_and_keeps_details_out_of_the_row() -> None
     row = compact_result_row(
         {
             "task_name": "Task",
-            "method": "ours",
+            "method": "omniflow",
             "device": "small5554",
             "official_validator_used": True,
             "official_validator_success": True,
@@ -53,7 +53,7 @@ def test_compact_result_row_is_idempotent_for_evidence_paths() -> None:
     original = compact_result_row(
         {
             "task": "TaskOne",
-            "method": "ours",
+            "method": "omniflow",
             "device": "small5554",
             "validator_success": True,
             "evidence_paths": ["/evidence/result", "/evidence/details"],
@@ -484,7 +484,7 @@ def test_baseline_target_run_evidence_does_not_require_transfer_states(tmp_path)
 
 
 def test_target_evidence_provenance_survives_metrics_aggregation(tmp_path) -> None:
-    result_path = tmp_path / "Task" / "ours" / "small5554" / "task_results.jsonl"
+    result_path = tmp_path / "Task" / "omniflow" / "small5554" / "task_results.jsonl"
     result_path.parent.mkdir(parents=True)
     result_path.write_text(
         json.dumps(
@@ -538,7 +538,7 @@ def test_metrics_preserve_runtime_environment_failure_markers(tmp_path) -> None:
     result_path = (
         tmp_path
         / "ContactsNewContactDraft"
-        / "mobilegpt_offline_retrieval"
+        / "mobilegpt"
         / "small5554"
         / "task_results.jsonl"
     )
@@ -564,7 +564,7 @@ def test_metrics_preserve_runtime_environment_failure_markers(tmp_path) -> None:
 
 
 def test_metrics_report_only_aggregate_model_calls_and_total_tokens(tmp_path: Path) -> None:
-    result_path = tmp_path / "Task" / "ours" / "small5554" / "task_results.jsonl"
+    result_path = tmp_path / "Task" / "omniflow" / "small5554" / "task_results.jsonl"
     result_path.parent.mkdir(parents=True)
     result_path.write_text(
         json.dumps(

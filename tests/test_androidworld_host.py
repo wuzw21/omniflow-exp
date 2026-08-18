@@ -5,8 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from types import SimpleNamespace
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 import xml.etree.ElementTree as ET
 
 from PIL import Image
@@ -31,6 +30,7 @@ from src.integrations.android_world.launch import (
     _patch_androidworld_directory_clear,
     _patch_androidworld_optional_setup_click,
     _prepare_androidworld_episode_apps,
+    _reset_androidworld_file_picker_state,
     _repair_androidworld_chrome_first_run,
     _result_has_official_validator_conclusion,
     _run_androidworld_setup_apps,
@@ -662,6 +662,33 @@ def test_androidworld_chrome_setup_falls_back_to_semantic_labels(monkeypatch) ->
     assert calls[-1] == ("close", "chrome")
 
 
+def test_androidworld_browser_setup_clears_file_picker_filters() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class ChromeApp:
+        app_name = "chrome"
+
+    class DocumentsApp:
+        app_name = "documents"
+
+    class AdbUtils:
+        def clear_app_data(self, package_name, _controller):
+            calls.append(("clear", package_name))
+
+    _reset_androidworld_file_picker_state(
+        SimpleNamespace(controller=object()),
+        setup_module=SimpleNamespace(adb_utils=AdbUtils()),
+        setup_apps=(ChromeApp,),
+    )
+    _reset_androidworld_file_picker_state(
+        SimpleNamespace(controller=object()),
+        setup_module=SimpleNamespace(adb_utils=AdbUtils()),
+        setup_apps=(DocumentsApp,),
+    )
+
+    assert calls == [("clear", "com.google.android.documentsui")]
+
+
 def test_androidworld_setup_clears_late_permission_dialog_before_resnapshot(
     monkeypatch,
 ) -> None:
@@ -854,15 +881,15 @@ def test_androidworld_episode_setup_resolves_contacts_chooser(monkeypatch) -> No
     )
     tools = SimpleNamespace(AndroidToolController=AndroidToolController)
     monkeypatch.setattr(
+        "src.integrations.android_world.launch.time.sleep", lambda _seconds: None
+    )
+    monkeypatch.setattr(
         "src.integrations.android_world.launch.importlib.import_module",
         lambda name: tools
         if name == "android_world.env.tools"
         else actuation
         if name == "android_world.env.actuation"
         else pytest.fail(f"unexpected import: {name}"),
-    )
-    monkeypatch.setattr(
-        "src.integrations.android_world.launch.time.sleep", lambda _seconds: None
     )
 
     class ContactsApp:
@@ -1913,7 +1940,7 @@ def test_actions_dispatch_only_through_official_androidworld_api(monkeypatch) ->
         device_screen_size=(720, 1280),
         execute_action=actions.append,
     )
-    host = AndroidWorldHost(env, adb_serial="emulator-5564")
+    host = AndroidWorldHost(env)
 
     click_result = host.act(Action("click", {"x": 500, "y": 250}))
     open_result = host.act(

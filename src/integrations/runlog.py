@@ -232,6 +232,8 @@ def _is_legacy_run_log(value: dict[str, Any]) -> bool:
                 "observation_before_act",
                 "executed_actions",
                 "actions",
+                "before_state_id",
+                "after_state_id",
             )
         )
         for step in steps

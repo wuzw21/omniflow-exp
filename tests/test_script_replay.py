@@ -3,10 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import numpy as np
-
 from omniflow.core.model import Action, Observation, TransferResult
-from omniflow.transfer.page_embedding import PageEmbedding
 from src.integrations.script_replay import run_script_replay
 
 
@@ -99,7 +96,6 @@ def test_script_replay_selects_full_function_and_uses_core_transfer(
     store_path = _store(
         tmp_path / "store.json",
         complete,
-        _function(function_id="reusable_part", steps=2),
         source_calls=[
             {"function_id": "complete_task", "arguments": {"target": "Alarm"}}
         ],
@@ -129,21 +125,6 @@ def test_script_replay_selects_full_function_and_uses_core_transfer(
         transfer,
     )
 
-    class PageEncoder:
-        def embed(self, _value: Observation) -> PageEmbedding:
-            return PageEmbedding(
-                vector=np.asarray((1.0, 0.0), dtype=np.float32),
-                element_count=1,
-                encoder_version="test",
-                checkpoint_path="/test/checkpoint.pt",
-                checkpoint_sha256="test",
-            )
-
-    monkeypatch.setattr(
-        "omniflow.runtime.engine.OmniTransferPageEncoder",
-        PageEncoder,
-    )
-
     result = run_script_replay(store_path=store_path, host=host)
 
     assert result.success is True
@@ -163,7 +144,7 @@ def test_script_replay_selects_full_function_and_uses_core_transfer(
     ]
 
 
-def test_script_replay_rejects_ambiguous_complete_function(tmp_path: Path) -> None:
+def test_script_replay_rejects_multi_function_store(tmp_path: Path) -> None:
     store_path = _store(
         tmp_path / "store.json",
         _function(function_id="complete_a", steps=2),
@@ -173,11 +154,9 @@ def test_script_replay_rejects_ambiguous_complete_function(tmp_path: Path) -> No
     try:
         run_script_replay(store_path=store_path, host=_Host({}))
     except ValueError as error:
-        assert str(error) == (
-            "script_replay_full_function_ambiguous:complete_a,complete_b"
-        )
+        assert str(error) == "function_store_single_function_required"
     else:
-        raise AssertionError("ambiguous complete Functions must fail closed")
+        raise AssertionError("multi-Function stores must fail closed")
 
 
 def test_script_replay_contains_no_private_action_mapping_implementation() -> None:

@@ -26,7 +26,6 @@ from omniflow.runtime.execution import (
     execute_robust_action,
     record_execution,
 )
-from omniflow.transfer.page_embedding import OmniTransferPageEncoder
 from omniflow.vlm.usage import merge_usage, token_usage_status
 
 
@@ -94,7 +93,6 @@ class OmniFlow:
             else None
         )
         self.plugins = self.config.resolved_plugins()
-        self._page_encoder: OmniTransferPageEncoder | None = None
 
     async def _execute(
         self,
@@ -783,29 +781,6 @@ class OmniFlow:
         source_states: dict[str, Observation | None],
         limit: int | None = None,
     ) -> RecallResult:
-        for function in self.store.functions.values():
-            if not function.steps:
-                continue
-            source_state_id = function.steps[0].source_state_id
-            if source_state_id in source_states:
-                continue
-            source_state = (
-                self.catalog.get_state(source_state_id)
-                if self.catalog is not None
-                else None
-            )
-            if source_state is None and self.host is not None:
-                get_state = getattr(self.host, "get_state", None)
-                if callable(get_state):
-                    try:
-                        value = await _await(get_state(source_state_id))
-                        source_state = (
-                            Observation.from_value(value) if value is not None else None
-                        )
-                    except Exception:  # noqa: BLE001
-                        source_state = None
-            source_states[source_state_id] = source_state
-
         resolved_limit = (
             self.config.runtime.max_function_tools if limit is None else int(limit)
         )
@@ -815,13 +790,7 @@ class OmniFlow:
             functions=self.store.functions,
             source_states=source_states,
             limit=max(0, int(resolved_limit)),
-            page_encoder=self._get_page_encoder(),
         )
-
-    def _get_page_encoder(self) -> OmniTransferPageEncoder:
-        if self._page_encoder is None:
-            self._page_encoder = OmniTransferPageEncoder()
-        return self._page_encoder
 
     def call_tool(
         self,
@@ -910,7 +879,7 @@ class OmniFlow:
 def _experiment(value: Experiment | str | None) -> Experiment:
     if isinstance(value, Experiment):
         return value
-    return Experiment.for_method(str(value or "ours"))
+    return Experiment.for_method(str(value or "omniflow"))
 
 
 def _action_from_tool_call(tool_call: ToolCall) -> Action:

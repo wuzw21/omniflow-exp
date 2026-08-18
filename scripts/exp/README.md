@@ -10,7 +10,7 @@ modules are implementation seams and must not be invoked as alternate runners.
 | Task-major formal run | `run_androidworld.sh --tasks TASK` |
 | Full indexed run | `run_androidworld.sh --all-tasks` |
 | Read-only static gate | `run_androidworld.sh --check-only [--all-tasks]` |
-| Bounded `ours` development | `run_androidworld.sh --development-run --tasks TASK` |
+| Bounded `omniflow` development | `run_androidworld.sh --development-run --tasks TASK` |
 | Source refresh | `run_androidworld.sh --collect-source --tasks TASK` |
 | B-MoCA one reuse method | `run_androidworld.sh --environment bmoca --method ours_replay\|mobilegpt_replay\|skilldroid_replay --tasks TASK` |
 | B-MoCA campaign | `run_androidworld.sh --environment bmoca --all-tasks [--tasks TASK1,TASK2]` |
@@ -105,16 +105,16 @@ then qualifies `ours_replay` on env100 with official success, method success,
 `model_calls=0`, and `fallback_steps=0`. A failed source gate ends that task
 without launching env101--109. A passing gate compiles the MobileGPT and
 DroidRun memories from the same env100 RunLog, then runs `ours_replay` on
-env101--109 and both baselines on env100--109. DroidRun memory conversion writes
-the official `macro.json` plus a provenance sidecar; it does not invoke a model
-or a second action mapper. The scheduler creates no AVD
+env101--109 and both baselines on env100--109. All lineage and hashes are
+registered in `data/current.json`; no Function or replay bundle writes a
+provenance sidecar. The scheduler creates no AVD
 clone before enhancement succeeds, clones env100 for the source gate, and
 clones env101--109 only after that gate passes. It writes
 `progress.csv`,
 `progress.jsonl`, per-attempt RunLogs, and the terminal
 `campaign_summary.json` under the new output root.
 
-After saving, ingest the external Function catalog with `--refresh-memory`.
+After saving, refresh the local data index with `--refresh-memory`.
 Experiment execution resolves the task's Store from `current.json`. If no Store
 is registered, the command fails with an explicit message; it never calls a
 converter or model to create one.
@@ -125,7 +125,7 @@ For each unfinished task, the pipeline:
 
 1. resolves the official-successful source-seed-111 RunLog and exact hash;
 2. resolves the registered Function Store and transfer states;
-3. qualifies `ours` on the source device with official validator success,
+3. qualifies `omniflow` on the source device with official validator success,
    `model_calls=0`, and `fallback_steps=0`;
 4. resolves method-native MobileGPT and AppAgent memory from the same RunLog;
 5. runs the fixed five methods on SmallPhone and unfolded Pixel Fold; and
@@ -156,7 +156,7 @@ otherwise the same official launcher receives the package and uses its package
 fallback. AndroidWorld's own ADB helper closes stale tasks. There is no local
 app registry, pre-launch gate, or second launcher.
 
-For `ours`, the AndroidWorld Method Adapter invokes one complete
+For `omniflow`, the AndroidWorld Method Adapter invokes one complete
 `OmniFlow.run()` cycle on the task. The official episode runner contributes the
 native lifecycle and may lower the canonical step budget; it does not split the
 Planner into repeated one-step OmniFlow runs or maintain separate resume and
@@ -215,13 +215,14 @@ with:
 ```bash
 OMNIFLOW_MEMORY_RUNLOG_ROOTS=/absolute/runlogs \
 OMNIFLOW_MEMORY_RESULT_ROOTS=/absolute/results \
-OMNIFLOW_MEMORY_FUNCTION_CATALOGS=/absolute/function-catalog.json \
 bash scripts/exp/run_androidworld.sh --refresh-memory
 ```
 
-Memory is content-addressed by exact SHA-256. Refresh updates canonical indexes;
-it does not rewrite or delete original evidence. Ambiguous, missing, or corrupt
-entries are preflight failures.
+Memory is content-addressed by exact SHA-256. Refresh atomically rewrites the
+single `data/current.json` index and does not rewrite original evidence.
+Function bundles are discovered from their canonical directory and contain the
+RunLog, Function Store, and transfer states together. Ambiguous, missing, or
+corrupt entries are preflight failures.
 
 ## Result records
 
@@ -251,11 +252,3 @@ bash scripts/exp/run_androidworld.sh \
 
 Development is unregistered and bounded. It must not change frozen prompts,
 baseline policies, official validation, or the formal protocol.
-
-For an explicitly requested OOB control-side experiment, set
-`OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND=oob`. This changes only the OmniFlow
-agent's observe/act transport: the AndroidWorld state contract remains
-`pixels / forest / ui_elements / auxiliaries`, XML is retained in `forest`,
-and actions still use the canonical normalized action schema. The default
-backend remains AndroidWorld native; this option is not part of formal result
-registration.

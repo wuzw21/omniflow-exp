@@ -9,9 +9,9 @@ APKs, emulator images, memories, and results stay outside the repository.
 The five formal methods are:
 
 - `fixed_replay`
-- `ours`
-- `mobilegpt_offline_retrieval`
-- `appagent_demo`
+- `omniflow`
+- `mobilegpt`
+- `appagent`
 - `t3a_hint`
 
 One result is exactly `task + method + device`. The shell entry point dispatches
@@ -42,6 +42,31 @@ starting emulators with `--check-only --all-tasks`. B-MoCA uses the same public
 launcher with `--environment bmoca --tasks TASK` for one method, or
 `--environment bmoca --all-tasks` for the three-method reuse campaign. See
 [`scripts/exp/README.md`](scripts/exp/README.md) for the command contract.
+
+## Call path
+
+The first code path to read is always:
+
+```text
+scripts/exp/run_androidworld.sh
+  -> src/experiment/e2e_task_pipeline.py       # task/method/device scheduling
+  -> src/experiment/androidworld.py            # one AndroidWorld result
+  -> src/integrations/android_world/launch.py  # one native episode
+```
+
+The B-MoCA campaign uses the same shell and scheduler; each environment result
+re-enters the shell's single-result B-MoCA branch and ends at the same native
+launcher. Development and source collection are bounded modes of that
+launcher, not alternate executors. Function creation has one route:
+`save_function` validates and writes the Store, then `--refresh-memory` updates
+`data/current.json`; runtime only reads that index and the registered Store.
+
+There are two MobileGPT preparation adapters because their contracts differ:
+AndroidWorld creates a sealed source bundle through
+`src/experiment/mobilegpt_source.py`, while B-MoCA creates its native replay
+memory through the scheduler's B-MoCA adapter. Both use the single converter in
+`src/integrations/mobilegpt_converter.py`; neither is a second Function or
+episode runner. Do not add another preparation entry point.
 
 Install the B-MoCA replay dependency with `uv sync --extra bmoca`. The protocol
 pins DroidRun v0.5.6. `skilldroid_replay` converts the qualified env100 RunLog to
@@ -104,7 +129,7 @@ The retained bridge tools are:
 - `run_gui`
 
 The shell never auto-builds a missing Function Store. Save the Functions first,
-refresh external memory, then run the experiment. Catalog snapshots are
+refresh the local data index, then run the experiment. Catalog snapshots are
 read-only source evidence and never seed or rewrite the Store at runtime.
 
 ## Checker model
@@ -165,12 +190,13 @@ normal VLM fallback.
 ## Results and memory
 
 `~/Projects/Omni/OmniFlow-exp/data/current.json`
-is the default canonical index for source RunLogs, Function Stores, method-native
+is the only canonical index for source RunLogs, Function Stores, method-native
 memory, and registered results. Every bundle uses the
 `<environment>/<task>/<device>/<category>/<method>/<attempt_id>` classification
 defined in `AGENTS.md`. Set `OMNIFLOW_EXP_MEMORY_ROOT` explicitly only for a
 read-only migration input. Existing official-validator conclusions are
-immutable and skipped.
+immutable and skipped. There are no parallel registry, snapshot, or index
+files.
 
 The former external memory locations are one-time migration inputs only; the
 launcher does not select them after the local `data/current.json` is built.
@@ -193,22 +219,13 @@ task results or public rows. Host/native AndroidWorld I/O expose mean/P50/P95
 latency, while ADB battery estimates are diagnostic rather than hardware power
 measurements.
 
-## Temporary known issues (2026-08-18)
+## Current data state
 
-Recent runtime changes pass the repository regression suite (`617 passed, 1
-skipped`). The remaining gap is historical acceptance data: the current local
-index has three active AndroidWorld Function Stores
-(`CameraTakePhoto`, `MarkorCreateNote`, and
-`TurnOffWifiAndTurnOnBluetooth`), while the requested ten-task conversion is
-not complete. Ten older task-local directories under `data/` have no immutable
-`manifest.json`; they are not indexed or executable and are retained only as
-unfinished migration evidence. Do not count them as successful Functions.
-
-The current `--check-only` path validates configuration and source lineage but
-does not prove the ten-task emulator E2E acceptance. Complete the remaining
-conversions and real source/target E2E runs before removing this note. Recent
-code changes are not treated as historical failures; this note tracks only the
-unfinished old evidence and acceptance coverage.
+The migrated local index contains 116 source tasks and four validated Function
+Stores. Runtime reads only `data/current.json`; old indexes, snapshots, and
+task-only scratch roots are outside the active repository path. Emulator E2E
+acceptance remains a separate runtime validation and is not inferred from
+authoring or index migration.
 
 ## Repository layout
 
@@ -223,7 +240,7 @@ unfinished old evidence and acceptance coverage.
 - `scripts/exp/run_androidworld.sh`: only public experiment launcher
 - `schemas/oob/`: shared RunLog, Function, checker, and bridge schemas
 
-The AndroidWorld `ours` adapter invokes one complete, persistent OmniFlow cycle
+The AndroidWorld `omniflow` adapter invokes one complete, persistent OmniFlow cycle
 per task. AndroidWorld's outer episode step does not split that cycle or own a
 second planner budget, Function session, resume state, or fallback counter.
 RunLog `open_app` stores only the package. At execution, the adapter uses the

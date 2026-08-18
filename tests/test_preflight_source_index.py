@@ -144,7 +144,7 @@ def test_preflight_contacts_reset_fails_closed(monkeypatch) -> None:
 def _write_index(
     root: Path,
     *,
-    method: str = "ours",
+    method: str = "omniflow",
     official_success: bool = True,
     source_kind: str = "androidworld_validator_success_source_runlog",
 ) -> Path:
@@ -161,7 +161,7 @@ def _write_index(
         ),
         encoding="utf-8",
     )
-    index = root / "index_by_task.json"
+    index = root / "current.json"
     index.write_text(
         json.dumps(
             {
@@ -250,7 +250,7 @@ def test_source_index_rejects_invalid_frozen_source(
         )
 
 
-def test_source_index_preserves_non_ours_source_method(tmp_path: Path) -> None:
+def test_source_index_preserves_non_omniflow_source_method(tmp_path: Path) -> None:
     index = _write_index(tmp_path / "fixed", method="fixed_replay")
 
     result = _validate_source_index(

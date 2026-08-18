@@ -19,7 +19,7 @@ from src.experiment.mobilegpt_contract import (
 from src.experiment.preflight import (
     APPAGENT_REQUIRED_MODULES,
     REQUIRED_DISTRIBUTION_VERSIONS,
-    _valid_appagent_demo_manifest,
+    _valid_appagent_manifest,
 )
 from src.experiment.protocol import DROIDRUN_VERSION
 
@@ -59,9 +59,9 @@ def test_bmoca_skilldroid_uses_pinned_droidrun_runtime() -> None:
 
 
 def test_preflight_accepts_offline_appagent_memory() -> None:
-    assert _valid_appagent_demo_manifest(
+    assert _valid_appagent_manifest(
         {
-            "schema_version": "omniflow.appagent-demo-memory.v2",
+            "schema_version": "omniflow.appagent-memory.v2",
             "official_appagent_revision": (
                 "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
             ),
@@ -121,7 +121,7 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "--methods" not in completed.stdout
     assert "--devices" not in completed.stdout
     assert "--tasks" in completed.stdout
-    assert "--convert-ours-assets" not in completed.stdout
+    assert "--convert-omniflow-assets" not in completed.stdout
     assert "--convert-runlog-memory" not in completed.stdout
     assert "--convert-source-runlogs" not in completed.stdout
     assert "--prepare-mobilegpt-memory" not in completed.stdout
@@ -134,7 +134,7 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "--task-deadline-sec" in completed.stdout
     assert "OMNIFLOW_EXP_ASSET_ROOT" in completed.stdout
     assert "OMNIFLOW_EXP_MEMORY_ROOT" in completed.stdout
-    assert "OMNIFLOW_OURS_AUTHORING_MANIFEST" not in completed.stdout
+    assert "AUTHORING_MANIFEST" not in completed.stdout
     assert "OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT" not in completed.stdout
     assert "OMNIFLOW_SOURCE_SELECTION_MANIFEST" not in completed.stdout
     assert "OMNIFLOW_FUNCTION_STORE_SELECTION_MANIFEST" not in completed.stdout
@@ -924,7 +924,6 @@ def test_check_only_is_read_only_before_any_runtime_output(
     refresh_local_data(
         memory_root=memory_root,
         source_index=source_index,
-        function_catalogs=(),
         runlog_roots=(assets,),
         result_roots=(),
     )
@@ -983,19 +982,9 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
     runlogs.mkdir()
     results.mkdir()
     assets = tmp_path / "assets"
-    source_index = (
-        assets
-        / "runtime"
-        / "evals"
-        / "androidworld_validator"
-        / "core_archive"
-        / "success_source_runlogs"
-        / "index_by_task.json"
-    )
+    source_index = assets / "inputs" / "final_source_index.json"
     source_index.parent.mkdir(parents=True)
     source_index.write_text("{}", encoding="utf-8")
-    catalog = tmp_path / "catalog.json"
-    catalog.write_text("{}", encoding="utf-8")
     memory_root = tmp_path / "memory"
     captured = tmp_path / "python-args.txt"
     fake_python = tmp_path / "python"
@@ -1013,7 +1002,6 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
         "OMNIFLOW_MEMORY_RUNLOG_ROOTS": str(runlogs),
         "OMNIFLOW_MEMORY_RESULT_ROOTS": str(results),
         "OMNIFLOW_EXP_RESULTS_ROOT": str(results),
-        "OMNIFLOW_MEMORY_FUNCTION_CATALOGS": str(catalog),
     }
 
     completed = subprocess.run(
@@ -1038,11 +1026,8 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
         str(runlogs),
         "--result-root",
         str(results),
-        "--function-catalog",
-        str(catalog),
     ]
 
-    environment.pop("OMNIFLOW_MEMORY_FUNCTION_CATALOGS")
     without_catalog = subprocess.run(
         ["bash", str(SCRIPT), "--refresh-memory"],
         cwd=REPO,

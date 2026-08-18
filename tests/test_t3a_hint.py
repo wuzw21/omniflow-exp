@@ -6,7 +6,7 @@ from runlog_fixtures import write_function_store
 from omniflow.core.model import Action, Function, FunctionStep
 from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION
 from src.experiment.androidworld import (
-    ArchivedRunLog,
+    CanonicalRunLog,
     _promote_result_metadata_to_row,
     _select_complete_function,
     _t3a_hint_action_identity,
@@ -21,9 +21,9 @@ from src.integrations.android_world.launch import _render_official_reference_pro
 def test_formal_result_method_set_is_exact() -> None:
     assert list(METHODS) == [
         "fixed_replay",
-        "ours",
-        "mobilegpt_offline_retrieval",
-        "appagent_demo",
+        "omniflow",
+        "mobilegpt",
+        "appagent",
         "t3a_hint",
     ]
 
@@ -344,7 +344,7 @@ def _function(
     )
 
 
-def test_t3a_hint_selects_unique_function_containing_all_subtraces(
+def test_t3a_hint_rejects_multiple_functions(
     tmp_path: Path,
 ) -> None:
     store_path = tmp_path / "store.json"
@@ -356,9 +356,11 @@ def test_t3a_hint_selects_unique_function_containing_all_subtraces(
         ),
     )
 
-    selected = _select_complete_function(store_path)
-
-    assert selected.id == "complete_run_settings"
+    with pytest.raises(
+        ValueError,
+        match="function_store_single_function_required",
+    ):
+        _select_complete_function(store_path)
 
 
 def test_t3a_hint_uses_official_t3a_with_source_trace(tmp_path: Path) -> None:
@@ -366,7 +368,7 @@ def test_t3a_hint_uses_official_t3a_with_source_trace(tmp_path: Path) -> None:
     source.write_text("{}", encoding="utf-8")
     hint = tmp_path / "source_action_hints.json"
     hint.write_text("{}", encoding="utf-8")
-    item = ArchivedRunLog(
+    item = CanonicalRunLog(
         task="SystemBluetoothTurnOff",
         goal="Turn Bluetooth off.",
         params={},

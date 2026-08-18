@@ -8,10 +8,14 @@ import os
 from pathlib import Path
 import re
 import socket
+import subprocess
+import sys
 import time
 from typing import Any, Callable
 import xml.etree.ElementTree as ET
 
+from omniflow.core.model import Action, ActionResult, RunResult
+from src.experiment.performance_metrics import PerformanceMetrics
 from src.experiment.protocol import MAX_STEPS
 from src.integrations.android_world.host import AndroidWorldHost, make_agent_result
 from src.integrations.mobilegpt_runtime import (
@@ -28,6 +32,27 @@ def _wire_text(value: str) -> str:
 
 def _socket_timeout(value: float) -> float | None:
     return None if value < 0 else max(0.1, value)
+
+
+def _connect_with_retry(host: str, port: int, timeout: float) -> socket.socket:
+    if timeout < 0:
+        return socket.create_connection((host, port), timeout=None)
+    deadline = time.monotonic() + max(0.1, timeout)
+    last_error: OSError | None = None
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            if last_error is not None:
+                raise last_error
+            raise TimeoutError("mobilegpt_server_start_timeout")
+        try:
+            return socket.create_connection(
+                (host, port),
+                timeout=min(1.0, max(0.1, remaining)),
+            )
+        except OSError as error:
+            last_error = error
+            time.sleep(min(0.1, remaining))
 
 
 def _jpeg_payload(image_base64: str | None) -> bytes:
@@ -76,6 +101,29 @@ def _center(bounds: tuple[int, int, int, int]) -> tuple[int, int]:
     return (left + right) // 2, (top + bottom) // 2
 
 
+def _display_from_xml(xml_text: str) -> tuple[int, int]:
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as error:
+        raise ValueError(f"mobilegpt_native_xml_invalid:{error}") from error
+    parsed = [
+        match
+        for element in root.iter()
+        if (
+            match := _BOUNDS_PATTERN.fullmatch(
+                str(element.attrib.get("bounds") or "").strip()
+            )
+        )
+    ]
+    if not parsed:
+        raise ValueError("mobilegpt_native_display_missing")
+    width = max(int(match.group(3)) for match in parsed)
+    height = max(int(match.group(4)) for match in parsed)
+    if width <= 0 or height <= 0:
+        raise ValueError("mobilegpt_native_display_invalid")
+    return width, height
+
+
 def _indexed_app_ui_count(xml_text: str, package_name: str = "") -> int:
     try:
         root = ET.fromstring(xml_text)
@@ -121,9 +169,11 @@ def _write_stats_event(event: dict[str, Any]) -> None:
 
 def build_mobilegpt_agent(
     *,
-    env: Any,
+    env: Any | None = None,
+    host: Any | None = None,
     evidence_root: str | Path | None = None,
     action_factory: Callable[..., Any] | None = None,
+    performance_metrics: PerformanceMetrics | None = None,
 ) -> Any:
     server_host = str(os.environ.get("MOBILEGPT_SERVER_HOST") or "127.0.0.1").strip()
     server_port = int(os.environ.get("MOBILEGPT_SERVER_PORT") or 12345)
@@ -150,13 +200,20 @@ def build_mobilegpt_agent(
         )
         if package.strip()
     ]
-    host = AndroidWorldHost(env, evidence_root=evidence_root)
+    if env is None and host is None:
+        raise ValueError("mobilegpt_environment_or_host_required")
+    canonical_host = host is not None
+    runtime_host = host or AndroidWorldHost(
+        env,
+        evidence_root=evidence_root,
+        performance_metrics=performance_metrics,
+    )
     upstream_mode = str(
         os.environ.get("MOBILEGPT_UPSTREAM_MODE") or ""
     ).strip().lower() in {"1", "true", "yes", "on"}
 
     class MobileGPTAndroidWorldAgent:
-        name = "external:mobilegpt"
+        name = "mobilegpt"
         transition_pause = 0.0
 
         def __init__(self) -> None:
@@ -167,7 +224,8 @@ def build_mobilegpt_agent(
 
         def reset(self, go_home: bool = False) -> None:
             self.attempted = False
-            self.env.reset(go_home=go_home)
+            if self.env is not None:
+                self.env.reset(go_home=go_home)
 
         def set_max_steps(self, max_steps: int) -> None:
             self.max_steps = max(1, int(max_steps))
@@ -178,8 +236,56 @@ def build_mobilegpt_agent(
             json_action = importlib.import_module("android_world.env.json_action")
             return json_action.JSONAction(**payload)
 
-        def _execute(self, **payload: Any) -> None:
-            self.env.execute_action(self._new_action(**payload))
+        def _execute(self, *, xml_text: str = "", **payload: Any) -> None:
+            if not canonical_host:
+                self.env.execute_action(self._new_action(**payload))
+                return
+            action_type = str(payload.get("action_type") or "").strip()
+            if action_type == "open_app":
+                action = Action(
+                    "open_app",
+                    {"package_name": str(payload.get("app_name") or "")},
+                )
+            elif action_type in {
+                "click",
+                "double_tap",
+                "long_press",
+                "input_text",
+            }:
+                width, height = _display_from_xml(xml_text)
+                x = round(float(payload.get("x")) * 1000.0 / width)
+                y = round(float(payload.get("y")) * 1000.0 / height)
+                args: dict[str, Any] = {"x": x, "y": y}
+                if action_type == "input_text":
+                    args.update(
+                        text=str(payload.get("text") or ""),
+                        clear_text=bool(payload.get("clear_text", True)),
+                    )
+                action = Action(action_type, args)
+            elif action_type == "scroll":
+                direction = str(payload.get("direction") or "").strip().lower()
+                gestures = {
+                    "up": {"x1": 500, "y1": 800, "x2": 500, "y2": 200},
+                    "down": {"x1": 500, "y1": 200, "x2": 500, "y2": 800},
+                    "left": {"x1": 800, "y1": 500, "x2": 200, "y2": 500},
+                    "right": {"x1": 200, "y1": 500, "x2": 800, "y2": 500},
+                }
+                if direction not in gestures:
+                    raise ValueError(
+                        f"mobilegpt_scroll_direction_invalid:{direction or 'missing'}"
+                    )
+                action = Action("swipe", gestures[direction])
+            elif action_type == "navigate_back":
+                action = Action("press_key", {"key": "back"})
+            elif action_type == "answer":
+                action = Action("answer", {"text": str(payload.get("text") or "")})
+            else:
+                raise ValueError(
+                    f"mobilegpt_canonical_action_unsupported:{action_type or 'missing'}"
+                )
+            result = ActionResult.from_value(runtime_host.act(action))
+            if not result.success:
+                raise RuntimeError(result.error or "mobilegpt_canonical_action_failed")
 
         def _send_line(self, stream: Any, prefix: str, value: str) -> None:
             stream.write(f"{prefix}{_wire_text(value)}\n".encode())
@@ -209,7 +315,7 @@ def build_mobilegpt_agent(
             indexed_app_nodes = 0
             while True:
                 attempts += 1
-                observation = host.observe(
+                observation = runtime_host.observe(
                     xml=True,
                     screenshot=True,
                     app_info=True,
@@ -280,7 +386,12 @@ def build_mobilegpt_agent(
                     _bounds_for_index(xml_text, parameters.get("index"))
                 )
                 if name == "click":
-                    self._execute(action_type="click", x=x, y=y)
+                    self._execute(
+                        action_type="click",
+                        x=x,
+                        y=y,
+                        xml_text=xml_text,
+                    )
                 elif name == "repeat-click":
                     try:
                         count = int(parameters.get("number") or 0)
@@ -289,9 +400,19 @@ def build_mobilegpt_agent(
                     if count <= 0:
                         raise ValueError("mobilegpt_repeat_click_count_invalid")
                     for _ in range(count):
-                        self._execute(action_type="click", x=x, y=y)
+                        self._execute(
+                            action_type="click",
+                            x=x,
+                            y=y,
+                            xml_text=xml_text,
+                        )
                 elif name == "long-click":
-                    self._execute(action_type="long_press", x=x, y=y)
+                    self._execute(
+                        action_type="long_press",
+                        x=x,
+                        y=y,
+                        xml_text=xml_text,
+                    )
                 else:
                     self._execute(
                         action_type="input_text",
@@ -303,6 +424,7 @@ def build_mobilegpt_agent(
                             or ""
                         ),
                         clear_text=True,
+                        xml_text=xml_text,
                     )
                 return True, ""
             if name == "scroll":
@@ -319,7 +441,8 @@ def build_mobilegpt_agent(
             if name == "speak":
                 message = str(parameters.get("message") or "").strip()
                 self._execute(action_type="answer", text=message)
-                self.env.interaction_cache = message
+                if self.env is not None:
+                    self.env.interaction_cache = message
                 return False, message
             if name == "ask":
                 raise RuntimeError("mobilegpt_ask_has_no_androidworld_answer_source")
@@ -342,9 +465,13 @@ def build_mobilegpt_agent(
                 "error": error or None,
                 "answer": answer or None,
                 "actions_executed": int(actions_executed),
-                "state_backend": "androidworld",
-                "action_backend": "androidworld",
-                "native_androidworld_agent_io": True,
+                "state_backend": (
+                    "canonical_host" if canonical_host else "androidworld"
+                ),
+                "action_backend": (
+                    "canonical_host" if canonical_host else "androidworld"
+                ),
+                "native_androidworld_agent_io": not canonical_host,
             }
             self.last_result_data = dict(data)
             return make_agent_result(
@@ -363,9 +490,10 @@ def build_mobilegpt_agent(
             actions_executed = 0
             answer = ""
             try:
-                with socket.create_connection(
-                    (server_host, server_port),
-                    timeout=_socket_timeout(connect_timeout),
+                with _connect_with_retry(
+                    server_host,
+                    server_port,
+                    connect_timeout,
                 ) as connection:
                     connection.settimeout(_socket_timeout(response_timeout))
                     with connection.makefile("rwb", buffering=0) as stream:
@@ -395,7 +523,7 @@ def build_mobilegpt_agent(
                                 observation, xml_text = ready_observation
                                 ready_observation = None
                             else:
-                                observation = host.observe(
+                                observation = runtime_host.observe(
                                     xml=True,
                                     screenshot=True,
                                     app_info=True,
@@ -470,4 +598,161 @@ def build_mobilegpt_agent(
     return MobileGPTAndroidWorldAgent()
 
 
-__all__ = ["build_mobilegpt_agent"]
+def run_mobilegpt_replay(
+    *,
+    host: Any,
+    goal: str,
+    memory_root: str | Path,
+    mobilegpt_root: str | Path,
+    server_port: int,
+    max_steps: int,
+    stats_path: str | Path,
+    server_log_path: str | Path,
+) -> RunResult:
+    """Run MobileGPT's selected-memory path with exploration fallbacks disabled."""
+
+    from src.integrations.mobilegpt_converter import validate_mobilegpt_memory
+
+    memory = Path(memory_root).expanduser().resolve()
+    validated = validate_mobilegpt_memory(memory)
+    upstream = Path(mobilegpt_root).expanduser().resolve()
+    stats = Path(stats_path).expanduser().resolve()
+    server_log = Path(server_log_path).expanduser().resolve()
+    stats.parent.mkdir(parents=True, exist_ok=True)
+    server_log.parent.mkdir(parents=True, exist_ok=True)
+    if stats.exists() or server_log.exists():
+        raise FileExistsError("mobilegpt_replay_evidence_already_exists")
+    port = int(server_port)
+    if port <= 0:
+        raise ValueError("mobilegpt_server_port_invalid")
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "MOBILEGPT_MEMORY_ROOT": str(memory),
+            "MOBILEGPT_MEMORY_ONLY": "1",
+            "MOBILEGPT_UPSTREAM_MODE": "0",
+            "MOBILEGPT_SERVER_HOST": "127.0.0.1",
+            "MOBILEGPT_SERVER_PORT": str(port),
+            "MOBILEGPT_STATS_JSONL": str(stats),
+            "MOBILEGPT_TARGET_APP": str(validated["app"]),
+            "MOBILEGPT_TARGET_PACKAGE": str(validated["app"]),
+            "MOBILEGPT_APP_PACKAGES": str(validated["app"]),
+            "MOBILEGPT_CHAT_MAX_ATTEMPTS": "1",
+        }
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "src.integrations.mobilegpt_runtime",
+        "--mobilegpt-root",
+        str(upstream),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+    ]
+    process: subprocess.Popen[Any] | None = None
+    agent_result: Any | None = None
+    try:
+        with server_log.open("w", encoding="utf-8") as log_stream:
+            process = subprocess.Popen(
+                command,
+                env=environment,
+                stdout=log_stream,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            original = {
+                key: os.environ.get(key)
+                for key in (
+                    "MOBILEGPT_SERVER_HOST",
+                    "MOBILEGPT_SERVER_PORT",
+                    "MOBILEGPT_TARGET_PACKAGE",
+                    "MOBILEGPT_APP_PACKAGES",
+                )
+            }
+            os.environ.update(
+                {
+                    "MOBILEGPT_SERVER_HOST": "127.0.0.1",
+                    "MOBILEGPT_SERVER_PORT": str(port),
+                    "MOBILEGPT_TARGET_PACKAGE": str(validated["app"]),
+                    "MOBILEGPT_APP_PACKAGES": str(validated["app"]),
+                }
+            )
+            try:
+                agent = build_mobilegpt_agent(host=host)
+                agent.set_max_steps(max_steps)
+                agent_result = agent.step(goal)
+            finally:
+                for key, value in original.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+    finally:
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5.0)
+
+    events = _mobilegpt_stats(stats)
+    chat_calls = [event for event in events if event.get("event") == "chat_call"]
+    embedding_calls = [
+        event for event in events if event.get("event") == "embedding_call"
+    ]
+    memory_misses = [
+        event
+        for event in events
+        if event.get("event") == "mobilegpt_memory_only_miss"
+    ]
+    data = dict(getattr(agent_result, "data", {}) or {})
+    error = str(data.get("error") or "").strip()
+    if memory_misses and not error:
+        error = "mobilegpt_memory_only_miss:" + str(
+            memory_misses[0].get("stage") or "unknown"
+        )
+    usage = {
+        key: sum(int(event.get(key) or 0) for event in chat_calls)
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+    }
+    return RunResult(
+        not error,
+        function_id="mobilegpt_replay",
+        actions_executed=int(data.get("actions_executed") or 0),
+        model_calls=len(chat_calls),
+        fallback_steps=0,
+        error=error or None,
+        detail={
+            "memory_hit": not memory_misses,
+            "mobilegpt_result": data,
+            "mobilegpt_stats": events,
+            "embedding_calls": len(embedding_calls),
+            "llm_usage": {
+                **usage,
+                "model_calls": len(chat_calls),
+                "token_usage_status": (
+                    "reported" if usage["total_tokens"] > 0 else "unavailable"
+                ),
+            },
+        },
+    )
+
+
+def _mobilegpt_stats(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    events: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+__all__ = ["build_mobilegpt_agent", "run_mobilegpt_replay"]

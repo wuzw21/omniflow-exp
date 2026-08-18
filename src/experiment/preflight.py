@@ -258,7 +258,7 @@ def _validate_mobilegpt_manifest(memory_root: Path) -> dict[str, Any]:
     }
 
 
-def _valid_appagent_demo_manifest(payload: Any) -> bool:
+def _valid_appagent_manifest(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
     source_metrics = payload.get("source_episode_metrics")
@@ -280,7 +280,7 @@ def _valid_appagent_demo_manifest(payload: Any) -> bool:
             and payload.get("source_emulator_used") is False
         )
         return (
-            payload.get("schema_version") == "omniflow.appagent-demo-memory.v2"
+            payload.get("schema_version") == "omniflow.appagent-memory.v2"
             and payload.get("official_appagent_revision")
             == APPAGENT_OFFICIAL_REVISION
             and payload.get("source_seed") == SOURCE_SEED
@@ -513,11 +513,16 @@ def _validate_source_index(
     source_root: Path,
     expected_tasks: int | None,
     task_names: tuple[str, ...] = (),
+    allow_historical_source: bool = False,
 ) -> dict[str, Any]:
     resolved_index = index_path.expanduser().resolve()
     payload = json.loads(resolved_index.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("source_index_must_be_object")
+    if payload.get("schema_version") == "omniflow.local-artifact-index.v1":
+        payload = payload.get("source_index")
+        if not isinstance(payload, dict):
+            raise ValueError("current_source_index_must_be_object")
     if expected_tasks is not None and len(payload) != expected_tasks:
         raise ValueError(
             f"source_index_task_count_invalid:{len(payload)}/{expected_tasks}"
@@ -542,11 +547,13 @@ def _validate_source_index(
         source_kind = str(metadata.get("source_kind") or "").strip()
         if (
             metadata.get("latest_official_success_source") is not True
-            or (
-                source_kind
-                and source_kind
-                != "androidworld_validator_success_source_runlog"
-            )
+            and not allow_historical_source
+        ):
+            invalid.append(str(task))
+            continue
+        if (
+            source_kind
+            and source_kind != "androidworld_validator_success_source_runlog"
         ):
             invalid.append(str(task))
             continue
@@ -629,11 +636,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-tasks", type=int)
     parser.add_argument("--source-index")
     parser.add_argument("--source-task", action="append", default=[])
+    parser.add_argument("--source-only", action="store_true")
     parser.add_argument("--source-root")
     parser.add_argument("--source-memory-root")
     parser.add_argument("--expected-memory-tasks", type=int)
     parser.add_argument("--appagent-root")
-    parser.add_argument("--appagent-demo-memory-root")
+    parser.add_argument("--appagent-memory-root")
     parser.add_argument("--minimum-free-gb", type=float, default=20.0)
     parser.add_argument("--server-port", type=int, default=12345)
     parser.add_argument("--require-kvm", action="store_true")
@@ -734,23 +742,23 @@ def main(argv: list[str] | None = None) -> int:
     if appagent_mode:
         memory_root = None
         demo_memory_value = str(
-            args.appagent_demo_memory_root
-            or os.getenv("OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT", "")
+            args.appagent_memory_root
+            or os.getenv("OMNIFLOW_APPAGENT_MEMORY_ROOT", "")
         ).strip()
         if not demo_memory_value:
-            add("appagent_demo_memory", True, "not supplied for source preparation")
+            add("appagent_memory", True, "not supplied for source preparation")
         else:
             demo_memory = Path(demo_memory_value).expanduser().resolve()
-            manifest = demo_memory / "appagent_demo_manifest.json"
+            manifest = demo_memory / "appagent_manifest.json"
             valid = False
             detail = str(manifest)
             try:
                 payload = json.loads(manifest.read_text(encoding="utf-8"))
-                valid = _valid_appagent_demo_manifest(payload)
+                valid = _valid_appagent_manifest(payload)
                 detail = f"sealed manifest at {manifest}"
             except (OSError, ValueError, json.JSONDecodeError) as error:
                 detail = str(error)
-            add("appagent_demo_memory", valid, detail)
+            add("appagent_memory", valid, detail)
             if valid:
                 memory_files = [
                     path
@@ -772,6 +780,7 @@ def main(argv: list[str] | None = None) -> int:
                     source_root=source_root,
                     expected_tasks=expected_tasks,
                     task_names=tuple(args.source_task),
+                    allow_historical_source=args.source_only,
                 )
             except (OSError, ValueError, json.JSONDecodeError) as error:
                 add("source_index", False, str(error))
@@ -791,9 +800,28 @@ def main(argv: list[str] | None = None) -> int:
                 )
     else:
         expected_tasks = args.expected_tasks or 116
-        source_root = repo / "runtime/evals/androidworld_validator/core_archive/success_source_runlogs/by_task"
-        source_metadata = list(source_root.glob("*/metadata.json"))
-        add("source_runlogs", len(source_metadata) == expected_tasks, f"{len(source_metadata)}/{expected_tasks}")
+        source_index = repo / "data" / "current.json"
+        try:
+            source_validation = _validate_source_index(
+                source_index,
+                source_root=repo / "data",
+                expected_tasks=expected_tasks,
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            add("source_index", False, str(error))
+        else:
+            add(
+                "source_index",
+                True,
+                json.dumps(
+                    {
+                        "tasks": source_validation["task_count"],
+                        "run_logs": source_validation["run_log_count"],
+                        "sha256": source_validation["index_sha256"],
+                    },
+                    sort_keys=True,
+                ),
+            )
 
         if memory_root is None:
             add("initial_memory", True, "empty_memory")
@@ -1064,7 +1092,7 @@ def main(argv: list[str] | None = None) -> int:
         "serial": args.serial,
         "profile": profile,
         "initial_memory_condition": (
-            "appagent_demo_memory"
+            "appagent_memory"
             if appagent_mode and memory_root is not None
             else "native_memory"
             if memory_root is not None

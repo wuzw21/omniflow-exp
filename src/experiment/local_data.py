@@ -33,14 +33,14 @@ from src.experiment.protocol import (
     METHODS,
     RESULT_COMMANDS_FILE,
     RESULT_SUMMARY_FILE,
-    SOURCE_DEVICE,
     SOURCE_SEED,
     TASK_SEED,
 )
 from src.integrations.runlog import adapt_source_run_log
 
-MEMORY_SCHEMA = "omniflow.androidworld-artifact-memory.v2"
-CURRENT_SCHEMA = "omniflow.androidworld-artifact-memory-pointer.v2"
+MEMORY_SCHEMA = "omniflow.local-data-registry.v3"
+CURRENT_SCHEMA = "omniflow.local-artifact-index.v1"
+_MISSING = object()
 FUNCTION_SOURCE_LINEAGE_SCHEMA = "omniflow.function-store-source-lineage.v1"
 RESULT_FILE_NAMES = (
     RESULT_COMMANDS_FILE,
@@ -105,6 +105,53 @@ def _json_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+def _localize_persisted_paths(value: Any, root: Path, key: str = "") -> Any:
+    if isinstance(value, dict):
+        localized: dict[str, Any] = {}
+        for name, item in value.items():
+            result = _localize_persisted_paths(item, root, str(name))
+            if result is not _MISSING:
+                localized[name] = result
+        return localized
+    if isinstance(value, list):
+        localized_items = [
+            result
+            for item in value
+            for result in (_localize_persisted_paths(item, root, key),)
+            if result is not _MISSING
+        ]
+        return localized_items
+    if not isinstance(value, str) or not value.startswith("/"):
+        return value
+    resolved = Path(value).expanduser().resolve()
+    try:
+        resolved.relative_to(root)
+        return str(resolved)
+    except ValueError:
+        pass
+    match = re.search(
+        r"/objects/sha256/([0-9a-f]{2})/([0-9a-f]{64})(\.[^/]+)?$",
+        value,
+    )
+    if match:
+        suffix = match.group(3) or ".json"
+        candidate = root / "objects" / "sha256" / match.group(1) / (
+            match.group(2) + suffix
+        )
+        if candidate.is_file():
+            return str(candidate.resolve())
+    if key.endswith("aliases") or key in {
+        "source_path",
+        "manifest_path",
+        "provenance_path",
+        "manifest_object_path",
+        "provenance_object_path",
+        "catalog_path",
+    }:
+        return _MISSING
+    return value
+
+
 def _atomic_write(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -125,6 +172,18 @@ def _atomic_write(path: Path, content: bytes) -> None:
 
 def _load_object(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_source_index(path: Path) -> dict[str, Any]:
+    payload = _load_object(path)
+    if not isinstance(payload, dict):
+        raise ValueError("source_index_must_be_object")
+    if payload.get("schema_version") == CURRENT_SCHEMA:
+        source_index = payload.get("source_index")
+        if not isinstance(source_index, dict):
+            raise ValueError("current_source_index_must_be_object")
+        return source_index
+    return payload
 
 
 def _resolve_index_reference(index_path: Path, value: Any) -> Path:
@@ -299,88 +358,6 @@ def _link_object(source: Path, target: Path, expected_hash: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _publish_index(memory_root: Path, name: str, value: Any) -> tuple[Path, str]:
-    content = _json_bytes(value)
-    digest = hashlib.sha256(content).hexdigest()
-    path = memory_root / "indexes" / f"{name}.{digest}.json"
-    if path.exists():
-        if _sha256(path) != digest:
-            raise ValueError(f"memory_index_hash_mismatch:{path}")
-    else:
-        _atomic_write(path, content)
-        path.chmod(0o444)
-    return path.resolve(), digest
-
-
-def _materialize_function_store(
-    memory_root: Path,
-    *,
-    task: str,
-    environment: str = "androidworld",
-    device: str = SOURCE_DEVICE[0],
-    category: str = "function",
-    method: str = "function_authoring",
-    store_object: Path,
-    store_sha256: str,
-    transfer_object: Path,
-    transfer_sha256: str,
-) -> dict[str, str]:
-    identity = hashlib.sha256(
-        "\0".join((store_sha256, transfer_sha256)).encode("utf-8")
-    ).hexdigest()
-    runtime_root = (
-        memory_root
-        / environment
-        / task
-        / device
-        / category
-        / method
-        / identity
-    )
-    store_path = runtime_root / "function_store.json"
-    transfer_path = runtime_root / "transfer_states.json"
-    _link_object(store_object, store_path, store_sha256)
-    _link_object(transfer_object, transfer_path, transfer_sha256)
-    manifest_path = runtime_root / "manifest.json"
-    manifest = {
-        "schema_version": "omniflow.local-artifact-bundle.v1",
-        "immutable": True,
-        "environment": "androidworld",
-        "task": task,
-        "device": SOURCE_DEVICE[0],
-        "category": "function",
-        "method": "function_authoring",
-        "attempt_id": identity,
-        "files": {
-            "function_store.json": {
-                "sha256": store_sha256,
-                "bytes": store_path.stat().st_size,
-            },
-            "transfer_states.json": {
-                "sha256": transfer_sha256,
-                "bytes": transfer_path.stat().st_size,
-            },
-        },
-    }
-    if manifest_path.exists():
-        if _sha256(manifest_path) != hashlib.sha256(_json_bytes(manifest)).hexdigest():
-            raise ValueError(f"memory_runtime_manifest_hash_mismatch:{manifest_path}")
-    else:
-        runtime_root.chmod(0o755)
-        try:
-            _atomic_write(manifest_path, _json_bytes(manifest))
-            manifest_path.chmod(0o444)
-        finally:
-            runtime_root.chmod(0o555)
-    runtime_root.chmod(0o555)
-    return {
-        "store_path": str(store_path.resolve()),
-        "store_sha256": store_sha256,
-        "transfer_states_path": str(transfer_path.resolve()),
-        "transfer_states_sha256": transfer_sha256,
-    }
-
-
 def _runlog_paths(roots: Iterable[Path]) -> list[Path]:
     paths: set[Path] = set()
     for root in roots:
@@ -411,50 +388,49 @@ def _result_paths(roots: Iterable[Path]) -> list[Path]:
     return sorted(paths)
 
 
-def _canonical_function_catalog_paths(memory_root: Path) -> list[Path]:
+def _canonical_function_store_paths(memory_root: Path) -> list[Path]:
     paths: list[Path] = []
     for environment in ("androidworld", "bmoca"):
         environment_root = memory_root / environment
         if not environment_root.is_dir():
             continue
-        for path in environment_root.rglob("function_catalog.json"):
+        for path in environment_root.rglob("function_store.json"):
             relative = path.relative_to(environment_root).parts
             if (
                 len(relative) == 6
                 and relative[2] == "function"
-                and relative[5] == "function_catalog.json"
+                and relative[5] == "function_store.json"
             ):
                 paths.append(path.resolve())
     return sorted(set(paths))
 
 
-def _catalog_bundle_identity(
+def _function_bundle_identity(
     memory_root: Path,
-    catalog_path: Path,
-    *,
-    task: str,
-) -> dict[str, str] | None:
+    store_path: Path,
+) -> dict[str, str]:
     for environment in ("androidworld", "bmoca"):
         environment_root = memory_root / environment
         try:
-            relative = catalog_path.resolve().relative_to(environment_root.resolve())
+            relative = store_path.resolve().relative_to(environment_root.resolve())
         except ValueError:
             continue
         parts = relative.parts
         if (
             len(parts) != 6
-            or parts[0] != task
             or parts[2] != "function"
-            or parts[5] != "function_catalog.json"
+            or parts[5] != "function_store.json"
         ):
-            raise ValueError(f"function_catalog_path_not_canonical:{catalog_path}")
+            raise ValueError(f"function_store_path_not_canonical:{store_path}")
         return {
             "environment": environment,
+            "task": parts[0],
             "device": parts[1],
             "category": parts[2],
             "method": parts[3],
+            "attempt_id": parts[4],
         }
-    return None
+    raise ValueError(f"function_store_path_not_canonical:{store_path}")
 
 
 def _function_source_seed(item: dict[str, Any]) -> int | None:
@@ -973,7 +949,7 @@ def _formal_result_protocol_error(
                     f"{task}:{device}:{field}:"
                     f"expected={expected_source_sha256}:actual={actual_sha256}"
                 )
-    if method == "mobilegpt_offline_retrieval":
+    if method == "mobilegpt":
         return _mobilegpt_result_protocol_error(
             task=task,
             source_seed=source_seed,
@@ -1122,7 +1098,7 @@ def _load_results(
                 "earliest_formal_protocol_compliant_validator_conclusion"
             ),
         }
-        if method == "mobilegpt_offline_retrieval":
+        if method == "mobilegpt":
             prep_manifest_path = Path(
                 str(result_row.get("prep_manifest") or "")
             ).expanduser()
@@ -1159,7 +1135,7 @@ def _load_results(
         current_mobilegpt = [
             value
             for value in ordered
-            if value[3]["method"] == "mobilegpt_offline_retrieval"
+            if value[3]["method"] == "mobilegpt"
             and value[3].get("mobilegpt_memory_schema")
             in MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS
         ]
@@ -1169,7 +1145,7 @@ def _load_results(
 
 def _load_function_stores(
     memory_root: Path,
-    catalogs: Sequence[Path],
+    stores: Sequence[Path],
     *,
     source_metadata: dict[str, Any],
     canonical_sources: dict[str, dict[str, Any]],
@@ -1182,191 +1158,95 @@ def _load_function_stores(
 ]:
     records: dict[str, dict[str, Any]] = {}
     candidates: dict[str, list[tuple[tuple[int, int], str]]] = {}
-    for catalog_path in catalogs:
-        if not catalog_path.is_file():
-            raise FileNotFoundError(f"function_catalog_missing:{catalog_path}")
-        catalog_digest = _sha256(catalog_path)
-        _materialize_object(memory_root, catalog_path, catalog_digest)
-        payload = _load_object(catalog_path)
+    for store in stores:
+        if not store.is_file():
+            raise FileNotFoundError(f"function_store_missing:{store}")
+        bundle_identity = _function_bundle_identity(memory_root, store)
+        task = bundle_identity["task"]
+        source_run_log = store.with_name("run_log.json")
+        transfer = store.with_name("transfer_states.json")
+        if not source_run_log.is_file():
+            raise FileNotFoundError(
+                f"function_source_run_log_missing:{task}:{source_run_log}"
+            )
+        if not transfer.is_file():
+            raise FileNotFoundError(f"function_transfer_states_missing:{task}:{transfer}")
+        store_payload = _load_object(store)
         if (
-            not isinstance(payload, dict)
-            or payload.get("schema_version") != "omniflow.function-asset-catalog.v1"
-            or not isinstance(payload.get("tasks"), dict)
+            not isinstance(store_payload, dict)
+            or store_payload.get("schema_version") != "omniflow.store.v2"
+            or not isinstance(store_payload.get("functions"), dict)
         ):
-            raise ValueError(f"function_catalog_invalid:{catalog_path}")
-        for raw_task, raw_item in payload["tasks"].items():
-            task = str(raw_task)
-            if not isinstance(raw_item, dict) or raw_item.get("status") != "converted":
-                continue
-            if raw_item.get("target_inputs_read") is not False:
-                raise ValueError(f"function_catalog_target_inputs_read:{task}")
-            if raw_item.get("target_observations_read") is not False:
-                raise ValueError(f"function_catalog_target_observations_read:{task}")
-            source_run_log = _require_hashed_file(
-                raw_item.get("source_run_log"),
-                raw_item.get("source_run_log_sha256"),
-                label=f"function_source_run_log:{task}",
-            )
-            store = _require_hashed_file(
-                raw_item.get("store_path"),
-                raw_item.get("store_sha256"),
-                label=f"function_store:{task}",
-            )
-            transfer = _require_hashed_file(
-                raw_item.get("transfer_states_path"),
-                raw_item.get("transfer_states_sha256"),
-                label=f"function_transfer_states:{task}",
-            )
-            provenance_payload: dict[str, Any] = {}
-            if raw_item.get("provenance_path"):
-                provenance = _require_hashed_file(
-                    raw_item.get("provenance_path"),
-                    raw_item.get("provenance_sha256"),
-                    label=f"function_provenance:{task}",
-                )
-                loaded_provenance = _load_object(provenance)
-                if isinstance(loaded_provenance, dict):
-                    provenance_payload = loaded_provenance
-            store_payload = _load_object(store)
-            if (
-                not isinstance(store_payload, dict)
-                or store_payload.get("schema_version") != "omniflow.store.v2"
-                or not isinstance(store_payload.get("functions"), dict)
-            ):
-                raise ValueError(f"function_store_invalid:{task}:{store}")
-            if len(store_payload["functions"]) != 1:
-                raise ValueError(f"function_store_single_function_required:{task}")
-            source_calls = store_payload.get("source_calls")
-            if (
-                not isinstance(source_calls, list)
-                or len(source_calls) != 1
-                or not isinstance(source_calls[0], dict)
-                or not isinstance(source_calls[0].get("arguments"), dict)
-                or str(source_calls[0].get("function_id") or "")
-                != next(iter(store_payload["functions"]))
-            ):
-                raise ValueError(f"function_store_single_source_call_required:{task}")
-            store_hash = _sha256(store)
-            transfer_hash = _sha256(transfer)
-            source_run_log_hash = _sha256(source_run_log)
-            raw_source_payload = _load_object(source_run_log)
-            if not isinstance(raw_source_payload, dict):
-                raise ValueError(f"function_source_run_log_invalid:{task}")
-            task_source_metadata = source_metadata.get(task)
-            if not isinstance(task_source_metadata, dict):
-                raise ValueError(f"function_source_metadata_missing:{task}")
-            function_source_metadata = dict(task_source_metadata)
-            source_transfer_states_value = raw_item.get("source_transfer_states")
-            if source_transfer_states_value:
-                source_transfer_states = _require_hashed_file(
-                    source_transfer_states_value,
-                    raw_item.get("source_transfer_states_sha256"),
-                    label=f"function_source_transfer_states:{task}",
-                )
-                source_transfer_states_payload = _load_object(source_transfer_states)
-                expected_source_run_id = str(
-                    raw_item.get("source_transfer_states_run_id") or ""
-                ).strip()
-                actual_source_run_id = str(
-                    source_transfer_states_payload.get("run_id")
-                    if isinstance(source_transfer_states_payload, dict)
-                    else ""
-                ).strip()
-                function_source_run_id = str(
-                    raw_source_payload.get("run_id") or ""
-                ).strip()
-                if (
-                    not expected_source_run_id
-                    or actual_source_run_id != expected_source_run_id
-                    or function_source_run_id != expected_source_run_id
-                ):
-                    raise ValueError(
-                        "function_source_transfer_states_run_id_mismatch:"
-                        f"{task}:source={function_source_run_id}:"
-                        f"catalog={actual_source_run_id}:"
-                        f"expected={expected_source_run_id or 'missing'}"
-                    )
-                function_source_metadata["source_state_catalog"] = str(
-                    source_transfer_states
-                )
-                function_source_metadata["source_state_catalog_sha256"] = _sha256(
-                    source_transfer_states
-                )
-            canonical_source = canonical_sources.get(task)
-            if not isinstance(canonical_source, dict):
-                raise ValueError(f"canonical_function_source_missing:{task}")
-            (
-                canonical_source_run_log,
-                canonical_source_run_log_hash,
-                source_run_log_lineage,
-            ) = _canonicalize_function_source_run_log(
-                memory_root,
-                task=task,
-                source_run_log=source_run_log,
-                source_payload=raw_source_payload,
-                source_metadata=function_source_metadata,
-                canonical_source=canonical_source,
-                screenshot_roots=screenshot_roots,
-                records=run_log_records,
-            )
-            identity = hashlib.sha256(
-                "\0".join(
-                    (
-                        source_run_log_hash,
-                        store_hash,
-                        transfer_hash,
-                    )
-                ).encode("utf-8")
-            ).hexdigest()
-            store_object = _materialize_object(memory_root, store, store_hash)
-            transfer_object = _materialize_object(
-                memory_root,
-                transfer,
-                transfer_hash,
-            )
-            bundle_identity = _catalog_bundle_identity(
-                memory_root,
-                catalog_path,
-                task=task,
-            ) or {
-                "environment": "androidworld",
-                "device": SOURCE_DEVICE[0],
-                "category": "function",
-                "method": "function_authoring",
-            }
-            record = records.setdefault(
-                identity,
-                {
-                    "identity_sha256": identity,
-                    "tasks": [],
-                    "catalog_aliases": [],
-                    "function_count": len(store_payload["functions"]),
-                    "source_calls": source_calls,
-                    "source_run_log_path": str(canonical_source_run_log),
-                    "source_run_log_sha256": canonical_source_run_log_hash,
-                    "source_run_log_lineage": source_run_log_lineage,
-                    **_materialize_function_store(
-                        memory_root,
-                        task=task,
-                        environment=bundle_identity["environment"],
-                        device=bundle_identity["device"],
-                        category=bundle_identity["category"],
-                        method=bundle_identity["method"],
-                        store_object=store_object,
-                        store_sha256=store_hash,
-                        transfer_object=transfer_object,
-                        transfer_sha256=transfer_hash,
-                    ),
-                },
-            )
-            record["tasks"].append(task)
-            record["catalog_aliases"].append(str(catalog_path))
-            quality = (1 if store_payload.get("source_calls") else 0,)
-            candidates.setdefault(task, []).append((quality, identity))
+            raise ValueError(f"function_store_invalid:{task}:{store}")
+        if len(store_payload["functions"]) != 1:
+            raise ValueError(f"function_store_single_function_required:{task}")
+        source_calls = store_payload.get("source_calls")
+        if (
+            not isinstance(source_calls, list)
+            or len(source_calls) != 1
+            or not isinstance(source_calls[0], dict)
+            or not isinstance(source_calls[0].get("arguments"), dict)
+            or str(source_calls[0].get("function_id") or "")
+            != next(iter(store_payload["functions"]))
+        ):
+            raise ValueError(f"function_store_single_source_call_required:{task}")
+        store_hash = _sha256(store)
+        transfer_hash = _sha256(transfer)
+        source_run_log_hash = _sha256(source_run_log)
+        raw_source_payload = _load_object(source_run_log)
+        if not isinstance(raw_source_payload, dict):
+            raise ValueError(f"function_source_run_log_invalid:{task}")
+        task_source_metadata = source_metadata.get(task)
+        if not isinstance(task_source_metadata, dict):
+            raise ValueError(f"function_source_metadata_missing:{task}")
+        canonical_source = canonical_sources.get(task)
+        if not isinstance(canonical_source, dict):
+            raise ValueError(f"canonical_function_source_missing:{task}")
+        (
+            canonical_source_run_log,
+            canonical_source_run_log_hash,
+            source_run_log_lineage,
+        ) = _canonicalize_function_source_run_log(
+            memory_root,
+            task=task,
+            source_run_log=source_run_log,
+            source_payload=raw_source_payload,
+            source_metadata=dict(task_source_metadata),
+            canonical_source=canonical_source,
+            screenshot_roots=screenshot_roots,
+            records=run_log_records,
+        )
+        identity = hashlib.sha256(
+            "\0".join(
+                (source_run_log_hash, store_hash, transfer_hash)
+            ).encode("utf-8")
+        ).hexdigest()
+        record = records.setdefault(
+            identity,
+            {
+                "identity_sha256": identity,
+                "tasks": [],
+                "function_count": len(store_payload["functions"]),
+                "source_calls": source_calls,
+                "source_run_log_path": str(canonical_source_run_log),
+                "source_run_log_sha256": canonical_source_run_log_hash,
+                "source_run_log_lineage": source_run_log_lineage,
+                "store_path": str(store),
+                "store_sha256": store_hash,
+                "transfer_states_path": str(transfer),
+                "transfer_states_sha256": transfer_hash,
+                "environment": bundle_identity["environment"],
+                "device": bundle_identity["device"],
+                "category": bundle_identity["category"],
+                "method": bundle_identity["method"],
+                "attempt_id": bundle_identity["attempt_id"],
+            },
+        )
+        record["tasks"].append(task)
+        candidates.setdefault(task, []).append(((1,), identity))
 
     for record in records.values():
         record["tasks"] = sorted(set(record["tasks"]))
-        record["catalog_aliases"] = sorted(set(record["catalog_aliases"]))
 
     canonical: dict[str, dict[str, Any]] = {}
     existing_identities = existing_canonical_identities or {}
@@ -1708,7 +1588,6 @@ def _refresh_local_data_unlocked(
     *,
     memory_root: str | Path,
     source_index: str | Path,
-    function_catalogs: Sequence[str | Path],
     runlog_roots: Sequence[str | Path],
     result_roots: Sequence[str | Path],
     mobilegpt_memory_roots: Sequence[str | Path] = (),
@@ -1722,9 +1601,7 @@ def _refresh_local_data_unlocked(
     index_path = Path(source_index).expanduser().resolve()
     if not index_path.is_file():
         raise FileNotFoundError(f"source_index_missing:{index_path}")
-    source_payload = _load_object(index_path)
-    if not isinstance(source_payload, dict):
-        raise ValueError("source_index_must_be_object")
+    source_payload = _load_source_index(index_path)
     task_names = sorted(str(task) for task in source_payload)
     screenshot_roots = tuple(
         sorted(
@@ -1852,12 +1729,7 @@ def _refresh_local_data_unlocked(
             _materialize_run_log_dependencies(root, canonical_payload)
         )
 
-    catalog_paths = sorted(
-        {
-            *(Path(value).expanduser().resolve() for value in function_catalogs),
-            *_canonical_function_catalog_paths(root),
-        }
-    )
+    function_store_paths = _canonical_function_store_paths(root)
     resolved_result_roots = sorted(
         {Path(value).expanduser().resolve() for value in result_roots}
     )
@@ -1874,7 +1746,7 @@ def _refresh_local_data_unlocked(
             )
     function_records, canonical_function_stores = _load_function_stores(
         root,
-        catalog_paths,
+        function_store_paths,
         source_metadata=source_payload,
         canonical_sources=canonical_sources,
         screenshot_roots=screenshot_roots,
@@ -1936,77 +1808,6 @@ def _refresh_local_data_unlocked(
             )
             item["source_state_catalog_sha256"] = catalog_digest
         memory_source_index[str(task)] = item
-    memory_source_index_path, memory_source_index_hash = _publish_index(
-        root,
-        "source_index",
-        memory_source_index,
-    )
-    store_index = {
-        task: {
-            key: record[key]
-            for key in (
-                "store_path",
-                "store_sha256",
-                "source_run_log_path",
-                "source_run_log_sha256",
-                "source_run_log_lineage",
-                "transfer_states_path",
-                "transfer_states_sha256",
-                "source_calls",
-            )
-        }
-        for task, record in canonical_function_stores.items()
-    }
-    store_index_path, store_index_hash = _publish_index(
-        root,
-        "ours_store_index",
-        store_index,
-    )
-    result_cells_path, result_cells_hash = _publish_index(
-        root,
-        "result_cells",
-        canonical_result_cells,
-    )
-    mobilegpt_memory_index_path, mobilegpt_memory_index_hash = _publish_index(
-        root,
-        "mobilegpt_memory_index",
-        canonical_mobilegpt_memories,
-    )
-    by_task: dict[str, dict[str, Any]] = {}
-    for task in task_names:
-        by_task[task] = {
-            "task": task,
-            "run_log_sha256s": sorted(
-                digest for digest, record in records.items() if task in record["tasks"]
-            ),
-            "function_store_identity_sha256s": sorted(
-                digest
-                for digest, record in function_records.items()
-                if task in record["tasks"]
-            ),
-            "result_sha256s": sorted(
-                digest
-                for digest, record in result_records.items()
-                if task in record["tasks"]
-            ),
-            "canonical": {
-                "source_run_log": canonical_sources.get(task),
-                "function_store": canonical_function_stores.get(task),
-                "mobilegpt_memory": canonical_mobilegpt_memories.get(task),
-                "result_cells": {
-                    result: value
-                    for result, value in canonical_result_cells.items()
-                    if result.split("|", 1)[0] == task
-                },
-            },
-        }
-    unclassified_result_hashes = sorted(
-        digest for digest, record in result_records.items() if not record["tasks"]
-    )
-    unclassified_runlog_hashes = sorted(
-        digest for digest, record in records.items() if not record["tasks"]
-    )
-
     registry: dict[str, Any] = {
         "schema_version": MEMORY_SCHEMA,
         "policy": {
@@ -2016,10 +1817,8 @@ def _refresh_local_data_unlocked(
             "success_cherry_picking": False,
         },
         "inputs": {
-            "source_index": str(index_path),
-            "source_index_sha256": _sha256(index_path),
+            "source_index": str(root / "current.json"),
             "source_screenshot_roots": [str(path) for path in screenshot_roots],
-            "function_catalogs": [str(path) for path in catalog_paths],
             "runlog_roots": sorted(
                 str(Path(value).expanduser().resolve()) for value in runlog_roots
             ),
@@ -2035,7 +1834,7 @@ def _refresh_local_data_unlocked(
             "task_count": len(task_names),
             "run_log_paths": len(paths),
             "unique_run_logs": len(records),
-            "function_catalog_paths": len(catalog_paths),
+            "function_store_paths": len(function_store_paths),
             "unique_function_stores": len(function_records),
             "function_store_tasks": len(canonical_function_stores),
             "result_paths": len(result_paths),
@@ -2050,91 +1849,17 @@ def _refresh_local_data_unlocked(
             "unique_mobilegpt_memories": len(mobilegpt_memory_records),
             "mobilegpt_memory_tasks": len(canonical_mobilegpt_memories),
         },
-        "indexes": {
-            "source_index": str(memory_source_index_path),
-            "source_index_sha256": memory_source_index_hash,
-            "ours_store_index": str(store_index_path),
-            "ours_store_index_sha256": store_index_hash,
-            "result_cells": str(result_cells_path),
-            "result_cells_sha256": result_cells_hash,
-            "mobilegpt_memory_index": str(mobilegpt_memory_index_path),
-            "mobilegpt_memory_index_sha256": mobilegpt_memory_index_hash,
-        },
-        "artifacts": {
-            "run_logs": {digest: records[digest] for digest in sorted(records)},
-            "function_stores": {
-                digest: function_records[digest] for digest in sorted(function_records)
-            },
-            "results": {
-                digest: result_records[digest] for digest in sorted(result_records)
-            },
-            "mobilegpt_memories": {
-                digest: mobilegpt_memory_records[digest]
-                for digest in sorted(mobilegpt_memory_records)
-            },
-            "baseline_batch_reports": {
-                digest: baseline_report_records[digest]
-                for digest in sorted(baseline_report_records)
-            },
-        },
         "canonical": {
             "source_run_logs": canonical_sources,
             "function_stores": canonical_function_stores,
             "result_cells": canonical_result_cells,
             "mobilegpt_memories": canonical_mobilegpt_memories,
         },
-        "by_task": by_task,
-        "unclassified": {
-            "run_log_sha256s": unclassified_runlog_hashes,
-            "result_sha256s": unclassified_result_hashes,
-        },
     }
-    registry_bytes = _json_bytes(registry)
-    registry_sha256 = hashlib.sha256(registry_bytes).hexdigest()
-    snapshot_root = root / "snapshots" / registry_sha256
-    registry_path = snapshot_root / "registry.json"
-    if registry_path.exists():
-        if _sha256(registry_path) != registry_sha256:
-            raise ValueError(f"memory_snapshot_hash_mismatch:{registry_path}")
-    else:
-        snapshot_root.mkdir(parents=True, exist_ok=False)
-        _atomic_write(registry_path, registry_bytes)
-        registry_path.chmod(0o444)
-        by_task_root = snapshot_root / "by_task"
-        by_task_root.mkdir()
-        for task, task_payload in by_task.items():
-            if not task.isalnum():
-                raise ValueError(f"memory_task_name_unsafe:{task}")
-            task_path = by_task_root / f"{task}.json"
-            _atomic_write(task_path, _json_bytes(task_payload))
-            task_path.chmod(0o444)
-        if unclassified_runlog_hashes or unclassified_result_hashes:
-            unclassified_path = by_task_root / "_unclassified.json"
-            _atomic_write(
-                unclassified_path,
-                _json_bytes(registry["unclassified"]),
-            )
-            unclassified_path.chmod(0o444)
-        by_task_root.chmod(0o555)
-        snapshot_root.chmod(0o555)
-    by_task_root = snapshot_root / "by_task"
-    if not by_task_root.is_dir():
-        raise ValueError(f"memory_by_task_index_missing:{by_task_root}")
-    pointer = {
-        "schema_version": CURRENT_SCHEMA,
-        "registry_path": str(registry_path.resolve()),
-        "registry_sha256": registry_sha256,
-        "source_index": str(memory_source_index_path),
-        "source_index_sha256": memory_source_index_hash,
-        "ours_store_index": str(store_index_path),
-        "ours_store_index_sha256": store_index_hash,
-        "result_cells": str(result_cells_path),
-        "result_cells_sha256": result_cells_hash,
-        "mobilegpt_memory_index": str(mobilegpt_memory_index_path),
-        "mobilegpt_memory_index_sha256": mobilegpt_memory_index_hash,
-        "by_task_root": str(by_task_root.resolve()),
-    }
-    _atomic_write(root / "current.json", _json_bytes(pointer))
+    registry["schema_version"] = CURRENT_SCHEMA
+    registry["source_index"] = memory_source_index
+    registry = _localize_persisted_paths(registry, root)
+    _atomic_write(root / "current.json", _json_bytes(registry))
     return registry
 
 
@@ -2142,7 +1867,6 @@ def refresh_local_data(
     *,
     memory_root: str | Path,
     source_index: str | Path,
-    function_catalogs: Sequence[str | Path],
     runlog_roots: Sequence[str | Path],
     result_roots: Sequence[str | Path],
     mobilegpt_memory_roots: Sequence[str | Path] = (),
@@ -2156,7 +1880,6 @@ def refresh_local_data(
         return _refresh_local_data_unlocked(
             memory_root=root,
             source_index=source_index,
-            function_catalogs=function_catalogs,
             runlog_roots=runlog_roots,
             result_roots=result_roots,
             mobilegpt_memory_roots=mobilegpt_memory_roots,
@@ -2166,56 +1889,17 @@ def refresh_local_data(
 
 
 def load_local_data(memory_index: str | Path) -> dict[str, Any]:
-    """Load and verify the registry selected by ``current.json``."""
+    """Load and verify the single canonical data index."""
 
     pointer_path = Path(memory_index).expanduser().resolve()
-    pointer = _load_object(pointer_path)
-    if not isinstance(pointer, dict) or pointer.get("schema_version") != CURRENT_SCHEMA:
-        raise ValueError(f"local_data_pointer_invalid:{pointer_path}")
-    registry_path = Path(str(pointer.get("registry_path") or "")).expanduser()
-    if not registry_path.is_absolute() or not registry_path.is_file():
-        raise FileNotFoundError(f"local_data_registry_missing:{registry_path}")
-    expected = str(pointer.get("registry_sha256") or "")
-    actual = _sha256(registry_path)
-    if not expected or actual != expected:
-        raise ValueError(
-            "local_data_registry_hash_mismatch:"
-            f"expected={expected or 'missing'}:actual={actual}"
-        )
-    registry = _load_object(registry_path)
-    if (
-        not isinstance(registry, dict)
-        or registry.get("schema_version") != MEMORY_SCHEMA
-    ):
-        raise ValueError(f"local_data_registry_invalid:{registry_path}")
-    for path_field, hash_field in (
-        ("source_index", "source_index_sha256"),
-        ("ours_store_index", "ours_store_index_sha256"),
-        ("result_cells", "result_cells_sha256"),
-    ):
-        path = Path(str(pointer.get(path_field) or "")).expanduser()
-        expected_hash = str(pointer.get(hash_field) or "")
-        if not path.is_absolute() or not path.is_file():
-            raise FileNotFoundError(
-                f"local_data_index_missing:{path_field}:{path}"
-            )
-        if not expected_hash or _sha256(path) != expected_hash:
-            raise ValueError(f"local_data_index_hash_mismatch:{path_field}:{path}")
-    mobilegpt_index = pointer.get("mobilegpt_memory_index")
-    mobilegpt_index_hash = pointer.get("mobilegpt_memory_index_sha256")
-    if mobilegpt_index is not None or mobilegpt_index_hash is not None:
-        path = Path(str(mobilegpt_index or "")).expanduser()
-        expected_hash = str(mobilegpt_index_hash or "")
-        if not path.is_absolute() or not path.is_file():
-            raise FileNotFoundError(
-                f"local_data_index_missing:mobilegpt_memory_index:{path}"
-            )
-        if not expected_hash or _sha256(path) != expected_hash:
-            raise ValueError(
-                "local_data_index_hash_mismatch:mobilegpt_memory_index:"
-                f"{path}"
-            )
-    return registry
+    current = _load_object(pointer_path)
+    if not isinstance(current, dict) or current.get("schema_version") != CURRENT_SCHEMA:
+        raise ValueError(f"local_data_index_invalid:{pointer_path}")
+    if not isinstance(current.get("canonical"), dict):
+        raise ValueError(f"local_data_index_canonical_missing:{pointer_path}")
+    if not isinstance(current.get("source_index"), dict):
+        raise ValueError(f"local_data_index_source_missing:{pointer_path}")
+    return current
 
 
 def registered_result_plan_from_memory(
@@ -2241,7 +1925,7 @@ def registered_result_plan_from_memory(
         if not isinstance(record, dict):
             continue
         if (
-            method == "mobilegpt_offline_retrieval"
+            method == "mobilegpt"
             and mobilegpt_memory_schemas is not None
             and record.get("selection_reason") != BASELINE_BATCH_REPORT_SELECTION
             and str(record.get("mobilegpt_memory_schema") or "")
@@ -2319,7 +2003,6 @@ def refresh_local_data_from_pointer(
     *,
     memory_index: str | Path,
     source_screenshot_roots: Sequence[str | Path] = (),
-    additional_function_catalogs: Sequence[str | Path] = (),
     additional_runlog_roots: Sequence[str | Path] = (),
     additional_result_roots: Sequence[str | Path] = (),
     additional_mobilegpt_memory_roots: Sequence[str | Path] = (),
@@ -2332,27 +2015,6 @@ def refresh_local_data_from_pointer(
     with _memory_lock(pointer_path.parent):
         registry = load_local_data(pointer_path)
         inputs = registry["inputs"]
-        resolved_function_catalogs = {
-            str(Path(value).expanduser().resolve())
-            for value in additional_function_catalogs
-        }
-        if replace_recorded_roots:
-            canonical_catalogs = {
-                str(path)
-                for path in _canonical_function_catalog_paths(pointer_path.parent)
-            }
-            function_catalogs = sorted(
-                resolved_function_catalogs
-                or canonical_catalogs
-                or {str(value) for value in inputs.get("function_catalogs") or []}
-            )
-        else:
-            function_catalogs = sorted(
-                {
-                    *(str(value) for value in inputs.get("function_catalogs") or []),
-                    *resolved_function_catalogs,
-                }
-            )
         resolved_runlog_roots = {
             str(Path(value).expanduser().resolve())
             for value in additional_runlog_roots
@@ -2410,7 +2072,6 @@ def refresh_local_data_from_pointer(
         return _refresh_local_data_unlocked(
             memory_root=pointer_path.parent,
             source_index=str(inputs["source_index"]),
-            function_catalogs=function_catalogs,
             runlog_roots=runlog_roots,
             result_roots=result_roots,
             mobilegpt_memory_roots=mobilegpt_memory_roots,
@@ -2445,7 +2106,6 @@ def main(argv: list[str] | None = None) -> int:
     refresh_parser.add_argument("--memory-root", required=True)
     refresh_parser.add_argument("--source-index")
     refresh_parser.add_argument("--source-screenshot-root", action="append", default=[])
-    refresh_parser.add_argument("--function-catalog", action="append", default=[])
     refresh_parser.add_argument("--runlog-root", action="append", required=True)
     refresh_parser.add_argument("--result-root", action="append", default=[])
     refresh_parser.add_argument(
@@ -2458,8 +2118,6 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         default=[],
     )
-    paths_parser = subparsers.add_parser("paths")
-    paths_parser.add_argument("--memory-index", required=True)
     plan_parser = subparsers.add_parser("plan")
     plan_parser.add_argument("--memory-index", required=True)
     plan_parser.add_argument("--task", required=True)
@@ -2474,7 +2132,6 @@ def main(argv: list[str] | None = None) -> int:
             report = refresh_local_data_from_pointer(
                 memory_index=pointer_path,
                 source_screenshot_roots=args.source_screenshot_root,
-                additional_function_catalogs=_split_values(args.function_catalog),
                 additional_runlog_roots=_split_values(args.runlog_root),
                 additional_result_roots=_split_values(args.result_root),
                 additional_mobilegpt_memory_roots=_split_values(
@@ -2494,7 +2151,6 @@ def main(argv: list[str] | None = None) -> int:
                 memory_root=memory_root,
                 source_index=args.source_index,
                 source_screenshot_roots=args.source_screenshot_root,
-                function_catalogs=_split_values(args.function_catalog),
                 runlog_roots=_split_values(args.runlog_root),
                 result_roots=_split_values(args.result_root),
                 mobilegpt_memory_roots=_split_values(
@@ -2504,15 +2160,10 @@ def main(argv: list[str] | None = None) -> int:
                     args.baseline_batch_report
                 ),
             )
-        pointer = _load_object(pointer_path)
         output = {
             "current": str(pointer_path),
-            "registry": pointer["registry_path"],
             "counts": report["counts"],
         }
-    elif args.command == "paths":
-        load_local_data(args.memory_index)
-        output = _load_object(Path(args.memory_index).expanduser().resolve())
     else:
         output = registered_result_plan_from_memory(
             memory_index=args.memory_index,

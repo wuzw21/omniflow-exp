@@ -37,15 +37,15 @@ from src.integrations.runlog import import_run_log, project_androidworld_step_ac
 
 APPAGENT_OFFICIAL_REVISION = "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
 APPAGENT_TEACHER_SOURCE_SCHEMA = "omniflow.appagent-teacher-source.v2"
-APPAGENT_DEMO_MEMORY_SCHEMA = "omniflow.appagent-demo-memory.v2"
-APPAGENT_DEMO_MANIFEST = "appagent_demo_manifest.json"
-APPAGENT_DEMO_ACTION_TYPES = {
+APPAGENT_MEMORY_SCHEMA = "omniflow.appagent-memory.v2"
+APPAGENT_MANIFEST = "appagent_manifest.json"
+APPAGENT_ACTION_TYPES = {
     "click",
     "input_text",
     "long_press",
     "swipe",
 }
-APPAGENT_SUPPORTED_SOURCE_TYPES = APPAGENT_DEMO_ACTION_TYPES | {
+APPAGENT_SUPPORTED_SOURCE_TYPES = APPAGENT_ACTION_TYPES | {
     "open_app",
     "press_key",
 }
@@ -943,7 +943,7 @@ class AppAgentTeacherAgent:
         app_dir = self.workspace_root / "apps" / _safe_appagent_name(self.app_name)
         demo_root = app_dir / "demos" / self.demo_name
         if demo_root.exists():
-            raise FileExistsError(f"immutable_appagent_demo_exists:{demo_root}")
+            raise FileExistsError(f"immutable_appagent_exists:{demo_root}")
         for path in (
             demo_root / "raw_screenshots",
             demo_root / "xml",
@@ -959,7 +959,7 @@ class AppAgentTeacherAgent:
         step_index: int,
     ) -> tuple[str, list[AppAgentElement]]:
         if self.demo_root is None:
-            raise RuntimeError("appagent_demo_root_not_prepared")
+            raise RuntimeError("appagent_root_not_prepared")
         xml_text, pixels = _native_appagent_observation(self.env)
         base_name = f"{self.demo_name}_{step_index}"
         xml_path = self.demo_root / "xml" / f"{base_name}.xml"
@@ -1018,7 +1018,7 @@ class AppAgentTeacherAgent:
 
     def _append_record(self, line: str) -> None:
         if self.demo_root is None:
-            raise RuntimeError("appagent_demo_root_not_prepared")
+            raise RuntimeError("appagent_root_not_prepared")
         if line == "stop" and self._stop_written:
             return
         with (self.demo_root / "record.txt").open("a", encoding="utf-8") as handle:
@@ -1146,7 +1146,7 @@ def build_appagent_teacher_source(
         "actions": actions,
         "action_count": len(actions),
         "demo_action_count": sum(
-            str(record["action"].get("type") or "") in APPAGENT_DEMO_ACTION_TYPES
+            str(record["action"].get("type") or "") in APPAGENT_ACTION_TYPES
             for record in actions
         ),
         "consumer": "appagent_official_human_demonstration",
@@ -1202,14 +1202,14 @@ def load_appagent_teacher_source(path: str | Path) -> dict[str, Any]:
             params.get("package_name") or ""
         ).strip():
             raise ValueError("appagent_teacher_source_open_app_package_required")
-        if action_type in APPAGENT_DEMO_ACTION_TYPES:
+        if action_type in APPAGENT_ACTION_TYPES:
             demo_action_count += 1
     if int(payload.get("demo_action_count") or 0) != demo_action_count:
         raise ValueError("appagent_teacher_source_demo_action_count_mismatch")
     return payload
 
 
-def seal_appagent_demo_memory(
+def seal_appagent_memory(
     *,
     memory_root: str | Path,
     app_name: str,
@@ -1327,9 +1327,9 @@ def seal_appagent_demo_memory(
         )
     if not usage_path.is_file():
         raise FileNotFoundError(f"appagent_document_usage_missing:{usage_path}")
-    manifest_path = root / APPAGENT_DEMO_MANIFEST
+    manifest_path = root / APPAGENT_MANIFEST
     manifest = {
-        "schema_version": APPAGENT_DEMO_MEMORY_SCHEMA,
+        "schema_version": APPAGENT_MEMORY_SCHEMA,
         "official_appagent_revision": APPAGENT_OFFICIAL_REVISION,
         "task_name": normalized_task,
         "app_name": normalized_app,
@@ -1422,7 +1422,7 @@ def validate_appagent_source_demo(
     return source_result_row
 
 
-def validate_appagent_demo_memory(
+def validate_appagent_memory(
     memory_root: str | Path,
     *,
     task_name: str,
@@ -1431,27 +1431,27 @@ def validate_appagent_demo_memory(
     """Validate a sealed AppAgent demo memory before warm evaluation."""
 
     root = Path(memory_root).expanduser().resolve()
-    manifest_path = root / APPAGENT_DEMO_MANIFEST
+    manifest_path = root / APPAGENT_MANIFEST
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or payload.get("schema_version") != (
-        APPAGENT_DEMO_MEMORY_SCHEMA
+        APPAGENT_MEMORY_SCHEMA
     ):
-        raise ValueError("appagent_demo_memory_schema_invalid")
+        raise ValueError("appagent_memory_schema_invalid")
     if payload.get("official_appagent_revision") != APPAGENT_OFFICIAL_REVISION:
-        raise ValueError("appagent_demo_memory_revision_invalid")
+        raise ValueError("appagent_memory_revision_invalid")
     if payload.get("task_name") != str(task_name or "").strip():
-        raise ValueError("appagent_demo_memory_task_mismatch")
+        raise ValueError("appagent_memory_task_mismatch")
     if payload.get("source_seed") != APPAGENT_SOURCE_SEED:
-        raise ValueError("appagent_demo_memory_source_seed_invalid")
+        raise ValueError("appagent_memory_source_seed_invalid")
     offline_conversion = payload.get("conversion_mode") == "canonical_runlog_offline"
     if payload.get("conversion_mode") not in {
         "source_episode",
         "canonical_runlog_offline",
     }:
-        raise ValueError("appagent_demo_memory_conversion_mode_invalid")
+        raise ValueError("appagent_memory_conversion_mode_invalid")
     if offline_conversion:
         if payload.get("source_emulator_used") is not False:
-            raise ValueError("appagent_demo_memory_source_emulator_forbidden")
+            raise ValueError("appagent_memory_source_emulator_forbidden")
         evidence_value = str(payload.get("native_memory_evidence") or "").strip()
         evidence = Path(evidence_value) if evidence_value else None
         if evidence is not None and not evidence.is_file():
@@ -1459,35 +1459,35 @@ def validate_appagent_demo_memory(
                 f"appagent_native_memory_evidence_missing:{evidence}"
             )
     elif payload.get("official_source_success") is not True:
-        raise ValueError("appagent_demo_memory_source_success_required")
+        raise ValueError("appagent_memory_source_success_required")
     source_metrics = payload.get("source_episode_metrics")
     if not isinstance(source_metrics, dict):
-        raise ValueError("appagent_demo_memory_source_metrics_missing")
+        raise ValueError("appagent_memory_source_metrics_missing")
     if not offline_conversion and float(source_metrics.get("duration_sec") or 0.0) <= 0:
-        raise ValueError("appagent_demo_memory_source_duration_missing")
+        raise ValueError("appagent_memory_source_duration_missing")
     if not offline_conversion and float(source_metrics.get("wall_sec") or 0.0) <= 0:
-        raise ValueError("appagent_demo_memory_source_wall_time_missing")
+        raise ValueError("appagent_memory_source_wall_time_missing")
     if int(source_metrics.get("total_tokens") or 0) != int(
         source_metrics.get("prompt_tokens") or 0
     ) + int(source_metrics.get("completion_tokens") or 0):
-        raise ValueError("appagent_demo_memory_source_tokens_inconsistent")
+        raise ValueError("appagent_memory_source_tokens_inconsistent")
     doc_usage = payload.get("doc_generation_usage")
     if not isinstance(doc_usage, dict):
-        raise ValueError("appagent_demo_memory_doc_usage_missing")
+        raise ValueError("appagent_memory_doc_usage_missing")
     if int(doc_usage.get("model_calls") or 0) <= 0:
-        raise ValueError("appagent_demo_memory_doc_model_calls_missing")
+        raise ValueError("appagent_memory_doc_model_calls_missing")
     if int(doc_usage.get("total_tokens") or 0) != int(
         doc_usage.get("prompt_tokens") or 0
     ) + int(doc_usage.get("completion_tokens") or 0):
-        raise ValueError("appagent_demo_memory_doc_tokens_inconsistent")
+        raise ValueError("appagent_memory_doc_tokens_inconsistent")
     if not offline_conversion and float(doc_usage.get("wall_sec") or 0.0) <= 0:
-        raise ValueError("appagent_demo_memory_doc_wall_time_missing")
+        raise ValueError("appagent_memory_doc_wall_time_missing")
     if float(payload.get("prep_wall_sec") or 0.0) <= 0:
-        raise ValueError("appagent_demo_memory_prep_wall_time_missing")
+        raise ValueError("appagent_memory_prep_wall_time_missing")
     if payload.get("teacher_complete") is not True or int(
         payload.get("teacher_actions_consumed") or 0
     ) != int(payload.get("teacher_action_count") or -1):
-        raise ValueError("appagent_demo_memory_teacher_incomplete")
+        raise ValueError("appagent_memory_teacher_incomplete")
     teacher_action_count = int(payload.get("teacher_action_count") or 0)
     demo_action_count = int(payload.get("demo_action_count") or 0)
     if (
@@ -1495,26 +1495,26 @@ def validate_appagent_demo_memory(
         or demo_action_count <= 0
         or demo_action_count > teacher_action_count
     ):
-        raise ValueError("appagent_demo_memory_action_count_invalid")
+        raise ValueError("appagent_memory_action_count_invalid")
     for key in (
         "target_inputs_read",
         "target_observations_read",
         "validator_state_read_for_memory",
     ):
         if payload.get(key) is not False:
-            raise ValueError(f"appagent_demo_memory_leakage:{key}")
+            raise ValueError(f"appagent_memory_leakage:{key}")
     _require_hash(payload, "teacher_source", "teacher_source_sha256")
     teacher_source = load_appagent_teacher_source(payload["teacher_source"])
     if teacher_source.get("task_name") != payload.get("task_name"):
-        raise ValueError("appagent_demo_memory_teacher_task_mismatch")
+        raise ValueError("appagent_memory_teacher_task_mismatch")
     if int(teacher_source.get("action_count") or 0) != teacher_action_count:
-        raise ValueError("appagent_demo_memory_teacher_action_count_mismatch")
+        raise ValueError("appagent_memory_teacher_action_count_mismatch")
     if int(teacher_source.get("demo_action_count") or 0) != demo_action_count:
-        raise ValueError("appagent_demo_memory_demo_action_count_mismatch")
+        raise ValueError("appagent_memory_action_count_mismatch")
     if teacher_source.get("source_run_log_sha256") != payload.get(
         "source_run_log_sha256"
     ):
-        raise ValueError("appagent_demo_memory_teacher_source_mismatch")
+        raise ValueError("appagent_memory_teacher_source_mismatch")
     if not offline_conversion:
         _require_hash(payload, "source_result", "source_result_sha256")
     _require_hash(
@@ -1530,23 +1530,23 @@ def validate_appagent_demo_memory(
     demo_root = Path(str(payload.get("demo_root") or ""))
     docs_root = Path(str(payload.get("demo_docs_root") or ""))
     if _tree_sha256(demo_root) != payload.get("demo_sha256"):
-        raise ValueError("appagent_demo_memory_demo_sha256_mismatch")
+        raise ValueError("appagent_memory_sha256_mismatch")
     if _tree_sha256(docs_root) != payload.get("demo_docs_sha256"):
-        raise ValueError("appagent_demo_memory_docs_sha256_mismatch")
+        raise ValueError("appagent_memory_docs_sha256_mismatch")
     _validate_demo_artifacts(
         demo_root,
         expected_teacher_action_count=teacher_action_count,
         expected_demo_action_count=demo_action_count,
     )
     if _validate_demo_docs(docs_root) != int(payload.get("demo_docs_file_count") or 0):
-        raise ValueError("appagent_demo_memory_docs_count_mismatch")
+        raise ValueError("appagent_memory_docs_count_mismatch")
     expected_source = (
         Path(source_run_log).expanduser().resolve()
         if source_run_log is not None
         else Path(str(payload.get("source_run_log") or "")).expanduser().resolve()
     )
     if _file_sha256(expected_source) != payload.get("source_run_log_sha256"):
-        raise ValueError("appagent_demo_memory_source_run_log_mismatch")
+        raise ValueError("appagent_memory_source_run_log_mismatch")
     return dict(payload)
 
 
@@ -2232,7 +2232,7 @@ def _validate_demo_artifacts(
     expected_demo_action_count: int,
 ) -> None:
     if expected_teacher_action_count <= 0 or expected_demo_action_count <= 0:
-        raise ValueError("appagent_demo_action_count_invalid")
+        raise ValueError("appagent_action_count_invalid")
     required_dirs = (
         demo_root / "raw_screenshots",
         demo_root / "xml",
@@ -2240,11 +2240,11 @@ def _validate_demo_artifacts(
     )
     for directory in required_dirs:
         if not directory.is_dir():
-            raise FileNotFoundError(f"appagent_demo_artifact_dir_missing:{directory}")
+            raise FileNotFoundError(f"appagent_artifact_dir_missing:{directory}")
         file_count = len([path for path in directory.iterdir() if path.is_file()])
         if file_count != expected_demo_action_count + 1:
             raise ValueError(
-                "appagent_demo_artifact_count_mismatch:"
+                "appagent_artifact_count_mismatch:"
                 f"{directory.name}:{file_count}:{expected_demo_action_count + 1}"
             )
     record_path = demo_root / "record.txt"
@@ -2254,38 +2254,38 @@ def _validate_demo_artifacts(
         if line.strip()
     ]
     if len(lines) != expected_demo_action_count + 1 or lines[-1] != "stop":
-        raise ValueError("appagent_demo_record_incomplete")
+        raise ValueError("appagent_record_incomplete")
     trace_rows = _jsonl_objects(demo_root / "teacher_trace.jsonl")
     if len(trace_rows) != expected_teacher_action_count:
-        raise ValueError("appagent_demo_teacher_trace_count_mismatch")
+        raise ValueError("appagent_teacher_trace_count_mismatch")
     if int(trace_rows[-1].get("teacher_cursor") or 0) != (
         expected_teacher_action_count
     ):
-        raise ValueError("appagent_demo_teacher_trace_incomplete")
+        raise ValueError("appagent_teacher_trace_incomplete")
     if any(row.get("source_coordinates_used") is not False for row in trace_rows):
-        raise ValueError("appagent_demo_source_coordinate_replay_detected")
+        raise ValueError("appagent_source_coordinate_replay_detected")
 
 
 def _validate_demo_docs(docs_root: Path) -> int:
     if not docs_root.is_dir():
-        raise FileNotFoundError(f"appagent_demo_docs_missing:{docs_root}")
+        raise FileNotFoundError(f"appagent_docs_missing:{docs_root}")
     paths = sorted(path for path in docs_root.glob("*.txt") if path.is_file())
     if not paths:
-        raise ValueError("appagent_demo_docs_empty")
+        raise ValueError("appagent_docs_empty")
     expected_keys = {"tap", "text", "v_swipe", "h_swipe", "long_press"}
     for path in paths:
         payload = ast.literal_eval(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict) or set(payload) != expected_keys:
-            raise ValueError(f"appagent_demo_doc_schema_invalid:{path}")
+            raise ValueError(f"appagent_doc_schema_invalid:{path}")
         if not any(str(value or "").strip() for value in payload.values()):
-            raise ValueError(f"appagent_demo_doc_empty:{path}")
+            raise ValueError(f"appagent_doc_empty:{path}")
     return len(paths)
 
 
 def _require_hash(payload: dict[str, Any], path_key: str, hash_key: str) -> None:
     path = Path(str(payload.get(path_key) or ""))
     if _file_sha256(path) != payload.get(hash_key):
-        raise ValueError(f"appagent_demo_memory_hash_mismatch:{path_key}")
+        raise ValueError(f"appagent_memory_hash_mismatch:{path_key}")
 
 
 def _tag_center(
@@ -2350,8 +2350,8 @@ def _safe_appagent_name(value: Any) -> str:
 
 
 __all__ = [
-    "APPAGENT_DEMO_MANIFEST",
-    "APPAGENT_DEMO_MEMORY_SCHEMA",
+    "APPAGENT_MANIFEST",
+    "APPAGENT_MEMORY_SCHEMA",
     "APPAGENT_OFFICIAL_REVISION",
     "APPAGENT_SOURCE_SEED",
     "APPAGENT_TEACHER_SOURCE_SCHEMA",
@@ -2365,6 +2365,6 @@ __all__ = [
     "build_appagent_teacher_source",
     "ground_appagent_teacher_action",
     "load_appagent_teacher_source",
-    "seal_appagent_demo_memory",
-    "validate_appagent_demo_memory",
+    "seal_appagent_memory",
+    "validate_appagent_memory",
 ]

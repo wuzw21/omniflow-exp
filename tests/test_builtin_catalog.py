@@ -69,8 +69,5 @@ def test_catalog_is_read_only_and_never_seeds_a_runtime_store(tmp_path: Path) ->
     assert not store_path.exists()
     assert flow.store.functions == {}
 
-    packaged_store = FunctionStore(catalog.root / "function_store.json")
-    assert set(packaged_store.functions) == {
-        "manual_americano_checkout_20260806",
-        "order_beverage_meituan",
-    }
+    with pytest.raises(ValueError, match="function_store_single_function_required"):
+        FunctionStore(catalog.root / "function_store.json")

@@ -4,9 +4,9 @@
   "protocol": {
     "methods": [
       "fixed_replay",
-      "ours",
-      "mobilegpt_offline_retrieval",
-      "appagent_demo",
+      "omniflow",
+      "mobilegpt",
+      "appagent",
       "t3a_hint"
     ],
     "devices": [

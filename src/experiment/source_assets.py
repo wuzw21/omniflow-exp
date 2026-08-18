@@ -1317,7 +1317,7 @@ def convert_runlog_memory(
     source = Path(source_run_log).expanduser().resolve()
     output = Path(output_root).expanduser().resolve()
     upstream = Path(upstream_root).expanduser().resolve()
-    if selector == "mobilegpt_offline_retrieval":
+    if selector == "mobilegpt":
         from src.experiment.mobilegpt_source import (
             convert_runlog_to_mobilegpt_bundle,
         )
@@ -1329,7 +1329,7 @@ def convert_runlog_memory(
             model=model,
             embedding_model=embedding_model,
         )
-    if selector == "appagent_demo":
+    if selector == "appagent":
         from src.experiment.appagent_source import (
             convert_runlog_to_appagent_memory,
         )

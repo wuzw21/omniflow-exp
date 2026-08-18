@@ -40,9 +40,7 @@ def test_oob_control_uses_one_request_and_canonical_action() -> None:
         adb_serial="emulator-5564",
         run=run,
     )
-    result = client.act(
-        Action("click", {"x": 500, "y": 250}).to_dict()
-    )
+    result = client.act(Action("click", {"x": 500, "y": 250}).to_dict())
 
     assert result["success"] is True
     assert any(CONTROL_ACTION in command for command in commands)

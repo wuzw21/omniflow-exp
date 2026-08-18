@@ -56,7 +56,7 @@ def test_default_registry_preserves_unknown_selector_error() -> None:
 
 def test_reuse_metrics_counts_function_actions_from_trace() -> None:
     metrics = reuse_metrics(
-        "ours",
+        "omniflow",
         actions_executed=3,
         canonical_run={
             "diagnostics": {
@@ -77,7 +77,7 @@ def test_reuse_metrics_counts_function_actions_from_trace() -> None:
 
 def test_reuse_metrics_preserves_zero_mobilegpt_hits() -> None:
     metrics = reuse_metrics(
-        "mobilegpt_offline_retrieval",
+        "mobilegpt",
         mobilegpt_stats={"memory_lookup_count": 4, "memory_hit_count": 0},
     )
 
@@ -90,7 +90,7 @@ def test_reuse_metrics_preserves_zero_mobilegpt_hits() -> None:
 
 def test_appagent_asset_use_is_distinct_from_document_utilization() -> None:
     metrics = reuse_metrics(
-        "appagent_demo",
+        "appagent",
         appagent_result={
             "decision_round_count": 16,
             "documentation_round_count": 0,
@@ -141,7 +141,7 @@ def test_appagent_uses_upstream_model_factory_not_generic_wrapper(
 
     default_method_adapter_registry().build(
         MethodAdapterContext(
-            selector="external:appagent",
+            selector="appagent",
             env=SimpleNamespace(),
             store_path="store.json",
             adb_serial="emulator-5554",

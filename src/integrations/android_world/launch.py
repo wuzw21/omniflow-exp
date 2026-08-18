@@ -41,7 +41,6 @@ from src.experiment.performance_metrics import (
     write_performance_metrics,
 )
 from src.experiment.protocol import (
-    FORMAL_MODEL_BASE_URL,
     FORMAL_MODEL_ENDPOINT_PROFILE,
     MAX_STEPS,
 )
@@ -65,14 +64,6 @@ from src.integrations.android_world.methods import (
 from src.integrations.runlog import import_run_log, project_androidworld_step_actions
 
 OMNIFLOW_ROOT = Path(__file__).resolve().parents[3]
-SOURCE_RUNLOG_POOL_DIR = (
-    OMNIFLOW_ROOT
-    / "data"
-    / "runtime"
-    / "evals"
-    / "androidworld_validator"
-    / "offline_source_runlog_pool"
-)
 logger = logging.getLogger(__name__)
 DEFAULT_RAW_REPLAY_ACTION_WAIT_SECONDS = 1.0
 ANDROIDWORLD_A11Y_FORWARDER_PACKAGE = (
@@ -1192,137 +1183,6 @@ def _task_params_provenance(task: Any) -> tuple[dict[str, Any], str]:
     if not isinstance(serialized, dict):
         serialized = {}
     return serialized, _stable_hash(serialized)
-
-
-def _write_jsonl_rows(path: Path, rows: Sequence[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "".join(
-            json.dumps(to_serializable(row), ensure_ascii=False, default=str) + "\n"
-            for row in rows
-        ),
-        encoding="utf-8",
-    )
-
-
-def _append_unique_source_pool_record(
-    *,
-    task_name: str,
-    goal: str,
-    params: dict[str, Any],
-    task_random_seed: int,
-    canonical_run: dict[str, Any],
-    task_result_record: dict[str, Any],
-) -> dict[str, Any]:
-    run_id = str(canonical_run.get("run_id") or "").strip()
-    task_slug = _safe_slug(task_name)
-    canonical_name = f"{task_slug}_{run_id or _stable_hash(canonical_run)[:12]}.run_log.json"
-    pool_dir = SOURCE_RUNLOG_POOL_DIR
-    raw_rel = (
-        Path("raw_source_artifacts")
-        / "androidworld_launcher"
-        / task_slug
-        / canonical_name
-    )
-    local_abs = (pool_dir / raw_rel).resolve()
-    local_abs.parent.mkdir(parents=True, exist_ok=True)
-    local_abs.write_text(
-        json.dumps(to_serializable(canonical_run), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    try:
-        local_ref = str(local_abs.relative_to(OMNIFLOW_ROOT))
-    except ValueError:
-        local_ref = str(local_abs)
-
-    record = {
-        "schema_version": "androidworld_offline_source_runlog_pool.v1",
-        "source_kind": "androidworld_validator_success_source_runlog",
-        "source_run_log": str(local_abs),
-        "canonical_run_log": str(local_abs),
-        "function_path": None,
-        "artifact_dir": None,
-        "run_id": run_id or None,
-        "task": task_name,
-        "goal": goal,
-        "params": to_serializable(params) if isinstance(params, dict) else {},
-        "collect_seed": task_random_seed,
-        "replay_seed": None,
-        "task_random_seed": task_random_seed,
-        "androidworld_success": True,
-        "androidworld_reward": (
-            (task_result_record.get("androidworld_validator_result") or {}).get("reward")
-            if isinstance(task_result_record.get("androidworld_validator_result"), dict)
-            else 1.0
-        ),
-        "step_count": _coerce_int(task_result_record.get("step_count")),
-        "duration_ms": _coerce_float(task_result_record.get("duration_ms")),
-        "action_signature_hash": _stable_hash(
-            [
-                {
-                    "source": step.get("source"),
-                    "actions": [
-                        {
-                            "type": action.get("type"),
-                            "params": {
-                                key: value
-                                for key, value in dict(action.get("params") or {}).items()
-                                if key != "source_context"
-                            },
-                        }
-                        for action in list(step.get("actions") or [])
-                        if isinstance(action, dict)
-                    ],
-                }
-                for step in list(canonical_run.get("steps") or [])
-                if isinstance(step, dict)
-            ]
-        ),
-        "params_hash": _stable_hash(params if isinstance(params, dict) else {}),
-        "latest_official_success_source": True,
-        "local_source_run_log": local_ref,
-        "local_canonical_run_log": local_ref,
-    }
-
-    pool_dir.mkdir(parents=True, exist_ok=True)
-    by_task_dir = pool_dir / "by_task" / task_slug
-    global_json = pool_dir / "all_success_source_runlogs.json"
-    global_jsonl = pool_dir / "all_success_source_runlogs.jsonl"
-    task_json = by_task_dir / "source_runlogs.json"
-    task_jsonl = by_task_dir / "source_runlogs.jsonl"
-
-    def _load_list(path: Path) -> list[dict[str, Any]]:
-        if not path.exists():
-            return []
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return []
-        return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
-
-    def _dedupe_key(item: dict[str, Any]) -> tuple[str, str, str]:
-        return (
-            str(item.get("run_id") or ""),
-            str(item.get("local_canonical_run_log") or ""),
-            str(item.get("action_signature_hash") or ""),
-        )
-
-    def _write_index(json_path: Path, jsonl_path: Path) -> None:
-        rows = _load_list(json_path)
-        keys = {_dedupe_key(row) for row in rows}
-        key = _dedupe_key(record)
-        if key not in keys:
-            rows.append(record)
-        json_path.parent.mkdir(parents=True, exist_ok=True)
-        json_path.write_text(
-            json.dumps(to_serializable(rows), indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        _write_jsonl_rows(jsonl_path, rows)
-
-    _write_index(global_json, global_jsonl)
-    _write_index(task_json, task_jsonl)
-    return record
 
 
 def _write_task_results_summary(
@@ -3791,7 +3651,7 @@ def _build_launch_agent(
     appagent_workspace_root: str = "",
     appagent_docs_root: str = "",
     appagent_teacher_source: str = "",
-    appagent_demo_name: str = "",
+    appagent_name: str = "",
     appagent_output_root: str = "",
     task_seed: int | None = None,
     evidence_root: str = "",
@@ -3833,7 +3693,7 @@ def _build_launch_agent(
             appagent_workspace_root=appagent_workspace_root,
             appagent_docs_root=appagent_docs_root,
             appagent_teacher_source=appagent_teacher_source,
-            appagent_demo_name=appagent_demo_name,
+            appagent_name=appagent_name,
             appagent_output_root=appagent_output_root,
             task_seed=task_seed,
             evidence_root=evidence_root,
@@ -3906,24 +3766,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--adb-path", default=_default_adb_path())
     parser.add_argument("--perform-emulator-setup", action="store_true")
     parser.add_argument("--fixed-task-seed", action="store_true")
-    parser.add_argument(
-        "--publish-success-source-runlog",
-        action="store_true",
-        help=(
-            "Publish an official-validator successful canonical run to the global "
-            "offline source pool. Disabled by default so target evaluation cannot "
-            "contaminate future source memory."
-        ),
-    )
     parser.add_argument("--checkpoint-dir", default="")
     parser.add_argument(
         "--agent",
-        default=MODE_OMNIFLOW,
+            default=MODE_OMNIFLOW,
         help=(
             "Agent selector. `omniflow` keeps the shared cache-first adapter; "
-            "`external:mobilegpt` delegates one official episode to MobileGPT; "
-            "`external:appagent` runs pinned AppAgent deployment; "
-            "`external:appagent_teacher` captures one source human demo; "
+            "`mobilegpt` delegates one official episode to MobileGPT; "
+            "`appagent` runs pinned AppAgent deployment; "
             "`official:t3a_gpt4` keeps the paper baseline compatibility path."
         ),
     )
@@ -3966,7 +3816,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--appagent-workspace-root", default="")
     parser.add_argument("--appagent-docs-root", default="")
     parser.add_argument("--appagent-teacher-source", default="")
-    parser.add_argument("--appagent-demo-name", default="")
+    parser.add_argument("--appagent-name", default="")
     parser.add_argument(
         "--task-params-json",
         default="",
@@ -4450,7 +4300,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             appagent_workspace_root=str(args.appagent_workspace_root or ""),
             appagent_docs_root=str(args.appagent_docs_root or ""),
             appagent_teacher_source=str(args.appagent_teacher_source or ""),
-            appagent_demo_name=str(args.appagent_demo_name or ""),
+            appagent_name=str(args.appagent_name or ""),
             appagent_output_root=str(run_output_dir / "appagent_runtime"),
             task_seed=int(args.task_random_seed),
             evidence_root=str(run_output_dir),
@@ -4506,7 +4356,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         official_llm_usage_before = (
             _get_agent_llm_usage(agent)
             if selected_agent.startswith("official:")
-            or selected_agent == "external:appagent"
+            or selected_agent == "appagent"
             else {}
         )
         started_at = utc_now_iso()
@@ -4668,7 +4518,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 mobilegpt_agent_result: dict[str, Any] = {}
                 mobilegpt_agent_error = ""
                 runtime_integrity_error = None
-                if selected_agent == "external:mobilegpt":
+                if selected_agent == "mobilegpt":
                     raw_agent_result = getattr(
                         agent,
                         "last_result_data",
@@ -4725,7 +4575,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "actions_executed",
                         )
                     )
-                    if selected_agent.startswith("external:appagent"):
+                    if selected_agent == "appagent":
                         actions_executed = _coerce_int(
                             getattr(
                                 agent,
@@ -4745,7 +4595,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             mobilegpt_agent_result.get("actions_executed")
                         ),
                     )
-                if selected_agent == "external:appagent":
+                if selected_agent == "appagent":
                     actions_executed = max(
                         actions_executed,
                         _coerce_int(getattr(agent, "actions_executed", 0)),
@@ -4808,9 +4658,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         _, model_base_url = resolve_openai_compatible_config(
                             profile=str(args.model_endpoint_profile or "auto"),
                         )
-                if selected_agent.startswith("official:") or selected_agent == (
-                    "external:appagent"
-                ):
+                if selected_agent.startswith("official:") or selected_agent == "appagent":
                     official_agent_usage = _diff_llm_usage(
                         _get_agent_llm_usage(agent),
                         official_llm_usage_before,
@@ -4835,9 +4683,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if canonical_run_id:
                     artifact_kind = "canonical_run"
                     artifact_ref = canonical_run_id
-                elif selected_agent.startswith("official:") or selected_agent.startswith(
-                    "external:appagent"
-                ):
+                elif selected_agent.startswith("official:") or selected_agent == "appagent":
                     artifact_kind = "checkpoint"
                     artifact_ref = checkpoint_dir
                 evaluation_task_params, evaluation_task_params_sha256 = (
@@ -4901,7 +4747,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "error": error_text,
                 }
                 appagent_reuse_result: dict[str, Any] = {}
-                if selected_agent == "external:appagent":
+                if selected_agent == "appagent":
                     appagent_reuse_result = {
                         "decision_round_count": _coerce_int(
                             getattr(agent, "round_count", 0)
@@ -5011,29 +4857,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     task_result_record["observation_evidence_error"] = (
                         episode_recorder_error
                     )
-                if (
-                    task_success
-                    and canonical_run is not None
-                    and bool(args.publish_success_source_runlog)
-                ):
-                    try:
-                        source_pool_record = _append_unique_source_pool_record(
-                            task_name=task_name,
-                            goal=goal_text,
-                            params=evaluation_task_params,
-                            task_random_seed=int(args.task_random_seed),
-                            canonical_run=canonical_run,
-                            task_result_record=task_result_record,
-                        )
-                        task_result_record["source_pool_record"] = {
-                            "local_canonical_run_log": source_pool_record.get(
-                                "local_canonical_run_log"
-                            ),
-                            "run_id": source_pool_record.get("run_id"),
-                            "task": source_pool_record.get("task"),
-                        }
-                    except Exception as exc:  # noqa: BLE001
-                        task_result_record["source_pool_record_error"] = str(exc)
                 task_results_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(task_results_path, "a", encoding="utf-8") as handle:
                     handle.write(

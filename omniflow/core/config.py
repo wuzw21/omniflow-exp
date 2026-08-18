@@ -42,11 +42,11 @@ DEFAULT_PLANNER_SYSTEM_PROMPT = (
 
 @dataclass(frozen=True)
 class Experiment:
-    name: str = "ours"
+    name: str = "omniflow"
 
     @classmethod
     def for_method(cls, name: str) -> "Experiment":
-        return cls(name=str(name or "ours"))
+        return cls(name=str(name or "omniflow"))
 
 
 @dataclass(frozen=True)

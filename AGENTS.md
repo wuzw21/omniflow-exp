@@ -1,5 +1,22 @@
 # OmniFlow-exp Rules
 
+## Single-owner edit map
+
+Change each concern only in its owner file; other files may call the owner but
+must not redefine its interface or lifecycle:
+
+- public experiment entry: `scripts/exp/run_androidworld.sh`
+- experiment scheduler: `src/experiment/e2e_task_pipeline.py`
+- one task/device runner: `src/experiment/androidworld.py`
+- Function authoring and Store writer: `omniflow/functions/assets.py`
+- canonical local index: `src/experiment/local_data.py`
+- AndroidWorld native host: `src/integrations/android_world/host.py`
+- method selection adapters: `src/integrations/android_world/methods.py`
+- external JSON-line interface: `omniflow/bridge.py`
+
+If a change appears to need a second owner, remove the duplicate or make it a
+private adapter that forwards to the owner.
+
 This repository contains only the paper's AndroidWorld experiment and the
 B-MoCA validation of the same OmniFlow method. Do not add product features,
 historical campaigns, ablations, raw assets, compatibility layers, or alternate
@@ -30,19 +47,20 @@ The retained management tools are `list_functions`, `get_function`,
 
 ## Function and checker contract
 
-One successful `omniflow.run_log.v1` may save one or more semantic Functions in
-one `save_function` call. Enhancement is optional (`enhance=true`) and uses the
-same validation and Store writer as a normal save.
+One successful `omniflow.run_log.v1` saves exactly one semantic Function in one
+`save_function` call. Enhancement is optional (`enhance=true`) and uses the same
+validation and Store writer as a normal save.
 
 Enhanced authoring uses one bounded three-stage workflow over one in-memory
-draft, not one JSON call per RunLog action. Stage 1 identifies Function ranges
-once; stages 2 and 3 edit one identified Function at a time for source-proven
-action semantics plus parameters, then checker registrations. The Agent never
+draft, not one JSON call per RunLog action. Stage 1 names the one complete
+Function; stages 2 and 3 edit that Function for source-proven action semantics
+plus parameters, then checker registrations. The Agent never
 returns complete Functions, source states,
 bindings, checker rules, Stores, or authoring manifests. It may request only
-the two action edits defined by the shared schema: replace a launcher click
-with the exact after-state package as `open_app`, or attach the exact visible
-source target as `target_description`.
+the two action decisions defined by the shared schema: mark an eligible launcher
+click as `open_app`, or mark an eligible visible click as `set_target`. The Agent
+never returns the package or target value; the compiler copies it from validated
+RunLog evidence.
 
 Method improvement changes the shared authoring policy, evidence supplied to
 the Agent, deterministic compiler, or runtime adapter; it never hand-edits a
@@ -54,46 +72,44 @@ decision and a rejected decision may receive only its own validation feedback.
 `save_function` deterministically preserves source action order and states,
 validates every requested action edit against the before/after RunLog states,
 compiles parameter schemas and bindings, registers checkers, and emits one
-large Function covering the complete successful trajectory plus optional
-reusable contiguous semantic subsegments identified by the Agent. The Agent
-must omit uncertain, transient-dialog, task-ending, and task-specific candidates
-instead of forcing a split. Every emitted subsegment must supply a non-empty
-`stability_reason` naming its stable precondition, repeatable semantic effect,
-and caller-varying content that must be parameterized. Subsegments never
-replace the complete Function, and meaningless one-click fragments are not
-saved. A checker action may not also
+large Function covering the complete successful trajectory. The Agent may not
+split the trajectory or emit a second Function. A checker action may not also
 remain a formal action in the same Function.
 
+For enhanced authoring, `source_calls` contains exactly the complete Function
+call that reproduces the successful RunLog.
+
 The single model-facing tool is `edit_function_draft`. Its three strict stage
-schemas return only: `complete_function + subsegments`, `action_edits +
-bindings`, then `checker_steps`. The latter two schemas are requested separately
+schemas return: `complete_function`, then `action_edits +
+bindings + optional source-grounded actions`, then `checker_steps`. The latter two schemas are requested separately
 for each Function and may refer only to that Function's listed source indices.
-An action edit contains only `function_id`,
-`step_index`, `operation`, and `value`. A subsegment contains Function metadata,
-`stability_reason`, and an inclusive/exclusive source step range. Bridge and
-experiment adapters import these schemas and select the supplied tool name
-instead of defining another authoring contract. One deterministically invalid
-stage edit gets one correction opportunity. Transport failures, missing
-evidence, or a second invalid edit fail immediately. Nothing is persisted
+An action edit contains only `function_id`, `step_index`, and `operation`. Bridge
+and experiment adapters import these schemas and select the supplied tool name
+instead of defining another authoring contract. Each stage gets at most three
+model attempts. A rejected decision receives only that stage's deterministic
+validation error before the Agent revises the same in-memory draft; transport
+failures and missing evidence fail immediately. Nothing is persisted
 until all three edits compile and all Functions pass the same authoritative
 validation and sole Store writer.
 
-Action semantics are source evidence, not free-form generation. `open_app`
+Action semantics are source evidence, not ungrounded generation. The action
+stage may return direct canonical actions for exploration, but `save_function`
+accepts them only when they exactly match the selected RunLog step or a
+deterministic source-proven semantic edit. `open_app`
 requires a source launcher page and a different non-empty package in the
-RunLog after-state; its value must equal that package. `set_target` requires an
-exact visible label at the source action point; its value must equal that label.
+RunLog after-state; the compiler copies that package. `set_target` requires an
+exact visible label at the source action point; the compiler copies that label.
 Caller-varying visible targets such as an hour or category bind
 `target_description`; typed content binds `text`. The compiler derives this
 path from the validated action; the Agent does not author it. Coordinates,
-packages, waits, and directions are never parameters. An invented or
-paraphrased target fails validation. A bound source value must occur directly
+packages, waits, and directions are never parameters. A bound source value must occur directly
 in the RunLog goal; a current page value absent from the goal is source state,
 not caller input.
 
 Before a saved B-MoCA bundle may run cross-environment, its complete Function
 must pass env100 `script_replay` with official success, method success,
 `model_calls=0`, and `fallback_steps=0`. A failed source gate ends that task;
-never prepare or launch env101--109 or `ours` for an unqualified Function. Do
+never prepare or launch env101--109 or `omniflow` for an unqualified Function. Do
 not clone any B-MoCA AVD before Function enhancement succeeds; prepare env100
 for the source gate first and the remaining AVDs only after that gate passes.
 
@@ -132,7 +148,7 @@ step in another; conflicting roles reject the entire atomic save.
 
 The global target-probability threshold is defined only in the
 `protocol.checker` block of `config/paper_androidworld.json`. Pair confidence
-and page-embedding similarity are evidence, not triggers. Per-rule thresholds
+and page-embedding similarity is not a trigger or recall signal. Per-rule thresholds
 and condition switches are forbidden because they recreate a trigger language.
 Formal Function actions go directly through canonical OmniTransfer target
 mapping; a missing or rejected mapping returns control to the normal Planner
@@ -141,6 +157,62 @@ fallback without source-coordinate execution.
 Function success is an ordinary Planner tool result, not AndroidWorld task
 completion. The Planner may call more Functions or GUI actions before it
 explicitly finishes.
+
+### Function generation and success criteria
+
+Function generation always starts from one complete, immutable, successful
+RunLog. The RunLog must contain the real native observations, action sequence,
+before/after states, screenshot references, task goal, device/source metadata,
+and the official environment outcome. A RunLog that is incomplete, missing
+screenshots or observations, has an invalid schema/hash, or fails the official
+validator is evidence of a failed attempt only; it must never be converted into
+an executable Function.
+
+The only generation pipeline is:
+
+1. `save_function` loads and validates the RunLog and checks its exact source
+   lineage and immutable evidence.
+2. With `enhance=false`, the deterministic compiler creates the complete
+   source-grounded Function from the RunLog action/state sequence.
+3. With `enhance=true`, `edit_function_draft` performs the bounded three-stage
+   workflow: name the complete trajectory, edit only
+   source-proven action semantics and bindings, then register Function-local
+   checker steps. The Agent may propose decisions, but the compiler copies
+   packages, targets, states, coordinates, and action evidence from the
+   validated RunLog and rejects invented values.
+4. The compiler preserves the complete ordered trajectory as the one large
+   Function and never emits a split recall candidate.
+5. The sole validator checks schemas, source indices, action/state transitions,
+   parameter bindings, checker roles, transfer evidence, and Function/Store
+   invariants. The sole Store writer then writes the Function Store atomically,
+   records exact hashes and lineage in the canonical `data/current.json` index.
+
+There are three distinct success levels and they must not be conflated:
+
+- **Authoring success:** `save_function` completes without validation errors,
+  writes a valid `omniflow.store.v2`, and the Store can be loaded through
+  `get_function`/`list_functions` from the canonical index. This proves only
+  that the Function was generated and persisted.
+- **Function replay success:** the complete Function is selected and executed
+  through the canonical OmniTransfer/runtime path, with no source-coordinate
+  passthrough. Every formal action maps or falls back normally, the Function
+  invocation returns success, and no evidence or checker invariant is violated.
+  A successful tool result alone is not official task completion.
+- **Official task/source-gate success:** the replayed task passes the official
+  AndroidWorld validator or B-MoCA reward, and the required method/result
+  contract also passes. For the B-MoCA env100 source gate, the required
+  conditions are official success, method success, `model_calls=0`, and
+  `fallback_steps=0`; only then may cross-environment replay proceed. For
+  AndroidWorld source qualification, the canonical source must be seed 111,
+  have screenshots and real RunLog evidence, pass the official validator, and
+  use zero model calls. A Function is not labelled successful merely because
+  authoring succeeded or because the Planner returned a tool result.
+
+If any stage fails, the attempt remains a failure/trace bundle with its error
+and evidence. No partial draft, invalid Function, checker-only fragment, or
+missing-Store replacement may be persisted as a runnable Function. Repair the
+shared policy/compiler/runtime seam and regenerate through `save_function` from
+the same successful RunLog; never hand-edit a generated Function Store.
 
 ## OmniTransfer boundary
 
@@ -160,8 +232,8 @@ evidence is an explicit failure and returns to normal VLM fallback.
 ## Formal experiment contract
 
 The atomic result is exactly one `task + method + device`. Do not reintroduce
-cell protocols or names. Formal methods are exactly `fixed_replay`, `ours`,
-`mobilegpt_offline_retrieval`, `appagent_demo`, and `t3a_hint`.
+cell protocols or names. Formal methods are exactly `fixed_replay`, `omniflow`,
+`mobilegpt`, `appagent`, and `t3a_hint`.
 
 The only formal configuration is the `protocol` block of
 `config/paper_androidworld.json`. `src/experiment/protocol.py`, shell, runners,
@@ -193,8 +265,81 @@ ledger; do not recreate master matrix, run-record, or per-method summary tables.
 
 ## Execution and memory
 
+### Canonical Python/Torch runtime
+
+All OmniFlow-exp commands, tests, Function conversion, AndroidWorld setup, and
+B-MoCA execution use the repository-local interpreter:
+
+`~/Projects/Omni/OmniFlow-exp/.venv/bin/python`
+
+This environment is the sole Python/Torch runtime for this repository and is
+currently Python 3.12.11 with Torch 2.13.0. Do not use any neighboring
+OmniFlow environment, Conda Python, system `python3`, or another Torch
+installation. The public shell entry defaults to this interpreter and
+rejects retired neighboring runtimes. `PYTHON_BIN` is reserved for an
+explicitly provisioned equivalent test runtime, never for formal execution.
+
+### Single artifact storage
+
+All AndroidWorld RunLogs, screenshots, converted source evidence, Function
+Stores, transfer-state catalogs, method memory, and registered result evidence
+are stored under exactly one stable local root:
+
+`~/Projects/Omni/OmniFlow-exp/data`
+
+`data/current.json` is the only runtime entry point and contains the complete
+`omniflow.local-artifact-index.v1` index inline: source rows, canonical
+Function Stores, method memory, and result rows. There is no second registry,
+`indexes/` directory, `snapshots/` directory, or per-task pointer. The
+canonical local data is materialized one item at a time from selected evidence
+and then treated as immutable. Do not create parallel `current.json` files,
+scratch memory roots, compatibility stores, or duplicate converted copies.
+
+Use this fixed `task_device_c` classification inside `data/` for every saved
+bundle:
+
+```text
+data/<environment>/<task>/<device>/<category>/<method>/<attempt_id>/
+  run_log.json                 # when the bundle contains a RunLog
+  transfer_states.json         # when transfer evidence exists
+  screenshots/                 # content-addressed screenshot files
+  trace/                       # XML/native/action trace files
+  function_store.json          # Function Store and Function-local checkers
+  result.json                  # compact public result row
+  details.json                 # detailed evidence companion
+```
+
+`environment` is `androidworld` or `bmoca`; `task` is the official task name;
+`device` is the protocol device or B-MoCA environment (`source5560`,
+`small5554`, `fold5564`, `env100`, and so on); `category` is one of `source`,
+`function`, `checker`, `trace`, `replay`, `result`, or `memory`; and `method` is
+the exact protocol/reuse method or `function_authoring` for shared authoring.
+Source and shared Function evidence still use the real source device and
+`function_authoring`, so every item is addressable as task + device + category
+(`task_device_c`) and method-bearing evidence never loses its method dimension.
+The five AndroidWorld methods are `fixed_replay`, `omniflow`,
+`mobilegpt`, `appagent`, and `t3a_hint`; B-MoCA reuse
+methods remain `ours_replay`, `mobilegpt_replay`, and `skilldroid_replay`.
+
+The inline `current.json` record carries the bundle classification, lineage,
+and hashes; do not create a second manifest, provenance registry, checker file,
+or per-task pointer for the same bundle. `save_function` keeps checker rules in
+the Function Store and writes no checker/provenance/manifest sidecars.
+Inner files must use the latest applicable repository schema: `omniflow.run_log.v1`,
+`omniflow.function.v2`, `omniflow.store.v2`,
+`omniflow.transfer-state-catalog.v1`, or the current method/result schema
+defined by its loader. Convert legacy or malformed input in memory, validate
+it, and write only the converted object plus its original hash in the inline
+record; never retain an invalid runtime copy. Writes are one bundle at a time
+and atomic; an incomplete bundle is not indexed or executable.
+
+Save task-major, one bundle at a time, and resolve only `data/current.json`
+during execution. Historical external locations and old task-local layouts are
+read-only migration inputs. After conversion, runtime must not visit them and
+must not create another task-only, method-only, or external artifact root.
+
 Run task-major and complete one task before advancing. Resolve
-`OMNIFLOW_EXP_MEMORY_ROOT/current.json` first and skip every formal result with
+`data/current.json` first and skip every formal result with
 an existing official-validator conclusion. Formal results and original attempts
 are immutable.
 
@@ -205,7 +350,7 @@ For each unfinished task:
 2. check Function recall, Planner selection, and offline replay;
 3. qualify the Function on the source contract with official validator success,
    `model_calls=0`, and `fallback_steps=0`;
-4. run at most three unregistered `ours` development iterations on SmallPhone,
+4. run at most three unregistered `omniflow` development iterations on SmallPhone,
    then Pixel Fold;
 5. freeze the version and fill only missing formal results.
 
@@ -221,10 +366,12 @@ contain screenshot references, use zero model calls, and pass the official
 validator. Normal qualification and formal execution still reject a non-111
 canonical source.
 
-The shared AndroidWorld setup seam may resolve the system `Open with` chooser
-for official Contacts setup only when `Open with`, `Contacts`, and `Just once`
-are all visible; it selects `Contacts` and `Just once`, then resumes the
-official onboarding `Skip`. Other chooser states remain setup failures.
+The shared AndroidWorld setup seam may resolve the system chooser for official
+Contacts setup only when `Just once` is visible and the title is either
+`Open with` with a visible `Contacts` choice, or `Open with Contacts` after that
+choice is already selected. It selects only the missing choice, confirms
+`Just once`, then resumes the official onboarding `Skip`. Other chooser states
+remain setup failures.
 
 For explicitly authorized source-data collection only, a single-task direct
 AndroidWorld collector may use the pinned checkout's native emulator,
@@ -235,11 +382,11 @@ not invoke experiment methods or register formal results.
 
 Use AndroidWorld native state/action and its official validator. B-MoCA is an
 environment adapter using the same OmniFlow Function/checker/OmniTransfer
-runtime and official B-MoCA reward. `ours` lets the Planner select Functions;
+runtime and official B-MoCA reward. `omniflow` lets the Planner select Functions;
 `script_replay` selects the one complete Function directly with its saved
 source-call arguments, but may not own a second action mapper or executor.
 
-The AndroidWorld `ours` adapter runs exactly one persistent `OmniFlow.run()`
+The AndroidWorld `omniflow` adapter runs exactly one persistent `OmniFlow.run()`
 cycle per task. The official episode runner's outer `step()` call is only an
 adapter invocation; it may not recreate OmniFlow with `max_steps=1`, accumulate
 separate partial RunResults, or own Function resume/fallback state. The
@@ -264,6 +411,10 @@ through Git.
 Do not commit RunLogs, screenshots, XML dumps, weights, APKs, emulator images,
 baseline memories, credentials, attempts, or result tables. Assets are supplied
 through explicit absolute paths and indexed by exact SHA-256 outside the repo.
+
+The retired source-pool writer, `index_by_task` archive, and legacy source
+converter are removed. Successful source RunLogs enter the canonical data
+index and then `save_function`; no parallel source archive may be recreated.
 
 `tools/manual_androidworld_harness.py` is human-only diagnosis. It cannot create
 formal results, refresh canonical memory, or replace the unified shell entry.

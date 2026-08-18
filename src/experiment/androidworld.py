@@ -46,6 +46,7 @@ from src.experiment.protocol import (
     DEFAULT_DEVICE,
     DEFAULT_METHOD,
     EPISODE_TIMEOUT_SEC,
+    ANDROIDWORLD_REVISION,
     MAX_STEPS,
     METHODS,
     RESULT_COMMANDS_FILE,
@@ -59,24 +60,20 @@ from src.experiment.protocol import (
 from src.experiment.result_registry import register_attempt_summary
 from src.experiment.result_schema import RESULT_FIELDS, compact_result_row
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
-from src.integrations.appagent_adapter import validate_appagent_demo_memory
+from src.integrations.appagent_adapter import validate_appagent_memory
 
-DEFAULT_ARCHIVE_INDEX = (
-    REPO_ROOT
-    / "runtime"
-    / "evals"
-    / "androidworld_validator"
-    / "core_archive"
-    / "success_source_runlogs"
-    / "index_by_task.json"
-)
+DEFAULT_DATA_INDEX = REPO_ROOT / "data" / "current.json"
 DEFAULT_ANDROID_WORLD_ROOT = (
-    REPO_ROOT / "runtime" / "external" / "droidrun-android-world" / "android_world"
+    Path.home()
+    / "Projects"
+    / "Omni"
+    / "releases"
+    / f"android-world-{ANDROIDWORLD_REVISION}"
 )
 DEFAULT_OUTPUT_ROOT = (
-    REPO_ROOT / "runtime" / "evals" / "androidworld_validator" / "runs"
+    REPO_ROOT / "data" / "androidworld"
 )
-DEFAULT_MOBILEGPT_ROOT = REPO_ROOT / "runtime" / "external" / "mobilegpt"
+DEFAULT_MOBILEGPT_ROOT = REPO_ROOT / "data" / "runtime" / "external" / "mobilegpt"
 DEFAULT_MOBILEGPT_STATS_JSONL = (
     DEFAULT_OUTPUT_ROOT / "_mobilegpt_stats" / "mobilegpt_stats.jsonl"
 )
@@ -92,7 +89,7 @@ DEFAULT_SOURCE_METHOD = DEFAULT_METHOD
 
 
 @dataclass(frozen=True)
-class ArchivedRunLog:
+class CanonicalRunLog:
     task: str
     goal: str
     params: dict[str, Any]
@@ -199,21 +196,6 @@ def _repo_path(value: str | Path, *, repo_root: Path = REPO_ROOT) -> Path:
     return path.resolve()
 
 
-def _default_e2e_store_path(
-    output_root: str | Path,
-    *,
-    repo_root: Path = REPO_ROOT,
-) -> Path:
-    """Use a per-run Function Store so experiments never read shared state."""
-
-    return (
-        _repo_path(output_root, repo_root=repo_root)
-        / "_runtime"
-        / "omniflow"
-        / "store.json"
-    )
-
-
 def _local_dotenv_env(*, repo_root: Path = REPO_ROOT) -> dict[str, str]:
     dotenv_path = repo_root / ".env"
     if not dotenv_path.exists():
@@ -299,7 +281,7 @@ def _temporary_env(updates: dict[str, str | None]):
                 os.environ[key] = value
 
 
-def _archive_ref_path(
+def _canonical_source_ref_path(
     value: str | Path,
     *,
     index_path: Path,
@@ -420,7 +402,7 @@ def _experiment_run_dir(
 
 
 def _androidworld_validator_root(*, repo_root: Path = REPO_ROOT) -> Path:
-    return repo_root / "runtime" / "evals" / "androidworld_validator"
+    return repo_root / "data" / "runtime" / "evals" / "androidworld_validator"
 
 
 def _result_registry_root(
@@ -519,29 +501,6 @@ _SOURCE_XML_EVIDENCE_KEYS = {
     "image_path",
     "image_base64",
 }
-
-
-def _write_canonical_source_run_log(
-    canonical: dict[str, Any],
-    *,
-    output_root: str | Path,
-    task: str,
-    suffix: str = "",
-    repo_root: Path = REPO_ROOT,
-) -> Path:
-    materialized_dir = (
-        _repo_path(output_root, repo_root=repo_root) / "_canonical_source_runlogs"
-    )
-    materialized_dir.mkdir(parents=True, exist_ok=True)
-    stem = _safe_stem(task)
-    if str(suffix or "").strip():
-        stem = f"{stem}.{_safe_stem(suffix)}"
-    materialized_path = materialized_dir / f"{stem}.run_log.json"
-    materialized_path.write_text(
-        json.dumps(canonical, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    return materialized_path.resolve()
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -742,50 +701,27 @@ def complete_androidworld_task_params(
     return completed
 
 
-def load_archive_index(
-    index_path: str | Path = DEFAULT_ARCHIVE_INDEX,
+def load_canonical_source_index(
+    index_path: str | Path = DEFAULT_DATA_INDEX,
     *,
     repo_root: Path = REPO_ROOT,
-) -> list[ArchivedRunLog]:
+) -> list[CanonicalRunLog]:
     path = _repo_path(index_path, repo_root=repo_root)
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
-        raise ValueError(f"Archive index must be a JSON object: {path}")
+        raise ValueError(f"Canonical data index must be a JSON object: {path}")
+    if data.get("schema_version") == "omniflow.local-artifact-index.v1":
+        data = data.get("source_index")
+        if not isinstance(data, dict):
+            raise ValueError(f"Current data index has no source index: {path}")
 
-    by_task_root = path.parent / "by_task"
-    if by_task_root.is_dir():
-        for metadata_path in sorted(by_task_root.glob("*/metadata.json")):
-            try:
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if (
-                not isinstance(metadata, dict)
-                or metadata.get("androidworld_success") is not True
-            ):
-                continue
-            task = str(metadata.get("task") or metadata_path.parent.name).strip()
-            source_run_log = metadata_path.parent / "source.run_log.json"
-            if not task or task in data or not source_run_log.is_file():
-                continue
-            data[task] = {
-                **metadata,
-                "retained_source_run_log": _path_ref_from(
-                    path.parent,
-                    source_run_log,
-                ),
-            }
-
-    archive: list[ArchivedRunLog] = []
+    source_items: list[CanonicalRunLog] = []
     for task, raw_meta in data.items():
         if not isinstance(raw_meta, dict):
             continue
         retained = str(raw_meta.get("retained_source_run_log") or "").strip()
         if not retained:
-            retained = (
-                "runtime/evals/androidworld_validator/core_archive/"
-                f"success_source_runlogs/by_task/{task}/source.run_log.json"
-            )
+            raise ValueError(f"source_run_log_missing_in_current_index:{task}")
         params = (
             raw_meta.get("params") if isinstance(raw_meta.get("params"), dict) else {}
         )
@@ -799,12 +735,12 @@ def load_archive_index(
             or raw_meta.get("task_random_seed"),
             30,
         )
-        archive.append(
-            ArchivedRunLog(
+        source_items.append(
+            CanonicalRunLog(
                 task=str(task),
                 goal=str(raw_meta.get("goal") or ""),
                 params=dict(params),
-                source_run_log=_archive_ref_path(
+                source_run_log=_canonical_source_ref_path(
                     retained,
                     index_path=path,
                     repo_root=repo_root,
@@ -814,10 +750,10 @@ def load_archive_index(
                 meta=dict(raw_meta),
             )
         )
-    return archive
+    return source_items
 
 
-def profile_source_run_log(item: ArchivedRunLog) -> SourceRunLogProfile:
+def profile_source_run_log(item: CanonicalRunLog) -> SourceRunLogProfile:
     data = _read_json(item.source_run_log)
     notes: list[str] = []
     read_error = str(data.get("_read_error") or "").strip()
@@ -922,7 +858,7 @@ def _apk_names(app_setup: object) -> tuple[str, ...]:
 
 
 def collect_androidworld_app_specs(
-    items: Sequence[ArchivedRunLog],
+    items: Sequence[CanonicalRunLog],
     *,
     android_world_root: str | Path = DEFAULT_ANDROID_WORLD_ROOT,
     suite_family: str = "android_world",
@@ -1112,7 +1048,7 @@ def build_device_readiness_summary(
 
 
 def materialize_replay_run_log(
-    item: ArchivedRunLog,
+    item: CanonicalRunLog,
     *,
     output_root: str | Path,
     repo_root: Path = REPO_ROOT,
@@ -1167,7 +1103,7 @@ def _copy_replay_run_log_to_memory(
 
 
 def _materialize_replay_run_log_for_memory(
-    item: ArchivedRunLog,
+    item: CanonicalRunLog,
     *,
     memory_root: str | Path,
     repo_root: Path = REPO_ROOT,
@@ -1295,11 +1231,7 @@ def _canonical_steps_from_cards(cards: Sequence[Any]) -> list[dict[str, Any]]:
 
 
 def canonicalize_source_run_log(
-    item: ArchivedRunLog,
-    *,
-    output_root: str | Path | None = None,
-    repo_root: Path = REPO_ROOT,
-    write_materialized: bool = False,
+    item: CanonicalRunLog,
 ) -> tuple[dict[str, Any], str, SourceRunLogProfile, Path | None]:
     """Return one canonical step-based runlog from the archived source asset."""
 
@@ -1327,7 +1259,7 @@ def canonicalize_source_run_log(
         payload.get("run_id")
         or data.get("run_id")
         or item.meta.get("run_id")
-        or f"androidworld_archive_{_safe_stem(item.task)}"
+        or f"androidworld_canonical_source_{_safe_stem(item.task)}"
     ).strip()
     canonical = dict(payload)
     canonical.update(
@@ -1341,7 +1273,7 @@ def canonicalize_source_run_log(
             "done_reason": str(canonical.get("done_reason") or "source_success"),
             "steps": steps,
             "step_count": len(steps),
-            "source": str(canonical.get("source") or "androidworld_archive_source"),
+            "source": str(canonical.get("source") or "androidworld_canonical_source"),
             "androidworld_task": str(canonical.get("androidworld_task") or item.task),
             "androidworld_params": dict(
                 canonical.get("androidworld_params")
@@ -1351,25 +1283,11 @@ def canonicalize_source_run_log(
         }
     )
 
-    materialized_path: Path | None = None
-    if write_materialized:
-        if output_root is None:
-            raise ValueError("output_root is required when write_materialized=True")
-        materialized_dir = (
-            _repo_path(output_root, repo_root=repo_root) / "_canonical_source_runlogs"
-        )
-        materialized_dir.mkdir(parents=True, exist_ok=True)
-        materialized_path = materialized_dir / f"{_safe_stem(item.task)}.run_log.json"
-        materialized_path.write_text(
-            json.dumps(canonical, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        materialized_path = materialized_path.resolve()
-    return canonical, materialization, profile, materialized_path
+    return canonical, materialization, profile, None
 
 
 def build_fixed_replay_command(
-    item: ArchivedRunLog,
+    item: CanonicalRunLog,
     *,
     android_world_root: str | Path = DEFAULT_ANDROID_WORLD_ROOT,
     output_root: str | Path = DEFAULT_OUTPUT_ROOT,
@@ -1521,7 +1439,7 @@ def build_fixed_replay_command(
 
 
 def build_official_androidworld_command(
-    item: ArchivedRunLog,
+    item: CanonicalRunLog,
     *,
     android_world_root: str | Path = DEFAULT_ANDROID_WORLD_ROOT,
     output_root: str | Path = DEFAULT_OUTPUT_ROOT,
@@ -1656,7 +1574,7 @@ def build_official_androidworld_command(
 
 
 def build_e2e_command(
-    item: ArchivedRunLog,
+    item: CanonicalRunLog,
     *,
     android_world_root: str | Path = DEFAULT_ANDROID_WORLD_ROOT,
     output_root: str | Path = DEFAULT_OUTPUT_ROOT,
@@ -1710,10 +1628,12 @@ def build_e2e_command(
             run_dir_suffix,
             fallback="run",
         )
+    if resolved_agent == "omniflow" and not str(store_path or "").strip():
+        raise ValueError("omniflow_function_store_required")
     resolved_store_path = (
         _repo_path(store_path, repo_root=repo_root)
         if store_path
-        else _default_e2e_store_path(output_root, repo_root=repo_root)
+        else None
     )
     resolved_task_seed = int(
         item.replay_seed if task_random_seed is None else task_random_seed
@@ -1837,7 +1757,7 @@ def build_e2e_command(
     )
 
 
-def validate_ours_transfer_assets(
+def validate_omniflow_transfer_assets(
     store_path: str | Path,
     *,
     require_action_transfer: bool = True,
@@ -3108,7 +3028,7 @@ def _validate_mobilegpt_converted_memory(
     ):
         raise ValueError("mobilegpt_virtual_memory_task_lifecycle_incomplete")
     if int(stats_summary.get("chat_model_calls") or 0) != 0:
-        raise ValueError("mobilegpt_offline_memory_chat_calls_forbidden")
+        raise ValueError("mobilegpt_memory_chat_calls_forbidden")
     return {
         "manifest": manifest,
         "manifest_path": str(manifest_path),
@@ -3596,7 +3516,7 @@ def _find_free_local_port() -> int:
 
 
 def _mobilegpt_browser_task_html(
-    item: ArchivedRunLog,
+    item: CanonicalRunLog,
     *,
     android_world_root: str | Path = DEFAULT_ANDROID_WORLD_ROOT,
     task_params_override: dict[str, Any] | None = None,
@@ -3620,7 +3540,7 @@ def _mobilegpt_browser_task_html(
 
 def _start_mobilegpt_browser_task_server(
     *,
-    item: ArchivedRunLog,
+    item: CanonicalRunLog,
     memory_root: Path,
     android_world_root: str | Path = DEFAULT_ANDROID_WORLD_ROOT,
     task_params_override: dict[str, Any] | None = None,
@@ -3887,10 +3807,10 @@ def _task_result_path_context(path: Path) -> dict[str, str]:
         return {}
     known_methods = {
         "fixed_replay",
-        "ours",
-        "mobilegpt_offline_retrieval",
+        "omniflow",
+        "mobilegpt",
         "t3a_hint",
-        "appagent_demo",
+        "appagent",
     }
     stage = ""
     run_dir = path.parent
@@ -4128,343 +4048,6 @@ def _success_source_action_signature_hash(canonical: dict[str, Any]) -> str:
     return _stable_json_hash(signature or canonical)
 
 
-def _success_source_record_key(
-    record: dict[str, Any],
-) -> tuple[str, str, str, str, str]:
-    return (
-        str(record.get("task") or ""),
-        str(record.get("method") or ""),
-        str(record.get("device") or ""),
-        str(record.get("run_id") or ""),
-        str(record.get("action_signature_hash") or ""),
-    )
-
-
-def _success_source_archive_entry(
-    record: dict[str, Any],
-    *,
-    index_root: Path,
-    source_run_log: Path,
-) -> dict[str, Any]:
-    source_seed = _coerce_int(
-        record.get("source_seed")
-        or record.get("replay_seed")
-        or record.get("task_random_seed"),
-        DEFAULT_TASK_RANDOM_SEED,
-    )
-    return {
-        "schema_version": "omniflow.androidworld_success_source_runlog_index.v1",
-        "source_kind": "androidworld_validator_success_source_runlog",
-        "goal": record.get("goal") or "",
-        "params": record.get("params")
-        if isinstance(record.get("params"), dict)
-        else {},
-        "retained_source_run_log": _path_ref_from(index_root, source_run_log),
-        "source_run_log": _path_ref_from(index_root, source_run_log),
-        "source_run_log_sha256": _file_sha256(source_run_log),
-        "source_seed": source_seed,
-        "replay_seed": _coerce_int(
-            record.get("replay_seed") or record.get("task_random_seed"),
-            DEFAULT_TASK_RANDOM_SEED,
-        ),
-        "collect_seed": _coerce_int(
-            record.get("collect_seed") or record.get("task_random_seed"),
-            DEFAULT_TASK_RANDOM_SEED,
-        ),
-        "task_random_seed": _coerce_int(
-            record.get("task_random_seed"),
-            DEFAULT_TASK_RANDOM_SEED,
-        ),
-        "step_count": _coerce_int(record.get("step_count"), 0),
-        "method": record.get("method") or "",
-        "device": record.get("device") or "",
-        "run_id": record.get("run_id") or None,
-        "action_signature_hash": record.get("action_signature_hash") or "",
-        "params_hash": record.get("params_hash") or "",
-        "latest_official_success_source": True,
-    }
-
-
-def _load_success_source_records(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-    if not isinstance(data, list):
-        return []
-    return [item for item in data if isinstance(item, dict)]
-
-
-def _write_success_source_task_indexes(
-    *,
-    archive_root: Path,
-    task_name: str,
-    records: Sequence[dict[str, Any]],
-    latest_source_run_log: Path,
-    latest_record: dict[str, Any],
-) -> None:
-    task_slug = _safe_stem(task_name)
-    by_task_dir = archive_root / "by_task" / task_slug
-    by_task_dir.mkdir(parents=True, exist_ok=True)
-    metadata_path = by_task_dir / "metadata.json"
-    index_path = archive_root / "index_by_task.json"
-
-    _write_json(
-        metadata_path,
-        {
-            **latest_record,
-            "retained_source_run_log": _path_ref_from(
-                by_task_dir,
-                latest_source_run_log,
-            ),
-            "all_source_runlogs": [
-                {
-                    "run_id": record.get("run_id"),
-                    "method": record.get("method"),
-                    "device": record.get("device"),
-                    "source_run_log": record.get("local_source_run_log"),
-                    "result_file": record.get("result_file"),
-                }
-                for record in records
-            ],
-        },
-    )
-    _write_json(
-        archive_root / "source_runlogs.json",
-        list(records),
-    )
-    _write_jsonl(archive_root / "source_runlogs.jsonl", list(records))
-    _write_json(
-        index_path,
-        {
-            task_name: _success_source_archive_entry(
-                latest_record,
-                index_root=archive_root,
-                source_run_log=latest_source_run_log,
-            )
-        },
-    )
-
-
-def _write_success_source_global_index(
-    *,
-    output_root: Path,
-    latest_by_task: dict[str, tuple[dict[str, Any], Path]],
-) -> Path | None:
-    if not latest_by_task:
-        return None
-    archive_root = output_root / "_aggregate" / "success_source_runlogs"
-    archive_root.mkdir(parents=True, exist_ok=True)
-    existing_json = archive_root / "source_runlogs.json"
-    records = _load_success_source_records(existing_json)
-    by_key = {_success_source_record_key(record): record for record in records}
-    for record, _source_path in latest_by_task.values():
-        by_key[_success_source_record_key(record)] = record
-    merged = list(by_key.values())
-
-    latest_records_by_task: dict[str, tuple[dict[str, Any], Path]] = {}
-    for record in merged:
-        task_name = str(record.get("task") or record.get("task_name") or "").strip()
-        if not task_name:
-            continue
-        source_text = str(
-            record.get("retained_source_run_log")
-            or record.get("local_canonical_run_log")
-            or record.get("local_source_run_log")
-            or ""
-        ).strip()
-        if not source_text:
-            continue
-        source_path = Path(source_text).expanduser()
-        if source_path.is_absolute():
-            resolved_source_path = source_path.resolve()
-        else:
-            index_relative = (archive_root / source_path).resolve()
-            resolved_source_path = (
-                index_relative if index_relative.exists() else _repo_path(source_path)
-            )
-        latest_records_by_task[task_name] = (record, resolved_source_path)
-    latest_records_by_task.update(latest_by_task)
-
-    _write_json(existing_json, merged)
-    _write_jsonl(archive_root / "source_runlogs.jsonl", merged)
-    _write_json(
-        archive_root / "index_by_task.json",
-        {
-            task_name: _success_source_archive_entry(
-                record,
-                index_root=archive_root,
-                source_run_log=source_path,
-            )
-            for task_name, (record, source_path) in sorted(
-                latest_records_by_task.items()
-            )
-        },
-    )
-    return (archive_root / "index_by_task.json").resolve()
-
-
-def save_success_source_runlogs_from_results(
-    paths: Sequence[str | Path],
-    *,
-    output_root: str | Path,
-) -> dict[str, Any]:
-    output_root_path = _repo_path(output_root)
-    result_files = discover_task_result_files(paths)
-    saved_records: list[dict[str, Any]] = []
-    skipped = {
-        "not_official_success": 0,
-        "missing_canonical_run": 0,
-        "missing_task": 0,
-    }
-    latest_by_task: dict[str, tuple[dict[str, Any], Path]] = {}
-
-    for file_path in result_files:
-        path_context = _task_result_path_context(file_path)
-        for row in _iter_jsonl_rows(file_path):
-            if not _official_validator_success(row):
-                skipped["not_official_success"] += 1
-                continue
-            canonical = row.get("canonical_run")
-            if not isinstance(canonical, dict):
-                skipped["missing_canonical_run"] += 1
-                continue
-            task_name = str(
-                row.get("task_name")
-                or row.get("task")
-                or path_context.get("task_name")
-                or ""
-            ).strip()
-            if not task_name:
-                skipped["missing_task"] += 1
-                continue
-
-            method = str(row.get("method") or path_context.get("method") or "").strip()
-            device = str(row.get("device") or path_context.get("device") or "").strip()
-            run_dir = str(
-                row.get("run_dir") or path_context.get("run_dir") or ""
-            ).strip()
-            params = _success_source_task_params(row)
-            task_seed = _success_source_task_seed(row, params)
-            canonical_to_write = canonicalize_run_log(canonical)
-            if canonical_to_write["task_name"] != task_name:
-                raise ValueError(
-                    "success_source_run_log_task_mismatch:"
-                    f"{task_name}:{canonical_to_write['task_name']}"
-                )
-
-            run_id = str(
-                canonical_to_write.get("run_id") or row.get("artifact_ref") or ""
-            ).strip()
-            canonical_hash = _stable_json_hash(canonical_to_write)
-            run_id_for_path = run_id or canonical_hash[:12]
-            action_signature_hash = _success_source_action_signature_hash(
-                canonical_to_write
-            )
-            task_root = output_root_path / _safe_stem(task_name)
-            archive_root = task_root / "success_source_runlogs"
-            raw_dir = (
-                archive_root
-                / "raw"
-                / _safe_stem(method or "unknown_method")
-                / _safe_stem(device or "unknown_device")
-            )
-            source_name = (
-                f"{_safe_stem(task_name)}."
-                f"{_safe_stem(method or 'unknown_method')}."
-                f"{_safe_stem(device or 'unknown_device')}."
-                f"{_safe_stem(run_id_for_path)}.run_log.json"
-            )
-            raw_source_path = raw_dir / source_name
-            latest_source_path = (
-                archive_root / "by_task" / _safe_stem(task_name) / "source.run_log.json"
-            )
-            _write_json(raw_source_path, canonical_to_write)
-            _write_json(latest_source_path, canonical_to_write)
-
-            source_pool_record = (
-                row.get("source_pool_record")
-                if isinstance(row.get("source_pool_record"), dict)
-                else {}
-            )
-            record = {
-                "schema_version": "omniflow.androidworld_task_success_source_runlog.v1",
-                "source_kind": "androidworld_validator_success_source_runlog",
-                "task": task_name,
-                "task_name": task_name,
-                "goal": row.get("goal") or canonical_to_write.get("goal") or "",
-                "params": params,
-                "collect_seed": task_seed,
-                "replay_seed": task_seed,
-                "task_random_seed": task_seed,
-                "method": method,
-                "device": device,
-                "run_dir": run_dir,
-                "result_file": str(file_path),
-                "run_id": run_id or None,
-                "artifact_kind": row.get("artifact_kind"),
-                "artifact_ref": row.get("artifact_ref"),
-                "androidworld_success": True,
-                "official_validator_success": True,
-                "androidworld_reward": (
-                    row.get("androidworld_validator_result", {}).get("reward")
-                    if isinstance(row.get("androidworld_validator_result"), dict)
-                    else None
-                ),
-                "step_count": _success_source_step_count(row, canonical_to_write),
-                "actions_executed": _coerce_int(row.get("actions_executed"), 0),
-                "duration_ms": _coerce_float(row.get("duration_ms"), 0.0),
-                "action_signature_hash": action_signature_hash,
-                "params_hash": _stable_json_hash(params),
-                "canonical_hash": canonical_hash,
-                "local_source_run_log": str(raw_source_path.resolve()),
-                "local_canonical_run_log": str(raw_source_path.resolve()),
-                "retained_source_run_log": str(latest_source_path.resolve()),
-                "launcher_source_pool_run_log": source_pool_record.get(
-                    "local_canonical_run_log"
-                )
-                or source_pool_record.get("local_source_run_log")
-                or "",
-                "latest_official_success_source": True,
-                "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            }
-
-            existing_path = archive_root / "source_runlogs.json"
-            existing = _load_success_source_records(existing_path)
-            by_key = {_success_source_record_key(item): item for item in existing}
-            key = _success_source_record_key(record)
-            is_new = key not in by_key
-            by_key[key] = record
-            task_records = list(by_key.values())
-            _write_success_source_task_indexes(
-                archive_root=archive_root,
-                task_name=task_name,
-                records=task_records,
-                latest_source_run_log=latest_source_path,
-                latest_record=record,
-            )
-            latest_by_task[task_name] = (record, latest_source_path.resolve())
-            if is_new:
-                saved_records.append(record)
-
-    global_index_path = _write_success_source_global_index(
-        output_root=output_root_path,
-        latest_by_task=latest_by_task,
-    )
-    return {
-        "schema_version": "omniflow.androidworld_success_source_runlogs_summary.v1",
-        "output_root": str(output_root_path),
-        "task_results_files": [str(path) for path in result_files],
-        "saved_count": len(saved_records),
-        "materialized_task_count": len(latest_by_task),
-        "saved_records": saved_records,
-        "skipped": skipped,
-        "global_index_by_task": str(global_index_path or ""),
-    }
-
-
 def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
     task_result_files = discover_task_result_files(paths)
     rows: list[tuple[Path, dict[str, Any]]] = []
@@ -4632,10 +4215,14 @@ def write_metrics_summary(summary: dict[str, Any], output_path: str | Path) -> N
         f"- duration_s: `{round(_coerce_float(summary['duration_ms']) / 1000.0, 3)}`",
         f"- model_calls: `{summary.get('model_calls', 0)}`",
         f"- total_tokens: `{summary.get('total_tokens', 0)}`",
-        "",
-        "| task | validator | replay_completed | actions | model_calls | total_tokens | step_completed | relocation | sec | error |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
+    md_lines.extend(
+        [
+            "",
+            "| task | validator | replay_completed | actions | model_calls | total_tokens | step_completed | relocation | sec | error |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+        ]
+    )
     for item in summary.get("per_task") or []:
         md_lines.append(
             "| "
@@ -4681,10 +4268,10 @@ def _add_androidworld_setup_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _select_from_args(args: argparse.Namespace) -> list[ArchivedRunLog]:
-    archive = load_archive_index(args.index)
-    by_name = {item.task: item for item in archive}
-    selected: list[ArchivedRunLog] = []
+def _select_from_args(args: argparse.Namespace) -> list[CanonicalRunLog]:
+    source_items = load_canonical_source_index(args.index)
+    by_name = {item.task: item for item in source_items}
+    selected: list[CanonicalRunLog] = []
     missing: list[str] = []
     for raw_name in str(args.task or "").split(","):
         name = raw_name.strip()
@@ -4696,14 +4283,14 @@ def _select_from_args(args: argparse.Namespace) -> list[ArchivedRunLog]:
         else:
             selected.append(item)
     if missing:
-        raise KeyError(f"Tasks not found in archive index: {', '.join(missing)}")
+        raise KeyError(f"Tasks not found in canonical data index: {', '.join(missing)}")
     return selected
 
 
 
 
-MOBILEGPT_METHODS = frozenset({"mobilegpt_offline_retrieval"})
-APPAGENT_METHODS = frozenset({"appagent_demo"})
+MOBILEGPT_METHODS = frozenset({"mobilegpt"})
+APPAGENT_METHODS = frozenset({"appagent"})
 _RESULT_NON_EXECUTED_STATUSES = {
     "INVALID_MEMORY_LEAKAGE",
     "env_failed",
@@ -5284,7 +4871,7 @@ def _select_complete_function(store_path: str | Path):
 
 
 def _source_action_hint_path_for_item(
-    item: ArchivedRunLog,
+    item: CanonicalRunLog,
     *,
     output_root: str | Path,
     store_path: str | Path | None = None,
@@ -5292,8 +4879,6 @@ def _source_action_hint_path_for_item(
 ) -> Path:
     payload, _, profile, _ = canonicalize_source_run_log(
         item,
-        repo_root=repo_root,
-        write_materialized=False,
     )
     forbidden_values = _t3a_hint_forbidden_values(item.params)
     source_steps = list(payload.get("steps") or [])
@@ -5594,7 +5179,7 @@ def _mobilegpt_observation_package(observation: Any) -> str:
 
 
 def _infer_mobilegpt_target_from_source_run_log(
-    item: ArchivedRunLog,
+    item: CanonicalRunLog,
     *,
     repo_root: Path = REPO_ROOT,
 ) -> dict[str, str]:
@@ -5603,8 +5188,6 @@ def _infer_mobilegpt_target_from_source_run_log(
     try:
         canonical, materialization, profile, _ = canonicalize_source_run_log(
             item,
-            repo_root=repo_root,
-            write_materialized=False,
         )
     except Exception as exc:
         return {
@@ -6704,7 +6287,7 @@ def _print_result_summary(summary: dict[str, Any]) -> None:
 
 
 def build_mobilegpt_androidworld_command(
-    item: ArchivedRunLog,
+    item: CanonicalRunLog,
     *,
     method_name: str,
     target: DeviceTarget,
@@ -6734,7 +6317,7 @@ def build_mobilegpt_androidworld_command(
         android_world_root=android_world_root,
         output_root=output_root,
         method_name=method_name,
-        agent_name="external:mobilegpt",
+        agent_name="mobilegpt",
         device_label=target.label,
         run_dir_suffix=run_dir_suffix,
         serial=target.serial,
@@ -6792,7 +6375,7 @@ def build_mobilegpt_androidworld_command(
 
 
 def build_appagent_androidworld_command(
-    item: ArchivedRunLog,
+    item: CanonicalRunLog,
     *,
     method_name: str,
     target: DeviceTarget,
@@ -6821,7 +6404,7 @@ def build_appagent_androidworld_command(
         raise ValueError("appagent_teacher_docs_forbidden")
     if not teacher_mode and docs_root is None:
         raise ValueError("appagent_native_memory_required")
-    selector = "external:appagent_teacher" if teacher_mode else "external:appagent"
+    selector = "appagent"
     spec = build_e2e_command(
         item,
         android_world_root=android_world_root,
@@ -6859,7 +6442,7 @@ def build_appagent_androidworld_command(
                 str(resolved_teacher_source),
                 "--appagent-workspace-root",
                 str(resolved_workspace_root),
-                "--appagent-demo-name",
+                "--appagent-name",
                 str(demo_name or f"demo_{item.task}_seed{task_random_seed}"),
             ]
         )
@@ -6884,7 +6467,7 @@ def build_appagent_androidworld_command(
             "appagent_teacher_source": str(resolved_teacher_source or ""),
             "appagent_workspace_root": str(resolved_workspace_root or ""),
             "uses_omniflow_function": False,
-            "uses_appagent_demo_docs": resolved_docs_root is not None,
+            "uses_appagent_docs": resolved_docs_root is not None,
             "teacher_mode": teacher_mode,
             "official_lifecycle": True,
             "state_backend": "androidworld",
@@ -6924,7 +6507,7 @@ def _configure_mobilegpt_formal_server(
 def _run_result_mobilegpt(
     *,
     args: argparse.Namespace,
-    item: ArchivedRunLog,
+    item: CanonicalRunLog,
     targets: Sequence[DeviceTarget],
     output_root: Path,
     task_params_override: dict[str, Any] | None,
@@ -6941,7 +6524,7 @@ def _run_result_mobilegpt(
 
     if item.meta.get("latest_official_success_source") is not True:
         raise ValueError(
-            "mobilegpt_offline_retrieval_requires_official_success_source:"
+            "mobilegpt_requires_official_success_source:"
             f"task={item.task}"
         )
     source_memory_value = str(
@@ -6949,7 +6532,7 @@ def _run_result_mobilegpt(
     ).strip()
     if not source_memory_value:
         raise ValueError(
-            "mobilegpt_offline_retrieval requires --mobilegpt-source-memory-root"
+            "mobilegpt requires --mobilegpt-source-memory-root"
         )
     source_memory_root = _repo_path(source_memory_value)
     if not source_memory_root.is_dir():
@@ -7406,7 +6989,7 @@ def cmd_result(args: argparse.Namespace) -> int:
                 break
             continue
 
-        if method == "ours":
+        if method == "omniflow":
             store_text = str(args.store_path or "").strip()
             if not store_text:
                 raise ValueError(
@@ -7416,10 +6999,10 @@ def cmd_result(args: argparse.Namespace) -> int:
         else:
             store_path = memory_root / "unused-store.json"
 
-        if method == "ours":
+        if method == "omniflow":
             transfer_asset_audit: dict[str, Any] = {}
             if not args.dry_run:
-                transfer_asset_audit = validate_ours_transfer_assets(
+                transfer_asset_audit = validate_omniflow_transfer_assets(
                     store_path,
                     require_action_transfer=True,
                 )
@@ -7448,16 +7031,16 @@ def cmd_result(args: argparse.Namespace) -> int:
                 },
             )
         if method in APPAGENT_METHODS:
-            if method == "appagent_demo":
+            if method == "appagent":
                 source_memory_text = str(
-                    getattr(args, "appagent_demo_memory_root", "") or ""
+                    getattr(args, "appagent_memory_root", "") or ""
                 ).strip()
                 if not source_memory_text:
                     raise ValueError(
-                        "appagent_demo requires --appagent-demo-memory-root"
+                        "appagent requires --appagent-memory-root"
                     )
                 source_memory_root = _repo_path(source_memory_text)
-                provenance = validate_appagent_demo_memory(
+                provenance = validate_appagent_memory(
                     source_memory_root,
                     task_name=item.task,
                     source_run_log=item.source_run_log,
@@ -7476,7 +7059,7 @@ def cmd_result(args: argparse.Namespace) -> int:
                 ) + _coerce_int(document_usage.get("completion_tokens"))
                 prep_total_tokens = prep_prompt_tokens + prep_completion_tokens
                 source_memory_manifest = (
-                    source_memory_root / "appagent_demo_manifest.json"
+                    source_memory_root / "appagent_manifest.json"
                 )
                 appagent_prep = {
                     "type": "appagent_native_source_demo_docs",
@@ -7510,17 +7093,17 @@ def cmd_result(args: argparse.Namespace) -> int:
                 artifacts = {
                     "source_memory_root": str(source_memory_root),
                     "source_memory_manifest": str(
-                        source_memory_root / "appagent_demo_manifest.json"
+                        source_memory_root / "appagent_manifest.json"
                     ),
                     "source_memory_manifest_sha256": _file_sha256(
-                        source_memory_root / "appagent_demo_manifest.json"
+                        source_memory_root / "appagent_manifest.json"
                     ),
                     "demo_docs_root": str(appagent_docs_root),
                     "demo_docs_sha256": provenance["demo_docs_sha256"],
                     "official_appagent_revision": provenance[
                         "official_appagent_revision"
                     ],
-                    "uses_appagent_demo_docs": True,
+                    "uses_appagent_docs": True,
                     "uses_omniflow_function": False,
                     "memory_read_only": True,
                 }
@@ -7530,7 +7113,7 @@ def cmd_result(args: argparse.Namespace) -> int:
                     "official_appagent_revision": (
                         "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
                     ),
-                    "uses_appagent_demo_docs": False,
+                    "uses_appagent_docs": False,
                     "uses_omniflow_function": False,
                 }
             _write_method_memory_manifest(
@@ -7538,11 +7121,11 @@ def cmd_result(args: argparse.Namespace) -> int:
                 task=item.task,
                 method=method,
                 memory_mode=memory_mode,
-                source_seed=(source_seed if method == "appagent_demo" else None),
+                    source_seed=(source_seed if method == "appagent" else None),
                 evaluation_seed=task_seed,
                 attempt_id=attempt_id,
                 source_run_log=(
-                    item.source_run_log if method == "appagent_demo" else None
+                    item.source_run_log if method == "appagent" else None
                 ),
                 artifacts=artifacts,
             )
@@ -7735,15 +7318,6 @@ def cmd_result(args: argparse.Namespace) -> int:
         for path in _formal_result_paths(record)
     ]
     aggregate_summary = aggregate_task_results([] if args.dry_run else aggregate_paths)
-    source_runlog_summary: dict[str, Any] = {}
-    if not bool(args.dry_run) and bool(
-        getattr(args, "save_success_source_runlog", False)
-    ):
-        source_runlog_summary = save_success_source_runlogs_from_results(
-            aggregate_paths,
-            output_root=output_root,
-        )
-        aggregate_summary["success_source_runlogs"] = source_runlog_summary
     summary = _write_result_summary(
         output_root=output_root,
         task=item.task,
@@ -7761,7 +7335,7 @@ def cmd_result(args: argparse.Namespace) -> int:
             summary_path=summary_path,
             attempt_manifest_path=attempt_manifest_path,
             runs_root=result_registry_root,
-            artifact_memory_index=Path(
+            local_data_index=Path(
                 os.environ["OMNIFLOW_EXP_MEMORY_INDEX"]
             ).expanduser()
             if os.environ.get("OMNIFLOW_EXP_MEMORY_INDEX")
@@ -7778,13 +7352,6 @@ def cmd_result(args: argparse.Namespace) -> int:
             f"{result_registration.get('registered_results_count', 0)} "
             f"ledger_appended={result_registration.get('ledger_records_appended', 0)} "
             f"registry={result_registry_root}",
-            flush=True,
-        )
-    if source_runlog_summary:
-        print(
-            "[result] success_source_runlogs="
-            f"{source_runlog_summary.get('saved_count', 0)} "
-            f"index={source_runlog_summary.get('global_index_by_task') or ''}",
             flush=True,
         )
     return 1 if failed else 0
@@ -7805,15 +7372,7 @@ def build_parser() -> argparse.ArgumentParser:
             "task"
         ),
     )
-    result_parser.add_argument("--index", default=str(DEFAULT_ARCHIVE_INDEX))
-    result_parser.add_argument(
-        "--master-source-index",
-        default="",
-        help=(
-            "Complete canonical task index used to materialize master progress. "
-            "Defaults to --index; task-limited execution indexes must override it."
-        ),
-    )
+    result_parser.add_argument("--index", default=str(DEFAULT_DATA_INDEX))
     result_parser.add_argument(
         "--android-world-root", default=str(DEFAULT_ANDROID_WORLD_ROOT)
     )
@@ -7872,7 +7431,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help=(
-            "Maximum VLM fallback planner calls for ours. Function actions do not "
+            "Maximum VLM fallback planner calls for omniflow. Function actions do not "
             "consume this budget; omitted means the normal max-step behavior."
         ),
     )
@@ -7902,13 +7461,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     result_parser.add_argument(
         "--appagent-root",
-        default=str(REPO_ROOT / "runtime" / "external" / "appagent"),
+        default=str(REPO_ROOT / "data" / "runtime" / "external" / "appagent"),
     )
     result_parser.add_argument(
-        "--appagent-demo-memory-root",
+        "--appagent-memory-root",
         default="",
         help=(
-            "Sealed source-111 AppAgent human-demo workspace required by appagent_demo."
+            "Sealed source-111 AppAgent human-demo workspace required by appagent."
         ),
     )
     result_parser.add_argument("--mobilegpt-server-host", default="0.0.0.0")
@@ -7954,15 +7513,6 @@ def build_parser() -> argparse.ArgumentParser:
             "Optional source-only native MobileGPT memory. If omitted, the "
             "same episode runner starts cold from empty memory; if supplied, "
             "it starts warm from an immutable snapshot."
-        ),
-    )
-    result_parser.add_argument(
-        "--save-success-source-runlog",
-        action="store_true",
-        help=(
-            "Explicitly materialize official-validator successful canonical runs "
-            "inside this output root for later source-authoring workflows. Disabled "
-            "by default so target evaluation remains read-only with respect to memory."
         ),
     )
     result_parser.add_argument("--dry-run", action="store_true")

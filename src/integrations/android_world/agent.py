@@ -24,6 +24,7 @@ from omniflow.transfer.runtime import (
 from omniflow.transfer.runtime import (
     capture_transfer_state as _transfer_state,
 )
+from src.experiment.performance_metrics import PerformanceMetrics
 from src.integrations.android_world.host import AndroidWorldHost, make_agent_result
 
 MODE_OMNIFLOW = "omniflow"
@@ -88,14 +89,14 @@ def build_agent(
     post_action_wait_seconds: float = 0.0,
     task_seed: int | None = None,
     evidence_root: str | Path | None = None,
+    performance_metrics: PerformanceMetrics | None = None,
 ) -> OmniFlow:
     if env is None:
         raise TypeError("build_agent requires env parameter")
     del runtime
-    default_store = (
-        Path(os.environ.get("OMNIFLOW_RUNTIME_DIR") or "runtime") / "omniflow.json"
-    )
-    resolved_store_path = Path(store_path or default_store).expanduser().resolve()
+    if not store_path:
+        raise ValueError("function_store_required")
+    resolved_store_path = Path(store_path).expanduser().resolve()
     transfer_state_path = resolved_store_path.parent / TRANSFER_STATE_CATALOG_FILENAME
     raw_host = AndroidWorldHost(
         env,
@@ -103,6 +104,10 @@ def build_agent(
         adb_path=adb_path,
         post_action_wait_seconds=post_action_wait_seconds,
         evidence_root=evidence_root,
+        performance_metrics=performance_metrics,
+        control_backend=os.environ.get(
+            "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "androidworld"
+        ),
     )
     state: dict[str, Any] = {
         "task_name": "",

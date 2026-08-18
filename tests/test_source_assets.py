@@ -353,7 +353,7 @@ def test_baseline_grounding_uses_complete_states_embedded_in_source_runlog(
     assert audit["source_state_count"] == 2
 
 
-def test_canonical_runlog_grounds_mobilegpt_without_ours_store(
+def test_canonical_runlog_grounds_mobilegpt_without_omniflow_store(
     tmp_path: Path,
 ) -> None:
     xml = (
@@ -1245,7 +1245,7 @@ def test_canonical_grounding_distinguishes_page_input_from_browser_chrome(
 def test_source_revision_reuses_frozen_asset_or_advances_past_failures(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "appagent_demo"
+    base = tmp_path / "appagent"
     failed = base / "native_source_r3"
     failed.mkdir(parents=True)
     (failed / "prep_failure.json").write_text("{}", encoding="utf-8")
@@ -1253,14 +1253,14 @@ def test_source_revision_reuses_frozen_asset_or_advances_past_failures(
     assert (
         select_source_asset_revision(
             base,
-            manifest_name="appagent_demo_manifest.json",
+            manifest_name="appagent_manifest.json",
         )
         == base / "native_source_r4"
     )
 
     frozen = base / "native_source_r4"
     frozen.mkdir()
-    (frozen / "appagent_demo_manifest.json").write_text(
+    (frozen / "appagent_manifest.json").write_text(
         "{}",
         encoding="utf-8",
     )
@@ -1270,7 +1270,7 @@ def test_source_revision_reuses_frozen_asset_or_advances_past_failures(
     assert (
         select_source_asset_revision(
             base,
-            manifest_name="appagent_demo_manifest.json",
+            manifest_name="appagent_manifest.json",
         )
         == frozen
     )
@@ -1279,7 +1279,7 @@ def test_source_revision_reuses_frozen_asset_or_advances_past_failures(
 def test_source_revision_is_stable_for_one_exact_source_hash(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "mobilegpt_offline_retrieval"
+    base = tmp_path / "mobilegpt"
     old = base / "native_source_r3"
     old.mkdir(parents=True)
     (old / "cold_memory_manifest.json").write_text(
@@ -1334,7 +1334,7 @@ def test_source_revision_is_stable_for_one_exact_source_hash(
 def test_source_revision_reuses_explicit_conversion_lineage_hash(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "mobilegpt_offline_retrieval"
+    base = tmp_path / "mobilegpt"
     canonical = "2" * 64
     legacy = "1" * 64
     frozen = base / f"source_{legacy[:12]}"
@@ -1358,7 +1358,7 @@ def test_source_revision_reuses_explicit_conversion_lineage_hash(
 def test_source_revision_skips_frozen_asset_from_wrong_model(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "mobilegpt_offline_retrieval"
+    base = tmp_path / "mobilegpt"
     expected = "2" * 64
     legacy = "1" * 64
     frozen = base / "native_source_r2"
@@ -1410,7 +1410,7 @@ def test_source_revision_skips_frozen_asset_from_wrong_model(
 def test_source_revision_skips_incompatible_mobilegpt_memory_contract(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "mobilegpt_offline_retrieval"
+    base = tmp_path / "mobilegpt"
     expected = "2" * 64
     old = base / f"source_{expected[:12]}"
     old.mkdir(parents=True)
@@ -1441,7 +1441,7 @@ def test_source_revision_skips_incompatible_mobilegpt_memory_contract(
 def test_source_revision_skips_frozen_asset_rejected_by_validator(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "mobilegpt_offline_retrieval"
+    base = tmp_path / "mobilegpt"
     expected = "2" * 64
     frozen = base / f"source_{expected[:12]}"
     frozen.mkdir(parents=True)
@@ -1476,7 +1476,7 @@ def test_source_revision_skips_frozen_asset_rejected_by_validator(
 def test_source_revision_ignores_terminal_failure_from_old_method(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "mobilegpt_offline_retrieval"
+    base = tmp_path / "mobilegpt"
     expected = "2" * 64
     failed = base / f"source_{expected[:12]}"
     failed.mkdir(parents=True)
@@ -1508,7 +1508,7 @@ def test_source_revision_ignores_terminal_failure_from_old_method(
 def test_source_revision_rejects_terminal_failure_for_exact_source_hash(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "mobilegpt_offline_retrieval"
+    base = tmp_path / "mobilegpt"
     expected = "2" * 64
     failed = base / f"source_{expected[:12]}"
     failed.mkdir(parents=True)
@@ -1537,7 +1537,7 @@ def test_source_revision_rejects_terminal_failure_for_exact_source_hash(
 def test_source_revision_advances_beyond_two_digit_failure_revision(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "mobilegpt_offline_retrieval"
+    base = tmp_path / "mobilegpt"
     expected = "2" * 64
     prefix = f"source_{expected[:12]}"
     for revision in range(1, 11):

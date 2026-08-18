@@ -139,9 +139,7 @@ class OobControlClient:
             else:
                 last_error = (result.stderr or result.stdout or "").strip()
             time.sleep(0.05)
-        raise RuntimeError(
-            "oob_control_result_timeout:" + last_error[-500:]
-        )
+        raise RuntimeError("oob_control_result_timeout:" + last_error[-500:])
 
     def _run(self, args: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
         command = [self.adb_path]

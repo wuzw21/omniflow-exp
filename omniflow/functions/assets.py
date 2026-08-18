@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import shutil
+import tempfile
 from typing import Any, Callable, Iterable
 import xml.etree.ElementTree as ET
 
@@ -23,6 +27,7 @@ from omniflow.runtime.semantic_grounding import semantic_target_at_point
 
 FUNCTION_ARTIFACT_VERSION = "omniflow.function.v2"
 STORE_VERSION = "omniflow.store.v2"
+_AUTHORING_STAGE_ATTEMPTS = 3
 
 _TOP_LEVEL_FIELDS = {
     "schema_version",
@@ -58,7 +63,7 @@ def function_authoring_tool(
         "properties": {
             "function_id": {
                 "type": "string",
-                "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
             },
             "name": {"type": "string", "minLength": 1, "maxLength": 120},
             "description": {"type": "string", "minLength": 1},
@@ -71,42 +76,26 @@ def function_authoring_tool(
         "properties": {
             "name": {
                 "type": "string",
-                "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
             },
             "description": {"type": "string", "minLength": 1},
-        },
-    }
-    segment = {
-        **metadata,
-        "required": [
-            "function_id",
-            "name",
-            "description",
-            "stability_reason",
-            "start_step_index",
-            "end_step_index",
-        ],
-        "properties": {
-            **metadata["properties"],
-            "stability_reason": {"type": "string", "minLength": 1},
-            "start_step_index": {"type": "integer", "minimum": 0},
-            "end_step_index": {"type": "integer", "minimum": 1},
         },
     }
     contracts = {
         "split": {
             "description": (
-                "Name the complete Function and include only Agent-identified stable, "
-                "independently replayable semantic subsegments."
+                "Name the one complete Function covering the successful RunLog."
             ),
-            "required": ["complete_function", "subsegments"],
+            "required": ["complete_function"],
             "properties": {
                 "complete_function": metadata,
-                "subsegments": {"type": "array", "items": segment},
             },
         },
         "parameters": {
-            "description": "Add source-proven action semantics and parameters.",
+            "description": (
+                "Author source-grounded actions and caller parameters. Direct actions "
+                "are accepted only when the compiler can prove them from the RunLog."
+            ),
             "required": ["action_edits", "bindings"],
             "properties": {
                 "action_edits": {
@@ -118,7 +107,6 @@ def function_authoring_tool(
                             "function_id",
                             "step_index",
                             "operation",
-                            "value",
                         ],
                         "properties": {
                             "function_id": metadata["properties"]["function_id"],
@@ -127,7 +115,6 @@ def function_authoring_tool(
                                 "type": "string",
                                 "enum": ["open_app", "set_target"],
                             },
-                            "value": {"type": "string", "minLength": 1},
                         },
                     },
                 },
@@ -147,7 +134,32 @@ def function_authoring_tool(
                             **parameter["properties"],
                         },
                     },
-                }
+                },
+                "actions": {
+                    "type": "array",
+                    "description": (
+                        "Optional direct action proposals. Use the original RunLog "
+                        "step index; save_function rejects any ungrounded action."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["function_id", "step_index", "action"],
+                        "properties": {
+                            "function_id": metadata["properties"]["function_id"],
+                            "step_index": {"type": "integer", "minimum": 0},
+                            "action": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "required": ["tool", "args"],
+                                "properties": {
+                                    "tool": {"type": "string", "minLength": 1},
+                                    "args": {"type": "object"},
+                                },
+                            },
+                        },
+                    },
+                },
             },
         },
         "checkers": {
@@ -191,6 +203,9 @@ def function_authoring_tool(
 def parse_function_artifact(value: dict[str, Any]) -> Function:
     if not isinstance(value, dict):
         raise ValueError("function_artifact_must_be_object")
+    missing = sorted(_TOP_LEVEL_FIELDS - set(value))
+    if missing:
+        raise ValueError(f"function_artifact_missing_fields:{','.join(missing)}")
     unknown = sorted(set(value) - _TOP_LEVEL_FIELDS)
     if unknown:
         raise ValueError(f"function_artifact_unknown_fields:{','.join(unknown)}")
@@ -240,8 +255,8 @@ def parse_function_artifact(value: dict[str, Any]) -> Function:
 def validate_function_artifact(function: Function) -> None:
     if function.schema_version != FUNCTION_ARTIFACT_VERSION:
         raise ValueError("unsupported_function_artifact_version")
-    if not function.function_id.strip():
-        raise ValueError("function_id_required")
+    if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", function.function_id) is None:
+        raise ValueError("function_id_invalid")
     builtin_tool_names = {
         str(tool.get("name") or "").strip()
         for tool in load_canonical_action_schema().get("tools") or ()
@@ -552,6 +567,8 @@ class FunctionStore:
         raw_functions = payload.get("functions")
         if not isinstance(raw_functions, dict):
             raise ValueError("function_store_functions_must_be_object")
+        if len(raw_functions) > 1:
+            raise ValueError("function_store_single_function_required")
         raw_source_calls = payload.get("source_calls") or []
         if not isinstance(raw_source_calls, list) or any(
             not isinstance(call, dict)
@@ -561,6 +578,8 @@ class FunctionStore:
             for call in raw_source_calls
         ):
             raise ValueError("function_store_source_calls_invalid")
+        if len(raw_source_calls) > 1:
+            raise ValueError("function_store_single_source_call_required")
         loaded: dict[str, Function] = {}
         load_errors: dict[str, str] = {}
         for key, value in raw_functions.items():
@@ -604,6 +623,136 @@ def _write_store(
     temporary.replace(path)
 
 
+def _write_json_artifact(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = (
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _copy_file_artifact(source: Path, destination: Path) -> None:
+    source = source.resolve()
+    destination = destination.resolve()
+    if source == destination:
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(
+        f".{destination.name}.{os.getpid()}.tmp"
+    )
+    try:
+        shutil.copyfile(source, temporary)
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _materialize_canonical_run_log(
+    *,
+    bundle_root: Path,
+    payload: dict[str, Any],
+    source_run_log_path: Path | None,
+) -> Path:
+    canonical = json.loads(json.dumps(payload, ensure_ascii=False))
+    screenshots_root = bundle_root / "screenshots"
+    suffixes = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+    }
+    seen: set[str] = set()
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            pixels = value.get("pixels")
+            if isinstance(pixels, dict) and pixels.get("path"):
+                digest = str(pixels.get("sha256") or "").strip().lower()
+                mime_type = str(pixels.get("mime_type") or "").strip()
+                suffix = suffixes.get(mime_type)
+                if len(digest) != 64 or suffix is None:
+                    raise ValueError("run_log_screenshot_metadata_invalid")
+                source = Path(str(pixels["path"])).expanduser().resolve()
+                if not source.is_file() and source_run_log_path is not None:
+                    source = (source_run_log_path.parent / source.name).resolve()
+                if not source.is_file():
+                    raise FileNotFoundError(f"run_log_screenshot_missing:{source}")
+                if _sha256_file(source) != digest:
+                    raise ValueError(f"run_log_screenshot_hash_mismatch:{source}")
+                target = screenshots_root / f"{digest}{suffix}"
+                if digest not in seen:
+                    _copy_file_artifact(source, target)
+                    seen.add(digest)
+                pixels["path"] = str(target)
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(canonical)
+    run_log_path = bundle_root / "run_log.json"
+    _write_json_artifact(run_log_path, canonical)
+    return run_log_path
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _canonical_bundle_identity(
+    destination: Path,
+    *,
+    task: str,
+) -> dict[str, str] | None:
+    parts = destination.parts
+    for index, component in enumerate(parts):
+        if component != "data":
+            continue
+        remaining = parts[index + 1 :]
+        if not remaining:
+            continue
+        if remaining[0] not in {"androidworld", "bmoca"}:
+            raise ValueError("function_artifact_path_not_canonical")
+        if len(remaining) != 7:
+            raise ValueError("function_artifact_path_not_canonical")
+        environment, path_task, device, category, method, attempt_id, filename = (
+            remaining
+        )
+        if path_task != task or category != "function" or filename != destination.name:
+            raise ValueError("function_artifact_path_not_canonical")
+        if not all(
+            str(value).strip()
+            for value in (environment, path_task, device, method, attempt_id)
+        ):
+            raise ValueError("function_artifact_path_not_canonical")
+        return {
+            "environment": environment,
+            "task": path_task,
+            "device": device,
+            "category": category,
+            "method": method,
+            "attempt_id": attempt_id,
+        }
+    return None
+
+
 def save_function(
     run_log: str | Path | dict[str, Any],
     store_path: str | Path,
@@ -618,22 +767,38 @@ def save_function(
     from omniflow.transfer.runtime import (
         TRANSFER_STATE_CATALOG_FILENAME,
         TRANSFER_STATE_CATALOG_VERSION,
-        load_transfer_state_catalog,
     )
 
     destination = Path(store_path).expanduser().resolve()
     root = destination.parent
 
     evidence_root: Path | None = None
+    source_run_log_path: Path | None = None
     if isinstance(run_log, dict):
         raw = dict(run_log)
     else:
         run_log_path = Path(run_log).expanduser().resolve()
+        source_run_log_path = run_log_path
         value = json.loads(run_log_path.read_text())
         if not isinstance(value, dict):
             raise ValueError("source_runlog_must_be_object")
         raw = value
         evidence_root = run_log_path.parent
+    if (
+        raw.get("schema_version") == "omniflow.run_log.v1"
+        and isinstance(raw.get("steps"), list)
+        and any(
+            isinstance(step, dict) and "before_state_id" in step
+            for step in raw["steps"]
+        )
+    ):
+        if source_run_log_path is None or evidence_root is None:
+            raise ValueError("legacy_run_log_path_required")
+        raw = json.loads(json.dumps(raw, ensure_ascii=False))
+        for step in raw["steps"]:
+            if isinstance(step, dict):
+                step.pop("before_state_id", None)
+                step.pop("after_state_id", None)
     raw_steps = raw.get("steps")
     compact_trace = (
         raw.get("schema_version") == "omniflow.canonical_run_log.v1"
@@ -767,6 +932,24 @@ def save_function(
             )
     if not steps:
         raise ValueError("successful_source_actions_required")
+    if source_run_log_path is None:
+        provenance = payload.get("provenance")
+        candidate = (
+            Path(str(provenance.get("source_path"))).expanduser().resolve()
+            if isinstance(provenance, dict)
+            and str(provenance.get("source_path") or "").strip()
+            and Path(str(provenance.get("source_path"))).expanduser().is_absolute()
+            else None
+        )
+        expected_hash = (
+            str(provenance.get("source_sha256") or "").strip().lower()
+            if isinstance(provenance, dict)
+            else ""
+        )
+        if candidate is not None and candidate.is_file():
+            if expected_hash and _sha256_file(candidate) != expected_hash:
+                raise ValueError("function_source_run_log_sha256_mismatch")
+            source_run_log_path = candidate
     facts = {
         "schema_version": "omniflow.function-compilation-facts.v1",
         "run_id": str(payload.get("run_id") or "successful-source"),
@@ -777,10 +960,13 @@ def save_function(
     }
     if enhance and complete_json is None:
         raise ValueError("function_enhancer_required")
-    if functions is not None and not isinstance(functions, list):
-        raise ValueError("functions_invalid")
+    if functions is not None and (
+        not isinstance(functions, list) or len(functions) > 1
+    ):
+        raise ValueError("function_single_function_required")
     if arguments is not None and not isinstance(arguments, dict):
         raise ValueError("function_arguments_invalid")
+    enhanced_source_function_id: str | None = None
     if enhance:
         raw_functions, generated_arguments = _author_functions(
             facts,
@@ -792,12 +978,17 @@ def save_function(
             **generated_arguments,
             **dict(arguments or {}),
         }
+        enhanced_source_function_id = str(
+            raw_functions[0].get("function_id") or ""
+        ).strip()
     else:
         if not functions:
             raise ValueError("functions_required")
         raw_functions = json.loads(json.dumps(functions, ensure_ascii=False))
         arguments_by_function = dict(arguments or {})
     parsed_functions = [parse_function_artifact(value) for value in raw_functions]
+    if len(parsed_functions) != 1:
+        raise ValueError("function_single_function_required")
     _validate_checker_evidence(parsed_functions, payload)
     function_ids = [function.id for function in parsed_functions]
     if len(function_ids) != len(set(function_ids)):
@@ -808,8 +999,10 @@ def save_function(
     exact_source_coverages: list[tuple[int, ...]] = []
     for function in parsed_functions:
         raw_arguments = arguments_by_function.get(function.id, {})
-        calls = raw_arguments if isinstance(raw_arguments, list) else [raw_arguments]
-        if not calls or any(not isinstance(arguments, dict) for arguments in calls):
+        if isinstance(raw_arguments, list):
+            raise ValueError("function_single_source_call_required")
+        calls = [raw_arguments]
+        if not isinstance(raw_arguments, dict):
             raise ValueError("function_arguments_invalid")
         exact_fallback_grounding = False
         for arguments in calls:
@@ -839,12 +1032,13 @@ def save_function(
                     raise AssertionError("exact_source_index_groups_missing")
                 _validate_checker_checkpoints(*source_index_groups)
                 exact_source_coverages.append(exact_coverage)
-            saved_source_calls.append(
-                {
-                    "function_id": function.id,
-                    "arguments": _copy_value(arguments),
-                }
-            )
+            if not enhance or function.id == enhanced_source_function_id:
+                saved_source_calls.append(
+                    {
+                        "function_id": function.id,
+                        "arguments": _copy_value(arguments),
+                    }
+                )
         if not exact_fallback_grounding:
             raise ValueError(
                 "function_action_not_grounded:"
@@ -870,17 +1064,21 @@ def save_function(
         state_id: states[state_id] for state_id in referenced_state_ids
     }
     root.mkdir(parents=True, exist_ok=True)
-    transfer_state_catalog_path = root / TRANSFER_STATE_CATALOG_FILENAME
-    existing_states = load_transfer_state_catalog(transfer_state_catalog_path)
-    merged_states = {**existing_states, **frozen_states}
-    state_run_id = facts["run_id"]
-    if transfer_state_catalog_path.is_file():
-        existing_catalog = json.loads(
-            transfer_state_catalog_path.read_text(encoding="utf-8")
+    if source_run_log_path is None:
+        source_run_log_path = root / "run_log.json"
+        _write_json_artifact(source_run_log_path, payload)
+    elif _canonical_bundle_identity(
+        destination,
+        task=str(payload.get("task_name") or payload.get("task") or "").strip(),
+    ) is not None:
+        source_run_log_path = _materialize_canonical_run_log(
+            bundle_root=root,
+            payload=payload,
+            source_run_log_path=source_run_log_path,
         )
-        existing_run_id = str(existing_catalog.get("run_id") or "").strip()
-        if existing_run_id and existing_run_id != state_run_id:
-            state_run_id = "multiple-runlogs"
+    transfer_state_catalog_path = root / TRANSFER_STATE_CATALOG_FILENAME
+    merged_states = frozen_states
+    state_run_id = facts["run_id"]
     temporary_states = transfer_state_catalog_path.with_suffix(".json.tmp")
     temporary_states.write_text(
         json.dumps(
@@ -896,14 +1094,8 @@ def save_function(
         encoding="utf-8",
     )
     store = FunctionStore(destination)
-    for function in parsed_functions:
-        store.functions[function.id] = function
-    replaced_ids = set(function_ids)
-    store.source_calls = [
-        call
-        for call in store.source_calls
-        if call["function_id"] not in replaced_ids
-    ] + saved_source_calls
+    store.functions = {function.id: function for function in parsed_functions}
+    store.source_calls = list(saved_source_calls)
     _write_store(destination, store.functions, store.source_calls)
     temporary_states.replace(transfer_state_catalog_path)
     report = {
@@ -1222,66 +1414,41 @@ def _author_functions(
         label="split",
         validate=lambda value: _validate_split_draft(value, facts),
     )
-    plans = _draft_functions(split)
+    plan = split["complete_function"]
     parameters: dict[str, list[dict[str, Any]]] = {
         "action_edits": [],
         "bindings": [],
+        "actions": [],
     }
-    for plan in plans:
-        function_id = plan["function_id"]
-        decision = _request_authoring_decision(
-            complete_json,
-            prompt=_draft_parameters_prompt(facts, plan),
-            tool=function_authoring_tool(stage="parameters"),
-            label=f"parameters:{function_id}",
-            validate=lambda value, expected=function_id: (
-                _validate_parameter_draft_for_function(
-                    value,
-                    facts,
-                    split,
-                    function_id=expected,
-                )
-            ),
-        )
-        parameters["action_edits"].extend(decision["action_edits"])
-        parameters["bindings"].extend(decision["bindings"])
-    checkers: dict[str, list[dict[str, Any]]] = {"checker_steps": []}
-    for plan in plans:
-        function_id = plan["function_id"]
-        decision = _request_authoring_decision(
-            complete_json,
-            prompt=_draft_checkers_prompt(
-                facts,
-                plan,
-                parameters,
-                all_plans=plans,
-            ),
-            tool=function_authoring_tool(stage="checkers"),
-            label=f"checkers:{function_id}",
-            validate=lambda value, expected=function_id: (
-                _validate_checker_draft_for_function(
-                    value,
-                    facts,
-                    split,
-                    parameters,
-                    function_id=expected,
-                )
-            ),
-        )
-        checkers["checker_steps"].extend(decision["checker_steps"])
-    selected_checkers = {
-        (item["function_id"], item["step_index"])
-        for item in checkers["checker_steps"]
-    }
-    for item in checkers["checker_steps"]:
-        for plan in plans:
-            if (
-                item["step_index"]
-                in _function_indices(plan, len(facts["steps"]))
-                and (plan["function_id"], item["step_index"])
-                not in selected_checkers
-            ):
-                raise ValueError("checker_action_role_inconsistent_across_functions")
+    function_id = plan["function_id"]
+    decision = _request_authoring_decision(
+        complete_json,
+        prompt=_draft_parameters_prompt(facts, plan),
+        tool=function_authoring_tool(stage="parameters"),
+        label=f"parameters:{function_id}",
+        validate=lambda value: _validate_parameter_draft_for_function(
+            value,
+            facts,
+            split,
+            function_id=function_id,
+        ),
+    )
+    parameters["action_edits"].extend(decision["action_edits"])
+    parameters["bindings"].extend(decision["bindings"])
+    parameters["actions"].extend(decision["actions"])
+    checkers = _request_authoring_decision(
+        complete_json,
+        prompt=_draft_checkers_prompt(facts, plan, parameters),
+        tool=function_authoring_tool(stage="checkers"),
+        label=f"checkers:{function_id}",
+        validate=lambda value: _validate_checker_draft_for_function(
+            value,
+            facts,
+            split,
+            parameters,
+            function_id=function_id,
+        ),
+    )
     return _compile_function_draft(facts, split, parameters, checkers)
 
 
@@ -1294,6 +1461,19 @@ def _authoring_correction_prompt(
         correction = (
             " Remove that binding. A source-state value absent from the goal may "
             "keep a source-proven action edit, but it cannot be an input parameter."
+        )
+    elif str(error).startswith("function_parameter_source_value_conflict:"):
+        correction = (
+            " The same parameter name was assigned to different source values. "
+            "Keep a binding only for a caller-varying value requested by the goal; "
+            "use distinct semantic parameter names for distinct values, or remove "
+            "the binding when the value is source state."
+        )
+    elif str(error).startswith("function_parameter_type_conflict:"):
+        correction = (
+            " The same parameter name was assigned to different JSON types. "
+            "Use distinct semantic parameter names for the different values, or "
+            "remove the binding that is not caller input."
         )
     return (
         f"{stage_prompt}\n\n"
@@ -1312,7 +1492,7 @@ def _request_authoring_decision(
     validate: Callable[[Any], dict[str, Any]],
 ) -> dict[str, Any]:
     validation_error: Exception | None = None
-    for attempt in range(2):
+    for attempt in range(_AUTHORING_STAGE_ATTEMPTS):
         request = (
             prompt
             if attempt == 0
@@ -1343,7 +1523,7 @@ def _validate_function_metadata(value: Any) -> dict[str, str]:
     function_id = str(value.get("function_id") or "").strip()
     name = str(value.get("name") or "").strip()
     description = str(value.get("description") or "").strip()
-    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", function_id) is None:
+    if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", function_id) is None:
         raise ValueError("function_id_invalid")
     if not name or len(name) > 120:
         raise ValueError("function_name_invalid")
@@ -1356,10 +1536,6 @@ def _validate_function_metadata(value: Any) -> dict[str, str]:
     }
 
 
-def _draft_functions(split: dict[str, Any]) -> list[dict[str, Any]]:
-    return [split["complete_function"], *split["subsegments"]]
-
-
 def _function_indices(value: dict[str, Any], step_count: int) -> tuple[int, ...]:
     if "start_step_index" not in value:
         return tuple(range(step_count))
@@ -1367,69 +1543,9 @@ def _function_indices(value: dict[str, Any], step_count: int) -> tuple[int, ...]
 
 
 def _validate_split_draft(value: Any, facts: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {
-        "complete_function",
-        "subsegments",
-    }:
+    if not isinstance(value, dict) or set(value) != {"complete_function"}:
         raise ValueError("function_split_contract_invalid")
-    complete = _validate_function_metadata(value["complete_function"])
-    raw_segments = value["subsegments"]
-    if not isinstance(raw_segments, list):
-        raise ValueError("function_subsegments_invalid")
-    step_count = len(facts["steps"])
-    segments: list[dict[str, Any]] = []
-    ids = {complete["function_id"]}
-    ranges: set[tuple[int, int]] = set()
-    for raw in raw_segments:
-        if not isinstance(raw, dict) or set(raw) != {
-            "function_id",
-            "name",
-            "description",
-            "stability_reason",
-            "start_step_index",
-            "end_step_index",
-        }:
-            raise ValueError("function_subsegment_contract_invalid")
-        metadata = _validate_function_metadata(
-            {key: raw[key] for key in ("function_id", "name", "description")}
-        )
-        stability_reason = str(raw.get("stability_reason") or "").strip()
-        if not stability_reason:
-            raise ValueError("function_subsegment_stability_reason_required")
-        start = raw.get("start_step_index")
-        end = raw.get("end_step_index")
-        if (
-            not isinstance(start, int)
-            or isinstance(start, bool)
-            or not isinstance(end, int)
-            or isinstance(end, bool)
-            or start < 0
-            or end <= start
-            or end > step_count
-        ):
-            raise ValueError("function_subsegment_range_invalid")
-        if (start, end) == (0, step_count):
-            raise ValueError("function_subsegment_duplicates_complete")
-        if metadata["function_id"] in ids:
-            raise ValueError("duplicate_function_id")
-        if (start, end) in ranges:
-            raise ValueError("function_subsegment_range_duplicate")
-        if (
-            end - start == 1
-            and facts["steps"][start]["action"]["tool"] in {"click", "long_press"}
-        ):
-            raise ValueError("function_enhancement_single_click_fragment_forbidden")
-        ids.add(metadata["function_id"])
-        ranges.add((start, end))
-        segments.append(
-            {
-                **metadata,
-                "stability_reason": stability_reason,
-                "start_step_index": start,
-                "end_step_index": end,
-            }
-        )
-    return {"complete_function": complete, "subsegments": segments}
+    return {"complete_function": _validate_function_metadata(value["complete_function"])}
 
 
 def _validate_parameter_draft(
@@ -1437,15 +1553,22 @@ def _validate_parameter_draft(
     facts: dict[str, Any],
     split: dict[str, Any],
 ) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {"action_edits", "bindings"}:
+    if not isinstance(value, dict) or not set(value).issubset(
+        {"action_edits", "bindings", "actions"}
+    ) or not {"action_edits", "bindings"}.issubset(value):
         raise ValueError("function_parameters_contract_invalid")
     raw_edits = value["action_edits"]
     raw_bindings = value["bindings"]
-    if not isinstance(raw_edits, list) or not isinstance(raw_bindings, list):
+    raw_actions = value.get("actions", [])
+    if (
+        not isinstance(raw_edits, list)
+        or not isinstance(raw_bindings, list)
+        or not isinstance(raw_actions, list)
+    ):
         raise ValueError("function_parameters_invalid")
     functions = {
         item["function_id"]: _function_indices(item, len(facts["steps"]))
-        for item in _draft_functions(split)
+        for item in (split["complete_function"],)
     }
     action_edits: list[dict[str, Any]] = []
     edited_steps: set[tuple[str, int]] = set()
@@ -1454,13 +1577,11 @@ def _validate_parameter_draft(
             "function_id",
             "step_index",
             "operation",
-            "value",
         }:
             raise ValueError("function_action_edit_contract_invalid")
         function_id = str(raw.get("function_id") or "").strip()
         step_index = raw.get("step_index")
         operation = str(raw.get("operation") or "").strip()
-        edit_value = str(raw.get("value") or "").strip()
         if function_id not in functions:
             raise ValueError("function_action_edit_unknown_function")
         if (
@@ -1477,8 +1598,9 @@ def _validate_parameter_draft(
         metadata = source_step.get("metadata") or {}
         if operation == "set_target":
             source_target = str(metadata.get("semantic_target") or "").strip()
-            if source_action["tool"] != "click" or edit_value != source_target:
+            if source_action["tool"] != "click" or not source_target:
                 raise ValueError("function_action_target_not_source_proven")
+            edit_value = source_target
         elif operation == "open_app":
             source_page = metadata.get("source_page") or {}
             after_page = metadata.get("after_page") or {}
@@ -1487,10 +1609,10 @@ def _validate_parameter_draft(
                 source_action["tool"] != "click"
                 or source_page.get("is_launcher") is not True
                 or not after_package
-                or edit_value != after_package
                 or after_package == str(source_page.get("package") or "").strip()
             ):
                 raise ValueError("function_open_app_not_source_proven")
+            edit_value = after_package
         else:
             raise ValueError("function_action_edit_operation_invalid")
         edited_steps.add(key)
@@ -1500,6 +1622,45 @@ def _validate_parameter_draft(
                 "step_index": step_index,
                 "operation": operation,
                 "value": edit_value,
+            }
+        )
+    action_overrides: list[dict[str, Any]] = []
+    override_steps: set[tuple[str, int]] = set()
+    for raw in raw_actions:
+        if not isinstance(raw, dict) or set(raw) != {
+            "function_id",
+            "step_index",
+            "action",
+        }:
+            raise ValueError("function_direct_action_contract_invalid")
+        function_id = str(raw.get("function_id") or "").strip()
+        step_index = raw.get("step_index")
+        if function_id not in functions:
+            raise ValueError("function_direct_action_unknown_function")
+        if (
+            not isinstance(step_index, int)
+            or isinstance(step_index, bool)
+            or step_index not in functions[function_id]
+        ):
+            raise ValueError("function_direct_action_step_not_in_function")
+        key = (function_id, int(step_index))
+        if key in override_steps or key in edited_steps:
+            raise ValueError("function_direct_action_duplicate")
+        try:
+            proposed = canonicalize_action(raw["action"], replayable_only=True)
+        except (TypeError, ValueError) as error:
+            raise ValueError("function_direct_action_invalid") from error
+        proposed = _validate_direct_action(
+            facts,
+            proposed,
+            step_index=int(step_index),
+        )
+        override_steps.add(key)
+        action_overrides.append(
+            {
+                "function_id": function_id,
+                "step_index": int(step_index),
+                "action": proposed,
             }
         )
     bindings: list[dict[str, Any]] = []
@@ -1525,13 +1686,14 @@ def _validate_parameter_draft(
             or step_index not in functions[function_id]
         ):
             raise ValueError("function_parameter_step_not_in_function")
-        if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", name) is None:
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", name) is None:
             raise ValueError("function_parameter_name_invalid")
         if not description:
             raise ValueError("function_parameter_description_required")
         draft_action = _draft_action(
             facts,
             action_edits,
+            action_overrides=action_overrides,
             function_id=function_id,
             step_index=step_index,
         )
@@ -1567,7 +1729,11 @@ def _validate_parameter_draft(
                 "argument_path": path,
             }
         )
-    return {"action_edits": action_edits, "bindings": bindings}
+    return {
+        "action_edits": action_edits,
+        "bindings": bindings,
+        "actions": action_overrides,
+    }
 
 
 def _validate_parameter_draft_for_function(
@@ -1580,7 +1746,7 @@ def _validate_parameter_draft_for_function(
     decision = _validate_parameter_draft(value, facts, split)
     if any(
         item["function_id"] != function_id
-        for key in ("action_edits", "bindings")
+        for key in ("action_edits", "bindings", "actions")
         for item in decision[key]
     ):
         raise ValueError("function_stage_must_edit_one_function")
@@ -1591,9 +1757,21 @@ def _draft_action(
     facts: dict[str, Any],
     action_edits: list[dict[str, Any]],
     *,
+    action_overrides: list[dict[str, Any]] | None = None,
     function_id: str,
     step_index: int,
 ) -> dict[str, Any]:
+    direct_action = next(
+        (
+            item["action"]
+            for item in action_overrides or ()
+            if item["function_id"] == function_id
+            and item["step_index"] == step_index
+        ),
+        None,
+    )
+    if direct_action is not None:
+        return _copy_value(direct_action)
     action = _copy_value(facts["steps"][step_index]["action"])
     edit = next(
         (
@@ -1612,6 +1790,46 @@ def _draft_action(
     return action
 
 
+def _validate_direct_action(
+    facts: dict[str, Any],
+    proposed: dict[str, Any],
+    *,
+    step_index: int,
+) -> dict[str, Any]:
+    """Allow exploration-style authoring while keeping actions RunLog-grounded."""
+
+    source = facts["steps"][step_index]
+    source_action = source["action"]
+    if proposed == source_action:
+        return proposed
+    metadata = source.get("metadata") or {}
+    source_target = str(metadata.get("semantic_target") or "").strip()
+    source_page = metadata.get("source_page") or {}
+    after_page = metadata.get("after_page") or {}
+    after_package = str(after_page.get("package") or "").strip()
+    if (
+        proposed.get("tool") == "open_app"
+        and source_action.get("tool") == "click"
+        and source_page.get("is_launcher") is True
+        and after_package
+        and after_package != str(source_page.get("package") or "").strip()
+        and proposed.get("args") == {"package_name": after_package}
+    ):
+        return proposed
+    if (
+        proposed.get("tool") == "click"
+        and source_action.get("tool") == "click"
+        and source_target
+        and proposed.get("args")
+        == {
+            **dict(source_action.get("args") or {}),
+            "target_description": source_target,
+        }
+    ):
+        return proposed
+    raise ValueError(f"function_direct_action_not_runlog_grounded:{step_index}")
+
+
 def _validate_checker_draft(
     value: Any,
     facts: dict[str, Any],
@@ -1623,7 +1841,7 @@ def _validate_checker_draft(
     raw_checkers = value["checker_steps"]
     if not isinstance(raw_checkers, list):
         raise ValueError("function_checkers_invalid")
-    plans = {item["function_id"]: item for item in _draft_functions(split)}
+    plans = {split["complete_function"]["function_id"]: split["complete_function"]}
     functions = {
         function_id: _function_indices(item, len(facts["steps"]))
         for function_id, item in plans.items()
@@ -1632,10 +1850,18 @@ def _validate_checker_draft(
         (item["function_id"], item["step_index"])
         for item in parameters["bindings"]
     }
+    parameter_steps.update(
+        (item["function_id"], item["step_index"])
+        for item in parameters["actions"]
+    )
     edited_steps = {
         (item["function_id"], item["step_index"])
         for item in parameters["action_edits"]
     }
+    edited_steps.update(
+        (item["function_id"], item["step_index"])
+        for item in parameters["actions"]
+    )
     checker_steps: list[dict[str, Any]] = []
     seen: set[tuple[str, int]] = set()
     for raw in raw_checkers:
@@ -1725,26 +1951,12 @@ def _draft_split_prompt(
     }
     return (
         "Edit only the semantic structure of one Function draft. Name and describe "
-        "the mandatory complete-RunLog Function. Before naming any subsegment, decide "
-        "whether its first source state has a recognizable semantic precondition, its "
-        "ordered actions have a repeatable semantic effect, and all caller-varying "
-        "content can be parameterized by the later binding stage. Subsegments are "
-        "optional: return one only when all three conditions make the contiguous "
-        "source-state/action sequence independently and stably replayable. Do not infer "
-        "stability merely because the complete RunLog succeeded. If any condition cannot "
-        "be established from the shown evidence, return no subsegment for that range. "
-        "Omit any uncertain "
-        "candidate, transient-dialog sequence, task-ending suffix, or task-specific "
-        "fragment. A subsegment description may claim only effects caused by actions "
-        "inside its range; a condition already true in its first source state is a "
-        "precondition, not an effect. Function names and descriptions contain only "
-        "task-progress effects, never optional obstruction-clearing checker effects. "
-        "Use inclusive start_step_index and exclusive "
-        "end_step_index. Each "
-        "stability_reason must state the stable precondition and repeatable semantic "
-        "effect, including which varying content must later be parameterized. Do not "
-        "create one-click fragments. Do not return actions, "
-        "parameters, checkers, bindings, or a complete Function.\n\nDraft input:\n"
+        "the mandatory complete-RunLog Function. Use a stable lower_snake_case "
+        "function_id and a short human-readable name with normal word spacing. The "
+        "Function must cover every successful source action in order. Preserve the "
+        "full trajectory even when some actions can also act as optional checkers. "
+        "Do not split the RunLog or return complete Functions, actions, parameters, "
+        "or checker registrations in this stage.\n\nDraft input:\n"
         + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
     )
 
@@ -1803,17 +2015,22 @@ def _draft_parameters_prompt(
         "shown function_id. step_index is the original RunLog source index and must be "
         f"one of {list(source_indices)}; it is not a local Function index. For a "
         "launcher click whose after_page.package is a "
-        "different app, use operation=open_app with exactly that package. Return "
+        "different app, use operation=open_app. Return "
         "open_app edits only for eligible_open_app_step_indices "
         f"{eligible_open_app_indices}. An action already represented as open_app needs "
-        "no edit. For a stable visible source_target, use operation=set_target with "
-        "exactly that label, and only for eligible_set_target_step_indices "
+        "no edit. For a stable visible source_target, use operation=set_target only "
+        "for eligible_set_target_step_indices "
         f"{eligible_target_indices}. "
-        "Never invent or paraphrase either value. Bind caller-varying values already "
+        "Do not return a package, label, target, or value: the compiler copies the "
+        "exact package or source target from the listed RunLog evidence after it "
+        "validates your operation choice. Bind caller-varying values already "
         "present after those edits only when the value is requested by the goal and "
         "replacing it changes the requested outcome. The compiler derives the binding "
         "target from the validated action: input_text binds text, while a click with a "
-        "source-proven set_target edit binds target_description. Do not return a path. "
+        "source-proven set_target edit binds target_description. You may also return "
+        "direct actions for an exploration-style draft, but include only the original "
+        "step index and a canonical action copied from the evidence; the compiler "
+        "rejects any action it cannot prove from that source step. Do not return a path. "
         "A current source-state value clicked only to open a picker or "
         "menu is not a caller parameter. For example, clicking the currently displayed "
         "minute before selecting the requested minute may receive set_target grounding, "
@@ -1840,26 +2057,18 @@ def _draft_checkers_prompt(
     facts: dict[str, Any],
     plan: dict[str, Any],
     parameters: dict[str, Any],
-    *,
-    all_plans: list[dict[str, Any]],
 ) -> str:
     source_indices = _function_indices(plan, len(facts["steps"]))
     function_id = plan["function_id"]
     unavailable_indices = {
         item["step_index"]
-        for key in ("bindings", "action_edits")
+        for key in ("bindings", "action_edits", "actions")
         for item in parameters[key]
         if item["function_id"] == function_id
     }
     task_progress = " ".join(
         (str(facts["goal"]), str(plan["name"]), str(plan["description"]))
     ).casefold()
-    shared_formal_indices = {
-        index
-        for other in all_plans
-        if other["function_id"] != function_id
-        for index in _function_indices(other, len(facts["steps"]))
-    }
     eligible_indices = []
     for index in source_indices:
         source_step = facts["steps"][index]
@@ -1872,7 +2081,6 @@ def _draft_checkers_prompt(
             in {"click", "input_text", "long_press"}
             and any(later > index for later in source_indices)
             and not (source_target and source_target.casefold() in task_progress)
-            and index not in shared_formal_indices
         ):
             eligible_indices.append(index)
     evidence = {
@@ -1887,6 +2095,11 @@ def _draft_checkers_prompt(
             for item in parameters["action_edits"]
             if item["function_id"] == function_id
         ],
+        "actions": [
+            item
+            for item in parameters["actions"]
+            if item["function_id"] == function_id
+        ],
         "eligible_checker_step_indices": eligible_indices,
         "source_actions": [
             _compact_source_actions(facts)[index] for index in source_indices
@@ -1899,9 +2112,7 @@ def _draft_checkers_prompt(
         f"{list(source_indices)}. Select only from eligible_checker_step_indices "
         f"{eligible_indices}; bound actions, edited actions, unsupported actions, and "
         "actions without a later formal step or whose target names task progress have "
-        "already been excluded. A source action used as a formal step by another "
-        "Function has also been excluded because one RunLog action cannot have "
-        "conflicting roles. Select "
+        "already been excluded. Select "
         "an existing source step only when it is optional, safe to skip, has a later "
         "formal action in that Function, and is a transferable click, input_text, or "
         "long_press. Required navigation and terminal actions are not checkers. Do not "
@@ -1917,35 +2128,36 @@ def _compile_function_draft(
     parameters: dict[str, Any],
     checkers: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    functions: list[dict[str, Any]] = []
-    arguments: dict[str, Any] = {}
-    for plan in _draft_functions(split):
-        function_id = plan["function_id"]
-        function, source_arguments = _compile_draft_function(
-            facts,
-            metadata={
-                key: plan[key] for key in ("function_id", "name", "description")
-            },
-            source_indices=_function_indices(plan, len(facts["steps"])),
-            action_edits=[
-                item
-                for item in parameters["action_edits"]
-                if item["function_id"] == function_id
-            ],
-            parameter_bindings=[
-                item
-                for item in parameters["bindings"]
-                if item["function_id"] == function_id
-            ],
-            checker_indices=[
-                item["step_index"]
-                for item in checkers["checker_steps"]
-                if item["function_id"] == function_id
-            ],
-        )
-        functions.append(function)
-        arguments[function_id] = source_arguments
-    return functions, arguments
+    plan = split["complete_function"]
+    function_id = plan["function_id"]
+    function, source_arguments = _compile_draft_function(
+        facts,
+        metadata={
+            key: plan[key] for key in ("function_id", "name", "description")
+        },
+        source_indices=_function_indices(plan, len(facts["steps"])),
+        action_edits=[
+            item
+            for item in parameters["action_edits"]
+            if item["function_id"] == function_id
+        ],
+        action_overrides=[
+            item
+            for item in parameters["actions"]
+            if item["function_id"] == function_id
+        ],
+        parameter_bindings=[
+            item
+            for item in parameters["bindings"]
+            if item["function_id"] == function_id
+        ],
+        checker_indices=[
+            item["step_index"]
+            for item in checkers["checker_steps"]
+            if item["function_id"] == function_id
+        ],
+    )
+    return [function], {function_id: source_arguments}
 
 
 def _compile_draft_function(
@@ -1954,6 +2166,7 @@ def _compile_draft_function(
     metadata: dict[str, str],
     source_indices: tuple[int, ...],
     action_edits: list[dict[str, Any]],
+    action_overrides: list[dict[str, Any]],
     parameter_bindings: list[dict[str, Any]],
     checker_indices: list[int],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1971,6 +2184,7 @@ def _compile_draft_function(
             "action": _draft_action(
                 facts,
                 action_edits,
+                action_overrides=action_overrides,
                 function_id=metadata["function_id"],
                 step_index=source_index,
             ),
@@ -1986,9 +2200,10 @@ def _compile_draft_function(
         path = binding["argument_path"]
         value = _read_path(
             _draft_action(
-                facts,
-                action_edits,
-                function_id=metadata["function_id"],
+            facts,
+            action_edits,
+            action_overrides=action_overrides,
+            function_id=metadata["function_id"],
                 step_index=source_index,
             )["args"],
             _tokens("." + path),

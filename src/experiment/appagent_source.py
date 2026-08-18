@@ -32,16 +32,16 @@ from src.integrations.android_world.host import (
     androidworld_observation_xml,
 )
 from src.integrations.appagent_adapter import (
-    APPAGENT_DEMO_ACTION_TYPES,
-    APPAGENT_DEMO_MANIFEST,
+    APPAGENT_ACTION_TYPES,
+    APPAGENT_MANIFEST,
     APPAGENT_OFFICIAL_REVISION,
     OfficialAppAgentRuntime,
     appagent_elements_from_xml,
     appagent_record_line,
     build_appagent_teacher_source,
     ground_appagent_teacher_action,
-    seal_appagent_demo_memory,
-    validate_appagent_demo_memory,
+    seal_appagent_memory,
+    validate_appagent_memory,
 )
 
 
@@ -49,7 +49,7 @@ def _appagent_observation_xml(observation: dict[str, Any]) -> str:
     return androidworld_observation_xml(observation)
 
 
-def _appagent_source_method_label(item: pipeline.ArchivedRunLog) -> str:
+def _appagent_source_method_label(item: pipeline.CanonicalRunLog) -> str:
     return str(item.meta.get("method") or "").strip() or pipeline.DEFAULT_SOURCE_METHOD
 
 
@@ -269,7 +269,7 @@ def _runlog_lineage(payload: dict[str, Any], content_sha256: str) -> set[str]:
     return lineage
 
 
-def _source_lineage(item: pipeline.ArchivedRunLog) -> tuple[str, set[str]]:
+def _source_lineage(item: pipeline.CanonicalRunLog) -> tuple[str, set[str]]:
     payload = json.loads(item.source_run_log.read_text(encoding="utf-8"))
     run_id = str(payload.get("run_id") or "").strip()
     source_sha256s = _runlog_lineage(
@@ -291,7 +291,7 @@ def _jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _native_memory_evidence(
     *,
-    item: pipeline.ArchivedRunLog,
+    item: pipeline.CanonicalRunLog,
     teacher_source: dict[str, Any],
     evidence_roots: Sequence[str | Path],
     model: str,
@@ -302,7 +302,7 @@ def _native_memory_evidence(
         root = Path(raw_root).expanduser().resolve()
         if not root.is_dir():
             raise FileNotFoundError(f"appagent_native_memory_root_missing:{root}")
-        for manifest_path in root.rglob(APPAGENT_DEMO_MANIFEST):
+        for manifest_path in root.rglob(APPAGENT_MANIFEST):
             try:
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
@@ -462,7 +462,7 @@ def _appagent_source_observation(
     raise ValueError(f"appagent_source_after_observation_missing:{step_index}")
 
 
-def _write_appagent_demo_state(
+def _write_appagent_state(
     *,
     observation: dict[str, Any],
     demo_root: Path,
@@ -593,7 +593,7 @@ def convert_runlog_to_appagent_memory(
     demo_records = [
         record
         for record in teacher_source["actions"]
-        if str(record["action"].get("type") or "") in APPAGENT_DEMO_ACTION_TYPES
+        if str(record["action"].get("type") or "") in APPAGENT_ACTION_TYPES
     ]
     if not demo_records:
         raise ValueError("appagent_official_demo_actions_required")
@@ -664,9 +664,9 @@ def convert_runlog_to_appagent_memory(
             "source_coordinates_used": False,
             "conversion_mode": "canonical_runlog_offline",
         }
-        if action_type in APPAGENT_DEMO_ACTION_TYPES:
+        if action_type in APPAGENT_ACTION_TYPES:
             state_index = len(record_lines) + 1
-            xml_text, _ = _write_appagent_demo_state(
+            xml_text, _ = _write_appagent_state(
                 observation=_appagent_source_observation(
                     source,
                     step_index=int(record["source_step_index"]),
@@ -695,7 +695,7 @@ def convert_runlog_to_appagent_memory(
             )
         trace_rows.append(trace)
     final_record = demo_records[-1]
-    _write_appagent_demo_state(
+    _write_appagent_state(
         observation=_appagent_source_observation(
             source,
             step_index=int(final_record["source_step_index"]),
@@ -732,7 +732,7 @@ def convert_runlog_to_appagent_memory(
         model=normalized_model,
     )
     prep_wall_sec = max(round(time.monotonic() - prep_started, 6), 0.000001)
-    manifest = seal_appagent_demo_memory(
+    manifest = seal_appagent_memory(
         memory_root=root,
         app_name=app_name,
         demo_name=demo_name,
@@ -751,7 +751,7 @@ def convert_runlog_to_appagent_memory(
     )
     return {
         "schema_version": "omniflow.runlog-memory-conversion.v1",
-        "method": "appagent_demo",
+        "method": "appagent",
         "task_name": str(source["task_name"]),
         "source_run_log": str(source_path),
         "memory_root": str(root),
@@ -768,15 +768,15 @@ def validate_appagent_source_memory(
 ) -> dict[str, Any]:
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_method = _appagent_source_method_label(item)
-    manifest = validate_appagent_demo_memory(
+    manifest = validate_appagent_memory(
         memory_root,
         task_name=item.task,
         source_run_log=item.source_run_log,
     )
     if str(manifest.get("source_method") or "") != source_method:
-        raise ValueError("appagent_demo_memory_source_method_invalid")
+        raise ValueError("appagent_memory_source_method_invalid")
     if str(manifest.get("document_generation_model") or "") != str(model):
-        raise ValueError("appagent_demo_memory_model_invalid")
+        raise ValueError("appagent_memory_model_invalid")
     models = {
         str(value or "").strip()
         for value in (
@@ -786,7 +786,7 @@ def validate_appagent_source_memory(
     }
     if models != {str(model)}:
         raise ValueError(
-            "appagent_demo_memory_usage_model_invalid:"
+            "appagent_memory_usage_model_invalid:"
             f"expected={model}:actual={sorted(models)}"
         )
     return manifest
@@ -794,7 +794,7 @@ def validate_appagent_source_memory(
 
 def _preflight_appagent_teacher(
     *,
-    item: pipeline.ArchivedRunLog,
+    item: pipeline.CanonicalRunLog,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     grounded, grounding_audit = build_grounded_teacher_run_log_from_canonical_item(
         item
@@ -821,7 +821,7 @@ def _preflight_appagent_teacher(
     groundable_action_count = 0
     for record in teacher_source.get("actions") or []:
         action = dict(record.get("action") or {})
-        if str(action.get("type") or "").strip() not in APPAGENT_DEMO_ACTION_TYPES:
+        if str(action.get("type") or "").strip() not in APPAGENT_ACTION_TYPES:
             continue
         step_index = int(record.get("source_step_index") or 0)
         step = grounded_steps.get(step_index) or {}
@@ -859,7 +859,7 @@ def _preflight_appagent_teacher(
     demo_records = [
         record
         for record in teacher_source["actions"]
-        if str(record["action"].get("type") or "") in APPAGENT_DEMO_ACTION_TYPES
+        if str(record["action"].get("type") or "") in APPAGENT_ACTION_TYPES
     ]
     for record in demo_records:
         step_index = int(record["source_step_index"])
@@ -927,7 +927,7 @@ def preflight_appagent_source(
     }
 
 
-def prepare_appagent_demo_memory(
+def prepare_appagent_memory(
     *,
     index_path: str | Path,
     task_name: str,
@@ -963,7 +963,7 @@ def prepare_appagent_demo_memory(
     from src.experiment.source_assets import convert_runlog_memory
 
     result = convert_runlog_memory(
-        "appagent_demo",
+        "appagent",
         source_run_log=item.source_run_log,
         output_root=memory_root,
         upstream_root=appagent_root,
@@ -986,7 +986,7 @@ def prepare_appagent_demo_memory(
 
 def _write_failure_marker(memory_root: str | Path, error: BaseException) -> None:
     root = Path(memory_root).expanduser().resolve()
-    if not root.is_dir() or (root / APPAGENT_DEMO_MANIFEST).exists():
+    if not root.is_dir() or (root / APPAGENT_MANIFEST).exists():
         return
     marker = root / "prep_failure.json"
     if marker.exists():
@@ -1047,7 +1047,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
     try:
         if args.command == "prepare":
-            result = prepare_appagent_demo_memory(
+            result = prepare_appagent_memory(
                 index_path=args.index,
                 task_name=args.task,
                 appagent_root=args.appagent_root,

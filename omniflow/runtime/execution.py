@@ -337,10 +337,13 @@ async def execute_robust_action(
     function_id = function.id if function is not None else None
     if (
         _action_uses_transfer_target(action)
-        and _observation_screenshot_path(source_state)
-        and not _observation_screenshot_path(observation)
+        and source_state is not None
+        and _observation_needs_transfer_refresh(
+            observation,
+            source_state=source_state,
+        )
     ):
-        observation = await _observe_ready(host)
+        observation = await _observe_ready(host, require_graph=True)
     semantic = resolve_semantic_action(action, observation)
     action = semantic.action
     semantic_detail = semantic.detail
@@ -464,13 +467,16 @@ async def _dispatch_prepared(
     return replace(core_step, after=after, origin="action")
 
 
-async def _observe_ready(host: Host) -> Observation:
+async def _observe_ready(host: Host, *, require_graph: bool = False) -> Observation:
     after = Observation()
     for attempt in range(_OBSERVATION_READY_MAX_ATTEMPTS):
         after = Observation.from_value(
             await _await(host.observe(xml=True, screenshot=True, app_info=True))
         )
-        if not _observation_window_outside_display(after):
+        graph_ready = _observation_graph_ready(after)
+        if not _observation_window_outside_display(after) and (
+            not require_graph or graph_ready
+        ):
             return after
         if attempt + 1 < _OBSERVATION_READY_MAX_ATTEMPTS:
             await asyncio.sleep(_OBSERVATION_READY_POLL_SECONDS)
@@ -510,6 +516,68 @@ def _observation_window_outside_display(observation: Observation) -> bool:
         or bounds[2] > width + tolerance_x
         or bounds[3] > height + tolerance_y
     )
+
+
+def _observation_needs_transfer_refresh(
+    observation: Observation,
+    *,
+    source_state: Observation,
+) -> bool:
+    if not _observation_graph_ready(observation):
+        return True
+    source_has_visual = bool(
+        _observation_screenshot_path(source_state)
+        or source_state.extra.get("visual_rgb")
+    )
+    target_has_visual = bool(
+        _observation_screenshot_path(observation)
+        or observation.extra.get("visual_rgb")
+    )
+    return source_has_visual and not target_has_visual
+
+
+def _observation_graph_ready(observation: Observation) -> bool:
+    xml_text = str(observation.xml or "").strip()
+    if not xml_text:
+        return False
+    graph_source = str(observation.extra.get("ui_graph_source") or "")
+    return not graph_source.endswith("_partial") or (
+        _observation_has_modal_graph(xml_text)
+        or _observation_has_full_screen_node(xml_text)
+    )
+
+
+def _observation_has_modal_graph(xml_text: str) -> bool:
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return False
+    for element in root.iter():
+        values = (
+            element.attrib.get("class"),
+            element.attrib.get("resource-id"),
+            element.attrib.get("content-desc"),
+        )
+        if any("dialog" in str(value or "").lower() for value in values):
+            return True
+    return False
+
+
+def _observation_has_full_screen_node(xml_text: str) -> bool:
+    try:
+        root = ET.fromstring(xml_text)
+        width = int(root.attrib.get("width") or 0)
+        height = int(root.attrib.get("height") or 0)
+    except (ET.ParseError, TypeError, ValueError):
+        return False
+    if width <= 0 or height <= 0:
+        return False
+    for element in list(root):
+        for descendant in element.iter():
+            bounds = _bounds(descendant.attrib.get("bounds"))
+            if bounds == (0, 0, width, height):
+                return True
+    return False
 
 
 def step_fact(step: StepResult) -> dict[str, Any]:
@@ -619,7 +687,13 @@ def default_transfer(
     target_xml = str(observation.xml or "")
     if not target_xml:
         return TransferResult(None, reason="omnitransfer_missing_target_page")
-    if str(observation.extra.get("ui_graph_source") or "").endswith("_partial"):
+    if (
+        str(observation.extra.get("ui_graph_source") or "").endswith("_partial")
+        and not (
+            _observation_has_modal_graph(target_xml)
+            or _observation_has_full_screen_node(target_xml)
+        )
+    ):
         return TransferResult(None, reason="omnitransfer_target_graph_incomplete")
     elements = _elements(target_xml)
     display_size = _display_size(observation, elements)

@@ -16,8 +16,8 @@ if [[ "$python_bin" != /* || ! -x "$python_bin" ]]; then
   exit 2
 fi
 env_file="${OMNIFLOW_ENV_FILE:-${asset_root:+$asset_root/.env}}"
-master_source_index="${asset_root:+$asset_root/inputs/final_source_index.json}"
-source_index="$master_source_index"
+source_index_input="${asset_root:+$asset_root/inputs/final_source_index.json}"
+source_index="$source_index_input"
 source_index_expected_tasks=""
 formal_source_seed=""
 formal_task_seed=""
@@ -174,10 +174,8 @@ preflight_minimum_free_gb="${OMNIFLOW_PREFLIGHT_MINIMUM_FREE_GB:-20}"
 max_steps="${OMNIFLOW_ANDROIDWORLD_MAX_STEPS:-$formal_max_steps}"
 max_fallback_steps="${OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS:-$formal_max_fallback_steps}"
 store_path="${OMNIFLOW_ANDROIDWORLD_STORE_PATH:-}"
-ours_store_index=""
 memory_root="${OMNIFLOW_EXP_MEMORY_ROOT:-$default_memory_root}"
 memory_index="${OMNIFLOW_EXP_MEMORY_INDEX:-${memory_root:+$memory_root/current.json}}"
-memory_function_catalogs="${OMNIFLOW_MEMORY_FUNCTION_CATALOGS:-}"
 memory_runlog_roots="${OMNIFLOW_MEMORY_RUNLOG_ROOTS:-$repo/data}"
 memory_result_roots="${OMNIFLOW_MEMORY_RESULT_ROOTS:-$repo/data}"
 memory_mobilegpt_roots="${OMNIFLOW_MEMORY_MOBILEGPT_ROOTS:-}"
@@ -188,7 +186,7 @@ fi
 mobilegpt_root="${OMNIFLOW_MOBILEGPT_ROOT:-${asset_root:+$asset_root/runtime/external/mobilegpt}}"
 mobilegpt_source_memory_root="${OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT:-}"
 appagent_root="${OMNIFLOW_APPAGENT_ROOT:-${asset_root:+$asset_root/runtime/external/appagent}}"
-appagent_demo_memory_root="${OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT:-}"
+appagent_memory_root="${OMNIFLOW_APPAGENT_MEMORY_ROOT:-}"
 preflight_profile=""
 preflight_serials=""
 manage_emulators="${OMNIFLOW_ANDROIDWORLD_MANAGE_EMULATORS:-1}"
@@ -471,7 +469,7 @@ Options:
                             only the official environment, never the method.
   --check-only              Validate the complete selected run without creating
                             assets, attempts, result directories, or emulators.
-  --development-run         Run one unregistered `ours` episode through this
+  --development-run         Run one unregistered `omniflow` episode through this
                             script for bounded method debugging.
   --dry-run                 Build one task command without executing it.
   --all-tasks               Run the selected task set in task-major order.
@@ -517,7 +515,6 @@ Optional runtime overrides:
 Long-term-memory refresh inputs:
   OMNIFLOW_MEMORY_RUNLOG_ROOTS       Colon-separated evidence roots.
   OMNIFLOW_MEMORY_RESULT_ROOTS       Colon-separated result roots.
-  OMNIFLOW_MEMORY_FUNCTION_CATALOGS  Colon-separated Function catalogs.
   OMNIFLOW_SOURCE_SCREENSHOT_ROOTS   Optional screenshot roots for legacy repairs.
 
 Environment adapters:
@@ -1036,7 +1033,7 @@ if [[ -n "$e2e_task" ]]; then
     echo "AndroidWorld E2E requires GLM-5.1 for the formal model, got: $formal_model" >&2
     exit 2
   fi
-  e2e_output_root="${OMNIFLOW_E2E_OUTPUT_ROOT:-$results_root/androidworld_e2e_task_attempts}"
+  e2e_output_root="${OMNIFLOW_E2E_OUTPUT_ROOT:-$results_root/androidworld}"
   if [[ "$e2e_output_root" != /* ]]; then
     echo "OMNIFLOW_E2E_OUTPUT_ROOT must be absolute." >&2
     exit 2
@@ -1075,8 +1072,8 @@ if [[ -n "$e2e_task" ]]; then
   if [[ "$source_collection" -eq 1 ]]; then
     e2e_args+=(--source-only)
   fi
-  if [[ -n "$appagent_demo_memory_root" ]]; then
-    e2e_args+=(--appagent-memory-root "$appagent_demo_memory_root")
+  if [[ -n "$appagent_memory_root" ]]; then
+    e2e_args+=(--appagent-memory-root "$appagent_memory_root")
   fi
   if [[ "$dry_run" -eq 1 ]]; then
     e2e_args+=(--dry-run)
@@ -1098,8 +1095,8 @@ if [[ "$refresh_memory" -eq 1 ]]; then
     exit 2
   fi
   memory_pointer="$memory_root/current.json"
-  if [[ ! -f "$memory_pointer" && ! -f "$master_source_index" ]]; then
-    echo "Canonical master source index missing: $master_source_index" >&2
+  if [[ ! -f "$memory_pointer" && ! -f "$source_index_input" ]]; then
+    echo "Canonical source input missing: $source_index_input" >&2
     exit 2
   fi
   if [[ -z "$memory_runlog_roots" ]]; then
@@ -1116,7 +1113,7 @@ if [[ "$refresh_memory" -eq 1 ]]; then
     --memory-root "$memory_root"
   )
   if [[ ! -f "$memory_pointer" ]]; then
-    memory_args+=(--source-index "$master_source_index")
+    memory_args+=(--source-index "$source_index_input")
   fi
   if [[ -n "$source_screenshot_roots" ]]; then
     IFS=':' read -r -a configured_screenshot_roots <<< "$source_screenshot_roots"
@@ -1173,44 +1170,9 @@ if [[ "$refresh_memory" -eq 1 ]]; then
       memory_args+=(--baseline-batch-report "$configured_report")
     done
   fi
-  if [[ -n "$memory_function_catalogs" ]]; then
-    IFS=':' read -r -a configured_function_catalogs <<< "$memory_function_catalogs"
-    for configured_catalog in "${configured_function_catalogs[@]}"; do
-      if [[ -z "$configured_catalog" ]]; then
-        continue
-      fi
-      if [[ "$configured_catalog" != /* || ! -f "$configured_catalog" ]]; then
-        echo "Memory Function catalog must be an existing absolute file: $configured_catalog" >&2
-        exit 2
-      fi
-      memory_args+=(--function-catalog "$configured_catalog")
-    done
-  fi
   cd "$repo"
   exec "$python_bin" "${memory_args[@]}"
 fi
-load_memory_paths() {
-  "$python_bin" - "$repo" "$memory_index" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
-from src.experiment.local_data import load_local_data
-
-index_path = Path(sys.argv[2]).expanduser().resolve()
-load_local_data(index_path)
-pointer = json.loads(index_path.read_text(encoding="utf-8"))
-print(
-    "\t".join(
-        (
-            str(pointer["source_index"]),
-            str(pointer["ours_store_index"]),
-        )
-    )
-)
-PY
-}
 if [[ -n "$batch_task_filter" && "$all_tasks" -eq 0 ]]; then
   all_tasks=1
 fi
@@ -1292,10 +1254,10 @@ if ! python_bin="$(command -v "$python_bin")"; then
   exit 1
 fi
 indexed_store_path_for_task() {
-  if [[ -z "$ours_store_index" ]]; then
+  if [[ -z "$memory_index" ]]; then
     return 1
   fi
-  "$python_bin" - "$ours_store_index" "$1" <<'PY'
+  "$python_bin" - "$memory_index" "$1" <<'PY'
 import hashlib
 import json
 import sys
@@ -1304,6 +1266,8 @@ from pathlib import Path
 index_path = Path(sys.argv[1]).expanduser().resolve()
 task_name = sys.argv[2]
 payload = json.loads(index_path.read_text(encoding="utf-8"))
+if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.local-artifact-index.v1":
+    payload = payload.get("canonical", {}).get("function_stores", {})
 row = payload.get(task_name) if isinstance(payload, dict) else None
 if not isinstance(row, dict):
     raise SystemExit(3)
@@ -1317,29 +1281,34 @@ for path_field, hash_field in fields:
     expected = str(row.get(hash_field) or "").strip()
     if not path.is_absolute() or not path.is_file():
         raise SystemExit(
-            f"ours_store_index_file_missing:{task_name}:{path_field}:{path}"
+            f"omniflow_store_index_file_missing:{task_name}:{path_field}:{path}"
         )
     actual = hashlib.sha256(path.read_bytes()).hexdigest()
     if not expected or actual != expected:
         raise SystemExit(
-            f"ours_store_index_hash_mismatch:{task_name}:{path_field}:"
+            f"omniflow_store_index_hash_mismatch:{task_name}:{path_field}:"
             f"expected={expected or 'missing'}:actual={actual}"
         )
 store_path = Path(str(row["store_path"])).resolve()
 transfer_path = Path(str(row["transfer_states_path"])).resolve()
 if transfer_path != store_path.with_name("transfer_states.json"):
-    raise SystemExit(f"ours_store_index_catalog_mismatch:{task_name}")
+            raise SystemExit(f"omniflow_store_index_catalog_mismatch:{task_name}")
 print(store_path)
 PY
 }
-memory_paths="$(load_memory_paths)"
-IFS=$'\t' read -r memory_source_index memory_store_index <<< "$memory_paths"
-master_source_index="$memory_source_index"
-source_index="$memory_source_index"
-ours_store_index="$memory_store_index"
+source_index="$memory_index"
+"$python_bin" - "$repo" "$memory_index" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
+from src.experiment.local_data import load_local_data
+
+load_local_data(Path(sys.argv[2]).expanduser().resolve())
+PY
 export OMNIFLOW_EXP_MEMORY_INDEX="$memory_index"
 requires_function_asset=0
-if [[ "$method" == "ours" ]]; then
+if [[ "$method" == "omniflow" ]]; then
   requires_function_asset=1
 fi
 prepare_function_asset_for_task() {
@@ -1394,18 +1363,18 @@ need_mobilegpt_preflight=0
 need_appagent_preflight=0
 
 case "$method" in
-    ours)
+    omniflow)
       requires_omnitransfer=1
       need_native_preflight=1
       ;;
     fixed_replay)
       need_native_preflight=1
       ;;
-    mobilegpt_offline_retrieval)
+    mobilegpt)
       need_mobilegpt_preflight=1
       requires_mobilegpt_source_memory=1
       ;;
-    appagent_demo)
+    appagent)
       need_appagent_preflight=1
       requires_appagent_source_memory=1
       ;;
@@ -1503,6 +1472,8 @@ from src.experiment.protocol import SOURCE_SEED
 source_index = json.loads(
     Path(sys.argv[4]).read_text(encoding="utf-8")
 )
+if source_index.get("schema_version") == "omniflow.local-artifact-index.v1":
+    source_index = source_index["source_index"]
 source_row = source_index.get(sys.argv[5])
 if not isinstance(source_row, dict):
     raise SystemExit(f"canonical_source_task_missing:{sys.argv[5]}")
@@ -1584,7 +1555,7 @@ if sys.argv[7] == "omniflow.mobilegpt-runlog-direct-memory.v1":
         except (OSError, TypeError, ValueError):
             return False
         return True
-elif sys.argv[7] == "omniflow.appagent-demo-memory.v2":
+elif sys.argv[7] == "omniflow.appagent-memory.v2":
     def candidate_validator(_candidate, payload):
         return (
             payload.get("conversion_mode") == "canonical_runlog_offline"
@@ -1626,7 +1597,7 @@ raise SystemExit(0 if payload.get("retry_allowed") is False else 1)
 PY
 }
 if [[ "$all_tasks" -eq 0 && "$requires_mobilegpt_source_memory" -eq 1 && -z "$mobilegpt_source_memory_root" ]]; then
-  mobilegpt_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${formal_source_seed}/$task/mobilegpt_offline_retrieval"
+  mobilegpt_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${formal_source_seed}/$task/mobilegpt"
   mobilegpt_source_attempt_root="$(
     select_source_asset_revision \
       "$mobilegpt_source_base" \
@@ -1639,21 +1610,20 @@ if [[ "$all_tasks" -eq 0 && "$requires_mobilegpt_source_memory" -eq 1 && -z "$mo
   )"
   mobilegpt_source_memory_root="$mobilegpt_source_attempt_root/memory"
 fi
-if [[ "$all_tasks" -eq 0 && "$requires_appagent_source_memory" -eq 1 && -z "$appagent_demo_memory_root" ]]; then
-  appagent_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${formal_source_seed}/$task/appagent_demo"
-  appagent_demo_memory_root="$(
+if [[ "$all_tasks" -eq 0 && "$requires_appagent_source_memory" -eq 1 && -z "$appagent_memory_root" ]]; then
+  appagent_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${formal_source_seed}/$task/appagent"
+  appagent_memory_root="$(
     select_source_asset_revision \
       "$appagent_source_base" \
-      "appagent_demo_manifest.json" \
+      "appagent_manifest.json" \
       "$task" \
       "$source_index" \
       "" \
-      "omniflow.appagent-demo-memory.v2"
+      "omniflow.appagent-memory.v2"
   )"
 fi
 for external_path in \
   "$env_file" \
-  "$master_source_index" \
   "$source_index" \
   "$android_world_root" \
   "$output_root" \
@@ -1670,8 +1640,8 @@ if [[ "$all_tasks" -eq 0 ]]; then
     echo "Experiment task asset paths must be absolute: $mobilegpt_source_memory_root" >&2
     exit 2
   fi
-  if [[ "$requires_appagent_source_memory" -eq 1 && "$appagent_demo_memory_root" != /* ]]; then
-    echo "Experiment task asset paths must be absolute: $appagent_demo_memory_root" >&2
+  if [[ "$requires_appagent_source_memory" -eq 1 && "$appagent_memory_root" != /* ]]; then
+    echo "Experiment task asset paths must be absolute: $appagent_memory_root" >&2
     exit 2
   fi
 fi
@@ -1680,7 +1650,7 @@ if [[ "$requires_omnitransfer" -eq 1 && "$omnitransfer_root" != /* ]]; then
   exit 2
 fi
 if [[ "$requires_omnitransfer" -eq 1 && "$all_tasks" -eq 0 && "$store_path" != /* ]]; then
-  echo "Ours Store must be an absolute path." >&2
+  echo "OmniFlow Store must be an absolute path." >&2
   exit 2
 fi
 if [[ "$all_tasks" -eq 1 ]]; then
@@ -1710,6 +1680,8 @@ from pathlib import Path
 index_path = Path(sys.argv[1]).expanduser().resolve()
 task_filter = sys.argv[2].strip()
 payload = json.loads(index_path.read_text(encoding="utf-8"))
+if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.local-artifact-index.v1":
+    payload = payload["source_index"]
 if not isinstance(payload, dict) or (not task_filter and len(payload) != 116):
     raise SystemExit(
         f"formal_task_index_invalid:expected="
@@ -1818,10 +1790,6 @@ if [[ ! -f "$source_index" ]]; then
   echo "Canonical source index missing: $source_index" >&2
   exit 1
 fi
-if [[ ! -f "$master_source_index" ]]; then
-  echo "Canonical master source index missing: $master_source_index" >&2
-  exit 1
-fi
 "$python_bin" - \
   "$source_index" \
   "$task" \
@@ -1842,6 +1810,8 @@ from src.integrations.android_world.apps import resolve_androidworld_package
 from src.integrations.runlog import import_run_log
 
 payload = json.loads(index_path.read_text(encoding="utf-8"))
+if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.local-artifact-index.v1":
+    payload = payload["source_index"]
 row = payload.get(task_name) if isinstance(payload, dict) else None
 if not isinstance(row, dict):
     raise SystemExit(f"canonical_source_task_missing:{task_name}")
@@ -1946,7 +1916,7 @@ if [[ "$manage_emulators" -eq 1 ]]; then
 fi
 if [[ "$requires_omnitransfer" -eq 1 ]]; then
   require_file "omnitransfer_runtime" "$omnitransfer_root/src/omnitransfer/runtime.py"
-  require_file "ours_store" "$store_path"
+  require_file "omniflow_store" "$store_path"
 fi
 if [[ "$need_mobilegpt_preflight" -eq 1 ]]; then
   require_file "mobilegpt_server" "$mobilegpt_root/Server/main.py"
@@ -1964,13 +1934,13 @@ if [[ "$requires_omnitransfer" -eq 1 ]]; then
 import json
 import sys
 
-from src.experiment.androidworld import validate_ours_transfer_assets
+from src.experiment.androidworld import validate_omniflow_transfer_assets
 
-audit = validate_ours_transfer_assets(
+audit = validate_omniflow_transfer_assets(
     sys.argv[1],
     require_action_transfer=True,
 )
-print("[ours-assets] " + json.dumps(audit, sort_keys=True))
+print("[omniflow-assets] " + json.dumps(audit, sort_keys=True))
 PY
 fi
 
@@ -1987,13 +1957,13 @@ if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
     mobilegpt_source_generation_required=1
   fi
 fi
-appagent_source_manifest="$appagent_demo_memory_root/appagent_demo_manifest.json"
+appagent_source_manifest="$appagent_memory_root/appagent_manifest.json"
 appagent_source_generation_required=0
 if [[ "$requires_appagent_source_memory" -eq 1 ]]; then
   if [[ -f "$appagent_source_manifest" ]]; then
     :
-  elif [[ -e "$appagent_demo_memory_root" ]]; then
-    echo "Immutable AppAgent source attempt is incomplete and cannot be retried: $appagent_demo_memory_root" >&2
+  elif [[ -e "$appagent_memory_root" ]]; then
+    echo "Immutable AppAgent source attempt is incomplete and cannot be retried: $appagent_memory_root" >&2
     exit 1
   else
     appagent_source_generation_required=1
@@ -2027,7 +1997,7 @@ if [[ "$requires_appagent_source_memory" -eq 1 ]]; then
     "$python_bin" -m src.experiment.appagent_source validate \
       --index "$source_index" \
       --task "$task" \
-      --memory-root "$appagent_demo_memory_root" \
+      --memory-root "$appagent_memory_root" \
       --model "$paper_model"
   fi
 fi
@@ -2336,6 +2306,8 @@ import sys
 from pathlib import Path
 
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.local-artifact-index.v1":
+    payload = payload.get("source_index", {})
 if not isinstance(payload, dict) or not payload:
     raise SystemExit("source_index_empty")
 print(len(payload))
@@ -2348,7 +2320,7 @@ if [[ "$appagent_source_generation_required" -eq 1 ]]; then
     --index "$source_index" \
     --task "$task" \
     --appagent-root "$appagent_root" \
-    --memory-root "$appagent_demo_memory_root" \
+      --memory-root "$appagent_memory_root" \
     --model "$paper_model"
 fi
 for serial in "${target_serials[@]}"; do
@@ -2388,8 +2360,8 @@ for serial in $preflight_serials; do
   fi
   if [[ "$profile" == "appagent" ]]; then
     preflight_args+=(--appagent-root "$appagent_root")
-    if [[ -n "$appagent_demo_memory_root" ]]; then
-      preflight_args+=(--appagent-demo-memory-root "$appagent_demo_memory_root")
+    if [[ -n "$appagent_memory_root" ]]; then
+      preflight_args+=(--appagent-memory-root "$appagent_memory_root")
     fi
   fi
   if [[ "$profile" == "mobilegpt" && "$task" == Contacts* ]]; then
@@ -2410,11 +2382,10 @@ command=(
   --task "$task"
   --source-seed "$expected_source_seed"
   --output-path "$output_root"
-  --master-source-index "$master_source_index"
   --result-registry-root "$results_root/androidworld_validator/runs"
   --omnitransfer-root "$omnitransfer_root"
   --store-path "$store_path"
-  --store-index "$ours_store_index"
+  --store-index "$memory_index"
   --mobilegpt-root "$mobilegpt_root"
   --mobilegpt-source-memory-root "$mobilegpt_source_memory_root"
   --appagent-root "$appagent_root"
@@ -2430,7 +2401,7 @@ if [[ "$fixed_task_params" != "1" ]]; then
   command+=(--no-fixed-task-params --task-params-json "")
 fi
 command+=(--device "$device_target")
-if [[ -n "$appagent_demo_memory_root" ]]; then
-  command+=(--appagent-demo-memory-root "$appagent_demo_memory_root")
+if [[ -n "$appagent_memory_root" ]]; then
+  command+=(--appagent-memory-root "$appagent_memory_root")
 fi
 exec "${command[@]}"
