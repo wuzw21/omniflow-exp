@@ -23,6 +23,7 @@ from omniflow.runtime.semantic_grounding import semantic_target_at_point
 
 FUNCTION_ARTIFACT_VERSION = "omniflow.function.v2"
 STORE_VERSION = "omniflow.store.v2"
+_AUTHORING_STAGE_ATTEMPTS = 3
 
 _TOP_LEVEL_FIELDS = {
     "schema_version",
@@ -1295,6 +1296,11 @@ def _authoring_correction_prompt(
             " Remove that binding. A source-state value absent from the goal may "
             "keep a source-proven action edit, but it cannot be an input parameter."
         )
+    elif str(error) == "function_enhancement_single_click_fragment_forbidden":
+        correction = (
+            " Remove every one-click subsegment from this decision. Keep the complete "
+            "Function metadata and any other independently replayable subsegments."
+        )
     return (
         f"{stage_prompt}\n\n"
         "The previous small decision was rejected: "
@@ -1312,7 +1318,7 @@ def _request_authoring_decision(
     validate: Callable[[Any], dict[str, Any]],
 ) -> dict[str, Any]:
     validation_error: Exception | None = None
-    for attempt in range(2):
+    for attempt in range(_AUTHORING_STAGE_ATTEMPTS):
         request = (
             prompt
             if attempt == 0

@@ -286,6 +286,73 @@ def test_stage_validation_gets_one_small_correction(tmp_path) -> None:
     assert "function_split_contract_invalid" in prompts[1]
 
 
+def test_stage_validation_allows_three_bounded_attempts(tmp_path) -> None:
+    split_calls = 0
+
+    def complete(prompt: str, tool: dict) -> str:
+        nonlocal split_calls
+        if tool["function"]["parameters"]["required"] == [
+            "complete_function",
+            "subsegments",
+        ]:
+            split_calls += 1
+            if split_calls < 3:
+                return '{"unexpected":true}'
+        return _draft_enhancer(prompt, tool)
+
+    save_function(
+        _authoring_run_log(),
+        tmp_path / "store.json",
+        enhance=True,
+        complete_json=complete,
+    )
+    assert split_calls == 3
+
+
+def test_single_click_subsegment_correction_requests_omission(tmp_path) -> None:
+    prompts: list[str] = []
+    split_calls = 0
+
+    def complete(prompt: str, tool: dict) -> str:
+        nonlocal split_calls
+        required = tool["function"]["parameters"]["required"]
+        if required == ["complete_function", "subsegments"]:
+            prompts.append(prompt)
+            split_calls += 1
+            if split_calls == 1:
+                return json.dumps(
+                    {
+                        "complete_function": {
+                            "function_id": "complete_note_entry",
+                            "name": "Complete note entry",
+                            "description": "Enter text and wait.",
+                        },
+                        "subsegments": [
+                            {
+                                "function_id": "dismiss_dialog",
+                                "name": "Dismiss dialog",
+                                "description": "Dismiss a dialog.",
+                                "stability_reason": (
+                                    "A dialog is visible and clicking dismiss closes it."
+                                ),
+                                "start_step_index": 0,
+                                "end_step_index": 1,
+                            }
+                        ],
+                    }
+                )
+        return _draft_enhancer(prompt, tool)
+
+    save_function(
+        _authoring_run_log(),
+        tmp_path / "store.json",
+        enhance=True,
+        complete_json=complete,
+    )
+    assert split_calls == 2
+    assert "Remove every one-click subsegment" in prompts[1]
+
+
 def test_enhancer_rejects_subsegment_without_stability_reason(tmp_path) -> None:
     def complete(_prompt: str, tool: dict) -> str:
         required = tool["function"]["parameters"]["required"]
