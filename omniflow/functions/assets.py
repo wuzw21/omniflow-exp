@@ -1710,6 +1710,7 @@ def _draft_parameters_prompt(
 ) -> str:
     source_indices = _function_indices(plan, len(facts["steps"]))
     evidence = {
+        "goal": facts["goal"],
         "function": plan,
         "source_actions": [
             _compact_source_actions(facts)[index] for index in source_indices
@@ -1724,8 +1725,14 @@ def _draft_parameters_prompt(
         "different app, use operation=open_app with exactly that package. For a stable "
         "visible source_target, use operation=set_target with exactly that label. "
         "Never invent or paraphrase either value. Bind caller-varying values already "
-        "present after those edits; argument_path is relative to action.args. A time, "
-        "query, contact, quantity, or selected visible label that varies by request "
+        "present after those edits only when the value is requested by the goal and "
+        "replacing it changes the requested outcome; argument_path is relative to "
+        "action.args. A current source-state value clicked only to open a picker or "
+        "menu is not a caller parameter. For example, clicking the currently displayed "
+        "minute before selecting the requested minute may receive set_target grounding, "
+        "but only the requested minute is bound. Reusing one parameter name on multiple "
+        "steps is valid only when every bound source value is equal. A time, query, "
+        "contact, quantity, or selected visible label explicitly varying with the goal "
         "must be a parameter. Coordinates, packages, waits, and directions are not "
         "parameters. Example: a launcher click from package containing 'launcher' to "
         "after_page.package='com.example.app' becomes an open_app edit; a source_target "

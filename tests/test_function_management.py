@@ -137,6 +137,14 @@ def test_enhancer_edits_one_draft_in_three_small_stages(tmp_path) -> None:
     assert "Subsegments are optional" in prompts[0]
     assert "Omit any uncertain candidate" in prompts[0]
     assert "stable precondition and repeatable semantic effect" in prompts[0]
+    assert any(
+        "current source-state value clicked only to open a picker" in prompt
+        for prompt in prompts
+    )
+    assert any(
+        '"goal":"Dismiss an optional prompt and enter meeting notes."' in prompt
+        for prompt in prompts
+    )
     assert all('"schema_version":"omniflow.function.v2"' not in p for p in prompts)
 
 
