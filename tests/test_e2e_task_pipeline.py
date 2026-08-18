@@ -597,6 +597,8 @@ def test_bmoca_enhancement_uses_the_shared_draft_edit_tool(
         "base_url": "https://llmapi.paratera.com/v1",
     }
     assert captured["tools"] == [tool]
+    assert captured["max_completion_tokens"] == 2048
+    assert captured["reasoning_effort"] == "none"
     assert captured["tool_choice"] == {
         "type": "function",
         "function": {"name": "edit_function_draft"},

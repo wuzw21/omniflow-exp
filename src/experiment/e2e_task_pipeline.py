@@ -2090,6 +2090,7 @@ def _function_enhancement_transport(
         response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
+            max_completion_tokens=2048,
             temperature=0,
             tools=[tool],
             tool_choice={
@@ -2097,6 +2098,7 @@ def _function_enhancement_transport(
                 "function": {"name": tool_name},
             },
             parallel_tool_calls=False,
+            reasoning_effort="none",
         )
         response_usage = getattr(response, "usage", None)
         usage["prompt_tokens"] += int(
