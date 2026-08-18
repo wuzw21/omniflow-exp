@@ -62,8 +62,9 @@ endpoint as `LLMTHU_BASE_URL` in the environment file.
 Function authoring does not run through a shell conversion mode. Use the bridge
 `save_function` API with one successful RunLog. Callers may submit complete
 Functions, or set `enhance=true` so the Agent edits one in-memory Function draft
-in exactly three model calls: semantic Function ranges, parameter declarations,
-plus source-proven action semantics, and Function-local checker registrations.
+through three stages: semantic Function ranges once, then parameter declarations
+plus source-proven action semantics and Function-local checker registrations
+separately for each identified Function.
 The middle edit may convert a launcher click to `open_app` only with the exact
 RunLog after-state package, or attach only the exact visible source target for
 semantic grounding and parameter binding. A reusable subsegment is optional
@@ -139,25 +140,23 @@ fallback state.
 ## Checker execution
 
 Only rules registered on the active Function are considered. Before each
-pending formal Function action, the latest canonical OmniTransfer page
-embedding first matches each unexecuted rule's source state to the current
-page. OmniTransfer then maps that rule's source action onto the current
-observation. It executes only when both configured thresholds pass. A rule
+pending formal Function action, OmniTransfer maps every unexecuted rule's source
+action onto the current observation. It executes only when the selected target
+passes the one configured high-probability threshold. A rule
 contains only `source_state_id` and `action`; a failed condition skips it and
 keeps it eligible for a later formal action. An executed rule remains complete
 if that Function invocation resumes. Pair confidence is not a trigger.
 Source coordinates are evidence only and never execute on a target.
 
 The only configurable checker choices are the rules registered in each
-Function and the two global `protocol.checker` thresholds. Evaluation cadence
-is fixed: all still-unexecuted rules are checked before every pending formal
-action. A Function with no registered rules performs no checker evaluation,
-and rules registered on another Function are never considered.
+Function and the one global `protocol.checker` target threshold. Evaluation
+cadence is fixed: all still-unexecuted rules are checked before every pending
+formal action. A Function with no registered rules performs no checker
+evaluation, and rules registered on another Function are never considered.
 
-The same page threshold gates every source-state-dependent formal Function
-action before transfer. `open_app` and `wait` are state-independent. A mismatch
-fails the Function into the normal Planner fallback instead of ranking targets
-on the wrong page.
+Formal Function actions use canonical OmniTransfer target mapping directly.
+A missing or rejected mapping fails the Function into the normal Planner
+fallback. Page-embedding similarity is not a checker or Function-step trigger.
 
 ## Configuration ownership
 

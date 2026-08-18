@@ -11,7 +11,6 @@ from typing import Any, Callable
 import xml.etree.ElementTree as ET
 
 from omniflow.core.config import (
-    DEFAULT_CHECKER_PAGE_THRESHOLD,
     DEFAULT_CHECKER_TARGET_THRESHOLD,
     PluginSet,
 )
@@ -34,7 +33,6 @@ from omniflow.runtime.core import (
     prepare_action as prepare_core_action,
 )
 from omniflow.runtime.semantic_grounding import resolve_semantic_action
-from omniflow.transfer.page_embedding import OmniTransferPageEncoder, PageEmbedding
 from omniflow.transfer.runtime import transfer_action
 
 _OPEN_APP_READY_POLL_SECONDS = 0.5
@@ -60,13 +58,9 @@ async def execute_function(
     resume_metadata: dict[str, Any] | None = None,
     installed_packages: frozenset[str] | None = None,
     state_loader: StateLoader | None = None,
-    page_encoder: OmniTransferPageEncoder | None = None,
-    checker_page_threshold: float = DEFAULT_CHECKER_PAGE_THRESHOLD,
     checker_target_threshold: float = DEFAULT_CHECKER_TARGET_THRESHOLD,
     executed_checker_rules: set[int] | None = None,
 ) -> RunResult:
-    if not 0.0 <= float(checker_page_threshold) <= 1.0:
-        raise ValueError("checker_page_threshold_invalid")
     if not 0.0 <= float(checker_target_threshold) <= 1.0:
         raise ValueError("checker_target_threshold_invalid")
     current = observation or Observation.from_value(
@@ -81,10 +75,6 @@ async def execute_function(
     if executed_checker_rules is None:
         executed_checker_rules = set()
     checker_source_states: dict[str, Observation | None] = {}
-    source_pages: dict[str, PageEmbedding] = {}
-    runtime_page_encoder = page_encoder
-    embedded_current_state: Observation | None = None
-    current_page: PageEmbedding | None = None
     resume_metadata_pending = dict(resume_metadata or {})
     for function_step in steps:
         for rule_index, raw_rule in enumerate(function.checker_rules):
@@ -100,23 +90,6 @@ async def execute_function(
                         state_loader=state_loader,
                     )
                 checker_source = checker_source_states[source_state_id]
-                if checker_source is None:
-                    page_similarity = None
-                else:
-                    if runtime_page_encoder is None:
-                        runtime_page_encoder = OmniTransferPageEncoder()
-                    if source_state_id not in source_pages:
-                        source_pages[source_state_id] = runtime_page_encoder.embed(
-                            checker_source
-                        )
-                    if embedded_current_state is not current:
-                        current_page = runtime_page_encoder.embed(current)
-                        embedded_current_state = current
-                    if current_page is None:
-                        raise RuntimeError("checker_current_page_embedding_missing")
-                    page_similarity = source_pages[source_state_id].similarity(
-                        current_page
-                    )
                 checker_step, decision = await execute_checker_step(
                     Action.from_value(rule["action"]),
                     observation=current,
@@ -124,8 +97,6 @@ async def execute_function(
                     plugins=plugins,
                     function=function,
                     source_state=checker_source,
-                    page_similarity=page_similarity,
-                    minimum_page_similarity=float(checker_page_threshold),
                     minimum_target_probability=float(checker_target_threshold),
                     installed_packages=installed_packages,
                 )
@@ -179,69 +150,20 @@ async def execute_function(
             function_step.source_state_id,
             state_loader=state_loader,
         )
-        source_page_evidence: dict[str, float] | None = None
-        if action.tool not in {"open_app", "wait"}:
-            if source_state is None:
-                return RunResult(
-                    False,
-                    function.id,
-                    executed,
-                    error="function_source_state_missing",
-                    final_state=current,
-                    detail={
-                        "trace": trace,
-                        "checker_decisions": checker_decisions,
-                        "failed_step_index": function_step.step_index,
-                        "next_step_index": function_step.step_index,
-                    },
-                )
-            try:
-                if runtime_page_encoder is None:
-                    runtime_page_encoder = OmniTransferPageEncoder()
-                source_state_id = function_step.source_state_id
-                if source_state_id not in source_pages:
-                    source_pages[source_state_id] = runtime_page_encoder.embed(
-                        source_state
-                    )
-                if embedded_current_state is not current:
-                    current_page = runtime_page_encoder.embed(current)
-                    embedded_current_state = current
-                if current_page is None:
-                    raise RuntimeError("function_current_page_embedding_missing")
-                page_similarity = source_pages[source_state_id].similarity(current_page)
-            except Exception as error:  # noqa: BLE001
-                return RunResult(
-                    False,
-                    function.id,
-                    executed,
-                    error=f"function_page_check_failed:{error}",
-                    final_state=current,
-                    detail={
-                        "trace": trace,
-                        "checker_decisions": checker_decisions,
-                        "failed_step_index": function_step.step_index,
-                        "next_step_index": function_step.step_index,
-                    },
-                )
-            source_page_evidence = {
-                "similarity": float(page_similarity),
-                "minimum_similarity": float(checker_page_threshold),
-            }
-            if page_similarity < float(checker_page_threshold):
-                return RunResult(
-                    False,
-                    function.id,
-                    executed,
-                    error="function_page_similarity_too_low",
-                    final_state=current,
-                    detail={
-                        "trace": trace,
-                        "checker_decisions": checker_decisions,
-                        "failed_step_index": function_step.step_index,
-                        "next_step_index": function_step.step_index,
-                        "page": source_page_evidence,
-                    },
-                )
+        if action.tool not in {"open_app", "wait"} and source_state is None:
+            return RunResult(
+                False,
+                function.id,
+                executed,
+                error="function_source_state_missing",
+                final_state=current,
+                detail={
+                    "trace": trace,
+                    "checker_decisions": checker_decisions,
+                    "failed_step_index": function_step.step_index,
+                    "next_step_index": function_step.step_index,
+                },
+            )
         step = await execute_robust_action(
             action,
             observation=current,
@@ -260,18 +182,10 @@ async def execute_function(
                 metadata={"function_step_index": function_step.step_index},
                 first_metadata=(
                     {
-                        **(
-                            {"function_alignment": dict(resume_metadata_pending)}
-                            if resume_metadata_pending
-                            else {}
-                        ),
-                        **(
-                            {"source_page": source_page_evidence}
-                            if source_page_evidence is not None
-                            else {}
-                        ),
+                        "function_alignment": dict(resume_metadata_pending)
                     }
-                    or None
+                    if resume_metadata_pending
+                    else None
                 ),
             )
         )
@@ -315,12 +229,10 @@ async def execute_checker_step(
     plugins: PluginSet,
     function: Function,
     source_state: Observation | None,
-    page_similarity: float | None,
-    minimum_page_similarity: float,
     minimum_target_probability: float,
     installed_packages: frozenset[str] | None = None,
 ) -> tuple[StepResult, dict[str, Any]]:
-    """Execute a checker only when its source page and action target both match."""
+    """Execute a checker only when OmniTransfer maps its source target strongly."""
 
     if source_state is None:
         return (
@@ -333,27 +245,6 @@ async def execute_checker_step(
                 function_id=function.id,
             ),
             {"status": "skipped", "reason": "checker_source_state_missing"},
-        )
-    page_evidence = {
-        "similarity": page_similarity,
-        "minimum_similarity": float(minimum_page_similarity),
-    }
-    if page_similarity is None or page_similarity < minimum_page_similarity:
-        reason = (
-            "checker_page_similarity_missing"
-            if page_similarity is None
-            else "checker_page_similarity_too_low"
-        )
-        return (
-            StepResult(
-                True,
-                action=action,
-                before=observation,
-                after=observation,
-                origin="checker",
-                function_id=function.id,
-            ),
-            {"status": "skipped", "reason": reason, "page": page_evidence},
         )
     decision = await prepare_action(
         action,
@@ -375,7 +266,6 @@ async def execute_checker_step(
             {
                 "status": "skipped",
                 "reason": decision.reason or "transfer_not_applicable",
-                "page": page_evidence,
                 "transfer": dict(decision.detail or {}),
             },
         )
@@ -408,7 +298,6 @@ async def execute_checker_step(
             {
                 "status": "skipped",
                 "reason": reason,
-                "page": page_evidence,
                 "transfer": dict(decision.detail or {}),
                 "target": target_evidence,
             },
@@ -429,7 +318,6 @@ async def execute_checker_step(
         {
             "status": "executed" if step.success else "failed",
             "reason": decision.reason or "omnitransfer_mapped",
-            "page": page_evidence,
             "transfer": dict(decision.detail or {}),
             "target": target_evidence,
         },

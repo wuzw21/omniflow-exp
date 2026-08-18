@@ -205,8 +205,6 @@ class OmniFlow:
                     state_loader=(
                         self.catalog.get_state if self.catalog is not None else None
                     ),
-                    page_encoder=self._get_page_encoder(),
-                    checker_page_threshold=self.config.runtime.checker_page_threshold,
                     checker_target_threshold=(
                         self.config.runtime.checker_target_threshold
                     ),
@@ -534,8 +532,6 @@ class OmniFlow:
                     state_loader=(
                         self.catalog.get_state if self.catalog is not None else None
                     ),
-                    page_encoder=self._get_page_encoder(),
-                    checker_page_threshold=self.config.runtime.checker_page_threshold,
                     checker_target_threshold=(
                         self.config.runtime.checker_target_threshold
                     ),

@@ -30,9 +30,6 @@ DEFAULT_MAX_STEPS = int(ANDROIDWORLD_PROTOCOL["max_steps"])
 DEFAULT_MAX_FALLBACK_STEPS = int(ANDROIDWORLD_PROTOCOL["max_fallback_steps"])
 DEFAULT_MAX_FUNCTION_TOOLS = int(ANDROIDWORLD_PROTOCOL["max_function_tools"])
 _CHECKER_CONFIG = dict(ANDROIDWORLD_PROTOCOL["checker"])
-DEFAULT_CHECKER_PAGE_THRESHOLD = float(
-    _CHECKER_CONFIG["page_similarity_threshold"]
-)
 DEFAULT_CHECKER_TARGET_THRESHOLD = float(
     _CHECKER_CONFIG["target_probability_threshold"]
 )
@@ -62,7 +59,6 @@ class RuntimeSettings:
     max_steps: int = DEFAULT_MAX_STEPS
     max_fallback_steps: int | None = DEFAULT_MAX_FALLBACK_STEPS
     max_function_tools: int = DEFAULT_MAX_FUNCTION_TOOLS
-    checker_page_threshold: float = DEFAULT_CHECKER_PAGE_THRESHOLD
     checker_target_threshold: float = DEFAULT_CHECKER_TARGET_THRESHOLD
 
 

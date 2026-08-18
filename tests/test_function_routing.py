@@ -651,9 +651,7 @@ def test_transfer_failure_falls_back_without_replaying_source_coordinates(
     assert [action.tool for action in host.actions] == ["open_app"]
     assert all(action.tool != "click" for action in host.actions)
     assert planner.visible_function_ids == [(function_id,), (function_id,)]
-    assert planner.previous_action_errors[0] == (
-        "function_page_check_failed:omnitransfer_page_xml_required"
-    )
+    assert planner.previous_action_errors[0] == "omnitransfer_missing_target_page"
     assert planner.observations[0].extra["function_execution"] == {
         "schema_version": "omniflow.function-execution-evidence.v1",
         "function_id": function_id,
@@ -661,7 +659,16 @@ def test_transfer_failure_falls_back_without_replaying_source_coordinates(
         "function_description": "Complete the exact goal: turn bluetooth on.",
         "replay_status": "actions_failed",
         "official_validator_status": "pending",
-        "steps": [],
+        "steps": [
+            {
+                "step_index": 0,
+                "before_state_id": "state_0",
+                "after_state_id": "state_0",
+                "tool": "click",
+                "success": False,
+                "error": "omnitransfer_missing_target_page",
+            }
+        ],
         "final_observation": {
             "state_id": "state_0",
             "package_name": "com.android.launcher",
@@ -694,9 +701,7 @@ def test_direct_function_transfer_failure_continues_with_gui_planner(tmp_path) -
     assert [action.tool for action in host.actions] == ["open_app"]
     assert all(action.tool != "click" for action in host.actions)
     assert planner.visible_function_ids == [(function_id,), (function_id,)]
-    assert planner.previous_action_errors[0] == (
-        "function_page_check_failed:omnitransfer_page_xml_required"
-    )
+    assert planner.previous_action_errors[0] == "omnitransfer_missing_target_page"
     assert "Continue Function" in planner.goals[0]
     assert "Do not repeat actions that already succeeded" in planner.goals[0]
     assert result.detail["function_resolution"]["status"] == "direct"

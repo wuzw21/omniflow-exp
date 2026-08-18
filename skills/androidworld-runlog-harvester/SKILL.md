@@ -20,7 +20,8 @@ reusable subsegment Functions atomically.
 
 ## Enhancement contract
 
-The Agent edits one in-memory draft in exactly three stages. It does not make
+The Agent edits one in-memory draft through three stages. Stage 1 runs once;
+stages 2 and 3 run separately for each identified Function. It does not make
 one model call per action and never writes complete Function artifacts, source
 states, complete source actions, bindings, checker rules, or Store entries.
 
@@ -66,6 +67,10 @@ Rules:
 - Return an empty `subsegments` list when no stable reusable range exists.
 
 ### Stage 2: source-proven actions and parameters
+
+This stage receives exactly one Function and only the RunLog source actions in
+that Function's range. Return entries only for the shown `function_id` and use
+the listed original RunLog `step_index`; never use a local Function index.
 
 Return:
 
@@ -116,6 +121,10 @@ Rules:
 
 ### Stage 3: checkers
 
+This stage receives exactly one Function and only its source actions. Return
+checker registrations only for the shown `function_id` and listed source
+indices.
+
 Return:
 
 ```json
@@ -153,10 +162,9 @@ Transport failure, missing source evidence, or a second invalid edit fails the
 save without partial persistence.
 
 Runtime evaluates every unexecuted Function-local checker before every pending
-formal action. The canonical OmniTransfer page embedding must match the source
-state and OmniTransfer must find a target above the configured probability
-threshold. A failed match skips the checker without executing source
-coordinates.
+formal action. OmniTransfer must find a target above the one configured high
+probability threshold. Page-embedding similarity is not a trigger. A missing or
+low-confidence mapping skips the checker without executing source coordinates.
 
 Before cross-environment evaluation, the complete Function must pass source
 environment `script_replay` with official success, `model_calls=0`, and

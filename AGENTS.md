@@ -34,10 +34,11 @@ One successful `omniflow.run_log.v1` may save one or more semantic Functions in
 one `save_function` call. Enhancement is optional (`enhance=true`) and uses the
 same validation and Store writer as a normal save.
 
-Enhanced authoring uses exactly three bounded Agent edits to one in-memory
-draft, not one JSON call per RunLog action. The edits are: semantic Function
-ranges; source-proven action semantics plus parameter declarations; and checker
-registrations. The Agent never returns complete Functions, source states,
+Enhanced authoring uses one bounded three-stage workflow over one in-memory
+draft, not one JSON call per RunLog action. Stage 1 identifies Function ranges
+once; stages 2 and 3 edit one identified Function at a time for source-proven
+action semantics plus parameters, then checker registrations. The Agent never
+returns complete Functions, source states,
 bindings, checker rules, Stores, or authoring manifests. It may request only
 the two action edits defined by the shared schema: replace a launcher click
 with the exact after-state package as `open_app`, or attach the exact visible
@@ -58,7 +59,9 @@ remain a formal action in the same Function.
 
 The single model-facing tool is `edit_function_draft`. Its three strict stage
 schemas return only: `complete_function + subsegments`, `action_edits +
-bindings`, then `checker_steps`. An action edit contains only `function_id`,
+bindings`, then `checker_steps`. The latter two schemas are requested separately
+for each Function and may refer only to that Function's listed source indices.
+An action edit contains only `function_id`,
 `step_index`, `operation`, and `value`. A subsegment contains Function metadata,
 `stability_reason`, and an inclusive/exclusive source step range. Bridge and
 experiment adapters import these schemas and select the supplied tool name
@@ -87,8 +90,8 @@ Function that saved it. Each rule contains a RunLog source state, its source
 action, and no other fields. There is no step number trigger and no trigger DSL.
 
 The entire configurable checker surface is exactly the Function-local
-`checker_rules` registration plus the two global thresholds in
-`protocol.checker`. Evaluation cadence is invariant: before every pending
+`checker_rules` registration plus the one global target probability threshold
+in `protocol.checker`. Evaluation cadence is invariant: before every pending
 formal action, check every still-unexecuted rule registered on that Function.
 Frequent evaluation must not weaken execution: every fixed condition below
 still has to pass, so an unrelated page or target can never trigger a checker.
@@ -98,11 +101,9 @@ registered on that Function. A checker executes once only when all conditions
 hold:
 
 1. the rule is registered on the active Function;
-2. the latest canonical OmniTransfer page embedding matches the current page
-   to the rule's RunLog source state;
-3. OmniTransfer maps the source action onto a target on the current observation;
+2. OmniTransfer maps the source action onto a target on the current observation;
    and
-4. the selected target's OmniTransfer rank probability reaches the configured
+3. the selected target's OmniTransfer rank probability reaches the configured
    high-confidence threshold.
 
 A failed condition skips the checker and leaves it eligible before a later
@@ -112,16 +113,13 @@ starts a new checker session. Allowed checker actions are `click`, `input_text`,
 and `long_press` with source target coordinates used only as OmniTransfer evidence.
 Never execute source-device coordinates on the target.
 
-The global page-similarity and target-probability thresholds are defined only
-in the `protocol.checker` block of `config/paper_androidworld.json`. Pair
-confidence is evidence, not a trigger. Per-rule thresholds and condition
-switches are forbidden because they recreate a trigger language.
-
-Every source-state-dependent formal Function action uses the same canonical
-page-similarity threshold before action transfer. `open_app` and `wait` are the
-only state-independent exceptions. A page mismatch fails the Function and
-returns control to the normal Planner fallback; it must never send the source
-action to OmniTransfer on an unrelated page.
+The global target-probability threshold is defined only in the
+`protocol.checker` block of `config/paper_androidworld.json`. Pair confidence
+and page-embedding similarity are evidence, not triggers. Per-rule thresholds
+and condition switches are forbidden because they recreate a trigger language.
+Formal Function actions go directly through canonical OmniTransfer target
+mapping; a missing or rejected mapping returns control to the normal Planner
+fallback without source-coordinate execution.
 
 Function success is an ordinary Planner tool result, not AndroidWorld task
 completion. The Planner may call more Functions or GUI actions before it

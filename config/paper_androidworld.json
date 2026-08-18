@@ -28,7 +28,6 @@
     "max_fallback_steps": 5,
     "max_function_tools": 8,
     "checker": {
-      "page_similarity_threshold": 0.9,
       "target_probability_threshold": 0.9
     },
     "function_enhancement_timeout_sec": 300,

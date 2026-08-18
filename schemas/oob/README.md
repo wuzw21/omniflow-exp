@@ -16,19 +16,19 @@ accepted only as OmniTransfer source-target evidence and never execute directly
 on a target device.
 
 A checker is registered only on the Function containing it. Before each pending
-formal action, the latest OmniTransfer page embedding first matches each
-unexecuted rule's source state to the current page, then OmniTransfer maps the
-source action onto the current observation. Only a high-confidence page and
-action-target match executes. Nonmatching rules remain eligible before later
-formal actions, so every checker action must be safe to skip and has at least
-one later formal action that provides a check point. There is no per-rule
-condition, trigger DSL, step-index trigger, global checker list, or default
-recovery rule.
+formal action, OmniTransfer maps every unexecuted rule's source action onto the
+current observation. Only a high-probability target mapping executes;
+page-embedding similarity is not a trigger. Nonmatching rules remain eligible
+before later formal actions, so every checker action must be safe to skip and
+has at least one later formal action that provides a check point. There is no
+per-rule condition, trigger DSL, step-index trigger, global checker list, or
+default recovery rule.
 
 The offline Agent may author complete semantic Functions through the internal
-split, parameter-binding, and checker-review stages. Every stage returns one
-complete bundle; the core verifies RunLog evidence, validates the schema, and
-stores the final bundle through `save_function`.
+split, parameter-binding, and checker-review stages. Split runs once; parameter
+and checker decisions are returned separately for each Function. The core
+verifies RunLog evidence, validates the schema, and stores the final bundle
+through `save_function`.
 
 Canonical actions use relative `0..1000` coordinates. The VLM boundary uses
 pixels in the current display frame, with conversion owned only by

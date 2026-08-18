@@ -58,12 +58,13 @@ successful RunLog
 ```
 
 One RunLog may save multiple semantic Functions in one call. `enhance=true` does
-not open another path: the Agent edits one in-memory draft in exactly three
-small stages—semantic Function ranges, source-proven action semantics plus
-parameter declarations, and checker registrations. The middle stage may request a
-action edit: a launcher click to the exact after-state package becomes
-`open_app`, or a visible source target becomes `target_description`. It never
-writes complete actions, states, bindings, checker rules, or a Store.
+not open another path: the Agent edits one in-memory draft through three small
+stages—semantic Function ranges once, then source-proven action semantics plus
+parameter declarations and checker registrations separately for each Function.
+The middle stage may request an action edit: a launcher click to the exact
+after-state package becomes `open_app`, or a visible source target becomes
+`target_description`. It never writes complete actions, states, bindings,
+checker rules, or a Store.
 
 The core validates those small edits against the RunLog, preserves action
 order, compiles bindings and checkers, and emits the complete Function plus
@@ -97,37 +98,34 @@ read-only source evidence and never seed or rewrite the Store at runtime.
 Checker rules are local registrations on one Function, not a global rule pool.
 A Function with no checker rules receives none from another Function.
 The only checker configuration is which rules that Function registers and the
-two global thresholds in `protocol.checker`. Check frequency is fixed rather
-than configurable: every unexecuted registered rule is evaluated before every
-pending formal action. This makes checking frequent without making execution
-permissive.
+one global target-probability threshold in `protocol.checker`. Check frequency
+is fixed rather than configurable: every unexecuted registered rule is
+evaluated before every pending formal action. This makes checking frequent
+without making execution permissive.
 
 Before every pending formal Function action, OmniFlow checks every unexecuted
 rule registered on that Function. It executes the checker once only when all of
 the following hold:
 
-1. the latest canonical OmniTransfer page embedding matches the current page
-   to the rule's RunLog source state;
-2. OmniTransfer finds a valid target for the source action on the current
+1. OmniTransfer finds a valid target for the source action on the current
    observation;
-3. the selected target's OmniTransfer rank probability reaches the configured
+2. the selected target's OmniTransfer rank probability reaches the configured
    high-confidence threshold; and
-4. the rule has not already executed in this Function invocation, including a
+3. the rule has not already executed in this Function invocation, including a
    resumed invocation after a later formal-action failure.
 
 Each rule contains exactly `source_state_id` and `action`; registration on the
 Function is the rule-to-Function relationship. Otherwise the rule is skipped
-and may be checked again before a later formal action. The page and target
-thresholds are configured once in `config/paper_androidworld.json`. Pair
-confidence cannot compensate for a page mismatch or ambiguous target ranking.
+and may be checked again before a later formal action. The target threshold is
+configured once in `config/paper_androidworld.json`. Pair confidence and
+page-embedding similarity cannot compensate for an ambiguous target ranking.
 There are no per-rule thresholds, step-number triggers, trigger DSLs, global
 checker pool, or source-coordinate passthrough. Checker actions are limited to
 transferable `click`, `input_text`, and `long_press` actions.
 
-Formal Function actions are page-bound too: before any state-dependent action,
-the same canonical page embedding threshold must match its RunLog source state.
-On mismatch, the Function fails back to the Planner without attempting target
-ranking. `open_app` and `wait` are the only state-independent actions.
+Formal Function actions use canonical OmniTransfer target mapping directly.
+Missing or rejected mappings fail back to the Planner without source-coordinate
+execution; no page-similarity gate runs before a Function step.
 
 ## OmniTransfer
 

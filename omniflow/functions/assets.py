@@ -1230,25 +1230,48 @@ def _author_functions(
         label="split",
         validate=lambda value: _validate_split_draft(value, facts),
     )
-    parameters = _request_authoring_decision(
-        complete_json,
-        prompt=_draft_parameters_prompt(facts, split),
-        tool=function_authoring_tool(stage="parameters"),
-        label="parameters",
-        validate=lambda value: _validate_parameter_draft(value, facts, split),
-    )
-    checkers = _request_authoring_decision(
-        complete_json,
-        prompt=_draft_checkers_prompt(facts, split, parameters),
-        tool=function_authoring_tool(stage="checkers"),
-        label="checkers",
-        validate=lambda value: _validate_checker_draft(
-            value,
-            facts,
-            split,
-            parameters,
-        ),
-    )
+    plans = _draft_functions(split)
+    parameters: dict[str, list[dict[str, Any]]] = {
+        "action_edits": [],
+        "bindings": [],
+    }
+    for plan in plans:
+        function_id = plan["function_id"]
+        decision = _request_authoring_decision(
+            complete_json,
+            prompt=_draft_parameters_prompt(facts, plan),
+            tool=function_authoring_tool(stage="parameters"),
+            label=f"parameters:{function_id}",
+            validate=lambda value, expected=function_id: (
+                _validate_parameter_draft_for_function(
+                    value,
+                    facts,
+                    split,
+                    function_id=expected,
+                )
+            ),
+        )
+        parameters["action_edits"].extend(decision["action_edits"])
+        parameters["bindings"].extend(decision["bindings"])
+    checkers: dict[str, list[dict[str, Any]]] = {"checker_steps": []}
+    for plan in plans:
+        function_id = plan["function_id"]
+        decision = _request_authoring_decision(
+            complete_json,
+            prompt=_draft_checkers_prompt(facts, plan, parameters),
+            tool=function_authoring_tool(stage="checkers"),
+            label=f"checkers:{function_id}",
+            validate=lambda value, expected=function_id: (
+                _validate_checker_draft_for_function(
+                    value,
+                    facts,
+                    split,
+                    parameters,
+                    function_id=expected,
+                )
+            ),
+        )
+        checkers["checker_steps"].extend(decision["checker_steps"])
     return _compile_function_draft(facts, split, parameters, checkers)
 
 
@@ -1536,6 +1559,23 @@ def _validate_parameter_draft(
     return {"action_edits": action_edits, "bindings": bindings}
 
 
+def _validate_parameter_draft_for_function(
+    value: Any,
+    facts: dict[str, Any],
+    split: dict[str, Any],
+    *,
+    function_id: str,
+) -> dict[str, Any]:
+    decision = _validate_parameter_draft(value, facts, split)
+    if any(
+        item["function_id"] != function_id
+        for key in ("action_edits", "bindings")
+        for item in decision[key]
+    ):
+        raise ValueError("function_stage_must_edit_one_function")
+    return decision
+
+
 def _draft_action(
     facts: dict[str, Any],
     action_edits: list[dict[str, Any]],
@@ -1614,6 +1654,23 @@ def _validate_checker_draft(
     return {"checker_steps": checker_steps}
 
 
+def _validate_checker_draft_for_function(
+    value: Any,
+    facts: dict[str, Any],
+    split: dict[str, Any],
+    parameters: dict[str, Any],
+    *,
+    function_id: str,
+) -> dict[str, Any]:
+    decision = _validate_checker_draft(value, facts, split, parameters)
+    if any(
+        item["function_id"] != function_id
+        for item in decision["checker_steps"]
+    ):
+        raise ValueError("function_stage_must_edit_one_function")
+    return decision
+
+
 def _compact_source_actions(facts: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         {
@@ -1659,15 +1716,21 @@ def _draft_split_prompt(
 
 def _draft_parameters_prompt(
     facts: dict[str, Any],
-    split: dict[str, Any],
+    plan: dict[str, Any],
 ) -> str:
+    source_indices = _function_indices(plan, len(facts["steps"]))
     evidence = {
-        "functions": _draft_functions(split),
-        "source_actions": _compact_source_actions(facts),
+        "function": plan,
+        "source_actions": [
+            _compact_source_actions(facts)[index] for index in source_indices
+        ],
     }
     return (
         "Edit only source-proven action semantics and parameter declarations on the "
-        "current Function draft. For a launcher click whose after_page.package is a "
+        "one Function shown below. Every returned function_id must exactly match the "
+        "shown function_id. step_index is the original RunLog source index and must be "
+        f"one of {list(source_indices)}; it is not a local Function index. For a "
+        "launcher click whose after_page.package is a "
         "different app, use operation=open_app with exactly that package. For a stable "
         "visible source_target, use operation=set_target with exactly that label. "
         "Never invent or paraphrase either value. Bind caller-varying values already "
@@ -1686,16 +1749,27 @@ def _draft_parameters_prompt(
 
 def _draft_checkers_prompt(
     facts: dict[str, Any],
-    split: dict[str, Any],
+    plan: dict[str, Any],
     parameters: dict[str, Any],
 ) -> str:
+    source_indices = _function_indices(plan, len(facts["steps"]))
+    function_id = plan["function_id"]
     evidence = {
-        "functions": _draft_functions(split),
-        "bindings": parameters["bindings"],
-        "source_actions": _compact_source_actions(facts),
+        "function": plan,
+        "bindings": [
+            item
+            for item in parameters["bindings"]
+            if item["function_id"] == function_id
+        ],
+        "source_actions": [
+            _compact_source_actions(facts)[index] for index in source_indices
+        ],
     }
     return (
-        "Edit only Function-local checker registrations on the current draft. Select "
+        "Edit only checker registrations for the one Function shown below. Every "
+        "returned function_id must exactly match the shown function_id. step_index is "
+        "the original RunLog source index and must be one of "
+        f"{list(source_indices)}. Select "
         "an existing source step only when it is optional, safe to skip, has a later "
         "formal action in that Function, and is a transferable click, input_text, or "
         "long_press. Required navigation and terminal actions are not checkers. Do not "

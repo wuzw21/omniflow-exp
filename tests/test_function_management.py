@@ -157,7 +157,9 @@ def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> 
         goal="Dismiss an optional dialog, search for a museum, and show results.",
     )
 
-    def complete(_prompt: str, tool: dict) -> str:
+    stage_calls: list[tuple[tuple[str, ...], str, tuple[int, ...]]] = []
+
+    def complete(prompt: str, tool: dict) -> str:
         required = tool["function"]["parameters"]["required"]
         if required == ["complete_function", "subsegments"]:
             return json.dumps(
@@ -191,34 +193,44 @@ def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> 
                     ],
                 }
             )
+        draft = _draft_input(prompt)
+        function_id = draft["function"]["function_id"]
+        source_indices = tuple(
+            action["step_index"] for action in draft["source_actions"]
+        )
+        stage_calls.append((tuple(required), function_id, source_indices))
         if required == ["action_edits", "bindings"]:
             return json.dumps(
                 {
                     "action_edits": [],
-                    "bindings": [
-                        {
-                            "function_id": function_id,
-                            "step_index": 1,
-                            "name": "query",
-                            "description": "Place query to enter",
-                            "argument_path": "text",
-                        }
-                        for function_id in (
+                    "bindings": (
+                        [
+                            {
+                                "function_id": function_id,
+                                "step_index": 1,
+                                "name": "query",
+                                "description": "Place query to enter",
+                                "argument_path": "text",
+                            }
+                        ]
+                        if function_id in {
                             "search_for_a_place",
                             "enter_search_query",
-                        )
-                    ]
+                        }
+                        else []
+                    ),
                 }
             )
         return json.dumps(
             {
-                "checker_steps": [
-                    {"function_id": function_id, "step_index": 0}
-                    for function_id in (
+                "checker_steps": (
+                    [{"function_id": function_id, "step_index": 0}]
+                    if function_id in {
                         "search_for_a_place",
                         "enter_search_query",
-                    )
-                ]
+                    }
+                    else []
+                )
             }
         )
 
@@ -235,6 +247,14 @@ def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> 
     assert store.get_function("submit_search").checker_rules == ()
     assert store.get_function("enter_search_query").input_schema["required"] == [
         "query"
+    ]
+    assert stage_calls == [
+        (("action_edits", "bindings"), "search_for_a_place", (0, 1, 2, 3)),
+        (("action_edits", "bindings"), "enter_search_query", (0, 1)),
+        (("action_edits", "bindings"), "submit_search", (2, 3)),
+        (("checker_steps",), "search_for_a_place", (0, 1, 2, 3)),
+        (("checker_steps",), "enter_search_query", (0, 1)),
+        (("checker_steps",), "submit_search", (2, 3)),
     ]
 
 
