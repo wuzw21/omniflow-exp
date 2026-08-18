@@ -140,6 +140,12 @@ keeps it eligible for a later formal action. An executed rule remains complete
 if that Function invocation resumes. Pair confidence is not a trigger.
 Source coordinates are evidence only and never execute on a target.
 
+The only configurable checker choices are the rules registered in each
+Function and the two global `protocol.checker` thresholds. Evaluation cadence
+is fixed: all still-unexecuted rules are checked before every pending formal
+action. A Function with no registered rules performs no checker evaluation,
+and rules registered on another Function are never considered.
+
 The same page threshold gates every source-state-dependent formal Function
 action before transfer. `open_app` and `wait` are state-independent. A mismatch
 fails the Function into the normal Planner fallback instead of ranking targets

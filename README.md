@@ -96,6 +96,11 @@ read-only source evidence and never seed or rewrite the Store at runtime.
 
 Checker rules are local registrations on one Function, not a global rule pool.
 A Function with no checker rules receives none from another Function.
+The only checker configuration is which rules that Function registers and the
+two global thresholds in `protocol.checker`. Check frequency is fixed rather
+than configurable: every unexecuted registered rule is evaluated before every
+pending formal action. This makes checking frequent without making execution
+permissive.
 
 Before every pending formal Function action, OmniFlow checks every unexecuted
 rule registered on that Function. It executes the checker once only when all of

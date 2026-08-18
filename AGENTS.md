@@ -82,6 +82,13 @@ Checker rules are registered on one Function through that Function's
 Function that saved it. Each rule contains a RunLog source state, its source
 action, and no other fields. There is no step number trigger and no trigger DSL.
 
+The entire configurable checker surface is exactly the Function-local
+`checker_rules` registration plus the two global thresholds in
+`protocol.checker`. Evaluation cadence is invariant: before every pending
+formal action, check every still-unexecuted rule registered on that Function.
+Frequent evaluation must not weaken execution: every fixed condition below
+still has to pass, so an unrelated page or target can never trigger a checker.
+
 Before every pending formal Function action, runtime checks each unexecuted rule
 registered on that Function. A checker executes once only when all conditions
 hold:
