@@ -88,6 +88,11 @@ Agent-authored parameters bind only `text` or `target_description`; the tool
 schema cannot return coordinate, package, wait, direction, or arbitrary nested
 bindings.
 
+Function quality fixes belong in this shared authoring policy, its evidence,
+the deterministic compiler, or the runtime adapter. Do not patch a generated
+Function or Store for one task. Re-run `save_function` from the same successful
+RunLog after a policy fix; its bounded stages may use several small model calls.
+
 The retained bridge tools are:
 
 - `save_function`

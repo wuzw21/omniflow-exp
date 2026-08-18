@@ -380,6 +380,63 @@ def test_enhancer_compiles_source_proven_launcher_click_to_open_app(tmp_path) ->
     }
 
 
+def test_enhancer_does_not_reedit_an_existing_open_app_action(tmp_path) -> None:
+    run_log = androidworld_run_log(
+        [{"action_type": "open_app", "app_name": "com.example.contacts"}],
+        observations=[
+            androidworld_state(
+                "launcher",
+                package_name="com.example.launcher",
+            )
+        ],
+        goal="Open Contacts.",
+    )
+
+    def complete(prompt: str, tool: dict) -> str:
+        required = tool["function"]["parameters"]["required"]
+        if required == ["complete_function", "subsegments"]:
+            return json.dumps(
+                {
+                    "complete_function": {
+                        "function_id": "open_contacts",
+                        "name": "Open Contacts",
+                        "description": "Open the Contacts application.",
+                    },
+                    "subsegments": [],
+                }
+            )
+        if required == ["action_edits", "bindings"]:
+            draft = _draft_input(prompt)
+            eligible = draft.get("eligible_open_app_step_indices")
+            return json.dumps(
+                {
+                    "action_edits": (
+                        []
+                        if eligible == []
+                        else [
+                            {
+                                "function_id": "open_contacts",
+                                "step_index": 0,
+                                "operation": "open_app",
+                                "value": "com.example.contacts",
+                            }
+                        ]
+                    ),
+                    "bindings": [],
+                }
+            )
+        return json.dumps({"checker_steps": []})
+
+    store_path = tmp_path / "store.json"
+    save_function(run_log, store_path, enhance=True, complete_json=complete)
+    function = FunctionStore(store_path).get_function("open_contacts")
+    assert function is not None
+    assert function.steps[0].action.to_dict() == {
+        "tool": "open_app",
+        "args": {"package_name": "com.example.contacts"},
+    }
+
+
 def test_enhancer_binds_source_proven_semantic_target(tmp_path) -> None:
     run_log = androidworld_run_log(
         [{"action_type": "click", "x": 500, "y": 500}],

@@ -157,6 +157,11 @@ keeps it eligible for a later formal action. An executed rule remains complete
 if that Function invocation resumes. Pair confidence is not a trigger.
 Source coordinates are evidence only and never execute on a target.
 
+AndroidWorld episode preparation resolves a visible system app chooser and
+permission obstruction through the shared native adapter before the first
+observation. This setup recovery is state-based experiment plumbing; it must
+never be encoded into a generated Function or task-specific prompt.
+
 The only configurable checker choices are the rules registered in each
 Function and the one global `protocol.checker` target threshold. Evaluation
 cadence is fixed: all still-unexecuted rules are checked before every pending

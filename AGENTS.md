@@ -44,6 +44,13 @@ the two action edits defined by the shared schema: replace a launcher click
 with the exact after-state package as `open_app`, or attach the exact visible
 source target as `target_description`.
 
+Method improvement changes the shared authoring policy, evidence supplied to
+the Agent, deterministic compiler, or runtime adapter; it never hand-edits a
+generated Function or Store. Regenerate the draft from the same successful
+RunLog through `save_function` after a policy repair. The enhancer may make
+multiple bounded model calls, but every call edits only one small draft
+decision and a rejected decision may receive only its own validation feedback.
+
 `save_function` deterministically preserves source action order and states,
 validates every requested action edit against the before/after RunLog states,
 compiles parameter schemas and bindings, registers checkers, and emits one

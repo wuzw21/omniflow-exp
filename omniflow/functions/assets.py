@@ -1759,8 +1759,26 @@ def _draft_parameters_prompt(
     ]
     goal = str(facts["goal"]).casefold()
     eligible_parameter_indices: list[int] = []
+    eligible_open_app_indices: list[int] = []
+    eligible_target_indices: list[int] = []
     for action in source_actions:
         source_action = action["action"]
+        source_page = action.get("source_page") or {}
+        after_page = action.get("after_page") or {}
+        after_package = str(after_page.get("package") or "").strip()
+        open_app_candidate = (
+            source_action.get("tool") == "click"
+            and source_page.get("is_launcher") is True
+            and bool(after_package)
+            and after_package != str(source_page.get("package") or "").strip()
+        )
+        if open_app_candidate:
+            eligible_open_app_indices.append(action["step_index"])
+        elif (
+            source_action.get("tool") == "click"
+            and str(action.get("source_target") or "").strip()
+        ):
+            eligible_target_indices.append(action["step_index"])
         value = (
             (source_action.get("args") or {}).get("text")
             if source_action.get("tool") == "input_text"
@@ -1774,6 +1792,8 @@ def _draft_parameters_prompt(
     evidence = {
         "goal": facts["goal"],
         "function": plan,
+        "eligible_open_app_step_indices": eligible_open_app_indices,
+        "eligible_set_target_step_indices": eligible_target_indices,
         "eligible_parameter_step_indices": eligible_parameter_indices,
         "source_actions": source_actions,
     }
@@ -1783,8 +1803,12 @@ def _draft_parameters_prompt(
         "shown function_id. step_index is the original RunLog source index and must be "
         f"one of {list(source_indices)}; it is not a local Function index. For a "
         "launcher click whose after_page.package is a "
-        "different app, use operation=open_app with exactly that package. For a stable "
-        "visible source_target, use operation=set_target with exactly that label. "
+        "different app, use operation=open_app with exactly that package. Return "
+        "open_app edits only for eligible_open_app_step_indices "
+        f"{eligible_open_app_indices}. An action already represented as open_app needs "
+        "no edit. For a stable visible source_target, use operation=set_target with "
+        "exactly that label, and only for eligible_set_target_step_indices "
+        f"{eligible_target_indices}. "
         "Never invent or paraphrase either value. Bind caller-varying values already "
         "present after those edits only when the value is requested by the goal and "
         "replacing it changes the requested outcome. The compiler derives the binding "

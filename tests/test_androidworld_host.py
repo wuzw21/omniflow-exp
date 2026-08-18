@@ -796,6 +796,105 @@ def test_androidworld_setup_clears_late_permission_dialog_before_resnapshot(
     ) in calls
 
 
+def test_androidworld_episode_setup_resolves_contacts_chooser(monkeypatch) -> None:
+    calls: list[object] = []
+
+    class Controller:
+        screen = "chooser"
+
+        def get_ui_elements(self):
+            labels_by_screen = {
+                "chooser": (
+                    "Open with Contacts",
+                    "Just once",
+                    "Always",
+                    "Use a different app",
+                    "Omnibot",
+                ),
+                "permission": ("Allow Contacts to send you notifications?",),
+                "contacts": ("Contacts",),
+            }
+            package = (
+                "com.google.android.permissioncontroller"
+                if self.screen == "permission"
+                else "com.google.android.contacts"
+                if self.screen == "contacts"
+                else "android"
+            )
+            return [
+                SimpleNamespace(
+                    text=label,
+                    content_description=None,
+                    package_name=package,
+                )
+                for label in labels_by_screen[self.screen]
+            ]
+
+    controller = Controller()
+    env = SimpleNamespace(controller=controller)
+
+    class AndroidToolController:
+        def __init__(self, raw_env) -> None:
+            assert raw_env is controller
+            self._env = raw_env
+
+        def click_element(self, label: str) -> None:
+            calls.append(("click_element", label))
+            if label == "Just once" and controller.screen == "chooser":
+                controller.screen = "permission"
+                return
+            raise AssertionError((controller.screen, label))
+
+    def click_permission(_resource_ids, _controller, timeout_sec=10.0) -> None:
+        calls.append(("click_permission", timeout_sec))
+        controller.screen = "contacts"
+
+    actuation = SimpleNamespace(
+        find_and_click_element_by_resource_id=click_permission
+    )
+    tools = SimpleNamespace(AndroidToolController=AndroidToolController)
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.importlib.import_module",
+        lambda name: tools
+        if name == "android_world.env.tools"
+        else actuation
+        if name == "android_world.env.actuation"
+        else pytest.fail(f"unexpected import: {name}"),
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.time.sleep", lambda _seconds: None
+    )
+
+    class ContactsApp:
+        app_name = "contacts"
+
+        @classmethod
+        def package_name(cls) -> str:
+            return "com.google.android.contacts"
+
+    setup_module = SimpleNamespace(
+        adb_utils=SimpleNamespace(
+            launch_app=lambda app, _controller: calls.append(("launch", app)),
+            close_app=lambda app, _controller: calls.append(("close", app)),
+        ),
+        app_snapshot=SimpleNamespace(save_snapshot=lambda *_args: None),
+    )
+
+    _prepare_androidworld_episode_apps(
+        env,
+        setup_module=setup_module,
+        setup_apps=(ContactsApp,),
+    )
+
+    assert calls == [
+        ("launch", "contacts"),
+        ("click_element", "Just once"),
+        ("click_permission", 10.0),
+        ("close", "contacts"),
+    ]
+    assert controller.screen == "contacts"
+
+
 def test_androidworld_official_setup_entry_clears_late_permission_dialog(
     monkeypatch,
 ) -> None:

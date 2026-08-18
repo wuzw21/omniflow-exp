@@ -98,6 +98,30 @@ def _normalize_androidworld_setup_label(value: Any) -> Any:
     )
 
 
+def _app_chooser_clicks(
+    elements: Sequence[Any],
+    *,
+    app_label: str,
+) -> tuple[str, ...]:
+    labels = {
+        _normalize_androidworld_setup_label(str(label or "").strip())
+        for element in elements
+        for label in (
+            getattr(element, "text", None),
+            getattr(element, "content_description", None),
+        )
+        if str(label or "").strip()
+    }
+    if "Just once" not in labels:
+        return ()
+    normalized_app_label = _normalize_androidworld_setup_label(app_label.strip())
+    if f"Open with {normalized_app_label}" in labels:
+        return ("Just once",)
+    if "Open with" not in labels or normalized_app_label not in labels:
+        return ()
+    return (normalized_app_label, "Just once")
+
+
 def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
     try:
         tools_module = importlib.import_module("android_world.env.tools")
@@ -118,22 +142,17 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
             normalized_label = _normalize_androidworld_setup_label(element_text)
             if normalized_label == "Skip":
                 elements = controller._env.get_ui_elements() or []
-                visible_labels = {
-                    _normalize_androidworld_setup_label(str(label or "").strip())
-                    for element in elements
-                    for label in (
-                        getattr(element, "text", None),
-                        getattr(element, "content_description", None),
-                    )
-                    if str(label or "").strip()
-                }
-                if {"Open with", "Contacts", "Just once"} <= visible_labels:
+                chooser_clicks = _app_chooser_clicks(
+                    elements,
+                    app_label="Contacts",
+                )
+                if chooser_clicks:
                     logger.info(
                         "AndroidWorld Contacts setup is resolving the system "
                         "app chooser before onboarding"
                     )
-                    original(controller, "Contacts")
-                    original(controller, "Just once")
+                    for label in chooser_clicks:
+                        original(controller, label)
                     return original(controller, "Skip")
             if normalized_label == "OK":
                 activity = str(
@@ -2236,6 +2255,21 @@ def _prepare_androidworld_episode_apps(
         try:
             time.sleep(2.0)
             elements = env.controller.get_ui_elements()
+            if app_name == "contacts":
+                chooser_clicks = _app_chooser_clicks(
+                    elements,
+                    app_label="Contacts",
+                )
+                if chooser_clicks:
+                    tool_controller = importlib.import_module(
+                        "android_world.env.tools"
+                    ).AndroidToolController(env.controller)
+                    for label in chooser_clicks:
+                        tool_controller.click_element(label)
+                    logger.info(
+                        "AndroidWorld episode setup resolved the Contacts chooser"
+                    )
+                    elements = env.controller.get_ui_elements()
             permission_dialog = any(
                 str(getattr(element, "package_name", "") or "").endswith(
                     ".permissioncontroller"
