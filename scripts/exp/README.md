@@ -98,7 +98,10 @@ live emulator.
 The shared lifecycle seam keeps AndroidWorld directory cleanup idempotent when
 host gRPC diagnostics pollute ADB stdout. It accepts Markor's absent final `OK`
 only after the Markor main activity is already foregrounded; every other setup
-error remains a failure. The same seam removes only gRPC fork diagnostics from
+error remains a failure. When official Contacts setup is blocked by Android's
+`Open with` chooser, the seam selects `Contacts` and `Just once`, then resumes
+the official onboarding `Skip`; any other chooser state remains a failure. The
+same seam removes only gRPC fork diagnostics from
 AndroidWorld ADB response payloads before official task code parses them, and
 retries APK installation without `--bypass-low-target-sdk-block` only when the
 emulator explicitly reports that option as unknown.

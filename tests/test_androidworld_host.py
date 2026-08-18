@@ -79,6 +79,71 @@ def test_androidworld_setup_skips_only_already_settled_notification_permission(
         controller_type.click_element = original
 
 
+def test_androidworld_setup_resolves_contacts_open_with_before_skip(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    class Environment:
+        screen = "chooser"
+
+        def get_ui_elements(self):
+            if self.screen == "chooser":
+                labels = ("Open with", "Omnibot", "Contacts", "Just once", "Always")
+            elif self.screen == "confirm":
+                labels = ("Open with", "Contacts", "Just once", "Always")
+            elif self.screen == "onboarding":
+                labels = ("Skip",)
+            else:
+                labels = ("Contacts",)
+            return [
+                SimpleNamespace(text=label, content_description=None, package_name="android")
+                for label in labels
+            ]
+
+    class AndroidToolController:
+        def __init__(self, env) -> None:
+            self._env = env
+
+        def click_element(self, element_text: str) -> None:
+            calls.append(element_text)
+            if element_text == "Skip" and self._env.screen == "chooser":
+                raise ValueError(
+                    'Target text "Skip" not found. Visible labels: '
+                    "['Open with', 'Omnibot', 'Contacts', 'Just once', 'Always']"
+                )
+            if element_text == "Contacts" and self._env.screen == "chooser":
+                self._env.screen = "confirm"
+                return
+            if element_text == "Just once" and self._env.screen == "confirm":
+                self._env.screen = "onboarding"
+                return
+            if element_text == "Skip" and self._env.screen == "onboarding":
+                self._env.screen = "contacts"
+                return
+            raise AssertionError((self._env.screen, element_text))
+
+    tools_module = SimpleNamespace(AndroidToolController=AndroidToolController)
+    monkeypatch.setattr(
+        "src.integrations.android_world.launch.importlib.import_module",
+        lambda name: tools_module
+        if name == "android_world.env.tools"
+        else pytest.fail(f"unexpected import: {name}"),
+    )
+    controller = AndroidToolController(Environment())
+
+    patch = _patch_androidworld_optional_setup_click()
+    assert patch is not None
+    controller_type, original = patch
+    try:
+        controller.click_element("Skip")
+    finally:
+        controller_type.click_element = original
+
+    assert controller._env.screen == "contacts"
+    assert calls == ["Skip", "Contacts", "Just once", "Skip"]
+
+
 def test_androidworld_setup_skips_only_absent_markor_final_ok(monkeypatch) -> None:
     class AndroidToolController:
         def __init__(self, env) -> None:

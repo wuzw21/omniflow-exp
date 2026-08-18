@@ -172,5 +172,7 @@ second planner budget, Function session, resume state, or fallback counter.
 RunLog `open_app` stores only the package. At execution, the adapter uses the
 pinned AndroidWorld registry and launcher, after closing any stale app task;
 there is no adapter-owned app registry or alternate launcher.
+Official Contacts setup may resolve Android's `Open with` chooser by selecting
+`Contacts` and `Just once` before resuming the official onboarding `Skip`.
 
 No formal experiment is launched during code migration.

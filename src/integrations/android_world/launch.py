@@ -116,6 +116,25 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
             if "Target text" not in message or "not found" not in message:
                 raise
             normalized_label = _normalize_androidworld_setup_label(element_text)
+            if normalized_label == "Skip":
+                elements = controller._env.get_ui_elements() or []
+                visible_labels = {
+                    _normalize_androidworld_setup_label(str(label or "").strip())
+                    for element in elements
+                    for label in (
+                        getattr(element, "text", None),
+                        getattr(element, "content_description", None),
+                    )
+                    if str(label or "").strip()
+                }
+                if {"Open with", "Contacts", "Just once"} <= visible_labels:
+                    logger.info(
+                        "AndroidWorld Contacts setup is resolving the system "
+                        "app chooser before onboarding"
+                    )
+                    original(controller, "Contacts")
+                    original(controller, "Just once")
+                    return original(controller, "Skip")
             if normalized_label == "OK":
                 activity = str(
                     getattr(controller._env, "foreground_activity_name", "") or ""
