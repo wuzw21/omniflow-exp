@@ -173,12 +173,14 @@ def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> 
                         {
                             "function_id": "enter_search_query",
                             "name": "Enter a search query",
-                            "description": "Dismiss an optional dialog and enter a query.",
+                            "description": "Enter and submit a search query.",
                             "stability_reason": (
-                                "The same input field and text action are deterministic."
+                                "A visible search field is the stable precondition; "
+                                "entering and submitting text has a repeatable effect, "
+                                "and the query is caller-provided."
                             ),
-                            "start_step_index": 0,
-                            "end_step_index": 2,
+                            "start_step_index": 1,
+                            "end_step_index": 3,
                         },
                         {
                             "function_id": "submit_search",
@@ -225,10 +227,7 @@ def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> 
             {
                 "checker_steps": (
                     [{"function_id": function_id, "step_index": 0}]
-                    if function_id in {
-                        "search_for_a_place",
-                        "enter_search_query",
-                    }
+                    if function_id == "search_for_a_place"
                     else []
                 )
             }
@@ -243,17 +242,17 @@ def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> 
     ]
     store = FunctionStore(store_path)
     assert len(store.get_function("search_for_a_place").checker_rules) == 1
-    assert len(store.get_function("enter_search_query").checker_rules) == 1
+    assert store.get_function("enter_search_query").checker_rules == ()
     assert store.get_function("submit_search").checker_rules == ()
     assert store.get_function("enter_search_query").input_schema["required"] == [
         "query"
     ]
     assert stage_calls == [
         (("action_edits", "bindings"), "search_for_a_place", (0, 1, 2, 3)),
-        (("action_edits", "bindings"), "enter_search_query", (0, 1)),
+        (("action_edits", "bindings"), "enter_search_query", (1, 2)),
         (("action_edits", "bindings"), "submit_search", (2, 3)),
         (("checker_steps",), "search_for_a_place", (0, 1, 2, 3)),
-        (("checker_steps",), "enter_search_query", (0, 1)),
+        (("checker_steps",), "enter_search_query", (1, 2)),
         (("checker_steps",), "submit_search", (2, 3)),
     ]
 
