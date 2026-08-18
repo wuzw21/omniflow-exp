@@ -640,7 +640,7 @@ def test_default_avd_system_image_matches_host_architecture(
         f"system-images;android-34;google_apis;{expected_abi}"
     ) == 1
     assert "emulator-5554=OmniFlowTargetSmall" in completed.stdout
-    assert "emulator-5560=SmallPhone" in completed.stdout
+    assert "emulator-5560=AndroidWorldAvd" in completed.stdout
     assert "emulator-5564=OmniFlowTargetFold" in completed.stdout
 
 
@@ -710,8 +710,8 @@ def test_default_topology_uses_three_distinct_device_instances(
         "source5560:emulator-5560:5560",
         "small5554:emulator-5554:5554",
         (
-                "emulator-5554=OmniFlowTargetSmall,emulator-5560=SmallPhone,"
-            "emulator-5564=OmniFlowTargetFold"
+            "emulator-5554=OmniFlowTargetSmall,emulator-5564=OmniFlowTargetFold,"
+            "emulator-5560=AndroidWorldAvd"
         ),
     ]
     avd_names = [

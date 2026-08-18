@@ -136,7 +136,8 @@ on the wrong page.
 ## Configuration ownership
 
 The `protocol` block in `config/paper_androidworld.json` owns methods, devices,
-seeds, budgets, timeouts, model endpoint, fold state, and pinned revisions.
+seeds, budgets, timeouts, model endpoint, fold state, AVD names, API levels,
+emulator profiles, and pinned revisions.
 `src/experiment/protocol.py` and this shell only read those values. Active user
 configuration is limited to external roots, credentials, task selection, and
 explicit development inputs.

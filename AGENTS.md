@@ -139,6 +139,9 @@ The only formal configuration is the `protocol` block of
 `config/paper_androidworld.json`. `src/experiment/protocol.py`, shell, runners,
 and reports are derived views. Methods, devices, seeds, budgets, timeouts,
 model endpoint, fold state, and pinned revisions must not be copied elsewhere.
+Device serials, console ports, AVD names, API levels, and emulator profiles are
+part of those protocol device records; shell and source collection must derive
+them instead of naming an AVD locally.
 Development overrides must be explicit. Retired source/format/accept/first/limit
 selectors are historical reader fields, not active options.
 

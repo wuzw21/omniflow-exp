@@ -42,6 +42,7 @@ from src.experiment.protocol import (
     MAX_FALLBACK_STEPS,
     MAX_STEPS,
     METHODS,
+    SOURCE_AVD,
     SOURCE_DEVICE,
     SOURCE_MAX_STEPS,
     SOURCE_SEED,
@@ -171,10 +172,10 @@ def test_mobilegpt_preparation_is_an_internal_pipeline_phase(
     assert phase["status"] == "created"
 
 
-def test_source_device_uses_independent_small_phone_avd() -> None:
+def test_source_device_uses_protocol_avd() -> None:
     parser = build_parser()
 
-    assert parser.get_default("source_avd") == "SmallPhone"
+    assert parser.get_default("source_avd") == SOURCE_AVD
     assert parser.get_default("source_device") == SOURCE_DEVICE
 
 

@@ -38,6 +38,7 @@ from src.experiment.protocol import (
     MAX_FALLBACK_STEPS,
     MAX_STEPS,
     METHODS,
+    SOURCE_AVD,
     SOURCE_DEVICE,
     SOURCE_MAX_STEPS,
     SOURCE_SEED,
@@ -2649,7 +2650,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=_parse_source_device,
         default=SOURCE_DEVICE,
     )
-    parser.add_argument("--source-avd", default="SmallPhone")
+    parser.add_argument("--source-avd", default=SOURCE_AVD)
     parser.add_argument("--emulator-gpu", default="swiftshader_indirect")
     parser.add_argument("--runtime-preflight", type=Path)
     parser.add_argument("--formal-model", default=FORMAL_MODEL)

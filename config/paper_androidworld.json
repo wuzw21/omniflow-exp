@@ -10,13 +10,16 @@
       "t3a_hint"
     ],
     "devices": [
-      {"label": "small5554", "serial": "emulator-5554", "console_port": 5554},
-      {"label": "fold5564", "serial": "emulator-5564", "console_port": 5564}
+      {"label": "small5554", "serial": "emulator-5554", "console_port": 5554, "avd": "OmniFlowTargetSmall", "api_level": 33, "profile": "small_phone"},
+      {"label": "fold5564", "serial": "emulator-5564", "console_port": 5564, "avd": "OmniFlowTargetFold", "api_level": 34, "profile": "pixel_fold"}
     ],
     "source_device": {
       "label": "source5560",
       "serial": "emulator-5560",
-      "console_port": 5560
+      "console_port": 5560,
+      "avd": "AndroidWorldAvd",
+      "api_level": 33,
+      "profile": "pixel_6"
     },
     "source_seed": 111,
     "evaluation_seed": 113,

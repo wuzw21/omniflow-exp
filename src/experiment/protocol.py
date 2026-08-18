@@ -14,6 +14,10 @@ DEVICES = tuple(
     )
     for device in ANDROIDWORLD_PROTOCOL["devices"]
 )
+DEVICE_AVDS = tuple(
+    (str(device["serial"]), str(device["avd"]))
+    for device in ANDROIDWORLD_PROTOCOL["devices"]
+)
 
 DEFAULT_METHOD = METHODS[0]
 DEFAULT_DEVICE = ":".join(str(value) for value in DEVICES[0])
@@ -22,6 +26,15 @@ SOURCE_DEVICE = (
     str(_SOURCE_DEVICE["label"]),
     str(_SOURCE_DEVICE["serial"]),
     int(_SOURCE_DEVICE["console_port"]),
+)
+SOURCE_AVD = str(_SOURCE_DEVICE["avd"])
+EMULATOR_AVD_SPECS = tuple(
+    (
+        str(device["avd"]),
+        int(device["api_level"]),
+        str(device["profile"]),
+    )
+    for device in (*ANDROIDWORLD_PROTOCOL["devices"], _SOURCE_DEVICE)
 )
 SOURCE_SEED = int(ANDROIDWORLD_PROTOCOL["source_seed"])
 TASK_SEED = int(ANDROIDWORLD_PROTOCOL["evaluation_seed"])

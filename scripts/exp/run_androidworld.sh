@@ -70,7 +70,9 @@ protocol_values="$("$python_bin" - <<'PY'
 from src.experiment.protocol import (
     DEFAULT_DEVICE,
     DEFAULT_METHOD,
+    DEVICE_AVDS,
     DEVICES,
+    EMULATOR_AVD_SPECS,
     FORMAL_MODEL,
     FORMAL_MODEL_BASE_URL,
     FORMAL_MODEL_ENDPOINT_PROFILE,
@@ -81,6 +83,7 @@ from src.experiment.protocol import (
     MAX_STEPS,
     METHODS,
     SOURCE_DEVICE,
+    SOURCE_AVD,
     SOURCE_SEED,
     STEP_TIMEOUT_SEC,
     TASK_DEADLINE_SEC,
@@ -106,6 +109,15 @@ print(
     ",".join(METHODS),
     ":".join(str(value) for value in SOURCE_DEVICE),
     DEFAULT_DEVICE,
+    SOURCE_AVD,
+    ",".join(
+        f"{serial}={avd}"
+        for serial, avd in ((*DEVICE_AVDS, (SOURCE_DEVICE[1], SOURCE_AVD)))
+    ),
+    ",".join(
+        f"{avd}|{api_level}|{profile}"
+        for avd, api_level, profile in EMULATOR_AVD_SPECS
+    ),
     next(serial for label, serial, _ in DEVICES if label.startswith("fold")),
 )
 PY
@@ -116,7 +128,8 @@ read -r formal_source_seed formal_task_seed formal_max_steps \
   formal_task_deadline_sec formal_model formal_model_endpoint_profile \
   formal_model_base_url formal_fixed_task_params formal_fold_state formal_fold_size \
   formal_default_method all_methods \
-  source_device default_device fold_serial <<< "$protocol_values"
+  source_device default_device source_avd emulator_avds \
+  emulator_avd_profiles fold_serial <<< "$protocol_values"
 expected_source_seed="$formal_source_seed"
 task_seed="$formal_task_seed"
 preflight="$repo/src/experiment/preflight.py"
@@ -149,7 +162,6 @@ appagent_demo_memory_root="${OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT:-}"
 preflight_profile=""
 preflight_serials=""
 manage_emulators="${OMNIFLOW_ANDROIDWORLD_MANAGE_EMULATORS:-1}"
-emulator_avds="emulator-5554=OmniFlowTargetSmall,emulator-5560=SmallPhone,emulator-5564=OmniFlowTargetFold"
 host_machine="$(uname -m)"
 case "$host_machine" in
   x86_64|amd64)
@@ -240,7 +252,15 @@ PY
   echo "AndroidWorld setup requires Python SQLite with FTS4 support. Set OMNIFLOW_SQLITE_FTS4_LIBRARY to an absolute compatible libsqlite3 path." >&2
   return 1
 }
-default_emulator_avd_specs="SmallPhone|system-images;android-33;google_apis;$default_emulator_system_image_abi|small_phone,OmniFlowTargetSmall|system-images;android-33;google_apis;$default_emulator_system_image_abi|small_phone,OmniFlowTargetFold|system-images;android-34;google_apis;$default_emulator_system_image_abi|pixel_fold"
+default_emulator_avd_specs=""
+if [[ -n "$emulator_avd_profiles" ]]; then
+  IFS=',' read -r -a configured_emulator_profiles <<< "$emulator_avd_profiles"
+  for configured_emulator_profile in "${configured_emulator_profiles[@]}"; do
+    IFS='|' read -r configured_avd configured_api configured_profile <<< "$configured_emulator_profile"
+    configured_spec="$configured_avd|system-images;android-$configured_api;google_apis;$default_emulator_system_image_abi|$configured_profile"
+    default_emulator_avd_specs="${default_emulator_avd_specs:+$default_emulator_avd_specs,}$configured_spec"
+  done
+fi
 emulator_avd_specs="$default_emulator_avd_specs"
 emulator_gpu="swiftshader_indirect"
 emulator_boot_timeout_sec="240"
@@ -901,7 +921,7 @@ if [[ -n "$e2e_task" ]]; then
     --adb-path "$e2e_adb_path"
     --emulator-bin "$e2e_emulator_bin"
     --source-device "$source_device"
-    --source-avd "SmallPhone"
+    --source-avd "$source_avd"
     --emulator-gpu "$emulator_gpu"
     --runtime-preflight "$repo/src/experiment/preflight.py"
     --formal-model "$formal_model"

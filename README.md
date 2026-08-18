@@ -17,7 +17,8 @@ The five formal methods are:
 One result is exactly `task + method + device`. The shell entry point dispatches
 tasks, the E2E pipeline schedules methods/devices, and the Python runner executes
 one result. Formal methods, devices, seeds, budgets, timeouts, endpoint, fold
-state, and revisions have one source: `config/paper_androidworld.json`.
+state, AVD topology, and revisions have one source:
+`config/paper_androidworld.json`.
 For GLM-5.1, `model.env` contains only `LLMTHU_API_KEY`; the endpoint URL comes
 from that canonical protocol and is exported internally.
 
