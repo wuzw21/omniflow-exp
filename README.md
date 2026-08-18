@@ -129,8 +129,8 @@ The retained bridge tools are:
 - `run_gui`
 
 The shell never auto-builds a missing Function Store. Save the Functions first,
-refresh the local data index, then run the experiment. Catalog snapshots are
-read-only source evidence and never seed or rewrite the Store at runtime.
+refresh the local data index, then run the experiment. Transfer-state evidence
+is read-only and never seeds or rewrites the Store at runtime.
 
 ## Checker model
 

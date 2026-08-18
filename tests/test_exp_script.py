@@ -1028,7 +1028,7 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
         str(results),
     ]
 
-    without_catalog = subprocess.run(
+    without_external_function_index = subprocess.run(
         ["bash", str(SCRIPT), "--refresh-memory"],
         cwd=REPO,
         env=environment,
@@ -1037,7 +1037,9 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
         text=True,
     )
 
-    assert without_catalog.returncode == 0, without_catalog.stderr
+    assert without_external_function_index.returncode == 0, (
+        without_external_function_index.stderr
+    )
     assert captured.read_text(encoding="utf-8").splitlines() == [
         "-m",
         "src.experiment.local_data",

@@ -32,8 +32,8 @@ Before changing or running this repository, read this file, `README.md`, and
 - `src/experiment/androidworld.py` runs exactly one `task + method + device`.
 - `save_function` is the only Function write API and the only path from a
   successful RunLog to Function Store persistence.
-- Catalog snapshots are read-only evidence. Runtime construction must never
-  seed, replace, or persist catalog Functions into a Function Store.
+- Transfer-state catalogs are immutable RunLog evidence. Runtime construction
+  reads only the registered Function Store and never creates a replacement.
 - Do not add an authoring manifest converter, automatic missing-Store builder,
   second compiler, second writer, checker plugin, diagnostic runner, or alias
   for a retired interface.

@@ -19,7 +19,9 @@ from omniflow.runtime.execution import (
 )
 
 
-def test_function_uses_catalog_state_when_host_state_is_missing(monkeypatch) -> None:
+def test_function_uses_explicit_state_loader_when_host_state_is_missing(
+    monkeypatch,
+) -> None:
     import omniflow.runtime.core as core
 
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
@@ -48,9 +50,9 @@ def test_function_uses_catalog_state_when_host_state_is_missing(monkeypatch) -> 
             return current
 
     function = Function(
-        function_id="catalog_function",
-        name="catalog function",
-        description="catalog state fallback",
+        function_id="state_loader_function",
+        name="state loader function",
+        description="explicit state loader fallback",
         steps=(
             FunctionStep(0, Action("click", {"x": 50, "y": 50}), "source-1"),
         ),
