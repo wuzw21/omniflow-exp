@@ -98,7 +98,10 @@ live emulator.
 The shared lifecycle seam keeps AndroidWorld directory cleanup idempotent when
 host gRPC diagnostics pollute ADB stdout. It accepts Markor's absent final `OK`
 only after the Markor main activity is already foregrounded; every other setup
-error remains a failure.
+error remains a failure. The same seam removes only gRPC fork diagnostics from
+AndroidWorld ADB response payloads before official task code parses them, and
+retries APK installation without `--bypass-low-target-sdk-block` only when the
+emulator explicitly reports that option as unknown.
 
 For `ours`, the AndroidWorld Method Adapter invokes one complete
 `OmniFlow.run()` cycle on the task. The official episode runner contributes the

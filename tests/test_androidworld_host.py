@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 import xml.etree.ElementTree as ET
 
@@ -20,6 +21,7 @@ from src.integrations.android_world.launch import (
     _bounded_androidworld_adb_file_transfer_timeout,
     _ensure_androidworld_a11y_forwarder,
     _ExperimentAgentAdapter,
+    _patch_androidworld_adb_output_sanitizer,
     _patch_androidworld_apk_install_compat,
     _patch_androidworld_chcon_compat,
     _patch_androidworld_directory_clear,
@@ -228,8 +230,14 @@ def test_androidworld_apk_install_retries_without_unsupported_flag() -> None:
     class AdbUtils:
         def install_apk(self, apk, _env):
             calls.append(("official", apk))
-            raise RuntimeError(
-                "Failed to install: Unknown option --bypass-low-target-sdk-block"
+            raise subprocess.CalledProcessError(
+                1,
+                ["adb", "install"],
+                output=(
+                    b"Exception occurred while executing 'install':\n"
+                    b"java.lang.IllegalArgumentException: Unknown option "
+                    b"--bypass-low-target-sdk-block\n"
+                ),
             )
 
         def issue_generic_request(self, args, _env, *, timeout_sec):
@@ -249,6 +257,34 @@ def test_androidworld_apk_install_retries_without_unsupported_flag() -> None:
         ("official", "/tmp/app.apk"),
         ("compat", ("install", "/tmp/app.apk"), 30.0),
     ]
+
+
+def test_androidworld_adb_output_removes_grpc_fork_diagnostics() -> None:
+    class Controller:
+        def execute_adb_call(self, _request):
+            return SimpleNamespace(
+                generic=SimpleNamespace(
+                    output=(
+                        b"I0818 08:14:27.756116 11386938 "
+                        b"ev_poll_posix.cc:593] FD from fork parent still in poll list\n"
+                        b"I0818 08:14:27.756170 11386938 fork_posix.cc:71] "
+                        b"Other threads are currently calling into gRPC\n"
+                        b"1697412907\n"
+                    )
+                )
+            )
+
+    controller = Controller()
+    controller_type, original = _patch_androidworld_adb_output_sanitizer(
+        controller
+    )
+    try:
+        response = controller.execute_adb_call(object())
+    finally:
+        controller_type.execute_adb_call = original
+
+    assert response.generic.output == b"1697412907\n"
+    assert int(response.generic.output.strip()) == 1697412907
 
 
 def test_androidworld_chcon_compat_only_normalizes_transport_endpoint_failure() -> None:
