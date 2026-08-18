@@ -18,7 +18,7 @@
   ],
   "properties": {
     "schema_version": {"const": "omniflow.function.v2"},
-    "function_id": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"},
+    "function_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"},
     "name": {"type": "string", "minLength": 1, "maxLength": 120},
     "description": {"type": "string", "minLength": 1},
     "input_schema": {"$ref": "#/$defs/input_schema"},
