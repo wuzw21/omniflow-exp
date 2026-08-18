@@ -6,11 +6,7 @@ import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from omniflow.bridge import JsonLineBridge
-from omniflow.functions.assets import (
-    FunctionStore,
-    function_authoring_tool,
-    save_function,
-)
+from omniflow.functions.assets import FunctionStore, function_authoring_tool, save_function
 
 
 def _function(function_id: str = "open_settings") -> dict:
@@ -63,322 +59,277 @@ def _authoring_run_log() -> dict:
     )
 
 
-def _semantic_plan(stage: str = "checkers") -> str:
-    function = {
-        "schema_version": "omniflow.function.v2",
-        "function_id": "enter_note",
-        "name": "Enter a note",
-        "description": (
-            "Dismiss an optional prompt, enter task-provided text, and wait "
-            "for the page to settle."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": False,
-        },
-        "bindings": [],
-        "steps": [
+def _draft_input(prompt: str) -> dict:
+    return json.loads(prompt.split("Draft input:\n", 1)[1].split("\n\n", 1)[0])
+
+
+def _draft_enhancer(prompt: str, tool: dict) -> str:
+    required = tool["function"]["parameters"]["required"]
+    if required == ["complete_function", "subsegments"]:
+        return json.dumps(
             {
-                "step_index": 0,
-                "source_state_id": "state-checker",
-                "action": {"tool": "click", "args": {"x": 500, "y": 500}},
-            },
-            {
-                "step_index": 1,
-                "source_state_id": "state-input",
-                "action": {
-                    "tool": "input_text",
-                    "args": {"text": "meeting notes"},
+                "complete_function": {
+                    "function_id": "complete_note_entry",
+                    "name": "Complete note entry",
+                    "description": "Dismiss an optional prompt, enter text, and wait.",
                 },
-            },
-            {
-                "step_index": 2,
-                "source_state_id": "state-ready",
-                "action": {"tool": "wait", "args": {"duration_ms": 1000}},
-            },
-        ],
-        "checker_rules": [],
-        "agent_visible": True,
-    }
-    arguments: dict[str, object] = {}
-    if stage in {"parameters", "checkers"}:
-        function["input_schema"] = {
-            "type": "object",
-            "properties": {
-                "note": {
-                    "type": "string",
-                    "description": "Note text to enter",
-                }
-            },
-            "required": ["note"],
-            "additionalProperties": False,
-        }
-        function["bindings"] = [
-            {
-                "source": "$.arguments.note",
-                "target": "$.steps[1].action.args.text",
+                "subsegments": [],
             }
-        ]
-        function["steps"][1]["action"]["args"]["text"] = ""
-        arguments = {"note": "meeting notes"}
-    if stage == "checkers":
-        checker_step = function["steps"].pop(0)
-        for index, step in enumerate(function["steps"]):
-            step["step_index"] = index
-        function["bindings"][0]["target"] = "$.steps[0].action.args.text"
-        function["checker_rules"] = [
+        )
+    if required == ["bindings"]:
+        return json.dumps(
             {
-                "source_state_id": checker_step["source_state_id"],
-                "action": checker_step["action"],
+                "bindings": [
+                    {
+                        "function_id": "complete_note_entry",
+                        "step_index": 1,
+                        "name": "note",
+                        "description": "Note text to enter",
+                        "argument_path": "text",
+                    }
+                ]
             }
-        ]
+        )
+    assert required == ["checker_steps"]
     return json.dumps(
         {
-            "functions": [
-                function
-            ],
-            "arguments": {"enter_note": arguments},
+            "checker_steps": [
+                {"function_id": "complete_note_entry", "step_index": 0}
+            ]
         }
     )
 
 
-def _stage_from_prompt(prompt: str) -> str:
-    return next(
-        stage for stage in ("split", "parameters", "checkers")
-        if f"stage {stage}" in prompt
-    )
-
-
-def test_enhance_creates_semantics_parameters_and_checker(tmp_path) -> None:
+def test_enhancer_edits_one_draft_in_three_small_stages(tmp_path) -> None:
     prompts: list[str] = []
-    store_path = tmp_path / "store.json"
-
     result = save_function(
         _authoring_run_log(),
-        store_path,
+        tmp_path / "store.json",
         enhance=True,
-        complete_json=lambda prompt, _tool: prompts.append(prompt)
-        or _semantic_plan(_stage_from_prompt(prompt)),
+        complete_json=lambda prompt, tool: prompts.append(prompt)
+        or _draft_enhancer(prompt, tool),
         instruction="Prefer one reusable text-entry operation.",
     )
 
-    assert result["function_ids"] == ["enter_note"]
-    saved = FunctionStore(store_path).get_function("enter_note")
+    assert result["function_ids"] == ["complete_note_entry"]
+    saved = FunctionStore(tmp_path / "store.json").get_function(
+        "complete_note_entry"
+    )
     assert saved is not None
-    assert "enter task-provided text" in saved.description
-    assert saved.input_schema["required"] == ["note"]
+    assert [step.action.tool for step in saved.steps] == ["input_text", "wait"]
+    assert saved.checker_rules[0]["source_state_id"] == "state-checker"
     assert saved.bindings == (
         {
             "source": "$.arguments.note",
             "target": "$.steps[0].action.args.text",
         },
     )
-    assert saved.checker_rules[0]["source_state_id"] == "state-checker"
-    assert FunctionStore(store_path).source_calls == [
-        {"function_id": "enter_note", "arguments": {"note": "meeting notes"}}
+    assert FunctionStore(tmp_path / "store.json").source_calls == [
+        {
+            "function_id": "complete_note_entry",
+            "arguments": {"note": "meeting notes"},
+        }
     ]
     assert len(prompts) == 3
-    assert "stage split" in prompts[0]
-    assert "stage parameters" in prompts[1]
-    assert "stage checkers" in prompts[2]
-    assert "safe to skip without breaking the remaining formal path" in prompts[2]
-    assert "a later unselected formal action" in prompts[2]
     assert "Prefer one reusable text-entry operation." in prompts[0]
-    assert '"function_id":"submit_web_search"' in prompts[0]
-    assert "Identify every reusable contiguous semantic subsegment" in prompts[0]
+    assert all('"schema_version":"omniflow.function.v2"' not in p for p in prompts)
 
 
-def test_enhance_rejects_extra_function_fields(tmp_path) -> None:
-    plan = json.loads(_semantic_plan())
-    plan["functions"][0]["actions"] = [{"tool": "click", "args": {}}]
-    try:
-        save_function(
-            _authoring_run_log(),
-            tmp_path / "store.json",
-            enhance=True,
-            complete_json=lambda _prompt, _tool: json.dumps(plan),
+def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> None:
+    run_log = androidworld_run_log(
+        [
+            {"action_type": "click", "x": 500, "y": 500},
+            {"action_type": "input_text", "text": "museum"},
+            {"action_type": "click", "x": 700, "y": 700},
+            {"action_type": "wait"},
+        ],
+        observations=[
+            androidworld_state("optional-dialog"),
+            androidworld_state("search-input"),
+            androidworld_state("search-filled"),
+            androidworld_state("results"),
+        ],
+        goal="Dismiss an optional dialog, search for a museum, and show results.",
+    )
+
+    def complete(_prompt: str, tool: dict) -> str:
+        required = tool["function"]["parameters"]["required"]
+        if required == ["complete_function", "subsegments"]:
+            return json.dumps(
+                {
+                    "complete_function": {
+                        "function_id": "search_for_a_place",
+                        "name": "Search for a place",
+                        "description": "Enter a place query and show its results.",
+                    },
+                    "subsegments": [
+                        {
+                            "function_id": "enter_search_query",
+                            "name": "Enter a search query",
+                            "description": "Dismiss an optional dialog and enter a query.",
+                            "stability_reason": (
+                                "The same input field and text action are deterministic."
+                            ),
+                            "start_step_index": 0,
+                            "end_step_index": 2,
+                        },
+                        {
+                            "function_id": "submit_search",
+                            "name": "Submit a search",
+                            "description": "Submit the query and wait for results.",
+                            "stability_reason": (
+                                "Submission and result loading form a stable sequence."
+                            ),
+                            "start_step_index": 2,
+                            "end_step_index": 4,
+                        },
+                    ],
+                }
+            )
+        if required == ["bindings"]:
+            return json.dumps(
+                {
+                    "bindings": [
+                        {
+                            "function_id": function_id,
+                            "step_index": 1,
+                            "name": "query",
+                            "description": "Place query to enter",
+                            "argument_path": "text",
+                        }
+                        for function_id in (
+                            "search_for_a_place",
+                            "enter_search_query",
+                        )
+                    ]
+                }
+            )
+        return json.dumps(
+            {
+                "checker_steps": [
+                    {"function_id": function_id, "step_index": 0}
+                    for function_id in (
+                        "search_for_a_place",
+                        "enter_search_query",
+                    )
+                ]
+            }
         )
-    except ValueError as error:
-        assert str(error) == "function_artifact_unknown_fields:actions"
-    else:
-        raise AssertionError("Unknown Agent output must be rejected")
+
+    store_path = tmp_path / "store.json"
+    result = save_function(run_log, store_path, enhance=True, complete_json=complete)
+    assert result["function_ids"] == [
+        "search_for_a_place",
+        "enter_search_query",
+        "submit_search",
+    ]
+    store = FunctionStore(store_path)
+    assert len(store.get_function("search_for_a_place").checker_rules) == 1
+    assert len(store.get_function("enter_search_query").checker_rules) == 1
+    assert store.get_function("submit_search").checker_rules == ()
+    assert store.get_function("enter_search_query").input_schema["required"] == [
+        "query"
+    ]
 
 
-def test_enhance_rejects_extra_parameter_schema_fields(tmp_path) -> None:
-    def complete_json(prompt: str, _tool: dict) -> str:
-        stage = _stage_from_prompt(prompt)
-        plan = json.loads(_semantic_plan(stage))
-        if stage == "parameters":
-            plan["functions"][0]["input_schema"]["title"] = "Uncontrolled schema"
-        return json.dumps(plan)
-
-    with pytest.raises(
-        ValueError,
-        match="function_parameter_schema_unknown_fields:title",
-    ):
-        save_function(
-            _authoring_run_log(),
-            tmp_path / "store.json",
-            enhance=True,
-            complete_json=complete_json,
-        )
-
-
-@pytest.mark.parametrize(
-    ("stage_to_corrupt", "expected_error"),
-    [
-        ("parameters", "parameters_stage_changed_function_logic"),
-        ("checkers", "checkers_stage_changed_function_logic"),
-    ],
-)
-def test_each_enhancement_stage_has_one_narrow_responsibility(
-    tmp_path,
-    stage_to_corrupt,
-    expected_error,
-) -> None:
-    def complete_json(prompt: str, _tool: dict) -> str:
-        stage = _stage_from_prompt(prompt)
-        plan = json.loads(_semantic_plan(stage))
-        if stage == stage_to_corrupt:
-            plan["functions"][0]["description"] = "Rewritten by the wrong stage."
-        return json.dumps(plan)
-
-    with pytest.raises(ValueError, match=expected_error):
-        save_function(
-            _authoring_run_log(),
-            tmp_path / "store.json",
-            enhance=True,
-            complete_json=complete_json,
-        )
-
-
-def test_stage_validation_error_gets_one_bounded_correction(tmp_path) -> None:
+def test_stage_validation_gets_one_small_correction(tmp_path) -> None:
     prompts: list[str] = []
-    parameter_calls = 0
+    split_calls = 0
 
-    def complete_json(prompt: str, _tool: dict) -> str:
-        nonlocal parameter_calls
+    def complete(prompt: str, tool: dict) -> str:
+        nonlocal split_calls
         prompts.append(prompt)
-        stage = _stage_from_prompt(prompt)
-        plan = json.loads(_semantic_plan(stage))
-        if stage == "parameters":
-            parameter_calls += 1
-            if parameter_calls == 1:
-                plan["functions"][0]["description"] = "Invalid rewrite."
-        return json.dumps(plan)
+        if tool["function"]["parameters"]["required"] == [
+            "complete_function",
+            "subsegments",
+        ]:
+            split_calls += 1
+            if split_calls == 1:
+                return '{"unexpected":true}'
+        return _draft_enhancer(prompt, tool)
 
-    result = save_function(
+    save_function(
         _authoring_run_log(),
         tmp_path / "store.json",
         enhance=True,
-        complete_json=complete_json,
+        complete_json=complete,
     )
-
-    assert result["function_ids"] == ["enter_note"]
-    assert parameter_calls == 2
-    assert len(prompts) == 4
-    assert "previous full bundle was rejected" in prompts[2]
-    assert "parameters_stage_changed_function_logic" in prompts[2]
+    assert split_calls == 2
+    assert "previous small decision was rejected" in prompts[1]
+    assert "function_split_contract_invalid" in prompts[1]
 
 
-def test_split_rejects_single_click_function_fragments(tmp_path) -> None:
-    def complete_json(prompt: str, _tool: dict) -> str:
-        stage = _stage_from_prompt(prompt)
-        plan = json.loads(_semantic_plan(stage))
-        if stage == "split":
-            fragment = _function("dismiss_prompt")
-            fragment["name"] = "Dismiss prompt"
-            fragment["description"] = "Click the dismiss control."
-            fragment["steps"] = [plan["functions"][0]["steps"][0]]
-            plan["functions"].append(fragment)
-            plan["arguments"]["dismiss_prompt"] = {}
-        return json.dumps(plan)
+def test_enhancer_rejects_subsegment_without_stability_reason(tmp_path) -> None:
+    def complete(_prompt: str, tool: dict) -> str:
+        required = tool["function"]["parameters"]["required"]
+        assert required == ["complete_function", "subsegments"]
+        return json.dumps(
+            {
+                "complete_function": {
+                    "function_id": "complete_note_entry",
+                    "name": "Complete note entry",
+                    "description": "Enter note text and wait for the result.",
+                },
+                "subsegments": [
+                    {
+                        "function_id": "enter_note",
+                        "name": "Enter a note",
+                        "description": "Enter note text.",
+                        "stability_reason": "",
+                        "start_step_index": 1,
+                        "end_step_index": 3,
+                    }
+                ],
+            }
+        )
 
     with pytest.raises(
-        ValueError,
-        match="function_enhancement_single_click_fragment_forbidden",
+        ValueError, match="function_subsegment_stability_reason_required"
     ):
         save_function(
             _authoring_run_log(),
             tmp_path / "store.json",
             enhance=True,
-            complete_json=complete_json,
+            complete_json=complete,
         )
 
 
-def test_checker_stage_cannot_register_another_functions_action(tmp_path) -> None:
-    def complete_json(prompt: str, _tool: dict) -> str:
-        stage = _stage_from_prompt(prompt)
-        plan = json.loads(_semantic_plan(stage))
-        wait_function = _function("wait_for_note")
-        wait_function["name"] = "Wait for note"
-        wait_function["description"] = "Wait for the note page to settle."
-        wait_function["steps"] = [
-            {
-                "step_index": 0,
-                "source_state_id": "state-ready",
-                "action": {"tool": "wait", "args": {"duration_ms": 1000}},
-            }
-        ]
-        if stage == "checkers":
-            wait_function["checker_rules"] = [
-                {
-                    "source_state_id": "state-checker",
-                    "action": {"tool": "click", "args": {"x": 500, "y": 500}},
-                }
-            ]
-        plan["functions"].append(wait_function)
-        plan["arguments"]["wait_for_note"] = {}
-        return json.dumps(plan)
+def test_parameter_binding_must_point_into_its_function_action(tmp_path) -> None:
+    def invalid(prompt: str, tool: dict) -> str:
+        value = json.loads(_draft_enhancer(prompt, tool))
+        if "bindings" in value:
+            value["bindings"][0]["step_index"] = 99
+        return json.dumps(value)
+
+    with pytest.raises(ValueError, match="function_parameter_step_not_in_function"):
+        save_function(
+            _authoring_run_log(),
+            tmp_path / "store.json",
+            enhance=True,
+            complete_json=invalid,
+        )
+
+
+def test_checker_registration_is_function_local(tmp_path) -> None:
+    def invalid(prompt: str, tool: dict) -> str:
+        value = json.loads(_draft_enhancer(prompt, tool))
+        if "checker_steps" in value:
+            value["checker_steps"][0]["function_id"] = "unknown"
+        return json.dumps(value)
 
     with pytest.raises(ValueError, match="checker_not_registered_on_function"):
         save_function(
             _authoring_run_log(),
             tmp_path / "store.json",
             enhance=True,
-            complete_json=complete_json,
+            complete_json=invalid,
         )
-
-
-def test_checker_registration_is_function_local(tmp_path) -> None:
-    store_path = tmp_path / "store.json"
-
-    def complete_json(prompt: str, _tool: dict) -> str:
-        plan = json.loads(_semantic_plan(_stage_from_prompt(prompt)))
-        wait_function = _function("wait_for_note")
-        wait_function["name"] = "Wait for note"
-        wait_function["description"] = "Wait for the note page to settle."
-        wait_function["steps"] = [
-            {
-                "step_index": 0,
-                "source_state_id": "state-ready",
-                "action": {"tool": "wait", "args": {"duration_ms": 1000}},
-            }
-        ]
-        plan["functions"].append(wait_function)
-        plan["arguments"]["wait_for_note"] = {}
-        return json.dumps(plan)
-
-    save_function(
-        _authoring_run_log(),
-        store_path,
-        enhance=True,
-        complete_json=complete_json,
-    )
-
-    store = FunctionStore(store_path)
-    assert len(store.get_function("enter_note").checker_rules) == 1
-    assert store.get_function("wait_for_note").checker_rules == ()
 
 
 def test_tools_expose_one_function_save_interface(tmp_path) -> None:
     bridge = JsonLineBridge(tmp_path / "functions.json")
     definitions = bridge._handle("request-1", "tools/list", {})["tools"]
-    tools = {item["name"] for item in definitions}
-
-    assert tools == {
+    assert {item["name"] for item in definitions} == {
         "save_function",
         "list_functions",
         "get_function",
@@ -390,17 +341,12 @@ def test_tools_expose_one_function_save_interface(tmp_path) -> None:
         "run_gui",
     }
     save = next(item for item in definitions if item["name"] == "save_function")
-    assert "complete Function bundle" in save["description"]
-    assert "functions" not in save["inputSchema"].get("required", [])
+    assert "Function draft" in save["description"]
 
 
 def test_save_function_requires_functions_without_enhance(tmp_path) -> None:
     bridge = JsonLineBridge(tmp_path / "functions.json")
-    result = bridge._save_function(
-        "request-1",
-        {"run_log": _authoring_run_log()},
-    )
-
+    result = bridge._save_function("request-1", {"run_log": _authoring_run_log()})
     assert result["success"] is False
     assert result["error"]["code"] == "FUNCTIONS_REQUIRED"
 
@@ -412,7 +358,6 @@ def test_save_function_accepts_one_runlog_and_multiple_functions(tmp_path) -> No
         goal="Open Settings.",
     )
     bridge = JsonLineBridge(tmp_path / "functions.json")
-
     result = bridge._save_function(
         "request-1",
         {
@@ -423,132 +368,61 @@ def test_save_function_accepts_one_runlog_and_multiple_functions(tmp_path) -> No
             ],
         },
     )
-
     assert result["success"] is True
     assert result["function_ids"] == ["open_settings", "open_system_settings"]
 
 
-def test_bridge_enhance_requires_a_complete_bundle_at_every_stage(tmp_path) -> None:
+def test_bridge_enhancement_edits_one_draft_in_three_stages(tmp_path) -> None:
+    required_fields: list[list[str]] = []
+
     class Bridge(JsonLineBridge):
         def host_call(self, request_id, method, payload):
             assert method == "model_turn"
-            prompt = payload["request"]["messages"][0]["content"]
-            stage = _stage_from_prompt(prompt)
-            previous_stage = {"parameters": "split", "checkers": "parameters"}.get(
-                stage
-            )
-            previous_bundle = (
-                json.loads(_semantic_plan(previous_stage))
-                if previous_stage is not None
-                else None
-            )
-            function_schema = payload["request"]["tools"][0]["function"]
-            assert function_schema == function_authoring_tool(
-                stage=stage,
-                current_bundle=previous_bundle,
-            )["function"]
+            request = payload["request"]
+            tool = request["tools"][0]
+            required_fields.append(tool["function"]["parameters"]["required"])
+            assert request["tool_choice"]["function"]["name"] == "edit_function_draft"
             return {
                 "tool_calls": [
                     {
                         "function": {
-                            "name": "submit_function_bundle",
-                                "arguments": _semantic_plan(
-                                    _stage_from_prompt(
-                                        prompt
-                                    )
-                                ),
+                            "name": "edit_function_draft",
+                            "arguments": _draft_enhancer(
+                                request["messages"][0]["content"], tool
+                            ),
                         }
                     }
                 ]
             }
 
-    bridge = Bridge(tmp_path / "functions.json")
-    result = bridge._save_function(
-        "request-1",
-        {"run_log": _authoring_run_log(), "enhance": True},
+    result = Bridge(tmp_path / "functions.json")._save_function(
+        "request-1", {"run_log": _authoring_run_log(), "enhance": True}
     )
-
     assert result["success"] is True
-    assert result["function_ids"] == ["enter_note"]
-
-
-def test_function_authoring_tool_requires_the_complete_function_contract() -> None:
-    tool = function_authoring_tool(stage="split", current_bundle=None)
-    function = tool["function"]
-    parameters = function["parameters"]
-    function_schema = parameters["properties"]["functions"]["items"]
-
-    assert function["name"] == "submit_function_bundle"
-    assert parameters["required"] == ["functions", "arguments"]
-    assert parameters["additionalProperties"] is False
-    assert function_schema["required"] == [
-        "schema_version",
-        "function_id",
-        "name",
-        "description",
-        "input_schema",
-        "bindings",
-        "steps",
-        "checker_rules",
-        "agent_visible",
-    ]
-    assert function_schema["properties"]["steps"]["items"]["required"] == [
-        "step_index",
-        "source_state_id",
-        "action",
-    ]
-    assert function_schema["properties"]["checker_rules"] == {"const": []}
-
-
-def test_function_authoring_tool_locks_each_stage_to_its_responsibility() -> None:
-    split_tool = function_authoring_tool(stage="split", current_bundle=None)
-    split_function = split_tool["function"]["parameters"]["properties"][
-        "functions"
-    ]["items"]
-    assert split_function["properties"]["checker_rules"] == {"const": []}
-    assert split_function["properties"]["bindings"] == {"const": []}
-
-    split_bundle = json.loads(_semantic_plan("split"))
-    parameter_tool = function_authoring_tool(
-        stage="parameters",
-        current_bundle=split_bundle,
-    )
-    parameter_functions = parameter_tool["function"]["parameters"]["properties"][
-        "functions"
-    ]
-    parameter_function = parameter_functions["items"]["oneOf"][0]
-    assert parameter_functions["minItems"] == 1
-    assert parameter_functions["maxItems"] == 1
-    assert parameter_function["properties"]["function_id"] == {
-        "const": "enter_note"
-    }
-    assert parameter_function["properties"]["name"] == {"const": "Enter a note"}
-    assert parameter_function["properties"]["checker_rules"] == {"const": []}
-    assert parameter_function["properties"]["steps"]["minItems"] == 3
-    assert parameter_function["properties"]["steps"]["maxItems"] == 3
-
-    parameter_bundle = json.loads(_semantic_plan("parameters"))
-    checker_tool = function_authoring_tool(
-        stage="checkers",
-        current_bundle=parameter_bundle,
-    )
-    checker_parameters = checker_tool["function"]["parameters"]
-    checker_function = checker_parameters["properties"]["functions"]["items"][
-        "oneOf"
-    ][0]
-    assert checker_parameters["properties"]["arguments"] == {
-        "const": parameter_bundle["arguments"]
-    }
-    assert checker_function["properties"]["checker_rules"]["items"]["enum"] == [
-        {
-            "source_state_id": step["source_state_id"],
-            "action": step["action"],
-        }
-        for step in parameter_bundle["functions"][0]["steps"]
+    assert required_fields == [
+        ["complete_function", "subsegments"],
+        ["bindings"],
+        ["checker_steps"],
     ]
 
 
-def test_save_function_reports_the_failed_agent_stage(tmp_path) -> None:
+def test_function_authoring_tool_is_three_small_draft_edits() -> None:
+    assert function_authoring_tool(stage="split")["function"]["parameters"][
+        "required"
+    ] == ["complete_function", "subsegments"]
+    assert function_authoring_tool(stage="parameters")["function"]["parameters"][
+        "required"
+    ] == ["bindings"]
+    assert function_authoring_tool(stage="checkers")["function"]["parameters"][
+        "required"
+    ] == ["checker_steps"]
+    assert {
+        function_authoring_tool(stage=stage)["function"]["name"]
+        for stage in ("split", "parameters", "checkers")
+    } == {"edit_function_draft"}
+
+
+def test_save_function_reports_the_failed_stage(tmp_path) -> None:
     calls = 0
 
     def timeout(_prompt: str, _tool: dict) -> str:
@@ -558,10 +432,7 @@ def test_save_function_reports_the_failed_agent_stage(tmp_path) -> None:
 
     with pytest.raises(
         ValueError,
-        match=(
-            "function_enhancement_split_model_failed:"
-            "TimeoutError:endpoint did not answer"
-        ),
+        match="function_enhancement_split_model_failed:TimeoutError:endpoint did not answer",
     ):
         save_function(
             _authoring_run_log(),
@@ -572,15 +443,13 @@ def test_save_function_reports_the_failed_agent_stage(tmp_path) -> None:
     assert calls == 1
 
 
-def test_save_function_rejects_model_commentary_around_the_bundle(
-    tmp_path,
-) -> None:
-    valid = _semantic_plan("split")
-
+def test_save_function_rejects_model_commentary_around_a_draft_edit(tmp_path) -> None:
     with pytest.raises(ValueError, match="function_enhancement_json_invalid"):
         save_function(
             _authoring_run_log(),
             tmp_path / "store.json",
             enhance=True,
-            complete_json=lambda _prompt, _tool: f"Here is the result: {valid}",
+            complete_json=lambda prompt, tool: (
+                "Here is the result: " + _draft_enhancer(prompt, tool)
+            ),
         )

@@ -11,8 +11,6 @@ from omniflow.core.model import Action, Function, FunctionStep
 from omniflow.core.schemas import (
     canonicalize_action,
     load_canonical_action_schema,
-    load_checker_rule_schema,
-    load_function_schema,
 )
 from omniflow.core.trajectory import (
     observation_display,
@@ -50,230 +48,125 @@ _PATH_TOKEN = re.compile(r"\.([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)]")
 def function_authoring_tool(
     *,
     stage: str,
-    current_bundle: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Return the complete bundle contract narrowed to one authoring stage."""
+    """Return the small decision contract used by the offline enhancer."""
 
-    if stage not in {"split", "parameters", "checkers"}:
-        raise ValueError(f"function_authoring_stage_invalid:{stage}")
-    if stage == "split" and current_bundle is not None:
-        raise ValueError("function_authoring_split_bundle_forbidden")
-    if stage != "split" and not isinstance(current_bundle, dict):
-        raise ValueError(f"function_authoring_{stage}_bundle_required")
-
-    function_schema = load_function_schema()
-    definitions = function_schema.pop("$defs")
-    action_schema = definitions["action"]
-    step_schema = definitions["step"]
-    step_schema["properties"]["action"] = action_schema
-    checker_schema = load_checker_rule_schema()
-    function_schema["properties"]["input_schema"] = definitions["input_schema"]
-    function_schema["properties"]["bindings"]["items"] = definitions["binding"]
-    function_schema["properties"]["steps"]["items"] = step_schema
-    function_schema["properties"]["checker_rules"]["items"] = checker_schema
-    for key in ("$schema", "$id", "title"):
-        function_schema.pop(key, None)
-        checker_schema.pop(key, None)
-    functions_schema: dict[str, Any] = {
-        "type": "array",
-        "minItems": 1,
-        "items": function_schema,
-    }
-    arguments_schema: dict[str, Any] = {
+    metadata = {
         "type": "object",
-        "description": (
-            "Map every function_id to one source argument object or a non-empty "
-            "list of source argument objects."
-        ),
-        "additionalProperties": {
-            "oneOf": [
-                {"type": "object"},
-                {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {"type": "object"},
-                },
-            ]
+        "additionalProperties": False,
+        "required": ["function_id", "name", "description"],
+        "properties": {
+            "function_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+            },
+            "name": {"type": "string", "minLength": 1, "maxLength": 120},
+            "description": {"type": "string", "minLength": 1},
         },
     }
-    if stage == "split":
-        function_schema["properties"]["input_schema"] = {
-            "const": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": False,
-            }
-        }
-        function_schema["properties"]["bindings"] = {"const": []}
-        function_schema["properties"]["checker_rules"] = {"const": []}
-    else:
-        assert current_bundle is not None
-        current_functions = list(current_bundle.get("functions") or ())
-        if not current_functions:
-            raise ValueError(f"function_authoring_{stage}_functions_required")
-        functions_schema = {
-            "type": "array",
-            "minItems": len(current_functions),
-            "maxItems": len(current_functions),
-            "items": {
-                "oneOf": [
-                    _stage_function_schema(function_schema, value, stage=stage)
-                    for value in current_functions
-                ]
+    parameter = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["name", "description", "argument_path"],
+        "properties": {
+            "name": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
             },
-        }
-        function_ids = [str(value["function_id"]) for value in current_functions]
-        if stage == "checkers":
-            arguments_schema = {"const": current_bundle.get("arguments") or {}}
-        else:
-            arguments_schema = {
-                "type": "object",
-                "additionalProperties": False,
-                "required": function_ids,
-                "properties": {
-                    function_id: {
-                        "oneOf": [
-                            {"type": "object"},
-                            {
-                                "type": "array",
-                                "minItems": 1,
-                                "items": {"type": "object"},
-                            },
-                        ]
-                    }
-                    for function_id in function_ids
-                },
-            }
+            "description": {"type": "string", "minLength": 1},
+            "argument_path": {
+                "type": "string",
+                "pattern": (
+                    "^[A-Za-z_][A-Za-z0-9_]*"
+                    "(?:\\.[A-Za-z_][A-Za-z0-9_]*|\\[[0-9]+\\])*$"
+                ),
+            },
+        },
+    }
+    segment = {
+        **metadata,
+        "required": [
+            "function_id",
+            "name",
+            "description",
+            "stability_reason",
+            "start_step_index",
+            "end_step_index",
+        ],
+        "properties": {
+            **metadata["properties"],
+            "stability_reason": {"type": "string", "minLength": 1},
+            "start_step_index": {"type": "integer", "minimum": 0},
+            "end_step_index": {"type": "integer", "minimum": 1},
+        },
+    }
+    contracts = {
+        "split": {
+            "description": "Set complete and reusable semantic Functions on the draft.",
+            "required": ["complete_function", "subsegments"],
+            "properties": {
+                "complete_function": metadata,
+                "subsegments": {"type": "array", "items": segment},
+            },
+        },
+        "parameters": {
+            "description": "Add caller-varying action arguments to the draft.",
+            "required": ["bindings"],
+            "properties": {
+                "bindings": {
+                    "type": "array",
+                    "items": {
+                        **parameter,
+                        "required": [
+                            "function_id",
+                            "step_index",
+                            "name",
+                            "description",
+                            "argument_path",
+                        ],
+                        "properties": {
+                            "function_id": metadata["properties"]["function_id"],
+                            "step_index": {"type": "integer", "minimum": 0},
+                            **parameter["properties"],
+                        },
+                    },
+                }
+            },
+        },
+        "checkers": {
+            "description": "Register optional RunLog actions as Function checkers.",
+            "required": ["checker_steps"],
+            "properties": {
+                "checker_steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["function_id", "step_index"],
+                        "properties": {
+                            "function_id": metadata["properties"]["function_id"],
+                            "step_index": {"type": "integer", "minimum": 0},
+                        },
+                    },
+                }
+            },
+        },
+    }
+    if stage not in contracts:
+        raise ValueError(f"function_authoring_stage_invalid:{stage}")
+    contract = contracts[stage]
     return {
         "type": "function",
         "function": {
-            "name": "submit_function_bundle",
-            "description": (
-                f"Return the complete Function bundle for save_function stage {stage}. "
-                "Include one full-trajectory Function and every reusable semantic "
-                "subsegment, with source arguments for every Function."
-            ),
-            "strict": False,
+            "name": "edit_function_draft",
+            "description": contract["description"],
+            "strict": True,
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["functions", "arguments"],
-                "properties": {
-                    "functions": {
-                        **functions_schema,
-                    },
-                    "arguments": arguments_schema,
-                },
+                "required": contract["required"],
+                "properties": contract["properties"],
             },
-        },
-    }
-
-
-def _stage_function_schema(
-    base_schema: dict[str, Any],
-    previous: dict[str, Any],
-    *,
-    stage: str,
-) -> dict[str, Any]:
-    schema = json.loads(json.dumps(base_schema, ensure_ascii=False))
-    properties = schema["properties"]
-    immutable_fields = {
-        "schema_version",
-        "function_id",
-        "name",
-        "description",
-        "agent_visible",
-    }
-    if stage == "checkers":
-        immutable_fields.add("input_schema")
-    for field in immutable_fields:
-        properties[field] = {"const": previous[field]}
-    previous_steps = list(previous["steps"])
-    if stage == "parameters":
-        properties["checker_rules"] = {"const": []}
-        step_schemas = [
-            {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["step_index", "source_state_id", "action"],
-                "properties": {
-                    "step_index": {"const": step["step_index"]},
-                    "source_state_id": {"const": step["source_state_id"]},
-                    "action": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["tool", "args"],
-                        "properties": {
-                            "tool": {"const": step["action"]["tool"]},
-                            "args": _parameter_arguments_schema(
-                                step["action"]["args"]
-                            ),
-                        },
-                    },
-                },
-            }
-            for step in previous_steps
-        ]
-        properties["steps"] = {
-            "type": "array",
-            "minItems": len(previous_steps),
-            "maxItems": len(previous_steps),
-            "items": {"oneOf": step_schemas},
-        }
-        return schema
-    properties["steps"] = {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": len(previous_steps),
-        "items": {
-            "oneOf": [
-                {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["step_index", "source_state_id", "action"],
-                    "properties": {
-                        "step_index": {"type": "integer", "minimum": 0},
-                        "source_state_id": {"const": step["source_state_id"]},
-                        "action": {"const": step["action"]},
-                    },
-                }
-                for step in previous_steps
-            ]
-        },
-    }
-    properties["checker_rules"] = {
-        "type": "array",
-        "items": {
-            "enum": [
-                {
-                    "source_state_id": step["source_state_id"],
-                    "action": step["action"],
-                }
-                for step in previous_steps
-            ]
-        },
-    }
-    return schema
-
-
-def _parameter_arguments_schema(arguments: dict[str, Any]) -> dict[str, Any]:
-    json_types = {
-        str: "string",
-        bool: "boolean",
-        int: "integer",
-        float: "number",
-        list: "array",
-        dict: "object",
-        type(None): "null",
-    }
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "required": list(arguments),
-        "properties": {
-            key: {"type": json_types[type(value)]}
-            for key, value in arguments.items()
         },
     }
 
@@ -1278,62 +1171,37 @@ def _author_functions(
     instruction: str,
     existing_functions: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    bundle: dict[str, Any] | None = None
-    for stage in ("split", "parameters", "checkers"):
-        previous_bundle = bundle
-        stage_prompt = _authoring_prompt(
+    split = _request_authoring_decision(
+        complete_json,
+        prompt=_draft_split_prompt(
             facts,
-            stage=stage,
-            current_bundle=bundle,
             existing_functions=existing_functions,
             instruction=instruction,
-        )
-        tool = function_authoring_tool(
-            stage=stage,
-            current_bundle=bundle,
-        )
-        validation_error: Exception | None = None
-        for output_attempt in range(2):
-            prompt = stage_prompt
-            if output_attempt:
-                assert validation_error is not None
-                prompt = _authoring_correction_prompt(
-                    stage_prompt,
-                    validation_error,
-                )
-            try:
-                raw_proposal = complete_json(prompt, tool)
-            except Exception as error:
-                raise ValueError(
-                    f"function_enhancement_{stage}_model_failed:"
-                    f"{type(error).__name__}:{error}"
-                ) from error
-            try:
-                proposal = _json_object(raw_proposal)
-            except ValueError as error:
-                validation_error = ValueError(
-                    f"function_enhancement_{stage}_output_invalid:{error}"
-                )
-            else:
-                try:
-                    candidate = _validate_agent_bundle(proposal, stage=stage)
-                    _validate_agent_stage_contract(
-                        candidate,
-                        previous_bundle=previous_bundle,
-                        stage=stage,
-                    )
-                    _validate_agent_trajectory(candidate, facts, stage=stage)
-                except (TypeError, ValueError) as error:
-                    validation_error = error
-                else:
-                    bundle = candidate
-                    break
-            assert validation_error is not None
-            if output_attempt == 0:
-                continue
-            raise validation_error
-    assert bundle is not None
-    return bundle["functions"], bundle["arguments"]
+        ),
+        tool=function_authoring_tool(stage="split"),
+        label="split",
+        validate=lambda value: _validate_split_draft(value, facts),
+    )
+    parameters = _request_authoring_decision(
+        complete_json,
+        prompt=_draft_parameters_prompt(facts, split),
+        tool=function_authoring_tool(stage="parameters"),
+        label="parameters",
+        validate=lambda value: _validate_parameter_draft(value, facts, split),
+    )
+    checkers = _request_authoring_decision(
+        complete_json,
+        prompt=_draft_checkers_prompt(facts, split, parameters),
+        tool=function_authoring_tool(stage="checkers"),
+        label="checkers",
+        validate=lambda value: _validate_checker_draft(
+            value,
+            facts,
+            split,
+            parameters,
+        ),
+    )
+    return _compile_function_draft(facts, split, parameters, checkers)
 
 
 def _authoring_correction_prompt(
@@ -1342,395 +1210,491 @@ def _authoring_correction_prompt(
 ) -> str:
     return (
         f"{stage_prompt}\n\n"
-        "The previous full bundle was rejected by the authoritative validator: "
-        f"{type(error).__name__}: {error}. Correct that exact violation and return "
-        "the complete functions and arguments bundle again. Preserve every field "
-        "owned by earlier stages. This is the only correction opportunity for this "
-        "stage."
+        "The previous small decision was rejected: "
+        f"{type(error).__name__}: {error}. Correct only this decision and return "
+        "the same small schema once."
     )
 
 
-def _validate_agent_bundle(value: Any, *, stage: str) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {"functions", "arguments"}:
-        raise ValueError(f"function_enhancement_{stage}_output_invalid")
-    functions = value.get("functions")
-    arguments = value.get("arguments")
-    if not isinstance(functions, list) or not functions:
-        raise ValueError(f"function_enhancement_{stage}_functions_required")
-    if not isinstance(arguments, dict):
-        raise ValueError(f"function_enhancement_{stage}_arguments_invalid")
-    parsed = [parse_function_artifact(function).to_dict() for function in functions]
-    function_ids = [function["function_id"] for function in parsed]
-    if len(function_ids) != len(set(function_ids)):
-        raise ValueError("duplicate_function_id")
-    if set(arguments) != set(function_ids):
-        raise ValueError(f"function_enhancement_{stage}_arguments_incomplete")
+def _request_authoring_decision(
+    complete_json: Callable[[str, dict[str, Any]], str],
+    *,
+    prompt: str,
+    tool: dict[str, Any],
+    label: str,
+    validate: Callable[[Any], dict[str, Any]],
+) -> dict[str, Any]:
+    validation_error: Exception | None = None
+    for attempt in range(2):
+        request = (
+            prompt
+            if attempt == 0
+            else _authoring_correction_prompt(prompt, validation_error)
+        )
+        try:
+            raw = complete_json(request, tool)
+        except Exception as error:
+            raise ValueError(
+                f"function_enhancement_{label}_model_failed:"
+                f"{type(error).__name__}:{error}"
+            ) from error
+        try:
+            return validate(_json_object(raw))
+        except (TypeError, ValueError) as error:
+            validation_error = error
+    assert validation_error is not None
+    raise validation_error
+
+
+def _validate_function_metadata(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict) or set(value) != {
+        "function_id",
+        "name",
+        "description",
+    }:
+        raise ValueError("function_metadata_contract_invalid")
+    function_id = str(value.get("function_id") or "").strip()
+    name = str(value.get("name") or "").strip()
+    description = str(value.get("description") or "").strip()
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", function_id) is None:
+        raise ValueError("function_id_invalid")
+    if not name or len(name) > 120:
+        raise ValueError("function_name_invalid")
+    if not description:
+        raise ValueError("function_description_required")
     return {
-        "functions": parsed,
-        "arguments": json.loads(json.dumps(arguments, ensure_ascii=False)),
+        "function_id": function_id,
+        "name": name,
+        "description": description,
     }
 
 
-def _validate_agent_stage_contract(
-    bundle: dict[str, Any],
-    *,
-    previous_bundle: dict[str, Any] | None,
-    stage: str,
-) -> None:
-    functions = [parse_function_artifact(value) for value in bundle["functions"]]
-    previous_functions: list[dict[str, Any]] = []
-    if previous_bundle is not None:
-        previous_functions = list(previous_bundle["functions"])
-        previous_ids = [str(value["function_id"]) for value in previous_functions]
-        if [function.id for function in functions] != previous_ids:
-            raise ValueError(f"function_enhancement_{stage}_function_set_changed")
-    if stage in {"split", "parameters"} and any(
-        function.checker_rules for function in functions
-    ):
-        raise ValueError(f"function_enhancement_{stage}_checker_rules_forbidden")
-    if stage == "parameters":
-        immutable_fields = {
-            "schema_version",
+def _draft_functions(split: dict[str, Any]) -> list[dict[str, Any]]:
+    return [split["complete_function"], *split["subsegments"]]
+
+
+def _function_indices(value: dict[str, Any], step_count: int) -> tuple[int, ...]:
+    if "start_step_index" not in value:
+        return tuple(range(step_count))
+    return tuple(range(value["start_step_index"], value["end_step_index"]))
+
+
+def _validate_split_draft(value: Any, facts: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {
+        "complete_function",
+        "subsegments",
+    }:
+        raise ValueError("function_split_contract_invalid")
+    complete = _validate_function_metadata(value["complete_function"])
+    raw_segments = value["subsegments"]
+    if not isinstance(raw_segments, list):
+        raise ValueError("function_subsegments_invalid")
+    step_count = len(facts["steps"])
+    segments: list[dict[str, Any]] = []
+    ids = {complete["function_id"]}
+    ranges: set[tuple[int, int]] = set()
+    for raw in raw_segments:
+        if not isinstance(raw, dict) or set(raw) != {
             "function_id",
             "name",
             "description",
-            "checker_rules",
-            "agent_visible",
-        }
-        for function, previous in zip(
-            functions,
-            previous_functions,
-            strict=True,
-        ):
-            current = function.to_dict()
-            if any(current[field] != previous[field] for field in immutable_fields):
-                raise ValueError("parameters_stage_changed_function_logic")
-            raw_arguments = bundle["arguments"][function.id]
-            calls = raw_arguments if isinstance(raw_arguments, list) else [raw_arguments]
-            if any(
-                bind_function(function, arguments).to_dict()["steps"]
-                != previous["steps"]
-                for arguments in calls
-            ):
-                raise ValueError("parameters_stage_changed_function_logic")
-        return
-    if stage == "checkers":
-        if bundle["arguments"] != previous_bundle["arguments"]:
-            raise ValueError("checkers_stage_changed_arguments")
-        immutable_fields = {
-            "schema_version",
-            "function_id",
-            "name",
-            "description",
-            "input_schema",
-            "agent_visible",
-        }
-        for function, previous in zip(
-            functions,
-            previous_functions,
-            strict=True,
-        ):
-            current = function.to_dict()
-            if any(current[field] != previous[field] for field in immutable_fields):
-                raise ValueError("checkers_stage_changed_function_logic")
-            selected_indices: list[int] = []
-            search_start = 0
-            for rule in current["checker_rules"]:
-                selected_index = next(
-                    (
-                        index
-                        for index in range(search_start, len(previous["steps"]))
-                        if previous["steps"][index]["source_state_id"]
-                        == rule["source_state_id"]
-                        and previous["steps"][index]["action"] == rule["action"]
-                    ),
-                    None,
-                )
-                if selected_index is None:
-                    raise ValueError("checker_not_registered_on_function")
-                selected_indices.append(selected_index)
-                search_start = selected_index + 1
-            selected = set(selected_indices)
-            remaining_indices = [
-                index
-                for index in range(len(previous["steps"]))
-                if index not in selected
-            ]
-            _validate_checker_checkpoints(remaining_indices, selected_indices)
-            expected_steps = [
-                {**previous["steps"][old_index], "step_index": new_index}
-                for new_index, old_index in enumerate(remaining_indices)
-            ]
-            if current["steps"] != expected_steps:
-                raise ValueError("checkers_stage_changed_function_logic")
-            new_step_index = {
-                old_index: new_index
-                for new_index, old_index in enumerate(remaining_indices)
-            }
-            expected_bindings: list[dict[str, str]] = []
-            for binding in previous["bindings"]:
-                target_match = _TARGET_PATH.fullmatch(binding["target"])
-                if target_match is None:
-                    raise ValueError("function_binding_path_invalid")
-                old_index = int(target_match.group("action_index"))
-                if old_index in selected:
-                    raise ValueError("checker_action_cannot_use_parameter_binding")
-                expected_bindings.append(
-                    {
-                        "source": binding["source"],
-                        "target": (
-                            f"$.steps[{new_step_index[old_index]}].action.args"
-                            f"{target_match.group('tail')}"
-                        ),
-                    }
-                )
-            if current["bindings"] != expected_bindings:
-                raise ValueError("checkers_stage_changed_parameter_bindings")
-        return
-    if stage != "split":
-        return
-    for function in functions:
+            "stability_reason",
+            "start_step_index",
+            "end_step_index",
+        }:
+            raise ValueError("function_subsegment_contract_invalid")
+        metadata = _validate_function_metadata(
+            {key: raw[key] for key in ("function_id", "name", "description")}
+        )
+        stability_reason = str(raw.get("stability_reason") or "").strip()
+        if not stability_reason:
+            raise ValueError("function_subsegment_stability_reason_required")
+        start = raw.get("start_step_index")
+        end = raw.get("end_step_index")
         if (
-            function.input_schema
-            != {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": False,
-            }
-            or function.bindings
-            or bundle["arguments"][function.id] != {}
+            not isinstance(start, int)
+            or isinstance(start, bool)
+            or not isinstance(end, int)
+            or isinstance(end, bool)
+            or start < 0
+            or end <= start
+            or end > step_count
         ):
-            raise ValueError("function_enhancement_split_parameters_forbidden")
+            raise ValueError("function_subsegment_range_invalid")
+        if (start, end) == (0, step_count):
+            raise ValueError("function_subsegment_duplicates_complete")
+        if metadata["function_id"] in ids:
+            raise ValueError("duplicate_function_id")
+        if (start, end) in ranges:
+            raise ValueError("function_subsegment_range_duplicate")
+        if (
+            end - start == 1
+            and facts["steps"][start]["action"]["tool"] in {"click", "long_press"}
+        ):
+            raise ValueError("function_enhancement_single_click_fragment_forbidden")
+        ids.add(metadata["function_id"])
+        ranges.add((start, end))
+        segments.append(
+            {
+                **metadata,
+                "stability_reason": stability_reason,
+                "start_step_index": start,
+                "end_step_index": end,
+            }
+        )
+    return {"complete_function": complete, "subsegments": segments}
 
 
-def _validate_agent_trajectory(
-    bundle: dict[str, Any],
+def _validate_parameter_draft(
+    value: Any,
+    facts: dict[str, Any],
+    split: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"bindings"}:
+        raise ValueError("function_parameters_contract_invalid")
+    raw_bindings = value["bindings"]
+    if not isinstance(raw_bindings, list):
+        raise ValueError("function_parameters_invalid")
+    functions = {
+        item["function_id"]: _function_indices(item, len(facts["steps"]))
+        for item in _draft_functions(split)
+    }
+    bindings: list[dict[str, Any]] = []
+    targets: set[tuple[str, int, str]] = set()
+    for raw in raw_bindings:
+        expected = {
+            "function_id",
+            "step_index",
+            "name",
+            "description",
+            "argument_path",
+        }
+        if not isinstance(raw, dict) or set(raw) != expected:
+            raise ValueError("function_parameter_contract_invalid")
+        function_id = str(raw.get("function_id") or "").strip()
+        step_index = raw.get("step_index")
+        name = str(raw.get("name") or "").strip()
+        description = str(raw.get("description") or "").strip()
+        path = str(raw.get("argument_path") or "").strip()
+        if function_id not in functions:
+            raise ValueError("function_parameter_unknown_function")
+        if step_index not in functions[function_id]:
+            raise ValueError("function_parameter_step_not_in_function")
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", name) is None:
+            raise ValueError("function_parameter_name_invalid")
+        if not description:
+            raise ValueError("function_parameter_description_required")
+        if re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])*",
+            path,
+        ) is None:
+            raise ValueError("function_parameter_path_invalid")
+        root = path.split(".", 1)[0].split("[", 1)[0]
+        if root in {
+            "x",
+            "y",
+            "package_name",
+            "duration_ms",
+            "direction",
+            "target_description",
+        }:
+            raise ValueError(f"function_parameter_path_forbidden:{path}")
+        target = (function_id, int(step_index), path)
+        if target in targets:
+            raise ValueError("function_parameter_target_duplicate")
+        try:
+            source_value = _read_path(
+                facts["steps"][step_index]["action"]["args"],
+                _tokens("." + path),
+            )
+        except (IndexError, KeyError, TypeError) as error:
+            raise ValueError(f"function_parameter_path_missing:{path}") from error
+        if _json_type(source_value) is None:
+            raise ValueError(f"function_parameter_type_invalid:{path}")
+        targets.add(target)
+        bindings.append(
+            {
+                "function_id": function_id,
+                "step_index": int(step_index),
+                "name": name,
+                "description": description,
+                "argument_path": path,
+            }
+        )
+    return {"bindings": bindings}
+
+
+def _validate_checker_draft(
+    value: Any,
+    facts: dict[str, Any],
+    split: dict[str, Any],
+    parameters: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"checker_steps"}:
+        raise ValueError("function_checkers_contract_invalid")
+    raw_checkers = value["checker_steps"]
+    if not isinstance(raw_checkers, list):
+        raise ValueError("function_checkers_invalid")
+    functions = {
+        item["function_id"]: _function_indices(item, len(facts["steps"]))
+        for item in _draft_functions(split)
+    }
+    parameter_steps = {
+        (item["function_id"], item["step_index"])
+        for item in parameters["bindings"]
+    }
+    checker_steps: list[dict[str, Any]] = []
+    seen: set[tuple[str, int]] = set()
+    for raw in raw_checkers:
+        if not isinstance(raw, dict) or set(raw) != {"function_id", "step_index"}:
+            raise ValueError("function_checker_selection_contract_invalid")
+        function_id = str(raw.get("function_id") or "").strip()
+        step_index = raw.get("step_index")
+        if function_id not in functions:
+            raise ValueError("checker_not_registered_on_function")
+        if step_index not in functions[function_id]:
+            raise ValueError("checker_not_registered_on_function")
+        key = (function_id, int(step_index))
+        if key in seen:
+            raise ValueError("function_checker_selection_duplicate")
+        if key in parameter_steps:
+            raise ValueError("checker_action_cannot_use_parameter_binding")
+        action = facts["steps"][step_index]["action"]
+        if action["tool"] not in {"click", "input_text", "long_press"}:
+            raise ValueError(f"checker_action_not_transferable:{step_index}")
+        formal = [index for index in functions[function_id] if index != step_index]
+        _validate_checker_checkpoints(formal, [int(step_index)])
+        seen.add(key)
+        checker_steps.append(
+            {"function_id": function_id, "step_index": int(step_index)}
+        )
+    return {"checker_steps": checker_steps}
+
+
+def _compact_source_actions(facts: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "step_index": index,
+            "action": step["action"],
+            "source_page": step.get("metadata", {}).get("source_page", {}),
+        }
+        for index, step in enumerate(facts["steps"])
+    ]
+
+
+def _draft_split_prompt(
     facts: dict[str, Any],
     *,
-    stage: str,
-) -> None:
-    source_steps = list(facts["steps"])
-    full_trajectory_present = False
-    for raw_function in bundle["functions"]:
-        function = parse_function_artifact(raw_function)
-        raw_calls = bundle["arguments"].get(function.id, {})
-        calls = raw_calls if isinstance(raw_calls, list) else [raw_calls]
-        for arguments in calls:
-            if not isinstance(arguments, dict):
-                raise ValueError(
-                    f"function_enhancement_{stage}_arguments_invalid"
-                )
-            bound = bind_function(function, arguments)
-            if _function_source_indices(
-                bound,
-                source_steps,
-                allow_semantic_relocation=False,
-            ) == tuple(range(len(source_steps))):
-                full_trajectory_present = True
-                break
-        if full_trajectory_present:
-            break
-    if not full_trajectory_present:
-        raise ValueError(f"function_enhancement_full_trajectory_required:{stage}")
-    if stage == "split" and len(source_steps) > 1:
-        for raw_function in bundle["functions"]:
-            function = parse_function_artifact(raw_function)
-            if (
-                len(function.steps) == 1
-                and function.steps[0].action.tool in {"click", "long_press"}
-            ):
-                raise ValueError(
-                    "function_enhancement_single_click_fragment_forbidden"
-                )
-
-
-def _authoring_prompt(
-    facts: dict[str, Any],
-    *,
-    stage: str,
-    current_bundle: dict[str, Any] | None,
     existing_functions: list[dict[str, Any]],
     instruction: str,
 ) -> str:
-    stage_instruction = {
-        "split": (
-            "Split the successful trajectory into semantic operations. Keep one "
-            "Function covering the full trajectory, and identify every reusable "
-            "contiguous semantic subsegment without creating one-click fragments. "
-            "Draft each complete Function. In this stage only, use "
-            "an empty object input_schema, bindings=[], and empty arguments for every "
-            "Function; parameterization belongs exclusively to the next stage."
-        ),
-        "parameters": (
-            "Review the draft and expose only caller-varying text, numbers, dates, "
-            "and choices through input_schema, bindings, and source arguments. "
-            "Keep stable app packages and fixed navigation controls inside the Function. "
-            "Return the same Functions in the same order with the same identity, "
-            "description, visibility, source states, action tools, and step order."
-        ),
-        "checkers": (
-            "Select only optional existing formal actions that should run when their "
-            "RunLog source state and mapped target are both present and are safe to "
-            "skip without breaking the remaining formal path. This may include optional "
-            "setup, interruption dismissal, recovery, or alternate-path navigation. "
-            "Move each selected action to checker_rules on that same Function. Every "
-            "selected action must have a later unselected formal action, because rules "
-            "are evaluated only before pending formal actions. Do not change Function "
-            "meaning, identity, order, parameters, arguments, or any unselected action. "
-            "Copy the complete Function set; checker_rules may contain only exact "
-            "source-state/action pairs moved from that same Function."
-        ),
-    }[stage]
-    example_steps = [
-        {
-            "step_index": 0,
-            "source_state_id": "source-home",
-            "action": {"tool": "click", "args": {"x": 700, "y": 800}},
-        },
-        {
-            "step_index": 1,
-            "source_state_id": "source-promo-dialog",
-            "action": {"tool": "click", "args": {"x": 800, "y": 700}},
-        },
-        {
-            "step_index": 2,
-            "source_state_id": "source-search-page",
-            "action": {"tool": "input_text", "args": {"text": ""}},
-        },
-        {
-            "step_index": 3,
-            "source_state_id": "source-search-filled",
-            "action": {"tool": "click", "args": {"x": 900, "y": 900}},
-        },
-    ]
-    if stage == "split":
-        example_steps[2]["action"]["args"]["text"] = "museum"
-        example_bindings: list[dict[str, str]] = []
-        example_properties: dict[str, Any] = {}
-        example_required: list[str] = []
-        example_arguments: dict[str, Any] = {}
-        example_checkers: list[dict[str, Any]] = []
-    else:
-        example_bindings = [
-            {
-                "source": "$.arguments.query",
-                "target": "$.steps[2].action.args.text",
-            }
-        ]
-        example_properties = {
-            "query": {"type": "string", "description": "Text to search for"}
-        }
-        example_required = ["query"]
-        example_arguments = {"query": "museum"}
-        example_checkers = []
-    if stage == "checkers":
-        optional_step = example_steps.pop(1)
-        for index, step in enumerate(example_steps):
-            step["step_index"] = index
-        example_bindings[0]["target"] = "$.steps[1].action.args.text"
-        example_checkers = [
-            {
-                "source_state_id": optional_step["source_state_id"],
-                "action": optional_step["action"],
-            }
-        ]
-    subsegment_steps = json.loads(json.dumps(example_steps[-2:]))
-    for index, step in enumerate(subsegment_steps):
-        step["step_index"] = index
-    subsegment_bindings = (
-        []
-        if stage == "split"
-        else [
-            {
-                "source": "$.arguments.query",
-                "target": "$.steps[0].action.args.text",
-            }
-        ]
-    )
-    subsegment_arguments = {} if stage == "split" else {"query": "museum"}
-    example = {
-        "functions": [
-            {
-                "schema_version": FUNCTION_ARTIFACT_VERSION,
-                "function_id": "search_the_web",
-                "name": "Search the web",
-                "description": (
-                    "Open the browser, enter a task-provided query, and submit it."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": example_properties,
-                    "required": example_required,
-                    "additionalProperties": False,
-                },
-                "bindings": example_bindings,
-                "steps": example_steps,
-                "checker_rules": example_checkers,
-                "agent_visible": True,
-            },
-            {
-                "schema_version": FUNCTION_ARTIFACT_VERSION,
-                "function_id": "submit_web_search",
-                "name": "Submit web search",
-                "description": "Enter a task-provided query and submit the search.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": example_properties,
-                    "required": example_required,
-                    "additionalProperties": False,
-                },
-                "bindings": subsegment_bindings,
-                "steps": subsegment_steps,
-                "checker_rules": [],
-                "agent_visible": True,
-            },
-        ],
-        "arguments": {
-            "search_the_web": example_arguments,
-            "submit_web_search": subsegment_arguments,
-        },
-    }
     evidence = {
         "goal": facts["goal"],
-        "actions": facts["steps"],
-        "existing_functions": existing_functions,
-        "current_bundle": current_bundle,
-        "instruction": str(instruction or "").strip()[:2000],
+        "source_actions": _compact_source_actions(facts),
+        "existing_function_hints": _function_hints(existing_functions),
+        "instruction": str(instruction or "").strip()[:1000],
     }
-    return f"""
-You are stage {stage} of one offline save_function pipeline.
-{stage_instruction}
+    return (
+        "Edit only the semantic structure of one Function draft. Name and describe "
+        "the mandatory complete-RunLog Function. Add only independently reusable, "
+        "stable contiguous subsegments using inclusive start_step_index and exclusive "
+        "end_step_index. For each subsegment, explain why its state/action sequence is "
+        "deterministic, not dependent on a transient dialog or task completion, and can "
+        "be replayed with varying content parameterized. Do not create one-click "
+        "fragments. Do not return actions, "
+        "parameters, checkers, bindings, or a complete Function.\n\nDraft input:\n"
+        + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
+    )
 
-Return exactly one complete JSON object with keys functions and arguments. Every Function
-must use omniflow.function.v2 and contain function_id, name, description, input_schema,
-bindings, ordered steps, checker_rules, and agent_visible. You may write actions directly,
-but every source_state_id and action must be supported by the supplied successful RunLog.
-At every stage, include at least one large semantic Function that covers the complete
-successful trajectory. Do not replace the complete Function with one Function per click.
-Identify every reusable contiguous semantic subsegment and return it alongside the required
-full-trajectory Function; do not create meaningless single-click fragments. Preserve source action order
-and never invent target-device state, target coordinates,
-validator logic, task-specific gates, or source-coordinate fallback. One Function is a
-reusable semantic operation, not one click. A checker belongs only to its Function and
-contains exactly source_state_id and action; never add a trigger expression, step number,
-or condition object. During checker review, move only optional actions whose execution is
-conditional on their RunLog source state and mapped target and that are safe to skip without
-breaking the remaining formal path. This can include optional setup, interruption dismissal,
-recovery, or alternate-path navigation. Every checker must have a later unselected formal
-action that provides a runtime check point. Never move required navigation or the terminal
-action into checker_rules, duplicate a formal action as a checker, or create a standalone
-Function merely to hold a checker.
-Checker actions must be transferable click, input_text, or long_press actions. Parameters must have
-source arguments that reproduce the recorded source action after binding. Return the full
-bundle even when this stage makes no change. Do not add commentary or extra keys.
 
-Few-shot shape:
-{json.dumps(example, ensure_ascii=False, separators=(",", ":"))}
+def _draft_parameters_prompt(
+    facts: dict[str, Any],
+    split: dict[str, Any],
+) -> str:
+    evidence = {
+        "functions": _draft_functions(split),
+        "source_actions": _compact_source_actions(facts),
+    }
+    return (
+        "Edit only parameter declarations on the current Function draft. Return "
+        "caller-varying values already present in action.args. Each declaration must "
+        "name its Function, source step, and argument_path relative to action.args. "
+        "Do not parameterize coordinates, packages, waits, directions, or target "
+        "evidence. Return an empty bindings list when none are needed.\n\nDraft input:\n"
+        + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
+    )
 
-RunLog evidence and current draft:
-{json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))}
-""".strip()
+
+def _draft_checkers_prompt(
+    facts: dict[str, Any],
+    split: dict[str, Any],
+    parameters: dict[str, Any],
+) -> str:
+    evidence = {
+        "functions": _draft_functions(split),
+        "bindings": parameters["bindings"],
+        "source_actions": _compact_source_actions(facts),
+    }
+    return (
+        "Edit only Function-local checker registrations on the current draft. Select "
+        "an existing source step only when it is optional, safe to skip, has a later "
+        "formal action in that Function, and is a transferable click, input_text, or "
+        "long_press. Required navigation and terminal actions are not checkers. Do not "
+        "write rules or triggers; return only Function and source-step relationships. "
+        "Return an empty checker_steps list when none are safe.\n\nDraft input:\n"
+        + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
+    )
+
+
+def _compile_function_draft(
+    facts: dict[str, Any],
+    split: dict[str, Any],
+    parameters: dict[str, Any],
+    checkers: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    functions: list[dict[str, Any]] = []
+    arguments: dict[str, Any] = {}
+    for plan in _draft_functions(split):
+        function_id = plan["function_id"]
+        function, source_arguments = _compile_draft_function(
+            facts,
+            metadata={
+                key: plan[key] for key in ("function_id", "name", "description")
+            },
+            source_indices=_function_indices(plan, len(facts["steps"])),
+            parameter_bindings=[
+                item
+                for item in parameters["bindings"]
+                if item["function_id"] == function_id
+            ],
+            checker_indices=[
+                item["step_index"]
+                for item in checkers["checker_steps"]
+                if item["function_id"] == function_id
+            ],
+        )
+        functions.append(function)
+        arguments[function_id] = source_arguments
+    return functions, arguments
+
+
+def _compile_draft_function(
+    facts: dict[str, Any],
+    *,
+    metadata: dict[str, str],
+    source_indices: tuple[int, ...],
+    parameter_bindings: list[dict[str, Any]],
+    checker_indices: list[int],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    formal_indices = [index for index in source_indices if index not in checker_indices]
+    if not formal_indices:
+        raise ValueError("function_steps_required")
+    _validate_checker_checkpoints(formal_indices, checker_indices)
+    local_index = {
+        source_index: index for index, source_index in enumerate(formal_indices)
+    }
+    steps = [
+        {
+            "step_index": local_index[source_index],
+            "source_state_id": facts["steps"][source_index]["before_state_id"],
+            "action": _copy_value(facts["steps"][source_index]["action"]),
+        }
+        for source_index in formal_indices
+    ]
+    properties: dict[str, dict[str, str]] = {}
+    source_arguments: dict[str, Any] = {}
+    bindings: list[dict[str, str]] = []
+    for binding in parameter_bindings:
+        source_index = binding["step_index"]
+        name = binding["name"]
+        path = binding["argument_path"]
+        value = _read_path(
+            facts["steps"][source_index]["action"]["args"],
+            _tokens("." + path),
+        )
+        value_type = _json_type(value)
+        assert value_type is not None
+        if name in source_arguments and source_arguments[name] != value:
+            raise ValueError(f"function_parameter_source_value_conflict:{name}")
+        if name in properties and properties[name]["type"] != value_type:
+            raise ValueError(f"function_parameter_type_conflict:{name}")
+        properties.setdefault(
+            name,
+            {"type": value_type, "description": binding["description"]},
+        )
+        source_arguments[name] = _copy_value(value)
+        target = f"$.steps[{local_index[source_index]}].action.args.{path}"
+        bindings.append({"source": f"$.arguments.{name}", "target": target})
+        _write_path(
+            steps[local_index[source_index]]["action"]["args"],
+            _tokens("." + path),
+            _empty_json_value(value_type),
+        )
+    checker_rules = [
+        {
+            "source_state_id": facts["steps"][index]["before_state_id"],
+            "action": _copy_value(facts["steps"][index]["action"]),
+        }
+        for index in checker_indices
+    ]
+    return (
+        {
+            "schema_version": FUNCTION_ARTIFACT_VERSION,
+            **metadata,
+            "input_schema": {
+                "type": "object",
+                "properties": properties,
+                "required": list(properties),
+                "additionalProperties": False,
+            },
+            "bindings": bindings,
+            "steps": steps,
+            "checker_rules": checker_rules,
+            "agent_visible": True,
+        },
+        source_arguments,
+    )
+
+
+def _function_hints(functions: list[dict[str, Any]]) -> list[dict[str, str]]:
+    hints: list[dict[str, str]] = []
+    for value in functions:
+        if not isinstance(value, dict):
+            continue
+        hint = {
+            key: str(value.get(key) or "").strip()
+            for key in ("function_id", "name", "description")
+        }
+        if hint["function_id"]:
+            hints.append(hint)
+    return hints
+
+
+def _json_type(value: Any) -> str | None:
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return None
+
+
+def _empty_json_value(value_type: str) -> Any:
+    return {
+        "string": "",
+        "integer": 0,
+        "number": 0.0,
+        "boolean": False,
+        "array": [],
+        "object": {},
+    }[value_type]
 
 
 def _source_page_summary(observation: dict[str, Any]) -> dict[str, Any]:

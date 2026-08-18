@@ -50,36 +50,28 @@ There is one write operation: `save_function`.
 
 ```text
 successful RunLog
-  -> optional Agent split -> parameters -> checker review
+  -> optional three-stage Agent draft edit
+  -> deterministic compilation
   -> validation
   -> save
   -> Function Store
 ```
 
 One RunLog may save multiple semantic Functions in one call. `enhance=true` does
-not open another path: three internal Agent stages each return a complete
-`{functions, arguments}` bundle for semantic splitting, parameter binding, and
-checker review. The core validates every stage, grounds the final states and
-actions in the same successful RunLog, and uses the same Store writer.
+not open another path: the Agent edits one in-memory draft in exactly three
+small stages—semantic Function ranges, parameter declarations, and checker
+registrations. It never writes actions, states, bindings, checker rules, or a
+Store.
 
-Every stage retains at least one large Function covering the complete successful
-trajectory. The split stage also returns every reusable contiguous semantic
-subsegment, without creating one-click fragments. All model transports use the
-same Function-bundle tool generated from the checked-in contracts. Its schema
-is narrowed for each stage: split cannot add parameters or checkers, parameter
-binding cannot change Function identity or action order, and checker review can
-select only exact actions already registered on that Function. Checker review
-may move a safely optional source-state-dependent setup, interruption, recovery,
-or alternate-path navigation action from the formal path into that Function's
-checker list. It cannot move required navigation or a terminal action with no
-later formal check point, rewrite Function meaning, parameters, arguments, or
-unselected actions, duplicate formal actions, or replace the complete Function
-with one-click fragments.
-
-A deterministically rejected stage output receives one explicit correction
-opportunity with the validator error. Model transport failures fail immediately;
-no partial Function is saved, and corrected output passes through the same
-validation and Store writer.
+The core deterministically copies source evidence, compiles bindings and
+checkers, and emits the complete Function plus reusable contiguous subsegments.
+Every subsegment must include the Agent's `stability_reason`: why the source
+state/action sequence is deterministic, does not rely on a transient dialog or
+task completion, and remains replayable when varying content is parameterized.
+Every output is grounded in the same successful RunLog and goes through the
+same validator and Store writer. A rejected stage edit receives one bounded
+correction; transport failures fail immediately and no partial Function is
+saved.
 
 The retained bridge tools are:
 

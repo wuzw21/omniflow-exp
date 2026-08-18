@@ -2086,6 +2086,7 @@ def _function_enhancement_transport(
     )
     def complete_json(prompt: str, tool: dict[str, Any]) -> str:
         usage["model_calls"] += 1
+        tool_name = str(tool["function"]["name"])
         response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
@@ -2093,7 +2094,7 @@ def _function_enhancement_transport(
             tools=[tool],
             tool_choice={
                 "type": "function",
-                "function": {"name": "submit_function_bundle"},
+                "function": {"name": tool_name},
             },
             parallel_tool_calls=False,
         )
@@ -2113,7 +2114,7 @@ def _function_enhancement_transport(
         if len(calls) != 1:
             raise ValueError("function_enhancer_tool_call_invalid")
         function = getattr(calls[0], "function", None)
-        if str(getattr(function, "name", "") or "") != "submit_function_bundle":
+        if str(getattr(function, "name", "") or "") != tool_name:
             raise ValueError("function_enhancer_tool_name_invalid")
         arguments = getattr(function, "arguments", None)
         if not isinstance(arguments, str):
@@ -2394,6 +2395,7 @@ def _run_bmoca_method_results(
     store_path: Path,
     task_root: Path,
     avd_homes: dict[str, Path],
+    environment_ids: Sequence[str] = _BMOCA_ENVIRONMENT_IDS,
     command_runner: Callable[..., dict[str, Any]] = run_logged_command,
 ) -> list[dict[str, Any]]:
     def worker(environment_id: str) -> dict[str, Any]:
@@ -2439,15 +2441,33 @@ def _run_bmoca_method_results(
             }
 
     rows: list[dict[str, Any]] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+    selected = tuple(
+        environment_id
+        for environment_id in environment_ids
+        if environment_id in avd_homes
+    )
+    if not selected:
+        return []
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=min(10, len(selected))
+    ) as executor:
         futures = {
             executor.submit(worker, environment_id): environment_id
-            for environment_id in _BMOCA_ENVIRONMENT_IDS
-            if environment_id in avd_homes
+            for environment_id in selected
         }
         for future in concurrent.futures.as_completed(futures):
             rows.append(future.result())
     return sorted(rows, key=lambda row: str(row["environment_id"]))
+
+
+def _bmoca_source_replay_qualified(row: dict[str, Any]) -> bool:
+    return (
+        row.get("status") == "success"
+        and row.get("official_success") is True
+        and row.get("method_success") is True
+        and int(row.get("model_calls") or 0) == 0
+        and int(row.get("fallback_steps") or 0) == 0
+    )
 
 
 def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
@@ -2556,12 +2576,78 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     _append_bmoca_progress_event(progress_jsonl, rows[key])
             _write_bmoca_progress(progress_csv, rows)
             continue
+        gate_key = (task, "script_replay", "100")
+        if "100" not in avd_homes:
+            rows[gate_key].update(
+                status="environment_failure",
+                error=avd_failures.get("100", "bmoca_env100_avd_unavailable"),
+            )
+            _append_bmoca_progress_event(progress_jsonl, rows[gate_key])
+            gate_rows: list[dict[str, Any]] = []
+        else:
+            rows[gate_key].update(status="running", store_path=str(store_path))
+            _append_bmoca_progress_event(progress_jsonl, rows[gate_key])
+            _write_bmoca_progress(progress_csv, rows)
+            gate_rows = _run_bmoca_method_results(
+                args=args,
+                task=task,
+                method="script_replay",
+                store_path=store_path,
+                task_root=task_root,
+                avd_homes={"100": avd_homes["100"]},
+                environment_ids=("100",),
+            )
+            if gate_rows:
+                gate_row = gate_rows[0]
+                rows[gate_key] = {
+                    key: value
+                    for key, value in gate_row.items()
+                    if not key.startswith("_")
+                }
+                _append_bmoca_progress_event(progress_jsonl, rows[gate_key])
+                observed_max_concurrency = max(
+                    observed_max_concurrency,
+                    _max_live_bmoca_results(gate_rows),
+                )
+        gate_row = rows[gate_key]
+        if not _bmoca_source_replay_qualified(gate_row):
+            gate_error = (
+                "bmoca_source_replay_gate_failed:"
+                f"status={gate_row.get('status')},"
+                f"official_success={gate_row.get('official_success')},"
+                f"method_success={gate_row.get('method_success')},"
+                f"model_calls={gate_row.get('model_calls')},"
+                f"fallback_steps={gate_row.get('fallback_steps')}"
+            )
+            for key, row in rows.items():
+                if key[0] == task and key != gate_key and row["status"] == "pending":
+                    row.update(status="prep_failed", error=gate_error)
+                    _append_bmoca_progress_event(progress_jsonl, row)
+            _write_bmoca_progress(progress_csv, rows)
+            continue
+
         for method in _BMOCA_METHODS:
+            method_environment_ids = (
+                tuple(
+                    environment_id
+                    for environment_id in _BMOCA_ENVIRONMENT_IDS
+                    if environment_id != "100"
+                )
+                if method == "script_replay"
+                else _BMOCA_ENVIRONMENT_IDS
+            )
             runnable_homes = dict(avd_homes)
             for environment_id, error in avd_failures.items():
+                if environment_id not in method_environment_ids:
+                    continue
                 key = (task, method, environment_id)
                 rows[key].update(status="environment_failure", error=error)
                 _append_bmoca_progress_event(progress_jsonl, rows[key])
+            runnable_homes = {
+                environment_id: home
+                for environment_id, home in runnable_homes.items()
+                if environment_id in method_environment_ids
+            }
             for environment_id in runnable_homes:
                 key = (task, method, environment_id)
                 rows[key].update(status="running", store_path=str(store_path))
@@ -2574,6 +2660,7 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 store_path=store_path,
                 task_root=task_root,
                 avd_homes=runnable_homes,
+                environment_ids=method_environment_ids,
             )
             observed_max_concurrency = max(
                 observed_max_concurrency,

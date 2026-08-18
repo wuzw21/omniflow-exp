@@ -34,48 +34,38 @@ One successful `omniflow.run_log.v1` may save one or more semantic Functions in
 one `save_function` call. Enhancement is optional (`enhance=true`) and uses the
 same validation and Store writer as a normal save.
 
-Enhanced authoring is one internal three-stage pipeline: split the successful
-trajectory into semantic Functions, bind task-varying parameters, then select
-and review Function-local checker actions. Each stage must return one complete
-bundle with exactly `functions` and `arguments`; every Function in the bundle
-must be a complete `omniflow.function.v2`. The Agent may author semantic
-Functions, parameters, bindings, and RunLog-grounded actions. It may not invent
-source evidence, target observations or coordinates, validator logic, source
-coordinate fallback, a trigger DSL, or a second save path. The core validates
-every stage and grounds the final actions and source states in the same
-successful RunLog before the only Store writer runs.
+Enhanced authoring uses exactly three bounded Agent edits to one in-memory
+draft, not one JSON call per RunLog action. The edits are: semantic Function
+ranges, parameter declarations, and checker registrations. The Agent never
+returns complete Functions, source states, actions, bindings, checker rules,
+Stores, or authoring manifests.
 
-Stage ownership is strict: split owns Function semantics and action segments;
-parameters may only add schemas, bindings, and source arguments whose bound
-actions reproduce the split output; checker review may only move selected,
-safely optional source-state-dependent formal actions into `checker_rules` on
-that same Function. Every selected checker action must be safe to skip without
-breaking the remaining formal path and must have a later unselected formal
-action so runtime has a pending-action check point. Checker review may not
-rewrite Function meaning, parameters, arguments, or unselected actions.
+`save_function` deterministically copies exact source actions and states,
+compiles parameter schemas and bindings, registers checkers, and emits one
+large Function covering the complete successful trajectory plus every reusable
+contiguous semantic subsegment identified by the Agent. A subsegment is valid
+only when the Agent explicitly supplies a non-empty `stability_reason` stating
+why the contiguous source-state/action sequence is deterministic, independent
+of transient dialogs and task completion, and replayable after caller-varying
+content is parameterized. Subsegments never replace the complete Function, and
+meaningless one-click fragments are not saved. A checker action may not also
+remain a formal action in the same Function.
 
-If a stage returns a syntactically valid bundle that deterministic validation
-rejects, that same stage gets exactly one correction opportunity containing the
-validation error and the unchanged stage schema. Transport failures, timeouts,
-and missing source evidence fail immediately. No partial bundle is saved, and
-the correction still enters the same validator and sole Store writer.
+The single model-facing tool is `edit_function_draft`. Its three strict stage
+schemas return only: `complete_function + subsegments`, `bindings`, then
+`checker_steps`. A subsegment contains Function metadata,
+`stability_reason`, and an inclusive/exclusive source step range. Bridge and
+experiment adapters import these schemas and select the supplied tool name
+instead of defining another authoring contract. One deterministically invalid
+stage edit gets one correction opportunity. Transport failures, missing
+evidence, or a second invalid edit fail immediately. Nothing is persisted
+until all three edits compile and all Functions pass the same authoritative
+validation and sole Store writer.
 
-Every enhancement stage must retain at least one large semantic Function whose
-formal steps plus Function-local checker rules cover the complete successful
-RunLog action trajectory. The split stage must also return every reusable
-contiguous semantic subsegment supported by the RunLog, while rejecting
-meaningless one-click fragments. Subsegments never replace the complete
-Function. A checker action may be moved out of the
-formal path; it may not also remain a formal action in the same Function.
-
-The model-facing authoring tool schema is generated from the checked-in
-Function and checker schemas. Bridge and experiment adapters must import that
-same schema instead of defining their own permissive `functions: object`
-contract. Narrow that schema to the current stage so split cannot add
-parameters/checkers, parameter binding cannot alter Function semantics or
-action order, and checker review can select only exact same-Function actions.
-Runtime validation remains authoritative even when a model endpoint does not
-support strict structured output.
+Before a saved B-MoCA bundle may run cross-environment, its complete Function
+must pass env100 `script_replay` with official success, method success,
+`model_calls=0`, and `fallback_steps=0`. A failed source gate ends that task;
+never launch env101--109 or `ours` for an unqualified Function.
 
 Checker rules are registered on one Function through that Function's
 `checker_rules`; there is no global checker pool. A rule belongs only to the

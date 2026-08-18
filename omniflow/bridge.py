@@ -455,6 +455,7 @@ class JsonLineBridge:
                 model = str(ANDROIDWORLD_PROTOCOL["model"])
 
                 def complete_json(prompt: str, tool: dict[str, Any]) -> str:
+                    tool_name = str(tool["function"]["name"])
                     response = self.host_call(
                         request_id,
                         "model_turn",
@@ -467,7 +468,7 @@ class JsonLineBridge:
                                 "temperature": 0,
                                 "tool_choice": {
                                     "type": "function",
-                                    "function": {"name": "submit_function_bundle"},
+                                    "function": {"name": tool_name},
                                 },
                                 "tools": [tool],
                             },
@@ -481,7 +482,7 @@ class JsonLineBridge:
                     function = tool_calls[0].get("function")
                     if (
                         not isinstance(function, dict)
-                        or function.get("name") != "submit_function_bundle"
+                        or function.get("name") != tool_name
                     ):
                         raise ValueError("function_enhancer_tool_name_invalid")
                     arguments = (
@@ -711,10 +712,10 @@ def _management_tool_definition(name: str) -> dict[str, Any]:
         "name": name,
         "description": (
             "Save one or more reusable Functions grounded in one successful RunLog. "
-            "Submit complete Functions, or set enhance=true so the Agent returns a "
-            "complete Function bundle at each split, parameter-binding, and checker-review "
-            "stage. The core validates every stage and grounds all final states and actions "
-            "in the RunLog before using the same Store writer."
+            "Submit complete Functions, or set enhance=true so the Agent edits one "
+            "Function draft in three small semantic, parameter, and checker stages. "
+            "The core deterministically compiles and grounds all final evidence before "
+            "using the same Store writer."
         ),
         "inputSchema": {
             "type": "object",

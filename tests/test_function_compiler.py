@@ -40,6 +40,39 @@ def _run_log(step_count: int) -> dict:
     )
 
 
+def _enhancer(
+    function_id: str,
+    name: str,
+    description: str,
+    *,
+    checker_indices: set[int] | None = None,
+):
+    metadata = {
+        "function_id": function_id,
+        "name": name,
+        "description": description,
+    }
+
+    def complete(prompt: str, tool: dict) -> str:
+        required = tool["function"]["parameters"]["required"]
+        if required == ["complete_function", "subsegments"]:
+            return json.dumps(
+                {"complete_function": metadata, "subsegments": []}
+            )
+        if required == ["bindings"]:
+            return json.dumps({"bindings": []})
+        return json.dumps(
+            {
+                "checker_steps": [
+                    {"function_id": function_id, "step_index": index}
+                    for index in sorted(checker_indices or set())
+                ]
+            }
+        )
+
+    return complete
+
+
 def test_compiler_requires_skill_bundle(
     tmp_path: Path,
 ) -> None:
@@ -150,35 +183,16 @@ def test_save_function_optionally_derives_checker_rules_with_agent(tmp_path: Pat
         "agent_visible": True,
     }
     store_path = tmp_path / "store.json"
-    authored = {
-        **function,
-        "steps": [
-            {
-                "step_index": 0,
-                "source_state_id": "ready",
-                "action": {"tool": "wait", "args": {"duration_ms": 1000}},
-            }
-        ],
-        "checker_rules": [
-            {
-                "source_state_id": "prompt",
-                "action": {"tool": "click", "args": {"x": 500, "y": 500}},
-            }
-        ],
-    }
-
     result = save_function(
         run_log,
         store_path,
         functions=[function],
         enhance=True,
-        complete_json=lambda prompt, _tool: json.dumps(
-            {
-                "functions": [
-                    authored if "stage checkers" in prompt else function
-                ],
-                "arguments": {"continue_after_prompt": {}},
-            }
+        complete_json=_enhancer(
+            "continue_after_prompt",
+            "Continue after an optional prompt",
+            "Dismiss the optional prompt when present, then continue.",
+            checker_indices={0},
         ),
     )
 
@@ -189,7 +203,7 @@ def test_save_function_optionally_derives_checker_rules_with_agent(tmp_path: Pat
     assert saved.checker_rules[0]["source_state_id"] == "prompt"
 
 
-def test_enhance_requires_one_function_covering_the_complete_runlog(
+def test_enhance_always_compiles_one_function_covering_the_complete_runlog(
     tmp_path: Path,
 ) -> None:
     run_log = androidworld_run_log(
@@ -200,41 +214,20 @@ def test_enhance_requires_one_function_covering_the_complete_runlog(
         observations=[androidworld_state("first"), androidworld_state("second")],
         goal="Open the menu and select the item.",
     )
-    partial = {
-        "schema_version": "omniflow.function.v2",
-        "function_id": "open_menu",
-        "name": "Open menu",
-        "description": "Open the visible menu.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": False,
-        },
-        "bindings": [],
-        "steps": [
-            {
-                "step_index": 0,
-                "source_state_id": "first",
-                "action": {"tool": "click", "args": {"x": 250, "y": 250}},
-            }
-        ],
-        "checker_rules": [],
-        "agent_visible": True,
-    }
-
-    with pytest.raises(
-        ValueError,
-        match="function_enhancement_full_trajectory_required",
-    ):
-        save_function(
-            run_log,
-            tmp_path / "store.json",
-            enhance=True,
-            complete_json=lambda _prompt, _tool: json.dumps(
-                {"functions": [partial], "arguments": {"open_menu": {}}}
-            ),
-        )
+    store_path = tmp_path / "store.json"
+    save_function(
+        run_log,
+        store_path,
+        enhance=True,
+        complete_json=_enhancer(
+            "open_menu_item",
+            "Open menu item",
+            "Open the menu and select the item.",
+        ),
+    )
+    saved = FunctionStore(store_path).get_function("open_menu_item")
+    assert saved is not None
+    assert [step.source_state_id for step in saved.steps] == ["first", "second"]
 
 
 def test_checker_action_cannot_duplicate_a_formal_action_in_the_same_function(
@@ -277,17 +270,8 @@ def test_checker_action_cannot_duplicate_a_formal_action_in_the_same_function(
         save_function(
             run_log,
             tmp_path / "store.json",
-            enhance=True,
-            complete_json=lambda prompt, _tool: json.dumps(
-                {
-                    "functions": [
-                        duplicated
-                        if "stage checkers" in prompt
-                        else {**duplicated, "checker_rules": []}
-                    ],
-                    "arguments": {"dismiss_dialog": {}},
-                }
-            ),
+            functions=[duplicated],
+            arguments={"dismiss_dialog": {}},
         )
 
 
@@ -337,23 +321,6 @@ def test_checker_action_requires_a_later_formal_action(tmp_path: Path) -> None:
             }
         ],
     }
-
-    with pytest.raises(ValueError, match="checker_requires_later_formal_action"):
-        save_function(
-            run_log,
-            tmp_path / "store.json",
-            enhance=True,
-            complete_json=lambda prompt, _tool: json.dumps(
-                {
-                    "functions": [
-                        terminal_as_checker
-                        if "stage checkers" in prompt
-                        else function
-                    ],
-                    "arguments": {"open_menu_item": {}},
-                }
-            ),
-        )
 
     with pytest.raises(ValueError, match="checker_requires_later_formal_action"):
         save_function(

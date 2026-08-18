@@ -61,24 +61,26 @@ endpoint as `LLMTHU_BASE_URL` in the environment file.
 
 Function authoring does not run through a shell conversion mode. Use the bridge
 `save_function` API with one successful RunLog. Callers may submit complete
-Functions, or set `enhance=true` so the internal split, parameter-binding, and
-checker-review stages each return a complete Function bundle. Normal and
-enhanced saves share one validation and Store writer.
-Checker review only selects existing actions from each Function and moves them
-into that same Function's `checker_rules`; it cannot rewrite the Function or
-register another Function's action. A selected action must depend on its source
-state and mapped target, be safe to skip without breaking the formal path, and
-have a later formal action that provides a runtime check point. The same model
-tool is narrowed at each stage so fields owned by earlier stages are
-structurally immutable.
-One deterministically invalid stage bundle gets one correction opportunity with
-the exact validator error. A timeout or transport failure is not retried, and
-nothing is persisted until all three stages pass the same validator.
+Functions, or set `enhance=true` so the Agent edits one in-memory Function draft
+in exactly three model calls: semantic Function ranges, parameter declarations,
+and Function-local checker registrations. Every reusable subsegment must carry
+a non-empty `stability_reason` explaining why it is a deterministic contiguous
+source-state/action sequence rather than a transient-dialog, task-completion,
+or one-click fragment. `save_function` copies exact evidence and
+deterministically compiles the complete Function plus accepted subsegments,
+bindings, and checker rules. Normal and enhanced saves share one validation and
+Store writer. One invalid stage edit gets one correction opportunity; a timeout
+or transport failure is not retried, and nothing is persisted until every
+compiled Function passes the same validator.
 
 The explicit B-MoCA campaign is the only launcher-owned preparation path: for
-each corpus task it calls that same `save_function(enhance=true)` writer once,
-then executes Planner-selected and zero-model direct-Function variants through
-the same OmniFlow runtime on env100--109. It writes `progress.csv`,
+each corpus task it calls that same `save_function(enhance=true)` writer once.
+It then runs only `script_replay` on env100 and requires official success,
+method success, `model_calls=0`, and `fallback_steps=0`. A failed source gate
+ends that task without launching env101--109. A passing gate unlocks
+Planner-selected `ours` on env100--109 and the remaining zero-model
+`script_replay` results on env101--109 through the same OmniFlow runtime. It
+writes `progress.csv`,
 `progress.jsonl`, per-attempt RunLogs, and the terminal
 `campaign_summary.json` under the new output root.
 

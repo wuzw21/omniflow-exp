@@ -19,6 +19,7 @@ from src.experiment.e2e_task_pipeline import (
     _function_enhancement_transport,
     _fixed_replay_source_step_width,
     _function_replay_success,
+    _bmoca_source_replay_qualified,
     _max_live_bmoca_results,
     _parse_source_device,
     _report,
@@ -33,6 +34,7 @@ from src.experiment.e2e_task_pipeline import (
     qualify_source_function,
     qualify_source_functions,
     run_logged_command,
+    run_bmoca_pipeline,
     run_pipeline,
     run_target_workers,
 )
@@ -282,6 +284,161 @@ def test_bmoca_method_launches_ten_isolated_overlapping_results(
     assert all("OMNIFLOW_ENV_FILE" not in env for env in environments)
 
 
+@pytest.mark.parametrize(
+    ("change", "qualified"),
+    [
+        ({}, True),
+        ({"status": "method_failure"}, False),
+        ({"official_success": False}, False),
+        ({"method_success": False}, False),
+        ({"model_calls": 1}, False),
+        ({"fallback_steps": 1}, False),
+    ],
+)
+def test_bmoca_source_replay_is_a_hard_gate(change, qualified) -> None:
+    row = {
+        "status": "success",
+        "official_success": True,
+        "method_success": True,
+        "model_calls": 0,
+        "fallback_steps": 0,
+        **change,
+    }
+    assert _bmoca_source_replay_qualified(row) is qualified
+
+
+def test_bmoca_pipeline_stops_task_after_failed_env100_source_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = "clock/create_alarm_at_06:30_am"
+    source = tmp_path / "source.run_log.json"
+    source.write_text("{}", encoding="utf-8")
+    calls: list[tuple[str, tuple[str, ...]]] = []
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._bmoca_manifest_tasks",
+        lambda *_: ([task], {task: source}),
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._bmoca_avd_names",
+        lambda *_: {str(value): f"env{value}" for value in range(100, 110)},
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._clone_bmoca_avd_home",
+        lambda **kwargs: kwargs["target_home"],
+    )
+    store = tmp_path / "store.json"
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._save_bmoca_function_once",
+        lambda **_: (store, {"enhanced": True}),
+    )
+
+    def run_results(**kwargs: object) -> list[dict[str, object]]:
+        environments = tuple(kwargs["environment_ids"])
+        calls.append((str(kwargs["method"]), environments))
+        return [
+            {
+                "task": task,
+                "method": "script_replay",
+                "environment_id": "100",
+                "status": "method_failure",
+                "official_success": False,
+                "method_success": False,
+                "actions_executed": 1,
+                "model_calls": 0,
+                "fallback_steps": 0,
+                "error": "official_validator_failed",
+            }
+        ]
+
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._run_bmoca_method_results",
+        run_results,
+    )
+    summary = run_bmoca_pipeline(
+        SimpleNamespace(
+            bmoca_corpus_manifest=tmp_path / "manifest.json",
+            task="all",
+            output_root=tmp_path / "campaign",
+            bmoca_root=tmp_path / "BMoCA",
+            bmoca_avd_home=tmp_path / "avd",
+        )
+    )
+
+    assert calls == [("script_replay", ("100",))]
+    assert summary["status_counts"] == {
+        "method_failure": 1,
+        "prep_failed": 19,
+    }
+
+
+def test_bmoca_pipeline_runs_remaining_results_only_after_source_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = "clock/create_alarm_at_06:30_am"
+    source = tmp_path / "source.run_log.json"
+    source.write_text("{}", encoding="utf-8")
+    calls: list[tuple[str, tuple[str, ...]]] = []
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._bmoca_manifest_tasks",
+        lambda *_: ([task], {task: source}),
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._bmoca_avd_names",
+        lambda *_: {str(value): f"env{value}" for value in range(100, 110)},
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._clone_bmoca_avd_home",
+        lambda **kwargs: kwargs["target_home"],
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._save_bmoca_function_once",
+        lambda **_: (tmp_path / "store.json", {"enhanced": True}),
+    )
+
+    def run_results(**kwargs: object) -> list[dict[str, object]]:
+        method = str(kwargs["method"])
+        environments = tuple(kwargs["environment_ids"])
+        calls.append((method, environments))
+        return [
+            {
+                "task": task,
+                "method": method,
+                "environment_id": environment_id,
+                "status": "success",
+                "official_success": True,
+                "method_success": True,
+                "actions_executed": 1,
+                "model_calls": 0,
+                "fallback_steps": 0,
+                "error": "",
+            }
+            for environment_id in environments
+        ]
+
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._run_bmoca_method_results",
+        run_results,
+    )
+    summary = run_bmoca_pipeline(
+        SimpleNamespace(
+            bmoca_corpus_manifest=tmp_path / "manifest.json",
+            task="all",
+            output_root=tmp_path / "campaign",
+            bmoca_root=tmp_path / "BMoCA",
+            bmoca_avd_home=tmp_path / "avd",
+        )
+    )
+
+    assert calls == [
+        ("script_replay", ("100",)),
+        ("ours", tuple(str(value) for value in range(100, 110))),
+        ("script_replay", tuple(str(value) for value in range(101, 110))),
+    ]
+    assert summary["status_counts"] == {"success": 20}
+
+
 def test_bmoca_offline_enhancement_calls_only_canonical_save_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -346,7 +503,7 @@ def test_bmoca_enhancement_failure_preserves_stage_and_usage(
         "src.experiment.e2e_task_pipeline.save_function",
         lambda *_args, **kwargs: kwargs["complete_json"](
             "split prompt",
-            function_authoring_tool(stage="split", current_bundle=None),
+            function_authoring_tool(stage="split"),
         ),
     )
     args = SimpleNamespace(formal_model="GLM-5.1")
@@ -369,7 +526,7 @@ def test_bmoca_enhancement_failure_preserves_stage_and_usage(
     assert failure["error"] == "TimeoutError: endpoint did not answer"
 
 
-def test_bmoca_enhancement_uses_the_shared_complete_bundle_tool(
+def test_bmoca_enhancement_uses_the_shared_draft_edit_tool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, object] = {}
@@ -390,8 +547,14 @@ def test_bmoca_enhancement_uses_the_shared_complete_bundle_tool(
                             tool_calls=[
                                 SimpleNamespace(
                                     function=SimpleNamespace(
-                                        name="submit_function_bundle",
-                                        arguments='{"functions":[],"arguments":{}}',
+                                        name="edit_function_draft",
+                                        arguments=(
+                                            '{"complete_function":{'
+                                            '"function_id":"open_item",'
+                                            '"name":"Open item",'
+                                            '"description":"Open the visible item."},'
+                                            '"subsegments":[]}'
+                                        ),
                                     )
                                 )
                             ]
@@ -426,9 +589,9 @@ def test_bmoca_enhancement_uses_the_shared_complete_bundle_tool(
         timeout_sec=180,
         usage=usage,
     )
-    tool = function_authoring_tool(stage="split", current_bundle=None)
+    tool = function_authoring_tool(stage="split")
 
-    assert complete("Return the bundle", tool) == '{"functions":[],"arguments":{}}'
+    assert '"function_id":"open_item"' in complete("Edit draft", tool)
     assert endpoint == {
         "profile": "llmthu",
         "base_url": "https://llmapi.paratera.com/v1",
@@ -436,7 +599,7 @@ def test_bmoca_enhancement_uses_the_shared_complete_bundle_tool(
     assert captured["tools"] == [tool]
     assert captured["tool_choice"] == {
         "type": "function",
-        "function": {"name": "submit_function_bundle"},
+        "function": {"name": "edit_function_draft"},
     }
     assert usage == {
         "model_calls": 1,

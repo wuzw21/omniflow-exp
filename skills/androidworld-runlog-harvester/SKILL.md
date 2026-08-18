@@ -1,147 +1,140 @@
 ---
 name: androidworld-runlog-harvester
-description: "Create or revise reusable OmniFlow Functions from an official-successful AndroidWorld or B-MoCA RunLog through the single save_function authoring pipeline."
+description: "Create reusable OmniFlow Functions from one official-successful AndroidWorld or B-MoCA RunLog through save_function."
 ---
 
-# Function authoring from a successful RunLog
+# Function authoring
 
-Use one public write operation: `save_function`. One RunLog may produce several
-semantic Functions, but there is no converter, manifest writer, direct Store
-write, or second enhancement interface.
+Use `save_function` as the only Function creation or update path. One
+successful RunLog may produce the mandatory complete Function and zero or more
+reusable subsegment Functions atomically.
 
-## Workflow
+## Procedure
 
-1. Call `tools/list` and use `get_run_log` plus `get_run_log_state` only when
-   more source evidence is needed.
-2. Confirm the RunLog is successful and preserves ordered source actions,
-   source states, and screenshot references.
-3. Call `save_function` once. Submit complete Functions directly, or use
-   `enhance=true` for the internal split, parameter-binding, and checker-review
-   stages.
-4. Return the saved Function IDs and save result. Function success is only a
-   Planner tool result; it is not task completion.
+1. Call `tools/list`.
+2. Inspect source evidence only when needed with `get_run_log` and
+   `get_run_log_state`.
+3. Call `save_function` once. Set `enhance=true` for Agent authoring.
+4. Do not call or create another converter, compiler, enhancer, manifest, or
+   Store writer.
 
-## Required Agent output
+## Enhancement contract
 
-Every internal enhancement stage returns exactly one JSON object with the two
-top-level keys below and no commentary. `save_function` supplies a stage-specific
-schema to the model and rejects extra keys, missing Functions, invalid bindings,
-invented evidence, changed Function identity, or incomplete trajectory coverage.
-The example below is the final checker-stage shape:
+The Agent edits one in-memory draft in exactly three stages. It does not make
+one model call per action and never writes complete Function artifacts, source
+states, source actions, bindings, checker rules, or Store entries.
+
+Return only the strict schema supplied for the current
+`edit_function_draft` call.
+
+### Stage 1: semantic ranges
+
+Return:
 
 ```json
 {
-  "functions": [
+  "complete_function": {
+    "function_id": "search_for_a_place",
+    "name": "Search for a place",
+    "description": "Enter a place query and show its results."
+  },
+  "subsegments": [
     {
-      "schema_version": "omniflow.function.v2",
-      "function_id": "search_the_web",
-      "name": "Search the web",
-      "description": "Open the browser, enter provided text, and submit it.",
-      "input_schema": {
-        "type": "object",
-        "properties": {
-          "query": {"type": "string"}
-        },
-        "required": ["query"],
-        "additionalProperties": false
-      },
-      "bindings": [
-        {
-          "source": "$.arguments.query",
-          "target": "$.steps[1].action.args.text"
-        }
-      ],
-      "steps": [
-        {
-          "step_index": 0,
-          "source_state_id": "source-home",
-          "action": {"tool": "click", "args": {"x": 700, "y": 800}}
-        },
-        {
-          "step_index": 1,
-          "source_state_id": "source-search-page",
-          "action": {"tool": "input_text", "args": {"text": ""}}
-        },
-        {
-          "step_index": 2,
-          "source_state_id": "source-search-filled",
-          "action": {"tool": "click", "args": {"x": 900, "y": 900}}
-        }
-      ],
-      "checker_rules": [
-        {
-          "source_state_id": "source-promo-dialog",
-          "action": {"tool": "click", "args": {"x": 800, "y": 700}}
-        }
-      ],
-      "agent_visible": true
+      "function_id": "enter_search_query",
+      "name": "Enter a search query",
+      "description": "Enter caller-provided text in the search field.",
+      "stability_reason": "The same visible search field and input action form a deterministic sequence; the query is parameterized.",
+      "start_step_index": 1,
+      "end_step_index": 3
     }
-  ],
-  "arguments": {
-    "search_the_web": {"query": "museum"}
-  }
+  ]
 }
 ```
 
-Return a complete `omniflow.function.v2` for every Function at every stage,
-even when that stage makes no changes. One Function is a reusable semantic
-operation, not a single click. Every stage must include at least one large
-Function covering the complete successful trajectory; reusable semantic
-subsegments may be added, but they never replace that complete Function. Keep
-source action order and continuity.
+Rules:
 
-The three internal stages have different permissions:
+- `complete_function` is mandatory and covers the entire successful RunLog.
+- A subsegment is an independently useful contiguous semantic operation.
+- `start_step_index` is inclusive and `end_step_index` is exclusive.
+- Select a subsegment only after identifying it as stably reproducible.
+- `stability_reason` is mandatory. It must explain why the source-state/action
+  sequence is deterministic across environments and remains replayable after
+  caller-varying content is parameterized.
+- Do not select a range whose behavior depends on a transient dialog, task
+  completion, validator state, target device, or task-specific coincidence.
+- Do not create isolated click or long-press fragments.
+- Return an empty `subsegments` list when no stable reusable range exists.
 
-1. `split`: choose the full-trajectory Function and every independently useful
-   contiguous subsegment. Return an empty object `input_schema`, empty
-   `bindings`, empty per-Function `arguments`, and empty `checker_rules`.
-2. `parameters`: keep the Function set, identities, descriptions, actions, and
-   order unchanged. Put only caller-varying values in `input_schema`, `bindings`,
-   and source `arguments`; binding those arguments must reproduce the original
-   RunLog actions exactly. Keep `checker_rules` empty.
-3. `checkers`: keep Function identities, meanings, parameters, and arguments
-   unchanged. Move only optional actions whose execution depends on their RunLog
-   source state and mapped target and that are safe to skip without breaking the
-   remaining formal path. This may include optional setup,
-   interruption-dismissal, recovery, or alternate-path navigation. Every
-   selected action must have a later unselected formal action, because runtime
-   evaluates rules only before pending formal actions. Reindex remaining formal
-   steps and their binding targets. If no action is safely optional, return the
-   unchanged Function with an empty checker list.
+### Stage 2: parameters
 
-The split stage must return every reusable contiguous semantic subsegment that
-the successful RunLog supports. Do not emit a subsegment that is only one click
-or has no independently reusable meaning. The complete trajectory Function is
-still mandatory even when several subsegments are returned.
+Return:
 
-The split stage chooses the complete Function and reusable subsegments. The
-parameter stage binds task-varying values without losing trajectory coverage.
-The checker stage may move safely optional source-state-dependent setup,
-interruption, recovery, or alternate-path navigation actions from formal steps
-into the checker list of the Function that needs them. It may not move required
-navigation, duplicate a formal action as a checker, move a terminal action with
-no later formal check point, or create a one-click Function merely to hold a
-checker.
+```json
+{
+  "bindings": [
+    {
+      "function_id": "enter_search_query",
+      "step_index": 2,
+      "name": "query",
+      "description": "Place query to enter",
+      "argument_path": "text"
+    }
+  ]
+}
+```
 
-## Checker rules
+Rules:
 
-A checker is registered only by being present in its Function's
-`checker_rules`. A checker rule contains exactly `source_state_id` and `action`.
-Do not return a step number, `when`, threshold, package switch, trigger DSL, or
-global checker list.
+- Declare only caller-varying values already present in that source action.
+- `argument_path` is relative to `action.args`.
+- The source step must be inside the named Function range.
+- Never parameterize coordinates, package names, waits, directions,
+  `target_description`, source states, or transfer evidence.
+- Return an empty `bindings` list when no parameter is needed.
 
-Runtime checks every unexecuted registered rule before every pending Function
-action. The latest canonical OmniTransfer page embedding must match the rule's
-source state above the one configured page threshold, then OmniTransfer must
-map the source action to a target candidate above the one configured target
-probability threshold. Both gates must pass. A matching checker executes once
-per Function invocation; a nonmatching checker remains eligible before a later
-action. Rules do not define private thresholds or custom trigger logic.
+### Stage 3: checkers
 
-## Evidence and failure rules
+Return:
 
-Every state and action must be supported by the successful source RunLog.
-Never invent target-device observations, target coordinates, validator logic,
-task-specific gates, or source-coordinate fallback. Report the first validation
-or save error. Do not retry through another interface or write the Store
-directly.
+```json
+{
+  "checker_steps": [
+    {
+      "function_id": "search_for_a_place",
+      "step_index": 0
+    }
+  ]
+}
+```
+
+Rules:
+
+- Register a checker only on a Function whose range contains that source step.
+- Select only an optional source-state-dependent action that is safe to skip and
+  has a later formal action in the same Function.
+- Allowed checker actions are `click`, `input_text`, and `long_press`.
+- A parameterized action cannot be a checker.
+- Required navigation, terminal actions, waits, app launches, key presses, and
+  swipes are not checkers.
+- Return an empty `checker_steps` list when no checker is safe.
+
+## Deterministic compilation
+
+`save_function` copies exact actions and source states from the successful
+RunLog, removes registered checker actions from formal steps, creates parameter
+schemas and bindings, validates every Function, and writes the Store atomically.
+The Agent supplies decisions only; it cannot modify source evidence.
+
+A rejected stage edit receives at most one correction of that same stage.
+Transport failure, missing source evidence, or a second invalid edit fails the
+save without partial persistence.
+
+Runtime evaluates every unexecuted Function-local checker before every pending
+formal action. The canonical OmniTransfer page embedding must match the source
+state and OmniTransfer must find a target above the configured probability
+threshold. A failed match skips the checker without executing source
+coordinates.
+
+Before cross-environment evaluation, the complete Function must pass source
+environment `script_replay` with official success, `model_calls=0`, and
+`fallback_steps=0`.
