@@ -165,6 +165,7 @@ task_seed="$formal_task_seed"
 preflight="$repo/src/experiment/preflight.py"
 selected_method_arg=""
 selected_device_arg=""
+control_backend="${OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND:-androidworld}"
 task="${OMNIFLOW_ANDROIDWORLD_TASK:-SystemBluetoothTurnOn}"
 batch_attempt_id="${OMNIFLOW_BATCH_ATTEMPT_ID:-}"
 device_target="${OMNIFLOW_ANDROIDWORLD_DEVICE:-$default_device}"
@@ -478,6 +479,8 @@ Options:
                             skilldroid_replay.
   --device LABEL:SERIAL:PORT
                             Run one target in the single-result runner.
+  --control-backend NAME    Use androidworld (default) or explicit oob transport
+                            for bounded development/source/E2E runs.
   --tasks TASK1,TASK2,...   Select an ordered task-major subset. Implies
                             --all-tasks during experiment execution.
   --e2e-task TASK           Run one bounded source-to-matrix task pipeline.
@@ -579,6 +582,14 @@ while [[ "$#" -gt 0 ]]; do
       fi
       selected_device_arg="$1"
       ;;
+    --control-backend)
+      shift
+      if [[ "$#" -eq 0 || ( "$1" != "androidworld" && "$1" != "oob" ) ]]; then
+        echo "--control-backend requires androidworld or oob." >&2
+        exit 2
+      fi
+      control_backend="$1"
+      ;;
     --refresh-memory)
       refresh_memory=1
       ;;
@@ -619,6 +630,15 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
+if [[ "$control_backend" == "oob" && "$execution_environment" != "androidworld" ]]; then
+  echo "--control-backend oob is only supported for AndroidWorld." >&2
+  exit 2
+fi
+if [[ "$control_backend" == "oob" && "$development_run" -eq 0 && "$source_collection" -eq 0 && -z "$e2e_task" ]]; then
+  echo "--control-backend oob is limited to --development-run, --collect-source, or --e2e-task." >&2
+  exit 2
+fi
+export OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND="$control_backend"
 if [[ "$execution_environment" != "bmoca" && ( -n "$selected_method_arg" || -n "$selected_device_arg" ) ]] && {
   [[ "$development_run" -eq 1 || "$source_collection" -eq 1 ||
     "$all_tasks" -eq 1 || -n "$e2e_task" || -n "$batch_task_filter" ||
@@ -1822,7 +1842,10 @@ if row.get("latest_official_success_source") is not True:
 actual_kind = str(row.get("source_kind") or "").strip()
 if (
     actual_kind
-    and actual_kind != "androidworld_validator_success_source_runlog"
+    and actual_kind not in {
+        "androidworld_validator_success_source_runlog",
+        "one_time_canonicalized_seed111_screenshot_source",
+    }
 ):
     raise SystemExit(
         f"formal_source_kind_mismatch:{task_name}:actual={actual_kind or 'missing'}"

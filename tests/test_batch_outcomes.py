@@ -9,7 +9,7 @@ from src.experiment.batch_outcomes import (
     summarize_results,
 )
 from src.experiment.mobilegpt_contract import MOBILEGPT_SOURCE_METHOD
-from src.integrations.android_world.launch import _write_task_results_summary
+from src.integrations.android_world.launch import _summarize_task_results
 
 
 def test_record_prep_failure_preserves_reason_tokens_and_time(tmp_path: Path) -> None:
@@ -306,9 +306,8 @@ def test_run_summary_uses_canonical_usage_fields(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    summary = _write_task_results_summary(
+    summary = _summarize_task_results(
         task_results_path=task_results,
-        output_dir=tmp_path / "summary",
         checkpoint_dir="checkpoint",
         agent="omniflow",
         tasks=("BrowserDraw",),

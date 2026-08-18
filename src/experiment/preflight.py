@@ -551,10 +551,10 @@ def _validate_source_index(
         ):
             invalid.append(str(task))
             continue
-        if (
-            source_kind
-            and source_kind != "androidworld_validator_success_source_runlog"
-        ):
+        if source_kind and source_kind not in {
+            "androidworld_validator_success_source_runlog",
+            "one_time_canonicalized_seed111_screenshot_source",
+        }:
             invalid.append(str(task))
             continue
         run_log_value = str(
@@ -664,7 +664,6 @@ def _required_files(profile: str) -> list[str]:
         return [
             "src/experiment/androidworld.py",
             "src/integrations/android_world/launch.py",
-            "runtime/external/droidrun-android-world/android_world/android_world/env/setup_device/apps.py",
         ]
     if profile == "mobilegpt":
         return [

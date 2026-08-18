@@ -4289,8 +4289,6 @@ def _select_from_args(args: argparse.Namespace) -> list[CanonicalRunLog]:
 
 
 
-MOBILEGPT_METHODS = frozenset({"mobilegpt"})
-APPAGENT_METHODS = frozenset({"appagent"})
 _RESULT_NON_EXECUTED_STATUSES = {
     "INVALID_MEMORY_LEAKAGE",
     "env_failed",
@@ -4300,7 +4298,7 @@ _RESULT_NON_EXECUTED_STATUSES = {
 
 
 def _is_mobilegpt_method(method: str) -> bool:
-    return str(method or "").strip() in MOBILEGPT_METHODS
+    return str(method or "").strip() == "mobilegpt"
 
 
 def _result_record_has_formal_result(record: dict[str, Any]) -> bool:
@@ -5687,7 +5685,6 @@ _RESULT_METADATA_ROW_KEYS = (
     "uses_omniflow_agent",
     "uses_source_action_hints",
     "uses_function_retrieval",
-    "function_reference_catalog_path",
     "perform_emulator_setup",
 )
 
@@ -6517,7 +6514,7 @@ def _run_result_mobilegpt(
     source_run_log: Path,
     compatible_source_sha256s: Sequence[str] = (),
 ) -> tuple[list[dict[str, Any]], int]:
-    if method not in MOBILEGPT_METHODS:
+    if method != "mobilegpt":
         raise ValueError(f"unsupported_mobilegpt_method:{method}")
     if not targets:
         raise ValueError("mobilegpt_device_target_required")
@@ -7030,103 +7027,87 @@ def cmd_result(args: argparse.Namespace) -> int:
                     ),
                 },
             )
-        if method in APPAGENT_METHODS:
-            if method == "appagent":
-                source_memory_text = str(
-                    getattr(args, "appagent_memory_root", "") or ""
-                ).strip()
-                if not source_memory_text:
-                    raise ValueError(
-                        "appagent requires --appagent-memory-root"
-                    )
-                source_memory_root = _repo_path(source_memory_text)
-                provenance = validate_appagent_memory(
-                    source_memory_root,
-                    task_name=item.task,
-                    source_run_log=item.source_run_log,
-                )
-                appagent_docs_root = Path(provenance["demo_docs_root"]).resolve()
-                source_metrics = dict(provenance["source_episode_metrics"])
-                document_usage = dict(provenance["doc_generation_usage"])
-                prep_model_calls = _coerce_int(
-                    source_metrics.get("model_calls")
-                ) + _coerce_int(document_usage.get("model_calls"))
-                prep_prompt_tokens = _coerce_int(
-                    source_metrics.get("prompt_tokens")
-                ) + _coerce_int(document_usage.get("prompt_tokens"))
-                prep_completion_tokens = _coerce_int(
-                    source_metrics.get("completion_tokens")
-                ) + _coerce_int(document_usage.get("completion_tokens"))
-                prep_total_tokens = prep_prompt_tokens + prep_completion_tokens
-                source_memory_manifest = (
+        if method == "appagent":
+            source_memory_text = str(
+                getattr(args, "appagent_memory_root", "") or ""
+            ).strip()
+            if not source_memory_text:
+                raise ValueError("appagent requires --appagent-memory-root")
+            source_memory_root = _repo_path(source_memory_text)
+            provenance = validate_appagent_memory(
+                source_memory_root,
+                task_name=item.task,
+                source_run_log=item.source_run_log,
+            )
+            appagent_docs_root = Path(provenance["demo_docs_root"]).resolve()
+            source_metrics = dict(provenance["source_episode_metrics"])
+            document_usage = dict(provenance["doc_generation_usage"])
+            prep_model_calls = _coerce_int(
+                source_metrics.get("model_calls")
+            ) + _coerce_int(document_usage.get("model_calls"))
+            prep_prompt_tokens = _coerce_int(
+                source_metrics.get("prompt_tokens")
+            ) + _coerce_int(document_usage.get("prompt_tokens"))
+            prep_completion_tokens = _coerce_int(
+                source_metrics.get("completion_tokens")
+            ) + _coerce_int(document_usage.get("completion_tokens"))
+            prep_total_tokens = prep_prompt_tokens + prep_completion_tokens
+            source_memory_manifest = source_memory_root / "appagent_manifest.json"
+            appagent_prep = {
+                "type": "appagent_native_source_demo_docs",
+                "model_calls": prep_model_calls,
+                "prompt_tokens": prep_prompt_tokens,
+                "completion_tokens": prep_completion_tokens,
+                "total_tokens": prep_total_tokens,
+                "token_usage_status": (
+                    "tracked" if prep_model_calls > 0 else "not_applicable"
+                ),
+                "wall_sec": _coerce_float(provenance.get("prep_wall_sec")),
+                "source_episode_duration_sec": _coerce_float(
+                    source_metrics.get("duration_sec")
+                ),
+                "source_episode_wall_sec": _coerce_float(
+                    source_metrics.get("wall_sec")
+                ),
+                "document_generation_wall_sec": _coerce_float(
+                    document_usage.get("wall_sec")
+                ),
+                "official_validator_success": bool(
+                    provenance.get("official_source_success")
+                ),
+                "manifest_path": str(source_memory_manifest),
+                "manifest_sha256": _file_sha256(source_memory_manifest),
+                "demo_sha256": str(provenance.get("demo_sha256") or ""),
+                "demo_docs_sha256": str(provenance.get("demo_docs_sha256") or ""),
+                "shared_across_targets": True,
+            }
+            memory_mode = "appagent_native_demo_docs"
+            artifacts = {
+                "source_memory_root": str(source_memory_root),
+                "source_memory_manifest": str(
                     source_memory_root / "appagent_manifest.json"
-                )
-                appagent_prep = {
-                    "type": "appagent_native_source_demo_docs",
-                    "model_calls": prep_model_calls,
-                    "prompt_tokens": prep_prompt_tokens,
-                    "completion_tokens": prep_completion_tokens,
-                    "total_tokens": prep_total_tokens,
-                    "token_usage_status": (
-                        "tracked" if prep_model_calls > 0 else "not_applicable"
-                    ),
-                    "wall_sec": _coerce_float(provenance.get("prep_wall_sec")),
-                    "source_episode_duration_sec": _coerce_float(
-                        source_metrics.get("duration_sec")
-                    ),
-                    "source_episode_wall_sec": _coerce_float(
-                        source_metrics.get("wall_sec")
-                    ),
-                    "document_generation_wall_sec": _coerce_float(
-                        document_usage.get("wall_sec")
-                    ),
-                    "official_validator_success": bool(
-                        provenance.get("official_source_success")
-                    ),
-                    "manifest_path": str(source_memory_manifest),
-                    "manifest_sha256": _file_sha256(source_memory_manifest),
-                    "demo_sha256": str(provenance.get("demo_sha256") or ""),
-                    "demo_docs_sha256": str(provenance.get("demo_docs_sha256") or ""),
-                    "shared_across_targets": True,
-                }
-                memory_mode = "appagent_native_demo_docs"
-                artifacts = {
-                    "source_memory_root": str(source_memory_root),
-                    "source_memory_manifest": str(
-                        source_memory_root / "appagent_manifest.json"
-                    ),
-                    "source_memory_manifest_sha256": _file_sha256(
-                        source_memory_root / "appagent_manifest.json"
-                    ),
-                    "demo_docs_root": str(appagent_docs_root),
-                    "demo_docs_sha256": provenance["demo_docs_sha256"],
-                    "official_appagent_revision": provenance[
-                        "official_appagent_revision"
-                    ],
-                    "uses_appagent_docs": True,
-                    "uses_omniflow_function": False,
-                    "memory_read_only": True,
-                }
-            else:
-                memory_mode = "none"
-                artifacts = {
-                    "official_appagent_revision": (
-                        "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
-                    ),
-                    "uses_appagent_docs": False,
-                    "uses_omniflow_function": False,
-                }
+                ),
+                "source_memory_manifest_sha256": _file_sha256(
+                    source_memory_root / "appagent_manifest.json"
+                ),
+                "demo_docs_root": str(appagent_docs_root),
+                "demo_docs_sha256": provenance["demo_docs_sha256"],
+                "official_appagent_revision": provenance[
+                    "official_appagent_revision"
+                ],
+                "uses_appagent_docs": True,
+                "uses_omniflow_function": False,
+                "memory_read_only": True,
+            }
             _write_method_memory_manifest(
                 memory_root=memory_root,
                 task=item.task,
                 method=method,
                 memory_mode=memory_mode,
-                    source_seed=(source_seed if method == "appagent" else None),
+                source_seed=source_seed,
                 evaluation_seed=task_seed,
                 attempt_id=attempt_id,
-                source_run_log=(
-                    item.source_run_log if method == "appagent" else None
-                ),
+                source_run_log=item.source_run_log,
                 artifacts=artifacts,
             )
         if method == "fixed_replay":
@@ -7221,7 +7202,7 @@ def cmd_result(args: argparse.Namespace) -> int:
                     planner_provider=args.planner_provider,
                     model=args.model,
                 )
-            elif method in APPAGENT_METHODS:
+            elif method == "appagent":
                 spec = build_appagent_androidworld_command(
                     item,
                     method_name=method,

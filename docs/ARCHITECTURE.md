@@ -152,7 +152,7 @@ production-file map; tests mirror the module they exercise.
 | `android_world/launch.py` | native lifecycle and launcher |
 | `android_world/methods.py` | method adapters |
 | `android_world/mobilegpt_agent.py` | MobileGPT episode adapter |
-| `android_world/oob_control.py` | retained diagnostic transport only |
+| `android_world/oob_control.py` | explicit development/source transport adapter |
 | `android_world/state.py` | native state normalization |
 | `appagent_adapter.py` | AppAgent conversion/runtime adapter |
 | `bmoca.py` | B-MoCA DeviceDriver adapter |
@@ -177,7 +177,10 @@ production-file map; tests mirror the module they exercise.
 
 To add a method, change the protocol, Method Adapter, shared scheduler dispatch,
 and its contract tests together. Do not add a method-specific lifecycle or
-result format. To add an action, change the shared action schema, compiler,
+result format. The optional OOB transport is selected only through the shared
+launcher with `--control-backend oob` for bounded development, source
+collection, or E2E runs; it does not create a second AndroidWorld lifecycle.
+To add an action, change the shared action schema, compiler,
 runtime execution, and one focused test. To add an artifact, extend the
 canonical bundle/index contract and its validator before writing it; never add
 a sidecar registry. To change a schema or public result field, make a separate

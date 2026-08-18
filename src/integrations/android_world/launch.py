@@ -1185,10 +1185,9 @@ def _task_params_provenance(task: Any) -> tuple[dict[str, Any], str]:
     return serialized, _stable_hash(serialized)
 
 
-def _write_task_results_summary(
+def _summarize_task_results(
     *,
     task_results_path: Path,
-    output_dir: Path,
     checkpoint_dir: str,
     agent: str,
     tasks: Sequence[str],
@@ -1279,47 +1278,6 @@ def _write_task_results_summary(
         "per_task": per_task,
     }
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    summary_path = output_dir / "summary.json"
-    summary_path.write_text(
-        json.dumps(to_serializable(summary), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    md_lines = [
-        "# AndroidWorld Run Summary",
-        "",
-        f"- agent: `{agent}`",
-        f"- task_results: `{task_results_path}`",
-        f"- checkpoint_dir: `{checkpoint_dir}`",
-        f"- official_validator_success: `{successful_tasks}/{official_validator_tasks}`",
-        f"- official_validator_coverage: `{official_validator_tasks}/{total_tasks}`",
-        f"- runtime integrity errors: `{len(runtime_integrity_errors)}`",
-        f"- total duration: `{round(total_duration_ms / 1000.0, 3)}s`",
-        f"- actions executed: `{total_actions}`",
-        f"- single-step execution accuracy: `{summary['single_step_execution_accuracy']}`",
-        f"- validator-weighted action accuracy: `{summary['validator_weighted_action_accuracy']}`",
-        f"- tool_calls / tokens: `{total_model_calls}` / `{total_tokens}`",
-        "",
-        "| task | official_validator | sec | actions | step_acc | tool_calls | tokens |",
-        "|---|---:|---:|---:|---:|---:|---:|",
-    ]
-    for item in per_task:
-        md_lines.append(
-            "| "
-            + " | ".join(
-                [
-                    str(item.get("task_name") or ""),
-                    "1" if item.get("official_validator_success") else "0",
-                    str(round(_coerce_float(item.get("duration_ms")) / 1000.0, 3)),
-                    str(item.get("actions_executed") or 0),
-                    str(item.get("action_completed_rate") or 0),
-                    str(item.get("model_calls") or 0),
-                    str(item.get("total_tokens") or 0),
-                ]
-            )
-            + " |"
-        )
-    (output_dir / "summary.md").write_text("\n".join(md_lines) + "\n", encoding="utf-8")
     print(
         "[omniflow] summary: "
         f"official_validator={successful_tasks}/{official_validator_tasks} "
@@ -1327,8 +1285,7 @@ def _write_task_results_summary(
         f"duration={total_duration_ms / 1000.0:.1f}s "
         f"actions={total_actions} "
         f"step_acc={summary['single_step_execution_accuracy']} "
-        f"tool_calls={total_model_calls} tokens={total_tokens} "
-        f"summary={summary_path}"
+        f"tool_calls={total_model_calls} tokens={total_tokens}"
     )
     return summary
 
@@ -4319,11 +4276,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         task_results_path = (
             run_output_dir / "task_results.jsonl"
         )
-        for stale_output_path in (
-            task_results_path,
-            run_output_dir / "summary.json",
-            run_output_dir / "summary.md",
-        ):
+        for stale_output_path in (task_results_path,):
             try:
                 stale_output_path.unlink()
             except FileNotFoundError:
@@ -4879,9 +4832,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"agent={mainline_name} on {args.suite_family} family. "
             f"Wrote to {checkpoint_dir}."
         )
-        run_summary = _write_task_results_summary(
+        run_summary = _summarize_task_results(
             task_results_path=task_results_path,
-            output_dir=Path(args.output_path).expanduser().resolve(),
             checkpoint_dir=str(checkpoint_dir),
             agent=mainline_name,
             tasks=selected_task_names,

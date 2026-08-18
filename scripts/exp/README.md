@@ -12,6 +12,7 @@ modules are implementation seams and must not be invoked as alternate runners.
 | Read-only static gate | `run_androidworld.sh --check-only [--all-tasks]` |
 | Bounded `omniflow` development | `run_androidworld.sh --development-run --tasks TASK` |
 | Source refresh | `run_androidworld.sh --collect-source --tasks TASK` |
+| OOB development/source transport | `run_androidworld.sh --control-backend oob --development-run --tasks TASK` |
 | B-MoCA one reuse method | `run_androidworld.sh --environment bmoca --method ours_replay\|mobilegpt_replay\|skilldroid_replay --tasks TASK` |
 | B-MoCA campaign | `run_androidworld.sh --environment bmoca --all-tasks [--tasks TASK1,TASK2]` |
 | Memory refresh | `run_androidworld.sh --refresh-memory` |
