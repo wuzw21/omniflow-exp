@@ -158,6 +158,77 @@ def test_compile_droidrun_macro_uses_official_format(tmp_path: Path) -> None:
     assert manifest["droidrun_commit"] == DROIDRUN_COMMIT
 
 
+def test_compile_droidrun_macro_accepts_qualified_env100_runlog(
+    tmp_path: Path,
+) -> None:
+    run_log = tmp_path / "target.run_log.json"
+    run_log.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.run_log.v1",
+                "run_id": "qualified-env100",
+                "goal": "Input 1+1",
+                "status": "succeeded",
+                "success": True,
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "action": {
+                            "action_type": "open_app",
+                            "app_name": "com.google.android.calculator",
+                        },
+                        "observation": {
+                            "auxiliaries": {
+                                "display": {"width": 1080, "height": 1920}
+                            }
+                        },
+                        "next_observation": {
+                            "auxiliaries": {
+                                "display": {"width": 1080, "height": 1920}
+                            }
+                        },
+                        "result": {"success": True},
+                    },
+                    {
+                        "step_index": 1,
+                        "action": {"action_type": "click", "x": 159, "y": 1483},
+                        "observation": {
+                            "auxiliaries": {
+                                "display": {"width": 1080, "height": 1920}
+                            }
+                        },
+                        "next_observation": {
+                            "auxiliaries": {
+                                "display": {"width": 1080, "height": 1920}
+                            }
+                        },
+                        "result": {"success": True},
+                    },
+                ],
+                "validator": {"official": True, "success": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    macro_path = tmp_path / "macro.json"
+
+    compile_droidrun_macro(
+        source_run_log=run_log,
+        source_state_catalog=tmp_path / "missing-transfer-states.json",
+        output_path=macro_path,
+    )
+
+    macro = json.loads(macro_path.read_text(encoding="utf-8"))
+    assert macro["actions"] == [
+        {
+            "action_type": "start_app",
+            "package": "com.google.android.calculator",
+            "activity": None,
+        },
+        {"action_type": "tap", "x": 159, "y": 1483},
+    ]
+
+
 def test_pinned_official_droidrun_macro_player_loads() -> None:
     player = load_official_droidrun_macro_player()
 

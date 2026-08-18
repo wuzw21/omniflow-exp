@@ -452,6 +452,8 @@ def test_bmoca_pipeline_runs_remaining_results_only_after_source_gate(
     task = "clock/create_alarm_at_06:30_am"
     source = tmp_path / "source.run_log.json"
     source.write_text("{}", encoding="utf-8")
+    qualified_source = tmp_path / "qualified-env100.run_log.json"
+    qualified_source.write_text("{}", encoding="utf-8")
     calls: list[tuple[str, tuple[str, ...]]] = []
     cloned: list[str] = []
     monkeypatch.setattr(
@@ -471,13 +473,16 @@ def test_bmoca_pipeline_runs_remaining_results_only_after_source_gate(
         "src.experiment.e2e_task_pipeline._save_bmoca_function_once",
         lambda **_: (tmp_path / "store.json", {"enhanced": True}),
     )
+    prepared_sources: list[Path] = []
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline._prepare_bmoca_mobilegpt_memory",
-        lambda **_: (tmp_path / "mobilegpt", {"status": "prepared"}),
+        lambda **kwargs: prepared_sources.append(kwargs["source_run_log"])
+        or (tmp_path / "mobilegpt", {"status": "prepared"}),
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline._prepare_bmoca_skilldroid_memory",
-        lambda **_: (tmp_path / "skilldroid.json", {"status": "prepared"}),
+        lambda **kwargs: prepared_sources.append(kwargs["source_run_log"])
+        or (tmp_path / "skilldroid.json", {"status": "prepared"}),
     )
 
     def run_results(**kwargs: object) -> list[dict[str, object]]:
@@ -496,6 +501,7 @@ def test_bmoca_pipeline_runs_remaining_results_only_after_source_gate(
                 "model_calls": 0,
                 "fallback_steps": 0,
                 "error": "",
+                "run_log_path": str(qualified_source),
             }
             for environment_id in environments
         ]
@@ -521,6 +527,10 @@ def test_bmoca_pipeline_runs_remaining_results_only_after_source_gate(
         ("skilldroid_replay", tuple(str(value) for value in range(100, 110))),
     ]
     assert cloned == [f"env{value}" for value in range(100, 110)]
+    assert prepared_sources == [
+        qualified_source,
+        qualified_source,
+    ]
     assert summary["status_counts"] == {"success": 30}
 
 

@@ -13,6 +13,7 @@ import sys
 from typing import Any, ClassVar
 
 from omniflow.core.model import Action, ActionResult, Observation, RunResult
+from omniflow.runlog import _androidworld_action_to_omniflow
 from omniflow.transfer.runtime import load_transfer_state_catalog
 from src.experiment.protocol import (
     DROIDRUN_COMMIT,
@@ -56,15 +57,11 @@ def compile_droidrun_macro(
     if not official_success:
         raise ValueError("droidrun_official_source_success_required")
 
-    states = load_transfer_state_catalog(source_state_catalog)
+    states = _source_states(run_log, source_state_catalog)
     actions: list[dict[str, Any]] = []
     source_indices: list[int] = []
     for expected_index, raw_step in enumerate(run_log["steps"]):
-        if (
-            not isinstance(raw_step, dict)
-            or raw_step.get("step_index") != expected_index
-            or not isinstance(raw_step.get("action"), dict)
-        ):
+        if not isinstance(raw_step, dict) or raw_step.get("step_index") != expected_index:
             raise ValueError("droidrun_source_step_invalid")
         result = raw_step.get("result")
         if not isinstance(result, dict) or result.get("success") is not True:
@@ -73,17 +70,16 @@ def compile_droidrun_macro(
         after_state_id = str(raw_step.get("after_state_id") or "").strip()
         if before_state_id and before_state_id == after_state_id:
             continue
-        source_state = states.get(before_state_id)
+        source_state = (
+            states.get(before_state_id)
+            if before_state_id
+            else _embedded_source_state(raw_step)
+        )
         if not isinstance(source_state, dict):
             raise TypeError(
                 f"droidrun_source_state_missing:{expected_index}:{before_state_id}"
             )
-        actions.append(
-            _to_droidrun_action(
-                Action.from_value(raw_step["action"]),
-                source_state=source_state,
-            )
-        )
+        actions.append(_to_droidrun_action(_source_action(raw_step), source_state=source_state))
         source_indices.append(expected_index)
     if not actions:
         raise ValueError("droidrun_source_actions_required")
@@ -386,6 +382,42 @@ def _display(state: dict[str, Any]) -> tuple[float, float]:
     return (
         _positive_number(display.get("width"), "source_width"),
         _positive_number(display.get("height"), "source_height"),
+    )
+
+
+def _source_states(
+    run_log: dict[str, Any],
+    source_state_catalog: str | Path,
+) -> dict[str, dict[str, Any]]:
+    if all(str(step.get("before_state_id") or "").strip() for step in run_log["steps"]):
+        return load_transfer_state_catalog(source_state_catalog)
+    return {}
+
+
+def _embedded_source_state(step: dict[str, Any]) -> dict[str, Any]:
+    observation = step.get("observation")
+    if not isinstance(observation, dict):
+        raise TypeError("droidrun_embedded_source_observation_required")
+    auxiliaries = observation.get("auxiliaries")
+    if not isinstance(auxiliaries, dict):
+        raise TypeError("droidrun_embedded_source_auxiliaries_required")
+    display = auxiliaries.get("display")
+    if not isinstance(display, dict):
+        raise TypeError("droidrun_source_display_required")
+    return {"display": display}
+
+
+def _source_action(step: dict[str, Any]) -> Action:
+    raw_action = step.get("action")
+    if not isinstance(raw_action, dict):
+        raise ValueError("droidrun_source_step_invalid")
+    if "tool" in raw_action:
+        return Action.from_value(raw_action)
+    observation = step.get("observation")
+    if not isinstance(observation, dict):
+        raise TypeError("droidrun_embedded_source_observation_required")
+    return Action.from_value(
+        _androidworld_action_to_omniflow(raw_action, observation=observation)
     )
 
 

@@ -2786,6 +2786,16 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             _write_bmoca_progress(progress_csv, rows)
             continue
 
+        qualified_source_run_log = Path(str(gate_row.get("run_log_path") or ""))
+        if not qualified_source_run_log.is_file():
+            gate_error = "bmoca_env100_qualified_run_log_missing"
+            for key, row in rows.items():
+                if key[0] == task and row["status"] == "pending":
+                    row.update(status="prep_failed", error=gate_error)
+                    _append_bmoca_progress_event(progress_jsonl, row)
+            _write_bmoca_progress(progress_csv, rows)
+            continue
+
         for method, prepare in (
             ("mobilegpt_replay", _prepare_bmoca_mobilegpt_memory),
             ("skilldroid_replay", _prepare_bmoca_skilldroid_memory),
@@ -2798,7 +2808,7 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                         else {}
                     ),
                     task=task,
-                    source_run_log=source_run_log,
+                    source_run_log=qualified_source_run_log,
                     task_root=task_root,
                 )
                 method_assets[method] = prepared_path
