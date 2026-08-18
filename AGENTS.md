@@ -145,6 +145,9 @@ them instead of naming an AVD locally.
 The source AVD uses the API-33 `small_phone` geometry recorded by the retained
 720x1280 source RunLogs; source collection must not scale those coordinates
 onto a different display profile.
+The shell provisions that configured source AVD before dispatching the E2E
+pipeline, and the pipeline must report an exited emulator process immediately
+instead of waiting for the full boot deadline.
 Development overrides must be explicit. Retired source/format/accept/first/limit
 selectors are historical reader fields, not active options.
 

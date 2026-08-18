@@ -262,6 +262,55 @@ if [[ -n "$emulator_avd_profiles" ]]; then
   done
 fi
 emulator_avd_specs="$default_emulator_avd_specs"
+
+avd_spec_for_name() {
+  local wanted_avd="$1"
+  local spec spec_avd system_image device_profile extra
+  IFS=',' read -r -a configured_avd_specs <<< "$emulator_avd_specs"
+  for spec in "${configured_avd_specs[@]}"; do
+    IFS='|' read -r spec_avd system_image device_profile extra <<< "$spec"
+    if [[ "$spec_avd" == "$wanted_avd" && -n "$system_image" && -n "$device_profile" && -z "${extra:-}" ]]; then
+      printf '%s\t%s\n' "$system_image" "$device_profile"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ensure_avd_installed() {
+  local avd="$1"
+  local selected_emulator_bin="$2"
+  local selected_avdmanager_bin="$3"
+  local selected_android_sdk_root="$4"
+  local avd_spec system_image device_profile image_dir
+  if "$selected_emulator_bin" -list-avds | grep -Fqx "$avd"; then
+    return 0
+  fi
+  if ! avd_spec="$(avd_spec_for_name "$avd")"; then
+    echo "Configured AVD is not installed and has no provisioning spec: avd=$avd" >&2
+    return 1
+  fi
+  IFS=$'\t' read -r system_image device_profile <<< "$avd_spec"
+  image_dir="$selected_android_sdk_root/$(printf '%s' "$system_image" | tr ';' '/')"
+  if [[ ! -d "$image_dir" ]]; then
+    echo "Configured AVD system image is not installed: avd=$avd image=$system_image" >&2
+    return 1
+  fi
+  if [[ ! -x "$selected_avdmanager_bin" ]]; then
+    echo "Android avdmanager missing: $selected_avdmanager_bin" >&2
+    return 1
+  fi
+  echo "[emulator] create-avd avd=$avd image=$system_image device=$device_profile"
+  printf 'no\n' | "$selected_avdmanager_bin" create avd \
+    --name "$avd" \
+    --package "$system_image" \
+    --device "$device_profile"
+  if ! "$selected_emulator_bin" -list-avds | grep -Fqx "$avd"; then
+    echo "AVD provisioning completed without the configured AVD: avd=$avd" >&2
+    return 1
+  fi
+}
+
 emulator_gpu="swiftshader_indirect"
 emulator_boot_timeout_sec="240"
 emulator_graceful_shutdown_timeout_sec="30"
@@ -876,12 +925,21 @@ if [[ -n "$e2e_task" ]]; then
   e2e_android_sdk_root="${OMNIFLOW_ANDROID_SDK_ROOT:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$(resolve_default_android_sdk_root)}}}"
   e2e_adb_path="${OMNIFLOW_ADB_PATH:-$e2e_android_sdk_root/platform-tools/adb}"
   e2e_emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$e2e_android_sdk_root/emulator/emulator}"
+  e2e_avdmanager_bin="${OMNIFLOW_AVDMANAGER_BIN:-$e2e_android_sdk_root/cmdline-tools/latest/bin/avdmanager}"
   if [[ "$e2e_adb_path" != /* || ! -x "$e2e_adb_path" ]]; then
     echo "--e2e-task requires an executable absolute ADB path: $e2e_adb_path" >&2
     exit 2
   fi
   if [[ "$e2e_emulator_bin" != /* || ! -x "$e2e_emulator_bin" ]]; then
     echo "--e2e-task requires an executable absolute emulator path: $e2e_emulator_bin" >&2
+    exit 2
+  fi
+  if [[ "$dry_run" -ne 1 ]] && ! ensure_avd_installed \
+    "$source_avd" \
+    "$e2e_emulator_bin" \
+    "$e2e_avdmanager_bin" \
+    "$e2e_android_sdk_root"; then
+    echo "--e2e-task source AVD is unavailable: $source_avd" >&2
     exit 2
   fi
   if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
@@ -1948,51 +2006,6 @@ avd_for_serial() {
   return 1
 }
 
-avd_spec_for_name() {
-  local wanted_avd="$1"
-  local spec spec_avd system_image device_profile extra
-  IFS=',' read -r -a configured_avd_specs <<< "$emulator_avd_specs"
-  for spec in "${configured_avd_specs[@]}"; do
-    IFS='|' read -r spec_avd system_image device_profile extra <<< "$spec"
-    if [[ "$spec_avd" == "$wanted_avd" && -n "$system_image" && -n "$device_profile" && -z "${extra:-}" ]]; then
-      printf '%s\t%s\n' "$system_image" "$device_profile"
-      return 0
-    fi
-  done
-  return 1
-}
-
-ensure_avd_installed() {
-  local avd="$1"
-  local avd_spec system_image device_profile image_dir
-  if "$emulator_bin" -list-avds | grep -Fqx "$avd"; then
-    return 0
-  fi
-  if ! avd_spec="$(avd_spec_for_name "$avd")"; then
-    echo "Configured AVD is not installed and has no provisioning spec: avd=$avd" >&2
-    return 1
-  fi
-  IFS=$'\t' read -r system_image device_profile <<< "$avd_spec"
-  image_dir="$android_sdk_root/${system_image//;/\/}"
-  if [[ ! -d "$image_dir" ]]; then
-    echo "Configured AVD system image is not installed: avd=$avd image=$system_image" >&2
-    return 1
-  fi
-  if [[ ! -x "$avdmanager_bin" ]]; then
-    echo "Android avdmanager missing: $avdmanager_bin" >&2
-    return 1
-  fi
-  echo "[emulator] create-avd avd=$avd image=$system_image device=$device_profile"
-  printf 'no\n' | "$avdmanager_bin" create avd \
-    --name "$avd" \
-    --package "$system_image" \
-    --device "$device_profile"
-  if ! "$emulator_bin" -list-avds | grep -Fqx "$avd"; then
-    echo "AVD provisioning completed without the configured AVD: avd=$avd" >&2
-    return 1
-  fi
-}
-
 device_state() {
   local serial="$1"
   local devices
@@ -2160,7 +2173,8 @@ ensure_emulator() {
     echo "No managed AVD mapping exists for $serial in the canonical emulator topology." >&2
     return 1
   fi
-  if ! ensure_avd_installed "$avd"; then
+  if ! ensure_avd_installed \
+    "$avd" "$emulator_bin" "$avdmanager_bin" "$android_sdk_root"; then
     echo "Configured AVD is unavailable: serial=$serial avd=$avd" >&2
     return 1
   fi

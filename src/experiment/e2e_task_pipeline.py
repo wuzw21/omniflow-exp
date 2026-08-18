@@ -249,7 +249,7 @@ def ensure_source_device(
     log_path = attempt_root / "preflight" / "source_emulator.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_file = log_path.open("x", encoding="utf-8")
-    subprocess.Popen(
+    emulator_process = subprocess.Popen(
         [
             str(args.emulator_bin),
             "-avd",
@@ -279,6 +279,10 @@ def ensure_source_device(
     while time.monotonic() < boot_deadline:
         if _source_device_ready(args):
             break
+        poll = getattr(emulator_process, "poll", None)
+        returncode = poll() if callable(poll) else None
+        if returncode is not None:
+            raise RuntimeError(f"source_emulator_exited:{returncode}")
         time.sleep(1)
     else:
         raise RuntimeError(f"source_emulator_not_ready:{source_serial}")

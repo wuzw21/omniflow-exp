@@ -676,6 +676,61 @@ def test_default_android_sdk_root_prefers_macos_standard_path(tmp_path: Path) ->
     assert completed.stdout.strip() == str(macos_sdk)
 
 
+def test_missing_protocol_avd_is_provisioned_by_shared_helper(
+    tmp_path: Path,
+) -> None:
+    script_prefix = tmp_path / "script-prefix.sh"
+    script_prefix.write_text(
+        SCRIPT.read_text(encoding="utf-8").split("\ndry_run=0\n", maxsplit=1)[0]
+        + "\ndry_run=0\n",
+        encoding="utf-8",
+    )
+    marker = tmp_path / "created"
+    emulator = tmp_path / "emulator"
+    emulator.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = '-list-avds' ] && [ -f \"$MARKER\" ]; then\n"
+        "  printf '%s\\n' OmniFlowSourceSmall\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    emulator.chmod(0o755)
+    avdmanager = tmp_path / "avdmanager"
+    avdmanager.write_text("#!/bin/sh\ntouch \"$MARKER\"\n", encoding="utf-8")
+    avdmanager.chmod(0o755)
+    sdk = tmp_path / "sdk"
+    for abi in ("arm64-v8a", "x86_64"):
+        (sdk / "system-images" / "android-33" / "google_apis" / abi).mkdir(
+            parents=True
+        )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "source \"$SCRIPT_PREFIX\"; "
+            "ensure_avd_installed OmniFlowSourceSmall "
+            "\"$TEST_EMULATOR\" \"$TEST_AVDMANAGER\" \"$TEST_SDK\"",
+        ],
+        cwd=REPO,
+        env={
+            **os.environ,
+            "PYTHON_BIN": sys.executable,
+            "SCRIPT_PREFIX": str(script_prefix),
+            "TEST_EMULATOR": str(emulator),
+            "TEST_AVDMANAGER": str(avdmanager),
+            "TEST_SDK": str(sdk),
+            "MARKER": str(marker),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert marker.exists()
+
+
 def test_default_topology_uses_three_distinct_device_instances(
     tmp_path: Path,
 ) -> None:

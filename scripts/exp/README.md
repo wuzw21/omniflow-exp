@@ -23,6 +23,8 @@ new capture runs at source seed 111, records screenshots, makes zero model
 calls, and must pass the official validator before it is reported as collected.
 Its isolated source AVD uses the canonical API-33 `small_phone` profile so the
 recorded 720x1280 action contract is replayed at its original geometry.
+The shell provisions the configured source AVD before handing control to the
+pipeline; an emulator process that exits during boot is an immediate failure.
 
 Both B-MoCA methods use the same Function/checker/OmniTransfer executor. `ours`
 uses the Planner to select a Function; `script_replay` directly selects the

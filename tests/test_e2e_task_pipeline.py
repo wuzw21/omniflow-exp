@@ -601,6 +601,46 @@ def test_source_device_is_cold_restarted_when_already_ready(
     assert str(args.android_world_root) in preflight_environments[0]["PYTHONPATH"]
 
 
+def test_source_device_reports_emulator_process_exit_immediately(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.source_avd = "MissingSourceAvd"
+    args.emulator_bin = tmp_path / "emulator"
+    args.emulator_gpu = "swiftshader_indirect"
+
+    class FailedProcess:
+        pid = 42
+
+        def poll(self) -> int:
+            return 2
+
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._adb_output",
+        lambda *_args: "",
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline._source_device_ready",
+        lambda _args: False,
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.subprocess.Popen",
+        lambda *_args, **_kwargs: FailedProcess(),
+    )
+    monkeypatch.setattr(
+        "src.experiment.e2e_task_pipeline.time.sleep",
+        lambda _seconds: None,
+    )
+
+    with pytest.raises(RuntimeError, match="source_emulator_exited:2"):
+        ensure_source_device(
+            args=args,
+            attempt_root=tmp_path / "attempt",
+            deadline=Deadline(1),
+        )
+
+
 def test_target_workers_parallelize_devices_and_serialize_methods(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

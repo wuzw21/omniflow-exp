@@ -23,6 +23,8 @@ For GLM-5.1, `model.env` contains only `LLMTHU_API_KEY`; the endpoint URL comes
 from that canonical protocol and is exported internally.
 The isolated source AVD uses the API-33 `small_phone` profile matching the
 retained 720x1280 source trajectories; target AVDs remain separate instances.
+The launcher provisions a missing configured source AVD before E2E dispatch and
+fails immediately if its emulator process exits during boot.
 
 Run a task-major slice:
 
