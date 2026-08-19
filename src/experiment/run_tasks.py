@@ -143,6 +143,15 @@ def _usage_from_result(row: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def _perform_androidworld_emulator_setup() -> bool:
+    return (
+        str(os.environ.get("OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP", "1"))
+        .strip()
+        .lower()
+        not in {"0", "false", "no", "off"}
+    )
+
+
 def _usage_accounting_status(row: dict[str, Any]) -> str:
     return "tracked" if row else "unavailable"
 
@@ -684,7 +693,7 @@ def collect_replayed_source(
         timeout_sec=int(TASK_DEADLINE_SEC),
         task_random_seed=SOURCE_SEED,
         task_params_override=dict(source_run_log["task_parameters"]),
-        perform_emulator_setup=True,
+        perform_emulator_setup=_perform_androidworld_emulator_setup(),
         python_executable=str(args.python_bin),
         repo_root=args.repo,
     )
@@ -951,7 +960,7 @@ def qualify_source_function(
         task_random_seed=SOURCE_SEED,
         fixed_task_seed=True,
         fixed_task_params=True,
-        perform_emulator_setup=True,
+        perform_emulator_setup=_perform_androidworld_emulator_setup(),
         store_path=store_path,
         omnitransfer_root=args.omnitransfer_root,
         function_id=str(source_call["function_id"]),
