@@ -41,6 +41,7 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_SOURCE_METHOD,
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
 )
+from src.experiment.process_runner import run_process
 from src.experiment.protocol import (
     ANDROIDWORLD_REVISION,
     DEFAULT_DEVICE,
@@ -3071,34 +3072,17 @@ def build_mobilegpt_command(
 
 def run_command(spec: CommandSpec, *, dry_run: bool = False) -> int:
     print(f"[{spec.label}] {_command_line(spec)}", flush=True)
-    started = time.monotonic()
     if dry_run:
         spec.metadata["wall_sec"] = 0.0
         return 0
-    process = subprocess.Popen(
+    result = run_process(
         spec.argv,
         cwd=spec.cwd,
-        env=_subprocess_env(spec.env),
-        start_new_session=True,
+        environment=_subprocess_env(spec.env),
+        timeout_sec=spec.timeout_sec,
     )
-    try:
-        process.communicate(timeout=spec.timeout_sec)
-        spec.metadata["wall_sec"] = round(time.monotonic() - started, 3)
-        return int(process.returncode or 0)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait(timeout=5)
-        spec.metadata["wall_sec"] = round(time.monotonic() - started, 3)
+    spec.metadata["wall_sec"] = round(float(result["wall_sec"]), 3)
+    if result["timed_out"]:
         spec.metadata["timeout_sec"] = float(spec.timeout_sec or 0)
         spec.metadata["timed_out"] = True
         print(
@@ -3106,20 +3090,7 @@ def run_command(spec: CommandSpec, *, dry_run: bool = False) -> int:
             flush=True,
         )
         return 124
-    except BaseException:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait(timeout=5)
-        raise
+    return int(result["returncode"])
 
 
 def _iter_jsonl_rows(path: Path) -> Iterable[dict[str, Any]]:

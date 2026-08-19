@@ -11,7 +11,6 @@ import json
 import os
 from pathlib import Path
 import re
-import signal
 import subprocess
 import threading
 import time
@@ -25,16 +24,17 @@ from src.experiment.androidworld import (
     build_e2e_command,
     build_fixed_replay_command,
 )
-from src.experiment.batch_outcomes import (
-    concluded_result_keys,
-    record_result_outcome,
-    summarize_results,
-)
 from src.experiment.artifact_index import (
     canonical_mobilegpt_memory_from_memory,
     load_artifact_index,
     registered_result_plan_from_memory,
 )
+from src.experiment.batch_outcomes import (
+    concluded_result_keys,
+    record_result_outcome,
+    summarize_results,
+)
+from src.experiment.process_runner import run_process
 from src.experiment.protocol import (
     BMOCA_RESULT_TIMEOUT_SEC,
     DEVICES,
@@ -121,59 +121,16 @@ def run_logged_command(
     log_path: Path,
     timeout_sec: float,
 ) -> dict[str, Any]:
-    """Run one child in its own process group and preserve its complete log."""
+    """Run one child through the shared experiment process lifecycle."""
 
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    if timeout_sec <= 0:
-        log_path.write_text(
-            "global task deadline exceeded before launch\n",
-            encoding="utf-8",
-        )
-        return {
-            "command": list(command),
-            "returncode": 124,
-            "timed_out": True,
-            "wall_sec": 0.0,
-            "log_path": str(log_path),
-        }
-    started = time.monotonic()
-    started_at = dt.datetime.now(dt.timezone.utc).isoformat()
-    timed_out = False
-    with log_path.open("x", encoding="utf-8") as log_file:
-        process = subprocess.Popen(
-            list(command),
-            cwd=cwd,
-            env=environment,
-            stdin=subprocess.DEVNULL,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            text=True,
-            start_new_session=True,
-        )
-        try:
-            returncode = process.wait(timeout=max(0.1, float(timeout_sec)))
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-                process.wait(timeout=10)
-            except (ProcessLookupError, subprocess.TimeoutExpired):
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait()
-            returncode = 124
-    return {
-        "command": list(command),
-        "returncode": int(returncode),
-        "timed_out": timed_out,
-        "wall_sec": round(time.monotonic() - started, 6),
-        "log_path": str(log_path),
-        "process_pid": int(process.pid),
-        "started_at": started_at,
-        "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-    }
+    return run_process(
+        command,
+        cwd=cwd,
+        environment=environment,
+        log_path=log_path,
+        stdin_devnull=True,
+        timeout_sec=timeout_sec,
+    )
 
 
 def _usage_from_result(row: dict[str, Any]) -> dict[str, int]:
