@@ -12,10 +12,10 @@ import pytest
 from runlog_fixtures import androidworld_run_log
 
 from omniflow.functions.assets import function_authoring_tool
-from src.experiment.androidworld import build_e2e_command
+from src.experiment.run_task import build_task_command
 from src.experiment.source_records import CanonicalRunLog
 from src.experiment.batch_outcomes import record_result_outcome
-from src.experiment.e2e_task_pipeline import (
+from src.experiment.run_tasks import (
     Deadline,
     PipelinePhaseError,
     _bmoca_source_replay_qualified,
@@ -97,7 +97,7 @@ def test_e2e_command_exposes_direct_function_without_planner_or_second_runner(
         meta={},
     )
 
-    spec = build_e2e_command(
+    spec = build_task_command(
         item,
         android_world_root=tmp_path / "android-world",
         output_root=tmp_path / "data",
@@ -135,7 +135,7 @@ def test_e2e_command_rejects_direct_function_for_non_omniflow_agent(
     )
 
     with pytest.raises(ValueError, match="direct_function_requires_omniflow_agent"):
-        build_e2e_command(
+        build_task_command(
             item,
             agent_name="official:t3a_gpt4",
             function_id="complete_task",
@@ -149,11 +149,11 @@ def test_dry_run_has_fixed_task_method_device_schedule(
     args = _args(tmp_path)
     args.dry_run = True
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.load_data_index",
+        "src.experiment.run_tasks.load_data_index",
         lambda _: {"canonical": {"source_run_logs": {}, "function_stores": {}}},
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.registered_result_plan_from_memory",
+        "src.experiment.run_tasks.registered_result_plan_from_memory",
         lambda **_: {
             "completed": [],
             "pending": [
@@ -208,11 +208,11 @@ def test_mobilegpt_preparation_is_an_internal_pipeline_phase(
         return {"returncode": 0, "timed_out": False, "wall_sec": 0.1}
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.canonical_prepared_memory_from_index",
+        "src.experiment.run_tasks.canonical_prepared_memory_from_index",
         canonical,
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.run_logged_command",
+        "src.experiment.run_tasks.run_logged_command",
         run,
     )
 
@@ -377,29 +377,29 @@ def test_bmoca_pipeline_stops_task_after_failed_omniflow_source_gate(
     calls: list[tuple[str, tuple[str, ...]]] = []
     cloned: list[str] = []
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._bmoca_manifest_tasks",
+        "src.experiment.run_tasks._bmoca_manifest_tasks",
         lambda *_: ([task], {task: source}),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._bmoca_avd_names",
+        "src.experiment.run_tasks._bmoca_avd_names",
         lambda *_: {str(value): f"env{value}" for value in range(100, 110)},
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._clone_bmoca_avd_home",
+        "src.experiment.run_tasks._clone_bmoca_avd_home",
         lambda **kwargs: cloned.append(kwargs["avd_name"])
         or kwargs["target_home"],
     )
     store = tmp_path / "store.json"
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._save_bmoca_function_once",
+        "src.experiment.run_tasks._save_bmoca_function_once",
         lambda **_: (store, {"enhanced": True}),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._prepare_bmoca_mobilegpt_memory",
+        "src.experiment.run_tasks._prepare_bmoca_mobilegpt_memory",
         lambda **_: (tmp_path / "mobilegpt", {"status": "prepared"}),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._prepare_bmoca_skilldroid_memory",
+        "src.experiment.run_tasks._prepare_bmoca_skilldroid_memory",
         lambda **_: (tmp_path / "skilldroid.json", {"status": "prepared"}),
     )
 
@@ -439,7 +439,7 @@ def test_bmoca_pipeline_stops_task_after_failed_omniflow_source_gate(
         ]
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._run_bmoca_method_results",
+        "src.experiment.run_tasks._run_bmoca_method_results",
         run_results,
     )
     summary = run_bmoca_pipeline(
@@ -471,15 +471,15 @@ def test_bmoca_pipeline_does_not_clone_avds_before_enhancement_succeeds(
     source.write_text("{}", encoding="utf-8")
     cloned: list[str] = []
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._bmoca_manifest_tasks",
+        "src.experiment.run_tasks._bmoca_manifest_tasks",
         lambda *_: ([task], {task: source}),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._bmoca_avd_names",
+        "src.experiment.run_tasks._bmoca_avd_names",
         lambda *_: {str(value): f"env{value}" for value in range(100, 110)},
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._clone_bmoca_avd_home",
+        "src.experiment.run_tasks._clone_bmoca_avd_home",
         lambda **kwargs: cloned.append(kwargs["avd_name"]),
     )
 
@@ -487,7 +487,7 @@ def test_bmoca_pipeline_does_not_clone_avds_before_enhancement_succeeds(
         raise ValueError("invalid enhancement")
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._save_bmoca_function_once",
+        "src.experiment.run_tasks._save_bmoca_function_once",
         fail_enhancement,
     )
 
@@ -515,28 +515,28 @@ def test_bmoca_pipeline_runs_remaining_results_only_after_source_gate(
     calls: list[tuple[str, tuple[str, ...]]] = []
     cloned: list[str] = []
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._bmoca_manifest_tasks",
+        "src.experiment.run_tasks._bmoca_manifest_tasks",
         lambda *_: ([task], {task: source}),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._bmoca_avd_names",
+        "src.experiment.run_tasks._bmoca_avd_names",
         lambda *_: {str(value): f"env{value}" for value in range(100, 110)},
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._clone_bmoca_avd_home",
+        "src.experiment.run_tasks._clone_bmoca_avd_home",
         lambda **kwargs: cloned.append(kwargs["avd_name"])
         or kwargs["target_home"],
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._save_bmoca_function_once",
+        "src.experiment.run_tasks._save_bmoca_function_once",
         lambda **_: (tmp_path / "store.json", {"enhanced": True}),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._prepare_bmoca_mobilegpt_memory",
+        "src.experiment.run_tasks._prepare_bmoca_mobilegpt_memory",
         lambda **_: (tmp_path / "mobilegpt", {"status": "prepared"}),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._prepare_bmoca_skilldroid_memory",
+        "src.experiment.run_tasks._prepare_bmoca_skilldroid_memory",
         lambda **_: (tmp_path / "skilldroid.json", {"status": "prepared"}),
     )
 
@@ -561,7 +561,7 @@ def test_bmoca_pipeline_runs_remaining_results_only_after_source_gate(
         ]
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._run_bmoca_method_results",
+        "src.experiment.run_tasks._run_bmoca_method_results",
         run_results,
     )
     summary = run_bmoca_pipeline(
@@ -604,9 +604,9 @@ def test_bmoca_offline_enhancement_calls_only_canonical_save_once(
             "transfer_state_catalog": str(transfer),
         }
 
-    monkeypatch.setattr("src.experiment.e2e_task_pipeline.save_function", writer)
+    monkeypatch.setattr("src.experiment.run_tasks.save_function", writer)
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._function_enhancement_transport",
+        "src.experiment.run_tasks._function_enhancement_transport",
         lambda **_: (lambda _prompt, _tool: "{}"),
     )
     args = SimpleNamespace(formal_model="GLM-5.1")
@@ -641,11 +641,11 @@ def test_bmoca_enhancement_failure_preserves_stage_and_usage(
         return fail
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._function_enhancement_transport",
+        "src.experiment.run_tasks._function_enhancement_transport",
         transport,
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.save_function",
+        "src.experiment.run_tasks.save_function",
         lambda *_args, **kwargs: kwargs["complete_json"](
             "split prompt",
             function_authoring_tool(stage="split"),
@@ -718,7 +718,7 @@ def test_bmoca_enhancement_uses_the_shared_draft_edit_tool(
         return "key", "https://example.invalid/v1"
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.resolve_openai_compatible_config",
+        "src.experiment.run_tasks.resolve_openai_compatible_config",
         resolve_endpoint,
     )
     usage = {
@@ -801,7 +801,7 @@ def test_resolve_args_preserves_symlinked_virtualenv_python(
 def test_result_environment_uses_orchestrator_budget_and_child_guard(
     tmp_path: Path,
 ) -> None:
-    from src.experiment.e2e_task_pipeline import _result_environment
+    from src.experiment.run_tasks import _result_environment
 
     args = _args(tmp_path)
     args.max_steps = 7
@@ -845,7 +845,7 @@ def test_source_device_ready_requires_exact_avd_identity(
         return ""
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._adb_output",
+        "src.experiment.run_tasks._adb_output",
         adb_output,
     )
 
@@ -873,19 +873,19 @@ def test_source_device_is_cold_restarted_when_already_ready(
         return ""
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._adb_output",
+        "src.experiment.run_tasks._adb_output",
         adb_output,
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._source_device_ready",
+        "src.experiment.run_tasks._source_device_ready",
         lambda _args: True,
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._read_object",
+        "src.experiment.run_tasks._read_object",
         lambda _path: {"source_index": "source-index.json"},
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.run_logged_command",
+        "src.experiment.run_tasks.run_logged_command",
         lambda command, **kwargs: (
             preflight_commands.append(command)
             or preflight_environments.append(kwargs["environment"])
@@ -893,11 +893,11 @@ def test_source_device_is_cold_restarted_when_already_ready(
         ),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.subprocess.Popen",
+        "src.experiment.run_tasks.subprocess.Popen",
         lambda *_args, **_kwargs: object(),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.time.sleep",
+        "src.experiment.run_tasks.time.sleep",
         lambda _seconds: None,
     )
 
@@ -933,19 +933,19 @@ def test_source_device_reports_emulator_process_exit_immediately(
             return 2
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._adb_output",
+        "src.experiment.run_tasks._adb_output",
         lambda *_args: "",
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._source_device_ready",
+        "src.experiment.run_tasks._source_device_ready",
         lambda _args: False,
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.subprocess.Popen",
+        "src.experiment.run_tasks.subprocess.Popen",
         lambda *_args, **_kwargs: FailedProcess(),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.time.sleep",
+        "src.experiment.run_tasks.time.sleep",
         lambda _seconds: None,
     )
 
@@ -965,15 +965,15 @@ def test_target_workers_parallelize_devices_and_serialize_methods(
     calls: list[tuple[str, str, float, float]] = []
     completed: set[tuple[str, str]] = set()
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._concluded_results",
+        "src.experiment.run_tasks._concluded_results",
         lambda *_: set(completed),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.concluded_result_keys",
+        "src.experiment.run_tasks.concluded_result_keys",
         lambda **_: set(),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.record_result_outcome",
+        "src.experiment.run_tasks.record_result_outcome",
         lambda **_: tmp_path / "outcome.json",
     )
 
@@ -1020,15 +1020,15 @@ def test_target_workers_fail_stop_after_pending_environment_failure(
     calls: list[tuple[str, str]] = []
     recorded: list[dict[str, object]] = []
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._concluded_results",
+        "src.experiment.run_tasks._concluded_results",
         lambda *_: set(),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.concluded_result_keys",
+        "src.experiment.run_tasks.concluded_result_keys",
         lambda **_: set(),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.record_result_outcome",
+        "src.experiment.run_tasks.record_result_outcome",
         lambda **kwargs: recorded.append(kwargs) or tmp_path / "outcome.json",
     )
 
@@ -1071,15 +1071,15 @@ def test_blocked_cells_do_not_duplicate_shared_prep_accounting(
     recorded: list[dict[str, object]] = []
     completed: set[tuple[str, str]] = set()
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._concluded_results",
+        "src.experiment.run_tasks._concluded_results",
         lambda *_: set(completed),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.concluded_result_keys",
+        "src.experiment.run_tasks.concluded_result_keys",
         lambda **_: set(),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.record_result_outcome",
+        "src.experiment.run_tasks.record_result_outcome",
         lambda **kwargs: recorded.append(kwargs) or tmp_path / "outcome.json",
     )
 
@@ -1228,7 +1228,7 @@ def test_collect_replayed_source_uses_fixed_replay_and_captures_screenshots(
         }
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.run_logged_command",
+        "src.experiment.run_tasks.run_logged_command",
         runner,
     )
     captured_path, captured, phase = collect_replayed_source(
@@ -1306,7 +1306,7 @@ def test_collect_replayed_source_rejects_model_calls(
         }
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.run_logged_command",
+        "src.experiment.run_tasks.run_logged_command",
         runner,
     )
 
@@ -1329,7 +1329,7 @@ def test_pipeline_does_not_collect_missing_canonical_source(
 ) -> None:
     args = _args(tmp_path)
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.ensure_source_device",
+        "src.experiment.run_tasks.ensure_source_device",
         lambda **_: {"status": "ready", "model_calls": 0, "total_tokens": 0},
     )
     collected = False
@@ -1340,15 +1340,15 @@ def test_pipeline_does_not_collect_missing_canonical_source(
         raise AssertionError("formal orchestration must not collect source data")
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.collect_replayed_source",
+        "src.experiment.run_tasks.collect_replayed_source",
         collect,
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._blocked_all",
+        "src.experiment.run_tasks._blocked_all",
         lambda **_: None,
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._report",
+        "src.experiment.run_tasks._report",
         lambda **kwargs: kwargs["phases"],
     )
 
@@ -1368,15 +1368,15 @@ def test_source_only_pipeline_collects_replayed_source_and_stops(
     args.source_only = True
     source_path = tmp_path / "source.run_log.json"
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.ensure_source_device",
+        "src.experiment.run_tasks.ensure_source_device",
         lambda **_: {"status": "ready", "model_calls": 0, "total_tokens": 0},
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._canonical_source",
+        "src.experiment.run_tasks._canonical_source",
         lambda *_, **__: ({}, source_path, {"task_name": args.task}),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.collect_replayed_source",
+        "src.experiment.run_tasks.collect_replayed_source",
         lambda **_: (
             source_path,
             {"task_name": args.task},
@@ -1389,7 +1389,7 @@ def test_source_only_pipeline_collects_replayed_source_and_stops(
         ),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.prepare_function_asset",
+        "src.experiment.run_tasks.prepare_function_asset",
         lambda **_: (_ for _ in ()).throw(
             AssertionError("source-only collection must not prepare Functions")
         ),
@@ -1414,7 +1414,7 @@ def test_source_mode_success_returns_zero_exit_status(
     source_qualification_only: bool,
     report_status: str,
 ) -> None:
-    from src.experiment import e2e_task_pipeline
+    from src.experiment import run_tasks
 
     args = SimpleNamespace(
         environment="androidworld",
@@ -1423,18 +1423,18 @@ def test_source_mode_success_returns_zero_exit_status(
         source_qualification_only=source_qualification_only,
     )
     monkeypatch.setattr(
-        e2e_task_pipeline,
+        run_tasks,
         "build_parser",
         lambda: SimpleNamespace(parse_args=lambda _argv: args),
     )
-    monkeypatch.setattr(e2e_task_pipeline, "_resolve_args", lambda value: value)
+    monkeypatch.setattr(run_tasks, "_resolve_args", lambda value: value)
     monkeypatch.setattr(
-        e2e_task_pipeline,
+        run_tasks,
         "run_pipeline",
         lambda _args: {"status": report_status},
     )
 
-    assert e2e_task_pipeline.main([]) == 0
+    assert run_tasks.main([]) == 0
 
 
 def test_pipeline_blocks_only_function_when_canonical_store_is_missing(
@@ -1444,15 +1444,15 @@ def test_pipeline_blocks_only_function_when_canonical_store_is_missing(
     args = _args(tmp_path)
     source_path = tmp_path / "source.json"
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.ensure_source_device",
+        "src.experiment.run_tasks.ensure_source_device",
         lambda **_: {"status": "ready", "model_calls": 0, "total_tokens": 0},
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._canonical_source",
+        "src.experiment.run_tasks._canonical_source",
         lambda *_, **__: ({}, source_path, {}),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.prepare_function_asset",
+        "src.experiment.run_tasks.prepare_function_asset",
         lambda **_: (_ for _ in ()).throw(RuntimeError("function failed")),
     )
     mobilegpt_called = False
@@ -1463,23 +1463,23 @@ def test_pipeline_blocks_only_function_when_canonical_store_is_missing(
         return tmp_path / "mobilegpt", {"status": "reused"}
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.prepare_mobilegpt_memory",
+        "src.experiment.run_tasks.prepare_mobilegpt_memory",
         prepare_mobilegpt,
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.prepare_appagent_memory",
+        "src.experiment.run_tasks.prepare_appagent_memory",
         lambda **_: (tmp_path / "appagent", {"status": "reused"}),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.run_target_workers",
+        "src.experiment.run_tasks.run_target_workers",
         lambda **_: [],
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._report",
+        "src.experiment.run_tasks._report",
         lambda **kwargs: kwargs["phases"],
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._blocked_all",
+        "src.experiment.run_tasks._blocked_all",
         lambda **_: None,
     )
 
@@ -1503,15 +1503,15 @@ def test_pipeline_qualifies_one_source_function_before_target_workers(
     source_call = {"function_id": "create_note", "arguments": {"name": "note"}}
     events: list[str] = []
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.ensure_source_device",
+        "src.experiment.run_tasks.ensure_source_device",
         lambda **_: {"status": "ready", "model_calls": 0, "total_tokens": 0},
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._canonical_source",
+        "src.experiment.run_tasks._canonical_source",
         lambda *_: ({}, source_path, {"task_parameters": {}}),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.prepare_function_asset",
+        "src.experiment.run_tasks.prepare_function_asset",
         lambda **_: (
             {"store_path": str(store_path)},
             {
@@ -1534,15 +1534,15 @@ def test_pipeline_qualifies_one_source_function_before_target_workers(
         }
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.qualify_source_function",
+        "src.experiment.run_tasks.qualify_source_function",
         qualify,
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.prepare_mobilegpt_memory",
+        "src.experiment.run_tasks.prepare_mobilegpt_memory",
         lambda **_: (tmp_path / "mobilegpt", {"status": "reused"}),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.prepare_appagent_memory",
+        "src.experiment.run_tasks.prepare_appagent_memory",
         lambda **_: (tmp_path / "appagent", {"status": "reused"}),
     )
 
@@ -1552,11 +1552,11 @@ def test_pipeline_qualifies_one_source_function_before_target_workers(
         return []
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.run_target_workers",
+        "src.experiment.run_tasks.run_target_workers",
         workers,
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._report",
+        "src.experiment.run_tasks._report",
         lambda **kwargs: kwargs["phases"],
     )
 
@@ -1577,15 +1577,15 @@ def test_source_qualification_only_stops_before_baselines_and_targets(
     store_path = tmp_path / "store.json"
     store_path.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.ensure_source_device",
+        "src.experiment.run_tasks.ensure_source_device",
         lambda **_: {"status": "ready", "model_calls": 0, "total_tokens": 0},
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._canonical_source",
+        "src.experiment.run_tasks._canonical_source",
         lambda *_: ({}, source_path, {"task_parameters": {}}),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.prepare_function_asset",
+        "src.experiment.run_tasks.prepare_function_asset",
         lambda **_: (
             {"store_path": str(store_path)},
             {
@@ -1599,7 +1599,7 @@ def test_source_qualification_only_stops_before_baselines_and_targets(
         ),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.qualify_source_function",
+        "src.experiment.run_tasks.qualify_source_function",
         lambda **_: {
             "status": "qualified",
             "qualified": True,
@@ -1608,19 +1608,19 @@ def test_source_qualification_only_stops_before_baselines_and_targets(
         },
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.prepare_mobilegpt_memory",
+        "src.experiment.run_tasks.prepare_mobilegpt_memory",
         lambda **_: (_ for _ in ()).throw(AssertionError("baseline prepared")),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.prepare_appagent_memory",
+        "src.experiment.run_tasks.prepare_appagent_memory",
         lambda **_: (_ for _ in ()).throw(AssertionError("baseline prepared")),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.run_target_workers",
+        "src.experiment.run_tasks.run_target_workers",
         lambda **_: (_ for _ in ()).throw(AssertionError("targets started")),
     )
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline._report",
+        "src.experiment.run_tasks._report",
         lambda **kwargs: kwargs["phases"],
     )
 
@@ -1675,7 +1675,7 @@ def test_source_function_qualification_requires_zero_model_and_fallback(
         }
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.run_logged_command",
+        "src.experiment.run_tasks.run_logged_command",
         runner,
     )
     result = qualify_source_function(
@@ -1737,7 +1737,7 @@ def test_source_function_qualification_does_not_require_whole_task_validator(
         }
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.run_logged_command",
+        "src.experiment.run_tasks.run_logged_command",
         runner,
     )
     result = qualify_source_function(
@@ -1800,7 +1800,7 @@ def test_source_function_qualification_uses_one_complete_function(
         }
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.run_logged_command",
+        "src.experiment.run_tasks.run_logged_command",
         runner,
     )
     source_call = {"function_id": "create_note", "arguments": {"name": "note"}}
@@ -1867,7 +1867,7 @@ def test_source_qualification_requires_official_validator(
         }
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.run_logged_command",
+        "src.experiment.run_tasks.run_logged_command",
         runner,
     )
     result = qualify_source_function(

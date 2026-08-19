@@ -9,7 +9,7 @@ from src.experiment.batch_outcomes import (
     summarize_results,
 )
 from src.experiment.mobilegpt_contract import MOBILEGPT_SOURCE_METHOD
-from src.integrations.android_world.launch import _summarize_task_results
+from src.integrations.android_world.run_episode import _summarize_task_results
 
 
 def test_record_prep_failure_preserves_reason_tokens_and_time(tmp_path: Path) -> None:

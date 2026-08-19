@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from PIL import Image
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from src.experiment.androidworld import (
+from src.experiment.run_task import (
     aggregate_task_results,
     write_metrics_summary,
 )

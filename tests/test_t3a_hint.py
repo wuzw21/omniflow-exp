@@ -5,17 +5,17 @@ from runlog_fixtures import write_function_store
 
 from omniflow.core.model import Action, Function, FunctionStep
 from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION
-from src.experiment.androidworld import (
+from src.experiment.run_task import (
     _promote_result_metadata_to_row,
     _select_complete_function,
     _t3a_hint_action_identity,
     _t3a_hint_step_action,
     _t3a_semantic_hint_step,
-    build_official_androidworld_command,
+    build_official_command,
 )
 from src.experiment.source_records import CanonicalRunLog
 from src.experiment.protocol import METHODS
-from src.integrations.android_world.launch import _render_official_reference_prompt
+from src.integrations.android_world.run_episode import _render_official_reference_prompt
 
 
 def test_formal_result_method_set_is_exact() -> None:
@@ -378,7 +378,7 @@ def test_t3a_hint_uses_official_t3a_with_source_trace(tmp_path: Path) -> None:
         meta={},
     )
 
-    spec = build_official_androidworld_command(
+    spec = build_official_command(
         item,
         android_world_root=tmp_path / "android_world",
         output_root=tmp_path / "results",

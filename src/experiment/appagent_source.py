@@ -50,6 +50,28 @@ def _appagent_observation_xml(observation: dict[str, Any]) -> str:
     return androidworld_observation_xml(observation)
 
 
+_APPAGENT_AUXILIARY_PACKAGE_PREFIXES = (
+    "com.google.android.inputmethod.",
+)
+
+
+def _appagent_demo_package(
+    observation: dict[str, Any],
+    source_package: str,
+) -> str:
+    """Treat the active IME as an auxiliary window of the source app."""
+
+    package = androidworld_observation_package(observation)
+    if (
+        source_package
+        and package
+        and package != source_package
+        and package.startswith(_APPAGENT_AUXILIARY_PACKAGE_PREFIXES)
+    ):
+        return source_package
+    return package
+
+
 def _appagent_source_method_label(item: CanonicalRunLog) -> str:
     return str(item.meta.get("method") or "").strip() or DEFAULT_METHOD
 
@@ -68,6 +90,7 @@ def _write_runtime_config(
     endpoint: str,
     model: str,
     timeout_sec: float,
+    max_tokens: int = 1024,
 ) -> None:
     try:
         import yaml
@@ -79,7 +102,10 @@ def _write_runtime_config(
         "OPENAI_API_BASE": endpoint,
         "OPENAI_API_KEY": api_key,
         "OPENAI_API_MODEL": model,
-        "MAX_TOKENS": 300,
+        # GLM-4.6V may spend part of a short completion budget on visual
+        # reasoning before emitting the AppAgent action description.  The
+        # official generator reads this value from its temporary config.
+        "MAX_TOKENS": int(max_tokens),
         "TEMPERATURE": 0.0,
         "REQUEST_INTERVAL": 0.0,
         "DASHSCOPE_API_KEY": "",
@@ -104,7 +130,7 @@ def run_official_document_generation(
     log_path: str | Path,
     usage_path: str | Path,
     model: str,
-    timeout_sec: float = 60.0,
+    timeout_sec: float = 180.0,
 ) -> dict[str, Any]:
     """Run the pinned official generator once and record exact API usage."""
 
@@ -148,6 +174,7 @@ def run_official_document_generation(
             endpoint=endpoint,
             model=normalized_model,
             timeout_sec=float(timeout_sec),
+            max_tokens=1024,
         )
         previous_cwd = Path.cwd()
         previous_argv = list(sys.argv)
@@ -622,6 +649,14 @@ def convert_runlog_to_appagent_memory(
         source_run_log=source_path,
     )
     runtime = OfficialAppAgentRuntime(appagent_root)
+    source_package = next(
+        (
+            str(record["action"].get("params", {}).get("package_name") or "")
+            for record in teacher_source["actions"]
+            if str(record["action"].get("type") or "") == "open_app"
+        ),
+        "",
+    )
     packages = []
     for record in demo_records:
         observation = _appagent_source_observation(
@@ -629,7 +664,7 @@ def convert_runlog_to_appagent_memory(
             step_index=int(record["source_step_index"]),
             after=False,
         )
-        package_name = androidworld_observation_package(observation)
+        package_name = _appagent_demo_package(observation, source_package)
         if package_name and package_name not in packages:
             packages.append(package_name)
     if len(packages) > 1:

@@ -9,7 +9,7 @@ from PIL import Image
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from src.integrations.android_world.launch import (
+from src.integrations.android_world.run_episode import (
     _apply_fixed_replay,
     _fixed_replay_bind_action_parameters,
     _fixed_replay_goal_parameter_bindings,

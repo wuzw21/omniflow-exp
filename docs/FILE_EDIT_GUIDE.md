@@ -29,14 +29,14 @@
 | `omniflow/transfer/*.py` | B/C | 唯一 page encoder 和 transfer-state reader；只能使用 canonical checkpoint，禁止新增 encoder/lookup 旁路 |
 | `omniflow/bridge.py`, `omniflow/runlog.py`, `omniflow/vlm/context.py`, `omniflow/vlm_coordinates.py` | B | 对外 bridge、canonical RunLog 和 Planner evidence；适配必须回到现有合同 |
 | `omniflow/**/__init__.py`, `src/**/__init__.py` | A | 只维护稳定导出和包边界，不放调度、业务实现或隐式兼容层 |
-| `src/experiment/e2e_task_pipeline.py`, `androidworld.py`, `process_runner.py` | A | scheduler、一个原子结果、统一子进程生命周期；不得新增 runner 或重复 `Popen` policy |
+| `src/experiment/run_tasks.py`, `run_task.py`, `run_process.py` | A | scheduler、一个原子结果、统一子进程生命周期；不得新增 runner 或重复 `Popen` policy |
 | `src/experiment/paths.py` | A/B | 唯一 repository-relative、index-relative 和 safe artifact path 规则；外部 roots 仍必须显式传入 |
 | `src/experiment/data_index.py`, `checks.py`, `source_evidence.py`, `observation_evidence.py` | B | 唯一 `data/current.json`、source/设备 gate、证据转换；source 不负责 provider 分派；不得增加 index、snapshot 或 source pool |
 | `src/experiment/protocol.py`, `result_schema.py`, `result_registry.py`, `batch_outcomes.py` | B | 正式 protocol、public row、ledger、汇总；字段/版本/统计口径必须独立 commit |
 | `src/experiment/development_emulator.py`, `emulator_processes.py`, `performance_metrics.py` | A/B | 开发 preflight、进程诊断、opt-in 性能侧通道；不能写 formal result 或改变 public row |
 | `src/experiment/mobilegpt_contract.py`, `mobilegpt_source.py`, `appagent_source.py` | B | 外部 baseline 的 source/contract owner；适配可以改，不能把 baseline 变成 Function 或共用结果表 |
 | `src/integrations/android_world/agent.py`, `methods.py`, `host.py`, `environment.py`, `apps.py`, `state.py` | A/B | AndroidWorld native adapter；可重构实现，但必须复用 Host、官方 validator 和唯一 method registry |
-| `src/integrations/android_world/launch.py` | B | 唯一 native lifecycle；可修 setup/episode/evidence，但不能在这里增加 scheduler 或临时 executor |
+| `src/integrations/android_world/run_episode.py` | B | 唯一 native lifecycle；可修 setup/episode/evidence，但不能在这里增加 scheduler 或临时 executor |
 | `src/integrations/android_world/mobilegpt_agent.py`, `oob_control.py` | C/B | 外部/旧适配边界；只有对应外部合同或明确实验需求变化时才改，不能复制成新适配层 |
 | `src/integrations/bmoca.py`, `mobilegpt.py`, `mobilegpt_runtime.py`, `appagent.py` | B/C | 外部协议 adapter；只修映射和验证，不改 pinned upstream 语义，不引入第二 converter |
 | `src/integrations/runlog.py`, `script_replay.py`, `skilldroid_replay.py` | C/B | 历史/官方 replay 薄适配；不能加私有 mapper、坐标 passthrough 或第二 executor |
@@ -112,10 +112,10 @@ rg --files -g '*.py' | sort
 | `src/__init__.py` | 包标记 |
 | `src/experiment/__init__.py` | experiment 导出 |
 | `src/experiment/protocol.py` | `config/paper_androidworld.json` 的 typed view；不复制常量 |
-| `src/experiment/e2e_task_pipeline.py` | 唯一 task + method + device scheduler；旁路应作为这里的请求模式进入共同 launcher |
-| `src/experiment/androidworld.py` | 一个 AndroidWorld `task + method + device` 结果；不是第二 scheduler |
+| `src/experiment/run_tasks.py` | 唯一 task + method + device scheduler；旁路应作为这里的请求模式进入共同 launcher |
+| `src/experiment/run_task.py` | 一个 AndroidWorld `task + method + device` 结果；不是第二 scheduler |
 | `src/experiment/paths.py` | 唯一路径解析、artifact component 和文件 SHA-256 owner；调用方不要重新实现 `Path(...).resolve()`、`_safe_component` 或文件哈希 |
-| `src/experiment/process_runner.py` | 所有 experiment command 的子进程组、timeout、终止和 immutable log seam；不要复制 `Popen` 生命周期 |
+| `src/experiment/run_process.py` | 所有 experiment command 的子进程组、timeout、终止和 immutable log seam；不要复制 `Popen` 生命周期 |
 | `src/experiment/development_emulator.py` | 有界开发 emulator preflight |
 | `src/experiment/emulator_processes.py` | managed emulator 进程识别；诊断命令不写结果 |
 | `src/experiment/checks.py` | source、device、外部资产和 protocol gate；不生成 Store |
@@ -149,7 +149,7 @@ rg --files -g '*.py' | sort
 | `src/integrations/android_world/apps.py` | AndroidWorld app setup helper |
 | `src/integrations/android_world/environment.py` | official task environment/validator adapter |
 | `src/integrations/android_world/host.py` | native observe/act/reset Host |
-| `src/integrations/android_world/launch.py` | 唯一 native lifecycle/launcher；直跑 Function 只能复用此生命周期，不得 patch `agent.run` |
+| `src/integrations/android_world/run_episode.py` | 唯一 native lifecycle/launcher；直跑 Function 只能复用此生命周期，不得 patch `agent.run` |
 | `src/integrations/android_world/methods.py` | 五个正式方法的 adapter registry，以及 direct Function intent；不得增加第二个 executor |
 | `src/integrations/android_world/mobilegpt_agent.py` | MobileGPT episode adapter |
 | `src/integrations/android_world/oob_control.py` | 仅显式选择的 development/source/OOB transport adapter |
@@ -171,7 +171,7 @@ rg --files -g '*.py' | sort
 | `tests/test_runtime_*.py` | runtime/checker/transfer/fallback 合同 |
 | `tests/test_transfer_*.py` / `tests/test_visual_transfer_pipeline.py` | OmniTransfer candidate/page encoder 合同 |
 | `tests/test_androidworld_*.py` | AndroidWorld Host、environment、method 合同 |
-| `tests/test_e2e_task_pipeline.py` / `tests/test_exp_script.py` | 唯一 scheduler 和 public shell 合同 |
+| `tests/test_run_tasks.py` / `tests/test_exp_script.py` | 唯一 scheduler 和 public shell 合同 |
 | `tests/test_result_registry.py` / `tests/test_batch_outcomes.py` | ledger 与汇总分开验证 |
 | `tests/test_mobilegpt_*.py` / `tests/test_appagent_source.py` | 外部 baseline adapter 合同 |
 | `tests/test_script_replay.py` / `tests/test_skilldroid_replay.py` | replay adapter 合同，尤其验证无私有 mapper |

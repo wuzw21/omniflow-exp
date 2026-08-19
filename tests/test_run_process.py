@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.experiment.process_runner import run_process
+from src.experiment.run_process import run_process
 
 
 def test_run_process_preserves_logged_command_result(tmp_path: Path) -> None:

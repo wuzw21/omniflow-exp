@@ -17,7 +17,7 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_MEMORY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
 )
-from src.experiment import androidworld as pipeline
+from src.experiment import run_task as pipeline
 from src.experiment.paths import sha256_file
 from src.experiment.source_records import CanonicalRunLog
 from src.experiment.protocol import SOURCE_SEED

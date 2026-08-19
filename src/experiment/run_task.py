@@ -44,7 +44,7 @@ from src.experiment.paths import (
     safe_relative_path,
     sha256_file,
 )
-from src.experiment.process_runner import run_process
+from src.experiment.run_process import run_process
 from src.experiment.protocol import (
     ANDROIDWORLD_REVISION,
     DEFAULT_DEVICE,
@@ -986,7 +986,7 @@ def canonicalize_source_run_log(
     return canonical, materialization, profile, None
 
 
-def build_fixed_replay_command(
+def build_replay_command(
     item: CanonicalRunLog,
     *,
     android_world_root: str | Path = DEFAULT_ANDROID_WORLD_ROOT,
@@ -1063,7 +1063,7 @@ def build_fixed_replay_command(
     argv = [
         python_executable,
         "-m",
-        "src.integrations.android_world.launch",
+        "src.integrations.android_world.run_episode",
         "--android-world-root",
         str(_repo_path(android_world_root, repo_root=repo_root)),
         "--tasks",
@@ -1138,7 +1138,7 @@ def build_fixed_replay_command(
     )
 
 
-def build_official_androidworld_command(
+def build_official_command(
     item: CanonicalRunLog,
     *,
     android_world_root: str | Path = DEFAULT_ANDROID_WORLD_ROOT,
@@ -1189,7 +1189,7 @@ def build_official_androidworld_command(
     argv = [
         python_executable,
         "-m",
-        "src.integrations.android_world.launch",
+        "src.integrations.android_world.run_episode",
         "--android-world-root",
         str(_repo_path(android_world_root, repo_root=repo_root)),
         "--tasks",
@@ -1273,7 +1273,7 @@ def build_official_androidworld_command(
     )
 
 
-def build_e2e_command(
+def build_task_command(
     item: CanonicalRunLog,
     *,
     android_world_root: str | Path = DEFAULT_ANDROID_WORLD_ROOT,
@@ -1374,7 +1374,7 @@ def build_e2e_command(
     argv = [
         python_executable,
         "-m",
-        "src.integrations.android_world.launch",
+        "src.integrations.android_world.run_episode",
         "--android-world-root",
         str(_repo_path(android_world_root, repo_root=repo_root)),
         "--tasks",
@@ -4403,7 +4403,7 @@ def _print_result_summary(summary: dict[str, Any]) -> None:
         )
 
 
-def build_mobilegpt_androidworld_command(
+def build_mobilegpt_server_command(
     item: CanonicalRunLog,
     *,
     method_name: str,
@@ -4429,7 +4429,7 @@ def build_mobilegpt_androidworld_command(
     run_dir_suffix: str = "",
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
-    spec = build_e2e_command(
+    spec = build_task_command(
         item,
         android_world_root=android_world_root,
         output_root=output_root,
@@ -4491,7 +4491,7 @@ def build_mobilegpt_androidworld_command(
     )
 
 
-def build_appagent_androidworld_command(
+def build_appagent_command(
     item: CanonicalRunLog,
     *,
     method_name: str,
@@ -4522,7 +4522,7 @@ def build_appagent_androidworld_command(
     if not teacher_mode and docs_root is None:
         raise ValueError("appagent_native_memory_required")
     selector = "appagent"
-    spec = build_e2e_command(
+    spec = build_task_command(
         item,
         android_world_root=android_world_root,
         output_root=output_root,
@@ -4847,7 +4847,7 @@ def _run_result_mobilegpt(
                     expected_digest=str(frozen_memory.get("digest") or ""),
                     expected_file_count=int(frozen_memory.get("file_count") or 0),
                 )
-            server_spec = build_mobilegpt_command(
+            server_spec = build_mobilegpt_server_command(
                 "server",
                 mobilegpt_root=args.mobilegpt_root,
                 mobilegpt_memory_root=episode_memory_root,
@@ -4912,7 +4912,7 @@ def _run_result_mobilegpt(
                     if args.fail_fast:
                         break
                     continue
-                episode_spec = build_mobilegpt_androidworld_command(
+                episode_spec = build_mobilegpt_command(
                     item,
                     method_name=method,
                     target=target,
@@ -5047,7 +5047,7 @@ def _run_result_mobilegpt(
     return records, failed
 
 
-def cmd_result(args: argparse.Namespace) -> int:
+def run_task(args: argparse.Namespace) -> int:
     selected = _select_from_args(args)
     if len(selected) != 1:
         raise ValueError("result requires exactly one selected --task entry")
@@ -5303,7 +5303,7 @@ def cmd_result(args: argparse.Namespace) -> int:
             )
         for target in targets:
             if method == "fixed_replay":
-                spec = build_fixed_replay_command(
+                spec = build_replay_command(
                     item,
                     android_world_root=args.android_world_root,
                     output_root=output_root,
@@ -5323,7 +5323,7 @@ def cmd_result(args: argparse.Namespace) -> int:
                     model=args.model,
                 )
             elif method == "appagent":
-                spec = build_appagent_androidworld_command(
+                spec = build_appagent_command(
                     item,
                     method_name=method,
                     target=target,
@@ -5341,7 +5341,7 @@ def cmd_result(args: argparse.Namespace) -> int:
                     adb_path=args.adb_path,
                 )
             elif method == "t3a_hint":
-                spec = build_official_androidworld_command(
+                spec = build_official_command(
                     item,
                     android_world_root=args.android_world_root,
                     output_root=output_root,
@@ -5361,7 +5361,7 @@ def cmd_result(args: argparse.Namespace) -> int:
                     perform_emulator_setup=bool(args.perform_emulator_setup),
                 )
             else:
-                spec = build_e2e_command(
+                spec = build_task_command(
                     item,
                     android_world_root=args.android_world_root,
                     output_root=output_root,
@@ -5618,7 +5618,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     result_parser.add_argument("--dry-run", action="store_true")
     result_parser.add_argument("--fail-fast", action="store_true")
-    result_parser.set_defaults(func=cmd_result)
+    result_parser.set_defaults(func=run_task)
     return parser
 
 

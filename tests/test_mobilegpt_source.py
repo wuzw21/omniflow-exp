@@ -8,7 +8,7 @@ from PIL import Image
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from src.experiment import androidworld as pipeline
+from src.experiment import run_task as pipeline
 from src.experiment import mobilegpt_source
 from src.experiment.data_index import (
     canonical_prepared_memory_from_index,

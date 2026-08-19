@@ -31,5 +31,5 @@ AppAgent: src/experiment/appagent_source.py
 
 This is a change path, not a second execution path. The provider source owner
 prepares or validates memory; the common AndroidWorld chain consumes the
-result. Do not add provider selection to `androidworld.py` or create another
+result. Do not add provider selection to `run_task.py` or create another
 runner.

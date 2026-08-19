@@ -12,10 +12,10 @@ import xml.etree.ElementTree as ET
 
 from PIL import Image
 
-from src.experiment import androidworld as pipeline
+from src.experiment import run_task as pipeline
 from src.experiment.source_records import CanonicalRunLog
 from src.integrations import mobilegpt_memory
-from src.integrations.android_world.launch import (
+from src.integrations.android_world.run_episode import (
     _mobilegpt_runtime_integrity_error,
     _mobilegpt_runtime_integrity_exit_code,
 )
@@ -964,7 +964,7 @@ def test_mobilegpt_episode_command_declares_native_androidworld_io(
         meta={},
     )
 
-    spec = pipeline.build_mobilegpt_androidworld_command(
+    spec = pipeline.build_mobilegpt_server_command(
         item,
         method_name="mobilegpt",
         target=pipeline.DeviceTarget("fold5564", "emulator-5564", 5564),

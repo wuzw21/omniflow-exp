@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from omniflow import Action
-from src.integrations.android_world.launch import _run_bmoca_e2e, build_parser
+from src.integrations.android_world.run_episode import _run_bmoca_e2e, build_parser
 from src.integrations.bmoca import (
     BMocaHost,
     discover_bmoca_episodes,
@@ -208,7 +208,7 @@ def test_bmoca_cli_is_one_isolated_public_method_environment_result() -> None:
 
 
 def test_bmoca_single_result_runner_has_no_campaign_scheduler_or_retry() -> None:
-    launch = Path("src/integrations/android_world/launch.py").read_text(
+    launch = Path("src/integrations/android_world/run_episode.py").read_text(
         encoding="utf-8"
     )
 

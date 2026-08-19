@@ -177,7 +177,7 @@ def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:
     assert "from src.experiment.result_registry import registered_result_plan" not in script_text
     assert "--master-progress-root" not in script_text
     assert script_text.count("registered_result_plan_from_memory(") == 0
-    assert "-m src.experiment.e2e_task_pipeline" in script_text
+    assert "-m src.experiment.run_tasks" in script_text
     assert '(( e2e_task_deadline_sec > 1800 ))' in script_text
     native_preflight = script_text.split(
         'if [[ "$profile" == "androidworld_native" ]]; then',
@@ -365,7 +365,7 @@ def test_development_run_routes_through_the_only_script_without_repeated_setup(
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert "src.integrations.android_world.launch" in completed.stdout
+    assert "src.integrations.android_world.run_episode" in completed.stdout
     assert "ExpenseAddMultipleFromGallery" in completed.stdout
     assert "GLM-5.1" in completed.stdout
     assert "model_endpoint_profile=llmthu" in completed.stdout
@@ -538,13 +538,20 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
     memory_index = memory / "current.json"
     memory_index.write_text("{}", encoding="utf-8")
     env_file = assets / ".env"
-    env_file.write_text("LLMTHU_API_KEY=test-only\n", encoding="utf-8")
+    env_file.write_text(
+        "LLMTHU_API_KEY=test-only\nHTTPS_PROXY=socks5://127.0.0.1:9\n",
+        encoding="utf-8",
+    )
     capture = tmp_path / "invocation.txt"
+    capture_proxy = tmp_path / "proxy.txt"
     fake_python = tmp_path / "python"
     fake_python.write_text(
         "#!/bin/sh\n"
         "if [ \"${1:-}\" = \"-\" ]; then\n"
         "  exec \"$REAL_PYTHON\" \"$@\"\n"
+        "fi\n"
+        "if [ \"${1:-}\" = \"-m\" ]; then\n"
+        "  printf '%s|%s|%s|%s\\n' \"${ALL_PROXY-}\" \"${all_proxy-}\" \"${HTTPS_PROXY-}\" \"${https_proxy-}\" > \"$CAPTURE_PROXY\"\n"
         "fi\n"
         "printf '%s\\n' \"$@\" > \"$CAPTURE\"\n",
         encoding="utf-8",
@@ -569,6 +576,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
             **os.environ,
             "HOME": str(account_root),
             "CAPTURE": str(capture),
+            "CAPTURE_PROXY": str(capture_proxy),
             "REAL_PYTHON": sys.executable,
             "PYTHON_BIN": str(fake_python),
             "OMNIFLOW_EXP_ASSET_ROOT": str(assets),
@@ -589,7 +597,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
 
     assert completed.returncode == 0, completed.stderr
     invocation = capture.read_text(encoding="utf-8").splitlines()
-    assert invocation[:2] == ["-m", "src.experiment.e2e_task_pipeline"]
+    assert invocation[:2] == ["-m", "src.experiment.run_tasks"]
     assert invocation[invocation.index("--task") + 1] == "BrowserDraw"
     assert "--source-backend" not in invocation
     assert invocation[invocation.index("--task-deadline-sec") + 1] == "1800"
@@ -597,6 +605,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
         "source5560:emulator-5560:5560"
     )
     assert invocation[-1] == "--dry-run"
+    assert capture_proxy.read_text(encoding="utf-8").strip() == "|||"
 
 
 @pytest.mark.parametrize(

@@ -18,9 +18,9 @@ from typing import Any, Callable, Sequence
 from omniflow.core.trajectory import require_complete_source_run_log
 from omniflow.functions.assets import save_function
 from omniflow.vlm.model_config import resolve_openai_compatible_config
-from src.experiment.androidworld import (
-    build_e2e_command,
-    build_fixed_replay_command,
+from src.experiment.run_task import (
+    build_task_command,
+    build_replay_command,
 )
 from src.experiment.data_index import (
     canonical_prepared_memory_from_index,
@@ -33,9 +33,10 @@ from src.experiment.batch_outcomes import (
     summarize_results,
 )
 from src.experiment.paths import resolve_path, safe_component
-from src.experiment.process_runner import run_process
+from src.experiment.run_process import run_process
 from src.experiment.protocol import (
     BMOCA_RESULT_TIMEOUT_SEC,
+    APPAGENT_MODEL,
     DEVICES,
     FORMAL_MODEL,
     FORMAL_MODEL_BASE_URL,
@@ -596,7 +597,7 @@ def collect_replayed_source(
         step_count=len(source_run_log["steps"]),
         meta={"androidworld_success": True},
     )
-    command_spec = build_fixed_replay_command(
+    command_spec = build_replay_command(
         item,
         android_world_root=args.android_world_root,
         output_root=phase_root,
@@ -750,7 +751,7 @@ def qualify_source_function(
         step_count=len(source_steps),
         meta={"source_function_qualification": True},
     )
-    command_spec = build_e2e_command(
+    command_spec = build_task_command(
         item,
         android_world_root=args.android_world_root,
         output_root=attempt_root / "source_qualification",
@@ -938,7 +939,7 @@ def prepare_appagent_memory(
         "--memory-root",
         str(root),
         "--model",
-        args.formal_model,
+        getattr(args, "appagent_model", APPAGENT_MODEL),
     ]
     environment = dict(os.environ)
     result = run_logged_command(
@@ -1018,6 +1019,9 @@ def _result_environment(
             "OMNITRANSFER_ROOT": str(args.omnitransfer_root),
             "OMNIFLOW_MOBILEGPT_ROOT": str(args.mobilegpt_root),
             "OMNIFLOW_APPAGENT_ROOT": str(args.appagent_root),
+            "OMNIFLOW_APPAGENT_MODEL": str(
+                getattr(args, "appagent_model", APPAGENT_MODEL)
+            ),
             "OMNIFLOW_BATCH_ATTEMPT_ID": result_attempt_id,
             "OMNIFLOW_BATCH_CHILD": "1",
             "OMNIFLOW_ANDROIDWORLD_TASK": args.task,
@@ -2889,6 +2893,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--emulator-gpu", default="swiftshader_indirect")
     parser.add_argument("--runtime-preflight", type=Path)
     parser.add_argument("--formal-model", default=FORMAL_MODEL)
+    parser.add_argument("--appagent-model", default=APPAGENT_MODEL)
     parser.add_argument("--bmoca-root", type=Path)
     parser.add_argument("--bmoca-corpus-manifest", type=Path)
     parser.add_argument("--bmoca-avd-home", type=Path)

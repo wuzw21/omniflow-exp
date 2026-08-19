@@ -100,7 +100,7 @@ def _stale_processes(serial: str) -> list[str]:
             "pgrep",
             "-af",
             (
-                "src.experiment.androidworld|androidworld.py|"
+                "src.experiment.run_task|run_task.py|"
                 "python main.py"
             ),
         ],
@@ -502,20 +502,20 @@ def build_parser() -> argparse.ArgumentParser:
 def _required_files(profile: str) -> list[str]:
     if profile == "appagent":
         return [
-            "src/experiment/androidworld.py",
+            "src/experiment/run_task.py",
             "src/integrations/appagent.py",
-            "src/integrations/android_world/launch.py",
+            "src/integrations/android_world/run_episode.py",
             "runtime/external/appagent/scripts/document_generation.py",
             "runtime/external/droidrun-android-world/android_world/android_world/env/setup_device/apps.py",
         ]
     if profile == "androidworld_native":
         return [
-            "src/experiment/androidworld.py",
-            "src/integrations/android_world/launch.py",
+            "src/experiment/run_task.py",
+            "src/integrations/android_world/run_episode.py",
         ]
     if profile == "mobilegpt":
         return [
-            "src/experiment/androidworld.py",
+            "src/experiment/run_task.py",
             "src/integrations/mobilegpt.py",
             "src/integrations/mobilegpt_runtime.py",
             "runtime/external/mobilegpt/Server/main.py",

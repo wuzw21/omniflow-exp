@@ -53,7 +53,7 @@ def _write_registered_result(
     manifest_path = result / "registration_manifest.json"
     task_params = {"seed": 1859998934}
     command = (
-        "python -m src.integrations.android_world.launch "
+        "python -m src.integrations.android_world.run_episode "
         f"--task-random-seed {evaluation_seed} --max-steps {max_steps} "
         "--fixed-task-seed --perform-emulator-setup"
     )
@@ -602,7 +602,7 @@ def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
                     "fixed_task_params": False,
                     "perform_emulator_setup": True,
                     "command": (
-                        "python -m src.integrations.android_world.launch "
+                        "python -m src.integrations.android_world.run_episode "
                         "--task-random-seed 113 --max-steps 20 "
                         "--fixed-task-seed --perform-emulator-setup"
                     ),

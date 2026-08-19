@@ -11,7 +11,7 @@ from PIL import Image
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from src.experiment import androidworld as pipeline
+from src.experiment import run_task as pipeline
 from src.experiment import appagent_source
 from src.experiment.source_records import CanonicalRunLog
 from src.integrations import appagent as appagent_adapter
@@ -1030,6 +1030,13 @@ def test_androidworld_ui_elements_supply_appagent_package() -> None:
     ) == "com.google.android.contacts"
 
 
+def test_appagent_treats_source_app_ime_as_auxiliary_window() -> None:
+    assert appagent_source._appagent_demo_package(
+        {"package_name": "com.google.android.inputmethod.latin"},
+        "com.dimowner.audiorecorder",
+    ) == "com.dimowner.audiorecorder"
+
+
 def test_appagent_source_failure_marker_forbids_retry(tmp_path: Path) -> None:
     bundle = tmp_path / "bundle"
     bundle.mkdir()
@@ -1459,7 +1466,7 @@ def test_appagent_warm_command_mounts_native_docs_memory(
     )
     monkeypatch.setattr(
         pipeline,
-        "build_e2e_command",
+        "build_task_command",
         lambda *_args, **_kwargs: base_spec,
     )
     item = CanonicalRunLog(
@@ -1472,7 +1479,7 @@ def test_appagent_warm_command_mounts_native_docs_memory(
         meta={},
     )
 
-    spec = pipeline.build_appagent_androidworld_command(
+    spec = pipeline.build_appagent_command(
         item,
         method_name="appagent",
         target=pipeline.DeviceTarget("small5554", "emulator-5554", 5554),

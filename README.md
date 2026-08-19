@@ -49,9 +49,9 @@ The first code path to read is always:
 
 ```text
 scripts/exp/run_androidworld.sh
-  -> src/experiment/e2e_task_pipeline.py       # task/method/device scheduling
-  -> src/experiment/androidworld.py            # one AndroidWorld result
-  -> src/integrations/android_world/launch.py  # one native episode
+  -> src/experiment/run_tasks.py       # task/method/device scheduling
+  -> src/experiment/run_task.py            # one AndroidWorld result
+  -> src/integrations/android_world/run_episode.py  # one native episode
 ```
 
 The B-MoCA campaign uses the same shell and scheduler; each environment result

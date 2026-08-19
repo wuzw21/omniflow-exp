@@ -58,7 +58,7 @@ The source file is the provider's public seam: it owns `prepare`, `validate`,
 and `preflight`, and is the first place to change when the provider's input or
 output contract changes. Only follow the integration file when the failure is
 inside the upstream format or runtime mapping. Do not add a provider branch to
-`androidworld.py`, `e2e_task_pipeline.py`, or the shell scheduler.
+`run_task.py`, `run_tasks.py`, or the shell scheduler.
 
 The shared harness runs the provider's focused tests, the matching shell
 integration tests, and its CLI help check. It is offline: it does not start an

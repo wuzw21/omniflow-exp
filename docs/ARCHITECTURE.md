@@ -14,8 +14,8 @@
 
 | 概念 | 唯一拥有者 | 责任 |
 | --- | --- | --- |
-| 任务执行 | `scripts/exp/run_androidworld.sh` → `src/experiment/e2e_task_pipeline.py` → `src/experiment/androidworld.py` | 选择任务、方法、设备，并运行一个原子结果 |
-| Native episode | `src/integrations/android_world/launch.py` | 创建 AndroidWorld/B-MoCA 环境、调用官方 validator、封存 RunLog |
+| 任务执行 | `scripts/exp/run_androidworld.sh` → `src/experiment/run_tasks.py` → `src/experiment/run_task.py` | 选择任务、方法、设备，并运行一个原子结果 |
+| Native episode | `src/integrations/android_world/run_episode.py` | 创建 AndroidWorld/B-MoCA 环境、调用官方 validator、封存 RunLog |
 | Function 生命周期 | `omniflow/functions/assets.py::save_function` | 从一份成功 RunLog 编译、验证并原子写入一个 Function Store |
 | 本地证据索引 | `src/experiment/data_index.py` | 物化并读取 `data/current.json`；运行时不扫描替代索引 |
 
@@ -25,9 +25,9 @@
 scripts/exp/run_androidworld.sh       # 唯一公开入口
   ├─ source / development / formal
   ├─ B-MoCA campaign preparation
-  └─ src/experiment/e2e_task_pipeline.py  # 唯一 task + method + device 调度器
-       └─ src/experiment/androidworld.py  # 一个原子 AndroidWorld 结果
-            └─ src/integrations/android_world/launch.py  # 一个 native episode
+  └─ src/experiment/run_tasks.py  # 唯一 task + method + device 调度器
+       └─ src/experiment/run_task.py  # 一个原子 AndroidWorld 结果
+            └─ src/integrations/android_world/run_episode.py  # 一个 native episode
                  └─ src/integrations/android_world/methods.py
                       ├─ fixed_replay
                       ├─ omniflow
@@ -38,16 +38,16 @@ scripts/exp/run_androidworld.sh       # 唯一公开入口
 
 The boundaries inside this path are intentionally different:
 
-- `e2e_task_pipeline.py` schedules one task-major attempt and interprets the
+- `run_tasks.py` schedules one task-major attempt and interprets the
   result; it does not own AndroidWorld lifecycle or a second replay runner.
-- `androidworld.py` translates protocol records into command specifications and
+- `run_task.py` translates protocol records into command specifications and
   collects result evidence; it does not own child-process lifecycle.
 - `paths.py` owns repository-relative resolution, index-relative evidence
   references, and safe artifact components. This unifies path rules without
   moving external AndroidWorld, OmniTransfer, or B-MoCA roots into `data/`.
-- `process_runner.py` is the single process-group, timeout, and immutable-log
+- `run_process.py` is the single process-group, timeout, and immutable-log
   seam shared by AndroidWorld and B-MoCA experiment commands.
-- `launch.py` owns one native AndroidWorld episode, including setup,
+- `run_episode.py` owns one native AndroidWorld episode, including setup,
   observation/action recording, official validation, and teardown.
 - `methods.py` resolves one method adapter. Direct Function replay is carried
   into `agent.py` as an execution decision, not implemented by launcher-side
@@ -78,7 +78,7 @@ resume state 或结果格式。
 当前保留的复用点是 `src/integrations/script_replay.py`：它只选择一个完整
 Function，随后调用 `agent_instance.call_tool()` / canonical runtime，测试中
 必须能证明它没有私有 action mapping。AndroidWorld source qualification
-通过 `build_e2e_command(function_id=..., function_arguments=...)` 进入同一
+通过 `build_task_command(function_id=..., function_arguments=...)` 进入同一
 launcher；`methods.py` 把这个意图交给 `agent.py`，由正常 `step()` cycle
 注入 `ToolCall`。因此 direct replay 和普通 `OmniFlow.run()` 共享 Host、
 OmniTransfer、checker、证据封存和结果归档，且不会因为 CLI 入口不同而产生
@@ -144,7 +144,7 @@ baseline 记录时经过的五个位置：
 
 | 候选 | 判断 | 后续动作 |
 | --- | --- | --- |
-| `launch.py` 中的 direct Function 调用与普通 OmniFlow 运行 | 真旁路：生命周期相似、调用语义可共享 | 通过 E2E 请求 seam 收敛，不删除直跑能力 |
+| `run_episode.py` 中的 direct Function 调用与普通 OmniFlow 运行 | 真旁路：生命周期相似、调用语义可共享 | 通过 E2E 请求 seam 收敛，不删除直跑能力 |
 | `script_replay.py` 与 runtime execution | 不是重复 mapper；前者是薄适配器，后者是核心实现 | 保留，继续用测试锁住“无私有 mapping” |
 | `data_index.py` 与 result ledger | 读写对象不同，不能粗暴合并 | 保留职责，拆出只在有测试证明时进行 |
 | `batch_outcomes.py` 与 `result_registry.py` | 汇总和注册是两个不可互换的写入语义 | 先记录公共 path helper 重复，再局部收敛 |

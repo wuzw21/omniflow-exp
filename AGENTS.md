@@ -11,9 +11,9 @@
 ## 不可破坏的运行合同
 
 - 唯一公开入口是 `scripts/exp/run_androidworld.sh`。
-- 唯一 task + method + device 调度器是 `src/experiment/e2e_task_pipeline.py`。
-- `src/experiment/androidworld.py` 只执行一个原子 AndroidWorld 结果。
-- `src/integrations/android_world/launch.py` 是唯一 native episode/lifecycle owner。
+- 唯一 task + method + device 调度器是 `src/experiment/run_tasks.py`。
+- `src/experiment/run_task.py` 只执行一个原子 AndroidWorld 结果。
+- `src/integrations/android_world/run_episode.py` 是唯一 native episode/lifecycle owner。
 - `save_function` 是唯一 Function 写 API、compiler 和 Store writer；成功 RunLog 只生成一个完整 Function。
 - runtime 只读取注册的 Function Store 和 `data/current.json`，不能自动补 Store、建 catalog 或写平行 manifest。
 - `data/current.json` 是唯一运行时本地索引；ledger、汇总和外部 manifest 只能作为证据。
@@ -51,9 +51,9 @@
 
 ```text
 bash scripts/exp/run_androidworld.sh ...
-  -> src/experiment/e2e_task_pipeline.py
-  -> src/experiment/androidworld.py
-  -> src/integrations/android_world/launch.py
+  -> src/experiment/run_tasks.py
+  -> src/experiment/run_task.py
+  -> src/integrations/android_world/run_episode.py
 ```
 
 Function authoring 只走 bridge 的 `save_function`；管理工具只有 README 中列出的

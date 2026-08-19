@@ -98,10 +98,11 @@ class ManualAndroidWorld:
             )
             sys.path.insert(0, str(import_root))
         from android_world import registry
+        from android_world.env import android_world_controller
         from android_world.env import env_launcher
         from android_world.env.setup_device import setup as android_world_setup
         from src.integrations.android_world.apps import resolve_androidworld_app_name
-        from src.integrations.android_world.launch import (
+        from src.integrations.android_world.run_episode import (
             _patch_androidworld_adb_output_sanitizer,
             _rehydrate_task_params,
         )
@@ -118,6 +119,13 @@ class ManualAndroidWorld:
             emulator_setup=False,
             adb_path=args.adb_path,
             grpc_port=args.grpc_port or args.console_port + 3000,
+            install_a11y_forwarding_app=args.install_a11y_forwarder,
+        )
+        # Keep AndroidWorld's official controller/action path, but use its
+        # native UIAutomator observation backend when the forwarder's optional
+        # host gRPC tree is unavailable on a fresh local AVD.
+        self._env.controller._a11y_method = (  # pylint: disable=protected-access
+            android_world_controller.A11yMethod.UIAUTOMATOR
         )
         if args.emulator_setup:
             _patch_androidworld_adb_output_sanitizer(self._env.controller)

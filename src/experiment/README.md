@@ -1,6 +1,6 @@
 # Experiment edit guide
 
-`e2e_task_pipeline.py` is the only scheduler. `androidworld.py` handles one
+`run_tasks.py` is the only scheduler. `run_task.py` handles one
 task/method/device result. `data_index.py` owns the sole `data/current.json`
 index and exposes `load_data_index`/`refresh_data_index` operations.
 `result_registry.py` writes the immutable ledger. `checks.py` checks inputs;
@@ -15,7 +15,7 @@ index evidence uses `resolve_reference`, and task/method/device names use
 explicit separate inputs; normalization is unified, physical ownership is not.
 
 The valuable single-Function replay is an E2E request mode built by
-`androidworld.build_e2e_command(function_id=..., function_arguments=...)`. It
+`androidworld.build_task_command(function_id=..., function_arguments=...)`. It
 uses the same native launcher, Host, OmniTransfer, checker session, evidence
 sealing, and result contract as normal `omniflow`; it is not a second runner.
 

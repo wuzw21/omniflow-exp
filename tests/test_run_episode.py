@@ -14,7 +14,7 @@ import pytest
 from omniflow import Action
 from src.integrations.android_world.apps import resolve_androidworld_app_name
 from src.integrations.android_world.host import AndroidWorldHost
-from src.integrations.android_world.launch import (
+from src.integrations.android_world.run_episode import (
     ANDROID_PERMISSION_DENY_RESOURCE_IDS,
     _androidworld_a11y_forwarder_installed,
     _androidworld_adb_file_transfer_timeout_sec,
@@ -76,7 +76,7 @@ def test_androidworld_setup_skips_only_already_settled_notification_permission(
 
     tools_module = SimpleNamespace(AndroidToolController=AndroidToolController)
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.importlib.import_module",
+        "src.integrations.android_world.run_episode.importlib.import_module",
         lambda name: tools_module
         if name == "android_world.env.tools"
         else pytest.fail(f"unexpected import: {name}"),
@@ -153,7 +153,7 @@ def test_androidworld_setup_resolves_contacts_open_with_before_skip(
 
     tools_module = SimpleNamespace(AndroidToolController=AndroidToolController)
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.importlib.import_module",
+        "src.integrations.android_world.run_episode.importlib.import_module",
         lambda name: tools_module
         if name == "android_world.env.tools"
         else pytest.fail(f"unexpected import: {name}"),
@@ -182,7 +182,7 @@ def test_androidworld_setup_skips_only_absent_markor_final_ok(monkeypatch) -> No
 
     tools_module = SimpleNamespace(AndroidToolController=AndroidToolController)
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.importlib.import_module",
+        "src.integrations.android_world.run_episode.importlib.import_module",
         lambda name: tools_module
         if name == "android_world.env.tools"
         else pytest.fail(f"unexpected import: {name}"),
@@ -243,7 +243,7 @@ def test_androidworld_prepares_markor_data_directory(monkeypatch) -> None:
     )
     real_import_module = __import__("importlib").import_module
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.importlib.import_module",
+        "src.integrations.android_world.run_episode.importlib.import_module",
         lambda name: SimpleNamespace(
             MARKOR_DATA="/storage/emulated/0/Documents/Markor"
         )
@@ -252,7 +252,7 @@ def test_androidworld_prepares_markor_data_directory(monkeypatch) -> None:
         if name == "android_world.env.actuation"
         else real_import_module(name),
     )
-    monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
+    monkeypatch.setattr("src.integrations.android_world.run_episode.time.sleep", lambda _: None)
 
     _prepare_androidworld_episode_apps(
         env,
@@ -534,14 +534,14 @@ def test_androidworld_setup_has_hard_deadline(monkeypatch) -> None:
 
     monkeypatch.setenv("OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC", "12")
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.signal.getsignal",
+        "src.integrations.android_world.run_episode.signal.getsignal",
         lambda _signal_number: "previous-handler",
     )
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.signal.signal", fake_signal
+        "src.integrations.android_world.run_episode.signal.signal", fake_signal
     )
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.signal.setitimer", fake_setitimer
+        "src.integrations.android_world.run_episode.signal.setitimer", fake_setitimer
     )
 
     with pytest.raises(
@@ -641,13 +641,13 @@ def test_androidworld_chrome_setup_falls_back_to_semantic_labels(monkeypatch) ->
 
     real_import_module = __import__("importlib").import_module
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.importlib.import_module",
+        "src.integrations.android_world.run_episode.importlib.import_module",
         lambda name: Tools()
         if name == "android_world.env.tools"
         else real_import_module(name),
     )
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.time.sleep", lambda _seconds: None
+        "src.integrations.android_world.run_episode.time.sleep", lambda _seconds: None
     )
 
     _repair_androidworld_chrome_first_run(
@@ -784,7 +784,7 @@ def test_androidworld_setup_clears_late_permission_dialog_before_resnapshot(
     )
     real_import_module = __import__("importlib").import_module
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.importlib.import_module",
+        "src.integrations.android_world.run_episode.importlib.import_module",
         lambda name: SimpleNamespace(
             find_and_click_element_by_resource_id=click_resource_id
         )
@@ -792,7 +792,7 @@ def test_androidworld_setup_clears_late_permission_dialog_before_resnapshot(
         else real_import_module(name),
     )
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.time.sleep", lambda _: None
+        "src.integrations.android_world.run_episode.time.sleep", lambda _: None
     )
 
     _run_androidworld_setup_apps(
@@ -881,10 +881,10 @@ def test_androidworld_episode_setup_resolves_contacts_chooser(monkeypatch) -> No
     )
     tools = SimpleNamespace(AndroidToolController=AndroidToolController)
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.time.sleep", lambda _seconds: None
+        "src.integrations.android_world.run_episode.time.sleep", lambda _seconds: None
     )
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.importlib.import_module",
+        "src.integrations.android_world.run_episode.importlib.import_module",
         lambda name: tools
         if name == "android_world.env.tools"
         else actuation
@@ -1030,7 +1030,7 @@ def test_androidworld_official_setup_entry_clears_late_permission_dialog(
     monkeypatch.setattr(actuation, "execute_adb_action", execute_action)
     monkeypatch.setattr(actuation.time, "time", lambda: next(clock, 11.0))
     monkeypatch.setattr(apps.time, "sleep", lambda _: None)
-    monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
+    monkeypatch.setattr("src.integrations.android_world.run_episode.time.sleep", lambda _: None)
 
     _run_androidworld_setup_apps(
         env,
@@ -1101,14 +1101,14 @@ def test_androidworld_episode_reset_clears_permission_dialog_before_first_observ
     )
     real_import_module = __import__("importlib").import_module
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.importlib.import_module",
+        "src.integrations.android_world.run_episode.importlib.import_module",
         lambda name: SimpleNamespace(
             find_and_click_element_by_resource_id=click_resource_id
         )
         if name == "android_world.env.actuation"
         else real_import_module(name),
     )
-    monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
+    monkeypatch.setattr("src.integrations.android_world.run_episode.time.sleep", lambda _: None)
 
     class Agent:
         def reset(self, go_home: bool = False) -> None:
@@ -1156,7 +1156,7 @@ def test_androidworld_waits_for_native_a11y_before_setup(monkeypatch) -> None:
             raise RuntimeError("not ready")
         return SimpleNamespace(forest=object())
 
-    monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
+    monkeypatch.setattr("src.integrations.android_world.run_episode.time.sleep", lambda _: None)
     _wait_for_androidworld_a11y(SimpleNamespace(get_state=get_state))
     assert calls == 3
 
@@ -1172,7 +1172,7 @@ def test_androidworld_a11y_readiness_allows_cold_boot_recovery(monkeypatch) -> N
             raise RuntimeError("forwarder still reconnecting")
         return SimpleNamespace(forest=object())
 
-    monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
+    monkeypatch.setattr("src.integrations.android_world.run_episode.time.sleep", lambda _: None)
     _wait_for_androidworld_a11y(SimpleNamespace(get_state=get_state))
     assert calls == 4
 
@@ -1194,7 +1194,7 @@ def test_androidworld_a11y_readiness_restarts_bound_stale_forwarder(
                 raise RuntimeError("Could not get a11y tree after 5 attempts.")
             return SimpleNamespace(forest=object())
 
-    monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
+    monkeypatch.setattr("src.integrations.android_world.run_episode.time.sleep", lambda _: None)
 
     _wait_for_androidworld_a11y(Env())
 
@@ -1222,7 +1222,7 @@ def test_androidworld_a11y_readiness_retries_when_forwarder_restart_is_unbound(
                 raise RuntimeError("Could not get a11y tree after 5 attempts.")
             return SimpleNamespace(forest=object())
 
-    monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
+    monkeypatch.setattr("src.integrations.android_world.run_episode.time.sleep", lambda _: None)
 
     _wait_for_androidworld_a11y(Env())
 
@@ -1231,7 +1231,7 @@ def test_androidworld_a11y_readiness_retries_when_forwarder_restart_is_unbound(
 
 def test_androidworld_a11y_readiness_rejects_empty_forests(monkeypatch) -> None:
     forests = iter(({}, [], {"window": object()}))
-    monkeypatch.setattr("src.integrations.android_world.launch.time.sleep", lambda _: None)
+    monkeypatch.setattr("src.integrations.android_world.run_episode.time.sleep", lambda _: None)
 
     _wait_for_androidworld_a11y(
         SimpleNamespace(
@@ -1268,7 +1268,7 @@ def test_androidworld_reuses_installed_a11y_forwarder(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.subprocess.run",
+        "src.integrations.android_world.run_episode.subprocess.run",
         run,
     )
 
@@ -1289,7 +1289,7 @@ def test_androidworld_reuses_installed_a11y_forwarder(monkeypatch) -> None:
 
 def test_androidworld_installs_a11y_forwarder_when_missing(monkeypatch) -> None:
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.subprocess.run",
+        "src.integrations.android_world.run_episode.subprocess.run",
         lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=""),
     )
 
@@ -1304,16 +1304,16 @@ def test_androidworld_installs_cached_a11y_forwarder(monkeypatch, tmp_path) -> N
     apk.write_bytes(b"official-apk")
     installed = iter((False, True))
     monkeypatch.setattr(
-        "src.integrations.android_world.launch._androidworld_a11y_forwarder_installed",
+        "src.integrations.android_world.run_episode._androidworld_a11y_forwarder_installed",
         lambda **_kwargs: next(installed),
     )
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.ANDROIDWORLD_A11Y_FORWARDER_SHA256",
+        "src.integrations.android_world.run_episode.ANDROIDWORLD_A11Y_FORWARDER_SHA256",
         hashlib.sha256(apk.read_bytes()).hexdigest(),
     )
     calls = []
     monkeypatch.setattr(
-        "src.integrations.android_world.launch.subprocess.run",
+        "src.integrations.android_world.run_episode.subprocess.run",
         lambda argv, **_kwargs: calls.append(argv) or SimpleNamespace(returncode=0),
     )
 

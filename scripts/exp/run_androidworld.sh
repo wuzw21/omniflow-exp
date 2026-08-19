@@ -103,6 +103,7 @@ from src.experiment.protocol import (
     DEVICE_AVDS,
     DEVICES,
     EMULATOR_AVD_SPECS,
+    APPAGENT_MODEL,
     FORMAL_MODEL,
     FORMAL_MODEL_BASE_URL,
     FORMAL_MODEL_ENDPOINT_PROFILE,
@@ -130,6 +131,7 @@ print(
     VALIDATOR_FLUSH_GRACE_SEC,
     TASK_DEADLINE_SEC,
     FORMAL_MODEL,
+    APPAGENT_MODEL,
     FORMAL_MODEL_ENDPOINT_PROFILE,
     FORMAL_MODEL_BASE_URL,
     int(FIXED_TASK_PARAMS),
@@ -155,11 +157,12 @@ PY
 read -r formal_source_seed formal_task_seed formal_max_steps \
   formal_max_fallback_steps formal_step_timeout_sec \
   official_validator_flush_grace_sec \
-  formal_task_deadline_sec formal_model formal_model_endpoint_profile \
+  formal_task_deadline_sec formal_model formal_appagent_model formal_model_endpoint_profile \
   formal_model_base_url formal_fixed_task_params formal_fold_state formal_fold_size \
   formal_default_method all_methods \
   source_device default_device source_avd emulator_avds \
   emulator_avd_profiles fold_serial <<< "$protocol_values"
+appagent_model="${OMNIFLOW_APPAGENT_MODEL:-$formal_appagent_model}"
 expected_source_seed="$formal_source_seed"
 task_seed="$formal_task_seed"
 preflight="$repo/src/experiment/checks.py"
@@ -735,7 +738,7 @@ if [[ "$execution_environment" == "bmoca" ]]; then
       exit 2
     fi
     bmoca_command=(
-      "$python_bin" -m src.integrations.android_world.launch
+      "$python_bin" -m src.integrations.android_world.run_episode
       --environment bmoca
       --bmoca-root "$bmoca_root"
       --environment-ids "$bmoca_single_environment_id"
@@ -834,7 +837,7 @@ PY
   export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
   bmoca_task_selection="${batch_task_filter:-*}"
   bmoca_pipeline_args=(
-    -m src.experiment.e2e_task_pipeline
+    -m src.experiment.run_tasks
     --environment bmoca
     --repo "$repo"
     --script "$repo/scripts/exp/run_androidworld.sh"
@@ -876,7 +879,7 @@ if [[ "$development_run" -eq 1 ]]; then
   development_planner_timeout="${OMNIFLOW_PLANNER_TIMEOUT_SEC:-60}"
   development_runtime_files=(
     "src/experiment/development_emulator.py"
-    "src/integrations/android_world/launch.py"
+    "src/integrations/android_world/run_episode.py"
   )
   missing_development_runtime_files=()
   for relative_path in "${development_runtime_files[@]}"; do
@@ -946,7 +949,7 @@ if [[ "$development_run" -eq 1 ]]; then
   fi
   echo "[model] model=$development_model model_endpoint_profile=$development_model_endpoint_profile model_endpoint=$selected_model_base_url"
   development_command=(
-    "$python_bin" -m src.integrations.android_world.launch
+    "$python_bin" -m src.integrations.android_world.run_episode
     --android-world-root "$android_world_root"
     --tasks "$task"
     --task-random-seed "$task_seed"
@@ -1053,6 +1056,22 @@ if [[ -n "$e2e_task" ]]; then
     set -a
     source "$env_file"
     set +a
+    # The formal endpoint must not inherit a developer SOCKS/HTTP proxy.
+    # httpx otherwise constructs a proxy transport before the provider call,
+    # which makes MobileGPT preparation fail when socksio is not installed.
+    unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
+    select_model_endpoint "$formal_model_endpoint_profile"
+    validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
+    mobilegpt_embedding_api_key="${MOBILEGPT_EMBEDDING_API_KEY:-$selected_model_api_key}"
+    mobilegpt_embedding_base_url="${MOBILEGPT_EMBEDDING_BASE_URL:-$selected_model_base_url}"
+    export OPENAI_MODEL="$formal_model"
+    export OMNIFLOW_PLANNER_MODEL="$formal_model"
+    export MOBILEGPT_CHAT_MODEL="$formal_model"
+    export MOBILEGPT_CHAT_API_KEY="$selected_model_api_key"
+    export MOBILEGPT_CHAT_BASE_URL="$selected_model_base_url"
+    export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"
+    export MOBILEGPT_EMBEDDING_BASE_URL="$mobilegpt_embedding_base_url"
+    export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
   fi
   normalized_e2e_model="$(printf '%s' "$formal_model" | tr '[:upper:]' '[:lower:]')"
   if [[ "$normalized_e2e_model" != "glm-5.1" ]]; then
@@ -1065,7 +1084,7 @@ if [[ -n "$e2e_task" ]]; then
     exit 2
   fi
   e2e_args=(
-    -m src.experiment.e2e_task_pipeline
+    -m src.experiment.run_tasks
     --repo "$repo"
     --script "$repo/scripts/exp/run_androidworld.sh"
     --task "$e2e_task"
@@ -1088,6 +1107,7 @@ if [[ -n "$e2e_task" ]]; then
     --emulator-gpu "$emulator_gpu"
     --runtime-preflight "$repo/src/experiment/checks.py"
     --formal-model "$formal_model"
+    --appagent-model "$appagent_model"
   )
   if [[ -n "${OMNIFLOW_E2E_ATTEMPT_ID:-}" ]]; then
     e2e_args+=(--attempt-id "$OMNIFLOW_E2E_ATTEMPT_ID")
@@ -1970,7 +1990,7 @@ if [[ "$requires_omnitransfer" -eq 1 ]]; then
 import json
 import sys
 
-from src.experiment.androidworld import validate_omniflow_transfer_assets
+from src.experiment.run_task import validate_omniflow_transfer_assets
 
 audit = validate_omniflow_transfer_assets(
     sys.argv[1],
@@ -2028,13 +2048,13 @@ if [[ "$requires_appagent_source_memory" -eq 1 ]]; then
     "$python_bin" -m src.experiment.appagent_source preflight \
       --index "$source_index" \
       --task "$task" \
-      --model "$paper_model"
+      --model "$appagent_model"
   else
     "$python_bin" -m src.experiment.appagent_source validate \
       --index "$source_index" \
       --task "$task" \
       --memory-root "$appagent_memory_root" \
-      --model "$paper_model"
+      --model "$appagent_model"
   fi
 fi
 if [[ "$check_only" -eq 1 ]]; then
@@ -2357,7 +2377,7 @@ if [[ "$appagent_source_generation_required" -eq 1 ]]; then
     --task "$task" \
     --appagent-root "$appagent_root" \
       --memory-root "$appagent_memory_root" \
-    --model "$paper_model"
+    --model "$appagent_model"
 fi
 for serial in "${target_serials[@]}"; do
   ensure_emulator "$serial"
@@ -2410,7 +2430,7 @@ done
 command=(
   "$python_bin"
   -m
-  src.experiment.androidworld
+  src.experiment.run_task
   result
   --index "$source_index"
   --android-world-root "$android_world_root"
