@@ -13,6 +13,7 @@ from runlog_fixtures import androidworld_run_log
 
 from omniflow.functions.assets import function_authoring_tool
 from src.experiment.run_task import (
+    _function_lineage_item,
     _read_object,
     build_mobilegpt_server_command,
     build_task_command,
@@ -94,6 +95,59 @@ def _args(tmp_path: Path) -> SimpleNamespace:
         source_only=False,
         dry_run=False,
     )
+
+
+def test_t3a_hint_uses_function_store_source_lineage(tmp_path: Path) -> None:
+    source = tmp_path / "lineage.run_log.json"
+    source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [{"action_type": "click", "x": 10, "y": 10}],
+                task_name="BrowserDraw",
+            )
+        ),
+        encoding="utf-8",
+    )
+    store = tmp_path / "function_store.json"
+    store.write_text("{}", encoding="utf-8")
+    index = tmp_path / "current.json"
+    index.write_text(
+        json.dumps(
+            {
+                "canonical": {
+                    "function_stores": {
+                        "BrowserDraw": {
+                            "store_path": str(store),
+                            "source_run_log_path": str(source),
+                            "source_run_log_sha256": hashlib.sha256(
+                                source.read_bytes()
+                            ).hexdigest(),
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    item = CanonicalRunLog(
+        task="BrowserDraw",
+        goal="stale goal",
+        params={},
+        source_run_log=tmp_path / "stale.json",
+        replay_seed=111,
+        step_count=0,
+        meta={},
+    )
+
+    aligned = _function_lineage_item(
+        item,
+        store_path=store,
+        index_path=index,
+    )
+
+    assert aligned.source_run_log == source.resolve()
+    assert aligned.step_count == 1
+    assert aligned.goal == "Complete the task."
 
 
 def test_e2e_command_exposes_direct_function_without_planner_or_second_runner(

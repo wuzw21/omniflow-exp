@@ -3383,6 +3383,42 @@ def _select_complete_function(store_path: str | Path):
     return candidates[0]
 
 
+def _function_lineage_item(
+    item: CanonicalRunLog,
+    *,
+    store_path: Path,
+    index_path: Path,
+) -> CanonicalRunLog:
+    index = _read_json(resolve_path(index_path))
+    record = (
+        index.get("canonical", {})
+        .get("function_stores", {})
+        .get(item.task)
+    )
+    if not isinstance(record, dict):
+        raise ValueError(f"t3a_hint_function_store_lineage_missing:{item.task}")
+    indexed_store = resolve_path(str(record.get("store_path") or ""))
+    if indexed_store != store_path.resolve():
+        raise ValueError(f"t3a_hint_function_store_lineage_store_mismatch:{item.task}")
+    source_path = resolve_path(str(record.get("source_run_log_path") or ""))
+    source_sha256 = str(record.get("source_run_log_sha256") or "").strip()
+    if (
+        not source_path.is_file()
+        or not source_sha256
+        or sha256_file(source_path) != source_sha256
+    ):
+        raise ValueError(f"t3a_hint_function_store_lineage_source_invalid:{item.task}")
+    source = require_complete_source_run_log(_read_object(source_path))
+    return replace(
+        item,
+        goal=str(source["goal"]),
+        params=dict(source["task_parameters"]),
+        source_run_log=source_path,
+        replay_seed=int(source["seed"]),
+        step_count=len(source["steps"]),
+    )
+
+
 def _source_action_hint_path_for_item(
     item: CanonicalRunLog,
     *,
@@ -5649,8 +5685,17 @@ def run_task(args: argparse.Namespace) -> int:
                 if str(args.store_path or "").strip()
                 else None
             )
+            hint_item = (
+                _function_lineage_item(
+                    item,
+                    store_path=source_hint_store_path,
+                    index_path=args.index,
+                )
+                if source_hint_store_path is not None
+                else item
+            )
             source_action_hint_path = _source_action_hint_path_for_item(
-                item,
+                hint_item,
                 output_root=memory_root,
                 store_path=source_hint_store_path,
             )
@@ -5662,7 +5707,7 @@ def run_task(args: argparse.Namespace) -> int:
                 source_seed=source_seed,
                 evaluation_seed=task_seed,
                 attempt_id=attempt_id,
-                source_run_log=item.source_run_log,
+                source_run_log=hint_item.source_run_log,
                 artifacts={
                     "source_run_log": str(item.source_run_log),
                     "source_run_log_sha256": sha256_file(item.source_run_log),
