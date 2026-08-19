@@ -128,7 +128,7 @@ baseline 记录时经过的五个位置：
 | `data_index.py` 与 result ledger | 读写对象不同，不能粗暴合并 | 保留职责，拆出只在有测试证明时进行 |
 | `batch_outcomes.py` 与 `result_registry.py` | 汇总和注册是两个不可互换的写入语义 | 先记录公共 path helper 重复，再局部收敛 |
 | `omniflow/runlog.py` 与 `src/integrations/runlog.py` | canonical loader 与历史外部导入 adapter | 旧适配层按要求暂不清理 |
-| `mobilegpt_source.py` / `appagent_source.py` | 两个外部协议不同 | 不合并；只共享纯证据 helper |
+| `mobilegpt_source.py` / `appagent_source.py` | 两个外部协议不同；分别实现 `MemoryAdapter` | 不合并转换规则，只共享 memory envelope |
 | 2430 行 shell、3093 行 scheduler、4619 行 launcher | 复杂文件，但都是现有唯一 owner | 先补 seam 和测试，再按模块内聚拆分；不复制入口 |
 | 已删除的 packaged catalog、old source pool、direct launcher 文件 | 最近提交已清掉的死路径 | 不恢复 alias 或兼容副本 |
 

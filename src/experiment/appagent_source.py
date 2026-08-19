@@ -22,6 +22,12 @@ from omniflow.core.trajectory import require_complete_source_run_log
 from src.experiment.mobilegpt_source import (
     load_canonical_source_item,
 )
+from src.experiment.memory_interface import (
+    MemoryAdapter,
+    MemoryCheck,
+    MemoryPackage,
+    MemoryRequest,
+)
 from src.experiment.paths import sha256_file
 from src.experiment.protocol import DEFAULT_METHOD, SOURCE_SEED
 from src.experiment.source_evidence import (
@@ -35,6 +41,7 @@ from src.integrations.android_world.host import (
 from src.integrations.appagent import (
     APPAGENT_ACTION_TYPES,
     APPAGENT_MANIFEST,
+    APPAGENT_MEMORY_SCHEMA,
     APPAGENT_OFFICIAL_REVISION,
     OfficialAppAgentRuntime,
     appagent_elements_from_xml,
@@ -44,6 +51,77 @@ from src.integrations.appagent import (
     seal_appagent_memory,
     validate_appagent_memory,
 )
+
+
+class AppAgentMemoryAdapter:
+    """Expose AppAgent preparation through the common memory interface."""
+
+    @property
+    def name(self) -> str:
+        return "appagent"
+
+    @property
+    def schema_version(self) -> str:
+        return APPAGENT_MEMORY_SCHEMA
+
+    def prepare(self, request: MemoryRequest) -> MemoryPackage:
+        if (
+            request.source_index is None
+            or request.memory_root is None
+            or not request.options.get("appagent_root")
+        ):
+            raise ValueError("appagent_prepare_requires_source_and_memory_inputs")
+        result = prepare_appagent_memory(
+            index_path=request.source_index,
+            task_name=request.task_name,
+            appagent_root=request.options["appagent_root"],
+            memory_root=request.memory_root,
+            model=request.model,
+        )
+        root = Path(str(result["memory_root"])).resolve()
+        manifest = root / APPAGENT_MANIFEST
+        manifest_data = result.get("manifest")
+        manifest_data = manifest_data if isinstance(manifest_data, dict) else {}
+        return MemoryPackage(
+            provider=self.name,
+            task_name=request.task_name,
+            root=root,
+            bundle_root=root.parent,
+            schema_version=self.schema_version,
+            sha256=str(
+                manifest_data.get("demo_sha256")
+                or manifest_data.get("memory_sha256")
+                or ""
+            ),
+            manifest=manifest,
+            metadata=result,
+        )
+
+    def check(self, request: MemoryRequest) -> MemoryCheck:
+        if request.source_index is None or request.memory_root is None:
+            raise ValueError("appagent_check_requires_source_and_memory_root")
+        try:
+            result = validate_appagent_source_memory(
+                index_path=request.source_index,
+                task_name=request.task_name,
+                memory_root=request.memory_root,
+                model=request.model,
+            )
+        except Exception as error:
+            return MemoryCheck(
+                provider=self.name,
+                task_name=request.task_name,
+                valid=False,
+                root=Path(request.memory_root).resolve(),
+                errors=(f"{type(error).__name__}: {error}",),
+            )
+        return MemoryCheck(
+            provider=self.name,
+            task_name=request.task_name,
+            valid=True,
+            root=Path(request.memory_root).resolve(),
+            details=result,
+        )
 
 
 def _appagent_observation_xml(observation: dict[str, Any]) -> str:
