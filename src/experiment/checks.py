@@ -19,7 +19,6 @@ import time
 from typing import Any
 
 from omniflow.core.trajectory import canonicalize_run_log as import_run_log
-from src.experiment.protocol import SOURCE_SEED
 from src.integrations.appagent import is_memory_manifest_valid
 from src.integrations.mobilegpt import validate_memory_manifest
 
@@ -546,19 +545,43 @@ def main(argv: list[str] | None = None) -> int:
         else "mobilegpt"
     )
 
+    appagent_root = Path(
+        args.appagent_root
+        or os.getenv(
+            "OMNIFLOW_APPAGENT_ROOT", str(repo / "runtime/external/appagent")
+        )
+    ).expanduser().resolve()
+    mobilegpt_root = Path(
+        os.getenv(
+            "OMNIFLOW_MOBILEGPT_ROOT", str(repo / "runtime/external/mobilegpt")
+        )
+    ).expanduser().resolve()
+    android_world_path = (
+        Path(android_world_root).expanduser().resolve()
+        if android_world_root
+        else repo / "runtime/external/droidrun-android-world"
+    )
+
+    def required_path(relative: str) -> Path:
+        if relative == "runtime/external/appagent/scripts/document_generation.py":
+            return appagent_root / "scripts/document_generation.py"
+        if relative == "runtime/external/mobilegpt/Server/main.py":
+            return mobilegpt_root / "Server/main.py"
+        if (
+            relative
+            == "runtime/external/droidrun-android-world/android_world/"
+            "android_world/env/setup_device/apps.py"
+        ):
+            return android_world_path / "android_world/env/setup_device/apps.py"
+        root = repo if relative.startswith("runtime/") else code_root
+        return root / relative
+
     def add(name: str, passed: bool, detail: str, warning: bool = False) -> None:
         checks.append(Check(name, "ok" if passed else "warning" if warning else "fail", detail))
 
     for relative in _required_files(profile):
-        root = repo if relative.startswith("runtime/") else code_root
-        add(f"file:{relative}", (root / relative).is_file(), relative)
+        add(f"file:{relative}", required_path(relative).is_file(), relative)
     if appagent_mode:
-        appagent_root = Path(
-            args.appagent_root
-            or os.getenv(
-                "OMNIFLOW_APPAGENT_ROOT", str(repo / "runtime/external/appagent")
-            )
-        ).expanduser().resolve()
         add(
             "appagent_root",
             (appagent_root / "scripts" / "model.py").is_file()
@@ -648,12 +671,20 @@ def main(argv: list[str] | None = None) -> int:
                 )
     else:
         expected_tasks = args.expected_tasks or 116
-        source_index = repo / "data" / "current.json"
+        source_index_value = str(args.source_index or "").strip()
+        source_index = (
+            Path(source_index_value).expanduser().resolve()
+            if source_index_value
+            else repo / "data" / "current.json"
+        )
         try:
             source_validation = _validate_source_index(
                 source_index,
-                source_root=repo / "data",
+                source_root=Path(args.source_root or source_index.parent)
+                .expanduser()
+                .resolve(),
                 expected_tasks=expected_tasks,
+                task_names=tuple(args.source_task),
             )
         except (OSError, ValueError, json.JSONDecodeError) as error:
             add("source_index", False, str(error))

@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 from contextlib import contextmanager
-import csv
 from dataclasses import dataclass, field, replace
 import datetime
 import hashlib
@@ -44,7 +42,6 @@ from src.experiment.paths import (
     safe_relative_path,
     sha256_file,
 )
-from src.experiment.run_process import run_process, start_process, stop_process
 from src.experiment.protocol import (
     ANDROIDWORLD_REVISION,
     DEFAULT_DEVICE,
@@ -62,10 +59,11 @@ from src.experiment.protocol import (
 )
 from src.experiment.result_registry import register_attempt_summary
 from src.experiment.result_schema import RESULT_FIELDS, compact_result_row
+from src.experiment.run_process import run_process, start_process, stop_process
 from src.experiment.source_records import CanonicalRunLog, SourceRunLogProfile
+from src.integrations import mobilegpt_memory
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
 from src.integrations.appagent import validate_appagent_memory
-from src.integrations import mobilegpt_memory
 
 
 def _load_mobilegpt_stats_summary(
@@ -2994,6 +2992,37 @@ def _t3a_hint_source_node(
         ),
         {},
     )
+    _, params = _t3a_hint_step_action(step)
+    index = params.get("index")
+    elements = observation.get("ui_elements")
+    if (
+        isinstance(index, int)
+        and not isinstance(index, bool)
+        and isinstance(elements, list)
+        and 0 <= index < len(elements)
+        and isinstance(elements[index], dict)
+    ):
+        element = elements[index]
+        if editable_only and not bool(element.get("is_editable")):
+            return {}
+        evidence: dict[str, str] = {}
+        for source_key, target_key in (
+            ("class_name", "class_name"),
+            ("text", "text"),
+            ("content_description", "content_description"),
+            ("resource_id", "resource_id"),
+            ("resource_name", "resource_id"),
+            ("package_name", "package_name"),
+        ):
+            value = _t3a_hint_redacted_text(
+                element.get(source_key),
+                forbidden_values=forbidden_values,
+                max_len=120,
+            )
+            if value and target_key not in evidence:
+                evidence[target_key] = value
+        if evidence:
+            return evidence
     forest = next(
         (
             value
@@ -3007,7 +3036,6 @@ def _t3a_hint_source_node(
         ),
         "",
     )
-    _, params = _t3a_hint_step_action(step)
     if not forest:
         source_context = params.get("source_context")
         if isinstance(source_context, dict):

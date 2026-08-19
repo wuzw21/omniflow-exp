@@ -145,6 +145,7 @@ class ManualAndroidWorld:
         params.setdefault("seed", args.seed)
         self._task = task_type(params)
         self._task.initialize_task(self._env)
+        _patch_androidworld_adb_output_sanitizer(self._env.controller)
         self._resolve_androidworld_app_name = resolve_androidworld_app_name
         self._root = Path(args.output).expanduser().resolve()
         self._images = self._root / "observations" / "objects"

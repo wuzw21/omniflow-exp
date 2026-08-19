@@ -1801,31 +1801,22 @@ PY
   exit "$batch_status"
 fi
 if [[ "${OMNIFLOW_BATCH_CHILD:-0}" != "1" ]]; then
-"$python_bin" - "$attempt_series_root" "$(dirname "$output_root")" <<'PY'
+"$python_bin" - "$output_root" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-roots = {Path(value).expanduser().resolve() for value in sys.argv[1:]}
-matches = []
-for root in roots:
-    if not root.is_dir():
-        continue
-    for manifest_path in root.glob("*/attempt_manifest.json"):
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if (
-            manifest.get("dry_run") is not True
-            and manifest.get("task_name")
-        ):
-            matches.append(str(manifest_path))
-if matches:
-    raise SystemExit(
-        "task_result_already_executed:"
-        f"manifests={','.join(sorted(matches))}"
-    )
+root = Path(sys.argv[1]).expanduser().resolve()
+manifest_path = root / "attempt_manifest.json"
+if manifest_path.is_file():
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        manifest = {}
+    if manifest.get("dry_run") is not True and manifest.get("task_name"):
+        raise SystemExit(
+            "task_result_already_executed:manifest=" + str(manifest_path)
+        )
 PY
 fi
 if [[ "$check_only" -ne 1 && ! -f "$env_file" ]]; then
@@ -2388,6 +2379,9 @@ for serial in $preflight_serials; do
   preflight_args=(
     --repo "$asset_root"
     --code-root "$repo"
+    --android-world-root "$android_world_root"
+    --source-index "$source_index"
+    --source-task "$task"
     --profile "$profile"
     --serial "$serial"
     --require-kvm

@@ -663,6 +663,38 @@ def install_mobilegpt_upstream_accounting() -> None:
     utils_module = importlib.import_module("utils.utils")
     if bool(getattr(utils_module, "_omniflow_upstream_accounting_installed", False)):
         return
+    original_parse_json = getattr(utils_module, "__parse_json", None)
+    if callable(original_parse_json):
+        def _parse_json_with_empty_content(value: Any, *, is_list: bool = False) -> Any:
+            return original_parse_json(str(value or ""), is_list=is_list)
+
+        utils_module.__parse_json = _parse_json_with_empty_content
+    original_query = getattr(utils_module, "query", None)
+    if (
+        callable(original_query)
+        and getattr(original_query, "__module__", "") == "utils.utils"
+    ):
+        def _query_with_explicit_empty_response_error(*args: Any, **kwargs: Any) -> Any:
+            result = original_query(*args, **kwargs)
+            if result is None:
+                raise ValueError("mobilegpt_upstream_empty_response")
+            return result
+
+        utils_module.query = _query_with_explicit_empty_response_error
+        for module_name in (
+            "agents.action_summarize_agent",
+            "agents.app_agent",
+            "agents.derive_agent",
+            "agents.explore_agent",
+            "agents.param_fill_agent",
+            "agents.select_agent",
+            "agents.subtask_merge_agent",
+            "agents.task_agent",
+            "memory.node_manager",
+        ):
+            module = sys.modules.get(module_name)
+            if module is not None and getattr(module, "query", None) is original_query:
+                module.query = _query_with_explicit_empty_response_error
     original_openai = utils_module.OpenAI
     native_success_accounting = callable(
         getattr(utils_module, "write_omniflow_mobilegpt_event", None)

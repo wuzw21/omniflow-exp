@@ -76,6 +76,15 @@ ANDROID_PERMISSION_DENY_RESOURCE_IDS = (
 )
 DEFAULT_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC = 300.0
 DEFAULT_ANDROIDWORLD_SETUP_TIMEOUT_SEC = 300.0
+_LLM_USAGE_COUNTER_KEYS = (
+    "model_calls",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "responses_with_usage",
+    "responses_without_usage",
+    "failed_calls",
+)
 
 
 def _normalize_androidworld_setup_label(value: Any) -> Any:
@@ -1515,6 +1524,55 @@ def _repair_androidworld_chrome_first_run(
         adb_utils.close_app("chrome", env.controller)
 
 
+def _repair_androidworld_setup_postconditions(
+    env: Any,
+    *,
+    setup_module: Any,
+    setup_apps: Sequence[Any],
+) -> None:
+    """Recover narrowly when an app setup snapshot was incomplete.
+
+    Some clean target AVDs can return from the pinned setup helper without an
+    installed third-party APK.  Reuse AndroidWorld's own installer/setup API
+    for only the affected app, then create the directory required by the
+    official AudioRecorder validator.
+    """
+
+    for app in setup_apps:
+        package_name_getter = getattr(app, "package_name", None)
+        if not callable(package_name_getter):
+            continue
+        try:
+            package_name = (
+                str(package_name_getter() or "").strip()
+            )
+        except Exception:
+            package_name = ""
+        if not package_name:
+            installer = getattr(setup_module, "maybe_install_app", None)
+            setup_app = getattr(setup_module, "setup_app", None)
+            if not callable(installer) or not callable(setup_app):
+                raise RuntimeError(
+                    "AndroidWorld setup helpers unavailable for incomplete app"
+                )
+            installer(app, env)
+            setup_app(app, env)
+            package_name = str(package_name_getter() or "").strip()
+        app_name = str(getattr(app, "app_name", "") or "").strip().casefold()
+        if app_name == "audio recorder":
+            device_constants = importlib.import_module(
+                "android_world.env.device_constants"
+            )
+            response = setup_module.adb_utils.issue_generic_request(
+                ["shell", "mkdir", "-p", device_constants.AUDIORECORDER_DATA],
+                env.controller,
+            )
+            setup_module.adb_utils.check_ok(
+                response,
+                "Failed to prepare AudioRecorder records directory.",
+            )
+
+
 def _run_androidworld_setup_apps(
     env: Any,
     *,
@@ -1616,6 +1674,11 @@ def _run_androidworld_setup_apps(
         setup_module.setup_apps(
             setup_env,
             app_list=tuple(setup_apps),
+        )
+        _repair_androidworld_setup_postconditions(
+            setup_env,
+            setup_module=setup_module,
+            setup_apps=setup_apps,
         )
         _repair_androidworld_chrome_first_run(
             setup_env,
@@ -1728,6 +1791,17 @@ def _patch_androidworld_adb_output_sanitizer(
             **kwargs: Any,
         ) -> Any:
             response = _original(instance, *args, **kwargs)
+            # Pull/push responses carry binary file contents in a separate
+            # protobuf field.  Never line-sanitize those requests: treating a
+            # SQLite pull as UTF-8 can silently corrupt the database and make
+            # the official validator report a missing table.
+            request = args[0] if args else kwargs.get("request")
+            try:
+                request_kind = request.WhichOneof("command")
+            except (AttributeError, ValueError):
+                request_kind = None
+            if request_kind in {"pull", "push"}:
+                return response
             generic = getattr(response, "generic", None)
             output = getattr(generic, "output", None)
             if isinstance(output, (bytes, str)):

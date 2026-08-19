@@ -634,7 +634,33 @@ def _target_audit_from_legacy_provenance(
         )
     raw = json.loads(source_path.read_text(encoding="utf-8"))
     hydration_states = dict(source_states)
-    for step in canonical["steps"]:
+    canonical_steps = list(canonical["steps"])
+    for raw_index, raw_step in enumerate(raw.get("steps") or ()):
+        if not isinstance(raw_step, dict) or raw_index >= len(canonical_steps):
+            continue
+        canonical_step = canonical_steps[raw_index]
+        for legacy_key, observation_key in (
+            ("before_state_id", "observation"),
+            ("after_state_id", "next_observation"),
+        ):
+            legacy_identifier = str(raw_step.get(legacy_key) or "").strip()
+            observation = canonical_step.get(observation_key)
+            if not legacy_identifier or not isinstance(observation, dict):
+                continue
+            state: dict[str, Any] = {"state_id": legacy_identifier}
+            xml_text = observation_xml(observation)
+            if xml_text:
+                state["xml"] = xml_text
+            auxiliaries = observation.get("auxiliaries")
+            if isinstance(auxiliaries, dict):
+                for key in ("package_name", "activity_name"):
+                    if auxiliaries.get(key) not in (None, ""):
+                        state[key] = str(auxiliaries[key])
+                display = _source_display(auxiliaries.get("display"))
+                if display:
+                    state["display"] = display
+            hydration_states[legacy_identifier] = state
+    for step in canonical_steps:
         for observation in (step.get("observation"), step.get("next_observation")):
             if not isinstance(observation, dict):
                 continue

@@ -413,6 +413,7 @@ def _build_appagent(context: MethodAdapterContext) -> Any:
     )
     api_key, base_url = resolve_openai_compatible_config(
         profile=context.model_endpoint_profile or None,
+        base_url=os.environ.get("OPENAI_BASE_URL"),
     )
     return AppAgentAndroidWorldAgent(
         env=context.env,
