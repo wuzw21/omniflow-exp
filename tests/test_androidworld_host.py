@@ -1955,6 +1955,39 @@ def test_actions_dispatch_only_through_official_androidworld_api(monkeypatch) ->
     ]
 
 
+def test_oob_open_app_resolves_androidworld_launcher_name(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class ControlClient:
+        def act(self, payload: dict[str, object]) -> dict[str, object]:
+            calls.append(payload)
+            return {"success": True}
+
+    monkeypatch.setattr(
+        "src.integrations.android_world.host.resolve_androidworld_package",
+        lambda identifier: (
+            "com.dimowner.audiorecorder"
+            if identifier == "audio recorder"
+            else ""
+        ),
+    )
+    host = AndroidWorldHost(
+        SimpleNamespace(device_screen_size=(720, 1280)),
+        control_backend="oob",
+    )
+    host.control_client = ControlClient()
+
+    result = host.act(Action("open_app", {"package_name": "audio recorder"}))
+
+    assert result.success is True
+    assert calls == [
+        {
+            "tool": "open_app",
+            "args": {"package_name": "com.dimowner.audiorecorder"},
+        }
+    ]
+
+
 def test_androidworld_app_launch_restarts_mapped_app_before_opening() -> None:
     calls: list[tuple[str, str]] = []
     controller = object()

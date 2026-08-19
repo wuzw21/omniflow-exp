@@ -20,7 +20,10 @@ from omniflow.core.androidworld_accessibility import (
     xml_with_screen_size,
 )
 from src.experiment.performance_metrics import PerformanceMetrics
-from src.integrations.android_world.apps import resolve_androidworld_app_name
+from src.integrations.android_world.apps import (
+    resolve_androidworld_app_name,
+    resolve_androidworld_package,
+)
 from src.integrations.android_world.oob_control import (
     OobControlClient,
     oob_state_from_payload,
@@ -534,7 +537,18 @@ class AndroidWorldHost:
         try:
             if self.control_client is not None:
                 def execute() -> dict[str, Any]:
-                    return self.control_client.act(action.to_dict())
+                    payload = action.to_dict()
+                    if action.tool == "open_app":
+                        args = dict(payload.get("args") or {})
+                        identifier = str(
+                            args.get("package_name") or args.get("app_name") or ""
+                        ).strip()
+                        resolved_package = resolve_androidworld_package(identifier)
+                        if resolved_package:
+                            args["package_name"] = resolved_package
+                            args.pop("app_name", None)
+                            payload["args"] = args
+                    return self.control_client.act(payload)
 
                 execute_host_action = getattr(
                     self.recorder, "execute_host_action", None
