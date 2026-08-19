@@ -3546,11 +3546,17 @@ def write_metrics_summary(summary: dict[str, Any], output_path: str | Path) -> N
 
 
 def _add_androidworld_setup_args(parser: argparse.ArgumentParser) -> None:
+    perform_setup_default = (
+        str(os.environ.get("OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP", "1"))
+        .strip()
+        .lower()
+        not in {"0", "false", "no", "off"}
+    )
     parser.add_argument(
         "--perform-emulator-setup",
         dest="perform_emulator_setup",
         action="store_true",
-        default=True,
+        default=perform_setup_default,
         help=(
             "Run AndroidWorld app setup before the task suite so each task "
             "initialize_task(env) can restore a fresh snapshot. Default: on."
