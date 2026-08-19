@@ -339,7 +339,17 @@ def test_bmoca_method_launches_ten_isolated_overlapping_results(
     assert len({env["OMNIFLOW_BMOCA_AVD_HOME"] for env in environments}) == 10
     assert len({env["OMNIFLOW_BMOCA_APPIUM_PORT"] for env in environments}) == 10
     assert len({env["OMNIFLOW_BMOCA_EMULATOR_CONSOLE_PORT"] for env in environments}) == 10
-    assert all(command[:2] == ["bash", str(args.script)] for command in commands)
+    assert all(
+        command[:4]
+        == [
+            str(args.python_bin),
+            "-m",
+            "src.integrations.android_world.run_episode",
+            "--environment",
+        ]
+        for command in commands
+    )
+    assert all("bash" not in command for command in commands)
     assert all("OPENAI_API_KEY" not in env for env in environments)
     assert all("OMNIFLOW_ENV_FILE" not in env for env in environments)
 

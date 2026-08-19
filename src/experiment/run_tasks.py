@@ -2335,6 +2335,64 @@ def _bmoca_environment_failure(error: str) -> bool:
     )
 
 
+def _bmoca_result_command(
+    *,
+    args: argparse.Namespace,
+    task: str,
+    method: str,
+    environment_id: str,
+    store_path: Path,
+    memory_path: Path | None,
+    output_path: Path,
+    avd_home: Path,
+    appium_port: int,
+    appium_system_port: int,
+    emulator_console_port: int,
+    emulator_adb_port: int,
+    emulator_grpc_port: int,
+) -> list[str]:
+    """Build the native B-MoCA episode command without re-entering the shell."""
+
+    command = [
+        str(args.python_bin),
+        "-m",
+        "src.integrations.android_world.run_episode",
+        "--environment",
+        "bmoca",
+        "--bmoca-root",
+        str(args.bmoca_root),
+        "--environment-ids",
+        str(environment_id),
+        "--android-sdk-root",
+        str(args.android_sdk_root),
+        "--android-avd-home",
+        str(avd_home),
+        "--appium-port",
+        str(appium_port),
+        "--appium-system-port",
+        str(appium_system_port),
+        "--emulator-console-port",
+        str(emulator_console_port),
+        "--emulator-adb-port",
+        str(emulator_adb_port),
+        "--emulator-grpc-port",
+        str(emulator_grpc_port),
+        "--tasks",
+        str(task),
+        "--agent",
+        str(method),
+        "--store-path",
+        str(store_path),
+        "--output-path",
+        str(output_path),
+    ]
+    if method != "ours_replay":
+        command.extend(("--reuse-memory-path", str(memory_path or "")))
+    if method == "mobilegpt_replay":
+        command.extend(("--mobilegpt-root", str(args.mobilegpt_root)))
+    return command
+
+
 def _run_bmoca_result(
     *,
     args: argparse.Namespace,
@@ -2358,16 +2416,21 @@ def _run_bmoca_result(
     log_path = task_root / "logs" / method / f"env_{environment_id}.log"
     live_started = time.monotonic()
     result = command_runner(
-        [
-            "bash",
-            str(args.script),
-            "--environment",
-            "bmoca",
-            "--method",
-            method,
-            "--tasks",
-            task,
-        ],
+        _bmoca_result_command(
+            args=args,
+            task=task,
+            method=method,
+            environment_id=environment_id,
+            store_path=store_path,
+            memory_path=memory_path,
+            output_path=result_root,
+            avd_home=avd_home,
+            appium_port=appium_port,
+            appium_system_port=appium_system_port,
+            emulator_console_port=emulator_console_port,
+            emulator_adb_port=emulator_adb_port,
+            emulator_grpc_port=emulator_grpc_port,
+        ),
         cwd=args.repo,
         environment=_bmoca_result_environment(
             args=args,
