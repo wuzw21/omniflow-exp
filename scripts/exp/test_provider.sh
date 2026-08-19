@@ -48,7 +48,6 @@ run_provider() {
       tests=(
         "$repo/tests/test_mobilegpt_source.py"
         "$repo/tests/test_mobilegpt_converter.py"
-        "$repo/tests/test_mobilegpt_agent.py"
       )
       ;;
     appagent)

@@ -17,7 +17,7 @@ from src.experiment.protocol import (
 
 _UNSUPPORTED_SELECTOR_ERROR = (
     "Unsupported AndroidWorld agent selector. Use `omniflow`, `fixed_replay`, "
-    "`mobilegpt`, `appagent`, or `official:<name>`."
+    "`appagent`, or `official:<name>`."
 )
 
 REUSE_METRICS_SCHEMA = "omniflow.androidworld.reuse-metrics.v1"
@@ -281,11 +281,6 @@ def default_method_adapter_registry() -> MethodAdapterRegistry:
                 build=_build_omniflow,
             ),
             MethodAdapter(
-                name="mobilegpt",
-                accepts=lambda selector: selector == "mobilegpt",
-                build=_build_mobilegpt,
-            ),
-            MethodAdapter(
                 name="appagent",
                 accepts=lambda selector: selector == "appagent",
                 build=_build_appagent,
@@ -374,16 +369,6 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
         built_agent,
         run_log_json_path=str(context.raw_replay_run_log).strip(),
         adb_path=context.adb_path,
-    )
-
-
-def _build_mobilegpt(context: MethodAdapterContext) -> Any:
-    from src.integrations.android_world.mobilegpt_agent import build_mobilegpt_agent
-
-    return build_mobilegpt_agent(
-        env=context.env,
-        evidence_root=context.evidence_root or None,
-        performance_metrics=context.performance_metrics,
     )
 
 

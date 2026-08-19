@@ -2094,12 +2094,13 @@ def build_mobilegpt_server_command(
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
     root = resolve_path(mobilegpt_root, root=repo_root)
+    server_root = root / "Server"
+    if not (server_root / "main.py").is_file():
+        raise FileNotFoundError(f"mobilegpt_server_root_missing:{server_root}")
     env: dict[str, str] = {}
     if serial.strip():
         env["ANDROID_SERIAL"] = serial.strip()
-    env["MOBILEGPT_RUNTIME_OBSERVE_BACKEND"] = str(
-        runtime_observe_backend or "androidworld"
-    ).strip()
+    del runtime_observe_backend
     if adb_path.strip():
         env["ADB_PATH"] = adb_path.strip()
     resolved_memory_root = (
@@ -2118,24 +2119,15 @@ def build_mobilegpt_server_command(
     resolved_action = str(action or "").strip().lower()
     if resolved_action == "server":
         env["MOBILEGPT_STATS_JSONL"] = str(resolve_path(stats_jsonl, root=repo_root))
-        env["MOBILEGPT_UPSTREAM_MODE"] = "1"
         argv = [
             python_executable,
-            "-m",
-            "src.integrations.mobilegpt_runtime",
-            "--mobilegpt-root",
-            str(root),
-            "--host",
-            str(server_host or "0.0.0.0"),
-            "--port",
-            str(int(port)),
-            "--upstream",
+            str(server_root / "main.py"),
         ]
         return CommandSpec(
             label="mobilegpt:server",
             argv=argv,
             env=env,
-            cwd=repo_root,
+            cwd=server_root,
             output_path=None,
             metadata={
                 "mobilegpt_root": str(root),
@@ -2143,7 +2135,8 @@ def build_mobilegpt_server_command(
                 "port": int(port),
                 "target_package": str(target_package or "").strip(),
                 "target_app": str(target_app or "").strip(),
-                "state_backend": "androidworld",
+                "state_backend": "official_mobilegpt",
+                "official_server": str(server_root / "main.py"),
             },
         )
 

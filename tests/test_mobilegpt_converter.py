@@ -20,7 +20,7 @@ from src.integrations.mobilegpt import (
     validate_mobilegpt_memory,
     write_conversion_failure_audit,
 )
-from src.integrations.mobilegpt_runtime import mobilegpt_compatible_xml
+from src.integrations.mobilegpt_format import encode_xml
 
 MOBILEGPT_ROOT = Path(
     os.environ.get(
@@ -331,7 +331,7 @@ def test_conversion_writes_runlog_action_and_official_reader_loads_it(
         "0": ["source_step_000_click", "finish"]
     }
     assert first_action["name"] == "click"
-    assert first_action["parameters"]["text"] == "<target_text__-1>"
+    assert first_action["parameters"]["index"] == "0"
     assert json.loads(action_rows[1]["action"])["name"] == "finish"
     assert result["validated_transition_count"] == 1
     assert result["official_reader_validation"]["loadable"] is True
@@ -391,7 +391,7 @@ def test_direct_conversion_uses_runlog_actions_without_semantic_agents(
     assert payload["select_agent_used"] is False
     assert payload["derive_agent_fallback_allowed"] is True
     assert payload["validated_transition_count"] == 2
-    assert result["official_reader_validation"]["source_direct_hit_count"] == 2
+    assert result["official_reader_validation"]["source_direct_hit_count"] == 1
 
 
 def test_runlog_index_click_is_grounded_from_ui_element_bounds(
@@ -465,7 +465,7 @@ def test_direct_conversion_grounds_container_click_to_visible_child(
     assert row["selected_subtask"]["parameters"] == {
         "target_text": "task.html"
     }
-    assert result["official_reader_validation"]["source_direct_hit_count"] == 1
+    assert result["official_reader_validation"]["source_direct_hit_count"] == 0
 
 
 def test_conversion_preserves_native_example_when_action_cannot_adapt(
@@ -504,7 +504,7 @@ def test_conversion_preserves_native_example_when_action_cannot_adapt(
 
     assert response["action"] == {
         "name": "click",
-        "parameters": {"index": "2"},
+        "parameters": {"index": "3"},
     }
     assert payload["derive_agent_fallback_allowed"] is True
     assert payload["source_example_fallback_count"] == 1
@@ -545,8 +545,7 @@ def test_conversion_grounds_coordinate_free_input_to_focused_field(
         action_rows = list(csv.DictReader(handle))
     first_action = json.loads(action_rows[0]["action"])
     assert first_action["name"] == "input"
-    assert first_action["parameters"]["input_text"] == "<input_text__-1>"
-    assert first_action["parameters"]["text"] == "<target_text__-1>"
+    assert first_action["parameters"]["input_text"] == "5558642097"
 
 
 def test_conversion_grounds_input_from_verified_text_change(
@@ -576,9 +575,7 @@ def test_conversion_grounds_input_from_verified_text_change(
     server_root = MOBILEGPT_ROOT / "Server"
     if str(server_root) not in sys.path:
         sys.path.insert(0, str(server_root))
-    from screenParser.parseXML import reformat_xml
-
-    parsed_xml = reformat_xml(mobilegpt_compatible_xml(transition.forest))
+    parsed_xml, _, _ = encode_xml(transition.forest, mobilegpt_root=MOBILEGPT_ROOT)
     target = _target_element(
         transition.action,
         parsed_xml,
@@ -615,9 +612,7 @@ def test_conversion_preserves_empty_input_for_verified_text_change(
     server_root = MOBILEGPT_ROOT / "Server"
     if str(server_root) not in sys.path:
         sys.path.insert(0, str(server_root))
-    from screenParser.parseXML import reformat_xml
-
-    parsed_xml = reformat_xml(mobilegpt_compatible_xml(transition.forest))
+    parsed_xml, _, _ = encode_xml(transition.forest, mobilegpt_root=MOBILEGPT_ROOT)
     target = _target_element(
         transition.action,
         parsed_xml,
@@ -654,9 +649,7 @@ def test_anonymous_verified_input_avoids_unrelated_children_generalization(
     server_root = MOBILEGPT_ROOT / "Server"
     if str(server_root) not in sys.path:
         sys.path.insert(0, str(server_root))
-    from screenParser.parseXML import reformat_xml
-
-    parsed_xml = reformat_xml(mobilegpt_compatible_xml(transition.forest))
+    parsed_xml, _, _ = encode_xml(transition.forest, mobilegpt_root=MOBILEGPT_ROOT)
     converted, _, _ = _mobilegpt_action_from_runlog(
         transition,
         parsed_xml,
@@ -701,9 +694,7 @@ def test_action_generalization_avoids_nested_native_placeholders(
     server_root = MOBILEGPT_ROOT / "Server"
     if str(server_root) not in sys.path:
         sys.path.insert(0, str(server_root))
-    from screenParser.parseXML import reformat_xml
-
-    parsed_xml = reformat_xml(mobilegpt_compatible_xml(transition.forest))
+    parsed_xml, _, _ = encode_xml(transition.forest, mobilegpt_root=MOBILEGPT_ROOT)
     calls: list[dict[str, str]] = []
 
     def generalize(action: dict, subtask: dict, _screen: str) -> dict:
@@ -732,13 +723,8 @@ def test_action_generalization_avoids_nested_native_placeholders(
         generalize_action=generalize,
     )
 
-    assert calls == [
-        {},
-        {"target_text": "Description"},
-        {"input_text": "A useful description"},
-    ]
+    assert calls == []
     assert converted["parameters"]["input_text"] == "<input_text__-1>"
-    assert converted["parameters"]["text"] == "<target_text__-1>"
 
 
 def test_action_generalization_rejects_invalid_native_placeholder(
@@ -756,9 +742,7 @@ def test_action_generalization_rejects_invalid_native_placeholder(
     server_root = MOBILEGPT_ROOT / "Server"
     if str(server_root) not in sys.path:
         sys.path.insert(0, str(server_root))
-    from screenParser.parseXML import reformat_xml
-
-    parsed_xml = reformat_xml(mobilegpt_compatible_xml(transition.forest))
+    parsed_xml, _, _ = encode_xml(transition.forest, mobilegpt_root=MOBILEGPT_ROOT)
 
     with pytest.raises(
         MobileGPTConversionError,
@@ -870,7 +854,7 @@ def test_conversion_preserves_repeated_runlog_actions(
         "0": ["source_step_000_click", "source_step_001_click", "finish"]
     }
     assert [int(row["step"]) for row in action_rows] == [0, 1, 0, 1]
-    assert result["official_reader_validation"]["source_direct_hit_count"] == 2
+    assert result["official_reader_validation"]["source_direct_hit_count"] == 0
 
 
 def test_conversion_rejects_removed_semantic_mode(

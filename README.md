@@ -63,12 +63,13 @@ modes of that launcher, not alternate executors. Function creation has one route
 `save_function` validates and writes the Store, then `--refresh-memory` updates
 `data/current.json`; runtime only reads that index and the registered Store.
 
-There are two MobileGPT preparation adapters because their contracts differ:
-AndroidWorld creates a sealed source bundle through
-`src/experiment/mobilegpt_source.py`, while B-MoCA creates its native replay
-memory through the scheduler's B-MoCA adapter. Both use the single converter in
-`src/integrations/mobilegpt.py`; neither is a second Function or
-episode runner. Do not add another preparation entry point.
+MobileGPT is not an OmniFlow AndroidWorld action adapter. The only local
+integration is the RunLog-to-native-memory conversion in
+`src/integrations/mobilegpt.py`, which calls the official XML Encoder through
+`src/integrations/mobilegpt_format.py`. Start the official MobileGPT checkout
+from its own `Server/main.py` and Android app; its Explore, Select, Derive, and
+Subtask code remains upstream-owned. Do not add a second runner or action
+schema.
 
 Install the B-MoCA replay dependency with `uv sync --extra bmoca`. The protocol
 pins DroidRun v0.5.6. `skilldroid_replay` converts the qualified env100 RunLog to
@@ -216,12 +217,12 @@ bash scripts/exp/run_androidworld.sh --refresh-memory
 
 Experiment execution capabilities are all routed through the same launcher:
 
-- AndroidWorld formal methods: `fixed_replay`, `omniflow`, `mobilegpt`,
-  `appagent`, and `t3a_hint`.
+- AndroidWorld local methods: `fixed_replay`, `omniflow`, `appagent`, and
+  `t3a_hint`.
 - Source qualification: `--collect-source` or
   `--source-qualification-only`.
 - Bounded development: `--development-run`.
-- B-MoCA: `ours_replay`, `mobilegpt_replay`, and `skilldroid_replay`.
+- B-MoCA: `ours_replay` and `skilldroid_replay`.
 - Performance side channel: `--collect-performance`, which writes a sidecar
   without changing the public result row.
 

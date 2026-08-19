@@ -1,12 +1,13 @@
 # Integration edit guide
 
 Integrations satisfy existing seams. AndroidWorld owns native I/O and method
-construction; AppAgent and MobileGPT adapters translate their external
-contracts; B-MoCA adapters preserve official reward semantics; RunLog and
-replay adapters convert evidence into the shared runtime.
+construction; B-MoCA adapters preserve official reward semantics; RunLog and
+replay adapters convert evidence into the shared runtime. External MobileGPT
+and AppAgent code is started from its own checkout; OmniFlow only writes their
+native warm-start files.
 
-An adapter may translate, validate, or patch an upstream dependency. It may not
-own task scheduling, Function persistence, a second action mapper, or a second
+An adapter may translate a source artifact into an upstream file format. It may
+not patch upstream prompts/actions, own task scheduling, or create a second
 episode lifecycle.
 
 `mobilegpt.py` owns RunLog conversion and the native memory reader.
@@ -21,6 +22,7 @@ Start with the matching source owner and use the shared harness:
 ```text
 MobileGPT: src/experiment/mobilegpt_source.py
   -> src/integrations/mobilegpt.py          # upstream memory format
+  -> src/integrations/mobilegpt_format.py   # official XML encoder only
   -> src/integrations/mobilegpt_memory.py   # memory checks and evidence
   -> bash scripts/exp/test_provider.sh mobilegpt
 

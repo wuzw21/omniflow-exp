@@ -208,11 +208,8 @@ def test_selected_model_profile_is_exported_for_native_openai_clients() -> None:
     assert 'export OPENAI_BASE_URL="$selected_model_base_url"' in script_text
 
 
-def test_mobilegpt_runtime_uses_sealed_embedding_contract_and_split_endpoints() -> None:
+def test_mobilegpt_uses_the_official_server_without_a_runtime_patch() -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
-    runtime_text = (
-        REPO / "src" / "integrations" / "mobilegpt_runtime.py"
-    ).read_text(encoding="utf-8")
 
     assert (
         'mobilegpt_embedding_api_key="${MOBILEGPT_EMBEDDING_API_KEY:-$selected_model_api_key}"'
@@ -223,8 +220,8 @@ def test_mobilegpt_runtime_uses_sealed_embedding_contract_and_split_endpoints() 
         'export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"'
         in script_text
     )
-    assert "preflight-endpoints" in script_text
-    assert "mobilegpt_embedding_dimension_mismatch" in runtime_text
+    assert "src.integrations.mobilegpt_runtime" not in script_text
+    assert "GLM-Embedding-2" in script_text
 
 
 def test_formal_dry_run_exits_before_output_and_emulator_management() -> None:

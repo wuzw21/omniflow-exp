@@ -16,6 +16,7 @@ import sys
 import time
 from typing import Any, Callable, Iterator, Sequence
 import xml.etree.ElementTree as ET
+import xml.dom.minidom
 
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
@@ -29,7 +30,7 @@ from src.integrations.android_world.host import (
     androidworld_observation_package,
     androidworld_observation_xml,
 )
-from src.integrations.mobilegpt_runtime import mobilegpt_compatible_xml
+from src.integrations.mobilegpt_format import encode_xml
 from src.integrations.runlog import import_run_log, infer_input_text_target
 from omniflow.core.model import Action
 from omniflow.transfer.runtime import load_transfer_state_catalog
@@ -1173,7 +1174,8 @@ def _generalize_action_safely(
     semantic_parameters: dict[str, str],
     screen: str,
     step_index: int,
-    generalize_action: Callable[[dict[str, Any], dict[str, Any], str], dict[str, Any]],
+    generalize_action: Callable[[dict[str, Any], dict[str, Any], str], dict[str, Any]]
+    | None = None,
 ) -> dict[str, Any]:
     base_subtask = {"name": subtask_name, "parameters": {}}
     converted = generalize_action(deepcopy(action), base_subtask, screen)
@@ -1378,7 +1380,8 @@ def _mobilegpt_action_from_runlog(
     *,
     task_parameters: dict[str, Any],
     selected_subtask: dict[str, Any],
-    generalize_action: Callable[[dict[str, Any], dict[str, Any], str], dict[str, Any]],
+    generalize_action: Callable[[dict[str, Any], dict[str, Any], str], dict[str, Any]]
+    | None = None,
 ) -> tuple[dict[str, Any], dict[str, str], str]:
     action = transition.action
     action_type = _action_type(action)
@@ -1443,8 +1446,12 @@ def _mobilegpt_action_from_runlog(
         )
     anonymous_verified_input = (
         action_type == "input_text"
-        and changed_input.get("identity") == {"role": "editable"}
-        and len(ET.fromstring(parsed_xml).findall(".//input")) == 1
+        and sum(
+            1
+            for element in ET.fromstring(parsed_xml).iter()
+            if element.tag == "input"
+        )
+        == 1
     )
     if anonymous_verified_input:
         converted["parameters"]["attrib"] = {
@@ -1465,7 +1472,7 @@ def _mobilegpt_action_from_runlog(
             converted["parameters"]["input_text"] = (
                 f"<{matching_parameters[0]}__-1>"
             )
-    elif "index" in converted["parameters"]:
+    elif "index" in converted["parameters"] and callable(generalize_action):
         generalization_screen = f"<hierarchy>{parsed_xml}</hierarchy>"
         selected_parameters = selected_subtask.get("parameters")
         if not isinstance(selected_parameters, dict):
@@ -1674,8 +1681,6 @@ def convert_runlog_to_mobilegpt_memory(
     audit_rows: list[dict[str, Any]] = []
     with _temporary_environment(environment), _working_directory(server_root):
         from memory.memory_manager import Memory
-        from screenParser.Encoder import xmlEncoder
-        from utils.action_utils import generalize_action
         if embedding_provider is None:
             from utils.utils import get_openai_embedding
 
@@ -1707,17 +1712,33 @@ def convert_runlog_to_mobilegpt_memory(
                 "mode": "offline_conversion",
             },
         )
-        encoder = xmlEncoder()
-        encoder.init(str(log_root))
+        xml_root = log_root / "xmls"
+        xml_root.mkdir(parents=True, exist_ok=True)
         pages_by_identity: dict[str, dict[str, Any]] = {}
         task_path: dict[str, list[str]] = {}
         for screen_index, transition in enumerate(encoded_transitions):
-            raw_xml = mobilegpt_compatible_xml(transition.forest)
-            raw_path = Path(encoder.xml_directory) / f"{screen_index}.xml"
+            raw_xml = str(transition.forest)
+            raw_path = xml_root / f"{screen_index}.xml"
             raw_path.write_text(raw_xml, encoding="utf-8")
-            parsed_xml, hierarchy_xml, encoded_xml = encoder.encode(
+            parsed_xml, hierarchy_xml, encoded_xml = encode_xml(
                 raw_xml,
-                screen_index,
+                mobilegpt_root=mobilegpt_root,
+            )
+            (xml_root / f"{screen_index}_parsed.xml").write_text(
+                parsed_xml,
+                encoding="utf-8",
+            )
+            (xml_root / f"{screen_index}_hierarchy_parsed.xml").write_text(
+                hierarchy_xml,
+                encoding="utf-8",
+            )
+            (xml_root / f"{screen_index}_encoded.xml").write_text(
+                encoded_xml,
+                encoding="utf-8",
+            )
+            (xml_root / f"{screen_index}_pretty.xml").write_text(
+                xml.dom.minidom.parseString(encoded_xml).toprettyxml(),
+                encoding="utf-8",
             )
             identity = _screen_identity(hierarchy_xml)
             page = pages_by_identity.get(identity)
@@ -1728,14 +1749,11 @@ def convert_runlog_to_mobilegpt_memory(
                 screen_root.mkdir(parents=True)
                 artifacts = {
                     "raw.xml": raw_path,
-                    "html.xml": Path(encoder.xml_directory)
-                    / f"{screen_index}_encoded.xml",
-                    "hierarchy.xml": Path(encoder.xml_directory)
+                    "html.xml": xml_root / f"{screen_index}_encoded.xml",
+                    "hierarchy.xml": xml_root
                     / f"{screen_index}_hierarchy_parsed.xml",
-                    "parsed.xml": Path(encoder.xml_directory)
-                    / f"{screen_index}_parsed.xml",
-                    "pretty.xml": Path(encoder.xml_directory)
-                    / f"{screen_index}_pretty.xml",
+                    "parsed.xml": xml_root / f"{screen_index}_parsed.xml",
+                    "pretty.xml": xml_root / f"{screen_index}_pretty.xml",
                 }
                 for name, source in artifacts.items():
                     if not source.is_file():
@@ -1781,7 +1799,6 @@ def convert_runlog_to_mobilegpt_memory(
                 parsed_xml,
                 task_parameters=trajectory["task_parameters"],
                 selected_subtask=selected_subtask,
-                generalize_action=generalize_action,
             )
             del label
             action_example = _native_action_example(
@@ -2010,7 +2027,7 @@ def convert_runlog_to_mobilegpt_memory(
         "derive_agent_fallback_allowed": True,
         "derive_agent_fallback_count": 0,
         "source_example_fallback_count": source_example_fallback_count,
-        "generalize_action_used": bool(audit_rows),
+        "generalize_action_used": False,
         "direct_subtasks_from_runlog": True,
         "source_direct_hit_validation": source_example_fallback_count == 0,
         "source_reader_coverage_validation": True,

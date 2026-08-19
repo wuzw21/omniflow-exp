@@ -478,8 +478,7 @@ Options:
   --dry-run                 Build one task command without executing it.
   --all-tasks               Run the selected task set in task-major order.
   --method METHOD           Run one method in the single-result runner. B-MoCA
-                            accepts ours_replay, mobilegpt_replay, or
-                            skilldroid_replay.
+                            accepts ours_replay or skilldroid_replay.
   --device LABEL:SERIAL:PORT
                             Run one target in the single-result runner.
   --control-backend NAME    Use androidworld (default) or explicit oob transport
@@ -716,8 +715,8 @@ if [[ "$execution_environment" == "bmoca" ]]; then
       echo "A B-MoCA single result requires exactly one task and cannot use --all-tasks." >&2
       exit 2
     fi
-    if [[ "$selected_method_arg" != "ours_replay" && "$selected_method_arg" != "mobilegpt_replay" && "$selected_method_arg" != "skilldroid_replay" ]]; then
-      echo "B-MoCA --method must be ours_replay, mobilegpt_replay, or skilldroid_replay." >&2
+    if [[ "$selected_method_arg" != "ours_replay" && "$selected_method_arg" != "skilldroid_replay" ]]; then
+      echo "B-MoCA --method must be ours_replay or skilldroid_replay." >&2
       exit 2
     fi
     if [[ -z "$bmoca_single_environment_id" || ! "$bmoca_single_environment_id" =~ ^10[0-9]$ ]]; then
@@ -757,33 +756,6 @@ if [[ "$execution_environment" == "bmoca" ]]; then
     if [[ "$selected_method_arg" != "ours_replay" ]]; then
       bmoca_command+=(--reuse-memory-path "$bmoca_reuse_memory_path")
     fi
-    if [[ "$selected_method_arg" == "mobilegpt_replay" ]]; then
-      if [[ -z "$mobilegpt_root" || "$mobilegpt_root" != /* || ! -d "$mobilegpt_root/Server" ]]; then
-        echo "B-MoCA mobilegpt_replay requires an absolute OMNIFLOW_MOBILEGPT_ROOT." >&2
-        exit 2
-      fi
-      if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
-        echo "B-MoCA mobilegpt_replay requires an existing absolute OMNIFLOW_ENV_FILE." >&2
-        exit 2
-      fi
-      set -a
-      source "$env_file"
-      set +a
-      unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
-      select_model_endpoint "$formal_model_endpoint_profile"
-      mobilegpt_embedding_api_key="${MOBILEGPT_EMBEDDING_API_KEY:-$selected_model_api_key}"
-      mobilegpt_embedding_base_url="${MOBILEGPT_EMBEDDING_BASE_URL:-$selected_model_base_url}"
-      validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
-      export MOBILEGPT_CHAT_MODEL="$formal_model"
-      export MOBILEGPT_CHAT_API_KEY="$selected_model_api_key"
-      export MOBILEGPT_CHAT_BASE_URL="$selected_model_base_url"
-      export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"
-      export MOBILEGPT_EMBEDDING_BASE_URL="$mobilegpt_embedding_base_url"
-      export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
-      bmoca_command+=(
-        --mobilegpt-root "$mobilegpt_root"
-      )
-    fi
     cd "$repo"
     exec "${bmoca_command[@]}"
   fi
@@ -813,10 +785,6 @@ PY
     echo "B-MoCA campaign requires the official env100 source AVD: $bmoca_avd_home/$bmoca_source_avd.avd" >&2
     exit 2
   fi
-  if [[ -z "$mobilegpt_root" || "$mobilegpt_root" != /* || ! -d "$mobilegpt_root/Server" ]]; then
-    echo "B-MoCA campaign requires an absolute OMNIFLOW_MOBILEGPT_ROOT." >&2
-    exit 2
-  fi
   if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
     echo "B-MoCA campaign enhancement requires an absolute OMNIFLOW_ENV_FILE." >&2
     exit 2
@@ -826,15 +794,7 @@ PY
   set +a
   unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
   select_model_endpoint "$formal_model_endpoint_profile"
-  mobilegpt_embedding_api_key="${MOBILEGPT_EMBEDDING_API_KEY:-$selected_model_api_key}"
-  mobilegpt_embedding_base_url="${MOBILEGPT_EMBEDDING_BASE_URL:-$selected_model_base_url}"
   validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
-  export MOBILEGPT_CHAT_MODEL="$formal_model"
-  export MOBILEGPT_CHAT_API_KEY="$selected_model_api_key"
-  export MOBILEGPT_CHAT_BASE_URL="$selected_model_base_url"
-  export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"
-  export MOBILEGPT_EMBEDDING_BASE_URL="$mobilegpt_embedding_base_url"
-  export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
   bmoca_task_selection="${batch_task_filter:-*}"
   bmoca_pipeline_args=(
     -m src.experiment.run_tasks
@@ -848,7 +808,6 @@ PY
     --omnitransfer-root "$resolved_omnitransfer_root"
     --python-bin "$python_bin"
     --formal-model "$formal_model"
-    --mobilegpt-root "$mobilegpt_root"
     --bmoca-root "$bmoca_root"
     --bmoca-corpus-manifest "$bmoca_corpus_manifest"
     --bmoca-avd-home "$bmoca_avd_home"
@@ -1016,10 +975,6 @@ if [[ -n "$e2e_task" ]]; then
     echo "--e2e-task requires canonical OmniTransfer: $canonical_omnitransfer_root." >&2
     exit 2
   fi
-  if [[ "$dry_run" -ne 1 && "$check_only" -ne 1 && ( -z "$mobilegpt_root" || "$mobilegpt_root" != /* || ! -d "$mobilegpt_root" ) ]]; then
-    echo "--e2e-task requires an absolute native MobileGPT root." >&2
-    exit 2
-  fi
   if [[ "$dry_run" -ne 1 && "$check_only" -ne 1 && ( -z "$appagent_root" || "$appagent_root" != /* || ! -d "$appagent_root" ) ]]; then
     echo "--e2e-task requires an absolute native AppAgent root." >&2
     exit 2
@@ -1062,16 +1017,8 @@ if [[ -n "$e2e_task" ]]; then
     unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
     select_model_endpoint "$formal_model_endpoint_profile"
     validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
-    mobilegpt_embedding_api_key="${MOBILEGPT_EMBEDDING_API_KEY:-$selected_model_api_key}"
-    mobilegpt_embedding_base_url="${MOBILEGPT_EMBEDDING_BASE_URL:-$selected_model_base_url}"
     export OPENAI_MODEL="$formal_model"
     export OMNIFLOW_PLANNER_MODEL="$formal_model"
-    export MOBILEGPT_CHAT_MODEL="$formal_model"
-    export MOBILEGPT_CHAT_API_KEY="$selected_model_api_key"
-    export MOBILEGPT_CHAT_BASE_URL="$selected_model_base_url"
-    export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"
-    export MOBILEGPT_EMBEDDING_BASE_URL="$mobilegpt_embedding_base_url"
-    export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
   fi
   normalized_e2e_model="$(printf '%s' "$formal_model" | tr '[:upper:]' '[:lower:]')"
   if [[ "$normalized_e2e_model" != "glm-5.1" ]]; then
@@ -1415,10 +1362,6 @@ case "$method" in
       ;;
     fixed_replay)
       need_native_preflight=1
-      ;;
-    mobilegpt)
-      need_mobilegpt_preflight=1
-      requires_mobilegpt_source_memory=1
       ;;
     appagent)
       need_appagent_preflight=1
@@ -2074,14 +2017,8 @@ if [[ "$need_mobilegpt_preflight" -eq 1 ]]; then
   export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"
   export MOBILEGPT_EMBEDDING_BASE_URL="$mobilegpt_embedding_base_url"
   if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
-    mobilegpt_embedding_contract="$($python_bin -m src.integrations.mobilegpt_runtime \
-      preflight-endpoints \
-      --manifest "$mobilegpt_source_manifest" \
-      --memory-root "$mobilegpt_source_memory_root" \
-      --chat-model "$paper_model")"
-    IFS=$'\t' read -r mobilegpt_runtime_embedding_model mobilegpt_runtime_embedding_dimension <<< "$mobilegpt_embedding_contract"
-    export MOBILEGPT_EMBEDDING_MODEL="$mobilegpt_runtime_embedding_model"
-    echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=$mobilegpt_runtime_embedding_model embedding_dimension=$mobilegpt_runtime_embedding_dimension"
+    export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
+    echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=GLM-Embedding-2"
   else
     export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
     echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=GLM-Embedding-2"

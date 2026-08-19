@@ -517,7 +517,7 @@ def _required_files(profile: str) -> list[str]:
         return [
             "src/experiment/run_task.py",
             "src/integrations/mobilegpt.py",
-            "src/integrations/mobilegpt_runtime.py",
+            "src/integrations/mobilegpt_format.py",
             "runtime/external/mobilegpt/Server/main.py",
             "runtime/external/droidrun-android-world/android_world/android_world/env/setup_device/apps.py",
         ]

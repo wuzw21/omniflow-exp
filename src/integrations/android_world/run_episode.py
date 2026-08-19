@@ -42,9 +42,6 @@ from src.experiment.protocol import (
     FORMAL_MODEL_ENDPOINT_PROFILE,
     MAX_STEPS,
 )
-from src.experiment.result_registry import (
-    mobilegpt_runtime_integrity_error as _mobilegpt_runtime_integrity_error,
-)
 from src.integrations.android_world.agent import (
     MODE_OMNIFLOW,
     build_agent,
@@ -314,10 +311,6 @@ def build_response_acceptance_detail(
             ),
         },
     }
-
-
-def _mobilegpt_runtime_integrity_exit_code(run_summary: dict[str, Any]) -> int:
-    return int(int(run_summary.get("runtime_integrity_error_count") or 0) > 0)
 
 
 def _official_hint_text(value: Any, *, max_len: int = 100) -> str:
@@ -3588,7 +3581,6 @@ def build_parser() -> argparse.ArgumentParser:
             default=MODE_OMNIFLOW,
         help=(
             "Agent selector. `omniflow` keeps the shared cache-first adapter; "
-            "`mobilegpt` delegates one official episode to MobileGPT; "
             "`appagent` runs pinned AppAgent deployment; "
             "`official:t3a_gpt4` keeps the paper baseline compatibility path."
         ),
@@ -3617,11 +3609,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--reuse-memory-path",
         default="",
         help="Oracle-selected task-local memory for a reuse-only method.",
-    )
-    parser.add_argument(
-        "--mobilegpt-root",
-        default=os.environ.get("OMNIFLOW_MOBILEGPT_ROOT") or "",
-        help="Pinned upstream MobileGPT checkout used by mobilegpt_replay.",
     )
     parser.add_argument(
         "--raw-replay-run-log",
@@ -3697,11 +3684,7 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
     )
 
     method = str(args.agent or "").strip()
-    if method not in {
-        "ours_replay",
-        "mobilegpt_replay",
-        "skilldroid_replay",
-    }:
+    if method not in {"ours_replay", "skilldroid_replay"}:
         raise ValueError(f"bmoca_method_unsupported:{method}")
     selected_tasks = [item.strip() for item in str(args.tasks).split(",") if item.strip()]
     if len(selected_tasks) != 1:
@@ -3720,9 +3703,6 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
         raise FileNotFoundError(
             f"bmoca_reuse_memory_missing:{reuse_memory_path}"
         )
-    mobilegpt_root = Path(args.mobilegpt_root).expanduser().resolve()
-    if method == "mobilegpt_replay" and not (mobilegpt_root / "Server").is_dir():
-        raise FileNotFoundError(f"bmoca_mobilegpt_root_missing:{mobilegpt_root}")
     environment_ids = tuple(
         item.strip() for item in str(args.environment_ids).split(",") if item.strip()
     )
@@ -3809,19 +3789,9 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
                             host=host,
                         )
                     else:
-                        from src.integrations.android_world.mobilegpt_agent import (
-                            run_mobilegpt_replay,
-                        )
-
-                        result = run_mobilegpt_replay(
-                            host=host,
-                            goal=episode.goal,
-                            memory_root=reuse_memory_path,
-                            mobilegpt_root=mobilegpt_root,
-                            server_port=12000 + int(episode.environment_id) - 100,
-                            max_steps=episode.max_steps,
-                            stats_path=episode_root / "mobilegpt.stats.jsonl",
-                            server_log_path=episode_root / "mobilegpt.server.log",
+                        raise ValueError(
+                            "bmoca_method_unsupported_without_provider_adapter:"
+                            f"{method}"
                         )
                 except Exception as error:  # noqa: BLE001 - seal failed episodes too
                     run_error = error
@@ -4337,27 +4307,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                         performance_metrics.to_dict(),
                         run_output_dir / "performance_sidecar.json",
                     )
-                mobilegpt_agent_result: dict[str, Any] = {}
-                mobilegpt_agent_error = ""
-                runtime_integrity_error = None
-                if selected_agent == "mobilegpt":
-                    raw_agent_result = getattr(
-                        agent,
-                        "last_result_data",
-                        None,
-                    )
-                    if isinstance(raw_agent_result, dict):
-                        mobilegpt_agent_result = dict(raw_agent_result)
-                        mobilegpt_agent_error = str(
-                            mobilegpt_agent_result.get("error") or ""
-                        ).strip()
-                        runtime_integrity_error = (
-                            _mobilegpt_runtime_integrity_error(
-                                mobilegpt_agent_error
-                            )
-                        )
-                        if runtime_integrity_error:
-                            error_text = runtime_integrity_error
                 if canonical_run is not None:
                     try:
                         canonical_function_step_count = int(
@@ -4410,13 +4359,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                         and selected_agent.startswith("official:")
                     ):
                         actions_executed = step_count
-                if mobilegpt_agent_result:
-                    actions_executed = max(
-                        actions_executed,
-                        _coerce_int(
-                            mobilegpt_agent_result.get("actions_executed")
-                        ),
-                    )
                 if selected_agent == "appagent":
                     actions_executed = max(
                         actions_executed,
@@ -4589,16 +4531,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     source_action_hint=official_goal_hint_meta,
                     uses_source_action_hints=bool(official_goal_hint_text),
                 )
-                if mobilegpt_agent_result:
-                    task_result_record["mobilegpt_agent_result"] = (
-                        to_serializable(mobilegpt_agent_result)
-                    )
-                    task_result_record["mobilegpt_agent_error"] = (
-                        mobilegpt_agent_error or None
-                    )
-                    task_result_record["runtime_integrity_error"] = (
-                        runtime_integrity_error
-                    )
                 if canonical_run is not None:
                     canonical_diagnostics = canonical_run.get("diagnostics")
                     canonical_diagnostics = (
@@ -4716,16 +4648,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 flush=True,
             )
             return 1
-        runtime_integrity_exit_code = _mobilegpt_runtime_integrity_exit_code(
-            run_summary
-        )
-        if runtime_integrity_exit_code:
-            print(
-                "[error] AndroidWorld episode ended with a MobileGPT runtime "
-                "integrity failure.",
-                flush=True,
-            )
-            return runtime_integrity_exit_code
         return 0
     finally:
         if original_launch_app is not None:

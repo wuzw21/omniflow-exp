@@ -37,8 +37,8 @@
 | `src/experiment/mobilegpt_contract.py`, `mobilegpt_source.py`, `appagent_source.py` | B | 外部 baseline 的 source/contract owner；适配可以改，不能把 baseline 变成 Function 或共用结果表 |
 | `src/integrations/android_world/agent.py`, `methods.py`, `host.py`, `environment.py`, `apps.py`, `state.py` | A/B | AndroidWorld native adapter；可重构实现，但必须复用 Host、官方 validator 和唯一 method registry |
 | `src/integrations/android_world/run_episode.py` | B | 唯一 native lifecycle；可修 setup/episode/evidence，但不能在这里增加 scheduler 或临时 executor |
-| `src/integrations/android_world/mobilegpt_agent.py`, `oob_control.py` | C/B | 外部/旧适配边界；只有对应外部合同或明确实验需求变化时才改，不能复制成新适配层 |
-| `src/integrations/bmoca.py`, `mobilegpt.py`, `mobilegpt_runtime.py`, `appagent.py` | B/C | 外部协议 adapter；只修映射和验证，不改 pinned upstream 语义，不引入第二 converter |
+| `src/integrations/android_world/oob_control.py` | C/B | 明确的开发/采集传输边界；不能复制成新适配层 |
+| `src/integrations/bmoca.py`, `mobilegpt.py`, `mobilegpt_format.py`, `appagent.py` | B/C | 外部文件格式转换；不修改 pinned upstream 语义，不引入运行时适配 |
 | `src/integrations/runlog.py`, `script_replay.py`, `skilldroid_replay.py` | C/B | 历史/官方 replay 薄适配；不能加私有 mapper、坐标 passthrough 或第二 executor |
 | `tests/**/*.py` | D | 所有测试都可增补或随 surviving owner 迁移；不得削弱断言来掩盖功能变化 |
 | `tools/manual_androidworld_harness.py` | C | 人工诊断工具；不能生成 formal result、刷新 canonical index 或替代公共 shell |
@@ -139,7 +139,7 @@ rg --files -g '*.py' | sort
 | `src/integrations/runlog.py` | 外部/历史 RunLog 投影；canonical loader 在 `omniflow/runlog.py` |
 | `src/integrations/mobilegpt.py` | 唯一 MobileGPT native memory converter |
 | `src/integrations/mobilegpt_memory.py` | MobileGPT Prepared Memory 的统计、图检查、manifest/evidence 校验；不拥有 task 调度 |
-| `src/integrations/mobilegpt_runtime.py` | pinned MobileGPT upstream runtime seam |
+| `src/integrations/mobilegpt_format.py` | 只调用 MobileGPT 官方 XML Encoder；不运行、不 patch MobileGPT |
 | `src/integrations/appagent.py` | AppAgent native conversion/runtime；不拥有调度 |
 | `src/integrations/bmoca.py` | B-MoCA DeviceDriver、episode 和 official reward adapter |
 | `src/integrations/script_replay.py` | 完整 Function 的共享 replay 薄适配器；禁止私有 mapper/executor |
@@ -151,7 +151,7 @@ rg --files -g '*.py' | sort
 | `src/integrations/android_world/host.py` | native observe/act/reset Host |
 | `src/integrations/android_world/run_episode.py` | 唯一 native lifecycle/launcher；直跑 Function 只能复用此生命周期，不得 patch `agent.run` |
 | `src/integrations/android_world/methods.py` | 五个正式方法的 adapter registry，以及 direct Function intent；不得增加第二个 executor |
-| `src/integrations/android_world/mobilegpt_agent.py` | MobileGPT episode adapter |
+| `src/integrations/mobilegpt_format.py` | MobileGPT 官方 XML Encoder 的最小转换入口 |
 | `src/integrations/android_world/oob_control.py` | 仅显式选择的 development/source/OOB transport adapter |
 | `src/integrations/android_world/state.py` | native state normalization |
 
