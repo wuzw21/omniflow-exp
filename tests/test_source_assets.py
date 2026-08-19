@@ -18,6 +18,18 @@ from src.integrations.appagent import (
     ground_appagent_teacher_action,
 )
 from src.integrations.mobilegpt import preflight_runlog_conversion
+
+
+def _source(report: dict) -> dict:
+    return report["source"]
+
+
+def _grounding(report: dict) -> dict:
+    return report["grounding"]
+
+
+def _safety(report: dict) -> dict:
+    return report["safety"]
 from src.integrations.runlog import convert_legacy_run_log
 
 
@@ -120,11 +132,12 @@ def test_frozen_source_evidence_grounds_appagent_teacher(
         provenance_source_run_log=source,
     )
 
+    assert audit["schema_version"] == "omniflow.source.evidence.v2"
     assert appagent["action_count"] == 2
     assert appagent["source_run_log"] == str(source)
     assert appagent["source_run_log_sha256"] == source_sha256
-    assert audit["target_inputs_read"] is False
-    assert audit["target_observations_read"] is False
+    assert _safety(audit)["target_inputs_read"] is False
+    assert _safety(audit)["target_observations_read"] is False
     assert hashlib.sha256(source.read_bytes()).hexdigest() == source_sha256
 
 
@@ -236,8 +249,8 @@ def test_source_and_store_indexes_join_without_rewriting_frozen_assets(
     assert (
         grounded["steps"][0]["metadata"]["source_context"]["element"]["text"] == "Save"
     )
-    assert audit["source_state_catalog"] == str(states)
-    assert audit["source_state_catalog_source"] == "frozen_catalog"
+    assert _source(audit)["state_catalog"] == str(states)
+    assert _source(audit)["catalog_source"] == "frozen_catalog"
     assert "provenance_manifest" not in audit
 
 
@@ -349,8 +362,8 @@ def test_baseline_grounding_uses_complete_states_embedded_in_source_runlog(
         "text": "Continue",
         "resource_id": "app:id/continue",
     }
-    assert audit["source_state_catalog_source"] == "embedded_source_run_log"
-    assert audit["source_state_count"] == 2
+    assert _source(audit)["catalog_source"] == "embedded_source_run_log"
+    assert _source(audit)["state_count"] == 2
 
 
 def test_canonical_runlog_grounds_mobilegpt_without_omniflow_store(
@@ -406,7 +419,7 @@ def test_canonical_runlog_grounds_mobilegpt_without_omniflow_store(
         "text": "Continue",
         "resource_id": "app:id/continue",
     }
-    assert audit["grounding_source"] == "canonical_androidworld_run_log"
+    assert _grounding(audit)["source"] == "canonical_androidworld_run_log"
     assert "provenance_manifest" not in audit
 
 
@@ -483,9 +496,9 @@ def test_canonical_grounding_recovers_unique_verified_legacy_target(
         "text": "Continue",
         "resource_id": "app:id/continue",
     }
-    assert audit["source_target_evidence_source"] == ("verified_legacy_provenance")
-    assert audit["source_target_evidence_count"] == 1
-    assert audit["verified_source_target_count"] == 1
+    assert _grounding(audit)["source_target_evidence_source"] == ("verified_legacy_provenance")
+    assert _grounding(audit)["source_target_evidence_count"] == 1
+    assert _grounding(audit)["verified_source_target_count"] == 1
 
 
 def test_canonical_grounding_reuses_observations_for_state_id_provenance(
@@ -560,7 +573,7 @@ def test_canonical_grounding_reuses_observations_for_state_id_provenance(
         "text": "Continue",
         "resource_id": "app:id/continue",
     }
-    assert audit["source_target_evidence_source"] == "verified_legacy_provenance"
+    assert _grounding(audit)["source_target_evidence_source"] == "verified_legacy_provenance"
 
 
 def test_canonical_grounding_rejects_legacy_provenance_hash_mismatch(
@@ -667,7 +680,7 @@ def test_canonical_grounding_accepts_removed_legacy_wait_steps(
         "text": "Continue",
         "resource_id": "app:id/continue",
     }
-    assert audit["source_target_evidence_source"] == "verified_legacy_provenance"
+    assert _grounding(audit)["source_target_evidence_source"] == "verified_legacy_provenance"
 
 
 def test_canonical_grounding_rejects_removed_non_wait_step(
@@ -724,9 +737,9 @@ def test_canonical_grounding_does_not_use_ambiguous_legacy_target(
     )
 
     assert "element" not in grounded["steps"][0]["metadata"]["source_context"]
-    assert audit["source_target_evidence_count"] == 1
-    assert audit["verified_source_target_count"] == 0
-    assert audit["semantic_action_count"] == 0
+    assert _grounding(audit)["source_target_evidence_count"] == 1
+    assert _grounding(audit)["verified_source_target_count"] == 0
+    assert _grounding(audit)["semantic_action_count"] == 0
 
 
 @pytest.mark.parametrize("action_type", ["answer", "status", "unknown"])
@@ -765,7 +778,7 @@ def test_canonical_grounding_preserves_non_ui_terminal_actions(
     assert grounded["steps"][0]["metadata"]["source_context"] == {
         "package_name": "com.example.app"
     }
-    assert audit["semantic_action_count"] == 0
+    assert _grounding(audit)["semantic_action_count"] == 0
 
 
 def test_canonical_grounding_uses_input_text_action_point(
@@ -811,7 +824,7 @@ def test_canonical_grounding_uses_input_text_action_point(
         "text": "Second",
         "resource_id": "app:id/second",
     }
-    assert audit["semantic_action_count"] == 1
+    assert _grounding(audit)["semantic_action_count"] == 1
 
 
 def test_canonical_grounding_uses_unique_structural_child_target(
@@ -860,8 +873,8 @@ def test_canonical_grounding_uses_unique_structural_child_target(
     grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
     preflight = preflight_runlog_conversion(grounded_path)
     assert preflight["ready"] is True
-    assert preflight["transition_count"] == audit["semantic_action_count"]
-    assert audit["semantic_action_count"] == 1
+    assert preflight["transition_count"] == _grounding(audit)["semantic_action_count"]
+    assert _grounding(audit)["semantic_action_count"] == 1
 
 
 def test_canonical_grounding_uses_unique_anonymous_editable_role(
@@ -917,8 +930,8 @@ def test_canonical_grounding_uses_unique_anonymous_editable_role(
     grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
     preflight = preflight_runlog_conversion(grounded_path)
     assert preflight["ready"] is True
-    assert preflight["transition_count"] == audit["semantic_action_count"]
-    assert audit["semantic_action_count"] == 1
+    assert preflight["transition_count"] == _grounding(audit)["semantic_action_count"]
+    assert _grounding(audit)["semantic_action_count"] == 1
 
 
 def test_canonical_grounding_inherits_adjacent_unique_editable_target(
@@ -982,8 +995,8 @@ def test_canonical_grounding_inherits_adjacent_unique_editable_target(
     grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
     preflight = preflight_runlog_conversion(grounded_path)
     assert preflight["ready"] is True
-    assert preflight["transition_count"] == audit["semantic_action_count"]
-    assert audit["semantic_action_count"] == 2
+    assert preflight["transition_count"] == _grounding(audit)["semantic_action_count"]
+    assert _grounding(audit)["semantic_action_count"] == 2
 
 
 def test_canonical_grounding_uses_verified_input_text_change(
@@ -1044,7 +1057,7 @@ def test_canonical_grounding_uses_verified_input_text_change(
     )
     assert appagent_target.tag == 1
     assert appagent_target.match_reason == "exact_visible_identity"
-    assert audit["semantic_action_count"] == 2
+    assert _grounding(audit)["semantic_action_count"] == 2
 
 
 def test_canonical_grounding_does_not_inherit_editable_across_packages(
@@ -1097,7 +1110,7 @@ def test_canonical_grounding_does_not_inherit_editable_across_packages(
     )
 
     assert "element" not in grounded["steps"][1]["metadata"]["source_context"]
-    assert audit["semantic_action_count"] == 1
+    assert _grounding(audit)["semantic_action_count"] == 1
 
 
 def test_canonical_grounding_recovers_source_display_from_xml(
@@ -1150,8 +1163,8 @@ def test_canonical_grounding_recovers_source_display_from_xml(
     grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
     preflight = preflight_runlog_conversion(grounded_path)
     assert preflight["ready"] is True
-    assert preflight["transition_count"] == audit["semantic_action_count"]
-    assert audit["semantic_action_count"] == 1
+    assert preflight["transition_count"] == _grounding(audit)["semantic_action_count"]
+    assert _grounding(audit)["semantic_action_count"] == 1
 
 
 def test_canonical_grounding_reuses_unique_source_display_for_dialog_xml(
@@ -1199,7 +1212,7 @@ def test_canonical_grounding_reuses_unique_source_display_for_dialog_xml(
         "text": "Create folder",
         "resource_id": "app:id/create_folder",
     }
-    assert audit["semantic_action_count"] == 1
+    assert _grounding(audit)["semantic_action_count"] == 1
 
 
 def test_canonical_grounding_distinguishes_page_input_from_browser_chrome(
@@ -1239,7 +1252,7 @@ def test_canonical_grounding_distinguishes_page_input_from_browser_chrome(
         "text": "Enter the product",
         "resource_id": "answer",
     }
-    assert audit["semantic_action_count"] == 1
+    assert _grounding(audit)["semantic_action_count"] == 1
 
 
 def test_source_revision_reuses_frozen_asset_or_advances_past_failures(

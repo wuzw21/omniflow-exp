@@ -24,6 +24,8 @@ from src.integrations.runlog import (
     project_androidworld_step_actions,
 )
 
+SOURCE_EVIDENCE_SCHEMA = "omniflow.source.evidence.v2"
+
 def select_source_asset_revision(
     base_root: str | Path,
     *,
@@ -922,24 +924,60 @@ def build_grounded_teacher_run_log(
         source_target_audit,
     )
 
-    audit = {
-        "schema_version": "omniflow.source-teacher-grounding.v1",
-        "source_run_log": str(source_path),
-        "source_run_log_sha256": _sha256(source_path),
-        "source_state_catalog": str(catalog_path),
-        "source_state_catalog_sha256": _sha256(catalog_path),
-        "source_state_catalog_source": "frozen_catalog",
-        "source_state_count": len(states),
-        "semantic_action_count": semantic_action_count,
-        **target_evidence_audit,
-        "target_inputs_read": False,
-        "target_observations_read": False,
-        "validator_state_read": False,
+    return grounded, _source_evidence_report(
+        source_path=source_path,
+        source_sha256=_sha256(source_path),
+        catalog_path=catalog_path,
+        catalog_sha256=_sha256(catalog_path),
+        catalog_source="frozen_catalog",
+        state_count=len(states),
+        semantic_action_count=semantic_action_count,
+        target_evidence=target_evidence_audit,
+        provenance_path=provenance_path,
+    )
+
+
+def _source_evidence_report(
+    *,
+    source_path: Path,
+    source_sha256: str,
+    catalog_path: Path,
+    catalog_sha256: str,
+    catalog_source: str,
+    state_count: int,
+    semantic_action_count: int,
+    target_evidence: dict[str, Any],
+    grounding_source: str = "",
+    provenance_path: Path | None = None,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "schema_version": SOURCE_EVIDENCE_SCHEMA,
+        "source": {
+            "run_log": str(source_path),
+            "run_log_sha256": source_sha256,
+            "state_catalog": str(catalog_path),
+            "state_catalog_sha256": catalog_sha256,
+            "catalog_source": catalog_source,
+            "state_count": int(state_count),
+        },
+        "grounding": {
+            "semantic_action_count": int(semantic_action_count),
+            **target_evidence,
+        },
+        "safety": {
+            "target_inputs_read": False,
+            "target_observations_read": False,
+            "validator_state_read": False,
+        },
     }
+    if grounding_source:
+        report["grounding"]["source"] = grounding_source
     if provenance_path is not None:
-        audit["provenance_manifest"] = str(provenance_path)
-        audit["provenance_sha256"] = _sha256(provenance_path)
-    return grounded, audit
+        report["provenance"] = {
+            "manifest": str(provenance_path),
+            "sha256": _sha256(provenance_path),
+        }
+    return report
 
 
 def _build_grounded_teacher_run_log_from_embedded_source(
@@ -997,24 +1035,17 @@ def _build_grounded_teacher_run_log_from_embedded_source(
         states,
         source_target_audit,
     )
-    audit = {
-        "schema_version": "omniflow.source-teacher-grounding.v1",
-        "source_run_log": str(source_path),
-        "source_run_log_sha256": _sha256(source_path),
-        "source_state_catalog": str(source_path),
-        "source_state_catalog_sha256": _sha256(source_path),
-        "source_state_catalog_source": "embedded_source_run_log",
-        "source_state_count": len(states),
-        "semantic_action_count": semantic_action_count,
-        **target_evidence_audit,
-        "target_inputs_read": False,
-        "target_observations_read": False,
-        "validator_state_read": False,
-    }
-    if provenance_path is not None:
-        audit["provenance_manifest"] = str(provenance_path)
-        audit["provenance_sha256"] = _sha256(provenance_path)
-    return grounded, audit
+    return grounded, _source_evidence_report(
+        source_path=source_path,
+        source_sha256=_sha256(source_path),
+        catalog_path=source_path,
+        catalog_sha256=_sha256(source_path),
+        catalog_source="embedded_source_run_log",
+        state_count=len(states),
+        semantic_action_count=semantic_action_count,
+        target_evidence=target_evidence_audit,
+        provenance_path=provenance_path,
+    )
 
 
 def _build_grounded_teacher_run_log_from_canonical_source(
@@ -1041,21 +1072,17 @@ def _build_grounded_teacher_run_log_from_canonical_source(
         states,
         source_target_audit,
     )
-    return grounded, {
-        "schema_version": "omniflow.source-teacher-grounding.v1",
-        "source_run_log": str(source_path),
-        "source_run_log_sha256": _sha256(source_path),
-        "source_state_catalog": str(source_path),
-        "source_state_catalog_sha256": _sha256(source_path),
-        "source_state_catalog_source": "embedded_source_run_log",
-        "source_state_count": len(states),
-        "semantic_action_count": semantic_action_count,
-        "grounding_source": "canonical_androidworld_run_log",
-        **target_evidence_audit,
-        "target_inputs_read": False,
-        "target_observations_read": False,
-        "validator_state_read": False,
-    }
+    return grounded, _source_evidence_report(
+        source_path=source_path,
+        source_sha256=_sha256(source_path),
+        catalog_path=source_path,
+        catalog_sha256=_sha256(source_path),
+        catalog_source="embedded_source_run_log",
+        state_count=len(states),
+        semantic_action_count=semantic_action_count,
+        target_evidence=target_evidence_audit,
+        grounding_source="canonical_androidworld_run_log",
+    )
 
 
 def build_grounded_teacher_run_log_from_item(

@@ -811,7 +811,7 @@ def _preflight_appagent_teacher(
             grounded_path,
             task_name=item.task,
             source_seed=SOURCE_SEED,
-            provenance_source_run_log=grounding_audit["source_run_log"],
+            provenance_source_run_log=grounding_audit["source"]["run_log"],
         )
     grounded_steps = {
         int(step.get("step_index", index)): step
@@ -884,7 +884,7 @@ def _preflight_appagent_teacher(
         phase="after",
         source_run_log=Path(item.source_run_log).expanduser().resolve(),
     )
-    grounding_audit["appagent_groundable_action_count"] = (
+    grounding_audit["grounding"]["appagent_groundable_action_count"] = (
         groundable_action_count
     )
     return grounded, grounding_audit, teacher_source
@@ -916,10 +916,11 @@ def preflight_appagent_source(
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
         "source_method": _appagent_source_method_label(item),
-        "source_run_log": str(grounding_audit["source_run_log"]),
+        "source": dict(grounding_audit["source"]),
         "action_count": int(teacher_source["action_count"]),
         "demo_action_count": int(teacher_source["demo_action_count"]),
-        "grounding": grounding_audit,
+        "grounding": dict(grounding_audit["grounding"]),
+        "safety": dict(grounding_audit["safety"]),
         "conversion_mode": "canonical_runlog_offline",
         "source_emulator_used": False,
         "native_memory_evidence": str(evidence["manifest"]) if evidence else None,

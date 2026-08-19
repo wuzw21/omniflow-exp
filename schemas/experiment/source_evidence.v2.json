@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omniflow.local/schemas/experiment/source_evidence.v2.json",
+  "title": "OmniFlow source evidence report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source", "grounding", "safety"],
+  "properties": {
+    "schema_version": {"const": "omniflow.source.evidence.v2"},
+    "source": {"$ref": "#/$defs/source"},
+    "grounding": {"$ref": "#/$defs/grounding"},
+    "safety": {"$ref": "#/$defs/safety"},
+    "provenance": {"$ref": "#/$defs/provenance"}
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_log",
+        "run_log_sha256",
+        "state_catalog",
+        "state_catalog_sha256",
+        "catalog_source",
+        "state_count"
+      ],
+      "properties": {
+        "run_log": {"type": "string", "minLength": 1},
+        "run_log_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "state_catalog": {"type": "string", "minLength": 1},
+        "state_catalog_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "catalog_source": {"enum": ["frozen_catalog", "embedded_source_run_log"]},
+        "state_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "grounding": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["semantic_action_count"],
+      "properties": {
+        "semantic_action_count": {"type": "integer", "minimum": 0},
+        "source": {"type": "string", "minLength": 1}
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_inputs_read",
+        "target_observations_read",
+        "validator_state_read"
+      ],
+      "properties": {
+        "target_inputs_read": {"const": false},
+        "target_observations_read": {"const": false},
+        "validator_state_read": {"const": false}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest", "sha256"],
+      "properties": {
+        "manifest": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

@@ -704,10 +704,10 @@ def test_appagent_preflight_uses_canonical_runlog_not_store_provenance(
     )
 
     assert result["ready"] is True
-    assert result["source_run_log"] == str(
+    assert result["source"]["run_log"] == str(
         (tmp_path / "source" / "source.run_log.json").resolve()
     )
-    assert result["grounding"]["grounding_source"] == (
+    assert result["grounding"]["source"] == (
         "canonical_androidworld_run_log"
     )
 
