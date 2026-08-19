@@ -38,6 +38,7 @@ from src.experiment.protocol import (
     BMOCA_RESULT_TIMEOUT_SEC,
     APPAGENT_MODEL,
     DEVICES,
+    FIXED_TASK_PARAMS,
     FORMAL_MODEL,
     FORMAL_MODEL_BASE_URL,
     FUNCTION_ENHANCEMENT_TIMEOUT_SEC,
@@ -51,6 +52,7 @@ from src.experiment.protocol import (
     STEP_TIMEOUT_SEC,
     TASK_DEADLINE_SEC,
     TASK_SEED,
+    VALIDATOR_FLUSH_GRACE_SEC,
 )
 from src.experiment.mobilegpt_contract import MOBILEGPT_EMBEDDING_MODEL
 from src.experiment.source_records import CanonicalRunLog
@@ -1045,6 +1047,89 @@ def _result_environment(
     return environment
 
 
+def _androidworld_result_command(
+    *,
+    args: argparse.Namespace,
+    attempt_id: str,
+    attempt_root: Path,
+    method: str,
+    device: tuple[str, str, int],
+    store_path: Path | None,
+    mobilegpt_memory: Path | None,
+    appagent_memory: Path | None,
+) -> list[str]:
+    """Build the one child command for an AndroidWorld result.
+
+    The public shell remains the human-facing entry point. Once the scheduler
+    has prepared a task, however, it calls the single-result runner directly;
+    the shell is not an internal RPC boundary.
+    """
+
+    label, serial, console_port = device
+    result_attempt_id = f"{attempt_id}.{method}.{label}"
+    result_attempt_root = (
+        attempt_root / "target_attempts" / label / method / result_attempt_id
+    )
+    timeout_sec = (
+        int(args.max_steps) * STEP_TIMEOUT_SEC + VALIDATOR_FLUSH_GRACE_SEC
+    )
+    command = [
+        str(args.python_bin),
+        "-m",
+        "src.experiment.run_task",
+        "result",
+        "--index",
+        str(args.memory_index),
+        "--android-world-root",
+        str(args.android_world_root),
+        "--adb-path",
+        str(args.adb_path),
+        "--task",
+        str(args.task),
+        "--source-seed",
+        str(SOURCE_SEED),
+        "--output-path",
+        str(result_attempt_root),
+        "--result-registry-root",
+        str(Path(args.results_root) / "androidworld_validator" / "runs"),
+        "--omnitransfer-root",
+        str(args.omnitransfer_root),
+        "--store-path",
+        str(store_path or ""),
+        "--store-index",
+        str(args.memory_index),
+        "--mobilegpt-root",
+        str(args.mobilegpt_root),
+        "--mobilegpt-source-memory-root",
+        str(mobilegpt_memory or ""),
+        "--appagent-root",
+        str(args.appagent_root),
+        "--timeout-sec",
+        str(timeout_sec),
+        "--max-steps",
+        str(args.max_steps),
+        "--max-fallback-steps",
+        str(args.max_fallback_steps),
+        "--task-random-seed",
+        str(TASK_SEED),
+        "--model",
+        str(getattr(args, "formal_model", FORMAL_MODEL)),
+        "--planner-provider",
+        "openai",
+        "--method",
+        str(method),
+        "--device",
+        f"{label}:{serial}:{int(console_port)}",
+    ]
+    if not FIXED_TASK_PARAMS:
+        command.extend(("--no-fixed-task-params", "--task-params-json", ""))
+    if appagent_memory is not None:
+        command.extend(("--appagent-memory-root", str(appagent_memory)))
+    if args.dry_run:
+        command.append("--dry-run")
+    return command
+
+
 def run_target_workers(
     *,
     args: argparse.Namespace,
@@ -1123,7 +1208,16 @@ def run_target_workers(
                 )
             log_path = attempt_root / "logs" / label / f"{method}.log"
             result = command_runner(
-                ["bash", str(args.script)],
+                _androidworld_result_command(
+                    args=args,
+                    attempt_id=attempt_id,
+                    attempt_root=attempt_root,
+                    method=method,
+                    device=device,
+                    store_path=store_path,
+                    mobilegpt_memory=mobilegpt_memory,
+                    appagent_memory=appagent_memory,
+                ),
                 cwd=args.repo,
                 environment=_result_environment(
                     args=args,

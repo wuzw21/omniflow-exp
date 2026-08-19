@@ -963,6 +963,7 @@ def test_target_workers_parallelize_devices_and_serialize_methods(
 ) -> None:
     args = _args(tmp_path)
     calls: list[tuple[str, str, float, float]] = []
+    commands: list[list[str]] = []
     completed: set[tuple[str, str]] = set()
     monkeypatch.setattr(
         "src.experiment.run_tasks._concluded_results",
@@ -980,6 +981,7 @@ def test_target_workers_parallelize_devices_and_serialize_methods(
     def runner(command: list[str], **kwargs: object) -> dict[str, object]:
         environment = kwargs["environment"]
         assert isinstance(environment, dict)
+        commands.append(command)
         method = str(environment["OMNIFLOW_ANDROIDWORLD_METHOD"])
         device = str(environment["OMNIFLOW_ANDROIDWORLD_DEVICE"]).split(":")[0]
         started = time.monotonic()
@@ -1003,6 +1005,13 @@ def test_target_workers_parallelize_devices_and_serialize_methods(
     )
 
     assert len(calls) == 10
+    assert len(commands) == 10
+    assert all(
+        command[:4]
+        == [str(args.python_bin), "-m", "src.experiment.run_task", "result"]
+        for command in commands
+    )
+    assert all("bash" not in command for command in commands)
     for device in ("small5554", "fold5564"):
         rows = sorted((row for row in calls if row[0] == device), key=lambda row: row[2])
         assert [row[1] for row in rows] == list(METHODS)
