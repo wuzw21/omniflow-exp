@@ -13,7 +13,6 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment import androidworld as pipeline
 from src.experiment import appagent_source
-from src.experiment.source_assets import convert_runlog_memory
 from src.integrations import appagent_adapter
 
 
@@ -753,17 +752,17 @@ def test_appagent_source_generation_is_offline_conversion(
     bundle = tmp_path / "bundle"
     captured: dict[str, object] = {}
 
-    def convert(method: str, **kwargs: object) -> dict[str, object]:
-        captured.update({"method": method, **kwargs})
+    def convert(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
         return {
             "task_name": "SystemBluetoothTurnOn",
             "source_run_log": str(kwargs["source_run_log"]),
-            "memory_root": str(kwargs["output_root"]),
+            "memory_root": str(kwargs["memory_root"]),
             "manifest": {"source_method": kwargs["source_method"]},
         }
 
     monkeypatch.setattr(
-        "src.experiment.source_assets.convert_runlog_memory",
+        "src.experiment.appagent_source.convert_runlog_to_appagent_memory",
         convert,
     )
 
@@ -777,16 +776,15 @@ def test_appagent_source_generation_is_offline_conversion(
         evidence_roots=[tmp_path / "unused-old-evidence"],
     )
 
-    assert captured["method"] == "appagent"
     assert captured["source_method"] == "omniflow"
-    assert captured["upstream_root"] == tmp_path / "appagent"
-    assert captured["output_root"] == bundle
+    assert captured["appagent_root"] == tmp_path / "appagent"
+    assert captured["memory_root"] == bundle
     assert result["source_method"] == "omniflow"
     assert result["source_emulator_used"] is False
     assert result["native_memory_evidence"] is None
 
 
-def test_convert_runlog_memory_builds_native_appagent(
+def test_appagent_source_builds_native_memory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -891,11 +889,10 @@ def test_convert_runlog_memory_builds_native_appagent(
         generate_docs,
     )
 
-    result = convert_runlog_memory(
-        "appagent",
+    result = appagent_source.convert_runlog_to_appagent_memory(
         source_run_log=source,
-        output_root=tmp_path / "bundle",
-        upstream_root=tmp_path / "appagent",
+        memory_root=tmp_path / "bundle",
+        appagent_root=tmp_path / "appagent",
         model="qwen3-vl-plus",
     )
 
@@ -909,7 +906,7 @@ def test_convert_runlog_memory_builds_native_appagent(
     assert len(list((demo / "raw_screenshots").glob("*.png"))) == 2
 
 
-def test_convert_runlog_memory_reports_missing_appagent_screenshot(
+def test_appagent_source_rejects_missing_screenshot(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "source.run_log.json"
@@ -938,11 +935,10 @@ def test_convert_runlog_memory_reports_missing_appagent_screenshot(
         ValueError,
         match="appagent_source_screenshot_missing:0:before",
     ):
-        convert_runlog_memory(
-        "appagent",
+        appagent_source.convert_runlog_to_appagent_memory(
             source_run_log=source,
-            output_root=tmp_path / "bundle",
-            upstream_root=tmp_path / "appagent",
+            memory_root=tmp_path / "bundle",
+            appagent_root=tmp_path / "appagent",
             model="qwen3-vl-plus",
         )
 

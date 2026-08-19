@@ -23,7 +23,6 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
     MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS,
 )
-from src.experiment.source_assets import convert_runlog_memory
 
 
 def _write_source_index(
@@ -399,7 +398,7 @@ def test_source_conversion_calls_only_converter_and_sealer(
     assert result["source_emulator_used"] is False
 
 
-def test_convert_runlog_memory_dispatches_to_mobilegpt_native_converter(
+def test_mobilegpt_source_uses_native_converter(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -438,11 +437,10 @@ def test_convert_runlog_memory_dispatches_to_mobilegpt_native_converter(
         raising=False,
     )
 
-    result = convert_runlog_memory(
-        "mobilegpt",
+    result = mobilegpt_source.convert_runlog_to_mobilegpt_bundle(
         source_run_log=source,
         output_root=tmp_path / "bundle",
-        upstream_root=tmp_path / "mobilegpt",
+        mobilegpt_root=tmp_path / "mobilegpt",
         model="qwen3-vl-plus",
         embedding_model="GLM-Embedding-3",
     )

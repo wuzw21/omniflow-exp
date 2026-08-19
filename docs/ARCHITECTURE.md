@@ -99,6 +99,25 @@ OmniTransfer、checker、证据封存和结果归档，且不会因为 CLI 入�
 
 ## 5. 当前精简候选与保留决定
 
+### 五个大文件的直白职责
+
+这五个文件不是五个重复的 runner，而是 Source RunLog 从输入证据变成可运行
+baseline 记录时经过的五个位置：
+
+| 文件 | 只应该回答的问题 | 不应该知道的事情 |
+| --- | --- | --- |
+| `source_assets.py` | 这份 Source RunLog 的截图、XML、动作和 revision 是否可信？ | AppAgent/MobileGPT 的转换规则 |
+| `appagent_adapter.py` | 如何把可信 source 转成 AppAgent 的 Prepared Memory？ | task 调度、Local Index、AndroidWorld episode 生命周期 |
+| `mobilegpt_converter.py` | 如何把可信 source 转成 MobileGPT 的 Prepared Memory？ | AppAgent 规则、Local Index 选择策略 |
+| `preflight.py` | 这次运行的依赖、设备和 Prepared Memory 是否 ready？ | 具体 provider 的转换实现 |
+| `artifact_index.py` | 如何物化和读取唯一 Local Index？ | AndroidWorld runner 和 provider 内部校验细节 |
+
+`source_assets.py` 曾经暴露 `convert_runlog_memory(method=...)`，让共享 source
+模块根据字符串选择 provider。这是已经删除的浅 seam：AppAgent 直接调用
+`convert_runlog_to_appagent_memory`，MobileGPT 直接调用
+`convert_runlog_to_mobilegpt_bundle`。新增 provider 时应新增自己的 adapter，
+而不是把分派字符串重新塞回 source 层。
+
 | 候选 | 判断 | 后续动作 |
 | --- | --- | --- |
 | `launch.py` 中的 direct Function 调用与普通 OmniFlow 运行 | 真旁路：生命周期相似、调用语义可共享 | 通过 E2E 请求 seam 收敛，不删除直跑能力 |

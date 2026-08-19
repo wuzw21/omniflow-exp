@@ -960,13 +960,10 @@ def prepare_appagent_memory(
     )
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_method = _appagent_source_method_label(item)
-    from src.experiment.source_assets import convert_runlog_memory
-
-    result = convert_runlog_memory(
-        "appagent",
+    result = convert_runlog_to_appagent_memory(
         source_run_log=item.source_run_log,
-        output_root=memory_root,
-        upstream_root=appagent_root,
+        appagent_root=appagent_root,
+        memory_root=memory_root,
         model=normalized_model,
         source_method=source_method,
     )
