@@ -162,7 +162,7 @@ read -r formal_source_seed formal_task_seed formal_max_steps \
   emulator_avd_profiles fold_serial <<< "$protocol_values"
 expected_source_seed="$formal_source_seed"
 task_seed="$formal_task_seed"
-preflight="$repo/src/experiment/preflight.py"
+preflight="$repo/src/experiment/checks.py"
 selected_method_arg=""
 selected_device_arg=""
 control_backend="${OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND:-androidworld}"
@@ -1082,7 +1082,7 @@ if [[ -n "$e2e_task" ]]; then
     --source-device "$source_device"
     --source-avd "$source_avd"
     --emulator-gpu "$emulator_gpu"
-    --runtime-preflight "$repo/src/experiment/preflight.py"
+    --runtime-preflight "$repo/src/experiment/checks.py"
     --formal-model "$formal_model"
   )
   if [[ -n "${OMNIFLOW_E2E_ATTEMPT_ID:-}" ]]; then
@@ -1130,7 +1130,7 @@ if [[ "$refresh_memory" -eq 1 ]]; then
     exit 1
   fi
   memory_args=(
-    -m src.experiment.artifact_index
+    -m src.experiment.data_index
     refresh
     --memory-root "$memory_root"
   )
@@ -1324,7 +1324,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
-from src.experiment.artifact_index import load_artifact_index
+from src.experiment.data_index import load_artifact_index
 
 load_artifact_index(Path(sys.argv[2]).expanduser().resolve())
 PY
@@ -1488,7 +1488,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
-from src.experiment.source_assets import select_source_asset_revision
+from src.experiment.source_evidence import select_source_asset_revision
 from src.experiment.protocol import SOURCE_SEED
 
 source_index = json.loads(
@@ -1520,7 +1520,7 @@ if lineage is not None:
 candidate_validator = None
 if sys.argv[7] == "omniflow.mobilegpt-runlog-direct-memory.v1":
     from src.experiment.androidworld import validate_mobilegpt_adapted_memory
-    from src.experiment.artifact_index import (
+    from src.experiment.data_index import (
         canonical_mobilegpt_memory_from_memory,
     )
     from src.experiment.mobilegpt_contract import (

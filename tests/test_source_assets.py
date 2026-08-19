@@ -8,16 +8,16 @@ from types import SimpleNamespace
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from src.experiment.source_assets import (
+from src.experiment.source_evidence import (
     build_grounded_teacher_run_log,
     build_grounded_teacher_run_log_from_item,
     select_source_asset_revision,
 )
-from src.integrations.appagent_adapter import (
+from src.integrations.appagent import (
     build_appagent_teacher_source,
     ground_appagent_teacher_action,
 )
-from src.integrations.mobilegpt_converter import preflight_runlog_conversion
+from src.integrations.mobilegpt import preflight_runlog_conversion
 from src.integrations.runlog import convert_legacy_run_log
 
 

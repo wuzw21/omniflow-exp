@@ -31,14 +31,14 @@
 | `omniflow/**/__init__.py`, `src/**/__init__.py` | A | 只维护稳定导出和包边界，不放调度、业务实现或隐式兼容层 |
 | `src/experiment/e2e_task_pipeline.py`, `androidworld.py`, `process_runner.py` | A | scheduler、一个原子结果、统一子进程生命周期；不得新增 runner 或重复 `Popen` policy |
 | `src/experiment/paths.py` | A/B | 唯一 repository-relative、index-relative 和 safe artifact path 规则；外部 roots 仍必须显式传入 |
-| `src/experiment/artifact_index.py`, `preflight.py`, `source_assets.py`, `observation_evidence.py` | B | 唯一 `data/current.json`、source/设备 gate、证据转换；source 不负责 provider 分派；不得增加 index、snapshot 或 source pool |
+| `src/experiment/data_index.py`, `checks.py`, `source_evidence.py`, `observation_evidence.py` | B | 唯一 `data/current.json`、source/设备 gate、证据转换；source 不负责 provider 分派；不得增加 index、snapshot 或 source pool |
 | `src/experiment/protocol.py`, `result_schema.py`, `result_registry.py`, `batch_outcomes.py` | B | 正式 protocol、public row、ledger、汇总；字段/版本/统计口径必须独立 commit |
 | `src/experiment/development_emulator.py`, `emulator_processes.py`, `performance_metrics.py` | A/B | 开发 preflight、进程诊断、opt-in 性能侧通道；不能写 formal result 或改变 public row |
 | `src/experiment/mobilegpt_contract.py`, `mobilegpt_source.py`, `appagent_source.py` | B | 外部 baseline 的 source/contract owner；适配可以改，不能把 baseline 变成 Function 或共用结果表 |
 | `src/integrations/android_world/agent.py`, `methods.py`, `host.py`, `environment.py`, `apps.py`, `state.py` | A/B | AndroidWorld native adapter；可重构实现，但必须复用 Host、官方 validator 和唯一 method registry |
 | `src/integrations/android_world/launch.py` | B | 唯一 native lifecycle；可修 setup/episode/evidence，但不能在这里增加 scheduler 或临时 executor |
 | `src/integrations/android_world/mobilegpt_agent.py`, `oob_control.py` | C/B | 外部/旧适配边界；只有对应外部合同或明确实验需求变化时才改，不能复制成新适配层 |
-| `src/integrations/bmoca.py`, `mobilegpt_converter.py`, `mobilegpt_runtime.py`, `appagent_adapter.py` | B/C | 外部协议 adapter；只修映射和验证，不改 pinned upstream 语义，不引入第二 converter |
+| `src/integrations/bmoca.py`, `mobilegpt.py`, `mobilegpt_runtime.py`, `appagent.py` | B/C | 外部协议 adapter；只修映射和验证，不改 pinned upstream 语义，不引入第二 converter |
 | `src/integrations/runlog.py`, `script_replay.py`, `skilldroid_replay.py` | C/B | 历史/官方 replay 薄适配；不能加私有 mapper、坐标 passthrough 或第二 executor |
 | `tests/**/*.py` | D | 所有测试都可增补或随 surviving owner 迁移；不得削弱断言来掩盖功能变化 |
 | `tools/manual_androidworld_harness.py` | C | 人工诊断工具；不能生成 formal result、刷新 canonical index 或替代公共 shell |
@@ -117,10 +117,10 @@ rg --files -g '*.py' | sort
 | `src/experiment/process_runner.py` | 所有 experiment command 的子进程组、timeout、终止和 immutable log seam；不要复制 `Popen` 生命周期 |
 | `src/experiment/development_emulator.py` | 有界开发 emulator preflight |
 | `src/experiment/emulator_processes.py` | managed emulator 进程识别；诊断命令不写结果 |
-| `src/experiment/preflight.py` | source、device、外部资产和 protocol gate；不生成 Store |
+| `src/experiment/checks.py` | source、device、外部资产和 protocol gate；不生成 Store |
 | `src/experiment/observation_evidence.py` | observation、截图、transfer coverage 证据封存 |
-| `src/experiment/source_assets.py` | source evidence 验证与 legacy input 的统一投影；不负责 AppAgent/MobileGPT 转换，不创建平行 source pool |
-| `src/experiment/artifact_index.py` | 唯一 `data/current.json` materializer/loader；不要增加 index/snapshot |
+| `src/experiment/source_evidence.py` | source evidence 验证与 legacy input 的统一投影；不负责 AppAgent/MobileGPT 转换，不创建平行 source pool |
+| `src/experiment/data_index.py` | 唯一 `data/current.json` materializer/loader；不要增加 index/snapshot |
 | `src/experiment/result_schema.py` | compact public result row；字段改动必须 schema/stat 独立 commit |
 | `src/experiment/result_registry.py` | immutable result registration ledger；不负责调度或汇总 |
 | `src/experiment/batch_outcomes.py` | 一次 attempt 的 outcome/summary；不成为运行时选择器 |
@@ -135,9 +135,9 @@ rg --files -g '*.py' | sort
 | --- | --- |
 | `src/integrations/__init__.py` | 适配器包标记 |
 | `src/integrations/runlog.py` | 外部/历史 RunLog 投影；canonical loader 在 `omniflow/runlog.py` |
-| `src/integrations/mobilegpt_converter.py` | 唯一 MobileGPT native memory converter |
+| `src/integrations/mobilegpt.py` | 唯一 MobileGPT native memory converter |
 | `src/integrations/mobilegpt_runtime.py` | pinned MobileGPT upstream runtime seam |
-| `src/integrations/appagent_adapter.py` | AppAgent native conversion/runtime；不拥有调度 |
+| `src/integrations/appagent.py` | AppAgent native conversion/runtime；不拥有调度 |
 | `src/integrations/bmoca.py` | B-MoCA DeviceDriver、episode 和 official reward adapter |
 | `src/integrations/script_replay.py` | 完整 Function 的共享 replay 薄适配器；禁止私有 mapper/executor |
 | `src/integrations/skilldroid_replay.py` | DroidRun v0.5.6 官方 MacroPlayer adapter |

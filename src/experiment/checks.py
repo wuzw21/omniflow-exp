@@ -655,7 +655,7 @@ def _required_files(profile: str) -> list[str]:
     if profile == "appagent":
         return [
             "src/experiment/androidworld.py",
-            "src/integrations/appagent_adapter.py",
+            "src/integrations/appagent.py",
             "src/integrations/android_world/launch.py",
             "runtime/external/appagent/scripts/document_generation.py",
             "runtime/external/droidrun-android-world/android_world/android_world/env/setup_device/apps.py",
@@ -668,7 +668,7 @@ def _required_files(profile: str) -> list[str]:
     if profile == "mobilegpt":
         return [
             "src/experiment/androidworld.py",
-            "src/integrations/mobilegpt_converter.py",
+            "src/integrations/mobilegpt.py",
             "src/integrations/mobilegpt_runtime.py",
             "runtime/external/mobilegpt/Server/main.py",
             "runtime/external/droidrun-android-world/android_world/android_world/env/setup_device/apps.py",

@@ -18,7 +18,7 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_SOURCE_METHOD,
 )
 from src.experiment.protocol import SOURCE_SEED
-from src.integrations.mobilegpt_converter import (
+from src.integrations.mobilegpt import (
     MobileGPTConversionError,
     convert_runlog_to_mobilegpt_memory,
     preflight_runlog_conversion,
@@ -242,7 +242,7 @@ def _register_mobilegpt_memory(
     bundle_root: str | Path,
     task_name: str,
 ) -> dict[str, Any]:
-    from src.experiment.artifact_index import refresh_artifact_index_from_pointer
+    from src.experiment.data_index import refresh_artifact_index_from_pointer
 
     report = refresh_artifact_index_from_pointer(
         memory_index=memory_index,

@@ -17,7 +17,7 @@
 | 任务执行 | `scripts/exp/run_androidworld.sh` → `src/experiment/e2e_task_pipeline.py` → `src/experiment/androidworld.py` | 选择任务、方法、设备，并运行一个原子结果 |
 | Native episode | `src/integrations/android_world/launch.py` | 创建 AndroidWorld/B-MoCA 环境、调用官方 validator、封存 RunLog |
 | Function 生命周期 | `omniflow/functions/assets.py::save_function` | 从一份成功 RunLog 编译、验证并原子写入一个 Function Store |
-| 本地证据索引 | `src/experiment/artifact_index.py` | 物化并读取 `data/current.json`；运行时不扫描替代索引 |
+| 本地证据索引 | `src/experiment/data_index.py` | 物化并读取 `data/current.json`；运行时不扫描替代索引 |
 
 ## 2. 唯一运行路径
 
@@ -106,13 +106,13 @@ baseline 记录时经过的五个位置：
 
 | 文件 | 只应该回答的问题 | 不应该知道的事情 |
 | --- | --- | --- |
-| `source_assets.py` | 这份 Source RunLog 的截图、XML、动作和 revision 是否可信？ | AppAgent/MobileGPT 的转换规则 |
-| `appagent_adapter.py` | 如何把可信 source 转成 AppAgent 的 Prepared Memory？ | task 调度、Local Index、AndroidWorld episode 生命周期 |
-| `mobilegpt_converter.py` | 如何把可信 source 转成 MobileGPT 的 Prepared Memory？ | AppAgent 规则、Local Index 选择策略 |
-| `preflight.py` | 这次运行的依赖、设备和 Prepared Memory 是否 ready？ | 具体 provider 的转换实现 |
-| `artifact_index.py` | 如何物化和读取唯一 Local Index？ | AndroidWorld runner 和 provider 内部校验细节 |
+| `source_evidence.py` | 这份 Source RunLog 的截图、XML、动作和 revision 是否可信？ | AppAgent/MobileGPT 的转换规则 |
+| `appagent.py` | 如何把可信 source 转成 AppAgent 的 Prepared Memory？ | task 调度、Local Index、AndroidWorld episode 生命周期 |
+| `mobilegpt.py` | 如何把可信 source 转成 MobileGPT 的 Prepared Memory？ | AppAgent 规则、Local Index 选择策略 |
+| `checks.py` | 这次运行的依赖、设备和 Prepared Memory 是否 ready？ | 具体 provider 的转换实现 |
+| `data_index.py` | 如何物化和读取唯一 Local Index？ | AndroidWorld runner 和 provider 内部校验细节 |
 
-`source_assets.py` 曾经暴露 `convert_runlog_memory(method=...)`，让共享 source
+`source_evidence.py` 曾经暴露 `convert_runlog_memory(method=...)`，让共享 source
 模块根据字符串选择 provider。这是已经删除的浅 seam：AppAgent 直接调用
 `convert_runlog_to_appagent_memory`，MobileGPT 直接调用
 `convert_runlog_to_mobilegpt_bundle`。新增 provider 时应新增自己的 adapter，
@@ -122,7 +122,7 @@ baseline 记录时经过的五个位置：
 | --- | --- | --- |
 | `launch.py` 中的 direct Function 调用与普通 OmniFlow 运行 | 真旁路：生命周期相似、调用语义可共享 | 通过 E2E 请求 seam 收敛，不删除直跑能力 |
 | `script_replay.py` 与 runtime execution | 不是重复 mapper；前者是薄适配器，后者是核心实现 | 保留，继续用测试锁住“无私有 mapping” |
-| `artifact_index.py` 与 result ledger | 读写对象不同，不能粗暴合并 | 保留职责，拆出只在有测试证明时进行 |
+| `data_index.py` 与 result ledger | 读写对象不同，不能粗暴合并 | 保留职责，拆出只在有测试证明时进行 |
 | `batch_outcomes.py` 与 `result_registry.py` | 汇总和注册是两个不可互换的写入语义 | 先记录公共 path helper 重复，再局部收敛 |
 | `omniflow/runlog.py` 与 `src/integrations/runlog.py` | canonical loader 与历史外部导入 adapter | 旧适配层按要求暂不清理 |
 | `mobilegpt_source.py` / `appagent_source.py` | 两个外部协议不同 | 不合并；只共享纯证据 helper |

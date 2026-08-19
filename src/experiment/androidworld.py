@@ -64,7 +64,7 @@ from src.experiment.protocol import (
 from src.experiment.result_registry import register_attempt_summary
 from src.experiment.result_schema import RESULT_FIELDS, compact_result_row
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
-from src.integrations.appagent_adapter import validate_appagent_memory
+from src.integrations.appagent import validate_appagent_memory
 
 DEFAULT_DATA_INDEX = REPO_ROOT / "data" / "current.json"
 DEFAULT_ANDROID_WORLD_ROOT = (
@@ -2526,7 +2526,7 @@ def validate_mobilegpt_adapted_memory(
         expected_model=expected_model,
         expected_source_method=expected_source_method,
     )
-    from src.integrations.mobilegpt_converter import validate_mobilegpt_memory
+    from src.integrations.mobilegpt import validate_mobilegpt_memory
 
     validated["memory_validation"] = validate_mobilegpt_memory(root)
     return validated
@@ -2616,7 +2616,7 @@ def seal_mobilegpt_source_memory(
         or int(official_reader.get("action_row_count") or 0) < transition_count
     ):
         raise ValueError("mobilegpt_virtual_memory_official_reader_invalid")
-    from src.integrations.mobilegpt_converter import validate_mobilegpt_memory
+    from src.integrations.mobilegpt import validate_mobilegpt_memory
 
     memory_validation = validate_mobilegpt_memory(memory)
     inventory = inspect_mobilegpt_memory(memory)

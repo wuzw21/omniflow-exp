@@ -1,12 +1,12 @@
 # Experiment edit guide
 
 `e2e_task_pipeline.py` is the only scheduler. `androidworld.py` handles one
-task/method/device result. `artifact_index.py` owns the sole `data/current.json`
-index and exposes the clearly named `load_artifact_index`/
-`refresh_artifact_index` operations. `result_registry.py` writes the immutable
-ledger. `preflight.py` checks inputs; `source_assets.py` validates source
-evidence only; the MobileGPT and AppAgent source files call their own provider
-conversion functions and prepare native evidence without owning lifecycle.
+task/method/device result. `data_index.py` owns the sole `data/current.json`
+index and exposes `load_artifact_index`/`refresh_artifact_index` operations.
+`result_registry.py` writes the immutable ledger. `checks.py` checks inputs;
+`source_evidence.py` validates source evidence only; the MobileGPT and AppAgent
+source files call their own provider conversion functions and prepare native
+evidence without owning lifecycle.
 There is no shared `method` string dispatcher in the source module.
 
 Path rules live in `paths.py`: repository-relative inputs use `resolve_path`,

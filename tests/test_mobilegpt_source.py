@@ -9,8 +9,8 @@ import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment import androidworld as pipeline
-from src.experiment import mobilegpt_source, preflight
-from src.experiment.artifact_index import (
+from src.experiment import mobilegpt_source, checks
+from src.experiment.data_index import (
     canonical_mobilegpt_memory_from_memory,
     refresh_artifact_index,
 )
@@ -264,7 +264,7 @@ def test_converted_memory_seals_and_registers(tmp_path: Path) -> None:
     assert sealed["manifest"]["provenance"]["semantic_subtasks"] is False
     assert sealed["manifest"]["provenance"]["actions_supplied_to_mobilegpt"] is True
     assert sealed["memory_validation"]["native_memory_complete"] is True
-    assert preflight._validate_mobilegpt_manifest(memory)["task_name"] == (
+    assert checks._validate_mobilegpt_manifest(memory)["task_name"] == (
         "SystemBluetoothTurnOn"
     )
     assert resolved is not None
@@ -481,7 +481,7 @@ def test_strict_reader_validates_canonical_memory(
         return {"native_memory_complete": True}
 
     monkeypatch.setattr(
-        "src.integrations.mobilegpt_converter.validate_mobilegpt_memory",
+        "src.integrations.mobilegpt.validate_mobilegpt_memory",
         validate_strict,
     )
 

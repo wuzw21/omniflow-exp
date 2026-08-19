@@ -13,7 +13,7 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment import androidworld as pipeline
 from src.experiment import appagent_source
-from src.integrations import appagent_adapter
+from src.integrations import appagent as appagent_adapter
 
 
 def _write_appagent_teacher_source(

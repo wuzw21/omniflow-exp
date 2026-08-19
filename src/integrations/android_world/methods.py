@@ -388,7 +388,7 @@ def _build_mobilegpt(context: MethodAdapterContext) -> Any:
 
 
 def _build_appagent(context: MethodAdapterContext) -> Any:
-    from src.integrations.appagent_adapter import (
+    from src.integrations.appagent import (
         AppAgentAndroidWorldAgent,
         AppAgentTeacherAgent,
         OfficialAppAgentRuntime,

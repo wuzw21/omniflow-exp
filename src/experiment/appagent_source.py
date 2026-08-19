@@ -24,14 +24,14 @@ from src.experiment.mobilegpt_source import (
     load_canonical_source_item,
 )
 from src.experiment.protocol import SOURCE_SEED
-from src.experiment.source_assets import (
+from src.experiment.source_evidence import (
     build_grounded_teacher_run_log_from_canonical_item,
 )
 from src.integrations.android_world.host import (
     androidworld_observation_package,
     androidworld_observation_xml,
 )
-from src.integrations.appagent_adapter import (
+from src.integrations.appagent import (
     APPAGENT_ACTION_TYPES,
     APPAGENT_MANIFEST,
     APPAGENT_OFFICIAL_REVISION,

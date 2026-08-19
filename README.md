@@ -65,7 +65,7 @@ There are two MobileGPT preparation adapters because their contracts differ:
 AndroidWorld creates a sealed source bundle through
 `src/experiment/mobilegpt_source.py`, while B-MoCA creates its native replay
 memory through the scheduler's B-MoCA adapter. Both use the single converter in
-`src/integrations/mobilegpt_converter.py`; neither is a second Function or
+`src/integrations/mobilegpt.py`; neither is a second Function or
 episode runner. Do not add another preparation entry point.
 
 Install the B-MoCA replay dependency with `uv sync --extra bmoca`. The protocol

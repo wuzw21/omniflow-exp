@@ -760,7 +760,7 @@ def test_resolve_args_preserves_symlinked_virtualenv_python(
 ) -> None:
     args = _args(tmp_path)
     args.emulator_bin = tmp_path / "emulator"
-    args.runtime_preflight = tmp_path / "repo" / "src" / "experiment" / "preflight.py"
+    args.runtime_preflight = tmp_path / "repo" / "src" / "experiment" / "checks.py"
     for path in (
         args.script,
         args.memory_index,
@@ -858,7 +858,7 @@ def test_source_device_is_cold_restarted_when_already_ready(
     args.source_avd = "SmallPhone"
     args.emulator_bin = tmp_path / "emulator"
     args.emulator_gpu = "swiftshader_indirect"
-    args.runtime_preflight = tmp_path / "preflight.py"
+    args.runtime_preflight = tmp_path / "checks.py"
     args.task = "ContactsAddContact"
     adb_calls: list[tuple[str, ...]] = []
     preflight_commands: list[list[str]] = []

@@ -9,7 +9,7 @@ import sys
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from src.integrations.mobilegpt_converter import (
+from src.integrations.mobilegpt import (
     MobileGPTConversionError,
     _load_runlog_trajectory,
     _mobilegpt_action_from_runlog,

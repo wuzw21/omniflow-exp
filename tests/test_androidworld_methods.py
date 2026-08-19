@@ -112,7 +112,7 @@ def test_appagent_asset_use_is_distinct_from_document_utilization() -> None:
 def test_appagent_uses_upstream_model_factory_not_generic_wrapper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from src.integrations import appagent_adapter
+    from src.integrations import appagent
 
     captured: dict[str, object] = {}
 
@@ -132,8 +132,8 @@ def test_appagent_uses_upstream_model_factory_not_generic_wrapper(
         captured["agent"] = kwargs
         return SimpleNamespace(**kwargs)
 
-    monkeypatch.setattr(appagent_adapter, "OfficialAppAgentRuntime", Runtime)
-    monkeypatch.setattr(appagent_adapter, "AppAgentAndroidWorldAgent", build_agent)
+    monkeypatch.setattr(appagent, "OfficialAppAgentRuntime", Runtime)
+    monkeypatch.setattr(appagent, "AppAgentAndroidWorldAgent", build_agent)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://example.test/v1")
     monkeypatch.setenv("OPENAI_MODEL", "paper-model")

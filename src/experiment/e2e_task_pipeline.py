@@ -23,7 +23,7 @@ from src.experiment.androidworld import (
     build_e2e_command,
     build_fixed_replay_command,
 )
-from src.experiment.artifact_index import (
+from src.experiment.data_index import (
     canonical_mobilegpt_memory_from_memory,
     load_artifact_index,
     registered_result_plan_from_memory,
@@ -52,7 +52,7 @@ from src.experiment.protocol import (
     TASK_DEADLINE_SEC,
     TASK_SEED,
 )
-from src.integrations.mobilegpt_converter import (
+from src.integrations.mobilegpt import (
     convert_runlog_to_mobilegpt_memory,
 )
 from src.integrations.runlog import project_androidworld_step_actions

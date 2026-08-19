@@ -9,7 +9,7 @@ import sys
 import pytest
 from runlog_fixtures import androidworld_run_log
 
-from src.experiment.preflight import (
+from src.experiment.checks import (
     _contacts_setup_ready,
     _dismiss_known_accessibility_crash_dialog,
     _reset_contacts_setup_screen,
@@ -17,9 +17,9 @@ from src.experiment.preflight import (
 )
 
 
-def test_mobilegpt_converter_imports_in_clean_process() -> None:
+def test_mobilegpt_imports_in_clean_process() -> None:
     completed = subprocess.run(
-        [sys.executable, "-c", "import src.integrations.mobilegpt_converter"],
+        [sys.executable, "-c", "import src.integrations.mobilegpt"],
         cwd=Path(__file__).resolve().parents[1],
         check=False,
         capture_output=True,
@@ -45,8 +45,8 @@ def test_preflight_dismisses_known_accessibility_crash_dialog(monkeypatch) -> No
             stderr="",
         )
 
-    monkeypatch.setattr("src.experiment.preflight._run", fake_run)
-    monkeypatch.setattr("src.experiment.preflight.time.sleep", lambda _: None)
+    monkeypatch.setattr("src.experiment.checks._run", fake_run)
+    monkeypatch.setattr("src.experiment.checks.time.sleep", lambda _: None)
 
     refreshed = _dismiss_known_accessibility_crash_dialog(
         "/sdk/adb",
@@ -71,7 +71,7 @@ def test_preflight_dismisses_known_accessibility_crash_dialog(monkeypatch) -> No
 
 def test_preflight_preserves_unknown_crash_dialog(monkeypatch) -> None:
     monkeypatch.setattr(
-        "src.experiment.preflight._run",
+        "src.experiment.checks._run",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("unknown crash dialogs must not be dismissed")
         ),
@@ -101,9 +101,9 @@ def test_preflight_resets_unknown_contacts_task(monkeypatch) -> None:
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("src.experiment.preflight._run", fake_run)
-    monkeypatch.setattr("src.experiment.preflight._dump_ui_xml", lambda *_: next(screens))
-    monkeypatch.setattr("src.experiment.preflight.time.sleep", lambda _: None)
+    monkeypatch.setattr("src.experiment.checks._run", fake_run)
+    monkeypatch.setattr("src.experiment.checks._dump_ui_xml", lambda *_: next(screens))
+    monkeypatch.setattr("src.experiment.checks.time.sleep", lambda _: None)
 
     screen = _reset_contacts_setup_screen("/sdk/adb", "emulator-5564")
 
@@ -125,7 +125,7 @@ def test_preflight_resets_unknown_contacts_task(monkeypatch) -> None:
 def test_preflight_contacts_reset_fails_closed(monkeypatch) -> None:
     unknown = '<hierarchy><node package="com.android.launcher3" text="Home" /></hierarchy>'
     monkeypatch.setattr(
-        "src.experiment.preflight._run",
+        "src.experiment.checks._run",
         lambda command, timeout=10.0: subprocess.CompletedProcess(
             command,
             0,
@@ -133,8 +133,8 @@ def test_preflight_contacts_reset_fails_closed(monkeypatch) -> None:
             stderr="",
         ),
     )
-    monkeypatch.setattr("src.experiment.preflight._dump_ui_xml", lambda *_: unknown)
-    monkeypatch.setattr("src.experiment.preflight.time.sleep", lambda _: None)
+    monkeypatch.setattr("src.experiment.checks._dump_ui_xml", lambda *_: unknown)
+    monkeypatch.setattr("src.experiment.checks.time.sleep", lambda _: None)
 
     screen = _reset_contacts_setup_screen("/sdk/adb", "emulator-5564")
 

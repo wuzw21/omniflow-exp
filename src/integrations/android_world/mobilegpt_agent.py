@@ -611,7 +611,7 @@ def run_mobilegpt_replay(
 ) -> RunResult:
     """Run MobileGPT's selected-memory path with exploration fallbacks disabled."""
 
-    from src.integrations.mobilegpt_converter import validate_mobilegpt_memory
+    from src.integrations.mobilegpt import validate_mobilegpt_memory
 
     memory = Path(memory_root).expanduser().resolve()
     validated = validate_mobilegpt_memory(memory)
