@@ -28,7 +28,7 @@ def _write_appagent_teacher_source(
     teacher_source.write_text(
         json.dumps(
             {
-                "schema_version": appagent_adapter.APPAGENT_TEACHER_SOURCE_SCHEMA,
+                "schema_version": appagent_adapter.APPAGENT_SOURCE_SCHEMA,
                 "task_name": task_name,
                 "source_seed": 111,
                 "source_run_id": "source",

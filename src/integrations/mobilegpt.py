@@ -27,7 +27,7 @@ from src.integrations.runlog import import_run_log, infer_input_text_target
 from omniflow.core.model import Action
 from omniflow.transfer.runtime import load_transfer_state_catalog
 
-CONVERSION_SOURCE_SCHEMA = "omniflow.mobilegpt-runlog-conversion-source.v1"
+CONVERSION_SOURCE_SCHEMA = "omniflow.mobilegpt.source.v2"
 CONVERSION_MODE_DIRECT = "runlog_direct"
 CONVERSION_AUDIT_SCHEMA = MOBILEGPT_AUDIT_SCHEMA
 

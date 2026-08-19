@@ -246,7 +246,7 @@ def test_converted_memory_seals_and_registers(tmp_path: Path) -> None:
 
     assert sealed["manifest"]["schema_version"] == MOBILEGPT_MEMORY_SCHEMA
     assert sealed["manifest"]["schema_version"] == (
-        "omniflow.mobilegpt-runlog-direct-memory.v1"
+        "omniflow.mobilegpt.memory.v2"
     )
     assert sealed["manifest"]["source_method"] == MOBILEGPT_SOURCE_METHOD
     assert sealed["manifest"]["source_model"] == ""

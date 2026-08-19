@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omniflow.local/schemas/experiment/mobilegpt_memory.v2.json",
+  "title": "OmniFlow MobileGPT prepared memory",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "task_name",
+    "source_seed",
+    "source_method",
+    "memory",
+    "source_run_log",
+    "trajectory_audit",
+    "source_stats",
+    "provenance"
+  ],
+  "properties": {
+    "schema_version": {"const": "omniflow.mobilegpt.memory.v2"},
+    "task_name": {"type": "string", "minLength": 1},
+    "source_seed": {"type": "integer", "minimum": 0},
+    "source_method": {"type": "string", "minLength": 1},
+    "memory": {"$ref": "#/$defs/file"},
+    "source_run_log": {"$ref": "#/$defs/file"},
+    "trajectory_audit": {"$ref": "#/$defs/file"},
+    "source_stats": {"$ref": "#/$defs/file"},
+    "provenance": {"type": "object", "additionalProperties": true}
+  },
+  "$defs": {
+    "file": {
+      "type": "object",
+      "required": ["relative_path", "sha256"],
+      "properties": {
+        "relative_path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

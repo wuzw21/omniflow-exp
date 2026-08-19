@@ -36,8 +36,8 @@ from src.integrations.android_world.host import (
 from src.integrations.runlog import import_run_log, project_androidworld_step_actions
 
 APPAGENT_OFFICIAL_REVISION = "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
-APPAGENT_TEACHER_SOURCE_SCHEMA = "omniflow.appagent-teacher-source.v2"
-APPAGENT_MEMORY_SCHEMA = "omniflow.appagent-memory.v2"
+APPAGENT_SOURCE_SCHEMA = "omniflow.appagent.source.v3"
+APPAGENT_MEMORY_SCHEMA = "omniflow.appagent.memory.v3"
 APPAGENT_MANIFEST = "appagent_manifest.json"
 APPAGENT_ACTION_TYPES = {
     "click",
@@ -1134,7 +1134,7 @@ def build_appagent_teacher_source(
         raise ValueError("appagent_multi_app_demonstration_unsupported")
 
     return {
-        "schema_version": APPAGENT_TEACHER_SOURCE_SCHEMA,
+        "schema_version": APPAGENT_SOURCE_SCHEMA,
         "task_name": normalized_task_name,
         "source_seed": int(source_seed),
         "source_run_id": str(payload.get("run_id") or ""),
@@ -1166,7 +1166,7 @@ def load_appagent_teacher_source(path: str | Path) -> dict[str, Any]:
     payload = json.loads(resolved.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("appagent_teacher_source_object_required")
-    if payload.get("schema_version") != APPAGENT_TEACHER_SOURCE_SCHEMA:
+    if payload.get("schema_version") != APPAGENT_SOURCE_SCHEMA:
         raise ValueError("appagent_teacher_source_schema_invalid")
     if payload.get("source_seed") != APPAGENT_SOURCE_SEED:
         raise ValueError(
@@ -2354,7 +2354,7 @@ __all__ = [
     "APPAGENT_MEMORY_SCHEMA",
     "APPAGENT_OFFICIAL_REVISION",
     "APPAGENT_SOURCE_SEED",
-    "APPAGENT_TEACHER_SOURCE_SCHEMA",
+    "APPAGENT_SOURCE_SCHEMA",
     "AppAgentAndroidWorldAgent",
     "AppAgentElement",
     "AppAgentTeacherAgent",

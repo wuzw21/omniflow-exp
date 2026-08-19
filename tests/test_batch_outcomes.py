@@ -18,7 +18,7 @@ def test_record_prep_failure_preserves_reason_tokens_and_time(tmp_path: Path) ->
     (source_attempt / "prep_failure.json").write_text(
         json.dumps(
             {
-                "schema_version": "omniflow.mobilegpt-source-failure.v1",
+                "schema_version": "omniflow.mobilegpt.memory-failure.v2",
                 "error_type": "RuntimeError",
                 "error": "mobilegpt_cold_memory_official_source_failed",
                 "retry_allowed": False,

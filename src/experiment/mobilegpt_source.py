@@ -149,7 +149,7 @@ def _source_preflight(
             **dict(report.get("failure_details") or {}),
         )
     audit = {
-        "schema_version": "omniflow.mobilegpt-conversion-preflight.v1",
+        "schema_version": "omniflow.mobilegpt.source-check.v2",
         "grounding_source": "canonical_androidworld_run_log",
         "source_run_log": str(source_run_log),
         "source_run_log_sha256": source_sha256,
@@ -169,7 +169,7 @@ def preflight_mobilegpt_source(
     _, _, source_audit, target_info = _source_preflight(item)
     report = dict(source_audit["report"])
     return {
-        "schema_version": "omniflow.mobilegpt-source-preflight.v4",
+        "schema_version": "omniflow.mobilegpt.source-check.v2",
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
         "source_method": MOBILEGPT_SOURCE_METHOD,
@@ -219,7 +219,7 @@ def validate_mobilegpt_source_memory(
         expected_source_method=MOBILEGPT_SOURCE_METHOD,
     )
     result = {
-        "schema_version": "omniflow.mobilegpt-source-validation.v4",
+        "schema_version": "omniflow.mobilegpt.memory-check.v2",
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
         "source_method": MOBILEGPT_SOURCE_METHOD,
@@ -286,7 +286,7 @@ def prepare_mobilegpt_source_memory(
     )
     result.update(
         {
-            "schema_version": "omniflow.mobilegpt-source-prepare.v7",
+            "schema_version": "omniflow.mobilegpt.memory-prepare.v2",
             "source_method": MOBILEGPT_SOURCE_METHOD,
             "learning_mode": MOBILEGPT_LEARNING_MODE,
             "teacher_forcing": False,
@@ -349,7 +349,7 @@ def convert_runlog_to_mobilegpt_bundle(
             **dict(report.get("failure_details") or {}),
         )
     source_audit = preflight_audit or {
-        "schema_version": "omniflow.mobilegpt-conversion-preflight.v1",
+        "schema_version": "omniflow.mobilegpt.source-check.v2",
         "grounding_source": "canonical_androidworld_run_log",
         "source_run_log": str(source_path),
         "source_run_log_sha256": pipeline._file_sha256(source_path),
@@ -416,7 +416,7 @@ def convert_runlog_to_mobilegpt_bundle(
         memory_schema=MOBILEGPT_MEMORY_SCHEMA,
     )
     return {
-        "schema_version": "omniflow.runlog-memory-conversion.v1",
+        "schema_version": "omniflow.mobilegpt.memory-prepare.v2",
         "method": "mobilegpt",
         "task_name": str(source["task_name"]),
         "source_seed": SOURCE_SEED,
@@ -468,7 +468,7 @@ def _write_failure_marker(output_root: str | Path, error: BaseException) -> None
     marker.write_text(
         json.dumps(
             {
-                "schema_version": "omniflow.mobilegpt-source-failure.v1",
+                "schema_version": "omniflow.mobilegpt.memory-failure.v2",
                 "failed_at": datetime.datetime.now(
                     datetime.timezone.utc
                 ).isoformat(),

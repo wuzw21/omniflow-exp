@@ -912,7 +912,7 @@ def preflight_appagent_source(
             model=str(model or "").strip(),
         )
     return {
-        "schema_version": "omniflow.appagent-source-preflight.v1",
+        "schema_version": "omniflow.appagent.source-check.v2",
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
         "source_method": _appagent_source_method_label(item),
@@ -970,7 +970,7 @@ def prepare_appagent_memory(
     )
     result.update(
         {
-            "schema_version": "omniflow.appagent-source-prepare.v3",
+            "schema_version": "omniflow.appagent.memory-prepare.v2",
             "source_seed": SOURCE_SEED,
             "source_method": source_method,
             "model": normalized_model,
@@ -992,7 +992,7 @@ def _write_failure_marker(memory_root: str | Path, error: BaseException) -> None
     marker.write_text(
         json.dumps(
             {
-                "schema_version": "omniflow.appagent-source-failure.v1",
+                "schema_version": "omniflow.appagent.memory-failure.v2",
                 "failed_at": datetime.datetime.now(
                     datetime.timezone.utc
                 ).isoformat(),

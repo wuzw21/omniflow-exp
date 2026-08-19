@@ -2,11 +2,11 @@
 
 MOBILEGPT_MEMORY_MANIFEST = "mobilegpt_memory_manifest.json"
 
-MOBILEGPT_MEMORY_SCHEMA = "omniflow.mobilegpt-runlog-direct-memory.v1"
+MOBILEGPT_MEMORY_SCHEMA = "omniflow.mobilegpt.memory.v2"
 MOBILEGPT_SOURCE_METHOD = "mobilegpt_runlog_direct_memory"
 MOBILEGPT_PREP_TYPE = "mobilegpt_runlog_direct_memory"
 MOBILEGPT_LEARNING_MODE = "mobilegpt_runlog_direct_conversion"
-MOBILEGPT_AUDIT_SCHEMA = "omniflow.mobilegpt-runlog-direct-audit.v1"
+MOBILEGPT_AUDIT_SCHEMA = "omniflow.mobilegpt.audit.v2"
 
 MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS = frozenset({MOBILEGPT_MEMORY_SCHEMA})
 MOBILEGPT_SOURCE_METHOD_BY_SCHEMA = {

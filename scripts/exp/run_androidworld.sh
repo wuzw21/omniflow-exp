@@ -80,7 +80,7 @@ player = load_official_droidrun_macro_player()
 print(f"[droidrun] version={actual} player={player.__name__}")
 PY
 }
-mobilegpt_source_schema="omniflow.mobilegpt-runlog-direct-memory.v1"
+mobilegpt_source_schema="omniflow.mobilegpt.memory.v2"
 mobilegpt_source_method="mobilegpt_runlog_direct_memory"
 mobilegpt_source_manifest_name="mobilegpt_memory_manifest.json"
 expected_source_seed=""
@@ -1518,7 +1518,7 @@ if lineage is not None:
         raise SystemExit(f"canonical_source_run_log_lineage_invalid:{sys.argv[5]}")
     compatible_source_sha256s.append(str(lineage.get("source_sha256") or ""))
 candidate_validator = None
-if sys.argv[7] == "omniflow.mobilegpt-runlog-direct-memory.v1":
+if sys.argv[7] == "omniflow.mobilegpt.memory.v2":
     from src.experiment.androidworld import validate_mobilegpt_adapted_memory
     from src.experiment.data_index import (
         canonical_mobilegpt_memory_from_memory,
@@ -1577,7 +1577,7 @@ if sys.argv[7] == "omniflow.mobilegpt-runlog-direct-memory.v1":
         except (OSError, TypeError, ValueError):
             return False
         return True
-elif sys.argv[7] == "omniflow.appagent-memory.v2":
+elif sys.argv[7] == "omniflow.appagent.memory.v3":
     def candidate_validator(_candidate, payload):
         return (
             payload.get("conversion_mode") == "canonical_runlog_offline"
@@ -1641,7 +1641,7 @@ if [[ "$all_tasks" -eq 0 && "$requires_appagent_source_memory" -eq 1 && -z "$app
       "$task" \
       "$source_index" \
       "" \
-      "omniflow.appagent-memory.v2"
+      "omniflow.appagent.memory.v3"
   )"
 fi
 for external_path in \

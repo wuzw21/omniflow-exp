@@ -280,7 +280,7 @@ def _valid_appagent_manifest(payload: Any) -> bool:
             and payload.get("source_emulator_used") is False
         )
         return (
-            payload.get("schema_version") == "omniflow.appagent-memory.v2"
+            payload.get("schema_version") == "omniflow.appagent.memory.v3"
             and payload.get("official_appagent_revision")
             == APPAGENT_OFFICIAL_REVISION
             and payload.get("source_seed") == SOURCE_SEED

@@ -61,7 +61,7 @@ def test_bmoca_skilldroid_uses_pinned_droidrun_runtime() -> None:
 def test_preflight_accepts_offline_appagent_memory() -> None:
     assert _valid_appagent_manifest(
         {
-            "schema_version": "omniflow.appagent-memory.v2",
+            "schema_version": "omniflow.appagent.memory.v3",
             "official_appagent_revision": (
                 "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
             ),
