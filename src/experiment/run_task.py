@@ -4527,8 +4527,7 @@ def build_mobilegpt_command(
     run_dir_suffix: str = "",
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
-    del android_world_root, task_random_seed, fixed_task_seed
-    del fixed_task_params, task_params_override, perform_emulator_setup
+    del fixed_task_seed
     resolved_output = _experiment_run_dir(
         output_root,
         task=item.task,
@@ -4554,6 +4553,8 @@ def build_mobilegpt_command(
         sys.executable,
         "-m",
         "src.integrations.official_forward",
+        "--baseline",
+        "mobilegpt",
         "--root",
         str(resolve_path(mobilegpt_root, root=repo_root)),
         "--serial",
@@ -4568,7 +4569,27 @@ def build_mobilegpt_command(
         str(client_output),
         "--timeout",
         str(float(finish_timeout_sec)),
+        "--android-world-root",
+        str(resolve_path(android_world_root, root=repo_root)),
+        "--task",
+        item.task,
+        "--task-params-json",
+        json.dumps(
+            dict(task_params_override or item.params)
+            if fixed_task_params
+            else {},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        "--task-seed",
+        str(int(task_random_seed if task_random_seed is not None else item.replay_seed)),
+        "--console-port",
+        str(int(target.console_port)),
+        "--grpc-port",
+        str(int(target.console_port) + 3000),
     ]
+    if not perform_emulator_setup:
+        client_argv.append("--no-perform-emulator-setup")
     return CommandSpec(
         label=f"mobilegpt:official:{target.label}",
         argv=client_argv,
@@ -4626,8 +4647,7 @@ def build_appagent_command(
         raise ValueError("official_appagent_deployment_does_not_run_teacher_mode")
     if docs_root is None:
         raise ValueError("appagent_native_memory_required")
-    del android_world_root, task_random_seed, fixed_task_seed
-    del fixed_task_params, task_params_override, perform_emulator_setup, workspace_root
+    del fixed_task_seed, workspace_root
     del demo_name
     resolved_appagent_root = resolve_path(appagent_root, root=repo_root)
     resolved_docs_root = resolve_path(docs_root, root=repo_root)
@@ -4685,12 +4705,43 @@ def build_appagent_command(
     )
     argv = [
         python_executable,
+        "-m",
+        "src.integrations.official_forward",
+        "--baseline",
+        "appagent",
+        "--executor",
         str(resolved_appagent_root / "scripts" / "task_executor.py"),
-        "--app",
+        "--app-name",
         app_name,
-        "--root_dir",
+        "--workspace",
         str(workspace),
+        "--goal",
+        item.goal,
+        "--timeout",
+        str(float(timeout_sec)),
+        "--android-world-root",
+        str(resolve_path(android_world_root, root=repo_root)),
+        "--task",
+        item.task,
+        "--task-params-json",
+        json.dumps(
+            dict(task_params_override or item.params)
+            if fixed_task_params
+            else {},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        "--task-seed",
+        str(int(task_random_seed if task_random_seed is not None else item.replay_seed)),
+        "--console-port",
+        str(int(target.console_port)),
+        "--grpc-port",
+        str(int(target.console_port) + 3000),
+        "--adb",
+        str(adb_path or "adb"),
     ]
+    if not perform_emulator_setup:
+        argv.append("--no-perform-emulator-setup")
     log_path = resolved_output / "official_appagent.log"
     return CommandSpec(
         label=f"appagent:official:{target.label}",
@@ -4704,7 +4755,7 @@ def build_appagent_command(
         cwd=workspace,
         output_path=resolved_output,
         timeout_sec=float(timeout_sec) if timeout_sec and timeout_sec > 0 else None,
-        stdin_text=item.goal + "\n",
+        stdin_text="",
         metadata={
             "mode": "appagent_official_deployment",
             "agent": "official_appagent",

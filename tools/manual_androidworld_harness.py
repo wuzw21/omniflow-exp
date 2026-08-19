@@ -97,55 +97,27 @@ class ManualAndroidWorld:
                 else android_world_root
             )
             sys.path.insert(0, str(import_root))
-        from android_world import registry
-        from android_world.env import android_world_controller
-        from android_world.env import env_launcher
-        from android_world.env.setup_device import setup as android_world_setup
         from src.integrations.android_world.apps import resolve_androidworld_app_name
         from src.integrations.android_world.run_episode import (
-            _patch_androidworld_adb_output_sanitizer,
-            _rehydrate_task_params,
+            start_androidworld_task_session,
         )
-        task_types = registry.TaskRegistry().get_registry(family="android_world")
-        if args.task not in task_types:
-            raise ValueError(f"unknown AndroidWorld task: {args.task}")
-        task_type = task_types[args.task]
-
         self._json_action = __import__(
             "android_world.env.json_action", fromlist=["JSONAction"]
         )
-        self._env = env_launcher.load_and_setup_env(
-            console_port=args.console_port,
-            emulator_setup=False,
+        params = json.loads(args.task_params_json or "{}")
+        startup, self._task = start_androidworld_task_session(
+            android_world_root=args.android_world_root,
+            task_name=args.task,
+            task_params=params,
+            task_seed=int(args.seed),
+            console_port=int(args.console_port),
             adb_path=args.adb_path,
             grpc_port=args.grpc_port or args.console_port + 3000,
-            install_a11y_forwarding_app=args.install_a11y_forwarder,
+            install_a11y_forwarding_app=bool(args.install_a11y_forwarder),
+            perform_emulator_setup=True,
+            use_uiautomator=True,
         )
-        # Keep AndroidWorld's official controller/action path, but use its
-        # native UIAutomator observation backend when the forwarder's optional
-        # host gRPC tree is unavailable on a fresh local AVD.
-        self._env.controller._a11y_method = (  # pylint: disable=protected-access
-            android_world_controller.A11yMethod.UIAUTOMATOR
-        )
-        if args.emulator_setup:
-            _patch_androidworld_adb_output_sanitizer(self._env.controller)
-            app_names = {
-                str(name).strip().lower()
-                for name in getattr(task_type, "app_names", ())
-            }
-            app_list = tuple(
-                app
-                for app in android_world_setup._APPS
-                if str(app.app_name).strip().lower() in app_names
-            )
-            android_world_setup.setup_apps(self._env, app_list=app_list or None)
-        task_type.set_device_time(self._env)
-        params = json.loads(args.task_params_json or "{}")
-        params = _rehydrate_task_params(params=params, task_type=task_type)
-        params.setdefault("seed", args.seed)
-        self._task = task_type(params)
-        self._task.initialize_task(self._env)
-        _patch_androidworld_adb_output_sanitizer(self._env.controller)
+        self._env = startup.env
         self._resolve_androidworld_app_name = resolve_androidworld_app_name
         self._root = Path(args.output).expanduser().resolve()
         self._images = self._root / "observations" / "objects"
@@ -342,11 +314,6 @@ def main() -> int:
         action="store_true",
         help="Install the official forwarder APK during startup when absent.",
     )
-    parser.add_argument(
-        "--emulator-setup",
-        action="store_true",
-        help="Run AndroidWorld's official emulator setup before task initialization.",
-    )
     args = parser.parse_args()
     harness = ManualAndroidWorld(args)
     try:
@@ -356,20 +323,31 @@ def main() -> int:
                 continue
             command = json.loads(line)
             kind = command.get("cmd")
-            if kind == "observe":
-                result = harness.observe(stable=bool(command.get("stable", True)))
-            elif kind == "click":
-                result = harness.click_target(dict(command.get("target", command)))
-            elif kind == "act":
-                result = harness.act(dict(command["action"]))
-            elif kind == "validate":
-                result = harness.validate()
-            elif kind == "quit":
-                result = {"ok": True}
-                print(json.dumps(result, ensure_ascii=False), flush=True)
-                break
-            else:
-                result = {"ok": False, "error": f"unknown command: {kind}"}
+            try:
+                if kind == "observe":
+                    result = harness.observe(stable=bool(command.get("stable", True)))
+                elif kind == "click":
+                    result = harness.click_target(dict(command.get("target", command)))
+                elif kind == "act":
+                    result = harness.act(dict(command["action"]))
+                elif kind == "validate":
+                    result = harness.validate()
+                elif kind == "quit":
+                    result = {"ok": True}
+                    print(json.dumps(result, ensure_ascii=False), flush=True)
+                    break
+                else:
+                    result = {"ok": False, "error": f"unknown command: {kind}"}
+            except Exception as error:  # pragma: no cover - interactive recovery
+                # UI transitions can invalidate a selector after the official
+                # action has already been delivered. Keep the session alive so
+                # the operator can observe the new native state and continue.
+                result = {
+                    "ok": False,
+                    "error": str(error),
+                    "step_index": len(harness._steps),
+                    "observation": harness._last_observation,
+                }
             print(json.dumps(result, ensure_ascii=False), flush=True)
     finally:
         harness.close()

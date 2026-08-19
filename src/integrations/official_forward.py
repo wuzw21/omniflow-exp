@@ -9,6 +9,7 @@ MobileGPT checkout with its own ``Server/memory`` and Android client.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -18,8 +19,52 @@ import shutil
 import socket
 import stat
 import subprocess
+import sys
 import time
-from typing import Any, Sequence
+from typing import Any, Iterator, Sequence
+
+
+@contextmanager
+def _androidworld_task_startup(
+    *,
+    android_world_root: str | Path,
+    task_name: str,
+    task_params_json: str,
+    task_seed: int,
+    console_port: int,
+    grpc_port: int,
+    adb_path: str,
+    perform_emulator_setup: bool,
+) -> Iterator[tuple[Any, Any]]:
+    """Prepare one official task through the canonical AndroidWorld seam."""
+
+    from src.integrations.android_world.run_episode import (
+        start_androidworld_task_session,
+    )
+
+    decoded = json.loads(str(task_params_json or "{}"))
+    if not isinstance(decoded, dict):
+        raise ValueError("androidworld_task_params_must_be_object")
+    startup, task = start_androidworld_task_session(
+        android_world_root=android_world_root,
+        task_name=task_name,
+        task_params=decoded,
+        task_seed=int(task_seed),
+        console_port=int(console_port),
+        adb_path=adb_path,
+        grpc_port=int(grpc_port),
+        perform_emulator_setup=bool(perform_emulator_setup),
+        use_uiautomator=True,
+    )
+    try:
+        yield startup.env, task
+    finally:
+        try:
+            task.tear_down(startup.env)
+        finally:
+            close = getattr(startup.env, "close", None)
+            if callable(close):
+                close()
 
 
 def resolve_mobilegpt_client_host(
@@ -292,7 +337,7 @@ def _run_adb(
     )
 
 
-def run_mobilegpt_client(
+def _run_mobilegpt_client(
     *,
     official_root: str | Path,
     serial: str,
@@ -419,24 +464,185 @@ def run_mobilegpt_client(
     return 124
 
 
+def run_mobilegpt_client(
+    *,
+    official_root: str | Path,
+    serial: str,
+    adb_path: str,
+    host: str,
+    instruction: str,
+    output_root: str | Path,
+    timeout_sec: float,
+    android_world_root: str | Path | None = None,
+    task_name: str = "",
+    task_params_json: str = "{}",
+    task_seed: int = 113,
+    console_port: int = 5560,
+    grpc_port: int = 8560,
+    perform_emulator_setup: bool = True,
+) -> int:
+    """Run MobileGPT from the same initialized AndroidWorld task state."""
+
+    if not android_world_root or not str(task_name).strip():
+        return _run_mobilegpt_client(
+            official_root=official_root,
+            serial=serial,
+            adb_path=adb_path,
+            host=host,
+            instruction=instruction,
+            output_root=output_root,
+            timeout_sec=timeout_sec,
+        )
+    with _androidworld_task_startup(
+        android_world_root=android_world_root,
+        task_name=task_name,
+        task_params_json=task_params_json,
+        task_seed=task_seed,
+        console_port=console_port,
+        grpc_port=grpc_port,
+        adb_path=adb_path,
+        perform_emulator_setup=perform_emulator_setup,
+    ) as (env, task):
+        returncode = _run_mobilegpt_client(
+            official_root=official_root,
+            serial=serial,
+            adb_path=adb_path,
+            host=host,
+            instruction=instruction,
+            output_root=output_root,
+            timeout_sec=timeout_sec,
+        )
+        reward = float(task.is_successful(env))
+        return returncode if returncode != 0 else (0 if reward > 0.5 else 1)
+
+
+def run_appagent_executor(
+    *,
+    python_executable: str,
+    executor: str | Path,
+    app_name: str,
+    workspace: str | Path,
+    goal: str,
+    timeout_sec: float,
+    android_world_root: str | Path,
+    task_name: str,
+    task_params_json: str,
+    task_seed: int,
+    console_port: int,
+    grpc_port: int,
+    adb_path: str,
+    perform_emulator_setup: bool = True,
+) -> int:
+    """Run official AppAgent after the canonical task initialization."""
+
+    with _androidworld_task_startup(
+        android_world_root=android_world_root,
+        task_name=task_name,
+        task_params_json=task_params_json,
+        task_seed=task_seed,
+        console_port=console_port,
+        grpc_port=grpc_port,
+        adb_path=adb_path,
+        perform_emulator_setup=perform_emulator_setup,
+    ) as (env, task):
+        try:
+            result = subprocess.run(
+                [
+                    str(python_executable),
+                    str(executor),
+                    "--app",
+                    str(app_name),
+                    "--root_dir",
+                    str(workspace),
+                ],
+                cwd=str(workspace),
+                input=str(goal) + "\n",
+                text=True,
+                check=False,
+                timeout=max(1.0, float(timeout_sec)),
+            )
+        except subprocess.TimeoutExpired:
+            return 124
+        if result.returncode != 0:
+            return result.returncode
+        reward = float(task.is_successful(env))
+        return 0 if reward > 0.5 else 1
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Forward one task to official MobileGPT")
-    parser.add_argument("--root", required=True)
-    parser.add_argument("--serial", required=True)
+    parser = argparse.ArgumentParser(description="Forward one task to an official baseline")
+    parser.add_argument("--baseline", choices=("mobilegpt", "appagent"), default="mobilegpt")
+    parser.add_argument("--root")
+    parser.add_argument("--serial", default="")
     parser.add_argument("--adb", default="adb")
-    parser.add_argument("--host", required=True)
-    parser.add_argument("--instruction", required=True)
-    parser.add_argument("--output", required=True)
+    parser.add_argument("--host", default="")
+    parser.add_argument("--instruction", default="")
+    parser.add_argument("--output", default="")
     parser.add_argument("--timeout", type=float, default=120.0)
+    parser.add_argument("--android-world-root")
+    parser.add_argument("--task")
+    parser.add_argument("--task-params-json", default="{}")
+    parser.add_argument("--task-seed", type=int, default=113)
+    parser.add_argument("--console-port", type=int, default=5560)
+    parser.add_argument("--grpc-port", type=int, default=8560)
+    parser.add_argument("--no-perform-emulator-setup", action="store_true")
+    parser.add_argument("--executor")
+    parser.add_argument("--app-name")
+    parser.add_argument("--workspace")
+    parser.add_argument("--goal", default="")
     args = parser.parse_args()
-    return run_mobilegpt_client(
-        official_root=args.root,
-        serial=args.serial,
-        adb_path=args.adb,
-        host=args.host,
-        instruction=args.instruction,
-        output_root=args.output,
+    if args.baseline == "mobilegpt":
+        required = {
+            "root": args.root,
+            "serial": args.serial,
+            "host": args.host,
+            "instruction": args.instruction,
+            "output": args.output,
+        }
+        missing = [name for name, value in required.items() if not str(value or "").strip()]
+        if missing:
+            parser.error("mobilegpt arguments required: " + ",".join(missing))
+        return run_mobilegpt_client(
+            official_root=args.root,
+            serial=args.serial,
+            adb_path=args.adb,
+            host=args.host,
+            instruction=args.instruction,
+            output_root=args.output,
+            timeout_sec=args.timeout,
+            android_world_root=args.android_world_root,
+            task_name=args.task or "",
+            task_params_json=args.task_params_json,
+            task_seed=args.task_seed,
+            console_port=args.console_port,
+            grpc_port=args.grpc_port,
+            perform_emulator_setup=not args.no_perform_emulator_setup,
+        )
+    required = {
+        "executor": args.executor,
+        "app-name": args.app_name,
+        "workspace": args.workspace,
+        "task": args.task,
+        "android-world-root": args.android_world_root,
+    }
+    missing = [name for name, value in required.items() if not str(value or "").strip()]
+    if missing:
+        parser.error("appagent arguments required: " + ",".join(missing))
+    return run_appagent_executor(
+        python_executable=sys.executable,
+        executor=args.executor,
+        app_name=args.app_name,
+        workspace=args.workspace,
+        goal=args.goal,
         timeout_sec=args.timeout,
+        android_world_root=args.android_world_root,
+        task_name=args.task,
+        task_params_json=args.task_params_json,
+        task_seed=args.task_seed,
+        console_port=args.console_port,
+        grpc_port=args.grpc_port,
+        adb_path=args.adb,
+        perform_emulator_setup=not args.no_perform_emulator_setup,
     )
 
 

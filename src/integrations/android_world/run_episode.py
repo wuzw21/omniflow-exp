@@ -1405,6 +1405,136 @@ def _load_androidworld_env(
     return env
 
 
+@dataclasses.dataclass(frozen=True)
+class AndroidWorldEnvironmentStartup:
+    """The one AndroidWorld environment-startup result shared by all methods."""
+
+    env: Any
+    adb_output_patches: tuple[tuple[type[Any], Any], ...]
+
+
+def prepare_androidworld_environment(
+    *,
+    env_launcher: Any,
+    setup_module: Any,
+    setup_apps: Sequence[Any],
+    console_port: int,
+    adb_path: str,
+    grpc_port: int,
+    install_a11y_forwarding_app: bool,
+    perform_emulator_setup: bool = True,
+    wait_for_a11y: bool = False,
+    use_uiautomator: bool = False,
+) -> AndroidWorldEnvironmentStartup:
+    """Run the canonical AndroidWorld environment startup sequence.
+
+    The action owner may differ (OmniFlow, an official baseline, or a human),
+    but environment state must be prepared identically.  This function owns
+    only startup; it never chooses or executes a task action.
+    """
+
+    env = _load_androidworld_env(
+        env_launcher=env_launcher,
+        console_port=int(console_port),
+        adb_path=str(adb_path or ""),
+        grpc_port=int(grpc_port),
+        install_a11y_forwarding_app=bool(install_a11y_forwarding_app),
+    )
+    if use_uiautomator:
+        from android_world.env import android_world_controller
+
+        env.controller._a11y_method = (  # pylint: disable=protected-access
+            android_world_controller.A11yMethod.UIAUTOMATOR
+        )
+    adb_output_patches = _patch_androidworld_adb_output_sanitizer(
+        env.controller
+    )
+    if wait_for_a11y and not _is_oob_control_backend():
+        _wait_for_androidworld_a11y(env)
+    if perform_emulator_setup:
+        logger.info(
+            "Setting up AndroidWorld snapshots for selected apps: %s",
+            ", ".join(
+                str(getattr(app, "app_name", "") or "") for app in setup_apps
+            )
+            or "<none>",
+        )
+        _run_androidworld_setup_apps(
+            env,
+            setup_module=setup_module,
+            setup_apps=tuple(setup_apps),
+        )
+    _prepare_androidworld_snapshot_restore(env, tuple(setup_apps))
+    _reset_androidworld_file_picker_state(
+        env,
+        setup_module=setup_module,
+        setup_apps=tuple(setup_apps),
+    )
+    return AndroidWorldEnvironmentStartup(
+        env=env,
+        adb_output_patches=adb_output_patches,
+    )
+
+
+def start_androidworld_task_session(
+    *,
+    android_world_root: str | Path,
+    task_name: str,
+    task_params: dict[str, Any] | None,
+    task_seed: int,
+    console_port: int,
+    adb_path: str,
+    grpc_port: int,
+    install_a11y_forwarding_app: bool = False,
+    perform_emulator_setup: bool = True,
+    use_uiautomator: bool = True,
+) -> tuple[AndroidWorldEnvironmentStartup, Any]:
+    """Start one official task for a human or an external baseline.
+
+    This is the non-agent counterpart of the formal launcher.  It uses the
+    same environment startup seam and the same AndroidWorld task
+    ``initialize_task`` contract; the caller owns all subsequent decisions.
+    """
+
+    root = Path(android_world_root).expanduser().resolve()
+    _add_android_world_path(root)
+    from android_world import registry
+    from android_world.env import env_launcher
+    from android_world.env.setup_device import setup as setup_module
+
+    task_types = registry.TaskRegistry().get_registry(family="android_world")
+    task_type = task_types.get(str(task_name))
+    if task_type is None:
+        raise ValueError(f"unknown AndroidWorld task: {task_name}")
+    app_names = {
+        str(name).strip().lower()
+        for name in getattr(task_type, "app_names", ())
+    }
+    setup_apps = tuple(
+        app
+        for app in setup_module._APPS
+        if str(app.app_name).strip().lower() in app_names
+    )
+    startup = prepare_androidworld_environment(
+        env_launcher=env_launcher,
+        setup_module=setup_module,
+        setup_apps=setup_apps,
+        console_port=int(console_port),
+        adb_path=str(adb_path or ""),
+        grpc_port=int(grpc_port),
+        install_a11y_forwarding_app=bool(install_a11y_forwarding_app),
+        perform_emulator_setup=bool(perform_emulator_setup),
+        use_uiautomator=bool(use_uiautomator),
+    )
+    task_type.set_device_time(startup.env)
+    params = dict(task_params or {})
+    params = _rehydrate_task_params(params=params, task_type=task_type)
+    params.setdefault("seed", int(task_seed))
+    task = task_type(params)
+    task.initialize_task(startup.env)
+    return startup, task
+
+
 def _androidworld_setup_apps_for_suite(
     suite: Any,
     *,
@@ -3995,40 +4125,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             if _is_oob_control_backend()
             else ("reuse-installed" if reuse_a11y_forwarder else "install-official"),
         )
-        env = _load_androidworld_env(
+        startup = prepare_androidworld_environment(
             env_launcher=env_launcher,
+            setup_module=aw_setup,
+            setup_apps=setup_app_list,
             console_port=int(args.console_port),
             adb_path=str(args.adb_path or ""),
             grpc_port=int(args.console_port) + 3000,
             install_a11y_forwarding_app=not reuse_a11y_forwarder,
+            perform_emulator_setup=bool(args.perform_emulator_setup),
+            wait_for_a11y=not _is_oob_control_backend(),
         )
-        adb_output_patches = _patch_androidworld_adb_output_sanitizer(
-            env.controller
-        )
-        if not _is_oob_control_backend():
-            _wait_for_androidworld_a11y(env)
-        else:
+        env = startup.env
+        adb_output_patches = startup.adb_output_patches
+        if _is_oob_control_backend():
             logger.info(
                 "OOB control backend owns the complete observe/act lifecycle; "
                 "native AndroidWorld A11y forwarding is disabled."
             )
-        if bool(args.perform_emulator_setup):
-            logger.info(
-                "Setting up AndroidWorld snapshots for selected tasks: %s",
-                ", ".join(selected_task_names) or "<all>",
-            )
-            _run_androidworld_setup_apps(
-                env,
-                setup_module=aw_setup,
-                setup_apps=setup_app_list,
-            )
         original_launch_app = _patch_androidworld_app_launch(adb_utils)
-        _prepare_androidworld_snapshot_restore(env, setup_app_list or ())
-        _reset_androidworld_file_picker_state(
-            env,
-            setup_module=aw_setup,
-            setup_apps=setup_app_list,
-        )
         if task_params:
             if len(selected_task_names) != 1:
                 raise ValueError("--task-params-json requires exactly one selected task")

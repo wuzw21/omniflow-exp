@@ -1491,14 +1491,17 @@ def test_appagent_warm_command_mounts_native_docs_memory(
         repo_root=tmp_path,
     )
 
-    assert spec.argv[-4:] == [
-        "--app",
-        "audiorecorder",
-        "--root_dir",
-        spec.metadata["official_workspace"],
+    assert spec.argv[1:5] == [
+        "-m",
+        "src.integrations.official_forward",
+        "--baseline",
+        "appagent",
     ]
-    assert spec.argv[1].endswith("/scripts/task_executor.py")
+    assert "--executor" in spec.argv
+    assert spec.metadata["official_executor"].endswith(
+        "/scripts/task_executor.py"
+    )
     assert spec.metadata["appagent_docs_root"] == str(docs_root.resolve())
     assert spec.metadata["official_wrapper"].endswith("/run.py")
-    assert spec.stdin_text == "Open task.html and draw.\n"
+    assert spec.stdin_text == ""
     assert spec.metadata["external_forward_only"] is True
