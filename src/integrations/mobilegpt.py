@@ -35,6 +35,7 @@ __all__ = [
     "MobileGPTConversionError",
     "convert_runlog_to_mobilegpt_memory",
     "preflight_runlog_conversion",
+    "validate_prepared_memory",
     "validate_mobilegpt_memory",
     "write_conversion_failure_audit",
 ]
@@ -69,6 +70,37 @@ class MobileGPTConversionError(RuntimeError):
         self.details = details
         suffix = ":" + json.dumps(details, ensure_ascii=False, sort_keys=True) if details else ""
         super().__init__(self.code + suffix)
+
+
+def validate_prepared_memory(
+    memory_root: str | Path,
+    *,
+    task_name: str,
+    source_seed: int,
+    source_run_log: str | Path,
+    compatible_source_sha256s: Sequence[str] = (),
+    expected_model: str = "",
+    expected_source_method: str = "",
+) -> dict[str, Any]:
+    """Validate one MobileGPT prepared memory at the provider seam.
+
+    The experiment index depends on this provider contract, not on the
+    AndroidWorld result runner. The implementation remains temporarily
+    delegated to the existing validator while that legacy validation block is
+    moved into this adapter in a later focused change.
+    """
+
+    from src.experiment.androidworld import validate_mobilegpt_adapted_memory
+
+    return validate_mobilegpt_adapted_memory(
+        memory_root,
+        task_name=task_name,
+        source_seed=source_seed,
+        source_run_log=source_run_log,
+        compatible_source_sha256s=compatible_source_sha256s,
+        expected_model=expected_model,
+        expected_source_method=expected_source_method,
+    )
 
 
 @dataclass(frozen=True)

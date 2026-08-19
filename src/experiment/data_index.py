@@ -1319,9 +1319,9 @@ def _load_prepared_memories(
             manifest_path.parent
             / str(memory_record.get("relative_path") or "")
         ).resolve()
-        from src.experiment.androidworld import validate_mobilegpt_adapted_memory
+        from src.integrations.mobilegpt import validate_prepared_memory
 
-        validated = validate_mobilegpt_adapted_memory(
+        validated = validate_prepared_memory(
             memory_path,
             task_name=task,
             source_seed=SOURCE_SEED,

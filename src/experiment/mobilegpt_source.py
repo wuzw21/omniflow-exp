@@ -22,6 +22,7 @@ from src.integrations.mobilegpt import (
     MobileGPTConversionError,
     convert_runlog_to_mobilegpt_memory,
     preflight_runlog_conversion,
+    validate_prepared_memory,
     write_conversion_failure_audit,
 )
 from src.integrations.runlog import import_run_log
@@ -209,7 +210,7 @@ def validate_mobilegpt_source_memory(
     schema_version = str(manifest.get("schema_version") or "")
     if schema_version != MOBILEGPT_MEMORY_SCHEMA:
         raise ValueError("mobilegpt_source_memory_schema_invalid")
-    validated = pipeline.validate_mobilegpt_adapted_memory(
+    validated = validate_prepared_memory(
         memory_root,
         task_name=item.task,
         source_seed=SOURCE_SEED,
