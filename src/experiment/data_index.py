@@ -1958,12 +1958,23 @@ def registered_result_plan_from_memory(
                     f"local_data_result_payload_invalid:{result_key}:{object_path}"
                 )
             if record.get("selection_reason") != BASELINE_BATCH_REPORT_SELECTION:
+                details = payload.get("details") if isinstance(payload, dict) else None
+                detail_row = next(
+                    (
+                        detail
+                        for detail in details or ()
+                        if isinstance(detail, dict)
+                        and str(detail.get("method") or "") == method
+                        and str(detail.get("device") or "") == device
+                    ),
+                    rows[0],
+                )
                 from src.experiment.result_registry import (
                     validate_formal_result_protocol,
                 )
 
                 validate_formal_result_protocol(
-                    rows[0],
+                    detail_row,
                     task_name=task_name,
                     method=method,
                     device=device,
