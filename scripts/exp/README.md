@@ -90,6 +90,21 @@ bash scripts/exp/run_androidworld.sh \
 不使用 OmniTransfer，且 `model_calls=0`、`fallback_steps=0`。完整公平比较
 合同见 [`docs/AUTODROID_9207_COMPARISON_PLAN.md`](../../docs/AUTODROID_9207_COMPARISON_PLAN.md)。
 
+运行完整的 116-task supplemental campaign 时，使用批量入口并显式选择
+supplemental method；这不会改变正式 `all` 矩阵：
+
+```bash
+OMNIFLOW_ANDROIDWORLD_SUPPLEMENTAL_METHOD=autodroid \
+bash scripts/exp/run_androidworld.sh --all-tasks \
+  --tasks TASK1,TASK2 \
+  --e2e-source-seed 111 \
+  --e2e-evaluation-seed 113
+```
+
+省略 `--tasks` 会按 `data/current.json` 的 116 个 task 全量运行。每个 task
+单独初始化、单独封存 validator/replay evidence；AutoDroid 结果仍只写入
+`androidworld_validator/supplemental/autodroid_9207/`。
+
 固定实验值：source seed `111`、evaluation seed `113`、formal model
 `GLM-5.1`。`--control-backend oob` 用于 OOB observe/act transport。
 

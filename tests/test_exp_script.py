@@ -158,6 +158,7 @@ def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:
     assert "--control-backend" in completed.stdout
     assert "--all-tasks" in completed.stdout
     assert "--method" in completed.stdout
+    assert "--supplemental-method" in completed.stdout
     assert "--device" in completed.stdout
     assert "--methods" not in completed.stdout
     assert "--devices" not in completed.stdout
