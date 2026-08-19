@@ -12,7 +12,7 @@ from src.experiment import androidworld as pipeline
 from src.experiment import mobilegpt_source, preflight
 from src.experiment.artifact_index import (
     canonical_mobilegpt_memory_from_memory,
-    refresh_local_data,
+    refresh_artifact_index,
 )
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
@@ -205,7 +205,7 @@ def _write_audit(path: Path, *, matched: bool = True) -> None:
 def test_converted_memory_seals_and_registers(tmp_path: Path) -> None:
     index, source_run_log = _write_source_index(tmp_path / "source")
     registry_root = tmp_path / "registry"
-    refresh_local_data(
+    refresh_artifact_index(
         memory_root=registry_root,
         source_index=index,
         runlog_roots=(source_run_log.parent,),

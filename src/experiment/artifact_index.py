@@ -1863,7 +1863,7 @@ def _refresh_local_data_unlocked(
     return registry
 
 
-def refresh_local_data(
+def refresh_artifact_index(
     *,
     memory_root: str | Path,
     source_index: str | Path,
@@ -1888,7 +1888,7 @@ def refresh_local_data(
         )
 
 
-def load_local_data(memory_index: str | Path) -> dict[str, Any]:
+def load_artifact_index(memory_index: str | Path) -> dict[str, Any]:
     """Load and verify the single canonical data index."""
 
     pointer_path = Path(memory_index).expanduser().resolve()
@@ -1915,7 +1915,7 @@ def registered_result_plan_from_memory(
 ) -> dict[str, list[tuple[str, str]]]:
     """Resolve completed formal results without rescanning historical results."""
 
-    registry = load_local_data(memory_index)
+    registry = load_artifact_index(memory_index)
     results = registry["canonical"]["result_cells"]
     expected = [(method, device) for method in methods for device in devices]
     completed: list[tuple[str, str]] = []
@@ -1983,7 +1983,7 @@ def canonical_mobilegpt_memory_from_memory(
 ) -> dict[str, Any] | None:
     """Resolve one validated task-local MobileGPT memory from current.json."""
 
-    registry = load_local_data(memory_index)
+    registry = load_artifact_index(memory_index)
     record = registry.get("canonical", {}).get("mobilegpt_memories", {}).get(
         str(task_name)
     )
@@ -1999,7 +1999,7 @@ def canonical_mobilegpt_memory_from_memory(
     return dict(record)
 
 
-def refresh_local_data_from_pointer(
+def refresh_artifact_index_from_pointer(
     *,
     memory_index: str | Path,
     source_screenshot_roots: Sequence[str | Path] = (),
@@ -2013,7 +2013,7 @@ def refresh_local_data_from_pointer(
 
     pointer_path = Path(memory_index).expanduser().resolve()
     with _memory_lock(pointer_path.parent):
-        registry = load_local_data(pointer_path)
+        registry = load_artifact_index(pointer_path)
         inputs = registry["inputs"]
         resolved_runlog_roots = {
             str(Path(value).expanduser().resolve())
@@ -2129,7 +2129,7 @@ def main(argv: list[str] | None = None) -> int:
         memory_root = Path(args.memory_root).expanduser().resolve()
         pointer_path = memory_root / "current.json"
         if pointer_path.is_file():
-            report = refresh_local_data_from_pointer(
+            report = refresh_artifact_index_from_pointer(
                 memory_index=pointer_path,
                 source_screenshot_roots=args.source_screenshot_root,
                 additional_runlog_roots=_split_values(args.runlog_root),
@@ -2147,7 +2147,7 @@ def main(argv: list[str] | None = None) -> int:
                 refresh_parser.error(
                     "--source-index is required when initializing memory"
                 )
-            report = refresh_local_data(
+            report = refresh_artifact_index(
                 memory_root=memory_root,
                 source_index=args.source_index,
                 source_screenshot_roots=args.source_screenshot_root,
@@ -2179,10 +2179,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 __all__ = [
-    "load_local_data",
+    "load_artifact_index",
     "canonical_mobilegpt_memory_from_memory",
-    "refresh_local_data",
-    "refresh_local_data_from_pointer",
+    "refresh_artifact_index",
+    "refresh_artifact_index_from_pointer",
     "registered_result_plan_from_memory",
 ]
 

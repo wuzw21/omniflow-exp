@@ -32,7 +32,7 @@ from src.experiment.batch_outcomes import (
 )
 from src.experiment.artifact_index import (
     canonical_mobilegpt_memory_from_memory,
-    load_local_data,
+    load_artifact_index,
     registered_result_plan_from_memory,
 )
 from src.experiment.protocol import (
@@ -359,7 +359,7 @@ def _canonical_source(
     *,
     require_protocol_seed: bool = True,
 ) -> tuple[dict[str, Any], Path, dict[str, Any]]:
-    registry = load_local_data(memory_index)
+    registry = load_artifact_index(memory_index)
     record = registry.get("canonical", {}).get("source_run_logs", {}).get(task)
     if not isinstance(record, dict):
         raise ValueError(f"canonical_source_missing:{task}")
@@ -738,7 +738,7 @@ def _canonical_function_store(
     memory_index: Path,
     task: str,
 ) -> dict[str, Any] | None:
-    registry = load_local_data(memory_index)
+    registry = load_artifact_index(memory_index)
     record = registry.get("canonical", {}).get("function_stores", {}).get(task)
     return dict(record) if isinstance(record, dict) else None
 
@@ -1392,7 +1392,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     attempt_root = args.output_root / _safe_component(args.task) / attempt_id
     outcomes_root = args.results_root / "androidworld_validator" / "result_outcomes"
     if args.dry_run:
-        registry = load_local_data(args.memory_index)
+        registry = load_artifact_index(args.memory_index)
         plan = registered_result_plan_from_memory(
             memory_index=args.memory_index,
             task_name=args.task,

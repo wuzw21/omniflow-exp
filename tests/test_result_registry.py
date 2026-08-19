@@ -8,8 +8,8 @@ import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment.artifact_index import (
-    load_local_data,
-    refresh_local_data,
+    load_artifact_index,
+    refresh_artifact_index,
 )
 from src.experiment.result_registry import (
     register_attempt_summary,
@@ -569,7 +569,7 @@ def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
         },
     )
     memory_root = tmp_path / "memory"
-    refresh_local_data(
+    refresh_artifact_index(
         memory_root=memory_root,
         source_index=source_index,
         runlog_roots=(tmp_path / "evidence",),
@@ -629,7 +629,7 @@ def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
     )
 
     assert registration["local_data_updated"] is True
-    memory = load_local_data(memory_root / "current.json")
+    memory = load_artifact_index(memory_root / "current.json")
     result = memory["canonical"]["result_cells"][
         "TaskOne|omniflow|small5554|111|113"
     ]

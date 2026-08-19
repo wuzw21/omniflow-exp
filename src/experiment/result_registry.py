@@ -574,9 +574,9 @@ def register_attempt_summary(
 
     local_data_updated = False
     if local_data_index is not None:
-        from src.experiment.artifact_index import refresh_local_data_from_pointer
+        from src.experiment.artifact_index import refresh_artifact_index_from_pointer
 
-        refresh_local_data_from_pointer(
+        refresh_artifact_index_from_pointer(
             memory_index=local_data_index,
             additional_result_roots=(runs_root,),
         )

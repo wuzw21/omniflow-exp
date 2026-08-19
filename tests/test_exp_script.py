@@ -11,7 +11,7 @@ from PIL import Image
 import pytest
 from runlog_fixtures import androidworld_run_log
 
-from src.experiment.artifact_index import refresh_local_data
+from src.experiment.artifact_index import refresh_artifact_index
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_MEMORY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
@@ -922,7 +922,7 @@ def test_check_only_is_read_only_before_any_runtime_output(
     fake_java.chmod(0o755)
     results = tmp_path / "results-never-created"
     memory_root = tmp_path / "memory"
-    refresh_local_data(
+    refresh_artifact_index(
         memory_root=memory_root,
         source_index=source_index,
         runlog_roots=(assets,),

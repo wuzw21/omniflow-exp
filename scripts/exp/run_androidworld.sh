@@ -1322,9 +1322,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
-from src.experiment.artifact_index import load_local_data
+from src.experiment.artifact_index import load_artifact_index
 
-load_local_data(Path(sys.argv[2]).expanduser().resolve())
+load_artifact_index(Path(sys.argv[2]).expanduser().resolve())
 PY
 export OMNIFLOW_EXP_MEMORY_INDEX="$memory_index"
 requires_function_asset=0
