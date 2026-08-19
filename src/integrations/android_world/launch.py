@@ -1400,7 +1400,6 @@ def _load_androidworld_env(
     controller = getattr(env, "controller", None)
     if controller is not None and hasattr(android_world_controller, "A11yMethod"):
         controller._a11y_method = android_world_controller.A11yMethod.NONE
-    os.environ["OMNIFLOW_OBSERVE_BACKEND"] = "oob"
     return env
 
 

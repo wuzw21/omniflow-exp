@@ -12,6 +12,8 @@ from omniflow import Action
 from src.integrations.android_world import host as host_module
 from src.integrations.android_world.oob_control import (
     CONTROL_ACTION,
+    OBSERVE_ACTION,
+    OBSERVE_RESULT_PATH,
     OobControlClient,
     oob_state_from_payload,
 )
@@ -51,6 +53,34 @@ def test_oob_control_uses_one_request_and_canonical_action() -> None:
         "action": {"tool": "click", "args": {"x": 500, "y": 250}},
         "await_stabilization": False,
     }
+
+
+def test_oob_observe_uses_the_resident_observe_receiver() -> None:
+    commands: list[list[str]] = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        if "broadcast" in command:
+            return _completed()
+        if command[-2:] == ["cat", OBSERVE_RESULT_PATH]:
+            return _completed(
+                stdout=json.dumps(
+                    {
+                        "schema_version": "oob.observe.v1",
+                        "success": True,
+                        "state": {"xml": "<hierarchy />"},
+                    }
+                )
+            )
+        return _completed()
+
+    client = OobControlClient(SimpleNamespace(), adb_serial="emulator-5564", run=run)
+    result = client.observe()
+
+    assert result["xml"] == "<hierarchy />"
+    broadcast = next(command for command in commands if "broadcast" in command)
+    assert OBSERVE_ACTION in broadcast
+    assert "DebugOmniFlowObserveReceiver" in broadcast[broadcast.index("-n") + 1]
 
 
 def test_oob_xml_produces_androidworld_state_shape(monkeypatch) -> None:

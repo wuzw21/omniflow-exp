@@ -18,6 +18,9 @@ CONTROL_ACTION = "cn.com.omnimind.bot.debug.CONTROL_OMNIFLOW"
 CONTROL_PACKAGE = "cn.com.omnimind.bot.debug"
 CONTROL_RECEIVER = ".DebugOmniFlowControlReceiver"
 CONTROL_RESULT_PATH = "files/debug-omniflow-control-result.json"
+OBSERVE_ACTION = "cn.com.omnimind.bot.debug.OBSERVE_OMNIFLOW"
+OBSERVE_RECEIVER = ".DebugOmniFlowObserveReceiver"
+OBSERVE_RESULT_PATH = "files/debug-omniflow-observe-result.json"
 
 
 class OobControlClient:
@@ -41,7 +44,7 @@ class OobControlClient:
         self._run_command = run or subprocess.run
 
     def observe(self) -> dict[str, Any]:
-        result = self._request("observe", {"screenshot": True})
+        result = self._observe_request()
         if not isinstance(result, dict):
             raise RuntimeError("oob_control_observe_result_invalid")
         return result
@@ -54,6 +57,76 @@ class OobControlClient:
         if not isinstance(result, dict):
             raise RuntimeError("oob_control_act_result_invalid")
         return result
+
+    def _observe_request(self) -> dict[str, Any]:
+        self._run(
+            [
+                "shell",
+                "run-as",
+                self.package_name,
+                "rm",
+                "-f",
+                OBSERVE_RESULT_PATH,
+            ],
+            timeout=10.0,
+        )
+        component = OBSERVE_RECEIVER
+        if component.startswith("."):
+            component = f"{self.package_name}/{component}"
+        broadcast = self._run(
+            [
+                "shell",
+                "am",
+                "broadcast",
+                "-a",
+                OBSERVE_ACTION,
+                "-n",
+                component,
+                "--ez",
+                "includeScreenshot",
+                "true",
+            ],
+            timeout=self.timeout_seconds,
+        )
+        if broadcast.returncode != 0:
+            raise RuntimeError(
+                "oob_observe_broadcast_failed:"
+                + (broadcast.stderr or broadcast.stdout or "").strip()
+            )
+        deadline = time.monotonic() + self.timeout_seconds
+        last_error = ""
+        while time.monotonic() < deadline:
+            result = self._run(
+                [
+                    "shell",
+                    "run-as",
+                    self.package_name,
+                    "cat",
+                    OBSERVE_RESULT_PATH,
+                ],
+                timeout=10.0,
+            )
+            text = str(result.stdout or "").strip()
+            if result.returncode == 0 and text:
+                try:
+                    response = json.loads(text)
+                except json.JSONDecodeError as error:
+                    raise RuntimeError("oob_observe_result_invalid_json") from error
+                if not isinstance(response, dict):
+                    raise RuntimeError("oob_observe_result_not_object")
+                if response.get("success") is not True:
+                    raise RuntimeError(
+                        "oob_observe_failed:" + str(response.get("error") or "unknown")
+                    )
+                state = response.get("state")
+                return {
+                    **response,
+                    **(state if isinstance(state, dict) else {}),
+                }
+            else:
+                last_error = (result.stderr or result.stdout or "").strip()
+            time.sleep(0.05)
+        raise RuntimeError("oob_observe_result_timeout:" + last_error[-500:])
 
     def reset(self) -> None:
         self._request("reset", {})
@@ -174,6 +247,9 @@ def oob_state_from_payload(
     *,
     fallback_screen_size: tuple[int, int] = (1, 1),
 ) -> Any:
+    nested_state = payload.get("state")
+    if isinstance(nested_state, dict):
+        payload = {**payload, **nested_state}
     xml = str(payload.get("xml") or "")
     if not xml.strip():
         raise ValueError("oob_control_xml_missing")
