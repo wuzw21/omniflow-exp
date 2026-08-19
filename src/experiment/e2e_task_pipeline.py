@@ -19,7 +19,6 @@ from omniflow.core.trajectory import require_complete_source_run_log
 from omniflow.functions.assets import save_function
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from src.experiment.androidworld import (
-    CanonicalRunLog,
     build_e2e_command,
     build_fixed_replay_command,
 )
@@ -52,6 +51,7 @@ from src.experiment.protocol import (
     TASK_DEADLINE_SEC,
     TASK_SEED,
 )
+from src.experiment.source_records import CanonicalRunLog
 from src.integrations.mobilegpt import (
     convert_runlog_to_mobilegpt_memory,
 )

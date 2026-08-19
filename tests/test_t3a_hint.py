@@ -6,7 +6,6 @@ from runlog_fixtures import write_function_store
 from omniflow.core.model import Action, Function, FunctionStep
 from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION
 from src.experiment.androidworld import (
-    CanonicalRunLog,
     _promote_result_metadata_to_row,
     _select_complete_function,
     _t3a_hint_action_identity,
@@ -14,6 +13,7 @@ from src.experiment.androidworld import (
     _t3a_semantic_hint_step,
     build_official_androidworld_command,
 )
+from src.experiment.source_records import CanonicalRunLog
 from src.experiment.protocol import METHODS
 from src.integrations.android_world.launch import _render_official_reference_prompt
 

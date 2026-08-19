@@ -13,6 +13,7 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment import androidworld as pipeline
 from src.experiment import appagent_source
+from src.experiment.source_records import CanonicalRunLog
 from src.integrations import appagent as appagent_adapter
 
 
@@ -1461,7 +1462,7 @@ def test_appagent_warm_command_mounts_native_docs_memory(
         "build_e2e_command",
         lambda *_args, **_kwargs: base_spec,
     )
-    item = pipeline.CanonicalRunLog(
+    item = CanonicalRunLog(
         task="BrowserDraw",
         goal="Open task.html and draw.",
         params={},

@@ -61,6 +61,7 @@ from src.experiment.protocol import (
 )
 from src.experiment.result_registry import register_attempt_summary
 from src.experiment.result_schema import RESULT_FIELDS, compact_result_row
+from src.experiment.source_records import CanonicalRunLog, SourceRunLogProfile
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
 from src.integrations.appagent import validate_appagent_memory
 from src.integrations import mobilegpt_memory
@@ -92,17 +93,6 @@ DEFAULT_SOURCE_METHOD = DEFAULT_METHOD
 
 
 @dataclass(frozen=True)
-class CanonicalRunLog:
-    task: str
-    goal: str
-    params: dict[str, Any]
-    source_run_log: Path
-    replay_seed: int
-    step_count: int
-    meta: dict[str, Any]
-
-
-@dataclass(frozen=True)
 class CommandSpec:
     label: str
     argv: list[str]
@@ -124,30 +114,6 @@ class DeviceTarget:
             "label": self.label,
             "serial": self.serial,
             "console_port": self.console_port,
-        }
-
-
-@dataclass(frozen=True)
-class SourceRunLogProfile:
-    task: str
-    source_run_log: Path
-    replay_format: str
-    step_count: int
-    card_count: int
-    latest_official_success_source: bool
-    direct_replay_ready: bool
-    notes: tuple[str, ...] = ()
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "task": self.task,
-            "source_run_log": str(self.source_run_log),
-            "replay_format": self.replay_format,
-            "step_count": self.step_count,
-            "card_count": self.card_count,
-            "latest_official_success_source": self.latest_official_success_source,
-            "direct_replay_ready": self.direct_replay_ready,
-            "notes": list(self.notes),
         }
 
 

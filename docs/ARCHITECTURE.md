@@ -112,6 +112,7 @@ baseline 记录时经过的五个位置：
 | `mobilegpt_memory.py` | MobileGPT Prepared Memory 的统计、图检查和完整校验 | task 调度、AndroidWorld episode 生命周期 |
 | `checks.py` | 这次运行的依赖、设备和 Prepared Memory 是否 ready？ | 具体 provider 的转换实现 |
 | `data_index.py` | 如何物化和读取唯一 Local Index？ | AndroidWorld runner 和 provider 内部校验细节 |
+| `source_records.py` | Source RunLog 的共享数据模型是什么？ | 读取、执行或转换 RunLog |
 
 `source_evidence.py` 曾经暴露 `convert_runlog_memory(method=...)`，让共享 source
 模块根据字符串选择 provider。这是已经删除的浅 seam：AppAgent 直接调用

@@ -12,7 +12,8 @@ import pytest
 from runlog_fixtures import androidworld_run_log
 
 from omniflow.functions.assets import function_authoring_tool
-from src.experiment.androidworld import CanonicalRunLog, build_e2e_command
+from src.experiment.androidworld import build_e2e_command
+from src.experiment.source_records import CanonicalRunLog
 from src.experiment.batch_outcomes import record_result_outcome
 from src.experiment.e2e_task_pipeline import (
     Deadline,

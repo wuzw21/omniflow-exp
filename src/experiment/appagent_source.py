@@ -27,6 +27,7 @@ from src.experiment.protocol import SOURCE_SEED
 from src.experiment.source_evidence import (
     build_grounded_teacher_run_log_from_canonical_item,
 )
+from src.experiment.source_records import CanonicalRunLog
 from src.integrations.android_world.host import (
     androidworld_observation_package,
     androidworld_observation_xml,
@@ -49,7 +50,7 @@ def _appagent_observation_xml(observation: dict[str, Any]) -> str:
     return androidworld_observation_xml(observation)
 
 
-def _appagent_source_method_label(item: pipeline.CanonicalRunLog) -> str:
+def _appagent_source_method_label(item: CanonicalRunLog) -> str:
     return str(item.meta.get("method") or "").strip() or pipeline.DEFAULT_SOURCE_METHOD
 
 
@@ -269,7 +270,7 @@ def _runlog_lineage(payload: dict[str, Any], content_sha256: str) -> set[str]:
     return lineage
 
 
-def _source_lineage(item: pipeline.CanonicalRunLog) -> tuple[str, set[str]]:
+def _source_lineage(item: CanonicalRunLog) -> tuple[str, set[str]]:
     payload = json.loads(item.source_run_log.read_text(encoding="utf-8"))
     run_id = str(payload.get("run_id") or "").strip()
     source_sha256s = _runlog_lineage(
@@ -291,7 +292,7 @@ def _jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _native_memory_evidence(
     *,
-    item: pipeline.CanonicalRunLog,
+    item: CanonicalRunLog,
     teacher_source: dict[str, Any],
     evidence_roots: Sequence[str | Path],
     model: str,
@@ -794,7 +795,7 @@ def validate_appagent_source_memory(
 
 def _preflight_appagent_teacher(
     *,
-    item: pipeline.CanonicalRunLog,
+    item: CanonicalRunLog,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     grounded, grounding_audit = build_grounded_teacher_run_log_from_canonical_item(
         item

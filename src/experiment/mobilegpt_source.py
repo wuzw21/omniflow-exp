@@ -17,6 +17,7 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_SOURCE_METHOD,
 )
 from src.experiment import androidworld as pipeline
+from src.experiment.source_records import CanonicalRunLog
 from src.experiment.protocol import SOURCE_SEED
 from src.integrations.mobilegpt import (
     MobileGPTConversionError,
@@ -39,7 +40,7 @@ def load_canonical_source_item(
     index_path: str | Path,
     *,
     task_name: str,
-) -> pipeline.CanonicalRunLog:
+) -> CanonicalRunLog:
     matches = [
         item
         for item in pipeline.load_canonical_source_index(index_path)
@@ -91,7 +92,7 @@ def load_canonical_source_item(
 
 def _mobilegpt_source_target(
     *,
-    item: pipeline.CanonicalRunLog,
+    item: CanonicalRunLog,
     source: dict[str, Any],
 ) -> dict[str, str]:
     inferred = pipeline._infer_mobilegpt_target_from_source_run_log(item)
@@ -132,7 +133,7 @@ def _mobilegpt_source_target(
 
 
 def _source_preflight(
-    item: pipeline.CanonicalRunLog,
+    item: CanonicalRunLog,
 ) -> tuple[Path, tuple[str, ...], dict[str, Any], dict[str, str]]:
     source_run_log = item.source_run_log
     source_sha256 = pipeline._file_sha256(source_run_log)

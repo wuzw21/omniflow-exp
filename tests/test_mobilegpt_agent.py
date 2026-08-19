@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 from PIL import Image
 
 from src.experiment import androidworld as pipeline
+from src.experiment.source_records import CanonicalRunLog
 from src.integrations import mobilegpt_memory
 from src.integrations.android_world.launch import (
     _mobilegpt_runtime_integrity_error,
@@ -953,7 +954,7 @@ def test_mobilegpt_episode_command_declares_native_androidworld_io(
 ) -> None:
     source_run_log = tmp_path / "source.run_log.json"
     source_run_log.write_text("{}", encoding="utf-8")
-    item = pipeline.CanonicalRunLog(
+    item = CanonicalRunLog(
         task="AudioRecorderRecordAudio",
         goal="Record and save audio",
         params={},
