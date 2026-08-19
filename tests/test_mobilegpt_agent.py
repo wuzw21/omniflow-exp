@@ -57,7 +57,7 @@ def test_mobilegpt_negative_timeout_means_unbounded_socket_wait() -> None:
 
 
 def test_mobilegpt_server_command_selects_strict_upstream_runtime(tmp_path: Path) -> None:
-    spec = pipeline.build_mobilegpt_command(
+    spec = pipeline.build_mobilegpt_server_command(
         "server",
         mobilegpt_root=tmp_path / "mobilegpt",
         stats_jsonl=tmp_path / "stats.jsonl",
@@ -964,7 +964,7 @@ def test_mobilegpt_episode_command_declares_native_androidworld_io(
         meta={},
     )
 
-    spec = pipeline.build_mobilegpt_server_command(
+    spec = pipeline.build_mobilegpt_command(
         item,
         method_name="mobilegpt",
         target=pipeline.DeviceTarget("fold5564", "emulator-5564", 5564),

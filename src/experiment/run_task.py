@@ -2074,7 +2074,7 @@ def _start_mobilegpt_browser_task_server(
     return prepare, process
 
 
-def build_mobilegpt_command(
+def build_mobilegpt_server_command(
     action: str,
     *,
     mobilegpt_root: str | Path = DEFAULT_MOBILEGPT_ROOT,
@@ -4403,7 +4403,7 @@ def _print_result_summary(summary: dict[str, Any]) -> None:
         )
 
 
-def build_mobilegpt_server_command(
+def build_mobilegpt_command(
     item: CanonicalRunLog,
     *,
     method_name: str,

@@ -30,7 +30,7 @@ from omniflow.vlm.planner import (
     parse_model_turn_response,
 )
 from omniflow.vlm_coordinates import canonical_action_to_screen_pixels
-from src.integrations.android_world import launch as androidworld_launch
+from src.integrations.android_world import run_episode as androidworld_run_episode
 from src.integrations.android_world.agent import (
     _TaskHost,
     build_agent,
@@ -1840,7 +1840,7 @@ def test_androidworld_launcher_configures_one_unified_planner(
 
     monkeypatch.setattr("omniflow.vlm.planner.VLMPlanner", CapturingPlanner)
     monkeypatch.setattr(
-        androidworld_launch,
+        androidworld_run_episode,
         "build_agent",
         lambda **options: SimpleNamespace(**options),
     )
@@ -1848,7 +1848,7 @@ def test_androidworld_launcher_configures_one_unified_planner(
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.setenv("LLMTHU_API_KEY", "unified-key")
 
-    flow = androidworld_launch._build_launch_agent(
+    flow = androidworld_run_episode._build_launch_agent(
         agent="omniflow",
         env=SimpleNamespace(),
         store_path="store.json",
