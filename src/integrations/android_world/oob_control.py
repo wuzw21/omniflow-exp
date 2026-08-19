@@ -43,8 +43,8 @@ class OobControlClient:
         self.timeout_seconds = max(1.0, float(timeout_seconds))
         self._run_command = run or subprocess.run
 
-    def observe(self) -> dict[str, Any]:
-        result = self._observe_request()
+    def observe(self, *, wait_to_stabilize: bool = False) -> dict[str, Any]:
+        result = self._observe_request(wait_to_stabilize=wait_to_stabilize)
         if not isinstance(result, dict):
             raise RuntimeError("oob_control_observe_result_invalid")
         return result
@@ -58,7 +58,7 @@ class OobControlClient:
             raise RuntimeError("oob_control_act_result_invalid")
         return result
 
-    def _observe_request(self) -> dict[str, Any]:
+    def _observe_request(self, *, wait_to_stabilize: bool) -> dict[str, Any]:
         self._run(
             [
                 "shell",
@@ -85,6 +85,9 @@ class OobControlClient:
                 "--ez",
                 "includeScreenshot",
                 "true",
+                "--ez",
+                "waitToStabilize",
+                "true" if wait_to_stabilize else "false",
             ],
             timeout=self.timeout_seconds,
         )
@@ -273,6 +276,9 @@ def oob_state_from_payload(
         "activity_name": activity_name,
         "display": {"width": width, "height": height},
     }
+    stabilization = payload.get("stabilization")
+    if isinstance(stabilization, dict):
+        auxiliaries["stabilization"] = dict(stabilization)
     return SimpleNamespace(
         pixels=pixels,
         forest=xml,

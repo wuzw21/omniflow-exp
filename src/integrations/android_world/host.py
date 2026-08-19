@@ -317,6 +317,16 @@ class AndroidWorldHost:
         app_info: bool,
     ) -> Observation:
         metrics = self.performance_metrics
+        wait_to_stabilize = (
+            str(
+                os.environ.get(
+                    "OMNIFLOW_ANDROIDWORLD_WAIT_TO_STABILIZE", "1"
+                )
+            )
+            .strip()
+            .lower()
+            not in {"0", "false", "no", "off"}
+        )
         with (
             metrics.timed("observe_get_state")
             if metrics is not None
@@ -324,22 +334,14 @@ class AndroidWorldHost:
         ):
             if self.control_client is not None:
                 state = oob_state_from_payload(
-                    self.control_client.observe(),
+                    self.control_client.observe(
+                        wait_to_stabilize=wait_to_stabilize,
+                    ),
                     fallback_screen_size=tuple(
                         int(value) for value in self._screen_size()
                     ),
                 )
             else:
-                wait_to_stabilize = (
-                    str(
-                        os.environ.get(
-                            "OMNIFLOW_ANDROIDWORLD_WAIT_TO_STABILIZE", "1"
-                        )
-                    )
-                    .strip()
-                    .lower()
-                    not in {"0", "false", "no", "off"}
-                )
                 state = self.env.get_state(
                     wait_to_stabilize=wait_to_stabilize
                 )

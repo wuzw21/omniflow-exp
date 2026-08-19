@@ -75,12 +75,13 @@ def test_oob_observe_uses_the_resident_observe_receiver() -> None:
         return _completed()
 
     client = OobControlClient(SimpleNamespace(), adb_serial="emulator-5564", run=run)
-    result = client.observe()
+    result = client.observe(wait_to_stabilize=True)
 
     assert result["xml"] == "<hierarchy />"
     broadcast = next(command for command in commands if "broadcast" in command)
     assert OBSERVE_ACTION in broadcast
     assert "DebugOmniFlowObserveReceiver" in broadcast[broadcast.index("-n") + 1]
+    assert broadcast[broadcast.index("waitToStabilize") + 1] == "true"
 
 
 def test_oob_xml_produces_androidworld_state_shape(monkeypatch) -> None:
@@ -134,7 +135,8 @@ def test_oob_host_replaces_androidworld_observe_and_act(monkeypatch, tmp_path) -
         def __init__(self, *_args, **_kwargs):
             self.actions = []
 
-        def observe(self):
+        def observe(self, *, wait_to_stabilize=False):
+            assert wait_to_stabilize is True
             return {
                 "package_name": "com.example",
                 "activity_name": "com.example/.MainActivity",
