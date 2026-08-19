@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import argparse
 from copy import deepcopy
+import hashlib
 import json
+import os
 from pathlib import Path
 import re
-from typing import Any
+import shutil
+from typing import Any, Iterable
 
 from omniflow.core.trajectory import state_id
 from omniflow.functions.assets import (
@@ -23,6 +26,7 @@ from omniflow.runlog import (
 )
 
 LEGACY_BUNDLE_VERSION = "omniflow.function-bundle.v2"
+LEGACY_CATALOG_VERSION = "omniflow.function-asset-catalog.v1"
 _SOURCE_PATH = re.compile(
     r"^\$\.arguments(?P<tail>(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])+)$"
 )
@@ -48,12 +52,15 @@ def migrate_function_store(
     source_run_log: str | Path | None = None,
     transfer_states: str | Path | None = None,
     force: bool = False,
+    dry_run: bool = False,
+    function_id: str | None = None,
 ) -> dict[str, Any]:
     """Migrate one old Store or bundle without changing the input file.
 
     A historical bundle needs its successful source RunLog because old actions
     did not carry source state IDs. A historical Store with multiple Functions
-    is split into one current Store per Function; no Function is discarded.
+    is split into one current Store per Function when every Function has one
+    source call; incomplete evidence is rejected instead of guessed.
     """
 
     input_file = Path(input_path).expanduser().resolve()
@@ -63,13 +70,29 @@ def migrate_function_store(
     schema_version = str(payload.get("schema_version") or "")
     if schema_version == STORE_VERSION:
         functions, source_calls = _read_current_store(payload)
+        if function_id is not None:
+            selected = [
+                function
+                for function in functions
+                if function["function_id"] == str(function_id)
+            ]
+            if len(selected) != 1:
+                raise ValueError(f"function_migration_function_missing:{function_id}")
+            functions = selected
+            source_calls = [
+                call
+                for call in source_calls
+                if call["function_id"] == str(function_id)
+            ]
         return _write_current_stores(
             input_file=input_file,
             functions=functions,
             source_calls=source_calls,
             output=output,
+            source_run_log=source_run_log,
             transfer_states=transfer_states,
             force=force,
+            dry_run=dry_run,
         )
     if schema_version == LEGACY_BUNDLE_VERSION:
         if source_run_log is None:
@@ -80,6 +103,7 @@ def migrate_function_store(
             source_run_log=Path(source_run_log).expanduser().resolve(),
             output=output,
             force=force,
+            dry_run=dry_run,
         )
     raise ValueError(
         "unsupported_function_json_version:"
@@ -131,8 +155,10 @@ def _write_current_stores(
     functions: list[dict[str, Any]],
     source_calls: list[dict[str, Any]],
     output: str | Path,
+    source_run_log: str | Path | None,
     transfer_states: str | Path | None,
     force: bool,
+    dry_run: bool,
 ) -> dict[str, Any]:
     output_path = Path(output).expanduser().resolve()
     if len(functions) == 1 and output_path.suffix.lower() == ".json":
@@ -151,8 +177,25 @@ def _write_current_stores(
         else input_file.with_name("transfer_states.json")
     )
     state_payload = _read_transfer_states(state_source) if state_source.is_file() else None
+    source_log = (
+        Path(source_run_log).expanduser().resolve()
+        if source_run_log is not None
+        else input_file.with_name("run_log.json")
+    )
+    if not source_log.is_file():
+        raise FileNotFoundError(f"function_migration_source_run_log_missing:{source_log}")
     reports: list[dict[str, Any]] = []
     for function, destination in destinations:
+        matching_calls = [
+            call
+            for call in source_calls
+            if call.get("function_id") == function["function_id"]
+        ]
+        if len(matching_calls) != 1:
+            raise ValueError(
+                "function_migration_source_call_required:"
+                f"{function['function_id']}:count={len(matching_calls)}"
+            )
         _refuse_existing(destination, force)
         if state_payload is None and function["steps"]:
             raise FileNotFoundError(
@@ -169,22 +212,44 @@ def _write_current_stores(
                 raise ValueError(
                     "function_migration_transfer_states_missing:" + ",".join(missing)
                 )
+        _refuse_existing(destination.with_name("run_log.json"), force)
+        if state_payload is not None:
+            _refuse_existing(destination.with_name("transfer_states.json"), force)
+    if dry_run:
+        return {
+            "schema_version": "omniflow.function-store-migration.v1",
+            "input": str(input_file),
+            "source_schema_version": STORE_VERSION,
+            "dry_run": True,
+            "stores": [
+                {
+                    "function_id": function["function_id"],
+                    "store_path": str(destination),
+                    "run_log_path": str(destination.with_name("run_log.json")),
+                    "transfer_states_path": str(destination.with_name("transfer_states.json")),
+                }
+                for function, destination in destinations
+            ],
+        }
     for function, destination in destinations:
+        matching_calls = [
+            call
+            for call in source_calls
+            if call.get("function_id") == function["function_id"]
+        ]
         write_function_store(
             destination,
             [function],
-            [
-                call
-                for call in source_calls
-                if call.get("function_id") == function["function_id"]
-            ],
+            matching_calls,
         )
         if state_payload is not None:
             _write_filtered_transfer_states(destination, function, state_payload, force)
+        _copy_artifact(source_log, destination.with_name("run_log.json"), force)
         reports.append(
             {
                 "function_id": function["function_id"],
                 "store_path": str(destination),
+                "run_log_path": str(destination.with_name("run_log.json")),
                 "transfer_states_path": str(destination.with_name("transfer_states.json")),
             }
         )
@@ -203,6 +268,7 @@ def _migrate_legacy_bundle(
     source_run_log: Path,
     output: str | Path,
     force: bool,
+    dry_run: bool,
 ) -> dict[str, Any]:
     if not source_run_log.is_file():
         raise FileNotFoundError(f"legacy_bundle_source_run_log_missing:{source_run_log}")
@@ -250,16 +316,30 @@ def _migrate_legacy_bundle(
     reports: list[dict[str, Any]] = []
     for (function, arguments), destination in destinations:
         _refuse_existing(destination, force)
+        _refuse_existing(destination.with_name("run_log.json"), force)
+        _refuse_existing(destination.with_name("transfer_states.json"), force)
+        if dry_run:
+            reports.append(
+                {
+                    "function_id": function["function_id"],
+                    "store_path": str(destination),
+                    "run_log_path": str(destination.with_name("run_log.json")),
+                    "transfer_states_path": str(destination.with_name("transfer_states.json")),
+                }
+            )
+            continue
         save_function(
             source_run_log,
             destination,
             functions=[function],
             arguments={function["function_id"]: arguments},
         )
+        _copy_artifact(source_run_log, destination.with_name("run_log.json"), force)
         reports.append(
             {
                 "function_id": function["function_id"],
                 "store_path": str(destination),
+                "run_log_path": str(destination.with_name("run_log.json")),
                 "transfer_states_path": str(destination.with_name("transfer_states.json")),
             }
         )
@@ -268,6 +348,7 @@ def _migrate_legacy_bundle(
         "input": str(input_file),
         "source_schema_version": LEGACY_BUNDLE_VERSION,
         "source_run_log": str(source_run_log),
+        "dry_run": dry_run,
         "stores": reports,
     }
 
@@ -514,6 +595,363 @@ def _write_filtered_transfer_states(
     temporary.replace(destination)
 
 
+def _copy_artifact(source: Path, destination: Path, force: bool) -> None:
+    """Copy evidence atomically so a failed migration cannot leave a partial file."""
+
+    if not source.is_file():
+        raise FileNotFoundError(f"function_migration_artifact_missing:{source}")
+    _refuse_existing(destination, force)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    suffix = hashlib.sha256(str(source).encode("utf-8")).hexdigest()[:8]
+    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.{suffix}.tmp")
+    try:
+        shutil.copyfile(source, temporary)
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _migrate_canonical_store(
+    input_path: Path,
+    output_root: Path,
+    *,
+    task: str,
+    source_run_log: Path | None,
+    transfer_states: Path | None,
+    environment: str,
+    device: str,
+    method: str,
+    attempt: str,
+    force: bool,
+    dry_run: bool,
+) -> list[dict[str, Any]]:
+    """Write one canonical attempt per Function, including split old Stores."""
+
+    payload = _read_object(input_path)
+    is_current_store = payload.get("schema_version") == STORE_VERSION
+    functions = payload.get("functions") if is_current_store else None
+    if not isinstance(functions, dict) or len(functions) <= 1:
+        result = migrate_function_store(
+            input_path,
+            _canonical_store_path(
+                output_root, environment, task, device, method, attempt
+            ),
+            source_run_log=source_run_log,
+            transfer_states=transfer_states,
+            force=force,
+            dry_run=dry_run,
+        )
+        return result.get("stores", [])
+
+    stores: list[dict[str, Any]] = []
+    for function_id in sorted(functions):
+        function_attempt = f"{attempt}_{_safe_path_name(function_id)}"
+        result = migrate_function_store(
+            input_path,
+            _canonical_store_path(
+                output_root, environment, task, device, method, function_attempt
+            ),
+            source_run_log=source_run_log,
+            transfer_states=transfer_states,
+            force=force,
+            dry_run=dry_run,
+            function_id=function_id,
+        )
+        stores.extend(result.get("stores", []))
+    return stores
+
+
+def _canonical_store_path(
+    output_root: Path,
+    environment: str,
+    task: str,
+    device: str,
+    method: str,
+    attempt: str,
+) -> Path:
+    return (
+        output_root / environment / task / device / "function" / method / attempt
+        / "function_store.json"
+    )
+
+
+def _safe_path_name(value: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("._")
+    return normalized or "function"
+
+
+def migrate_function_catalog(
+    input_path: str | Path,
+    output_root: str | Path,
+    *,
+    environment: str = "androidworld",
+    device: str = "source5554",
+    method: str = "function_authoring",
+    attempt_id: str | None = None,
+    force: bool = False,
+    dry_run: bool = False,
+    seen_store_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    """Migrate Stores referenced by a historical catalog, one task at a time."""
+
+    catalog_path = Path(input_path).expanduser().resolve()
+    catalog = _read_object(catalog_path)
+    if catalog.get("schema_version") != LEGACY_CATALOG_VERSION:
+        raise ValueError(f"function_migration_catalog_invalid:{catalog_path}")
+    tasks = catalog.get("tasks")
+    if not isinstance(tasks, dict):
+        raise ValueError(f"function_migration_catalog_tasks_invalid:{catalog_path}")
+    root = Path(output_root).expanduser().resolve()
+    seen = seen_store_ids if seen_store_ids is not None else set()
+    reports: list[dict[str, Any]] = []
+    for task_name, raw_item in sorted(tasks.items()):
+        if not isinstance(raw_item, dict):
+            reports.append({
+                "task": str(task_name),
+                "status": "blocked",
+                "reason": "catalog_task_invalid",
+            })
+            continue
+        task = str(raw_item.get("task") or task_name).strip()
+        try:
+            store_path = _catalog_path(catalog_path, raw_item, "store_path")
+            store_identity = (
+                f"sha256:{_sha256(store_path)}"
+                if store_path.is_file()
+                else f"path:{store_path}"
+            )
+            if store_identity in seen:
+                reports.append({
+                    "task": task,
+                    "status": "duplicate",
+                    "source": str(store_path),
+                })
+                continue
+            source_run_log = _catalog_path(catalog_path, raw_item, "source_run_log")
+            transfer_states = _catalog_path(
+                catalog_path, raw_item, "transfer_states_path"
+            )
+            attempt = str(
+                raw_item.get("attempt_id")
+                or attempt_id
+                or f"migration_{store_identity.split(':', 1)[1][:12]}"
+            )
+            stores = _migrate_canonical_store(
+                store_path,
+                root,
+                task=task,
+                source_run_log=source_run_log,
+                transfer_states=transfer_states,
+                environment=environment,
+                device=device,
+                method=method,
+                attempt=attempt,
+                force=force,
+                dry_run=dry_run,
+            )
+            seen.add(store_identity)
+            reports.append({
+                "task": task,
+                "status": "converted",
+                "source": str(store_path),
+                "attempt_id": attempt,
+                "stores": stores,
+            })
+        except (FileExistsError, FileNotFoundError, TypeError, ValueError) as error:
+            reports.append({
+                "task": task,
+                "status": "blocked",
+                "reason": str(error) or type(error).__name__,
+            })
+    return {
+        "schema_version": "omniflow.function-store-batch-migration.v1",
+        "source_schema_version": LEGACY_CATALOG_VERSION,
+        "input": str(catalog_path),
+        "output_root": str(root),
+        "dry_run": dry_run,
+        "counts": _migration_counts(reports),
+        "tasks": reports,
+    }
+
+
+def scan_function_json_root(
+    input_root: str | Path,
+    output_root: str | Path,
+    *,
+    environment: str = "androidworld",
+    device: str = "source5554",
+    method: str = "function_authoring",
+    force: bool = False,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Classify and migrate every known historical Function JSON below a root."""
+
+    source_root = Path(input_root).expanduser().resolve()
+    if not source_root.is_dir():
+        raise FileNotFoundError(f"function_migration_input_root_missing:{source_root}")
+    candidates: list[tuple[Path, str]] = []
+    for path in sorted(source_root.rglob("*.json")):
+        try:
+            payload = _read_object(path)
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+            continue
+        schema_version = str(payload.get("schema_version") or "")
+        if schema_version in {
+            STORE_VERSION,
+            LEGACY_BUNDLE_VERSION,
+            LEGACY_CATALOG_VERSION,
+        }:
+            candidates.append((path, schema_version))
+
+    reports: list[dict[str, Any]] = []
+    referenced_stores: set[Path] = set()
+    seen_catalog_digests: set[str] = set()
+    seen_store_ids: set[str] = set()
+    for path, schema_version in candidates:
+        if schema_version != LEGACY_CATALOG_VERSION:
+            continue
+        catalog_digest = _sha256(path)
+        if catalog_digest in seen_catalog_digests:
+            continue
+        seen_catalog_digests.add(catalog_digest)
+        try:
+            catalog = _read_object(path)
+            tasks = catalog.get("tasks")
+            if isinstance(tasks, dict):
+                for item in tasks.values():
+                    if isinstance(item, dict) and item.get("store_path"):
+                        referenced_stores.add(_catalog_path(path, item, "store_path"))
+            reports.append(
+                migrate_function_catalog(
+                    path,
+                    output_root,
+                    environment=environment,
+                    device=device,
+                    method=method,
+                    force=force,
+                    dry_run=dry_run,
+                    seen_store_ids=seen_store_ids,
+                )
+            )
+        except (FileExistsError, FileNotFoundError, TypeError, ValueError) as error:
+            reports.append({
+                "schema_version": "omniflow.function-store-batch-migration.v1",
+                "source_schema_version": schema_version,
+                "input": str(path),
+                "dry_run": dry_run,
+                "counts": {"converted": 0, "blocked": 1, "stores": 0},
+                "tasks": [{"status": "blocked", "reason": str(error)}],
+            })
+
+    direct_reports: list[dict[str, Any]] = []
+    seen_direct_ids: set[str] = set()
+    for path, schema_version in candidates:
+        if schema_version == LEGACY_CATALOG_VERSION or path.resolve() in referenced_stores:
+            continue
+        direct_identity = _sha256(path)
+        if direct_identity in seen_direct_ids:
+            direct_reports.append({
+                "input": str(path),
+                "source_schema_version": schema_version,
+                "status": "duplicate",
+            })
+            continue
+        task = _task_name_for_path(path)
+        attempt = f"migration_{direct_identity[:12]}"
+        source_run_log = path.with_name("run_log.json")
+        try:
+            stores = _migrate_canonical_store(
+                path,
+                Path(output_root).expanduser().resolve(),
+                task=task,
+                source_run_log=source_run_log if source_run_log.is_file() else None,
+                transfer_states=(
+                    path.with_name("transfer_states.json")
+                    if path.with_name("transfer_states.json").is_file()
+                    else None
+                ),
+                environment=environment,
+                device=device,
+                method=method,
+                attempt=attempt,
+                force=force,
+                dry_run=dry_run,
+            )
+            seen_direct_ids.add(direct_identity)
+            direct_reports.append({
+                "input": str(path),
+                "source_schema_version": schema_version,
+                "status": "converted",
+                "task": task,
+                "stores": stores,
+            })
+        except (FileExistsError, FileNotFoundError, TypeError, ValueError) as error:
+            direct_reports.append({
+                "input": str(path),
+                "source_schema_version": schema_version,
+                "status": "blocked",
+                "task": task,
+                "reason": str(error) or type(error).__name__,
+            })
+
+    return {
+        "schema_version": "omniflow.function-store-root-migration.v1",
+        "input_root": str(source_root),
+        "output_root": str(Path(output_root).expanduser().resolve()),
+        "dry_run": dry_run,
+        "catalogs": reports,
+        "direct": direct_reports,
+        "counts": _migration_counts([*reports, *direct_reports]),
+    }
+
+
+def _catalog_path(catalog_path: Path, item: dict[str, Any], field: str) -> Path:
+    value = str(item.get(field) or "").strip()
+    if not value:
+        raise ValueError(f"catalog_{field}_required")
+    path = Path(value).expanduser()
+    return (path if path.is_absolute() else catalog_path.parent / path).resolve()
+
+
+def _task_name_for_path(path: Path) -> str:
+    parts = path.resolve().parts
+    for marker in ("androidworld", "bmoca"):
+        if marker in parts and parts.index(marker) + 1 < len(parts):
+            return parts[parts.index(marker) + 1]
+    return path.parent.name or "unknown_task"
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _migration_counts(reports: Iterable[dict[str, Any]]) -> dict[str, int]:
+    converted = blocked = stores = 0
+    for report in reports:
+        if report.get("status") == "converted":
+            converted += 1
+        if report.get("status") == "blocked":
+            blocked += 1
+        nested = report.get("tasks")
+        if isinstance(nested, list):
+            for item in nested:
+                if item.get("status") == "converted":
+                    converted += 1
+                if item.get("status") == "blocked":
+                    blocked += 1
+                item_stores = item.get("stores")
+                if isinstance(item_stores, list):
+                    stores += len(item_stores)
+        stores_value = report.get("stores")
+        if isinstance(stores_value, list):
+            stores += len(stores_value)
+    return {"converted": converted, "blocked": blocked, "stores": stores}
+
+
 def _path_tokens(value: str) -> list[str | int]:
     return [name if name else int(index) for name, index in _PATH_TOKEN.findall(value)]
 
@@ -548,23 +986,64 @@ def _refuse_existing(path: Path, force: bool) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", required=True, help="Old Store or function bundle JSON.")
-    parser.add_argument("--output", required=True, help="New JSON path, or directory when splitting Functions.")
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument("--input", help="Old Store, bundle, or catalog JSON.")
+    input_group.add_argument("--input-root", help="Root containing historical Function JSON.")
+    parser.add_argument("--output", required=True, help="New JSON path or migration output root.")
     parser.add_argument("--source-run-log", help="Required for omniflow.function-bundle.v2.")
     parser.add_argument("--transfer-states", help="Optional old transfer_states.json for a Store.")
+    parser.add_argument("--environment", default="androidworld")
+    parser.add_argument("--device", default="source5554")
+    parser.add_argument("--method", default="function_authoring")
+    parser.add_argument("--attempt-id")
+    parser.add_argument("--dry-run", action="store_true", help="Validate and report without writing output.")
+    parser.add_argument("--report", help="Write the JSON migration report to this path.")
     parser.add_argument("--force", action="store_true", help="Allow replacing migration outputs.")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    report = migrate_function_store(
-        args.input,
-        args.output,
-        source_run_log=args.source_run_log,
-        transfer_states=args.transfer_states,
-        force=args.force,
-    )
+    if args.input_root:
+        report = scan_function_json_root(
+            args.input_root,
+            args.output,
+            environment=args.environment,
+            device=args.device,
+            method=args.method,
+            force=args.force,
+            dry_run=args.dry_run,
+        )
+    else:
+        input_path = Path(args.input).expanduser().resolve()
+        payload = _read_object(input_path)
+        if payload.get("schema_version") == LEGACY_CATALOG_VERSION:
+            report = migrate_function_catalog(
+                input_path,
+                args.output,
+                environment=args.environment,
+                device=args.device,
+                method=args.method,
+                attempt_id=args.attempt_id,
+                force=args.force,
+                dry_run=args.dry_run,
+            )
+        else:
+            report = migrate_function_store(
+                input_path,
+                args.output,
+                source_run_log=args.source_run_log,
+                transfer_states=args.transfer_states,
+                force=args.force,
+                dry_run=args.dry_run,
+            )
+    if args.report:
+        report_path = Path(args.report).expanduser().resolve()
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 

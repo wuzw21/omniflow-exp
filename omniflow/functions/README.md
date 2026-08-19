@@ -38,6 +38,27 @@ silently dropping all but one. Pass a directory as the output:
 The converter never edits its input and refuses an existing output unless
 `--force` is explicit. It also requires the old `transfer_states.json` beside
 the input Store, or via `--transfer-states`; this prevents producing a Store
-that cannot execute. `function-asset-catalog.v1` is an index, not a Function
-Store, and must not be renamed into one. Rebuild the canonical `data/current.json`
-index after migration.
+that cannot execute. Every migrated Store also receives its source
+`run_log.json`; a Store without source-call evidence is reported as blocked.
+
+For a whole historical directory, use one dry run first:
+
+```bash
+.venv/bin/python -m omniflow.functions.migrate_store \
+  --input-root /absolute/old-data \
+  --output /absolute/new-data \
+  --dry-run --report /absolute/migration-report.json
+```
+
+The scanner recognizes current Stores, old bundles, and
+`function-asset-catalog.v1`. A catalog is only an old index: its referenced
+Store, RunLog, and transfer states are migrated; the catalog itself is never
+copied into runtime data. Duplicate catalog objects are scanned once. Missing
+evidence, missing source arguments, ambiguous legacy action alignment, and
+existing outputs are listed as `blocked` with a reason instead of being
+silently skipped. Multi-Function historical Stores are split into separate
+canonical attempts so the data index can register them.
+
+After reviewing the report, rerun without `--dry-run`. Then rebuild the one
+runtime index with the existing `src.experiment.data_index refresh` command;
+the migration tool deliberately does not become a second index writer.

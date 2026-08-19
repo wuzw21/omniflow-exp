@@ -88,7 +88,7 @@ rg --files -g '*.py' | sort
 | `omniflow/core/trajectory.py` | RunLog/trajectory 的结构、顺序、hash 不变量 |
 | `omniflow/functions/__init__.py` | Function 导出 |
 | `omniflow/functions/assets.py` | 唯一 compiler、validator、`save_function`、Store writer；禁止第二 writer 或手改 Store |
-| `omniflow/functions/migrate_store.py` | 旧 Function JSON 的一次性迁移器；只能调用 current writer，必须保留 source evidence，禁止兼容运行时直接读取旧 Store |
+| `omniflow/functions/migrate_store.py` | 旧 Function JSON 的一次性迁移器；支持单文件和 `--input-root` 批量扫描，只能调用 current writer，必须保留 source RunLog、source call 和 transfer states；无法证明语义完整时只写 blocked 报告，禁止兼容运行时直接读取旧 Store |
 | `omniflow/functions/recall.py` | 只从已加载 Store 选择完整 Function；不创建 catalog |
 | `omniflow/runtime/__init__.py` | runtime 导出 |
 | `omniflow/runtime/core.py` | 单个 canonical action primitive |

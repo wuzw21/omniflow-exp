@@ -110,6 +110,15 @@ transfer states。迁移失败时不应放宽校验；没有 source state、无�
 改 schema_version 伪装成 Store；迁移完成后仍由 `data_index.py` 重新生成唯一
 运行时索引 `data/current.json`。
 
+迁移器支持两种粒度：单文件迁移用于逐个修复；`--input-root` 批量扫描用于
+一次整理历史 JSON。批量流程固定为“识别 schema -> 读取 catalog 引用 ->
+验证 Store、source RunLog、source call、transfer states -> 写入 canonical
+Function 资产 -> 输出 converted/blocked 报告”。它不覆盖输入，也不写
+`current.json`。旧 catalog 重复对象只按内容扫描一次；一个旧 Store 中的
+多个 Function 会被放进不同的 canonical attempt，避免重新制造
+`current.json` 无法识别的多 Function 目录。没有足够证据的 Function 必须
+出现在 blocked 报告中，不能用空参数或坐标猜测补齐。
+
 ## 5. 当前精简候选与保留决定
 
 ### 五个大文件的直白职责
