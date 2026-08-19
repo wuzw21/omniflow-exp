@@ -394,6 +394,46 @@ def test_direct_conversion_uses_runlog_actions_without_semantic_agents(
     assert result["official_reader_validation"]["source_direct_hit_count"] == 2
 
 
+def test_runlog_index_click_is_grounded_from_ui_element_bounds(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.json"
+    source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [{"action_type": "click", "index": 1}],
+                observations=[
+                    androidworld_state(
+                        "indexed",
+                        forest=(
+                            '<hierarchy><node text="Get started" '
+                            'clickable="true" bounds="[20,30][80,90]" />'
+                            "</hierarchy>"
+                        ),
+                        ui_elements=[
+                            {},
+                            {
+                                "bbox_pixels": {
+                                    "x_min": 20,
+                                    "y_min": 30,
+                                    "x_max": 80,
+                                    "y_max": 90,
+                                }
+                            },
+                        ],
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    trajectory = _load_runlog_trajectory(source)
+
+    assert trajectory["transitions"][0].action["x"] == 50
+    assert trajectory["transitions"][0].action["y"] == 60
+
+
 def test_direct_conversion_grounds_container_click_to_visible_child(
     tmp_path: Path,
 ) -> None:

@@ -766,9 +766,9 @@ if [[ "$execution_environment" == "bmoca" ]]; then
       set -a
       source "$env_file"
       set +a
-      mobilegpt_embedding_api_key="${MOBILEGPT_EMBEDDING_API_KEY:-${OPENAI_API_KEY:-}}"
-      mobilegpt_embedding_base_url="${MOBILEGPT_EMBEDDING_BASE_URL:-${OPENAI_BASE_URL:-}}"
       select_model_endpoint "$formal_model_endpoint_profile"
+      mobilegpt_embedding_api_key="${MOBILEGPT_EMBEDDING_API_KEY:-$selected_model_api_key}"
+      mobilegpt_embedding_base_url="${MOBILEGPT_EMBEDDING_BASE_URL:-$selected_model_base_url}"
       validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
       export MOBILEGPT_CHAT_MODEL="$formal_model"
       export MOBILEGPT_CHAT_API_KEY="$selected_model_api_key"
@@ -820,9 +820,9 @@ PY
   set -a
   source "$env_file"
   set +a
-  mobilegpt_embedding_api_key="${MOBILEGPT_EMBEDDING_API_KEY:-${OPENAI_API_KEY:-}}"
-  mobilegpt_embedding_base_url="${MOBILEGPT_EMBEDDING_BASE_URL:-${OPENAI_BASE_URL:-}}"
   select_model_endpoint "$formal_model_endpoint_profile"
+  mobilegpt_embedding_api_key="${MOBILEGPT_EMBEDDING_API_KEY:-$selected_model_api_key}"
+  mobilegpt_embedding_base_url="${MOBILEGPT_EMBEDDING_BASE_URL:-$selected_model_base_url}"
   validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
   export MOBILEGPT_CHAT_MODEL="$formal_model"
   export MOBILEGPT_CHAT_API_KEY="$selected_model_api_key"
@@ -1911,14 +1911,20 @@ if [[ "$check_only" -ne 1 ]]; then
   source "$env_file"
   set +a
 fi
-mobilegpt_embedding_api_key="${OPENAI_API_KEY:-}"
-mobilegpt_embedding_base_url="${OPENAI_BASE_URL:-}"
+select_model_endpoint "$formal_model_endpoint_profile"
+mobilegpt_embedding_api_key="${MOBILEGPT_EMBEDDING_API_KEY:-$selected_model_api_key}"
+mobilegpt_embedding_base_url="${MOBILEGPT_EMBEDDING_BASE_URL:-$selected_model_base_url}"
 paper_model="$formal_model"
 export OPENAI_MODEL="$paper_model"
 export OMNIFLOW_PLANNER_MODEL="$paper_model"
 export MOBILEGPT_CHAT_MODEL="$paper_model"
 export OMNITRANSFER_ROOT="$omnitransfer_root"
 unset MOBILEGPT_MEMORY_ONLY
+if [[ "$need_mobilegpt_preflight" -eq 1 ]]; then
+  export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"
+  export MOBILEGPT_EMBEDDING_BASE_URL="$mobilegpt_embedding_base_url"
+  export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
+fi
 missing_assets=()
 require_file() {
   local label="$1"

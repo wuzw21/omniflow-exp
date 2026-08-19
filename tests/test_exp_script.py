@@ -214,7 +214,10 @@ def test_mobilegpt_runtime_uses_sealed_embedding_contract_and_split_endpoints() 
         REPO / "src" / "integrations" / "mobilegpt_runtime.py"
     ).read_text(encoding="utf-8")
 
-    assert 'mobilegpt_embedding_api_key="${OPENAI_API_KEY:-}"' in script_text
+    assert (
+        'mobilegpt_embedding_api_key="${MOBILEGPT_EMBEDDING_API_KEY:-$selected_model_api_key}"'
+        in script_text
+    )
     assert 'export MOBILEGPT_CHAT_API_KEY="$selected_model_api_key"' in script_text
     assert (
         'export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"'

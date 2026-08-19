@@ -487,6 +487,7 @@ def _load_runlog_trajectory(
         action = dict(action)
         action_type = _action_type(action)
         observation = _observation_for_step(raw_step)
+        action = _ground_indexed_action(action, observation)
         package = _package_from_observation(observation)
         if package:
             packages.append(package)
@@ -920,6 +921,42 @@ def _point(action: dict[str, Any]) -> tuple[float, float] | None:
         return float(action["x"]), float(action["y"])
     except (KeyError, TypeError, ValueError):
         return None
+
+
+def _ground_indexed_action(
+    action: dict[str, Any],
+    observation: dict[str, Any],
+) -> dict[str, Any]:
+    """Ground AndroidWorld's UI-element index for native MobileGPT parsing."""
+
+    if _point(action) is not None:
+        return action
+    if _action_type(action) not in {"click", "double_tap", "input_text", "long_press"}:
+        return action
+    try:
+        index = int(action["index"])
+    except (KeyError, TypeError, ValueError):
+        return action
+    elements = observation.get("ui_elements")
+    if not isinstance(elements, list) or not 0 <= index < len(elements):
+        return action
+    element = elements[index]
+    if not isinstance(element, dict):
+        return action
+    bounds = element.get("bbox_pixels")
+    if not isinstance(bounds, dict):
+        return action
+    try:
+        left = float(bounds["x_min"])
+        top = float(bounds["y_min"])
+        right = float(bounds["x_max"])
+        bottom = float(bounds["y_max"])
+    except (KeyError, TypeError, ValueError):
+        return action
+    grounded = dict(action)
+    grounded["x"] = (left + right) / 2.0
+    grounded["y"] = (top + bottom) / 2.0
+    return grounded
 
 
 def _element_contains_action(element: ET.Element, action: dict[str, Any]) -> bool:
