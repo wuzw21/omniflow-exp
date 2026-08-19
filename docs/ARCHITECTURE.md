@@ -136,7 +136,7 @@ baseline 记录时经过的五个位置：
 | `appagent.py` | 如何把可信 source 转成 AppAgent 的 Prepared Memory？ | task 调度、Local Index、AndroidWorld episode 生命周期；执行由官方 AppAgent 进程完成 |
 | `mobilegpt.py` | 如何把可信 source 转成 MobileGPT 的 Prepared Memory？ | AppAgent 规则、Local Index 选择策略 |
 | `mobilegpt_memory.py` | MobileGPT Prepared Memory 的统计、图检查和完整校验 | task 调度、AndroidWorld episode 生命周期 |
-| `checks.py` | 这次运行的依赖、设备和 Prepared Memory 是否 ready？ | 具体 provider 的转换实现 |
+| `checks.py` | 这次运行的依赖、root 设备、已安装 Accessibility 服务和 Prepared Memory 是否 ready？ | 具体 provider 的转换实现 |
 | `data_index.py` | 如何物化和读取唯一 Local Index？ | AndroidWorld runner 和 provider 内部校验细节 |
 | `source_records.py` | Source RunLog 的共享数据模型是什么？ | 读取、执行或转换 RunLog |
 

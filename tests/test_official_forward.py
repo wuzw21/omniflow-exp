@@ -5,6 +5,7 @@ from pathlib import Path
 from src.integrations.official_forward import (
     prepare_appagent_workspace,
     prepare_mobilegpt_server,
+    resolve_mobilegpt_client_host,
 )
 
 
@@ -114,3 +115,19 @@ def test_mobilegpt_forwarder_configures_models_only_in_staging(
     assert "text-embedding-3-small" in (
         server / "utils" / "utils.py"
     ).read_text(encoding="utf-8")
+
+
+def test_mobilegpt_host_defaults_to_emulator_alias() -> None:
+    assert resolve_mobilegpt_client_host(
+        "",
+        serial="emulator-5560",
+        adb_path="adb",
+    ) == "10.0.2.2"
+
+
+def test_mobilegpt_explicit_host_wins_over_device_detection() -> None:
+    assert resolve_mobilegpt_client_host(
+        "192.168.1.155",
+        serial="physical-device",
+        adb_path="missing-adb",
+    ) == "192.168.1.155"

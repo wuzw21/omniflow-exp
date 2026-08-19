@@ -18,7 +18,9 @@ from src.experiment.mobilegpt_contract import (
 )
 from src.experiment.checks import (
     APPAGENT_REQUIRED_MODULES,
+    DEFAULT_ACCESSIBILITY_SERVICES,
     REQUIRED_DISTRIBUTION_VERSIONS,
+    configure_default_device_services,
 )
 from src.integrations.appagent import is_memory_manifest_valid
 from src.experiment.protocol import DROIDRUN_VERSION
@@ -93,6 +95,36 @@ def test_preflight_accepts_offline_appagent_memory() -> None:
     )
 
 
+def test_device_configuration_enables_all_installed_services(monkeypatch) -> None:
+    def fake_run(command, timeout=10):
+        if command[-5:] == [
+            "shell",
+            "settings",
+            "get",
+            "secure",
+            "enabled_accessibility_services",
+        ]:
+            output = DEFAULT_ACCESSIBILITY_SERVICES[0]
+        elif "dumpsys" in command:
+            output = (
+                "Bound services:\n"
+                + "\n".join(DEFAULT_ACCESSIBILITY_SERVICES)
+                + "\nEnabled services:\n"
+                + "\n".join(DEFAULT_ACCESSIBILITY_SERVICES)
+                + "\nCrashed services:{}\nClient list info:\n"
+            )
+        else:
+            output = ""
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr("src.experiment.checks._run", fake_run)
+    result = configure_default_device_services("adb", "root-device")
+
+    assert result["settings_write_ok"] is True
+    assert result["installed"] == list(DEFAULT_ACCESSIBILITY_SERVICES)
+    assert result["enabled"] == list(DEFAULT_ACCESSIBILITY_SERVICES)
+
+
 def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:
     scripts = sorted(
         path.relative_to(REPO).as_posix()
@@ -155,6 +187,10 @@ def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:
     assert "validate_page_encoder_runtime" in script_text
     assert "OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS" not in script_text
     assert 'default_memory_root="$repo/data"' in script_text
+    assert 'require_root_device="${OMNIFLOW_REQUIRE_ROOT_DEVICE:-1}"' in script_text
+    assert 'configure_device="${OMNIFLOW_CONFIGURE_DEVICE:-1}"' in script_text
+    assert "preflight_args+=(--require-root)" in script_text
+    assert "preflight_args+=(--configure-device)" in script_text
     assert "validate_model_endpoint_auth" in script_text
     assert 'f\"{base_url}/models\"' in script_text
     assert 'omnitransfer_root="${OMNITRANSFER_ROOT:-$workspace_root/OmniTransfer}"' in (
@@ -657,7 +693,7 @@ def test_default_avd_system_image_matches_host_architecture(
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.count(
         f"system-images;android-33;google_apis;{expected_abi}"
-    ) == 2
+    ) == 3
     assert completed.stdout.count(
         f"system-images;android-34;google_apis;{expected_abi}"
     ) == 1
@@ -753,7 +789,7 @@ def test_missing_protocol_avd_is_provisioned_by_shared_helper(
     assert marker.exists()
 
 
-def test_default_topology_uses_three_distinct_device_instances(
+def test_default_topology_lists_all_distinct_avds(
     tmp_path: Path,
 ) -> None:
     script_prefix = tmp_path / "script-prefix.sh"
@@ -787,7 +823,8 @@ def test_default_topology_uses_three_distinct_device_instances(
         "source5560:emulator-5560:5560",
         "small5554:emulator-5554:5554",
         (
-            "emulator-5554=OmniFlowTargetSmall,emulator-5564=OmniFlowTargetFold,"
+            "emulator-5554=OmniFlowTargetSmall,emulator-5562=OmniFlowAW_r25,"
+            "emulator-5564=OmniFlowTargetFold,"
             "emulator-5560=OmniFlowSourceSmall"
         ),
     ]
@@ -795,7 +832,7 @@ def test_default_topology_uses_three_distinct_device_instances(
         mapping.split("=", maxsplit=1)[1]
         for mapping in completed.stdout.splitlines()[2].split(",")
     ]
-    assert len(avd_names) == len(set(avd_names)) == 3
+    assert len(avd_names) == len(set(avd_names)) == 4
 
 
 @pytest.mark.parametrize(

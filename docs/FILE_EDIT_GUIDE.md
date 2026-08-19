@@ -118,7 +118,7 @@ rg --files -g '*.py' | sort
 | `src/experiment/run_process.py` | 所有 experiment command 的子进程组、timeout、终止和 immutable log seam；不要复制 `Popen` 生命周期 |
 | `src/experiment/development_emulator.py` | 有界开发 emulator preflight |
 | `src/experiment/emulator_processes.py` | managed emulator 进程识别；诊断命令不写结果 |
-| `src/experiment/checks.py` | source、device、外部资产和 protocol gate；不生成 Store |
+| `src/experiment/checks.py` | source、device、外部资产和 protocol gate；默认检查 root 并启用已安装的实验 Accessibility 服务；不生成 Store |
 | `src/experiment/observation_evidence.py` | observation、截图、transfer coverage 证据封存 |
 | `src/experiment/source_evidence.py` | source evidence 验证与 legacy input 的统一投影；不负责 AppAgent/MobileGPT 转换，不创建平行 source pool |
 | `src/experiment/source_records.py` | `CanonicalRunLog`/`SourceRunLogProfile` 纯数据模型；不读取 index、不执行任务 |

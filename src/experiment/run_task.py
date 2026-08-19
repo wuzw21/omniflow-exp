@@ -65,6 +65,7 @@ from src.experiment.source_records import CanonicalRunLog, SourceRunLogProfile
 from src.integrations import mobilegpt_memory
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
 from src.integrations.appagent import validate_appagent_memory
+from src.integrations.official_forward import resolve_mobilegpt_client_host
 
 
 def _load_mobilegpt_stats_summary(
@@ -4543,11 +4544,11 @@ def build_mobilegpt_command(
             fallback="run",
         )
     client_runtime_env = _subprocess_env({})
-    client_host = str(
-        client_runtime_env.get("MOBILEGPT_CLIENT_HOST") or "10.0.2.2"
-    ).strip()
-    if client_host in {"0.0.0.0", "::", "[::]", "127.0.0.1"}:
-        client_host = "10.0.2.2"
+    client_host = resolve_mobilegpt_client_host(
+        client_runtime_env.get("MOBILEGPT_CLIENT_HOST", ""),
+        serial=target.serial,
+        adb_path=adb_path,
+    )
     client_output = resolved_output / "official_client"
     client_argv = [
         sys.executable,

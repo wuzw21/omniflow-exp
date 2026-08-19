@@ -169,6 +169,8 @@ preflight="$repo/src/experiment/checks.py"
 selected_method_arg=""
 selected_device_arg=""
 control_backend="${OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND:-androidworld}"
+require_root_device="${OMNIFLOW_REQUIRE_ROOT_DEVICE:-1}"
+configure_device="${OMNIFLOW_CONFIGURE_DEVICE:-1}"
 task="${OMNIFLOW_ANDROIDWORLD_TASK:-SystemBluetoothTurnOn}"
 batch_attempt_id="${OMNIFLOW_BATCH_ATTEMPT_ID:-}"
 device_target="${OMNIFLOW_ANDROIDWORLD_DEVICE:-$default_device}"
@@ -2330,6 +2332,12 @@ for serial in $preflight_serials; do
     --minimum-free-gb "$preflight_minimum_free_gb"
     --json-out "$preflight_output_root/runtime_preflight_${profile}_${serial#emulator-}.json"
   )
+  if [[ "$require_root_device" == "1" ]]; then
+    preflight_args+=(--require-root)
+  fi
+  if [[ "$configure_device" == "1" ]]; then
+    preflight_args+=(--configure-device)
+  fi
   if [[ "$profile" == "mobilegpt" ]]; then
     preflight_args+=(--expected-tasks 116)
     if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then

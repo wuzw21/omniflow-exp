@@ -64,9 +64,13 @@ The Android client is copied only to a temporary build directory so its official
 is never edited.
 
 MobileGPT requires an Android SDK, Gradle/Android dependencies, an enabled
-Accessibility Service, and a reachable server host. For Android emulators the
-default host is `10.0.2.2`; for a physical or LAN-connected device set
-`MOBILEGPT_CLIENT_HOST` to the host machine's LAN address.
+Accessibility Service, and a reachable server host. The public launcher
+preflight requires root access and enables the installed AndroidWorld,
+OmniFlow, and MobileGPT accessibility services together. For Android
+emulators the client host is `10.0.2.2`; for a physical or LAN-connected
+device it is derived from the device route. Set `MOBILEGPT_CLIENT_HOST` only
+when the host has multiple interfaces or automatic route detection is not the
+desired network.
 
 ## Evidence rule
 

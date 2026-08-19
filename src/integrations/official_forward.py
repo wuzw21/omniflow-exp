@@ -15,10 +15,51 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import socket
 import stat
 import subprocess
 import time
 from typing import Any, Sequence
+
+
+def resolve_mobilegpt_client_host(
+    host: str = "",
+    *,
+    serial: str = "",
+    adb_path: str = "adb",
+) -> str:
+    """Choose a host address reachable from the selected Android device.
+
+    Emulators use Android's documented host alias.  Physical/root devices use
+    the host-side address selected by the route to the device, so the official
+    MobileGPT client does not need a hand-edited ``HOST_IP`` for every run.
+    An explicit non-wildcard host always wins.
+    """
+
+    explicit = str(host or "").strip()
+    if explicit and explicit not in {"0.0.0.0", "::", "[::]", "127.0.0.1"}:
+        return explicit
+    if str(serial or "").startswith("emulator-"):
+        return "10.0.2.2"
+    try:
+        route = subprocess.run(
+            [str(adb_path or "adb"), "-s", str(serial), "shell", "ip", "route"],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        ).stdout
+        device_ips = re.findall(r"\bsrc\s+(\d{1,3}(?:\.\d{1,3}){3})\b", route)
+        for device_ip in device_ips:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                probe.connect((device_ip, 1))
+                local_ip = str(probe.getsockname()[0] or "").strip()
+            if local_ip and local_ip != "127.0.0.1":
+                return local_ip
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return "10.0.2.2"
 
 
 def _link_or_fail(source: Path, target: Path) -> None:

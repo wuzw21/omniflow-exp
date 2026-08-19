@@ -84,6 +84,24 @@ export OMNITRANSFER_ROOT="$HOME/Projects/Omni/OmniTransfer"
 The launcher uses the single runtime at `OmniFlow-exp/.venv/bin/python` by
 default. Set `PYTHON_BIN` only for an explicitly provisioned equivalent test
 runtime; the formal experiment must use the repository-local environment.
+
+Before each device preflight, the launcher now expects a root-capable Android
+device and enables every installed service used by the experiment: the
+AndroidWorld accessibility forwarder, OmniFlow's accessibility service, and
+MobileGPT's official accessibility service. The operation preserves unrelated
+user-enabled services and is idempotent. Override only when using a deliberately
+restricted device:
+
+```bash
+OMNIFLOW_REQUIRE_ROOT_DEVICE=0 OMNIFLOW_CONFIGURE_DEVICE=0 \
+  bash scripts/exp/run_androidworld.sh --check-only
+```
+
+MobileGPT uses `10.0.2.2` automatically for emulators. On a rooted physical
+device the launcher derives the host-side LAN address from the device route;
+`MOBILEGPT_CLIENT_HOST` remains the explicit override when the host has more
+than one network interface.
+
 Install the B-MoCA baseline runtime with `uv sync --extra bmoca`; the launcher
 checks the installed DroidRun version against the protocol-pinned v0.5.6 before
 running a B-MoCA campaign or a direct `skilldroid_replay` result.

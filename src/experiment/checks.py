@@ -33,6 +33,15 @@ APPAGENT_REQUIRED_MODULES = (
 )
 REQUIRED_DISTRIBUTION_VERSIONS = {"android-env": "1.2.3"}
 
+# These are the only device-side services used by the three supported
+# execution paths.  They are enabled together when the device preflight runs;
+# a provider still owns its own protocol and action implementation.
+DEFAULT_ACCESSIBILITY_SERVICES = (
+    "com.google.androidenv.accessibilityforwarder/com.google.androidenv.accessibilityforwarder.AccessibilityForwarder",
+    "cn.com.omnimind.bot.debug/cn.com.omnimind.accessibility.service.AssistsService",
+    "com.example.MobileGPT/com.example.MobileGPT.MobileGPTAccessibilityService",
+)
+
 
 @dataclass
 class Check:
@@ -119,6 +128,151 @@ def _stale_processes(serial: str) -> list[str]:
 def _wake_and_unlock(adb: str, serial: str) -> None:
     _run([adb, "-s", serial, "shell", "input", "keyevent", "WAKEUP"], timeout=10)
     _run([adb, "-s", serial, "shell", "wm", "dismiss-keyguard"], timeout=10)
+
+
+def _root_access(adb: str, serial: str) -> tuple[bool, str]:
+    """Return whether the selected device can execute a root shell command."""
+
+    direct = _run([adb, "-s", serial, "shell", "id"], timeout=10).stdout.strip()
+    if re.search(r"\buid=0(?:\(|\s|$)", direct):
+        return True, f"direct root: {direct}"
+    via_su = _run(
+        [adb, "-s", serial, "shell", "su", "-c", "id"],
+        timeout=10,
+    ).stdout.strip()
+    if re.search(r"\buid=0(?:\(|\s|$)", via_su):
+        return True, f"su root: {via_su}"
+    return False, via_su or direct or "root shell unavailable"
+
+
+def _installed_accessibility_services(adb: str, serial: str) -> tuple[str, ...]:
+    """Keep only known services whose APK/service is present on this device."""
+
+    installed: list[str] = []
+    package_dumps: dict[str, str] = {}
+    for component in DEFAULT_ACCESSIBILITY_SERVICES:
+        package, service = component.split("/", 1)
+        service_name = service.rsplit(".", 1)[-1]
+        package_dump = package_dumps.setdefault(
+            package,
+            _run(
+                [adb, "-s", serial, "shell", "dumpsys", "package", package],
+                timeout=10,
+            ).stdout,
+        )
+        if service in package_dump or service_name in package_dump:
+            installed.append(component)
+    return tuple(installed)
+
+
+def configure_default_device_services(adb: str, serial: str) -> dict[str, object]:
+    """Enable every installed accessibility service used by this repository.
+
+    The operation is idempotent and preserves unrelated user-enabled
+    services.  It intentionally does not install APKs or modify provider
+    source code; missing services are reported for the caller to diagnose.
+    """
+
+    current = _run(
+        [
+            adb,
+            "-s",
+            serial,
+            "shell",
+            "settings",
+            "get",
+            "secure",
+            "enabled_accessibility_services",
+        ],
+        timeout=10,
+    ).stdout.strip()
+    enabled = [
+        value
+        for value in current.split(":")
+        if value and value != "null"
+    ]
+    installed = _installed_accessibility_services(adb, serial)
+    for index, value in enumerate(enabled):
+        package = value.split("/", 1)[0]
+        service_name = value.rsplit(".", 1)[-1]
+        for component in DEFAULT_ACCESSIBILITY_SERVICES:
+            known_package, known_service = component.split("/", 1)
+            if (
+                package == known_package
+                and service_name == known_service.rsplit(".", 1)[-1]
+            ):
+                enabled[index] = component
+                break
+    for component in installed:
+        if component not in enabled:
+            enabled.append(component)
+    enabled = list(dict.fromkeys(enabled))
+    value = ":".join(enabled)
+    result = _run(
+        [
+            adb,
+            "-s",
+            serial,
+            "shell",
+            "settings",
+            "put",
+            "secure",
+            "enabled_accessibility_services",
+            value,
+        ],
+        timeout=10,
+    )
+    enabled_flag = _run(
+        [
+            adb,
+            "-s",
+            serial,
+            "shell",
+            "settings",
+            "put",
+            "secure",
+            "accessibility_enabled",
+            "1",
+        ],
+        timeout=10,
+    )
+    accessibility_dump = _run(
+        [adb, "-s", serial, "shell", "dumpsys", "accessibility"],
+        timeout=10,
+    ).stdout
+    bound_section = (
+        accessibility_dump.split("Bound services:", 1)[1].split(
+            "Enabled services:",
+            1,
+        )[0]
+        if "Bound services:" in accessibility_dump
+        else ""
+    )
+    crashed_section = (
+        accessibility_dump.split("Crashed services:", 1)[1].split(
+            "Client list info:",
+            1,
+        )[0]
+        if "Crashed services:" in accessibility_dump
+        else ""
+    )
+    service_health = {
+        component: (
+            component.rsplit(".", 1)[-1] in bound_section
+            and component.rsplit(".", 1)[-1] not in crashed_section
+        )
+        for component in installed
+    }
+    return {
+        "installed": list(installed),
+        "enabled": enabled,
+        "service_health": service_health,
+        "settings_write_ok": (
+            result.returncode == 0
+            and enabled_flag.returncode == 0
+            and all(service_health.values())
+        ),
+    }
 
 
 def _resolve_tool(name: str, subdir: str) -> str:
@@ -494,6 +648,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--server-port", type=int, default=12345)
     parser.add_argument("--require-kvm", action="store_true")
     parser.add_argument("--require-device", action="store_true")
+    parser.add_argument(
+        "--require-root",
+        action="store_true",
+        help="Require a root-capable device (direct root or su root).",
+    )
+    parser.add_argument(
+        "--configure-device",
+        action="store_true",
+        help="Enable every installed repository accessibility service.",
+    )
     parser.add_argument("--require-contacts-ready", action="store_true")
     parser.add_argument("--json-out")
     return parser
@@ -817,6 +981,34 @@ def main(argv: list[str] | None = None) -> int:
         ready = any(line.split()[:2] == [args.serial, "device"] for line in devices.splitlines())
         add("device", ready, args.serial)
         if ready:
+            if args.require_root or args.configure_device:
+                root_ready, root_detail = _root_access(adb, args.serial)
+                if args.require_root:
+                    add("root_access", root_ready, root_detail)
+                elif not root_ready:
+                    add(
+                        "root_access",
+                        True,
+                        f"not required; configure skipped: {root_detail}",
+                        warning=True,
+                    )
+                if args.configure_device:
+                    if not root_ready and args.require_root:
+                        add(
+                            "device_services",
+                            False,
+                            "root-capable device required before service configuration",
+                        )
+                    else:
+                        configured = configure_default_device_services(
+                            adb,
+                            args.serial,
+                        )
+                        add(
+                            "device_services",
+                            bool(configured["settings_write_ok"]),
+                            json.dumps(configured, sort_keys=True),
+                        )
             boot = _run([adb, "-s", args.serial, "shell", "getprop", "sys.boot_completed"], timeout=5).stdout.strip()
             add("boot_completed", boot == "1", boot or "empty")
             _wake_and_unlock(adb, args.serial)
