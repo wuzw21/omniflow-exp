@@ -32,7 +32,7 @@ from src.experiment.batch_outcomes import (
     summarize_results,
 )
 from src.experiment.paths import resolve_path, safe_component, sha256_file
-from src.experiment.run_process import run_process
+from src.experiment.run_process import run_process, start_process
 from src.experiment.protocol import (
     BMOCA_RESULT_TIMEOUT_SEC,
     APPAGENT_MODEL,
@@ -209,8 +209,7 @@ def ensure_source_device(
         time.sleep(2)
     log_path = attempt_root / "preflight" / "source_emulator.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_file = log_path.open("x", encoding="utf-8")
-    emulator_process = subprocess.Popen(
+    emulator_process = start_process(
         [
             str(args.emulator_bin),
             "-avd",
@@ -229,12 +228,11 @@ def ensure_source_device(
             args.emulator_gpu,
         ],
         cwd=args.repo,
-        stdin=subprocess.DEVNULL,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
+        environment=dict(os.environ),
+        log_path=log_path,
+        log_mode="x",
+        stdin_devnull=True,
     )
-    log_file.close()
     boot_timeout = deadline.remaining(TASK_DEADLINE_SEC)
     boot_deadline = time.monotonic() + boot_timeout
     while time.monotonic() < boot_deadline:

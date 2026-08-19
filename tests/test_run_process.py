@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
-from src.experiment.run_process import run_process
+from src.experiment.run_process import run_process, start_process, stop_process
 
 
 def test_run_process_preserves_logged_command_result(tmp_path: Path) -> None:
@@ -50,3 +51,21 @@ def test_run_process_allows_unbounded_command_when_timeout_is_none(
 
     assert result["returncode"] == 7
     assert result["timed_out"] is False
+
+
+def test_background_process_uses_shared_group_lifecycle(tmp_path: Path) -> None:
+    log_path = tmp_path / "background.log"
+    process = start_process(
+        ["/bin/sh", "-c", "printf 'background-output\\n'; sleep 30"],
+        cwd=tmp_path,
+        environment={},
+        log_path=log_path,
+        log_mode="x",
+    )
+    try:
+        assert process.poll() is None
+        time.sleep(0.1)
+    finally:
+        stop_process(process, timeout_sec=1)
+    assert process.poll() is not None
+    assert "background-output" in log_path.read_text(encoding="utf-8")

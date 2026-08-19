@@ -18,6 +18,62 @@ import time
 from typing import Any, Sequence
 
 
+def start_process(
+    command: Sequence[str],
+    *,
+    cwd: Path,
+    environment: dict[str, str],
+    log_path: Path | None = None,
+    log_mode: str = "a",
+    stdin_devnull: bool = False,
+) -> subprocess.Popen[Any]:
+    """Start one background experiment process under the shared policy."""
+
+    command_list = list(command)
+    resolved_log_path = Path(log_path).expanduser().resolve() if log_path else None
+    log_file = None
+    try:
+        if resolved_log_path is not None:
+            resolved_log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_file = resolved_log_path.open(log_mode, encoding="utf-8")
+        return subprocess.Popen(
+            command_list,
+            cwd=cwd,
+            env=environment,
+            stdin=subprocess.DEVNULL if stdin_devnull else None,
+            stdout=log_file,
+            stderr=subprocess.STDOUT if log_file is not None else None,
+            text=True,
+            start_new_session=True,
+        )
+    finally:
+        if log_file is not None:
+            log_file.close()
+
+
+def stop_process(
+    process: subprocess.Popen[Any] | None,
+    *,
+    timeout_sec: float = 10.0,
+) -> None:
+    """Stop one background process group and escalate after a bounded wait."""
+
+    if process is None or process.poll() is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=max(0.1, float(timeout_sec)))
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+
+
 def run_process(
     command: Sequence[str],
     *,
@@ -102,15 +158,4 @@ def run_process(
 
 
 def _terminate_process_group(process: subprocess.Popen[Any]) -> None:
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    try:
-        process.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.wait()
+    stop_process(process)

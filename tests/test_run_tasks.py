@@ -893,7 +893,7 @@ def test_source_device_is_cold_restarted_when_already_ready(
         ),
     )
     monkeypatch.setattr(
-        "src.experiment.run_tasks.subprocess.Popen",
+        "src.experiment.run_process.subprocess.Popen",
         lambda *_args, **_kwargs: object(),
     )
     monkeypatch.setattr(
@@ -941,7 +941,7 @@ def test_source_device_reports_emulator_process_exit_immediately(
         lambda _args: False,
     )
     monkeypatch.setattr(
-        "src.experiment.run_tasks.subprocess.Popen",
+        "src.experiment.run_process.subprocess.Popen",
         lambda *_args, **_kwargs: FailedProcess(),
     )
     monkeypatch.setattr(

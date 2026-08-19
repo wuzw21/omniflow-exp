@@ -44,7 +44,7 @@ from src.experiment.paths import (
     safe_relative_path,
     sha256_file,
 )
-from src.experiment.run_process import run_process
+from src.experiment.run_process import run_process, start_process, stop_process
 from src.experiment.protocol import (
     ANDROIDWORLD_REVISION,
     DEFAULT_DEVICE,
@@ -2052,8 +2052,7 @@ def _start_mobilegpt_browser_task_server(
     }
     if dry_run:
         return prepare, None
-    log_handle = log_path.open("a", encoding="utf-8")
-    process = subprocess.Popen(
+    process = start_process(
         [
             sys.executable,
             "-m",
@@ -2065,12 +2064,9 @@ def _start_mobilegpt_browser_task_server(
             str(serve_dir),
         ],
         cwd=REPO_ROOT,
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
-        text=True,
+        environment=_subprocess_env({}),
+        log_path=log_path,
     )
-    # The child keeps its own fd; closing the parent handle avoids leaks.
-    log_handle.close()
     time.sleep(0.5)
     if process.poll() is not None:
         raise RuntimeError(
@@ -3656,10 +3652,10 @@ def _start_background_command(
     print(f"[{spec.label}:background] {_command_line(spec)}", flush=True)
     if dry_run:
         return None, 0
-    process = subprocess.Popen(
+    process = start_process(
         spec.argv,
         cwd=spec.cwd,
-        env=_subprocess_env(spec.env),
+        environment=_subprocess_env(spec.env),
     )
     if warmup_sec > 0:
         time.sleep(float(warmup_sec))
@@ -3672,12 +3668,7 @@ def _start_background_command(
 def _stop_background_command(process: subprocess.Popen[Any] | None) -> None:
     if process is None or process.poll() is not None:
         return
-    process.terminate()
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=5)
+    stop_process(process, timeout_sec=5)
 
 
 def _normalize_result_row(row: dict[str, Any]) -> dict[str, Any]:
