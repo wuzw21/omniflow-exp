@@ -20,7 +20,7 @@ import numpy as np
 from omniflow.core.model import Observation
 
 _LATEST_PAGE_CHECKPOINT_SHA256 = (
-    "9913bb389745ee6b70fe80197f0f3a270740be414344313229da9aa4b2c23875"
+    "0494224f76c410f17d47b4aaaeacf99e2060c1174da628884c287a6922882ada"
 )
 
 
@@ -70,8 +70,8 @@ def _latest_page_checkpoint(root: Path) -> Path:
         / "src"
         / "omnitransfer"
         / "checkpoints"
-        / "omnitransfer_spatial_xml_alignment_v9_20260805"
-        / "v9_spatial_xml_alignment_seed29.pt"
+        / "omnitransfer_unified_association_v1_20260819"
+        / "relation_slots_l3_h64_seed17.npz"
     )
 
 
@@ -127,7 +127,8 @@ class OmniTransferPageEncoder:
         self.checkpoint_path = selected_checkpoint
         self.checkpoint_sha256 = checkpoint_sha256
         self.encoder_version = (
-            f"{self._embedder.architecture}:{self._embedder.text_encoder}"
+            f"{self._embedder.architecture}:{self._embedder.text_encoder}:"
+            f"{self._embedder.backend}"
         )
 
     @property
@@ -153,17 +154,15 @@ class OmniTransferPageEncoder:
         if isinstance(screenshot_path, str) and screenshot_path.strip():
             pixels["path"] = screenshot_path
         graph_id = hashlib.sha256(xml.encode("utf-8")).hexdigest()[:20]
-        vector = np.asarray(
-            self._embedder.encode(xml, graph_id=graph_id, pixels=pixels),
-            dtype=np.float32,
-        )
+        embedded = self._embedder.embed(xml, graph_id=graph_id, pixels=pixels)
+        vector = np.asarray(embedded.vector, dtype=np.float32)
         if vector.ndim != 1 or vector.shape[0] != self._embedder.embedding_dim:
             raise ValueError("omnitransfer_page_embedding_shape_invalid")
         if not np.all(np.isfinite(vector)) or np.linalg.norm(vector) <= 0.0:
             raise ValueError("omnitransfer_page_embedding_unusable")
         return PageEmbedding(
             vector=vector,
-            element_count=xml.count("<node"),
+            element_count=int(embedded.node_count),
             encoder_version=self.encoder_version,
             checkpoint_path=str(self.checkpoint_path),
             checkpoint_sha256=self.checkpoint_sha256,
