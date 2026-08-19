@@ -132,6 +132,111 @@ The shell never auto-builds a missing Function Store. Save the Functions first,
 refresh the local data index, then run the experiment. Transfer-state evidence
 is read-only and never seeds or rewrites the Store at runtime.
 
+### Public bridge API
+
+The bridge is a JSON-RPC-lines process. Start it with one Store:
+
+```bash
+.venv/bin/python -m omniflow.bridge \
+  --store /absolute/path/function_store.json
+```
+
+The wire schema is [`schemas/oob/omniflow_android_bridge.v2.json`](schemas/oob/omniflow_android_bridge.v2.json).
+The public `tools/call` names and their important inputs are:
+
+| Tool | Inputs | Purpose |
+| --- | --- | --- |
+| `run_gui` | `goal`, `model`; optional `max_steps`, `defer_user_input` | Run the shared Planner/Function runtime through the host callbacks |
+| `list_functions` | optional `limit`, `offset`, `include_hidden` | List registered Functions |
+| `get_function` | `function_id` | Read one Function |
+| `save_function` | `run_id` or `run_log`; `functions` or `enhance=true`; optional `arguments`, `instruction` | Compile, validate, and atomically save one RunLog-grounded Function |
+| `delete_function` | `function_id` | Delete one registered Function |
+| `clear_functions` | `confirm=true` | Delete all registered Functions explicitly |
+| `list_run_logs` | optional `limit`, `offset`, `source`, `status`, `model`, `query` | Search host-owned RunLogs |
+| `get_run_log` | `run_id` | Read one RunLog |
+| `get_run_log_state` | `state_id` | Read one immutable XML/screenshot state |
+
+The host integration must implement only the callbacks declared by the same
+schema: `observe`, `act`, `model_turn`, `installed_apps`, `record_step`,
+`request_input`, `list_run_logs`, `get_run_log`, and `get_state`. These are host
+callbacks, not a second experiment runner. Function actions always use the
+shared OmniTransfer mapping and fall back to the normal Planner on transfer
+failure; source-device coordinates are never replayed directly.
+
+### Configuration
+
+There are two configuration layers:
+
+1. Edit [`config/paper_androidworld.json`](config/paper_androidworld.json) for
+   protocol values: formal methods, devices, seeds, step/time budgets,
+   checker threshold, model endpoint profile, AVD profiles, and pinned
+   revisions. Do not duplicate these values in shell scripts or Python.
+2. Set paths and secrets in the environment. The minimum setup is:
+
+```bash
+export OMNIFLOW_EXP_ASSET_ROOT=/absolute/OmniFlow-exp/data
+export OMNIFLOW_EXP_RESULTS_ROOT=/absolute/OmniFlow-exp/data
+export OMNIFLOW_EXP_MEMORY_ROOT=/absolute/OmniFlow-exp/data
+export OMNIFLOW_ENV_FILE=/absolute/model.env
+export OMNITRANSFER_ROOT=$HOME/Projects/Omni/OmniTransfer
+```
+
+`model.env` contains `LLMTHU_API_KEY`; credentials are not committed. Use the
+repository `.venv/bin/python` for formal runs. External AndroidWorld,
+MobileGPT, AppAgent, B-MoCA, Android SDK, Java, and ADB locations are supplied
+through the optional `OMNIFLOW_*_ROOT`, `OMNIFLOW_ANDROID_SDK_ROOT`,
+`OMNIFLOW_JAVA_HOME`, and `OMNIFLOW_ADB_PATH` variables documented by
+`bash scripts/exp/run_androidworld.sh --help`. The launcher is the only place
+that turns these variables into scheduler arguments.
+
+### Test and validation capabilities
+
+Use the smallest check that answers the question:
+
+```bash
+# Full offline regression; no emulator or model is required by the tests.
+.venv/bin/python -m pytest -q
+
+# Provider-specific contract and shell integration checks.
+bash scripts/exp/test_provider.sh mobilegpt
+bash scripts/exp/test_provider.sh appagent
+bash scripts/exp/test_provider.sh all
+
+# Static experiment gate; validates the selected run without starting an emulator.
+bash scripts/exp/run_androidworld.sh --check-only --all-tasks
+
+# Build one command without executing it.
+bash scripts/exp/run_androidworld.sh --dry-run --tasks TASK
+
+# Validate and rebuild the single local data index.
+bash scripts/exp/run_androidworld.sh --refresh-memory
+```
+
+Experiment execution capabilities are all routed through the same launcher:
+
+- AndroidWorld formal methods: `fixed_replay`, `omniflow`, `mobilegpt`,
+  `appagent`, and `t3a_hint`.
+- Source qualification: `--collect-source` or
+  `--source-qualification-only`.
+- Bounded development: `--development-run`.
+- B-MoCA: `ours_replay`, `mobilegpt_replay`, and `skilldroid_replay`.
+- Performance side channel: `--collect-performance`, which writes a sidecar
+  without changing the public result row.
+
+For old Function JSON, run a dry migration before writing anything; the
+converter classifies Stores, bundles, and catalogs and reports missing evidence
+as `blocked`:
+
+```bash
+.venv/bin/python -m omniflow.functions.migrate_store \
+  --input-root /absolute/old-data \
+  --output /absolute/new-data \
+  --dry-run --report /absolute/migration-report.json
+```
+
+See [`omniflow/functions/README.md`](omniflow/functions/README.md) for the
+single-file migration form and the rules for rebuilding `data/current.json`.
+
 ## Checker model
 
 Checker rules are local registrations on one Function, not a global rule pool.
