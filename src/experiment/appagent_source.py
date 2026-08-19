@@ -19,11 +19,11 @@ from typing import Any
 from PIL import Image
 
 from omniflow.core.trajectory import require_complete_source_run_log
-from src.experiment import androidworld as pipeline
 from src.experiment.mobilegpt_source import (
     load_canonical_source_item,
 )
-from src.experiment.protocol import SOURCE_SEED
+from src.experiment.paths import sha256_file
+from src.experiment.protocol import DEFAULT_METHOD, SOURCE_SEED
 from src.experiment.source_evidence import (
     build_grounded_teacher_run_log_from_canonical_item,
 )
@@ -51,7 +51,7 @@ def _appagent_observation_xml(observation: dict[str, Any]) -> str:
 
 
 def _appagent_source_method_label(item: CanonicalRunLog) -> str:
-    return str(item.meta.get("method") or "").strip() or pipeline.DEFAULT_SOURCE_METHOD
+    return str(item.meta.get("method") or "").strip() or DEFAULT_METHOD
 
 
 def _chat_completions_url(base_url: str) -> str:
@@ -275,7 +275,7 @@ def _source_lineage(item: CanonicalRunLog) -> tuple[str, set[str]]:
     run_id = str(payload.get("run_id") or "").strip()
     source_sha256s = _runlog_lineage(
         payload,
-        pipeline._file_sha256(item.source_run_log),
+        sha256_file(item.source_run_log),
     )
     if not run_id:
         raise ValueError("appagent_native_memory_lineage_missing")
@@ -328,7 +328,7 @@ def _native_memory_evidence(
                     manifest_lineage.update(
                         _runlog_lineage(
                             manifest_payload,
-                            pipeline._file_sha256(evidence_runlog),
+                            sha256_file(evidence_runlog),
                         )
                     )
                 except (OSError, json.JSONDecodeError):
@@ -484,7 +484,7 @@ def _write_appagent_state(
         source_run_log=source_run_log,
     )
     expected_sha256 = str(pixels.get("sha256") or "").strip()
-    if not expected_sha256 or pipeline._file_sha256(screenshot) != expected_sha256:
+    if not expected_sha256 or sha256_file(screenshot) != expected_sha256:
         raise ValueError(
             f"appagent_source_screenshot_hash_mismatch:{source_step_index}:{phase}"
         )
@@ -526,7 +526,7 @@ def _require_appagent_observation_evidence(
         source_run_log=source_run_log,
     )
     expected_sha256 = str(pixels.get("sha256") or "").strip()
-    if not expected_sha256 or pipeline._file_sha256(screenshot) != expected_sha256:
+    if not expected_sha256 or sha256_file(screenshot) != expected_sha256:
         raise ValueError(
             f"appagent_source_screenshot_hash_mismatch:{source_step_index}:{phase}"
         )

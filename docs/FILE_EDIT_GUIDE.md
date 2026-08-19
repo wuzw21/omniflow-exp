@@ -113,7 +113,7 @@ rg --files -g '*.py' | sort
 | `src/experiment/protocol.py` | `config/paper_androidworld.json` 的 typed view；不复制常量 |
 | `src/experiment/e2e_task_pipeline.py` | 唯一 task + method + device scheduler；旁路应作为这里的请求模式进入共同 launcher |
 | `src/experiment/androidworld.py` | 一个 AndroidWorld `task + method + device` 结果；不是第二 scheduler |
-| `src/experiment/paths.py` | 唯一路径解析和 artifact component owner；调用方不要重新实现 `Path(...).resolve()` 或 `_safe_component` |
+| `src/experiment/paths.py` | 唯一路径解析、artifact component 和文件 SHA-256 owner；调用方不要重新实现 `Path(...).resolve()`、`_safe_component` 或文件哈希 |
 | `src/experiment/process_runner.py` | 所有 experiment command 的子进程组、timeout、终止和 immutable log seam；不要复制 `Popen` 生命周期 |
 | `src/experiment/development_emulator.py` | 有界开发 emulator preflight |
 | `src/experiment/emulator_processes.py` | managed emulator 进程识别；诊断命令不写结果 |

@@ -17,6 +17,7 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_SOURCE_METHOD,
 )
 from src.experiment import androidworld as pipeline
+from src.experiment.paths import sha256_file
 from src.experiment.source_records import CanonicalRunLog
 from src.experiment.protocol import SOURCE_SEED
 from src.integrations.mobilegpt import (
@@ -71,7 +72,7 @@ def load_canonical_source_item(
         or item.meta.get("source_run_log_sha256")
         or ""
     ).strip()
-    actual_sha256 = pipeline._file_sha256(item.source_run_log)
+    actual_sha256 = sha256_file(item.source_run_log)
     if not expected_sha256 or expected_sha256 != actual_sha256:
         raise ValueError(
             f"mobilegpt_source_runlog_hash_mismatch:task={task_name}"
@@ -136,7 +137,7 @@ def _source_preflight(
     item: CanonicalRunLog,
 ) -> tuple[Path, tuple[str, ...], dict[str, Any], dict[str, str]]:
     source_run_log = item.source_run_log
-    source_sha256 = pipeline._file_sha256(source_run_log)
+    source_sha256 = sha256_file(source_run_log)
     source = import_run_log(
         json.loads(source_run_log.read_text(encoding="utf-8"))
     )
@@ -355,7 +356,7 @@ def convert_runlog_to_mobilegpt_bundle(
         "schema_version": "omniflow.mobilegpt.source-check.v2",
         "grounding_source": "canonical_androidworld_run_log",
         "source_run_log": str(source_path),
-        "source_run_log_sha256": pipeline._file_sha256(source_path),
+        "source_run_log_sha256": sha256_file(source_path),
         "actions_supplied_to_mobilegpt": True,
         "function_store_used": False,
         "report": report,

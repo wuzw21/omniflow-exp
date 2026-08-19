@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -16,6 +15,7 @@ from omniflow.core.trajectory import (
     state_id as observation_state_id,
 )
 from omniflow.transfer.runtime import load_transfer_state_catalog
+from src.experiment.paths import sha256_file
 from src.integrations.runlog import (
     convert_legacy_run_log,
     import_run_log,
@@ -203,10 +203,6 @@ def _manifest_source_sha256(value: Any) -> str:
     return (nested or str(value.get("source_run_log_sha256") or "").strip()).lower()
 
 
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def _require_frozen_file(
     value: str | Path,
     *,
@@ -216,7 +212,7 @@ def _require_frozen_file(
     path = Path(value).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(f"{label}_missing:{path}")
-    actual = _sha256(path)
+    actual = sha256_file(path)
     if not expected_sha256 or actual != str(expected_sha256):
         raise ValueError(
             f"{label}_hash_mismatch:"
@@ -630,7 +626,7 @@ def _target_audit_from_legacy_provenance(
             "verified_source_target_count": 0,
         }
     expected_sha256 = str(provenance.get("source_sha256") or "").strip()
-    actual_sha256 = _sha256(source_path)
+    actual_sha256 = sha256_file(source_path)
     if not expected_sha256 or actual_sha256 != expected_sha256:
         raise ValueError(
             "source_legacy_provenance_hash_mismatch:"
@@ -926,9 +922,9 @@ def build_grounded_teacher_run_log(
 
     return grounded, _source_evidence_report(
         source_path=source_path,
-        source_sha256=_sha256(source_path),
+        source_sha256=sha256_file(source_path),
         catalog_path=catalog_path,
-        catalog_sha256=_sha256(catalog_path),
+        catalog_sha256=sha256_file(catalog_path),
         catalog_source="frozen_catalog",
         state_count=len(states),
         semantic_action_count=semantic_action_count,
@@ -975,7 +971,7 @@ def _source_evidence_report(
     if provenance_path is not None:
         report["provenance"] = {
             "manifest": str(provenance_path),
-            "sha256": _sha256(provenance_path),
+            "sha256": sha256_file(provenance_path),
         }
     return report
 
@@ -1037,9 +1033,9 @@ def _build_grounded_teacher_run_log_from_embedded_source(
     )
     return grounded, _source_evidence_report(
         source_path=source_path,
-        source_sha256=_sha256(source_path),
+        source_sha256=sha256_file(source_path),
         catalog_path=source_path,
-        catalog_sha256=_sha256(source_path),
+        catalog_sha256=sha256_file(source_path),
         catalog_source="embedded_source_run_log",
         state_count=len(states),
         semantic_action_count=semantic_action_count,
@@ -1074,9 +1070,9 @@ def _build_grounded_teacher_run_log_from_canonical_source(
     )
     return grounded, _source_evidence_report(
         source_path=source_path,
-        source_sha256=_sha256(source_path),
+        source_sha256=sha256_file(source_path),
         catalog_path=source_path,
-        catalog_sha256=_sha256(source_path),
+        catalog_sha256=sha256_file(source_path),
         catalog_source="embedded_source_run_log",
         state_count=len(states),
         semantic_action_count=semantic_action_count,

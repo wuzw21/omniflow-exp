@@ -42,6 +42,7 @@ from src.experiment.paths import (
     resolve_path,
     safe_component,
     safe_relative_path,
+    sha256_file,
 )
 from src.experiment.process_runner import run_process
 from src.experiment.protocol import (
@@ -384,7 +385,7 @@ def _claim_result_attempt(
     runner_path = Path(__file__).resolve()
     provenance: dict[str, Any] = {
         "runner": str(runner_path),
-        "runner_sha256": _file_sha256(runner_path),
+        "runner_sha256": sha256_file(runner_path),
     }
     manifest = {
         "schema_version": "omniflow.androidworld_attempt.v1",
@@ -1102,9 +1103,9 @@ def build_fixed_replay_command(
         timeout_sec=float(timeout_sec) if timeout_sec and timeout_sec > 0 else None,
         metadata={
             "source_run_log": str(item.source_run_log),
-            "source_run_log_sha256": _file_sha256(item.source_run_log),
+            "source_run_log_sha256": sha256_file(item.source_run_log),
             "replay_run_log": str(replay_run_log),
-            "replay_run_log_sha256": _file_sha256(replay_run_log),
+            "replay_run_log_sha256": sha256_file(replay_run_log),
             "memory_root": str(_repo_path(replay_memory_root, repo_root=repo_root))
             if replay_memory_root
             else "",
@@ -1782,18 +1783,18 @@ def seal_mobilegpt_source_memory(
         },
         "source_run_log": {
             "relative_path": copied_source.relative_to(bundle_root).as_posix(),
-            "sha256": _file_sha256(copied_source),
+            "sha256": sha256_file(copied_source),
             "recorded_seed": recorded_source_seed,
         },
         "trajectory_audit": {
             "relative_path": copied_audit.relative_to(bundle_root).as_posix(),
-            "sha256": _file_sha256(copied_audit),
+            "sha256": sha256_file(copied_audit),
             "transition_count": transition_count,
             "validated_transition_count": validated_count,
         },
         "source_stats": {
             "relative_path": copied_stats.relative_to(bundle_root).as_posix(),
-            "sha256": _file_sha256(copied_stats),
+            "sha256": sha256_file(copied_stats),
             "task_started_count": int(stats_summary.get("task_started_count") or 0),
             "task_finished_count": int(stats_summary.get("task_finished_count") or 0),
             "model_calls": _coerce_int(stats_summary.get("model_calls")),
@@ -3366,17 +3367,6 @@ def _source_action_hint_path_for_item(
     return hint_path.resolve()
 
 
-def _file_sha256(path: str | Path) -> str:
-    resolved = _repo_path(path)
-    if not resolved.is_file():
-        raise FileNotFoundError(f"provenance_artifact_missing:{resolved}")
-    digest = hashlib.sha256()
-    with resolved.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _claim_method_memory_root(memory_root: str | Path) -> Path:
     root = _repo_path(memory_root)
     try:
@@ -3441,7 +3431,7 @@ def _write_method_memory_manifest(
         source.update(
             {
                 "run_log": str(resolved_source),
-                "run_log_sha256": _file_sha256(resolved_source),
+                "run_log_sha256": sha256_file(resolved_source),
             }
         )
     leakage_audit = _memory_leakage_audit(
@@ -5068,7 +5058,7 @@ def cmd_result(args: argparse.Namespace) -> int:
         raise ValueError("result requires exactly one device")
     mobilegpt_source_run_log = item.source_run_log
     mobilegpt_source_run_log_sha256s = (
-        _file_sha256(mobilegpt_source_run_log),
+        sha256_file(mobilegpt_source_run_log),
     )
     attempt_root, _ = _task_managed_output_root(args.output_path)
     source_seed = int(args.source_seed)
@@ -5144,14 +5134,14 @@ def cmd_result(args: argparse.Namespace) -> int:
                 source_run_log=item.source_run_log,
                 artifacts={
                     "store_path": str(store_path),
-                    "store_sha256": _file_sha256(store_path)
+                    "store_sha256": sha256_file(store_path)
                     if store_path.is_file()
                     else None,
                     "recorded_source_seed": item.replay_seed,
                     "function_authoring": "external_agent_skill",
                     "transfer_asset_audit": transfer_asset_audit,
                     "transfer_state_catalog_sha256": (
-                        _file_sha256(transfer_asset_audit["transfer_state_catalog"])
+                        sha256_file(transfer_asset_audit["transfer_state_catalog"])
                         if transfer_asset_audit.get("transfer_state_catalog")
                         else None
                     ),
@@ -5206,7 +5196,7 @@ def cmd_result(args: argparse.Namespace) -> int:
                     provenance.get("official_source_success")
                 ),
                 "manifest_path": str(source_memory_manifest),
-                "manifest_sha256": _file_sha256(source_memory_manifest),
+                "manifest_sha256": sha256_file(source_memory_manifest),
                 "demo_sha256": str(provenance.get("demo_sha256") or ""),
                 "demo_docs_sha256": str(provenance.get("demo_docs_sha256") or ""),
                 "shared_across_targets": True,
@@ -5217,7 +5207,7 @@ def cmd_result(args: argparse.Namespace) -> int:
                 "source_memory_manifest": str(
                     source_memory_root / "appagent_manifest.json"
                 ),
-                "source_memory_manifest_sha256": _file_sha256(
+                "source_memory_manifest_sha256": sha256_file(
                     source_memory_root / "appagent_manifest.json"
                 ),
                 "demo_docs_root": str(appagent_docs_root),
@@ -5258,10 +5248,10 @@ def cmd_result(args: argparse.Namespace) -> int:
                 source_run_log=item.source_run_log,
                 artifacts={
                     "source_run_log": str(item.source_run_log),
-                    "source_run_log_sha256": _file_sha256(item.source_run_log),
+                    "source_run_log_sha256": sha256_file(item.source_run_log),
                     "recorded_source_seed": item.replay_seed,
                     "replay_run_log": str(replay_run_log),
-                    "replay_run_log_sha256": _file_sha256(replay_run_log),
+                    "replay_run_log_sha256": sha256_file(replay_run_log),
                     "source_materialization": replay_materialization,
                     "replay_memory_root": str(memory_root),
                 },
@@ -5289,10 +5279,10 @@ def cmd_result(args: argparse.Namespace) -> int:
                 source_run_log=item.source_run_log,
                 artifacts={
                     "source_run_log": str(item.source_run_log),
-                    "source_run_log_sha256": _file_sha256(item.source_run_log),
+                    "source_run_log_sha256": sha256_file(item.source_run_log),
                     "recorded_source_seed": item.replay_seed,
                     "source_action_hint_path": str(source_action_hint_path),
-                    "source_action_hint_sha256": _file_sha256(source_action_hint_path),
+                    "source_action_hint_sha256": sha256_file(source_action_hint_path),
                     "semantic_source": (
                         "omniflow_function_store"
                         if source_hint_store_path is not None
@@ -5300,7 +5290,7 @@ def cmd_result(args: argparse.Namespace) -> int:
                     ),
                     "source_store": str(source_hint_store_path or ""),
                     "source_store_sha256": (
-                        _file_sha256(source_hint_store_path)
+                        sha256_file(source_hint_store_path)
                         if source_hint_store_path is not None
                         else None
                     ),

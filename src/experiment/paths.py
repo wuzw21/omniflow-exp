@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import re
 from typing import Any
@@ -16,6 +17,19 @@ def resolve_path(value: str | Path, *, root: Path = REPO_ROOT) -> Path:
     if not path.is_absolute():
         path = root / path
     return path.resolve()
+
+
+def sha256_file(value: str | Path, *, root: Path = REPO_ROOT) -> str:
+    """Return the SHA-256 digest of one resolved file."""
+
+    path = resolve_path(value, root=root)
+    if not path.is_file():
+        raise FileNotFoundError(f"provenance_artifact_missing:{path}")
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def resolve_reference(
