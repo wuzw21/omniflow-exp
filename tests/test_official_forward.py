@@ -6,6 +6,7 @@ from src.integrations.official_forward import (
     prepare_appagent_workspace,
     prepare_mobilegpt_server,
     resolve_mobilegpt_client_host,
+    validate_autodroid_memory_root,
 )
 
 
@@ -131,3 +132,21 @@ def test_mobilegpt_explicit_host_wins_over_device_detection() -> None:
         serial="physical-device",
         adb_path="missing-adb",
     ) == "192.168.1.155"
+
+
+def test_autodroid_memory_manifest_is_validated_without_conversion(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "androidworld_apps"
+    root.mkdir()
+    (root / "memory_manifest.json").write_text(
+        '{"format":"autodroid-droidbot-memory-manifest-v1",'
+        '"apps":[{"name":"audio"}],"device":{}}\n',
+        encoding="utf-8",
+    )
+
+    result = validate_autodroid_memory_root(root)
+
+    assert result["app_count"] == 1
+    assert result["memory_root"] == str(root.resolve())
+    assert len(result["manifest_sha256"]) == 64
