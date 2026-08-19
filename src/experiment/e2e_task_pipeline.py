@@ -51,6 +51,7 @@ from src.experiment.protocol import (
     TASK_DEADLINE_SEC,
     TASK_SEED,
 )
+from src.experiment.mobilegpt_contract import MOBILEGPT_EMBEDDING_MODEL
 from src.experiment.source_records import CanonicalRunLog
 from src.integrations.mobilegpt import (
     convert_runlog_to_mobilegpt_memory,
@@ -996,7 +997,7 @@ def _result_environment(
     attempt_root: Path,
     method: str,
     device: tuple[str, str, int],
-    store_path: Path,
+    store_path: Path | None,
     mobilegpt_memory: Path | None,
     appagent_memory: Path | None,
 ) -> dict[str, str]:
@@ -1022,7 +1023,6 @@ def _result_environment(
             "OMNIFLOW_ANDROIDWORLD_TASK": args.task,
             "OMNIFLOW_ANDROIDWORLD_METHOD": method,
             "OMNIFLOW_ANDROIDWORLD_DEVICE": f"{label}:{serial}:{port}",
-            "OMNIFLOW_ANDROIDWORLD_STORE_PATH": str(store_path),
             "OMNIFLOW_ANDROIDWORLD_MAX_STEPS": str(args.max_steps),
             "OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS": str(
                 args.max_fallback_steps
@@ -1030,6 +1030,8 @@ def _result_environment(
             "OMNIFLOW_ANDROIDWORLD_OUTPUT_PATH": str(result_attempt_root),
         }
     )
+    if store_path is not None:
+        environment["OMNIFLOW_ANDROIDWORLD_STORE_PATH"] = str(store_path)
     if mobilegpt_memory is not None:
         environment["OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT"] = str(
             mobilegpt_memory
@@ -1046,7 +1048,7 @@ def run_target_workers(
     attempt_id: str,
     attempt_root: Path,
     outcomes_root: Path,
-    store_path: Path,
+    store_path: Path | None,
     mobilegpt_memory: Path | None,
     appagent_memory: Path | None,
     blocked_methods: dict[str, tuple[str, str, str]],
@@ -1516,26 +1518,20 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "function_asset",
             str(failure),
         )
-        _blocked_all(
-            args=args,
-            attempt_id=attempt_id,
-            attempt_root=attempt_root,
-            outcomes_root=outcomes_root,
-            status="prep_failed",
-            stage="function_asset",
-            evidence=failure,
-        )
-        return _report(
-            args=args,
-            attempt_id=attempt_id,
-            attempt_root=attempt_root,
-            outcomes_root=outcomes_root,
-            deadline=deadline,
-            phases=phases,
-        )
 
-    source_calls = phases["function"].get("source_calls")
-    if not isinstance(source_calls, list) or len(source_calls) != 1:
+    source_calls = (
+        phases.get("function", {}).get("source_calls")
+        if function_store is not None
+        else None
+    )
+    if function_store is None:
+        phases["source_qualification"] = {
+            "status": "skipped",
+            "model_calls": 0,
+            "total_tokens": 0,
+            "reason": "function_store_unavailable_non_function_methods_continue",
+        }
+    elif not isinstance(source_calls, list) or len(source_calls) != 1:
         failure = _write_json(
             attempt_root / "source_qualification" / "failure.json",
             {"error": "canonical_function_single_source_call_required"},
@@ -1547,11 +1543,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "error": "canonical_function_single_source_call_required",
         }
         blocked_methods["omniflow"] = (
-            "prep_failed",
-            "source_qualification",
-            str(failure),
-        )
-        blocked_methods["t3a_hint"] = (
             "prep_failed",
             "source_qualification",
             str(failure),
@@ -1576,11 +1567,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     "source_qualification",
                     str(failure),
                 )
-                blocked_methods["t3a_hint"] = (
-                    "prep_failed",
-                    "source_qualification",
-                    str(failure),
-                )
         except Exception as error:
             failure = _write_json(
                 attempt_root / "source_qualification" / "failure.json",
@@ -1593,11 +1579,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 "error": str(error),
             }
             blocked_methods["omniflow"] = (
-                "prep_failed",
-                "source_qualification",
-                str(failure),
-            )
-            blocked_methods["t3a_hint"] = (
                 "prep_failed",
                 "source_qualification",
                 str(failure),
@@ -1665,29 +1646,18 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             str(failure),
         )
 
+    store_path: Path | None = None
     if function_store is None:
         failure = _write_json(
             attempt_root / "assets" / "function_store_missing.json",
             {"error": "canonical_function_store_unavailable"},
         )
-        _blocked_all(
-            args=args,
-            attempt_id=attempt_id,
-            attempt_root=attempt_root,
-            outcomes_root=outcomes_root,
-            status="prep_failed",
-            stage="function_asset",
-            evidence=failure,
+        blocked_methods.setdefault(
+            "omniflow",
+            ("prep_failed", "function_asset", str(failure)),
         )
-        return _report(
-            args=args,
-            attempt_id=attempt_id,
-            attempt_root=attempt_root,
-            outcomes_root=outcomes_root,
-            deadline=deadline,
-            phases=phases,
-        )
-    store_path = Path(str(function_store["store_path"])).resolve()
+    else:
+        store_path = Path(str(function_store["store_path"])).resolve()
     try:
         workers = run_target_workers(
             args=args,
@@ -2093,7 +2063,7 @@ def _prepare_bmoca_mobilegpt_memory(
     audit_path = root / "conversion.audit.json"
     started = time.monotonic()
     embedding_model = str(
-        os.environ.get("MOBILEGPT_EMBEDDING_MODEL") or "text-embedding-v4"
+        os.environ.get("MOBILEGPT_EMBEDDING_MODEL") or MOBILEGPT_EMBEDDING_MODEL
     ).strip()
     embedding_api_key = str(
         os.environ.get("MOBILEGPT_EMBEDDING_API_KEY") or ""
@@ -2248,6 +2218,7 @@ def _bmoca_result_environment(
     if method == "mobilegpt_replay":
         environment["OMNIFLOW_MOBILEGPT_ROOT"] = str(args.mobilegpt_root)
         environment["MOBILEGPT_CHAT_MODEL"] = str(args.formal_model)
+        environment["MOBILEGPT_EMBEDDING_MODEL"] = MOBILEGPT_EMBEDDING_MODEL
     else:
         for key in (*_MODEL_ENVIRONMENT_KEYS, "OMNIFLOW_ENV_FILE"):
             environment.pop(key, None)

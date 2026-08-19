@@ -812,7 +812,7 @@ def test_result_environment_uses_orchestrator_budget_and_child_guard(
         attempt_root=tmp_path / "attempt",
         method="t3a_hint",
         device=DEVICES[0],
-        store_path=tmp_path / "store.json",
+        store_path=None,
         mobilegpt_memory=None,
         appagent_memory=None,
     )
@@ -822,6 +822,7 @@ def test_result_environment_uses_orchestrator_budget_and_child_guard(
     assert environment["OMNIFLOW_BATCH_ATTEMPT_ID"] == result_attempt_id
     assert environment["OMNIFLOW_ANDROIDWORLD_MAX_STEPS"] == "7"
     assert environment["OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS"] == "2"
+    assert "OMNIFLOW_ANDROIDWORLD_STORE_PATH" not in environment
 
 
 def test_formal_timeout_covers_frozen_steps_and_validator_flush() -> None:
@@ -1436,7 +1437,7 @@ def test_source_mode_success_returns_zero_exit_status(
     assert e2e_task_pipeline.main([]) == 0
 
 
-def test_pipeline_stops_when_canonical_function_store_is_missing(
+def test_pipeline_blocks_only_function_when_canonical_store_is_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1459,7 +1460,7 @@ def test_pipeline_stops_when_canonical_function_store_is_missing(
     def prepare_mobilegpt(**_kwargs: object) -> object:
         nonlocal mobilegpt_called
         mobilegpt_called = True
-        raise AssertionError("asset preflight must stop before baseline preparation")
+        return tmp_path / "mobilegpt", {"status": "reused"}
 
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.prepare_mobilegpt_memory",
@@ -1467,7 +1468,7 @@ def test_pipeline_stops_when_canonical_function_store_is_missing(
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.prepare_appagent_memory",
-        lambda **_: (_ for _ in ()).throw(RuntimeError("appagent failed")),
+        lambda **_: (tmp_path / "appagent", {"status": "reused"}),
     )
     monkeypatch.setattr(
         "src.experiment.e2e_task_pipeline.run_target_workers",
@@ -1485,7 +1486,9 @@ def test_pipeline_stops_when_canonical_function_store_is_missing(
     phases = run_pipeline(args)
 
     assert phases["function"]["status"] == "failed"
-    assert mobilegpt_called is False
+    assert mobilegpt_called is True
+    assert phases["mobilegpt_memory"]["status"] == "reused"
+    assert phases["appagent_memory"]["status"] == "reused"
 
 
 def test_pipeline_qualifies_one_source_function_before_target_workers(

@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
+    MOBILEGPT_EMBEDDING_MODEL,
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
@@ -1574,7 +1575,7 @@ def convert_runlog_to_mobilegpt_memory(
     stats_path: str | Path,
     audit_path: str | Path,
     model: str,
-    embedding_model: str = "text-embedding-v4",
+    embedding_model: str = MOBILEGPT_EMBEDDING_MODEL,
     target_package: str = "",
     target_app: str = "",
     embedding_provider: Callable[[str], Sequence[float]] | None = None,
@@ -1586,7 +1587,7 @@ def convert_runlog_to_mobilegpt_memory(
     if conversion_mode != CONVERSION_MODE_DIRECT:
         raise ValueError(f"mobilegpt_conversion_mode_invalid:{conversion_mode}")
     normalized_embedding_model = (
-        str(embedding_model or "").strip() or "text-embedding-v4"
+        str(embedding_model or "").strip() or MOBILEGPT_EMBEDDING_MODEL
     )
 
     trajectory = _load_runlog_trajectory(

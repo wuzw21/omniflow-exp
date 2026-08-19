@@ -7,6 +7,7 @@ MOBILEGPT_SOURCE_METHOD = "mobilegpt_runlog_direct_memory"
 MOBILEGPT_PREP_TYPE = "mobilegpt_runlog_direct_memory"
 MOBILEGPT_LEARNING_MODE = "mobilegpt_runlog_direct_conversion"
 MOBILEGPT_AUDIT_SCHEMA = "omniflow.mobilegpt.audit.v2"
+MOBILEGPT_EMBEDDING_MODEL = "GLM-Embedding-2"
 
 MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS = frozenset({MOBILEGPT_MEMORY_SCHEMA})
 MOBILEGPT_SOURCE_METHOD_BY_SCHEMA = {

@@ -11,6 +11,7 @@ import time
 from typing import Any
 
 from src.experiment.mobilegpt_contract import (
+    MOBILEGPT_EMBEDDING_MODEL,
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
@@ -267,14 +268,14 @@ def prepare_mobilegpt_source_memory(
     mobilegpt_root: str | Path,
     output_root: str | Path,
     model: str,
-    embedding_model: str = "text-embedding-v4",
+    embedding_model: str = MOBILEGPT_EMBEDDING_MODEL,
     memory_index: str | Path | None = None,
 ) -> dict[str, Any]:
     normalized_model = str(model or "").strip()
     if not normalized_model:
         raise ValueError("mobilegpt_source_model_required")
     normalized_embedding_model = (
-        str(embedding_model or "").strip() or "text-embedding-v4"
+        str(embedding_model or "").strip() or MOBILEGPT_EMBEDDING_MODEL
     )
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_run_log, _, source_audit, target_info = _source_preflight(item)
@@ -320,7 +321,7 @@ def convert_runlog_to_mobilegpt_bundle(
     mobilegpt_root: str | Path,
     output_root: str | Path,
     model: str,
-    embedding_model: str = "text-embedding-v4",
+    embedding_model: str = MOBILEGPT_EMBEDDING_MODEL,
     target_package: str = "",
     target_app: str = "",
     preflight_audit: dict[str, Any] | None = None,
@@ -331,7 +332,7 @@ def convert_runlog_to_mobilegpt_bundle(
     if not normalized_model:
         raise ValueError("mobilegpt_source_model_required")
     normalized_embedding_model = (
-        str(embedding_model or "").strip() or "text-embedding-v4"
+        str(embedding_model or "").strip() or MOBILEGPT_EMBEDDING_MODEL
     )
     source_path = Path(source_run_log).expanduser().resolve()
     source = import_run_log(json.loads(source_path.read_text(encoding="utf-8")))

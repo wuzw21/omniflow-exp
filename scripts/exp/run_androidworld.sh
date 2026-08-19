@@ -775,6 +775,7 @@ if [[ "$execution_environment" == "bmoca" ]]; then
       export MOBILEGPT_CHAT_BASE_URL="$selected_model_base_url"
       export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"
       export MOBILEGPT_EMBEDDING_BASE_URL="$mobilegpt_embedding_base_url"
+      export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
       bmoca_command+=(
         --mobilegpt-root "$mobilegpt_root"
       )
@@ -828,6 +829,7 @@ PY
   export MOBILEGPT_CHAT_BASE_URL="$selected_model_base_url"
   export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"
   export MOBILEGPT_EMBEDDING_BASE_URL="$mobilegpt_embedding_base_url"
+  export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
   bmoca_task_selection="${batch_task_filter:-*}"
   bmoca_pipeline_args=(
     -m src.experiment.e2e_task_pipeline
@@ -2061,8 +2063,8 @@ if [[ "$need_mobilegpt_preflight" -eq 1 ]]; then
     export MOBILEGPT_EMBEDDING_MODEL="$mobilegpt_runtime_embedding_model"
     echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=$mobilegpt_runtime_embedding_model embedding_dimension=$mobilegpt_runtime_embedding_dimension"
   else
-    export MOBILEGPT_EMBEDDING_MODEL="text-embedding-v4"
-    echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=text-embedding-v4"
+    export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
+    echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=GLM-Embedding-2"
   fi
 fi
 echo "[model] model=$paper_model model_endpoint_profile=$formal_model_endpoint_profile model_endpoint=$selected_model_base_url"
