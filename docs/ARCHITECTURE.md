@@ -113,7 +113,7 @@ baseline 记录时经过的五个位置：
 | `checks.py` | 这次运行的依赖、设备和 Prepared Memory 是否 ready？ | 具体 provider 的转换实现 |
 | `data_index.py` | 如何物化和读取唯一 Local Index？ | AndroidWorld runner 和 provider 内部校验细节 |
 | `source_records.py` | Source RunLog 的共享数据模型是什么？ | 读取、执行或转换 RunLog |
-| `memory_ref.py` | 统一执行流如何可选地引用 provider memory？ | 具体 provider 的转换和文件格式 |
+| `memory_interface.py` | provider memory 如何接入统一执行流？ | 具体 provider 的转换和文件格式 |
 
 `source_evidence.py` 曾经暴露 `convert_runlog_memory(method=...)`，让共享 source
 模块根据字符串选择 provider。这是已经删除的浅 seam：AppAgent 直接调用
@@ -128,7 +128,7 @@ baseline 记录时经过的五个位置：
 | `data_index.py` 与 result ledger | 读写对象不同，不能粗暴合并 | 保留职责，拆出只在有测试证明时进行 |
 | `batch_outcomes.py` 与 `result_registry.py` | 汇总和注册是两个不可互换的写入语义 | 先记录公共 path helper 重复，再局部收敛 |
 | `omniflow/runlog.py` 与 `src/integrations/runlog.py` | canonical loader 与历史外部导入 adapter | 旧适配层按要求暂不清理 |
-| `mobilegpt_source.py` / `appagent_source.py` | 两个外部协议不同；按需准备和校验 memory | 不合并转换规则，只共享可选的 memory reference |
+| `mobilegpt_source.py` / `appagent_source.py` | 两个外部协议不同；分别实现 `MemoryAdapter` | 不合并转换规则，只共享 memory envelope |
 | 2430 行 shell、3093 行 scheduler、4619 行 launcher | 复杂文件，但都是现有唯一 owner | 先补 seam 和测试，再按模块内聚拆分；不复制入口 |
 | 已删除的 packaged catalog、old source pool、direct launcher 文件 | 最近提交已清掉的死路径 | 不恢复 alias 或兼容副本 |
 

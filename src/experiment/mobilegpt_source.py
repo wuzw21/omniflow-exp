@@ -17,6 +17,12 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_SOURCE_METHOD,
 )
 from src.experiment import androidworld as pipeline
+from src.experiment.memory_interface import (
+    MemoryAdapter,
+    MemoryCheck,
+    MemoryPackage,
+    MemoryRequest,
+)
 from src.experiment.paths import sha256_file
 from src.experiment.source_records import CanonicalRunLog
 from src.experiment.protocol import SOURCE_SEED
@@ -35,6 +41,77 @@ _IGNORED_SOURCE_PACKAGES = {
     "com.example.MobileGPT",
     "com.google.android.apps.nexuslauncher",
 }
+
+
+class MobileGPTMemoryAdapter:
+    """Expose MobileGPT preparation through the common memory interface."""
+
+    @property
+    def name(self) -> str:
+        return "mobilegpt"
+
+    @property
+    def schema_version(self) -> str:
+        return MOBILEGPT_MEMORY_SCHEMA
+
+    def prepare(self, request: MemoryRequest) -> MemoryPackage:
+        if request.source_index is None or request.output_root is None:
+            raise ValueError("mobilegpt_prepare_requires_source_index_and_output_root")
+        mobilegpt_root = request.options.get("mobilegpt_root")
+        memory_index = request.options.get("memory_index")
+        if not mobilegpt_root or memory_index is None:
+            raise ValueError("mobilegpt_prepare_requires_provider_options")
+        result = prepare_mobilegpt_source_memory(
+            index_path=request.source_index,
+            task_name=request.task_name,
+            mobilegpt_root=mobilegpt_root,
+            output_root=request.output_root,
+            model=request.model,
+            embedding_model=str(
+                request.options.get("embedding_model") or "text-embedding-v4"
+            ),
+            memory_index=memory_index,
+        )
+        root = Path(str(result["memory_root"])).resolve()
+        sealed = result.get("sealed")
+        sealed = sealed if isinstance(sealed, dict) else {}
+        return MemoryPackage(
+            provider=self.name,
+            task_name=request.task_name,
+            root=root,
+            bundle_root=root.parent,
+            schema_version=self.schema_version,
+            sha256=str(sealed.get("memory_sha256") or ""),
+            manifest=root.parent / MOBILEGPT_MEMORY_MANIFEST,
+            metadata=result,
+        )
+
+    def check(self, request: MemoryRequest) -> MemoryCheck:
+        if request.source_index is None or request.memory_root is None:
+            raise ValueError("mobilegpt_check_requires_source_index_and_memory_root")
+        try:
+            result = validate_mobilegpt_source_memory(
+                index_path=request.source_index,
+                task_name=request.task_name,
+                memory_root=request.memory_root,
+                model=request.model,
+                memory_index=request.options.get("memory_index"),
+            )
+        except Exception as error:
+            return MemoryCheck(
+                provider=self.name,
+                task_name=request.task_name,
+                valid=False,
+                root=Path(request.memory_root).resolve(),
+                errors=(f"{type(error).__name__}: {error}",),
+            )
+        return MemoryCheck(
+            provider=self.name,
+            task_name=request.task_name,
+            valid=True,
+            root=Path(request.memory_root).resolve(),
+            details=result,
+        )
 
 
 def load_canonical_source_item(
