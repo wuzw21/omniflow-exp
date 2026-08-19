@@ -18,7 +18,7 @@ and does not use the OmniFlow action schema.
 
 | Baseline | Official entry | OmniFlow provides | OmniFlow does not implement |
 | --- | --- | --- | --- |
-| AppAgent | `AppAgent/run.py` | temporary `config.yaml`, `apps/<app>/` link to sealed `demo_docs`, one-device ADB proxy, task text | AppAgent parsing, UI tags, model loop, ADB actions |
+| AppAgent | `AppAgent/scripts/task_executor.py` (the official `run.py` wrapper is recorded as provenance) | temporary `config.yaml`, `apps/<app>/` link to sealed `demo_docs`, one-device ADB proxy, task text | AppAgent parsing, UI tags, model loop, ADB actions |
 | MobileGPT | staged upstream `Server/main.py` plus upstream Android app | temporary Server workspace with official Python package and copied native memory, client host patch in a temporary checkout, APK build/install, official broadcast | Explore/Select/Derive/Subtask logic, socket protocol, XML parser, action execution |
 
 ## AppAgent edit point
@@ -35,9 +35,10 @@ Change only the sealed AppAgent memory input or the provider configuration in
   tasks/
 ```
 
-The task is sent through stdin to the official `run.py` wrapper, which starts
-the upstream `scripts/task_executor.py` itself. Do not add an AppAgent parser
-or controller under `src/`.
+The task is sent through stdin to the official `scripts/task_executor.py`.
+The upstream `run.py` wrapper is not used for the evaluation process because
+its `os.system` call does not propagate the executor's return code. Do not add
+an AppAgent parser or controller under `src/`.
 
 ## MobileGPT edit point
 
@@ -45,13 +46,27 @@ The only conversion-specific input is the existing native memory converter.
 The forwarder overlays its `frozen_memory` data into a copied official
 `Server/memory` directory while preserving the official Python package files.
 The official server therefore still imports and runs its own `memory` package.
+Its upstream model constants are overridden only in the disposable staging
+copy: the embedding model must match the model sealed in the memory manifest,
+and `MOBILEGPT_CHAT_MODEL` can select an account-accessible chat model. For
+example:
+
+```sh
+export MOBILEGPT_CHAT_MODEL=GLM-5.1
+# Leave this unset to use the model recorded by the memory bundle.
+export MOBILEGPT_EMBEDDING_MODEL=GLM-Embedding-2
+```
+
+If the configured embedding model differs from the sealed memory model, the
+runner stops before starting the official Server.
 The Android client is copied only to a temporary build directory so its official
 `HOST_IP` constant can point to the server; the checked-out MobileGPT repository
 is never edited.
 
 MobileGPT requires an Android SDK, Gradle/Android dependencies, an enabled
 Accessibility Service, and a reachable server host. For Android emulators the
-default host is `10.0.2.2`; set `MOBILEGPT_CLIENT_HOST` for another device.
+default host is `10.0.2.2`; for a physical or LAN-connected device set
+`MOBILEGPT_CLIENT_HOST` to the host machine's LAN address.
 
 ## Evidence rule
 

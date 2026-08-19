@@ -1497,6 +1497,8 @@ def test_appagent_warm_command_mounts_native_docs_memory(
         "--root_dir",
         spec.metadata["official_workspace"],
     ]
+    assert spec.argv[1].endswith("/scripts/task_executor.py")
     assert spec.metadata["appagent_docs_root"] == str(docs_root.resolve())
+    assert spec.metadata["official_wrapper"].endswith("/run.py")
     assert spec.stdin_text == "Open task.html and draw.\n"
     assert spec.metadata["external_forward_only"] is True

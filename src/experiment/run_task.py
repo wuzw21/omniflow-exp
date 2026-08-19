@@ -28,6 +28,7 @@ from omniflow.core.trajectory import canonicalize_run_log
 from omniflow.functions.assets import FunctionStore
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
+    MOBILEGPT_EMBEDDING_MODEL,
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
@@ -2078,6 +2079,44 @@ def _start_mobilegpt_browser_task_server(
     return prepare, process
 
 
+def _mobilegpt_memory_embedding_model(memory_root: Path) -> str:
+    """Return the embedding model sealed with one MobileGPT memory bundle."""
+
+    manifest_path = memory_root.parent / MOBILEGPT_MEMORY_MANIFEST
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(
+            f"mobilegpt_memory_manifest_unreadable:{manifest_path}"
+        ) from error
+    stats = payload.get("source_stats")
+    models = stats.get("embedding_models") if isinstance(stats, dict) else None
+    unique_models = sorted(
+        {str(model).strip() for model in models or [] if str(model).strip()}
+    )
+    dotenv_env = _local_dotenv_env()
+    configured = str(
+        dotenv_env.get("MOBILEGPT_EMBEDDING_MODEL")
+        or os.environ.get("MOBILEGPT_EMBEDDING_MODEL")
+        or ""
+    ).strip()
+    if configured:
+        if unique_models and configured not in unique_models:
+            raise ValueError(
+                "mobilegpt_embedding_model_mismatch:"
+                f"memory={','.join(unique_models)} configured={configured}"
+            )
+        return configured
+    if len(unique_models) == 1:
+        return unique_models[0]
+    if not unique_models:
+        return MOBILEGPT_EMBEDDING_MODEL
+    raise ValueError(
+        "mobilegpt_memory_has_multiple_embedding_models:"
+        + ",".join(unique_models)
+    )
+
+
 def build_mobilegpt_server_command(
     action: str,
     *,
@@ -2121,6 +2160,13 @@ def build_mobilegpt_server_command(
     if resolved_action == "server":
         if resolved_memory_root is None:
             raise ValueError("mobilegpt_server_memory_required")
+        embedding_model = _mobilegpt_memory_embedding_model(resolved_memory_root)
+        runtime_env = _subprocess_env({})
+        chat_model = str(
+            runtime_env.get("MOBILEGPT_CHAT_MODEL")
+            or runtime_env.get("OPENAI_MODEL")
+            or ""
+        ).strip()
         from src.integrations.official_forward import prepare_mobilegpt_server
 
         staged = resolved_memory_root.parent / "official_server_workspace"
@@ -2128,9 +2174,14 @@ def build_mobilegpt_server_command(
             official_root=root,
             memory_root=resolved_memory_root,
             workspace=staged,
+            embedding_model=embedding_model,
+            chat_model=chat_model,
         )
         staged_server_root = Path(forward["server_root"])
         env["MOBILEGPT_STATS_JSONL"] = str(resolve_path(stats_jsonl, root=repo_root))
+        env["MOBILEGPT_EMBEDDING_MODEL"] = embedding_model
+        if chat_model:
+            env["MOBILEGPT_CHAT_MODEL"] = chat_model
         argv = [
             python_executable,
             str(staged_server_root / "main.py"),
@@ -2150,6 +2201,8 @@ def build_mobilegpt_server_command(
                 "state_backend": "official_mobilegpt",
                 "official_server": str(server_root / "main.py"),
                 "official_staged_server": str(staged_server_root / "main.py"),
+                "embedding_model": embedding_model,
+                "chat_model": chat_model,
                 "external_forward_only": True,
                 "log_path": str(staged_server_root.parent / "official_server.log"),
             },
@@ -4489,8 +4542,9 @@ def build_mobilegpt_command(
             run_dir_suffix,
             fallback="run",
         )
+    client_runtime_env = _subprocess_env({})
     client_host = str(
-        os.environ.get("MOBILEGPT_CLIENT_HOST") or "10.0.2.2"
+        client_runtime_env.get("MOBILEGPT_CLIENT_HOST") or "10.0.2.2"
     ).strip()
     if client_host in {"0.0.0.0", "::", "[::]", "127.0.0.1"}:
         client_host = "10.0.2.2"
@@ -4630,7 +4684,7 @@ def build_appagent_command(
     )
     argv = [
         python_executable,
-        str(resolved_appagent_root / "run.py"),
+        str(resolved_appagent_root / "scripts" / "task_executor.py"),
         "--app",
         app_name,
         "--root_dir",
@@ -4656,7 +4710,10 @@ def build_appagent_command(
             "device_target": target.to_dict(),
             "appagent_root": str(resolved_appagent_root),
             "appagent_docs_root": str(resolved_docs_root or ""),
-            "official_entry": str(resolved_appagent_root / "run.py"),
+            "official_entry": str(
+                resolved_appagent_root / "scripts" / "task_executor.py"
+            ),
+            "official_wrapper": str(resolved_appagent_root / "run.py"),
             "official_executor": str(
                 resolved_appagent_root / "scripts" / "task_executor.py"
             ),

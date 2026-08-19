@@ -50,14 +50,27 @@ if [ "$#" -eq 1 ] && [ "$1" = "devices" ]; then
   printf 'List of devices attached\\n%s\\tdevice\\n' "$serial"
   exit 0
 fi
+# AppAgent's upstream controller expects one `Physical size:` line. Newer
+# Android releases also print `Override size:`; keep that device detail out of
+# the official parser without changing AppAgent itself.
+if [ "$#" -ge 4 ] && [ "$1" = "-s" ] && [ "$3" = "shell" ] && [ "$4" = "wm" ] && [ "${5:-}" = "size" ]; then
+  wm_output=$("$real_adb" "$@" </dev/null)
+  printf '%s\\n' "$wm_output" | awk '/^[[:space:]]*Physical size:/{{print; found=1; exit}} END{{if (!found) exit 1}}' || printf '%s\\n' "$wm_output" | sed -n '1p'
+  exit 0
+fi
+if [ "$#" -ge 3 ] && [ "$1" = "shell" ] && [ "$2" = "wm" ] && [ "${3:-}" = "size" ]; then
+  wm_output=$("$real_adb" -s "$serial" "$@" </dev/null)
+  printf '%s\\n' "$wm_output" | awk '/^[[:space:]]*Physical size:/{{print; found=1; exit}} END{{if (!found) exit 1}}' || printf '%s\\n' "$wm_output" | sed -n '1p'
+  exit 0
+fi
 has_serial=0
 for arg in "$@"; do
   if [ "$arg" = "-s" ]; then has_serial=1; fi
 done
 if [ "$has_serial" -eq 1 ]; then
-  exec "$real_adb" "$@"
+  exec "$real_adb" "$@" </dev/null
 fi
-exec "$real_adb" -s "$serial" "$@"
+exec "$real_adb" -s "$serial" "$@" </dev/null
 '''
     proxy.write_text(script, encoding="utf-8")
     proxy.chmod(proxy.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -116,6 +129,8 @@ def prepare_mobilegpt_server(
     official_root: str | Path,
     memory_root: str | Path,
     workspace: str | Path,
+    embedding_model: str = "",
+    chat_model: str = "",
 ) -> dict[str, str]:
     """Stage the official Server so its documented relative ``./memory`` works."""
 
@@ -133,6 +148,14 @@ def prepare_mobilegpt_server(
         overlay = memory
     work.mkdir(parents=True, exist_ok=False)
     shutil.copytree(source, target, symlinks=True)
+    configured_embedding_model = str(embedding_model or "").strip()
+    configured_chat_model = str(chat_model or "").strip()
+    if configured_embedding_model or configured_chat_model:
+        _configure_mobilegpt_server(
+            target,
+            embedding_model=configured_embedding_model,
+            chat_model=configured_chat_model,
+        )
     staged_memory = target / "memory"
     for entry in overlay.iterdir():
         destination = staged_memory / entry.name
@@ -145,6 +168,69 @@ def prepare_mobilegpt_server(
         "server_root": str(target),
         "memory_root": str(staged_memory),
     }
+
+
+def _configure_mobilegpt_server(
+    server_root: Path,
+    *,
+    embedding_model: str = "",
+    chat_model: str = "",
+) -> None:
+    """Inject provider names into a temporary copy of the official Server.
+
+    MobileGPT's upstream code keeps provider model names as constants. This
+    edits only the disposable staging copy; the planner, memory reader,
+    protocol, and action implementation remain upstream code.
+    """
+
+    normalized_embedding = str(embedding_model or "").strip()
+    normalized_chat = str(chat_model or "").strip()
+    utils_path = server_root / "utils" / "utils.py"
+    if normalized_embedding and utils_path.is_file():
+        source = utils_path.read_text(encoding="utf-8")
+        source = re.sub(
+            r'def get_openai_embedding\(text: str, model="text-embedding-3-small", \*\*kwargs\)(?: -> [^:]+)?:',
+            'def get_openai_embedding(text: str, model=None, **kwargs):\n'
+            '    model = model or os.getenv("MOBILEGPT_EMBEDDING_MODEL", "text-embedding-3-small")',
+            source,
+            count=1,
+        )
+        utils_path.write_text(source, encoding="utf-8")
+    if normalized_chat:
+        main_path = server_root / "main.py"
+        source = main_path.read_text(encoding="utf-8")
+        for name in (
+            "TASK_AGENT_GPT_VERSION",
+            "APP_AGENT_GPT_VERSION",
+            "SELECT_AGENT_HISTORY_GPT_VERSION",
+            "EXPLORE_AGENT_GPT_VERSION",
+            "SELECT_AGENT_GPT_VERSION",
+            "DERIVE_AGENT_GPT_VERSION",
+            "PARAMETER_FILLER_AGENT_GPT_VERSION",
+            "ACTION_SUMMARIZE_AGENT_GPT_VERSION",
+            "SUBTASK_MERGE_AGENT_GPT_VERSION",
+            "gpt_4",
+            "gpt_4_turbo",
+            "gpt_3_5_turbo",
+        ):
+            source = re.sub(
+                rf'os\.environ\["{re.escape(name)}"\] = "[^"]+"',
+                f'os.environ["{name}"] = os.environ.get("MOBILEGPT_CHAT_MODEL", "{normalized_chat}")',
+                source,
+            )
+        source = source.replace(
+            'os.environ["vision_model"] = "gpt-4o"',
+            'os.environ["vision_model"] = os.environ.get("MOBILEGPT_VISION_MODEL", os.environ.get("MOBILEGPT_CHAT_MODEL", "gpt-4o"))',
+        )
+        main_path.write_text(source, encoding="utf-8")
+        param_path = server_root / "agents" / "param_fill_agent.py"
+        if param_path.is_file():
+            param_source = param_path.read_text(encoding="utf-8")
+            param_source = param_source.replace(
+                'model="gpt-4o"',
+                'model=os.getenv("MOBILEGPT_CHAT_MODEL", "gpt-4o")',
+            )
+            param_path.write_text(param_source, encoding="utf-8")
 
 
 def _run_adb(
