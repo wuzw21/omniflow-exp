@@ -5,6 +5,7 @@ import importlib
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from omniflow import (
@@ -93,14 +94,13 @@ def build_agent(
     performance_metrics: PerformanceMetrics | None = None,
     direct_function_id: str = "",
     direct_function_arguments: dict[str, Any] | None = None,
-) -> OmniFlow:
+    allow_empty_store: bool = False,
+) -> OmniFlow | SimpleNamespace:
     if env is None:
         raise TypeError("build_agent requires env parameter")
     del runtime
-    if not store_path:
+    if not store_path and not allow_empty_store:
         raise ValueError("function_store_required")
-    resolved_store_path = Path(store_path).expanduser().resolve()
-    transfer_state_path = resolved_store_path.parent / TRANSFER_STATE_CATALOG_FILENAME
     raw_host = AndroidWorldHost(
         env,
         adb_serial=adb_serial,
@@ -112,6 +112,20 @@ def build_agent(
             "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "androidworld"
         ),
     )
+    if not store_path:
+        # Fixed replay owns its action sequence in _apply_fixed_replay.  It
+        # still needs the canonical AndroidWorld Host and lifecycle wrapper,
+        # but it has no Function Store to load.  Keep the adapter object small
+        # and let the shared replay seam remain the only executor.
+        return SimpleNamespace(
+            env=env,
+            host=raw_host,
+            name=MODE_OMNIFLOW,
+            set_max_steps=lambda _step_budget: None,
+            reset=lambda go_home=False: raw_host.reset(go_home=go_home),
+        )
+    resolved_store_path = Path(store_path).expanduser().resolve()
+    transfer_state_path = resolved_store_path.parent / TRANSFER_STATE_CATALOG_FILENAME
     state: dict[str, Any] = {
         "task_name": "",
         "goal": "",

@@ -352,6 +352,8 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
         "evidence_root": context.evidence_root or None,
         "performance_metrics": context.performance_metrics,
     }
+    if context.selector == "fixed_replay":
+        build_kwargs["allow_empty_store"] = True
     if str(context.direct_function_id or "").strip():
         build_kwargs["direct_function_id"] = str(context.direct_function_id).strip()
         build_kwargs["direct_function_arguments"] = dict(
