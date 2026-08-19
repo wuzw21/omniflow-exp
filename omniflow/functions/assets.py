@@ -731,6 +731,12 @@ def _materialize_canonical_run_log(
                 source = Path(str(pixels["path"])).expanduser().resolve()
                 if not source.is_file() and source_run_log_path is not None:
                     source = (source_run_log_path.parent / source.name).resolve()
+                if not source.is_file() and source_run_log_path is not None:
+                    source = _content_addressed_screenshot(
+                        source_run_log_path=source_run_log_path,
+                        digest=digest,
+                        suffix=suffix,
+                    )
                 if not source.is_file():
                     raise FileNotFoundError(f"run_log_screenshot_missing:{source}")
                 if _sha256_file(source) != digest:
@@ -758,6 +764,23 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _content_addressed_screenshot(
+    *,
+    source_run_log_path: Path,
+    digest: str,
+    suffix: str,
+) -> Path:
+    """Find a screenshot in the source data object's verified object store."""
+
+    for parent in (source_run_log_path.resolve(), *source_run_log_path.resolve().parents):
+        if parent.name != "data":
+            continue
+        candidate = parent / "objects" / "sha256" / digest[:2] / f"{digest}{suffix}"
+        if candidate.is_file() and _sha256_file(candidate) == digest:
+            return candidate
+    return Path()
 
 
 def _canonical_bundle_identity(

@@ -18,6 +18,7 @@ from src.integrations.appagent import (
     ground_appagent_teacher_action,
 )
 from src.integrations.mobilegpt import preflight_runlog_conversion
+from omniflow.functions.assets import _materialize_canonical_run_log
 
 
 def _source(report: dict) -> dict:
@@ -30,6 +31,57 @@ def _grounding(report: dict) -> dict:
 
 def _safety(report: dict) -> dict:
     return report["safety"]
+
+
+def test_function_materializer_resolves_stale_screenshot_from_data_objects(
+    tmp_path: Path,
+) -> None:
+    data_root = tmp_path / "data"
+    source_run_log = (
+        data_root
+        / "objects"
+        / "sha256"
+        / "aa"
+        / ("a" * 64 + ".json")
+    )
+    source_run_log.parent.mkdir(parents=True)
+    source_run_log.write_text("{}", encoding="utf-8")
+    screenshot_bytes = b"canonical screenshot"
+    digest = hashlib.sha256(screenshot_bytes).hexdigest()
+    screenshot = (
+        data_root
+        / "objects"
+        / "sha256"
+        / digest[:2]
+        / f"{digest}.png"
+    )
+    screenshot.parent.mkdir(parents=True)
+    screenshot.write_bytes(screenshot_bytes)
+
+    materialized = _materialize_canonical_run_log(
+        bundle_root=tmp_path / "bundle",
+        payload={
+            "steps": [
+                {
+                    "observation_before_act": {
+                        "pixels": {
+                            "path": "/Users/stale/data/screen.png",
+                            "sha256": digest,
+                            "mime_type": "image/png",
+                        }
+                    }
+                }
+            ]
+        },
+        source_run_log_path=source_run_log,
+    )
+
+    materialized_payload = json.loads(materialized.read_text(encoding="utf-8"))
+    copied = Path(
+        materialized_payload["steps"][0]["observation_before_act"]["pixels"]["path"]
+    )
+    assert copied.is_file()
+    assert copied.read_bytes() == screenshot_bytes
 from src.integrations.runlog import convert_legacy_run_log
 
 
