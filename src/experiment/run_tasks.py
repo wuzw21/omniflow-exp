@@ -20,11 +20,13 @@ from omniflow.vlm.model_config import resolve_openai_compatible_config
 from src.experiment.run_task import (
     build_task_command,
     build_replay_command,
+    validate_omniflow_transfer_assets,
 )
 from src.experiment.data_index import (
     canonical_prepared_memory_from_index,
     load_data_index,
     registered_result_plan_from_memory,
+    refresh_data_index_from_pointer,
 )
 from src.experiment.batch_outcomes import (
     concluded_result_keys,
@@ -60,6 +62,7 @@ from src.integrations.mobilegpt import (
 )
 from src.integrations.runlog import project_androidworld_step_actions
 from src.integrations.skilldroid_replay import compile_droidrun_macro
+from src.integrations.official_forward import validate_autodroid_memory_root
 
 
 def _read_object(path: str | Path) -> dict[str, Any]:
@@ -280,6 +283,11 @@ def ensure_source_device(
         "--json-out",
         str(preflight_path),
     ]
+    minimum_free_gb = str(
+        os.environ.get("OMNIFLOW_PREFLIGHT_MINIMUM_FREE_GB") or ""
+    ).strip()
+    if minimum_free_gb:
+        command.extend(("--minimum-free-gb", minimum_free_gb))
     result = run_logged_command(
         command,
         cwd=args.repo,
@@ -694,9 +702,78 @@ def prepare_function_asset(
     deadline: Deadline,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     existing = _canonical_function_store(args.memory_index, args.task)
+    created = False
+    creation_report: dict[str, Any] | None = None
+    usage = {
+        "model_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
     if existing is None:
-        raise FileNotFoundError(f"canonical_function_store_missing:{args.task}")
-    if str(existing.get("source_run_log_sha256") or "") != sha256_file(source_path):
+        if not getattr(args, "ensure_function", False):
+            raise FileNotFoundError(f"canonical_function_store_missing:{args.task}")
+        source_device = getattr(args, "source_device", SOURCE_DEVICE)
+        source_label = safe_component(str(source_device[0]))
+        store_path = (
+            args.asset_root
+            / "androidworld"
+            / safe_component(args.task)
+            / source_label
+            / "function"
+            / "function_authoring"
+            / safe_component(attempt_root.name)
+            / "function_store.json"
+        )
+        if store_path.exists():
+            raise FileExistsError(
+                f"function_authoring_artifact_already_exists:{store_path}"
+            )
+        try:
+            creation_report = save_function(
+                source_path,
+                store_path,
+                enhance=True,
+                complete_json=_function_enhancement_transport(
+                    model=args.formal_model,
+                    timeout_sec=float(FUNCTION_ENHANCEMENT_TIMEOUT_SEC),
+                    usage=usage,
+                ),
+            )
+            refresh_data_index_from_pointer(
+                memory_index=args.memory_index,
+                additional_runlog_roots=(args.asset_root,),
+                additional_result_roots=(args.results_root,),
+                replace_recorded_roots=False,
+            )
+            existing = _canonical_function_store(args.memory_index, args.task)
+            if existing is None:
+                raise FileNotFoundError(
+                    f"created_function_store_not_indexed:{args.task}"
+                )
+            indexed_store_path = Path(str(existing.get("store_path") or ""))
+            if indexed_store_path.resolve() != store_path.resolve():
+                raise ValueError(
+                    "created_function_store_not_canonical:"
+                    f"expected={store_path}:actual={indexed_store_path}"
+                )
+            created = True
+        except Exception as error:
+            raise PipelinePhaseError(
+                "function_asset_creation_failed",
+                {
+                    "status": "failed",
+                    "model_calls": usage["model_calls"],
+                    "total_tokens": usage["total_tokens"],
+                    "error": f"{type(error).__name__}: {error}",
+                },
+            ) from error
+    # save_function may canonicalize the source RunLog (for example, by
+    # materializing screenshot evidence), so the indexed Function source hash
+    # can legitimately differ from the raw input hash on the creation pass.
+    # The writer/compiler and transfer audit already validate that created
+    # bundle.  Keep the strict hash check for reused bundles.
+    if not created and str(existing.get("source_run_log_sha256") or "") != sha256_file(source_path):
         raise ValueError(f"canonical_function_source_mismatch:{args.task}")
     store_path = Path(str(existing["store_path"])).resolve()
     source_calls = existing.get("source_calls")
@@ -711,12 +788,23 @@ def prepare_function_asset(
         )
     ):
         raise ValueError(f"canonical_function_source_calls_missing:{args.task}")
-    return existing, {
-        "status": "reused",
-        "model_calls": 0,
-        "total_tokens": 0,
+    transfer_audit = validate_omniflow_transfer_assets(
+        store_path,
+        require_action_transfer=True,
+    )
+    phase = {
+        "status": "created" if created else "reused",
+        "model_calls": usage["model_calls"],
+        "total_tokens": usage["total_tokens"],
         "store": str(store_path),
         "source_calls": source_calls,
+        "transfer_audit": transfer_audit,
+    }
+    if creation_report is not None:
+        phase["enhanced"] = creation_report.get("enhanced") is True
+        phase["function_ids"] = list(creation_report.get("function_ids") or ())
+    return existing, {
+        **phase,
     }
 
 
@@ -781,9 +869,6 @@ def qualify_source_function(
         }
     )
     for key in (
-        "OPENAI_API_KEY",
-        "OPENAI_BASE_URL",
-        "LLMTHU_API_KEY",
         "ANTHROPIC_API_KEY",
         "GOOGLE_API_KEY",
     ):
@@ -961,29 +1046,97 @@ def prepare_appagent_memory(
     }
 
 
+def prepare_autodroid_memory(
+    *,
+    args: argparse.Namespace,
+    attempt_root: Path,
+    deadline: Deadline,
+) -> tuple[Path, dict[str, Any]]:
+    """Register the official AutoDroid dataset without converting its memory."""
+
+    del attempt_root, deadline
+    root_text = str(getattr(args, "autodroid_memory_root", "") or "").strip()
+    if not root_text:
+        raise ValueError("autodroid_memory_root_required")
+    root = Path(root_text).expanduser().resolve()
+    validation = validate_autodroid_memory_root(root)
+    return root, {
+        "status": "reused",
+        "model_calls": 0,
+        "total_tokens": 0,
+        "memory_root": str(root),
+        "memory_format": "droidbot_utg_events",
+        "official_manifest": validation,
+    }
+
+
 def _concluded_results(
     args: argparse.Namespace,
     outcomes_root: Path,
     attempt_id: str,
 ) -> set[tuple[str, str]]:
+    methods = _e2e_methods(args)
+    devices = _e2e_devices(args)
+    source_seed = _e2e_source_seed(args)
+    evaluation_seed = _e2e_evaluation_seed(args)
     plan = registered_result_plan_from_memory(
         memory_index=args.memory_index,
         task_name=args.task,
-        methods=METHODS,
-        devices=tuple(device[0] for device in DEVICES),
-        source_seed=SOURCE_SEED,
-        evaluation_seed=TASK_SEED,
+        methods=methods,
+        devices=tuple(device[0] for device in devices),
+        source_seed=source_seed,
+        evaluation_seed=evaluation_seed,
         formal_max_steps=int(args.max_steps),
     )
     return set(plan["completed"]) | concluded_result_keys(
         outcomes_root=outcomes_root,
         task_name=args.task,
-        methods=METHODS,
-        devices=tuple(device[0] for device in DEVICES),
-        source_seed=SOURCE_SEED,
-        evaluation_seed=TASK_SEED,
+        methods=methods,
+        devices=tuple(device[0] for device in devices),
+        source_seed=source_seed,
+        evaluation_seed=evaluation_seed,
         attempt_id=attempt_id,
     )
+
+
+def _e2e_methods(args: argparse.Namespace) -> tuple[str, ...]:
+    selected = str(getattr(args, "e2e_method", "") or "").strip()
+    if not selected or selected == "all":
+        return METHODS
+    methods = tuple(value.strip() for value in selected.split(",") if value.strip())
+    invalid = tuple(value for value in methods if value not in METHODS)
+    if invalid:
+        raise ValueError(
+            "androidworld_e2e_method_invalid:" + ",".join(sorted(set(invalid)))
+        )
+    return methods
+
+
+def _e2e_devices(args: argparse.Namespace) -> tuple[tuple[str, str, int], ...]:
+    selected = getattr(args, "e2e_device", None)
+    if selected is None or selected == "" or selected == "all":
+        return DEVICES
+    if isinstance(selected, tuple):
+        return (selected,)
+    raw_devices = tuple(value.strip() for value in str(selected).split(",") if value.strip())
+    devices = tuple(_parse_source_device(value) for value in raw_devices)
+    known = {device[0] for device in DEVICES}
+    unknown = tuple(device[0] for device in devices if device[0] not in known)
+    if unknown:
+        raise ValueError(
+            "androidworld_e2e_device_invalid:" + ",".join(sorted(set(unknown)))
+        )
+    if len({device[0] for device in devices}) != len(devices):
+        raise ValueError("androidworld_e2e_device_duplicate")
+    return devices
+
+
+def _e2e_source_seed(args: argparse.Namespace) -> int:
+    return int(getattr(args, "e2e_source_seed", SOURCE_SEED))
+
+
+def _e2e_evaluation_seed(args: argparse.Namespace) -> int:
+    return int(getattr(args, "e2e_evaluation_seed", TASK_SEED))
 
 
 def _result_environment(
@@ -996,6 +1149,7 @@ def _result_environment(
     store_path: Path | None,
     mobilegpt_memory: Path | None,
     appagent_memory: Path | None,
+    autodroid_memory: Path | None = None,
 ) -> dict[str, str]:
     label, serial, port = device
     result_attempt_id = f"{attempt_id}.{method}.{label}"
@@ -1037,6 +1191,8 @@ def _result_environment(
         )
     if appagent_memory is not None:
         environment["OMNIFLOW_APPAGENT_MEMORY_ROOT"] = str(appagent_memory)
+    if autodroid_memory is not None:
+        environment["OMNIFLOW_AUTODROID_MEMORY_ROOT"] = str(autodroid_memory)
     return environment
 
 
@@ -1050,6 +1206,7 @@ def _androidworld_result_command(
     store_path: Path | None,
     mobilegpt_memory: Path | None,
     appagent_memory: Path | None,
+    autodroid_memory: Path | None = None,
 ) -> list[str]:
     """Build the one child command for an AndroidWorld result.
 
@@ -1080,7 +1237,7 @@ def _androidworld_result_command(
         "--task",
         str(args.task),
         "--source-seed",
-        str(SOURCE_SEED),
+        str(_e2e_source_seed(args)),
         "--output-path",
         str(result_attempt_root),
         "--result-registry-root",
@@ -1104,7 +1261,7 @@ def _androidworld_result_command(
         "--max-fallback-steps",
         str(args.max_fallback_steps),
         "--task-random-seed",
-        str(TASK_SEED),
+        str(_e2e_evaluation_seed(args)),
         "--model",
         str(getattr(args, "formal_model", FORMAL_MODEL)),
         "--planner-provider",
@@ -1118,6 +1275,21 @@ def _androidworld_result_command(
         command.extend(("--no-fixed-task-params", "--task-params-json", ""))
     if appagent_memory is not None:
         command.extend(("--appagent-memory-root", str(appagent_memory)))
+    if method == "autodroid":
+        autodroid_root = getattr(args, "autodroid_root", "")
+        autodroid_memory_root = autodroid_memory or getattr(
+            args, "autodroid_memory_root", ""
+        )
+        command.extend(
+            (
+                "--autodroid-root",
+                str(autodroid_root),
+                "--autodroid-memory-root",
+                str(autodroid_memory_root),
+                "--autodroid-app",
+                str(getattr(args, "autodroid_app", "")),
+            )
+        )
     if args.dry_run:
         command.append("--dry-run")
     return command
@@ -1134,14 +1306,21 @@ def run_target_workers(
     mobilegpt_memory: Path | None,
     appagent_memory: Path | None,
     blocked_methods: dict[str, tuple[str, str, str]],
+    autodroid_memory: Path | None = None,
     command_runner: Callable[..., dict[str, Any]] = run_logged_command,
 ) -> list[dict[str, Any]]:
     """Run methods sequentially per device and devices concurrently."""
 
     completed = _concluded_results(args, outcomes_root, attempt_id)
+    methods = _e2e_methods(args)
+    devices = _e2e_devices(args)
+    source_seed = _e2e_source_seed(args)
+    evaluation_seed = _e2e_evaluation_seed(args)
     stop_event = threading.Event()
     for method, (status, stage, evidence) in blocked_methods.items():
-        for label, serial, _ in DEVICES:
+        if method not in methods:
+            continue
+        for label, serial, _ in devices:
             if (method, label) in completed:
                 continue
             record_result_outcome(
@@ -1151,8 +1330,8 @@ def run_target_workers(
                 device=label,
                 device_serial=serial,
                 attempt_id=attempt_id,
-                source_seed=SOURCE_SEED,
-                evaluation_seed=TASK_SEED,
+                source_seed=source_seed,
+                evaluation_seed=evaluation_seed,
                 status=status,
                 stage=stage,
                 task_log=evidence if Path(evidence).is_file() else None,
@@ -1162,7 +1341,7 @@ def run_target_workers(
     def worker(device: tuple[str, str, int]) -> list[dict[str, Any]]:
         label, serial, _ = device
         worker_results: list[dict[str, Any]] = []
-        for method in METHODS:
+        for method in methods:
             if stop_event.is_set():
                 break
             if method in blocked_methods or (method, label) in completed:
@@ -1178,8 +1357,8 @@ def run_target_workers(
                     device=label,
                     device_serial=serial,
                     attempt_id=attempt_id,
-                    source_seed=SOURCE_SEED,
-                    evaluation_seed=TASK_SEED,
+                    source_seed=source_seed,
+                    evaluation_seed=evaluation_seed,
                     status="deadline_exceeded",
                     stage="target_episode",
                     artifact_root=attempt_root,
@@ -1210,6 +1389,7 @@ def run_target_workers(
                     store_path=store_path,
                     mobilegpt_memory=mobilegpt_memory,
                     appagent_memory=appagent_memory,
+                    autodroid_memory=autodroid_memory,
                 ),
                 cwd=args.repo,
                 environment=_result_environment(
@@ -1221,6 +1401,7 @@ def run_target_workers(
                     store_path=store_path,
                     mobilegpt_memory=mobilegpt_memory,
                     appagent_memory=appagent_memory,
+                    autodroid_memory=autodroid_memory,
                 ),
                 log_path=log_path,
                 timeout_sec=deadline.remaining(TASK_DEADLINE_SEC),
@@ -1240,8 +1421,8 @@ def run_target_workers(
                     device=label,
                     device_serial=serial,
                     attempt_id=attempt_id,
-                    source_seed=SOURCE_SEED,
-                    evaluation_seed=TASK_SEED,
+                    source_seed=source_seed,
+                    evaluation_seed=evaluation_seed,
                     status=status,
                     stage="target_episode",
                     task_log=log_path,
@@ -1269,8 +1450,214 @@ def run_target_workers(
         return worker_results
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [executor.submit(worker, device) for device in DEVICES]
+        futures = [executor.submit(worker, device) for device in devices]
         return [result for future in futures for result in future.result()]
+
+
+def run_function_replay_collection(args: argparse.Namespace) -> dict[str, Any]:
+    """Collect one deterministic Function conversion and its official replay."""
+
+    deadline = Deadline(args.task_deadline_sec)
+    attempt_id = args.attempt_id or (
+        "function_replay_no_enhance_"
+        + dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        + f"_{os.getpid()}"
+    )
+    attempt_root = args.output_root / safe_component(args.task) / attempt_id
+    attempt_root.mkdir(parents=True, exist_ok=False)
+    summary: dict[str, Any] = {
+        "schema_version": "omniflow.androidworld.function-replay-collection.v1",
+        "immutable": True,
+        "task": args.task,
+        "attempt_id": attempt_id,
+        "enhance": False,
+        "status": "failed",
+        "source_seed": SOURCE_SEED,
+        "evaluation_seed": _e2e_evaluation_seed(args),
+        "model_calls": 0,
+        "total_tokens": 0,
+        "phases": {},
+    }
+    try:
+        _, source_path, run_log = _canonical_source(args.memory_index, args.task)
+        source_copy = _write_json(attempt_root / "source" / "run_log.json", run_log)
+        summary["phases"]["source"] = {
+            "status": "reused",
+            "source_run_log": str(source_path),
+            "source_run_log_sha256": sha256_file(source_path),
+            "copied_run_log": str(source_copy),
+            "step_count": len(run_log.get("steps") or []),
+        }
+
+        device_label = safe_component(str(_e2e_devices(args)[0][0]))
+        function_bundle_root = (
+            args.asset_root
+            / "androidworld"
+            / safe_component(args.task)
+            / device_label
+            / "function"
+            / "function_authoring"
+            / safe_component(attempt_id)
+        )
+        store_path = function_bundle_root / "function_store.json"
+        conversion = save_function(
+            source_path,
+            store_path,
+            enhance=False,
+        )
+        transfer_audit = validate_omniflow_transfer_assets(
+            store_path,
+            require_action_transfer=True,
+        )
+        summary["phases"]["function"] = {
+            "status": "created",
+            "enhanced": conversion["enhanced"],
+            "function_ids": conversion["function_ids"],
+            "source_calls": conversion["source_arguments"],
+            "store_path": str(store_path),
+            "store_sha256": sha256_file(store_path),
+            "transfer_audit": transfer_audit,
+        }
+
+        if args.dry_run:
+            summary["status"] = "planned"
+            summary["phases"]["replay"] = {
+                "status": "planned",
+                "device": list(_e2e_devices(args)[0]),
+                "avd": str(args.replay_avd),
+            }
+            summary["outer_wall_sec"] = deadline.elapsed
+            _write_json(attempt_root / "pipeline_summary.json", summary)
+            return summary
+
+        devices = _e2e_devices(args)
+        if len(devices) != 1:
+            raise ValueError("function_replay_collection_requires_one_device")
+        device = devices[0]
+        label, serial, console_port = device
+        emulator_phase = run_logged_command(
+            [
+                str(args.python_bin),
+                "-m",
+                "src.experiment.development_emulator",
+                "--adb",
+                str(args.adb_path),
+                "--emulator",
+                str(args.emulator_bin),
+                "--serial",
+                serial,
+                "--avd",
+                str(args.replay_avd),
+                "--gpu",
+                str(args.emulator_gpu),
+                "--log-path",
+                str(attempt_root / "preflight" / "replay_emulator.log"),
+                "--boot-timeout",
+                str(min(240, max(1, int(deadline.remaining(240))))),
+            ],
+            cwd=args.repo,
+            environment=dict(os.environ),
+            log_path=attempt_root / "preflight" / "replay_emulator_command.log",
+            timeout_sec=deadline.remaining(300),
+        )
+        summary["phases"]["replay_device"] = {
+            **emulator_phase,
+            "status": "ready" if emulator_phase["returncode"] == 0 else "failed",
+            "device": list(device),
+            "avd": str(args.replay_avd),
+        }
+        if emulator_phase["returncode"] != 0:
+            raise PipelinePhaseError("function_replay_device_failed", summary["phases"]["replay_device"])
+
+        replay_attempt_id = f"{attempt_id}.function_replay.{label}"
+        replay_root = attempt_root / "replay" / label
+        source_call = conversion["source_arguments"]
+        function_id = str(next(iter(source_call)))
+        function_arguments = dict(source_call[function_id])
+        item = CanonicalRunLog(
+            task=args.task,
+            goal=str(run_log.get("goal") or args.task),
+            params=dict(run_log.get("task_parameters") or {}),
+            source_run_log=source_path,
+            replay_seed=SOURCE_SEED,
+            step_count=len(run_log.get("steps") or []),
+            meta={"function_replay_collection": True},
+        )
+        command_spec = build_task_command(
+            item,
+            android_world_root=args.android_world_root,
+            output_root=replay_root,
+            method_name="function_replay",
+            device_label=label,
+            serial=serial,
+            console_port=console_port,
+            adb_path=str(args.adb_path),
+            max_steps=SOURCE_MAX_STEPS,
+            timeout_sec=int(TASK_DEADLINE_SEC),
+            max_fallback_steps=0,
+            task_random_seed=SOURCE_SEED,
+            fixed_task_seed=True,
+            fixed_task_params=True,
+            task_params_override=dict(run_log.get("task_parameters") or {}),
+            perform_emulator_setup=True,
+            store_path=store_path,
+            omnitransfer_root=args.omnitransfer_root,
+            function_id=function_id,
+            function_arguments=function_arguments,
+            python_executable=str(args.python_bin),
+            repo_root=args.repo,
+            run_dir_suffix="source_collection",
+        )
+        if command_spec.output_path is None:
+            raise RuntimeError("function_replay_collection_output_path_required")
+        environment = dict(os.environ)
+        environment.update(
+            {
+                **command_spec.env,
+                "PYTHONPATH": f"{args.repo}:{args.repo / 'src'}:{args.android_world_root}",
+            }
+        )
+        for key in ("ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
+            environment.pop(key, None)
+        replay_result = run_logged_command(
+            command_spec.argv,
+            cwd=args.repo,
+            environment=environment,
+            log_path=command_spec.output_path.parent / "function_replay.log",
+            timeout_sec=deadline.remaining(TASK_DEADLINE_SEC),
+        )
+        result_root = command_spec.output_path
+        row = _last_jsonl_row(result_root / "task_results.jsonl")
+        replay_phase = {
+            **replay_result,
+            "status": "succeeded"
+            if replay_result["returncode"] == 0
+            and _official_success(row)
+            and _function_replay_success(row)
+            else "failed",
+            "official_validator_success": _official_success(row),
+            "function_replay_success": _function_replay_success(row),
+            "model_calls": int(row.get("model_calls") or 0),
+            "fallback_steps": int(row.get("fallback_steps") or 0),
+            "result_root": str(result_root),
+            "result_row": row,
+        }
+        summary["phases"]["replay"] = replay_phase
+        summary["status"] = (
+            "complete"
+            if replay_phase["status"] == "succeeded"
+            and replay_phase["model_calls"] == 0
+            and replay_phase["fallback_steps"] == 0
+            else "failed"
+        )
+    except Exception as error:
+        phase = getattr(error, "phase", {})
+        summary["error"] = f"{type(error).__name__}: {error}"
+        if phase:
+            summary["phases"]["failure"] = phase
+    summary["outer_wall_sec"] = deadline.elapsed
+    _write_json(attempt_root / "pipeline_summary.json", summary)
+    return summary
 
 
 def _blocked_all(
@@ -1288,8 +1675,12 @@ def _blocked_all(
     ):
         return
     completed = _concluded_results(args, outcomes_root, attempt_id)
-    for method in METHODS:
-        for label, serial, _ in DEVICES:
+    methods = _e2e_methods(args)
+    devices = _e2e_devices(args)
+    source_seed = _e2e_source_seed(args)
+    evaluation_seed = _e2e_evaluation_seed(args)
+    for method in methods:
+        for label, serial, _ in devices:
             if (method, label) in completed:
                 continue
             record_result_outcome(
@@ -1299,8 +1690,8 @@ def _blocked_all(
                 device=label,
                 device_serial=serial,
                 attempt_id=attempt_id,
-                source_seed=SOURCE_SEED,
-                evaluation_seed=TASK_SEED,
+                source_seed=source_seed,
+                evaluation_seed=evaluation_seed,
                 status=status,
                 stage=stage,
                 task_log=evidence if evidence.is_file() else None,
@@ -1370,14 +1761,18 @@ def _report(
         }
         _write_json(attempt_root / "pipeline_summary.json", summary)
         return summary
+    methods = _e2e_methods(args)
+    devices = _e2e_devices(args)
+    source_seed = _e2e_source_seed(args)
+    evaluation_seed = _e2e_evaluation_seed(args)
     result_summary = summarize_results(
         memory_index=args.memory_index,
         outcomes_root=outcomes_root,
         tasks=(args.task,),
-        methods=METHODS,
-        devices=tuple(device[0] for device in DEVICES),
-        source_seed=SOURCE_SEED,
-        evaluation_seed=TASK_SEED,
+        methods=methods,
+        devices=tuple(device[0] for device in devices),
+        source_seed=source_seed,
+        evaluation_seed=evaluation_seed,
         attempt_id=attempt_id,
     )
     prep_model_calls = sum(
@@ -1391,8 +1786,12 @@ def _report(
         if isinstance(phase, dict)
     )
     counts = result_summary["counts"]
+    execution_gate = phases.get("execution_gate")
     status = (
-        "complete"
+        "prep_failed"
+        if isinstance(execution_gate, dict)
+        and execution_gate.get("status") == "blocked"
+        else "complete"
         if counts["pending"] == 0
         else "deadline_exceeded"
         if deadline.expired
@@ -1406,8 +1805,8 @@ def _report(
         "task": args.task,
         "attempt_id": attempt_id,
         "status": status,
-        "source_seed": SOURCE_SEED,
-        "evaluation_seed": TASK_SEED,
+        "source_seed": source_seed,
+        "evaluation_seed": evaluation_seed,
         "deadline_sec": deadline.seconds,
         "outer_wall_sec": deadline.elapsed,
         "counts": counts,
@@ -1431,13 +1830,17 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     outcomes_root = args.results_root / "androidworld_validator" / "result_outcomes"
     if args.dry_run:
         registry = load_data_index(args.memory_index)
+        methods = _e2e_methods(args)
+        devices = _e2e_devices(args)
+        source_seed = _e2e_source_seed(args)
+        evaluation_seed = _e2e_evaluation_seed(args)
         plan = registered_result_plan_from_memory(
             memory_index=args.memory_index,
             task_name=args.task,
-            methods=METHODS,
-            devices=tuple(device[0] for device in DEVICES),
-            source_seed=SOURCE_SEED,
-            evaluation_seed=TASK_SEED,
+            methods=methods,
+            devices=tuple(device[0] for device in devices),
+            source_seed=source_seed,
+            evaluation_seed=evaluation_seed,
             formal_max_steps=int(args.max_steps),
         )
         return {
@@ -1446,12 +1849,12 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "deadline_sec": args.task_deadline_sec,
             "max_steps": int(args.max_steps),
             "max_fallback_steps": int(args.max_fallback_steps),
-            "source_seed": SOURCE_SEED,
-            "evaluation_seed": TASK_SEED,
-            "methods": list(METHODS),
-            "devices": [list(device) for device in DEVICES],
+            "source_seed": source_seed,
+            "evaluation_seed": evaluation_seed,
+            "methods": list(methods),
+            "devices": [list(device) for device in devices],
             "schedule": {
-                device[0]: list(METHODS) for device in DEVICES
+                device[0]: list(methods) for device in devices
             },
             "completed": [list(result) for result in plan["completed"]],
             "pending": [list(result) for result in plan["pending"]],
@@ -1473,8 +1876,10 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "deadline_sec": args.task_deadline_sec,
             "max_steps": int(args.max_steps),
             "max_fallback_steps": int(args.max_fallback_steps),
-            "methods": list(METHODS),
-            "devices": [list(device) for device in DEVICES],
+            "methods": list(_e2e_methods(args)),
+            "devices": [list(device) for device in _e2e_devices(args)],
+            "source_seed": _e2e_source_seed(args),
+            "evaluation_seed": _e2e_evaluation_seed(args),
         },
     )
     try:
@@ -1610,6 +2015,31 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             str(failure),
         )
 
+    if function_store is None and getattr(args, "ensure_function", False):
+        phases["execution_gate"] = {
+            "status": "blocked",
+            "model_calls": 0,
+            "total_tokens": 0,
+            "reason": "function_check_failed",
+        }
+        _blocked_all(
+            args=args,
+            attempt_id=attempt_id,
+            attempt_root=attempt_root,
+            outcomes_root=outcomes_root,
+            status="prep_failed",
+            stage="function_asset",
+            evidence=failure,
+        )
+        return _report(
+            args=args,
+            attempt_id=attempt_id,
+            attempt_root=attempt_root,
+            outcomes_root=outcomes_root,
+            deadline=deadline,
+            phases=phases,
+        )
+
     source_calls = (
         phases.get("function", {}).get("source_calls")
         if function_store is not None
@@ -1686,56 +2116,114 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         )
 
     mobilegpt_memory: Path | None = None
-    try:
-        mobilegpt_memory, phases["mobilegpt_memory"] = prepare_mobilegpt_memory(
-            args=args,
-            attempt_root=attempt_root,
-            deadline=deadline,
-        )
-    except Exception as error:
-        failure_phase = getattr(error, "phase", {})
-        failure = _write_json(
-            attempt_root / "assets" / "mobilegpt_failure.json",
-            {"error": f"{type(error).__name__}: {error}"},
-        )
+    if "mobilegpt" in _e2e_methods(args):
+        try:
+            mobilegpt_memory, phases["mobilegpt_memory"] = prepare_mobilegpt_memory(
+                args=args,
+                attempt_root=attempt_root,
+                deadline=deadline,
+            )
+        except Exception as error:
+            failure_phase = getattr(error, "phase", {})
+            failure = _write_json(
+                attempt_root / "assets" / "mobilegpt_failure.json",
+                {"error": f"{type(error).__name__}: {error}"},
+            )
+            phases["mobilegpt_memory"] = {
+                **failure_phase,
+                "status": "failed",
+                "model_calls": int(failure_phase.get("model_calls") or 0),
+                "total_tokens": int(failure_phase.get("total_tokens") or 0),
+                "error": str(error),
+            }
+            blocked_methods["mobilegpt"] = (
+                "prep_failed",
+                "source_memory",
+                str(failure),
+            )
+    else:
         phases["mobilegpt_memory"] = {
-            **failure_phase,
-            "status": "failed",
-            "model_calls": int(failure_phase.get("model_calls") or 0),
-            "total_tokens": int(failure_phase.get("total_tokens") or 0),
-            "error": str(error),
+            "status": "skipped",
+            "model_calls": 0,
+            "total_tokens": 0,
+            "reason": "method_not_selected",
         }
-        blocked_methods["mobilegpt"] = (
-            "prep_failed",
-            "source_memory",
-            str(failure),
-        )
 
     appagent_memory: Path | None = None
-    try:
-        appagent_memory, phases["appagent_memory"] = prepare_appagent_memory(
-            args=args,
-            attempt_root=attempt_root,
-            deadline=deadline,
-        )
-    except Exception as error:
-        failure_phase = getattr(error, "phase", {})
-        failure = _write_json(
-            attempt_root / "assets" / "appagent_failure.json",
-            {"error": f"{type(error).__name__}: {error}"},
-        )
+    if "appagent" in _e2e_methods(args):
+        try:
+            appagent_memory, phases["appagent_memory"] = prepare_appagent_memory(
+                args=args,
+                attempt_root=attempt_root,
+                deadline=deadline,
+            )
+        except Exception as error:
+            failure_phase = getattr(error, "phase", {})
+            failure = _write_json(
+                attempt_root / "assets" / "appagent_failure.json",
+                {"error": f"{type(error).__name__}: {error}"},
+            )
+            phases["appagent_memory"] = {
+                **failure_phase,
+                "status": "failed",
+                "model_calls": int(failure_phase.get("model_calls") or 0),
+                "total_tokens": int(failure_phase.get("total_tokens") or 0),
+                "error": str(error),
+            }
+            blocked_methods["appagent"] = (
+                "prep_failed",
+                "source_memory",
+                str(failure),
+            )
+    else:
         phases["appagent_memory"] = {
-            **failure_phase,
-            "status": "failed",
-            "model_calls": int(failure_phase.get("model_calls") or 0),
-            "total_tokens": int(failure_phase.get("total_tokens") or 0),
-            "error": str(error),
+            "status": "skipped",
+            "model_calls": 0,
+            "total_tokens": 0,
+            "reason": "method_not_selected",
         }
-        blocked_methods["appagent"] = (
-            "prep_failed",
-            "source_memory",
-            str(failure),
-        )
+
+    autodroid_memory: Path | None = None
+    autodroid_configured = all(
+        getattr(args, field, None) is not None
+        for field in ("autodroid_root", "autodroid_memory_root")
+    )
+    if "autodroid" in _e2e_methods(args) and autodroid_configured:
+        try:
+            autodroid_memory, phases["autodroid_memory"] = prepare_autodroid_memory(
+                args=args,
+                attempt_root=attempt_root,
+                deadline=deadline,
+            )
+        except Exception as error:
+            failure_phase = getattr(error, "phase", {})
+            failure = _write_json(
+                attempt_root / "assets" / "autodroid_failure.json",
+                {"error": f"{type(error).__name__}: {error}"},
+            )
+            phases["autodroid_memory"] = {
+                **failure_phase,
+                "status": "failed",
+                "model_calls": 0,
+                "total_tokens": 0,
+                "error": str(error),
+            }
+            blocked_methods["autodroid"] = (
+                "prep_failed",
+                "official_memory",
+                str(failure),
+            )
+    else:
+        phases["autodroid_memory"] = {
+            "status": "skipped",
+            "model_calls": 0,
+            "total_tokens": 0,
+            "reason": (
+                "method_not_selected"
+                if "autodroid" not in _e2e_methods(args)
+                else "not_configured_for_programmatic_caller"
+            ),
+        }
 
     store_path: Path | None = None
     if function_store is None:
@@ -1759,6 +2247,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             store_path=store_path,
             mobilegpt_memory=mobilegpt_memory,
             appagent_memory=appagent_memory,
+            autodroid_memory=autodroid_memory,
             blocked_methods=blocked_methods,
         )
         phases["targets"] = {
@@ -1984,7 +2473,11 @@ def _function_enhancement_transport(
         response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            max_completion_tokens=2048,
+            # GLM-5.1 may spend a substantial portion of the completion on
+            # reasoning before emitting the forced authoring tool call.  The
+            # smaller budget can end with no parseable tool call on the
+            # parameter-binding stage even though the request is valid.
+            max_completion_tokens=4096,
             temperature=0,
             tools=[tool],
             tool_choice={
@@ -3031,6 +3524,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mobilegpt-root", type=Path)
     parser.add_argument("--appagent-root", type=Path)
     parser.add_argument("--appagent-memory-root", type=Path)
+    parser.add_argument("--autodroid-root", type=Path)
+    parser.add_argument("--autodroid-memory-root", type=Path)
+    parser.add_argument("--autodroid-app", default="")
     parser.add_argument("--python-bin", type=Path, required=True)
     parser.add_argument("--adb-path", type=Path)
     parser.add_argument("--emulator-bin", type=Path)
@@ -3050,8 +3546,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bmoca-android-env-root", type=Path)
     parser.add_argument("--android-sdk-root", type=Path)
     parser.add_argument("--attempt-id", default="")
+    parser.add_argument(
+        "--e2e-method",
+        help="One method, comma-separated methods, or all.",
+    )
+    parser.add_argument(
+        "--e2e-device",
+        help="One device, comma-separated devices, or all.",
+    )
+    parser.add_argument("--e2e-source-seed", type=int, default=SOURCE_SEED)
+    parser.add_argument("--e2e-evaluation-seed", type=int, default=TASK_SEED)
+    parser.add_argument(
+        "--ensure-function",
+        action="store_true",
+        help="Create and validate the task Function before E2E execution.",
+    )
     parser.add_argument("--source-qualification-only", action="store_true")
     parser.add_argument("--source-only", action="store_true")
+    parser.add_argument(
+        "--function-replay-collection",
+        action="store_true",
+        help="Convert the successful source RunLog with enhance=false and replay it once.",
+    )
+    parser.add_argument("--replay-avd", default="OmniFlowTargetSmall")
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
@@ -3110,6 +3627,12 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
         if args.max_fallback_steps != 0:
             raise ValueError("bmoca_campaign_fallback_must_be_zero")
         return args
+    if int(getattr(args, "e2e_source_seed", SOURCE_SEED)) != SOURCE_SEED:
+        raise ValueError("androidworld_e2e_source_seed_must_be_111")
+    if int(getattr(args, "e2e_evaluation_seed", TASK_SEED)) != TASK_SEED:
+        raise ValueError("androidworld_e2e_evaluation_seed_must_be_113")
+    _e2e_methods(args)
+    _e2e_devices(args)
     for field in (
         "memory_index",
         "asset_root",
@@ -3125,6 +3648,17 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
         if value is None:
             raise ValueError(f"androidworld_required_path_missing:{field}")
         setattr(args, field, value.expanduser().resolve())
+    selected_methods = _e2e_methods(args)
+    if "autodroid" in selected_methods and hasattr(args, "autodroid_root"):
+        for field in ("autodroid_root", "autodroid_memory_root"):
+            value = getattr(args, field, None)
+            if value is None:
+                raise ValueError(f"androidworld_required_path_missing:{field}")
+            setattr(args, field, value.expanduser().resolve())
+            if not getattr(args, field).is_dir():
+                raise FileNotFoundError(
+                    f"required_directory_missing:{field}:{getattr(args, field)}"
+                )
     if not args.task.isalnum():
         raise ValueError("androidworld_task_name_invalid")
     if not args.source_avd.strip():
@@ -3155,7 +3689,12 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _resolve_args(build_parser().parse_args(argv))
-    result = run_bmoca_pipeline(args) if args.environment == "bmoca" else run_pipeline(args)
+    if args.environment == "bmoca":
+        result = run_bmoca_pipeline(args)
+    elif getattr(args, "function_replay_collection", False):
+        result = run_function_replay_collection(args)
+    else:
+        result = run_pipeline(args)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if args.environment == "bmoca":
         return 0 if result.get("status") == "complete" else 1
@@ -3165,8 +3704,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if result.get("status") == "collected" else 1
     if args.source_qualification_only:
         return 0 if result.get("status") == "qualified" else 1
+    if getattr(args, "function_replay_collection", False):
+        return 0 if result.get("status") == "complete" else 1
     counts = result.get("counts") if isinstance(result, dict) else None
-    return 0 if isinstance(counts, dict) and counts.get("pending") == 0 else 1
+    return (
+        0
+        if result.get("status") == "complete"
+        and isinstance(counts, dict)
+        and counts.get("pending") == 0
+        else 1
+    )
 
 
 if __name__ == "__main__":

@@ -16,6 +16,14 @@ if [[ "$python_bin" != /* || ! -x "$python_bin" ]]; then
   exit 2
 fi
 env_file="${OMNIFLOW_ENV_FILE:-${asset_root:+$asset_root/.env}}"
+if [[ -z "${OMNIFLOW_ENV_FILE:-}" || ! -f "$env_file" ]]; then
+  for candidate in "$asset_root/.env" "$workspace_root/OmniFlow/.env" "$workspace_root/OmniFlow-exp/.env"; do
+    if [[ -f "$candidate" ]]; then
+      env_file="$candidate"
+      break
+    fi
+  done
+fi
 source_index_input="${asset_root:+$asset_root/inputs/final_source_index.json}"
 source_index="$source_index_input"
 source_index_expected_tasks=""
@@ -193,6 +201,25 @@ mobilegpt_root="${OMNIFLOW_MOBILEGPT_ROOT:-${asset_root:+$asset_root/runtime/ext
 mobilegpt_source_memory_root="${OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT:-}"
 appagent_root="${OMNIFLOW_APPAGENT_ROOT:-${asset_root:+$asset_root/runtime/external/appagent}}"
 appagent_memory_root="${OMNIFLOW_APPAGENT_MEMORY_ROOT:-}"
+autodroid_root="${OMNIFLOW_AUTODROID_ROOT:-${asset_root:+$asset_root/runtime/external/autodroid}}"
+autodroid_memory_root="${OMNIFLOW_AUTODROID_MEMORY_ROOT:-${asset_root:+$asset_root/runtime/autodroid/androidworld_apps}}"
+autodroid_app="${OMNIFLOW_AUTODROID_APP:-}"
+if [[ -z "${OMNIFLOW_MOBILEGPT_ROOT:-}" ]]; then
+  for candidate in "$mobilegpt_root" "$workspace_root/OmniFlow/runtime/external/mobilegpt"; do
+    if [[ -d "$candidate" ]]; then
+      mobilegpt_root="$candidate"
+      break
+    fi
+  done
+fi
+if [[ -z "${OMNIFLOW_APPAGENT_ROOT:-}" ]]; then
+  for candidate in "$appagent_root" "$workspace_root/OmniFlow/runtime/external/appagent"; do
+    if [[ -d "$candidate" ]]; then
+      appagent_root="$candidate"
+      break
+    fi
+  done
+fi
 preflight_profile=""
 preflight_serials=""
 manage_emulators="${OMNIFLOW_ANDROIDWORLD_MANAGE_EMULATORS:-1}"
@@ -360,12 +387,20 @@ check_only=0
 development_run=0
 source_qualification_only=0
 source_collection=0
+function_replay_collection=0
 all_tasks=0
 batch_task_filter=""
 refresh_memory=0
 e2e_task=""
+e2e_method=""
+e2e_device=""
+e2e_source_seed="$formal_source_seed"
+e2e_evaluation_seed="$formal_task_seed"
 e2e_task_deadline_sec="${OMNIFLOW_E2E_TASK_DEADLINE_SEC:-$formal_task_deadline_sec}"
 source_screenshot_roots="${OMNIFLOW_SOURCE_SCREENSHOT_ROOTS:-}"
+setup_device=""
+function_replay_device="${OMNIFLOW_FUNCTION_REPLAY_DEVICE:-small5554:emulator-5554:5554}"
+function_replay_avd="${OMNIFLOW_FUNCTION_REPLAY_AVD:-OmniFlowTargetSmall}"
 
 select_model_endpoint() {
   local profile="$1"
@@ -404,6 +439,27 @@ PY
   if [[ "$profile" == "llmthu" ]]; then
     export LLMTHU_API_KEY="$selected_model_api_key"
   fi
+}
+
+configure_model_stack() {
+  local chat_model="${1:-$formal_model}"
+  local embedding_model="${2:-GLM-Embedding-2}"
+  if [[ -z "$selected_model_api_key" || -z "$selected_model_base_url" ]]; then
+    echo "model_endpoint_not_selected" >&2
+    exit 2
+  fi
+  export OPENAI_API_KEY="$selected_model_api_key"
+  export OPENAI_BASE_URL="$selected_model_base_url"
+  export OPENAI_MODEL="$chat_model"
+  export OPENAI_EMBEDDING_MODEL="$embedding_model"
+  export OMNIFLOW_PLANNER_MODEL="$chat_model"
+  export MOBILEGPT_CHAT_API_KEY="$selected_model_api_key"
+  export MOBILEGPT_CHAT_BASE_URL="$selected_model_base_url"
+  export MOBILEGPT_CHAT_MODEL="$chat_model"
+  export MOBILEGPT_VISION_MODEL="$chat_model"
+  export MOBILEGPT_EMBEDDING_API_KEY="$selected_model_api_key"
+  export MOBILEGPT_EMBEDDING_BASE_URL="$selected_model_base_url"
+  export MOBILEGPT_EMBEDDING_MODEL="$embedding_model"
 }
 
 validate_model_endpoint_auth() {
@@ -487,12 +543,25 @@ Options:
                             for bounded development/source/E2E runs.
   --tasks TASK1,TASK2,...   Select an ordered task-major subset. Implies
                             --all-tasks during experiment execution.
-  --e2e-task TASK           Run one bounded source-to-matrix task pipeline.
+  --e2e-task TASK           Run one bounded single-method, single-device E2E.
+  --e2e-method METHOD[,..]  Method(s) for --e2e-task, or all (required).
+  --e2e-device LABEL:SERIAL:PORT
+                            Device(s) for --e2e-task, comma-separated, or all.
+  --e2e-source-seed SEED    Source seed for --e2e-task (fixed at 111).
+  --e2e-evaluation-seed SEED
+                            Evaluation seed for --e2e-task (fixed at 113).
+  --setup-device LABEL[,..]|all
+                            Install and health-check the complete host/device
+                            stack for one or more protocol devices. This mode
+                            does not execute an AndroidWorld task.
   --source-qualification-only
                             Stop that pipeline after immutable seed-111 Function
                             qualification; create no target result results.
   --collect-source         Re-run one task on the source device only and save
                             screenshot-backed native RunLog evidence.
+  --function-replay-collection
+                            Convert each successful source RunLog with
+                            enhance=false and run one official Function replay.
   --task-deadline-sec SEC   Whole-task wall deadline; maximum/default is 1800.
   --refresh-memory          Deduplicate and index all configured RunLogs,
                             method assets, and existing results.
@@ -540,6 +609,10 @@ Examples:
   bash scripts/exp/run_androidworld.sh --environment bmoca --all-tasks
   bash scripts/exp/run_androidworld.sh \
     --e2e-task AudioRecorderRecordAudioWithFileName \
+    --e2e-method omniflow \
+    --e2e-device small5562:emulator-5562:5562 \
+    --e2e-source-seed 111 \
+    --e2e-evaluation-seed 113 \
     --task-deadline-sec 1800
 EOF
 }
@@ -605,11 +678,54 @@ while [[ "$#" -gt 0 ]]; do
       fi
       e2e_task="$1"
       ;;
+    --e2e-method)
+      shift
+      if [[ "$#" -eq 0 || -z "$1" ]]; then
+        echo "--e2e-method requires one AndroidWorld method." >&2
+        exit 2
+      fi
+      e2e_method="$1"
+      ;;
+    --e2e-device)
+      shift
+      if [[ "$#" -eq 0 || -z "$1" ]]; then
+        echo "--e2e-device requires LABEL:SERIAL:PORT." >&2
+        exit 2
+      fi
+      e2e_device="$1"
+      ;;
+    --e2e-source-seed)
+      shift
+      if [[ "$#" -eq 0 || ! "$1" =~ ^[0-9]+$ ]]; then
+        echo "--e2e-source-seed requires a non-negative integer." >&2
+        exit 2
+      fi
+      e2e_source_seed="$1"
+      ;;
+    --e2e-evaluation-seed)
+      shift
+      if [[ "$#" -eq 0 || ! "$1" =~ ^[0-9]+$ ]]; then
+        echo "--e2e-evaluation-seed requires a non-negative integer." >&2
+        exit 2
+      fi
+      e2e_evaluation_seed="$1"
+      ;;
+    --setup-device)
+      shift
+      if [[ "$#" -eq 0 || -z "$1" ]]; then
+        echo "--setup-device requires a protocol device label, comma list, or all." >&2
+        exit 2
+      fi
+      setup_device="$1"
+      ;;
     --source-qualification-only)
       source_qualification_only=1
       ;;
     --collect-source)
       source_collection=1
+      ;;
+    --function-replay-collection)
+      function_replay_collection=1
       ;;
     --task-deadline-sec)
       shift
@@ -634,6 +750,65 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
+if [[ -n "$setup_device" ]]; then
+  if [[ "$execution_environment" != "androidworld" || "$development_run" -eq 1 ||
+    "$source_collection" -eq 1 || "$all_tasks" -eq 1 || -n "$batch_task_filter" ||
+    "$refresh_memory" -eq 1 || -n "$e2e_task" || -n "$selected_method_arg" ||
+    -n "$selected_device_arg" || "$dry_run" -eq 1 || "$check_only" -eq 1 ]]; then
+    echo "--setup-device cannot be combined with experiment execution or check options." >&2
+    exit 2
+  fi
+  setup_android_sdk_root="${OMNIFLOW_ANDROID_SDK_ROOT:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$(resolve_default_android_sdk_root)}}}"
+  setup_adb_path="${OMNIFLOW_ADB_PATH:-$setup_android_sdk_root/platform-tools/adb}"
+  setup_emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$setup_android_sdk_root/emulator/emulator}"
+  setup_avdmanager_bin="${OMNIFLOW_AVDMANAGER_BIN:-$setup_android_sdk_root/cmdline-tools/latest/bin/avdmanager}"
+  setup_a11y_apk="${OMNIFLOW_ANDROIDWORLD_A11Y_APK:-$repo/runtime/cache/androidworld/accessibility_forwarder.apk}"
+  if [[ ! -f "$setup_a11y_apk" ]]; then
+    for candidate in \
+      "$repo/runtime/cache/androidworld/accessibility_forwarder.apk" \
+      "$asset_root/runtime/cache/androidworld/accessibility_forwarder.apk" \
+      "$workspace_root/OmniFlow/runtime/cache/androidworld/accessibility_forwarder.apk"; do
+      if [[ -f "$candidate" ]]; then
+        setup_a11y_apk="$candidate"
+        break
+      fi
+    done
+  fi
+  setup_command=(
+    "$python_bin" -m src.experiment.device_setup
+    --repo "$repo"
+    --device "$setup_device"
+    --python "$python_bin"
+    --sdk-root "$setup_android_sdk_root"
+    --android-world-root "$android_world_root"
+    --omnitransfer-root "$omnitransfer_root"
+    --mobilegpt-root "$mobilegpt_root"
+    --appagent-root "$appagent_root"
+    --autodroid-root "$autodroid_root"
+    --autodroid-memory-root "$autodroid_memory_root"
+    --autodroid-app "$autodroid_app"
+    --asset-root "$asset_root"
+    --report-root "$results_root"
+    --a11y-apk "$setup_a11y_apk"
+  )
+  if [[ -n "$env_file" && -f "$env_file" ]]; then
+    setup_command+=(--env-file "$env_file")
+  fi
+  if [[ -n "$setup_adb_path" ]]; then
+    setup_command+=(--adb "$setup_adb_path")
+  fi
+  if [[ -n "$setup_emulator_bin" ]]; then
+    setup_command+=(--emulator "$setup_emulator_bin")
+  fi
+  if [[ -n "$setup_avdmanager_bin" ]]; then
+    setup_command+=(--avdmanager "$setup_avdmanager_bin")
+  fi
+  if [[ "${OMNIFLOW_SETUP_INSTALL_PYTHON:-1}" != "0" ]]; then
+    setup_command+=(--install-python)
+  fi
+  cd "$repo"
+  exec "${setup_command[@]}"
+fi
 if [[ "$control_backend" == "oob" && "$execution_environment" != "androidworld" ]]; then
   echo "--control-backend oob is only supported for AndroidWorld." >&2
   exit 2
@@ -660,6 +835,8 @@ if [[ "$execution_environment" != "bmoca" && "$source_collection" -eq 1 ]]; then
   fi
   e2e_task="$batch_task_filter"
   batch_task_filter=""
+  e2e_method="${e2e_method:-omniflow}"
+  e2e_device="${e2e_device:-$default_device}"
   source_qualification_only=0
 fi
 if [[ "$execution_environment" == "bmoca" ]]; then
@@ -797,6 +974,7 @@ PY
   unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
   select_model_endpoint "$formal_model_endpoint_profile"
   validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
+  configure_model_stack "$formal_model"
   bmoca_task_selection="${batch_task_filter:-*}"
   bmoca_pipeline_args=(
     -m src.experiment.run_tasks
@@ -905,6 +1083,7 @@ if [[ "$development_run" -eq 1 ]]; then
   set +a
   select_model_endpoint "$development_model_endpoint_profile"
   validate_experiment_model "$development_model" "$development_model_endpoint_profile"
+  configure_model_stack "$development_model"
   if [[ "$dry_run" -eq 0 ]]; then
     validate_page_encoder_runtime
   fi
@@ -951,6 +1130,22 @@ if [[ -n "$e2e_task" ]]; then
     echo "--e2e-task cannot be combined with maintenance or matrix-selection options." >&2
     exit 2
   fi
+  if [[ -z "$e2e_method" ]]; then
+    echo "--e2e-task requires --e2e-method METHOD or all." >&2
+    exit 2
+  fi
+  if [[ -z "$e2e_device" ]]; then
+    echo "--e2e-task requires --e2e-device LABEL:SERIAL:PORT." >&2
+    exit 2
+  fi
+  if [[ "$e2e_source_seed" != "$formal_source_seed" ]]; then
+    echo "--e2e-task requires source seed $formal_source_seed." >&2
+    exit 2
+  fi
+  if [[ "$e2e_evaluation_seed" != "$formal_task_seed" ]]; then
+    echo "--e2e-task requires evaluation seed $formal_task_seed." >&2
+    exit 2
+  fi
   if [[ ! "$e2e_task_deadline_sec" =~ ^[1-9][0-9]*$ ]] || (( e2e_task_deadline_sec > 1800 )); then
     echo "--task-deadline-sec must be a positive integer no greater than 1800." >&2
     exit 2
@@ -977,7 +1172,7 @@ if [[ -n "$e2e_task" ]]; then
     echo "--e2e-task requires canonical OmniTransfer: $canonical_omnitransfer_root." >&2
     exit 2
   fi
-  if [[ "$dry_run" -ne 1 && "$check_only" -ne 1 && ( -z "$appagent_root" || "$appagent_root" != /* || ! -d "$appagent_root" ) ]]; then
+  if [[ "$function_replay_collection" -eq 0 && "$dry_run" -ne 1 && "$check_only" -ne 1 && ( -z "$appagent_root" || "$appagent_root" != /* || ! -d "$appagent_root" ) ]]; then
     echo "--e2e-task requires an absolute native AppAgent root." >&2
     exit 2
   fi
@@ -997,7 +1192,7 @@ if [[ -n "$e2e_task" ]]; then
     echo "--e2e-task requires an executable absolute emulator path: $e2e_emulator_bin" >&2
     exit 2
   fi
-  if [[ "$dry_run" -ne 1 ]] && ! ensure_avd_installed \
+  if [[ "$function_replay_collection" -eq 0 && "$dry_run" -ne 1 ]] && ! ensure_avd_installed \
     "$source_avd" \
     "$e2e_emulator_bin" \
     "$e2e_avdmanager_bin" \
@@ -1005,7 +1200,15 @@ if [[ -n "$e2e_task" ]]; then
     echo "--e2e-task source AVD is unavailable: $source_avd" >&2
     exit 2
   fi
-  if [[ "$check_only" -ne 1 ]]; then
+  if [[ "$function_replay_collection" -eq 1 && "$dry_run" -ne 1 ]] && ! ensure_avd_installed \
+    "$function_replay_avd" \
+    "$e2e_emulator_bin" \
+    "$e2e_avdmanager_bin" \
+    "$e2e_android_sdk_root"; then
+    echo "--function-replay-collection replay AVD is unavailable: $function_replay_avd" >&2
+    exit 2
+  fi
+  if [[ "$check_only" -ne 1 && "$function_replay_collection" -eq 0 ]]; then
     if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
       echo "--e2e-task requires an existing absolute OMNIFLOW_ENV_FILE." >&2
       exit 2
@@ -1019,8 +1222,7 @@ if [[ -n "$e2e_task" ]]; then
     unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
     select_model_endpoint "$formal_model_endpoint_profile"
     validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
-    export OPENAI_MODEL="$formal_model"
-    export OMNIFLOW_PLANNER_MODEL="$formal_model"
+    configure_model_stack "$formal_model"
   fi
   normalized_e2e_model="$(printf '%s' "$formal_model" | tr '[:upper:]' '[:lower:]')"
   if [[ "$normalized_e2e_model" != "glm-5.1" ]]; then
@@ -1057,7 +1259,20 @@ if [[ -n "$e2e_task" ]]; then
     --runtime-preflight "$repo/src/experiment/checks.py"
     --formal-model "$formal_model"
     --appagent-model "$appagent_model"
+    --e2e-method "$e2e_method"
+    --e2e-device "$e2e_device"
+    --e2e-source-seed "$e2e_source_seed"
+    --e2e-evaluation-seed "$e2e_evaluation_seed"
+    --ensure-function
   )
+  if [[ "$function_replay_collection" -eq 1 ]]; then
+    e2e_args+=(
+      --function-replay-collection
+      --replay-avd "$function_replay_avd"
+      --e2e-method omniflow
+      --e2e-device "$function_replay_device"
+    )
+  fi
   if [[ -n "${OMNIFLOW_E2E_ATTEMPT_ID:-}" ]]; then
     e2e_args+=(--attempt-id "$OMNIFLOW_E2E_ATTEMPT_ID")
   fi
@@ -1733,6 +1948,13 @@ PY
   batch_status=0
   for batch_task in "${batch_tasks[@]}"; do
     child_args=(--e2e-task "$batch_task" --task-deadline-sec "$e2e_task_deadline_sec")
+    if [[ "$function_replay_collection" -eq 1 ]]; then
+      child_args+=(
+        --function-replay-collection
+        --e2e-method omniflow
+        --e2e-device "$function_replay_device"
+      )
+    fi
     if [[ "$check_only" -eq 1 ]]; then
       child_args+=(--check-only)
     elif [[ "$dry_run" -eq 1 ]]; then
@@ -2013,22 +2235,9 @@ fi
 select_model_endpoint "$formal_model_endpoint_profile"
 validate_experiment_model "$paper_model" "$formal_model_endpoint_profile"
 validate_model_endpoint_auth
-export MOBILEGPT_CHAT_API_KEY="$selected_model_api_key"
-export MOBILEGPT_CHAT_BASE_URL="$selected_model_base_url"
+configure_model_stack "$paper_model"
 if [[ "$need_mobilegpt_preflight" -eq 1 ]]; then
-  if [[ -z "$mobilegpt_embedding_api_key" || -z "$mobilegpt_embedding_base_url" ]]; then
-    echo "MobileGPT embedding endpoint is missing from OPENAI_API_KEY/OPENAI_BASE_URL in OMNIFLOW_ENV_FILE." >&2
-    exit 2
-  fi
-  export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"
-  export MOBILEGPT_EMBEDDING_BASE_URL="$mobilegpt_embedding_base_url"
-  if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
-    export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
-    echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=GLM-Embedding-2"
-  else
-    export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
-    echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=GLM-Embedding-2"
-  fi
+  echo "[mobilegpt-endpoints] chat_model=$MOBILEGPT_CHAT_MODEL embedding_model=$MOBILEGPT_EMBEDDING_MODEL"
 fi
 echo "[model] model=$paper_model model_endpoint_profile=$formal_model_endpoint_profile model_endpoint=$selected_model_base_url"
 if [[ "$dry_run" -eq 1 ]]; then
