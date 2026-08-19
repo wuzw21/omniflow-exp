@@ -15,6 +15,7 @@ from omniflow import (
     RuntimeSettings,
 )
 from omniflow.core.config import DEFAULT_MAX_STEPS, Experiment
+from omniflow.core.model import ToolCall
 from omniflow.core.trajectory import state_id
 from omniflow.transfer.runtime import (
     TRANSFER_STATE_CATALOG_FILENAME,
@@ -90,6 +91,8 @@ def build_agent(
     task_seed: int | None = None,
     evidence_root: str | Path | None = None,
     performance_metrics: PerformanceMetrics | None = None,
+    direct_function_id: str = "",
+    direct_function_arguments: dict[str, Any] | None = None,
 ) -> OmniFlow:
     if env is None:
         raise TypeError("build_agent requires env parameter")
@@ -151,6 +154,30 @@ def build_agent(
     flow.env = env
     flow.transition_pause = None
 
+    direct_id = str(direct_function_id or "").strip()
+    if direct_id:
+        if direct_function_arguments is not None and not isinstance(
+            direct_function_arguments, dict
+        ):
+            raise ValueError("direct_function_arguments_must_be_object")
+        if flow.store.get_function(direct_id) is None:
+            raise ValueError(f"direct_function_not_found:{direct_id}")
+        direct_arguments = dict(direct_function_arguments or {})
+
+        def run_direct_function(
+            _goal: str,
+            *,
+            experiment: Experiment | str | None = None,
+        ) -> RunResult:
+            return flow.call_tool(
+                ToolCall(direct_id, dict(direct_arguments)),
+                experiment=experiment,
+            )
+
+        run_cycle = run_direct_function
+    else:
+        run_cycle = None
+
     def reset(go_home: bool = False) -> None:
         state.update(
             last_result=None,
@@ -206,7 +233,8 @@ def build_agent(
                 },
             )
         state["goal"] = goal_text
-        result = flow.run(
+        cycle = run_cycle or flow.run
+        result = cycle(
             goal_text,
             experiment=Experiment(name="androidworld"),
         )

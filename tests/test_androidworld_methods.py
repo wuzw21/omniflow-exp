@@ -190,18 +190,11 @@ def test_omniflow_adapter_preserves_launcher_step_cap() -> None:
 
 
 def test_direct_function_is_a_method_adapter_not_a_runner_override() -> None:
-    calls: list[object] = []
+    captured: dict[str, object] = {}
 
-    class Store:
-        def get_function(self, function_id: str) -> object:
-            return object() if function_id == "complete_task" else None
-
-    class Agent:
-        store = Store()
-
-        def call_tool(self, tool_call: object, *, experiment: object = None) -> object:
-            calls.append((tool_call, experiment))
-            return "function-result"
+    def build_agent(**options: object) -> object:
+        captured.update(options)
+        return object()
 
     context = MethodAdapterContext(
         selector="omniflow",
@@ -211,36 +204,13 @@ def test_direct_function_is_a_method_adapter_not_a_runner_override() -> None:
         direct_function_id="complete_task",
         direct_function_arguments={"target": "Alarm"},
         planner_model="must-not-build",
-        build_omniflow_agent=lambda **_options: Agent(),
+        build_omniflow_agent=build_agent,
     )
 
-    replay_agent = default_method_adapter_registry().build(context)
+    default_method_adapter_registry().build(context)
 
-    assert replay_agent.run("ignored", experiment="episode") == "function-result"
-    assert calls[0][0].name == "complete_task"
-    assert calls[0][0].arguments == {"target": "Alarm"}
-    assert calls[0][1] == "episode"
-
-
-def test_direct_function_replay_rejects_missing_registered_function() -> None:
-    class Store:
-        def get_function(self, _function_id: str) -> None:
-            return None
-
-    with pytest.raises(ValueError, match="direct_function_not_found:missing"):
-        default_method_adapter_registry().build(
-            MethodAdapterContext(
-                selector="omniflow",
-                env=SimpleNamespace(),
-                store_path="store.json",
-                adb_serial="emulator-5554",
-                direct_function_id="missing",
-                build_omniflow_agent=lambda **_options: SimpleNamespace(
-                    store=Store(),
-                    call_tool=lambda *_args, **_kwargs: None,
-                ),
-            )
-        )
+    assert captured["direct_function_id"] == "complete_task"
+    assert captured["direct_function_arguments"] == {"target": "Alarm"}
 
 
 def test_omniflow_adapter_uses_canonical_planner_configuration(
@@ -415,6 +385,73 @@ def test_androidworld_step_runs_one_complete_omniflow_cycle(
     assert second.data["done_reason"] == "omniflow_cycle_already_completed"
     assert run_calls == ["Turn bluetooth on"]
     assert agent.host.state["last_result"] is result
+
+
+def test_androidworld_direct_function_runs_through_episode_step_without_planner(
+    monkeypatch,
+) -> None:
+    result = RunResult(
+        success=True,
+        function_id="complete_task",
+        actions_executed=3,
+        model_calls=0,
+        fallback_steps=0,
+        detail={"done_reason": "finished", "planner_steps": 0},
+    )
+    tool_calls: list[object] = []
+    store = SimpleNamespace(
+        functions={},
+        get_function=lambda function_id: object()
+        if function_id == "complete_task"
+        else None,
+    )
+    flow = SimpleNamespace(
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=20)),
+        store=store,
+        call_tool=lambda tool_call, **_kwargs: (tool_calls.append(tool_call) or result),
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.agent.OmniFlow",
+        lambda *_args, **kwargs: (
+            setattr(flow, "config", kwargs["config"])
+            or setattr(flow, "host", kwargs["host"])
+            or flow
+        ),
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.agent.AndroidWorldHost",
+        lambda *_args, **_kwargs: SimpleNamespace(installed_packages=lambda: set()),
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.agent.load_transfer_state_catalog",
+        lambda _path: {},
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.agent.transfer_state_coverage",
+        lambda *_args: {
+            "required_state_count": 0,
+            "complete": True,
+            "missing_state_ids": [],
+        },
+    )
+
+    from src.integrations.android_world.agent import build_agent
+
+    agent = build_agent(
+        env=SimpleNamespace(),
+        store_path="store.json",
+        max_steps=20,
+        direct_function_id="complete_task",
+        direct_function_arguments={"target": "Alarm"},
+    )
+
+    episode_result = agent.step("planner must not run")
+
+    assert episode_result.data["function_id"] == "complete_task"
+    assert len(tool_calls) == 1
+    assert tool_calls[0].name == "complete_task"
+    assert tool_calls[0].arguments == {"target": "Alarm"}
+    assert tool_calls[0].name != "planner must not run"
 
 
 def test_androidworld_stops_at_the_planner_step_budget(monkeypatch) -> None:

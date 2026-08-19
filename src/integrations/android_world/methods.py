@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 from typing import Any, Callable
 
-from omniflow.core.model import ToolCall
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from src.experiment.protocol import (
     FORMAL_MODEL_BASE_URL,
@@ -272,42 +271,6 @@ class MethodAdapterRegistry:
         return matches[0].build(context)
 
 
-class FunctionReplayAgent:
-    """Expose one registered Function through the normal agent lifecycle.
-
-    Direct Function execution is a useful source-qualification and replay
-    mode, not a second AndroidWorld runner.  This small adapter changes only
-    the method decision: reset, evidence recording, host access, and the
-    official episode wrapper remain owned by the launcher.
-    """
-
-    def __init__(
-        self,
-        agent: Any,
-        *,
-        function_id: str,
-        arguments: dict[str, Any],
-    ) -> None:
-        normalized_id = str(function_id or "").strip()
-        if not normalized_id or not callable(getattr(agent, "call_tool", None)):
-            raise ValueError("direct_function_requires_omniflow_agent")
-        store = getattr(agent, "store", None)
-        if store is None or store.get_function(normalized_id) is None:
-            raise ValueError(f"direct_function_not_found:{normalized_id}")
-        self._agent = agent
-        self.function_id = normalized_id
-        self.arguments = dict(arguments)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._agent, name)
-
-    def run(self, _goal: str, *, experiment: Any = None) -> Any:
-        return self._agent.call_tool(
-            ToolCall(self.function_id, dict(self.arguments)),
-            experiment=experiment,
-        )
-
-
 def default_method_adapter_registry() -> MethodAdapterRegistry:
     """Return the one registry used by the AndroidWorld launcher."""
     return MethodAdapterRegistry(
@@ -389,18 +352,14 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
         "evidence_root": context.evidence_root or None,
         "performance_metrics": context.performance_metrics,
     }
+    if str(context.direct_function_id or "").strip():
+        build_kwargs["direct_function_id"] = str(context.direct_function_id).strip()
+        build_kwargs["direct_function_arguments"] = dict(
+            context.direct_function_arguments or {}
+        )
     if planner is not None:
         build_kwargs["planner"] = planner
     built_agent = build_agent(**build_kwargs)
-    if str(context.direct_function_id or "").strip():
-        arguments = context.direct_function_arguments
-        if arguments is not None and not isinstance(arguments, dict):
-            raise ValueError("direct_function_arguments_must_be_object")
-        return FunctionReplayAgent(
-            built_agent,
-            function_id=context.direct_function_id,
-            arguments=dict(arguments or {}),
-        )
     if context.selector != "fixed_replay":
         return built_agent
     if not str(context.raw_replay_run_log or "").strip():
