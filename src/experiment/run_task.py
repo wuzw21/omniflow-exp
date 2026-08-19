@@ -67,6 +67,19 @@ from src.integrations.android_world.methods import reuse_metrics_from_result_row
 from src.integrations.appagent import validate_appagent_memory
 from src.integrations import mobilegpt_memory
 
+
+def _load_mobilegpt_stats_summary(
+    *,
+    summary_path: str | Path | None,
+    stats_jsonl_path: str | Path | None,
+) -> dict[str, Any]:
+    """Load the shared MobileGPT stats summary for result-row accounting."""
+
+    return mobilegpt_memory._load_mobilegpt_stats_summary(
+        summary_path=summary_path,
+        stats_jsonl_path=stats_jsonl_path,
+    )
+
 DEFAULT_DATA_INDEX = REPO_ROOT / "data" / "current.json"
 DEFAULT_ANDROID_WORLD_ROOT = (
     Path.home()
@@ -141,10 +154,6 @@ def _rate(numerator: int | float, denominator: int | float) -> float:
     if denominator <= 0:
         return 0.0
     return round(float(numerator) / denominator, 6)
-
-
-def _repo_path(value: str | Path, *, repo_root: Path = REPO_ROOT) -> Path:
-    return resolve_path(value, root=repo_root)
 
 
 def _local_dotenv_env(*, repo_root: Path = REPO_ROOT) -> dict[str, str]:
@@ -251,7 +260,7 @@ def _canonical_source_ref_path(
         if ancestor_relative.exists():
             return ancestor_relative
 
-    repo_relative = _repo_path(path, repo_root=repo_root)
+    repo_relative = resolve_path(path, root=repo_root)
     if repo_relative.exists():
         return repo_relative
 
@@ -320,7 +329,7 @@ def _experiment_run_dir(
     repo_root: Path = REPO_ROOT,
 ) -> Path:
     return (
-        _repo_path(output_root, repo_root=repo_root)
+        resolve_path(output_root, root=repo_root)
         / _safe_stem(task)
         / _safe_stem(method, fallback="method")
         / _device_label(
@@ -342,9 +351,9 @@ def _result_registry_root(
 ) -> Path:
     explicit_runs = str(getattr(args, "result_registry_root", "") or "").strip()
     if explicit_runs:
-        return _repo_path(explicit_runs)
+        return resolve_path(explicit_runs)
 
-    index_path = _repo_path(args.index)
+    index_path = resolve_path(args.index)
     for candidate in (index_path.parent, *index_path.parents):
         if candidate.name == "androidworld_validator":
             return candidate / "runs"
@@ -357,7 +366,7 @@ def _task_managed_output_root(
     repo_root: Path = REPO_ROOT,
 ) -> tuple[Path, str]:
     """Keep the caller's exact immutable attempt root authoritative."""
-    resolved = _repo_path(output_root, repo_root=repo_root)
+    resolved = resolve_path(output_root, root=repo_root)
     canonical_shared_root = _androidworld_validator_root(repo_root=repo_root) / "runs"
     if resolved == canonical_shared_root:
         raise ValueError(
@@ -367,7 +376,7 @@ def _task_managed_output_root(
 
 
 def _source_seed_output_root(output_root: str | Path, source_seed: int) -> Path:
-    return _repo_path(output_root) / f"source_seed_{int(source_seed)}"
+    return resolve_path(output_root) / f"source_seed_{int(source_seed)}"
 
 
 def _claim_result_attempt(
@@ -379,7 +388,7 @@ def _claim_result_attempt(
     evaluation_seed: int | None,
     dry_run: bool = False,
 ) -> Path:
-    root = _repo_path(output_root)
+    root = resolve_path(output_root)
     root.mkdir(parents=True, exist_ok=True)
     manifest_path = root / "attempt_manifest.json"
     runner_path = Path(__file__).resolve()
@@ -409,7 +418,7 @@ def _claim_result_attempt(
 
 
 def _method_root(output_root: str | Path, task: str, method: str) -> Path:
-    return _repo_path(output_root) / _safe_stem(task) / _safe_stem(method)
+    return resolve_path(output_root) / _safe_stem(task) / _safe_stem(method)
 
 
 def _method_memory_root(output_root: str | Path, task: str, method: str) -> Path:
@@ -636,7 +645,7 @@ def load_canonical_source_index(
     *,
     repo_root: Path = REPO_ROOT,
 ) -> list[CanonicalRunLog]:
-    path = _repo_path(index_path, repo_root=repo_root)
+    path = resolve_path(index_path, root=repo_root)
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"Canonical data index must be a JSON object: {path}")
@@ -772,7 +781,7 @@ def materialize_replay_run_log(
     empty_input_text_cards_removed = _drop_empty_input_text_cards(payload)
 
     normalized_dir = (
-        _repo_path(output_root, repo_root=repo_root) / "_normalized_runlogs"
+        resolve_path(output_root, root=repo_root) / "_normalized_runlogs"
     )
     normalized_dir.mkdir(parents=True, exist_ok=True)
     normalized_path = normalized_dir / f"{_safe_stem(item.task)}.run_log.json"
@@ -793,9 +802,9 @@ def _copy_replay_run_log_to_memory(
     task: str,
     repo_root: Path = REPO_ROOT,
 ) -> Path:
-    replay_dir = _repo_path(output_root, repo_root=repo_root) / "_replay_runlogs"
+    replay_dir = resolve_path(output_root, root=repo_root) / "_replay_runlogs"
     replay_dir.mkdir(parents=True, exist_ok=True)
-    source = _repo_path(source_run_log, repo_root=repo_root)
+    source = resolve_path(source_run_log, root=repo_root)
     destination = replay_dir / f"{_safe_stem(task)}.run_log.json"
     if source.resolve() != destination.resolve():
         destination.write_bytes(source.read_bytes())
@@ -1065,7 +1074,7 @@ def build_replay_command(
         "-m",
         "src.integrations.android_world.run_episode",
         "--android-world-root",
-        str(_repo_path(android_world_root, repo_root=repo_root)),
+        str(resolve_path(android_world_root, root=repo_root)),
         "--tasks",
         item.task,
         "--task-random-seed",
@@ -1106,7 +1115,7 @@ def build_replay_command(
             "source_run_log_sha256": sha256_file(item.source_run_log),
             "replay_run_log": str(replay_run_log),
             "replay_run_log_sha256": sha256_file(replay_run_log),
-            "memory_root": str(_repo_path(replay_memory_root, repo_root=repo_root))
+            "memory_root": str(resolve_path(replay_memory_root, root=repo_root))
             if replay_memory_root
             else "",
             "source_materialization": source_materialization,
@@ -1191,7 +1200,7 @@ def build_official_command(
         "-m",
         "src.integrations.android_world.run_episode",
         "--android-world-root",
-        str(_repo_path(android_world_root, repo_root=repo_root)),
+        str(resolve_path(android_world_root, root=repo_root)),
         "--tasks",
         item.task,
         "--task-random-seed",
@@ -1222,13 +1231,13 @@ def build_official_command(
         argv.extend(
             [
                 "--source-action-hint-path",
-                str(_repo_path(source_action_hint_path, repo_root=repo_root)),
+                str(resolve_path(source_action_hint_path, root=repo_root)),
             ]
         )
     if adb_path.strip():
         argv.extend(["--adb-path", adb_path.strip()])
     hint_path_text = (
-        str(_repo_path(source_action_hint_path, repo_root=repo_root))
+        str(resolve_path(source_action_hint_path, root=repo_root))
         if source_action_hint_path
         else ""
     )
@@ -1338,7 +1347,7 @@ def build_task_command(
     if resolved_agent == "omniflow" and not str(store_path or "").strip():
         raise ValueError("omniflow_function_store_required")
     resolved_store_path = (
-        _repo_path(store_path, repo_root=repo_root)
+        resolve_path(store_path, root=repo_root)
         if store_path
         else None
     )
@@ -1361,7 +1370,7 @@ def build_task_command(
             max(0, int(max_fallback_steps))
         )
     resolved_omnitransfer_root = (
-        _repo_path(omnitransfer_root, repo_root=repo_root)
+        resolve_path(omnitransfer_root, root=repo_root)
         if omnitransfer_root
         else None
     )
@@ -1376,7 +1385,7 @@ def build_task_command(
         "-m",
         "src.integrations.android_world.run_episode",
         "--android-world-root",
-        str(_repo_path(android_world_root, repo_root=repo_root)),
+        str(resolve_path(android_world_root, root=repo_root)),
         "--tasks",
         item.task,
         "--task-random-seed",
@@ -1505,7 +1514,7 @@ def validate_omniflow_transfer_assets(
         transfer_state_coverage,
     )
 
-    resolved_store_path = _repo_path(store_path)
+    resolved_store_path = resolve_path(store_path)
     if not resolved_store_path.is_file():
         raise FileNotFoundError(
             f"validated v2 Function Store not found: {resolved_store_path}"
@@ -1636,7 +1645,7 @@ def seal_mobilegpt_source_memory(
 
     if int(source_seed) != SOURCE_SEED:
         raise ValueError("mobilegpt_virtual_memory_requires_source_seed_111")
-    memory = _repo_path(memory_root)
+    memory = resolve_path(memory_root)
     bundle_root = memory.parent.resolve()
     if memory.name != "memory":
         raise ValueError("mobilegpt_virtual_memory_directory_must_be_named_memory")
@@ -1645,9 +1654,9 @@ def seal_mobilegpt_source_memory(
         raise FileExistsError(
             f"immutable_mobilegpt_memory_manifest_exists:{manifest_path}"
         )
-    source_path = _repo_path(source_run_log)
-    stats_path = _repo_path(source_stats)
-    audit_path = _repo_path(trajectory_audit)
+    source_path = resolve_path(source_run_log)
+    stats_path = resolve_path(source_stats)
+    audit_path = resolve_path(trajectory_audit)
     source_payload = canonicalize_run_log(
         json.loads(source_path.read_text(encoding="utf-8"))
     )
@@ -1866,8 +1875,8 @@ def freeze_mobilegpt_memory(
     source_memory_root: str | Path,
     frozen_memory_root: str | Path,
 ) -> dict[str, Any]:
-    source_root = _repo_path(source_memory_root)
-    frozen_root = _repo_path(frozen_memory_root)
+    source_root = resolve_path(source_memory_root)
+    frozen_root = resolve_path(frozen_memory_root)
     if not source_root.is_dir():
         raise FileNotFoundError(f"MobileGPT memory root not found: {source_root}")
     if frozen_root.exists():
@@ -1894,8 +1903,8 @@ def prepare_mobilegpt_episode_memory(
     expected_digest: str,
     expected_file_count: int,
 ) -> dict[str, Any]:
-    frozen_root = _repo_path(frozen_memory_root)
-    episode_root = _repo_path(episode_memory_root)
+    frozen_root = resolve_path(frozen_memory_root)
+    episode_root = resolve_path(episode_memory_root)
     if not frozen_root.is_dir():
         raise FileNotFoundError(f"frozen_mobilegpt_memory_missing:{frozen_root}")
     if episode_root.exists():
@@ -1945,7 +1954,7 @@ def audit_mobilegpt_episode_memory(
     expected_digest: str,
     expected_file_count: int,
 ) -> tuple[Path, dict[str, Any]]:
-    episode_root = _repo_path(episode_memory_root)
+    episode_root = resolve_path(episode_memory_root)
     actual_digest, actual_file_count = mobilegpt_memory.mobilegpt_memory_digest(episode_root)
     runtime_mutated = not (
         actual_digest == expected_digest and actual_file_count == expected_file_count
@@ -1997,7 +2006,7 @@ def _mobilegpt_browser_task_html(
     params = dict(task_params_override or item.params or {})
     if "browser_task_seed" not in params:
         return ""
-    root = _repo_path(android_world_root)
+    root = resolve_path(android_world_root)
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     try:
@@ -2090,7 +2099,7 @@ def build_mobilegpt_server_command(
     python_executable: str = sys.executable,
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
-    root = _repo_path(mobilegpt_root, repo_root=repo_root)
+    root = resolve_path(mobilegpt_root, root=repo_root)
     env: dict[str, str] = {}
     if serial.strip():
         env["ANDROID_SERIAL"] = serial.strip()
@@ -2100,7 +2109,7 @@ def build_mobilegpt_server_command(
     if adb_path.strip():
         env["ADB_PATH"] = adb_path.strip()
     resolved_memory_root = (
-        _repo_path(mobilegpt_memory_root, repo_root=repo_root)
+        resolve_path(mobilegpt_memory_root, root=repo_root)
         if mobilegpt_memory_root
         else None
     )
@@ -2114,7 +2123,7 @@ def build_mobilegpt_server_command(
 
     resolved_action = str(action or "").strip().lower()
     if resolved_action == "server":
-        env["MOBILEGPT_STATS_JSONL"] = str(_repo_path(stats_jsonl, repo_root=repo_root))
+        env["MOBILEGPT_STATS_JSONL"] = str(resolve_path(stats_jsonl, root=repo_root))
         env["MOBILEGPT_UPSTREAM_MODE"] = "1"
         argv = [
             python_executable,
@@ -2193,7 +2202,7 @@ def discover_task_result_files(paths: Sequence[str | Path]) -> list[Path]:
     seen: set[Path] = set()
     files: list[Path] = []
     for raw_path in paths:
-        path = _repo_path(raw_path)
+        path = resolve_path(raw_path)
         candidates = (
             [path]
             if path.is_file()
@@ -2565,7 +2574,7 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
 
 
 def write_metrics_summary(summary: dict[str, Any], output_path: str | Path) -> None:
-    path = _repo_path(output_path)
+    path = resolve_path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(summary, indent=2, ensure_ascii=False),
@@ -2691,7 +2700,7 @@ def _result_record_has_formal_result(record: dict[str, Any]) -> bool:
 def _formal_result_paths(record: dict[str, Any]) -> list[Path]:
     if not _result_record_has_formal_result(record):
         return []
-    output_path = _repo_path(str(record.get("output_path") or ""))
+    output_path = resolve_path(str(record.get("output_path") or ""))
     if output_path.is_dir():
         result_files = sorted(output_path.rglob("task_results.jsonl"))
         if result_files:
@@ -3204,7 +3213,7 @@ def _t3a_semantic_hint_step(
 
 
 def _select_complete_function(store_path: str | Path):
-    store = FunctionStore(_repo_path(store_path))
+    store = FunctionStore(resolve_path(store_path))
     if store.load_errors:
         raise ValueError(
             "t3a_hint_function_store_invalid:" + ",".join(sorted(store.load_errors))
@@ -3264,7 +3273,7 @@ def _source_action_hint_path_for_item(
     semantic_preceding_steps = [None, *source_steps[:-1]]
     store_alignment_mode = "not_applicable"
     if store_path is not None:
-        resolved_store_path = _repo_path(store_path, repo_root=repo_root)
+        resolved_store_path = resolve_path(store_path, root=repo_root)
         task_function = _select_complete_function(resolved_store_path)
         raw_store = _read_json(resolved_store_path)
         raw_functions = raw_store.get("functions")
@@ -3357,7 +3366,7 @@ def _source_action_hint_path_for_item(
         "semantic_step_count": len(semantic_steps),
         "steps": semantic_steps,
     }
-    hint_dir = _repo_path(output_root, repo_root=repo_root) / "_source_action_hints"
+    hint_dir = resolve_path(output_root, root=repo_root) / "_source_action_hints"
     hint_dir.mkdir(parents=True, exist_ok=True)
     hint_path = hint_dir / f"{_safe_stem(item.task)}.source_action_hints.json"
     hint_path.write_text(
@@ -3368,7 +3377,7 @@ def _source_action_hint_path_for_item(
 
 
 def _claim_method_memory_root(memory_root: str | Path) -> Path:
-    root = _repo_path(memory_root)
+    root = resolve_path(memory_root)
     try:
         root.mkdir(parents=True, exist_ok=False)
     except FileExistsError as exc:
@@ -3422,12 +3431,12 @@ def _write_method_memory_manifest(
     target_observations_read: bool = False,
     validator_state_read: bool = False,
 ) -> Path:
-    root = _repo_path(memory_root)
+    root = resolve_path(memory_root)
     if not root.is_dir():
         raise FileNotFoundError(f"unclaimed_memory_root:{root}")
     source: dict[str, Any] = {"seed": source_seed}
     if source_run_log is not None:
-        resolved_source = _repo_path(source_run_log)
+        resolved_source = resolve_path(source_run_log)
         source.update(
             {
                 "run_log": str(resolved_source),
@@ -3892,7 +3901,7 @@ def _result_summary_rows(
             continue
         if dry_run_summary:
             continue
-        memory_root = _repo_path(memory_root_value)
+        memory_root = resolve_path(memory_root_value)
         if status in {"teacher_memory_write", "cold_memory_write"}:
             teacher_stats = _load_mobilegpt_stats_summary(
                 summary_path=memory_root / "mobilegpt_stats_summary.json",
@@ -3911,12 +3920,12 @@ def _result_summary_rows(
             continue
         episode_stats = _load_mobilegpt_stats_summary(
             summary_path=(
-                _repo_path(explicit_episode_summary)
+                resolve_path(explicit_episode_summary)
                 if explicit_episode_summary
                 else None
             ),
             stats_jsonl_path=(
-                _repo_path(explicit_episode_jsonl) if explicit_episode_jsonl else None
+                resolve_path(explicit_episode_jsonl) if explicit_episode_jsonl else None
             ),
         )
         if episode_stats:
@@ -4328,7 +4337,7 @@ def _write_result_summary(
     command_records: Sequence[dict[str, Any]],
     aggregate_summary: dict[str, Any],
 ) -> dict[str, Any]:
-    task_root = _repo_path(output_root) / _safe_stem(task)
+    task_root = resolve_path(output_root) / _safe_stem(task)
     task_root.mkdir(parents=True, exist_ok=True)
     rows = _result_summary_rows(
         task=task,
@@ -4457,7 +4466,7 @@ def build_mobilegpt_command(
         env={
             **spec.env,
             "ANDROID_SERIAL": target.serial,
-            "MOBILEGPT_STATS_JSONL": str(_repo_path(stats_jsonl, repo_root=repo_root)),
+            "MOBILEGPT_STATS_JSONL": str(resolve_path(stats_jsonl, root=repo_root)),
             "MOBILEGPT_RUNTIME_OBSERVE_BACKEND": "androidworld",
             "MOBILEGPT_SERVER_HOST": client_host,
             "MOBILEGPT_SERVER_PORT": str(int(server_port)),
@@ -4542,17 +4551,17 @@ def build_appagent_command(
         python_executable=python_executable,
         repo_root=repo_root,
     )
-    resolved_appagent_root = _repo_path(appagent_root, repo_root=repo_root)
+    resolved_appagent_root = resolve_path(appagent_root, root=repo_root)
     argv = [*spec.argv, "--appagent-root", str(resolved_appagent_root)]
     resolved_docs_root: Path | None = None
     resolved_teacher_source: Path | None = None
     resolved_workspace_root: Path | None = None
     if docs_root is not None:
-        resolved_docs_root = _repo_path(docs_root, repo_root=repo_root)
+        resolved_docs_root = resolve_path(docs_root, root=repo_root)
         argv.extend(["--appagent-docs-root", str(resolved_docs_root)])
     if teacher_mode:
-        resolved_teacher_source = _repo_path(teacher_source, repo_root=repo_root)
-        resolved_workspace_root = _repo_path(workspace_root, repo_root=repo_root)
+        resolved_teacher_source = resolve_path(teacher_source, root=repo_root)
+        resolved_workspace_root = resolve_path(workspace_root, root=repo_root)
         argv.extend(
             [
                 "--appagent-teacher-source",
@@ -4651,7 +4660,7 @@ def _run_result_mobilegpt(
         raise ValueError(
             "mobilegpt requires --mobilegpt-source-memory-root"
         )
-    source_memory_root = _repo_path(source_memory_value)
+    source_memory_root = resolve_path(source_memory_value)
     if not source_memory_root.is_dir():
         raise FileNotFoundError(f"mobilegpt_source_memory_missing:{source_memory_root}")
     source_manifest_path = source_memory_root.parent / MOBILEGPT_MEMORY_MANIFEST
@@ -5112,7 +5121,7 @@ def run_task(args: argparse.Namespace) -> int:
                 raise ValueError(
                     f"--store-path is required when result includes {method}"
                 )
-            store_path = _repo_path(store_text)
+            store_path = resolve_path(store_text)
         else:
             store_path = memory_root / "unused-store.json"
 
@@ -5153,7 +5162,7 @@ def run_task(args: argparse.Namespace) -> int:
             ).strip()
             if not source_memory_text:
                 raise ValueError("appagent requires --appagent-memory-root")
-            source_memory_root = _repo_path(source_memory_text)
+            source_memory_root = resolve_path(source_memory_text)
             provenance = validate_appagent_memory(
                 source_memory_root,
                 task_name=item.task,
@@ -5259,7 +5268,7 @@ def run_task(args: argparse.Namespace) -> int:
         elif method == "t3a_hint":
             official_agent_name = "t3a_gpt4"
             source_hint_store_path = (
-                _repo_path(str(args.store_path))
+                resolve_path(str(args.store_path))
                 if str(args.store_path or "").strip()
                 else None
             )

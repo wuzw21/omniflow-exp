@@ -36,6 +36,7 @@ from src.experiment.protocol import (
     SOURCE_SEED,
     TASK_SEED,
 )
+from src.experiment.paths import sha256_file
 from src.integrations.runlog import adapt_source_run_log
 
 MEMORY_SCHEMA = "omniflow.data.v4"
@@ -83,14 +84,6 @@ _ARCHIVED_MOBILEGPT_RESULT_CONTRACTS = {
         "learning_mode": "mobilegpt_runlog_teacher",
     },
 }
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as file:
-        for chunk in iter(lambda: file.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _json_bytes(value: Any) -> bytes:
@@ -203,7 +196,7 @@ def _resolve_index_reference(index_path: Path, value: Any) -> Path:
 def _materialize_object(memory_root: Path, source: Path, digest: str) -> Path:
     target = memory_root / "objects" / "sha256" / digest[:2] / f"{digest}.json"
     if target.exists():
-        if not target.is_file() or _sha256(target) != digest:
+        if not target.is_file() or sha256_file(target) != digest:
             raise ValueError(f"memory_object_hash_mismatch:{target}")
         return target.resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -212,7 +205,7 @@ def _materialize_object(memory_root: Path, source: Path, digest: str) -> Path:
         # The object store must not share an inode with external immutable
         # evidence: making the object read-only must never alter source modes.
         shutil.copyfile(source, temporary)
-        if _sha256(temporary) != digest:
+        if sha256_file(temporary) != digest:
             raise ValueError(f"memory_object_copy_hash_mismatch:{source}")
         temporary.chmod(0o444)
         os.replace(temporary, target)
@@ -230,14 +223,14 @@ def _materialize_binary_object(
 ) -> Path:
     target = memory_root / "objects" / "sha256" / digest[:2] / f"{digest}{suffix}"
     if target.exists():
-        if not target.is_file() or _sha256(target) != digest:
+        if not target.is_file() or sha256_file(target) != digest:
             raise ValueError(f"memory_object_hash_mismatch:{target}")
         return target.resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
     try:
         shutil.copyfile(source, temporary)
-        if _sha256(temporary) != digest:
+        if sha256_file(temporary) != digest:
             raise ValueError(f"memory_object_copy_hash_mismatch:{source}")
         temporary.chmod(0o444)
         os.replace(temporary, target)
@@ -291,7 +284,7 @@ def _materialize_run_log_dependencies(
             source = stored
         if not source.is_file():
             raise FileNotFoundError(f"run_log_screenshot_missing:{source}")
-        actual = _sha256(source)
+        actual = sha256_file(source)
         if actual != digest:
             raise ValueError(
                 "run_log_screenshot_hash_mismatch:"
@@ -316,7 +309,7 @@ def _materialize_content(memory_root: Path, content: bytes, digest: str) -> Path
     if hashlib.sha256(content).hexdigest() != digest:
         raise ValueError(f"memory_content_hash_mismatch:{digest}")
     if target.exists():
-        if not target.is_file() or _sha256(target) != digest:
+        if not target.is_file() or sha256_file(target) != digest:
             raise ValueError(f"memory_object_hash_mismatch:{target}")
         return target.resolve()
     _atomic_write(target, content)
@@ -329,7 +322,7 @@ def _require_hashed_file(value: Any, expected: Any, *, label: str) -> Path:
     expected_hash = str(expected or "").strip()
     if not path.is_file():
         raise FileNotFoundError(f"{label}_missing:{path}")
-    actual = _sha256(path)
+    actual = sha256_file(path)
     if not expected_hash or actual != expected_hash:
         raise ValueError(
             f"{label}_hash_mismatch:"
@@ -340,7 +333,7 @@ def _require_hashed_file(value: Any, expected: Any, *, label: str) -> Path:
 
 def _link_object(source: Path, target: Path, expected_hash: str) -> None:
     if target.exists():
-        if not target.is_file() or _sha256(target) != expected_hash:
+        if not target.is_file() or sha256_file(target) != expected_hash:
             raise ValueError(f"memory_runtime_hash_mismatch:{target}")
         return
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -350,7 +343,7 @@ def _link_object(source: Path, target: Path, expected_hash: str) -> None:
             os.link(source, temporary)
         except OSError:
             shutil.copyfile(source, temporary)
-        if _sha256(temporary) != expected_hash:
+        if sha256_file(temporary) != expected_hash:
             raise ValueError(f"memory_runtime_copy_hash_mismatch:{source}")
         temporary.chmod(0o444)
         os.replace(temporary, target)
@@ -490,7 +483,7 @@ def _canonicalize_function_source_run_log(
     screenshot_roots: Sequence[Path],
     records: dict[str, dict[str, Any]],
 ) -> tuple[Path, str, dict[str, Any]]:
-    source_sha256 = _sha256(source_run_log)
+    source_sha256 = sha256_file(source_run_log)
     if source_payload.get("schema_version") == "omniflow.run_log.v1":
         source_payload, _source_catalog = import_run_log_evidence(
             source_payload,
@@ -682,7 +675,7 @@ def _verified_registered_result(path: Path) -> dict[str, Any]:
         or manifest.get("immutable") is not True
     ):
         raise ValueError("registration_manifest_invalid")
-    if str(manifest.get("registered_result_sha256") or "") != _sha256(path):
+    if str(manifest.get("registered_result_sha256") or "") != sha256_file(path):
         raise ValueError("registered_result_hash_mismatch")
     for field in (
         "registration_id",
@@ -758,7 +751,7 @@ def _mobilegpt_result_protocol_error(
     if not manifest_path.is_absolute() or not manifest_path.is_file():
         return f"{prefix}:manifest_missing:{manifest_path}"
     recorded_manifest_sha256 = str(row.get("prep_manifest_sha256") or "").strip()
-    actual_manifest_sha256 = _sha256(manifest_path)
+    actual_manifest_sha256 = sha256_file(manifest_path)
     if recorded_manifest_sha256 != actual_manifest_sha256:
         return (
             f"{prefix}:manifest_hash_mismatch:"
@@ -935,7 +928,7 @@ def _formal_result_protocol_error(
                     "formal_result_fixed_replay_source_missing:"
                     f"{task}:{device}:{field}:{path}"
                 )
-            actual_sha256 = _sha256(path)
+            actual_sha256 = sha256_file(path)
             recorded_sha256 = str(row.get(f"{field}_sha256") or "").strip()
             if recorded_sha256 and recorded_sha256 != actual_sha256:
                 return (
@@ -972,7 +965,7 @@ def _load_results(
     records: dict[str, dict[str, Any]] = {}
     candidates: dict[str, list[tuple[str, str, str, dict[str, Any]]]] = {}
     for path in paths:
-        digest = _sha256(path)
+        digest = sha256_file(path)
         record = records.setdefault(
             digest,
             {
@@ -1072,7 +1065,7 @@ def _load_results(
         if not verified["validator_conclusion"]:
             continue
         manifest_path = verified["manifest_path"]
-        manifest_digest = _sha256(manifest_path)
+        manifest_digest = sha256_file(manifest_path)
         manifest_object = _materialize_object(
             memory_root,
             manifest_path,
@@ -1113,7 +1106,7 @@ def _load_results(
                 result_row.get("prep_type") or ""
             )
         if method == "fixed_replay":
-            candidate["source_run_log_sha256"] = _sha256(
+            candidate["source_run_log_sha256"] = sha256_file(
                 Path(str(result_row["source_run_log"])).expanduser()
             )
         result = f"{task}|{method}|{device}|{source_seed}|{evaluation_seed}"
@@ -1190,9 +1183,9 @@ def _load_function_stores(
             != next(iter(store_payload["functions"]))
         ):
             raise ValueError(f"function_store_single_source_call_required:{task}")
-        store_hash = _sha256(store)
-        transfer_hash = _sha256(transfer)
-        source_run_log_hash = _sha256(source_run_log)
+        store_hash = sha256_file(store)
+        transfer_hash = sha256_file(transfer)
+        source_run_log_hash = sha256_file(source_run_log)
         raw_source_payload = _load_object(source_run_log)
         if not isinstance(raw_source_payload, dict):
             raise ValueError(f"function_source_run_log_invalid:{task}")
@@ -1330,7 +1323,7 @@ def _load_prepared_memories(
             expected_source_method=source_method,
         )
         memory_sha256 = str(validated["memory_sha256"])
-        manifest_sha256 = _sha256(manifest_path)
+        manifest_sha256 = sha256_file(manifest_path)
         record = records.setdefault(
             memory_sha256,
             {
@@ -1565,8 +1558,8 @@ def _load_baseline_batch_reports(
                 f"baseline_batch_counts_mismatch:{summary_path}:"
                 f"expected={summary_counts}:actual={actual_counts}"
             )
-        summary_digest = _sha256(summary_path)
-        results_digest = _sha256(results_path)
+        summary_digest = sha256_file(summary_path)
+        results_digest = sha256_file(results_path)
         records[summary_digest] = {
             "attempt_id": str(summary.get("attempt_id") or ""),
             "summary_sha256": summary_digest,
@@ -1633,7 +1626,7 @@ def _refresh_data_index_unlocked(
     records: dict[str, dict[str, Any]] = {}
     indexed_canonical_digests: dict[str, str] = {}
     for path in paths:
-        digest = _sha256(path)
+        digest = sha256_file(path)
         payload = _load_object(path)
         if not isinstance(payload, dict):
             raise ValueError(f"run_log_must_be_object:{path}")
@@ -1720,7 +1713,7 @@ def _refresh_data_index_unlocked(
 
     canonical_sources: dict[str, dict[str, Any]] = {}
     for path, task in sorted(indexed_paths.items(), key=lambda item: item[1]):
-        baseline_digest = _sha256(path)
+        baseline_digest = sha256_file(path)
         digest = indexed_canonical_digests.get(task, baseline_digest)
         canonical_sources[task] = dict(records[digest])
         canonical_payload = _load_object(
@@ -1790,7 +1783,7 @@ def _refresh_data_index_unlocked(
                 raise FileNotFoundError(
                     f"indexed_source_state_catalog_missing:{task}:{catalog_path}"
                 )
-            catalog_digest = _sha256(catalog_path)
+            catalog_digest = sha256_file(catalog_path)
             expected_catalog_digest = str(
                 raw_item.get("source_state_catalog_sha256")
                 or raw_item.get("transfer_state_catalog_sha256")
@@ -1942,7 +1935,7 @@ def registered_result_plan_from_memory(
                 not object_path.is_absolute()
                 or not object_path.is_file()
                 or not expected_hash
-                or _sha256(object_path) != expected_hash
+                or sha256_file(object_path) != expected_hash
             ):
                 raise ValueError(
                     f"local_data_result_object_invalid:{result_key}:{object_path}"

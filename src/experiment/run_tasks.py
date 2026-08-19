@@ -6,7 +6,6 @@ import argparse
 import concurrent.futures
 import csv
 import datetime as dt
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -32,7 +31,7 @@ from src.experiment.batch_outcomes import (
     record_result_outcome,
     summarize_results,
 )
-from src.experiment.paths import resolve_path, safe_component
+from src.experiment.paths import resolve_path, safe_component, sha256_file
 from src.experiment.run_process import run_process
 from src.experiment.protocol import (
     BMOCA_RESULT_TIMEOUT_SEC,
@@ -61,10 +60,6 @@ from src.integrations.mobilegpt import (
 )
 from src.integrations.runlog import project_androidworld_step_actions
 from src.integrations.skilldroid_replay import compile_droidrun_macro
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _read_object(path: str | Path) -> dict[str, Any]:
@@ -325,7 +320,7 @@ def _canonical_source(
             return registry, fallback[0], fallback[1]
     path = Path(str(record.get("object_path") or "")).expanduser().resolve()
     try:
-        if not path.is_file() or _sha256(path) != str(record.get("sha256") or ""):
+        if not path.is_file() or sha256_file(path) != str(record.get("sha256") or ""):
             raise ValueError(f"canonical_source_object_invalid:{task}:{path}")
         run_log = require_complete_source_run_log(_read_object(path))
         if run_log["task_name"] != task:
@@ -433,7 +428,7 @@ def _captured_androidworld_state(record: Any) -> dict[str, Any]:
     if not screenshot.is_file():
         raise FileNotFoundError(f"fixed_replay_capture_screenshot_missing:{screenshot}")
     expected = str(pixels.get("sha256") or "").strip().lower()
-    actual = _sha256(screenshot)
+    actual = sha256_file(screenshot)
     if expected != actual:
         raise ValueError(
             "fixed_replay_capture_screenshot_hash_mismatch:"
@@ -571,7 +566,7 @@ def _captured_source_run_log(
             "diagnostics": {
                 "capture": "fixed_replay",
                 "source_run_log": str(source_path),
-                "source_run_log_sha256": _sha256(source_path),
+                "source_run_log_sha256": sha256_file(source_path),
                 "model_calls": 0,
             },
         }
@@ -674,9 +669,9 @@ def collect_replayed_source(
     # captured RunLog for the source-only report.
     selected_path, selected = captured_path, captured
     result["input_source"] = str(source_path)
-    result["input_source_sha256"] = _sha256(source_path)
+    result["input_source_sha256"] = sha256_file(source_path)
     result["captured_source"] = str(captured_path)
-    result["captured_source_sha256"] = _sha256(captured_path)
+    result["captured_source_sha256"] = sha256_file(captured_path)
     result["captured_steps"] = len(captured["steps"])
     result["selected_source"] = str(selected_path)
     result["status"] = "collected"
@@ -703,7 +698,7 @@ def prepare_function_asset(
     existing = _canonical_function_store(args.memory_index, args.task)
     if existing is None:
         raise FileNotFoundError(f"canonical_function_store_missing:{args.task}")
-    if str(existing.get("source_run_log_sha256") or "") != _sha256(source_path):
+    if str(existing.get("source_run_log_sha256") or "") != sha256_file(source_path):
         raise ValueError(f"canonical_function_source_mismatch:{args.task}")
     store_path = Path(str(existing["store_path"])).resolve()
     source_calls = existing.get("source_calls")
@@ -815,9 +810,9 @@ def qualify_source_function(
             "task_run_status": str(canonical.get("status") or ""),
             "function_id": str(row.get("function_id") or source_call["function_id"]),
             "source_run_log": str(source_path),
-            "source_run_log_sha256": _sha256(source_path),
+            "source_run_log_sha256": sha256_file(source_path),
             "store_path": str(store_path),
-            "store_sha256": _sha256(store_path),
+            "store_sha256": sha256_file(store_path),
             "transfer_states_sha256": str(
                 function_store.get("transfer_states_sha256") or ""
             ),
@@ -1896,7 +1891,7 @@ def _bmoca_manifest_tasks(
         path = (manifest_path.parent / relative).resolve()
         if not relative or not path.is_file():
             raise FileNotFoundError(f"bmoca_source_runlog_missing:{task}:{path}")
-        if expected_sha and _sha256(path) != expected_sha:
+        if expected_sha and sha256_file(path) != expected_sha:
             raise ValueError(f"bmoca_source_runlog_sha256_mismatch:{task}")
         if task in source_run_logs:
             raise ValueError(f"bmoca_source_runlog_ambiguous:{task}")
@@ -2083,7 +2078,7 @@ def _save_bmoca_function_once(
                 "status": "failed",
                 "task": task,
                 "source_run_log": str(source_run_log),
-                "source_run_log_sha256": _sha256(source_run_log),
+                "source_run_log_sha256": sha256_file(source_run_log),
                 "save_function_calls": 1,
                 "wall_sec": round(time.monotonic() - started, 6),
                 "error": f"{type(error).__name__}: {error}",
@@ -2095,12 +2090,12 @@ def _save_bmoca_function_once(
         "schema_version": "omniflow.bmoca-function-enhancement.v1",
         "task": task,
         "source_run_log": str(source_run_log),
-        "source_run_log_sha256": _sha256(source_run_log),
+        "source_run_log_sha256": sha256_file(source_run_log),
         "save_function_calls": 1,
         "enhanced": report.get("enhanced") is True,
         "function_ids": list(report.get("function_ids") or ()),
         "store_path": str(store_path),
-        "store_sha256": _sha256(store_path),
+        "store_sha256": sha256_file(store_path),
         "transfer_state_catalog": str(report.get("transfer_state_catalog") or ""),
         "wall_sec": round(time.monotonic() - started, 6),
         **usage,
@@ -2141,7 +2136,7 @@ def _prepare_bmoca_skilldroid_memory(
         "task": task,
         "method": "skilldroid_replay",
         "source_run_log": str(source_run_log),
-        "memory_sha256": _sha256(memory_path),
+        "memory_sha256": sha256_file(memory_path),
         "wall_sec": round(time.monotonic() - started, 6),
     }
     _write_json(task_root / "skilldroid_memory.json", prepared)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,7 +13,7 @@ import tempfile
 from typing import Any, Iterable
 
 from src.experiment.mobilegpt_contract import MOBILEGPT_SUPPORTED_SOURCE_METHODS
-from src.experiment.paths import safe_component
+from src.experiment.paths import safe_component, sha256_file
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
 
 SCHEMA_VERSION = "omniflow.androidworld.result_outcome.v2"
@@ -22,10 +21,6 @@ LEGACY_SCHEMA_VERSION = "omniflow.androidworld.cell_outcome.v1"
 _MOBILEGPT_SOURCE_STATS_PATTERN = re.compile(
     r"MOBILEGPT_STATS_JSONL=(?P<path>[^\s'\"]+source_stats\.jsonl)"
 )
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _json_object(path: Path) -> dict[str, Any]:
@@ -232,7 +227,7 @@ def record_result_outcome(
         "recorded_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "task_log": str(log_path) if log_path is not None else "",
         "task_log_sha256": (
-            _sha256(log_path) if log_path is not None and log_path.is_file() else ""
+            sha256_file(log_path) if log_path is not None and log_path.is_file() else ""
         ),
         "artifact_root": str(artifact_path) if artifact_path is not None else "",
     }
