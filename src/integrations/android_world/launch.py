@@ -557,7 +557,7 @@ class _ExperimentAgentAdapter:
             "ensure_accessibility_forwarder_ready",
             None,
         )
-        if callable(ensure_ready):
+        if callable(ensure_ready) and not _is_oob_control_backend():
             ensure_ready()
         self._recording_session.start_episode()
         effective_goal = str(goal or "")
@@ -1351,6 +1351,57 @@ def _ensure_androidworld_a11y_forwarder(
     return _androidworld_a11y_forwarder_installed(
         console_port=console_port, adb_path=adb_path
     )
+
+
+def _is_oob_control_backend() -> bool:
+    backend = str(
+        os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "androidworld")
+    ).strip().lower()
+    return backend in {"oob", "omniflow", "oob_control"}
+
+
+def _load_androidworld_env(
+    *,
+    env_launcher: Any,
+    console_port: int,
+    adb_path: str,
+    grpc_port: int,
+    install_a11y_forwarding_app: bool,
+) -> Any:
+    """Load the official environment without native A11y in OOB mode."""
+    if not _is_oob_control_backend():
+        return env_launcher.load_and_setup_env(
+            console_port=console_port,
+            emulator_setup=False,
+            adb_path=adb_path,
+            grpc_port=grpc_port,
+            install_a11y_forwarding_app=install_a11y_forwarding_app,
+        )
+
+    from android_world.env import android_world_controller
+
+    original_wrapper = android_world_controller.apply_a11y_forwarder_app_wrapper
+    android_world_controller.apply_a11y_forwarder_app_wrapper = (
+        lambda raw_env, _install: raw_env
+    )
+    try:
+        env = env_launcher.load_and_setup_env(
+            console_port=console_port,
+            emulator_setup=False,
+            adb_path=adb_path,
+            grpc_port=grpc_port,
+            install_a11y_forwarding_app=False,
+        )
+    finally:
+        android_world_controller.apply_a11y_forwarder_app_wrapper = original_wrapper
+
+    # Do not allow an environment lifecycle fallback to silently read native
+    # accessibility data after OOB has taken ownership of observe/act.
+    controller = getattr(env, "controller", None)
+    if controller is not None and hasattr(android_world_controller, "A11yMethod"):
+        controller._a11y_method = android_world_controller.A11yMethod.NONE
+    os.environ["OMNIFLOW_OBSERVE_BACKEND"] = "oob"
+    return env
 
 
 def _androidworld_setup_apps_for_suite(
@@ -3887,18 +3938,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             get_app_mapping=aw_setup.get_app_mapping,
         )
 
-        reuse_a11y_forwarder = _ensure_androidworld_a11y_forwarder(
-            console_port=int(args.console_port),
-            adb_path=str(args.adb_path or ""),
-            apk_path=str(os.environ.get("OMNIFLOW_ANDROIDWORLD_A11Y_APK") or ""),
-        )
+        reuse_a11y_forwarder = False
+        if not _is_oob_control_backend():
+            reuse_a11y_forwarder = _ensure_androidworld_a11y_forwarder(
+                console_port=int(args.console_port),
+                adb_path=str(args.adb_path or ""),
+                apk_path=str(os.environ.get("OMNIFLOW_ANDROIDWORLD_A11Y_APK") or ""),
+            )
         logger.info(
             "AndroidWorld accessibility forwarder mode: %s",
-            "reuse-installed" if reuse_a11y_forwarder else "install-official",
+            "oob-bypassed"
+            if _is_oob_control_backend()
+            else ("reuse-installed" if reuse_a11y_forwarder else "install-official"),
         )
-        env = env_launcher.load_and_setup_env(
+        env = _load_androidworld_env(
+            env_launcher=env_launcher,
             console_port=int(args.console_port),
-            emulator_setup=False,
             adb_path=str(args.adb_path or ""),
             grpc_port=int(args.console_port) + 3000,
             install_a11y_forwarding_app=not reuse_a11y_forwarder,
@@ -3906,7 +3961,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         adb_output_patches = _patch_androidworld_adb_output_sanitizer(
             env.controller
         )
-        _wait_for_androidworld_a11y(env)
+        if not _is_oob_control_backend():
+            _wait_for_androidworld_a11y(env)
+        else:
+            logger.info(
+                "OOB control backend owns the complete observe/act lifecycle; "
+                "native AndroidWorld A11y forwarding is disabled."
+            )
         if bool(args.perform_emulator_setup):
             logger.info(
                 "Setting up AndroidWorld snapshots for selected tasks: %s",

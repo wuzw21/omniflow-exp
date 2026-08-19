@@ -635,8 +635,10 @@ if [[ "$control_backend" == "oob" && "$execution_environment" != "androidworld" 
   exit 2
 fi
 if [[ "$control_backend" == "oob" && "$development_run" -eq 0 && "$source_collection" -eq 0 && -z "$e2e_task" ]]; then
-  echo "--control-backend oob is limited to --development-run, --collect-source, or --e2e-task." >&2
-  exit 2
+  if [[ "$selected_method_arg" != "fixed_replay" || -z "$selected_device_arg" ]]; then
+    echo "--control-backend oob formal execution requires fixed_replay and an explicit device." >&2
+    exit 2
+  fi
 fi
 export OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND="$control_backend"
 if [[ "$execution_environment" != "bmoca" && ( -n "$selected_method_arg" || -n "$selected_device_arg" ) ]] && {
