@@ -9,6 +9,7 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment.data_index import (
     load_data_index,
+    registered_result_plan_from_memory,
     refresh_data_index,
 )
 from src.experiment.result_registry import (
@@ -634,6 +635,18 @@ def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
         "TaskOne|omniflow|small5554|111|113"
     ]
     assert result["official_validator_success"] is False
+
+    plan = registered_result_plan_from_memory(
+        memory_index=memory_root / "current.json",
+        task_name="TaskOne",
+        methods=("omniflow",),
+        devices=("small5554",),
+        source_seed=111,
+        evaluation_seed=113,
+        formal_max_steps=20,
+    )
+    assert plan["completed"] == []
+    assert plan["pending"] == [("omniflow", "small5554")]
 
 
 def test_result_registration_keeps_runtime_integrity_evidence_after_conclusion(

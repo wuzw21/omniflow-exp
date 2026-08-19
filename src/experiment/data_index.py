@@ -1918,6 +1918,8 @@ def registered_result_plan_from_memory(
         record = results.get(result_key)
         if not isinstance(record, dict):
             continue
+        if record.get("official_validator_success") is not True:
+            continue
         if (
             method == "mobilegpt"
             and prepared_memory_schemas is not None

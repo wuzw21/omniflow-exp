@@ -49,6 +49,16 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _content_addressed_fallback(path: Path, source_data: Path) -> Path | None:
+    digest = path.stem
+    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+        return None
+    candidate = source_data / "objects" / "sha256" / digest[:2] / path.name
+    if not candidate.is_file() or _sha256(candidate) != digest:
+        return None
+    return candidate
+
+
 def _walk_strings(value: Any) -> Iterable[str]:
     if isinstance(value, dict):
         for item in value.values():
@@ -73,6 +83,11 @@ def _rewrite_paths(value: Any, source_data: Path, target_data: Path) -> Any:
     if isinstance(value, str) and (
         value == source_text or value.startswith(source_text + os.sep)
     ):
+        path = Path(value).expanduser()
+        if not path.exists():
+            fallback = _content_addressed_fallback(path, source_data)
+            if fallback is not None:
+                value = str(fallback)
         return target_text + value[len(source_text) :]
     return value
 
@@ -99,8 +114,11 @@ def _add_path(
     except ValueError:
         return
     if not path.exists():
-        missing.add(str(path))
-        return
+        fallback = _content_addressed_fallback(path, source_data)
+        if fallback is None:
+            missing.add(str(path))
+            return
+        path = fallback
     if path.is_dir() and not allow_directory:
         return
     if path.is_dir():
@@ -240,6 +258,39 @@ def stage_migration(
         + "\n",
         encoding="utf-8",
     )
+    staged_data = stage / "data"
+    for source_path in plan.files:
+        relative_path = source_path.relative_to(plan.source_data)
+        destination = staged_data / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if source_path.suffix.casefold() not in {".json", ".jsonl"}:
+            shutil.copy2(source_path, destination)
+            continue
+        if source_path.suffix.casefold() == ".jsonl":
+            lines = source_path.read_text(encoding="utf-8").splitlines()
+            rewritten = []
+            for line in lines:
+                if not line.strip():
+                    rewritten.append(line)
+                    continue
+                rewritten.append(
+                    json.dumps(
+                        _rewrite_paths(json.loads(line), plan.source_data, plan.target_data),
+                        ensure_ascii=False,
+                    )
+                )
+            destination.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+            continue
+        payload = json.loads(source_path.read_text(encoding="utf-8"))
+        destination.write_text(
+            json.dumps(
+                _rewrite_paths(payload, plan.source_data, plan.target_data),
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     (stage / "migration.json").write_text(
         json.dumps(
             {

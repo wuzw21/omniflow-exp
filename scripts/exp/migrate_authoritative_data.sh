@@ -95,8 +95,7 @@ else
   exit 1
 fi
 
-rsync -a --files-from="$stage_root/files.txt" \
-  "$source_data/" "$target_host:$target_data/"
+rsync -a "$stage_root/data/" "$target_host:$target_data/"
 rsync -a "$stage_root/current.json" "$target_host:$target_data/current.json"
 rsync -a "$stage_root/migration.json" "$target_host:$target_data/migration.json"
 ssh -o BatchMode=yes "$target_host" \

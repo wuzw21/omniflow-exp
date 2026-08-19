@@ -573,6 +573,7 @@ Options:
                             Convert each successful source RunLog with
                             enhance=false and run one official Function replay.
   --task-deadline-sec SEC   Whole-task wall deadline; maximum/default is 1800.
+  --attempt-id ID            Internal batch child attempt identifier.
   --refresh-memory          Deduplicate and index all configured RunLogs,
                             method assets, and existing results.
   -h, --help                Show this help and exit.
@@ -676,6 +677,14 @@ while [[ "$#" -gt 0 ]]; do
         exit 2
       fi
       selected_device_arg="$1"
+      ;;
+    --attempt-id)
+      shift
+      if [[ "$#" -eq 0 || ! "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
+        echo "--attempt-id requires one safe attempt identifier." >&2
+        exit 2
+      fi
+      export OMNIFLOW_E2E_ATTEMPT_ID="$1"
       ;;
     --control-backend)
       shift
@@ -802,9 +811,6 @@ if [[ -n "$setup_device" ]]; then
     --omnitransfer-root "$omnitransfer_root"
     --mobilegpt-root "$mobilegpt_root"
     --appagent-root "$appagent_root"
-    --autodroid-root "$autodroid_root"
-    --autodroid-memory-root "$autodroid_memory_root"
-    --autodroid-app "$autodroid_app"
     --asset-root "$asset_root"
     --report-root "$results_root"
     --a11y-apk "$setup_a11y_apk"

@@ -1,9 +1,9 @@
 # AutoDroid 9207 Supplemental Comparison
 
 This document defines the supplemental AutoDroid comparison. It does not add a
-method or device to the formal AndroidWorld matrix. The formal matrix remains
-the five-method, three-target-device protocol and its historical 116 × 10 =
-1160 cells.
+method or device to the formal AndroidWorld matrix. The formal protocol remains
+the five-method configuration; the historical reporting main table remains
+fixed at 116 × 10 = 1160 cells.
 
 ## Protocol
 
