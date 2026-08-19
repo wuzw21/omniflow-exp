@@ -8,6 +8,11 @@ ledger. `preflight.py` checks inputs; `source_assets.py` validates source
 evidence; the MobileGPT and AppAgent source files prepare their native evidence
 without owning lifecycle.
 
+Path rules live in `paths.py`: repository-relative inputs use `resolve_path`,
+index evidence uses `resolve_reference`, and task/method/device names use
+`safe_component`. External AndroidWorld, OmniTransfer, and B-MoCA roots remain
+explicit separate inputs; normalization is unified, physical ownership is not.
+
 The valuable single-Function replay is an E2E request mode built by
 `androidworld.build_e2e_command(function_id=..., function_arguments=...)`. It
 uses the same native launcher, Host, OmniTransfer, checker session, evidence

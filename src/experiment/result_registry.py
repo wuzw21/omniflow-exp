@@ -15,6 +15,7 @@ import shutil
 import tempfile
 from typing import Any
 
+from src.experiment.paths import safe_component
 from src.experiment.protocol import DEVICES, RESULT_COMMANDS_FILE
 from src.experiment.result_schema import compact_result_row
 
@@ -36,13 +37,6 @@ def _commands_path_for_summary(summary_path: Path) -> Path:
     if current.exists():
         return current
     return summary_path.with_name("one_task_commands.jsonl")
-
-
-def _safe_component(value: str, *, fallback: str) -> str:
-    normalized = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value).strip()).strip(
-        "._-"
-    )
-    return normalized or fallback
 
 
 def _sha256(path: Path) -> str:
@@ -474,21 +468,25 @@ def register_attempt_summary(
                 method=method,
                 device=device,
             )
-            safe_attempt = _safe_component(attempt_id, fallback=fingerprint[:12])
+            safe_attempt = safe_component(
+                attempt_id,
+                fallback=fingerprint[:12],
+                strip_chars="._-",
+            )
             registration_id = ".".join(
                 (
-                    _safe_component(task_name, fallback="task"),
-                    _safe_component(method, fallback="method"),
-                    _safe_component(device, fallback="device"),
+                    safe_component(task_name, fallback="task", strip_chars="._-"),
+                    safe_component(method, fallback="method", strip_chars="._-"),
+                    safe_component(device, fallback="device", strip_chars="._-"),
                     safe_attempt,
                     fingerprint[:12],
                 )
             )
             destination = (
                 runs_root
-                / _safe_component(task_name, fallback="task")
-                / _safe_component(method, fallback="method")
-                / _safe_component(device, fallback="device")
+                / safe_component(task_name, fallback="task", strip_chars="._-")
+                / safe_component(method, fallback="method", strip_chars="._-")
+                / safe_component(device, fallback="device", strip_chars="._-")
                 / safe_attempt
             )
             manifest_path = destination / "registration_manifest.json"

@@ -42,6 +42,9 @@ The boundaries inside this path are intentionally different:
   result; it does not own AndroidWorld lifecycle or a second replay runner.
 - `androidworld.py` translates protocol records into command specifications and
   collects result evidence; it does not own child-process lifecycle.
+- `paths.py` owns repository-relative resolution, index-relative evidence
+  references, and safe artifact components. This unifies path rules without
+  moving external AndroidWorld, OmniTransfer, or B-MoCA roots into `data/`.
 - `process_runner.py` is the single process-group, timeout, and immutable-log
   seam shared by AndroidWorld and B-MoCA experiment commands.
 - `launch.py` owns one native AndroidWorld episode, including setup,

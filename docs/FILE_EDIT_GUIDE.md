@@ -30,6 +30,7 @@
 | `omniflow/bridge.py`, `omniflow/runlog.py`, `omniflow/vlm/context.py`, `omniflow/vlm_coordinates.py` | B | 对外 bridge、canonical RunLog 和 Planner evidence；适配必须回到现有合同 |
 | `omniflow/**/__init__.py`, `src/**/__init__.py` | A | 只维护稳定导出和包边界，不放调度、业务实现或隐式兼容层 |
 | `src/experiment/e2e_task_pipeline.py`, `androidworld.py`, `process_runner.py` | A | scheduler、一个原子结果、统一子进程生命周期；不得新增 runner 或重复 `Popen` policy |
+| `src/experiment/paths.py` | A/B | 唯一 repository-relative、index-relative 和 safe artifact path 规则；外部 roots 仍必须显式传入 |
 | `src/experiment/artifact_index.py`, `preflight.py`, `source_assets.py`, `observation_evidence.py` | B | 唯一 `data/current.json`、source/设备 gate、证据转换；不得增加 index、snapshot 或 source pool |
 | `src/experiment/protocol.py`, `result_schema.py`, `result_registry.py`, `batch_outcomes.py` | B | 正式 protocol、public row、ledger、汇总；字段/版本/统计口径必须独立 commit |
 | `src/experiment/development_emulator.py`, `emulator_processes.py`, `performance_metrics.py` | A/B | 开发 preflight、进程诊断、opt-in 性能侧通道；不能写 formal result 或改变 public row |
@@ -112,6 +113,7 @@ rg --files -g '*.py' | sort
 | `src/experiment/protocol.py` | `config/paper_androidworld.json` 的 typed view；不复制常量 |
 | `src/experiment/e2e_task_pipeline.py` | 唯一 task + method + device scheduler；旁路应作为这里的请求模式进入共同 launcher |
 | `src/experiment/androidworld.py` | 一个 AndroidWorld `task + method + device` 结果；不是第二 scheduler |
+| `src/experiment/paths.py` | 唯一路径解析和 artifact component owner；调用方不要重新实现 `Path(...).resolve()` 或 `_safe_component` |
 | `src/experiment/process_runner.py` | 所有 experiment command 的子进程组、timeout、终止和 immutable log seam；不要复制 `Popen` 生命周期 |
 | `src/experiment/development_emulator.py` | 有界开发 emulator preflight |
 | `src/experiment/emulator_processes.py` | managed emulator 进程识别；诊断命令不写结果 |

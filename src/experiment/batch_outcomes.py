@@ -14,6 +14,7 @@ import tempfile
 from typing import Any, Iterable
 
 from src.experiment.mobilegpt_contract import MOBILEGPT_SUPPORTED_SOURCE_METHODS
+from src.experiment.paths import safe_component
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
 
 SCHEMA_VERSION = "omniflow.androidworld.result_outcome.v2"
@@ -21,11 +22,6 @@ LEGACY_SCHEMA_VERSION = "omniflow.androidworld.cell_outcome.v1"
 _MOBILEGPT_SOURCE_STATS_PATTERN = re.compile(
     r"MOBILEGPT_STATS_JSONL=(?P<path>[^\s'\"]+source_stats\.jsonl)"
 )
-
-
-def _safe_component(value: str, *, fallback: str) -> str:
-    normalized = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or "").strip())
-    return normalized.strip("._") or fallback
 
 
 def _sha256(path: Path) -> str:
@@ -201,10 +197,10 @@ def record_result_outcome(
     )
     destination = (
         root
-        / _safe_component(task_name, fallback="task")
-        / _safe_component(method, fallback="method")
-        / _safe_component(device, fallback="device")
-        / _safe_component(attempt_id, fallback="attempt")
+        / safe_component(task_name, fallback="task")
+        / safe_component(method, fallback="method")
+        / safe_component(device, fallback="device")
+        / safe_component(attempt_id, fallback="attempt")
     )
     metrics = _stats_metrics(artifact_path)
     payload: dict[str, Any] = {
@@ -280,7 +276,7 @@ def concluded_result_keys(
     accepted_methods = {str(value) for value in methods}
     accepted_devices = {str(value) for value in devices}
     concluded: set[tuple[str, str]] = set()
-    task_root = root / _safe_component(task_name, fallback="task")
+    task_root = root / safe_component(task_name, fallback="task")
     if not task_root.is_dir():
         return concluded
     for outcome_path in sorted(task_root.rglob("outcome.json")):

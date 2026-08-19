@@ -10,7 +10,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import threading
 import time
@@ -34,6 +33,7 @@ from src.experiment.batch_outcomes import (
     record_result_outcome,
     summarize_results,
 )
+from src.experiment.paths import resolve_path, safe_component
 from src.experiment.process_runner import run_process
 from src.experiment.protocol import (
     BMOCA_RESULT_TIMEOUT_SEC,
@@ -64,7 +64,7 @@ def _sha256(path: Path) -> str:
 
 
 def _read_object(path: str | Path) -> dict[str, Any]:
-    resolved = Path(path).expanduser().resolve()
+    resolved = resolve_path(path)
     value = json.loads(resolved.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError(f"json_object_required:{resolved}")
@@ -80,11 +80,6 @@ def _write_json(path: Path, value: Any) -> Path:
     )
     temporary.replace(path)
     return path
-
-
-def _safe_component(value: str) -> str:
-    normalized = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value).strip())
-    return normalized.strip("._") or "item"
 
 
 class Deadline:
@@ -385,13 +380,6 @@ def _audited_historical_source(
         ):
             return candidate.resolve(), run_log
     return None
-
-
-def _resolve_reference(index_path: Path, value: Any) -> Path:
-    path = Path(str(value or "")).expanduser()
-    if not path.is_absolute():
-        path = index_path.parent / path
-    return path.resolve()
 
 
 def _official_success(row: dict[str, Any]) -> bool:
@@ -1346,7 +1334,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         + dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         + f"_{os.getpid()}"
     )
-    attempt_root = args.output_root / _safe_component(args.task) / attempt_id
+    attempt_root = args.output_root / safe_component(args.task) / attempt_id
     outcomes_root = args.results_root / "androidworld_validator" / "result_outcomes"
     if args.dry_run:
         registry = load_artifact_index(args.memory_index)
@@ -1978,7 +1966,7 @@ def _save_bmoca_function_once(
     source_run_log: Path,
     task_root: Path,
 ) -> tuple[Path, dict[str, Any]]:
-    attempt_id = _safe_component(
+    attempt_id = safe_component(
         str(
             getattr(args, "attempt_id", "")
             or getattr(getattr(args, "output_root", None), "name", "")
@@ -1992,7 +1980,7 @@ def _save_bmoca_function_once(
         repository_root
         / "data"
         / "bmoca"
-        / _safe_component(task)
+        / safe_component(task)
         / "env100"
         / "function"
         / "function_authoring"
@@ -2548,7 +2536,7 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     enhancement_reports: list[dict[str, Any]] = []
     memory_reports: list[dict[str, Any]] = []
     for task in tasks:
-        task_root = campaign_root / "tasks" / _safe_component(task)
+        task_root = campaign_root / "tasks" / safe_component(task)
         source_run_log = source_run_logs.get(task)
         if source_run_log is None:
             for method in _BMOCA_METHODS:

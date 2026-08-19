@@ -15,7 +15,6 @@ import random
 import re
 import shlex
 import shutil
-import signal
 import socket
 import subprocess
 import sys
@@ -40,6 +39,11 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_PREP_TYPE_BY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
+)
+from src.experiment.paths import (
+    resolve_path,
+    safe_component,
+    safe_relative_path,
 )
 from src.experiment.process_runner import run_process
 from src.experiment.protocol import (
@@ -174,10 +178,7 @@ def _rate(numerator: int | float, denominator: int | float) -> float:
 
 
 def _repo_path(value: str | Path, *, repo_root: Path = REPO_ROOT) -> Path:
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        path = repo_root / path
-    return path.resolve()
+    return resolve_path(value, root=repo_root)
 
 
 def _local_dotenv_env(*, repo_root: Path = REPO_ROOT) -> dict[str, str]:
@@ -292,8 +293,12 @@ def _canonical_source_ref_path(
 
 
 def _safe_stem(value: str, *, fallback: str = "task") -> str:
-    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or "").strip()).strip("._")
-    return stem[:120] or fallback
+    return safe_component(
+        value,
+        fallback=fallback,
+        max_length=120,
+        strip_chars="._",
+    )
 
 
 def _stable_json_hash(payload: Any) -> str:
@@ -315,15 +320,7 @@ def _write_json(path: Path, payload: Any) -> None:
 
 
 def _safe_relative_path(value: str, *, fallback: str = "run") -> Path:
-    parts = [
-        _safe_stem(part, fallback="")
-        for part in re.split(r"[\\/]+", str(value or "").strip())
-        if str(part or "").strip()
-    ]
-    parts = [part for part in parts if part]
-    if not parts:
-        return Path(_safe_stem("", fallback=fallback))
-    return Path(*parts)
+    return safe_relative_path(value, fallback=fallback)
 
 
 def _device_label(
