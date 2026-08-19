@@ -766,6 +766,7 @@ if [[ "$execution_environment" == "bmoca" ]]; then
       set -a
       source "$env_file"
       set +a
+      unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
       select_model_endpoint "$formal_model_endpoint_profile"
       mobilegpt_embedding_api_key="${MOBILEGPT_EMBEDDING_API_KEY:-$selected_model_api_key}"
       mobilegpt_embedding_base_url="${MOBILEGPT_EMBEDDING_BASE_URL:-$selected_model_base_url}"
@@ -820,6 +821,7 @@ PY
   set -a
   source "$env_file"
   set +a
+  unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
   select_model_endpoint "$formal_model_endpoint_profile"
   mobilegpt_embedding_api_key="${MOBILEGPT_EMBEDDING_API_KEY:-$selected_model_api_key}"
   mobilegpt_embedding_base_url="${MOBILEGPT_EMBEDDING_BASE_URL:-$selected_model_base_url}"
@@ -1910,6 +1912,7 @@ if [[ "$check_only" -ne 1 ]]; then
   set -a
   source "$env_file"
   set +a
+  unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
 fi
 select_model_endpoint "$formal_model_endpoint_profile"
 mobilegpt_embedding_api_key="${MOBILEGPT_EMBEDDING_API_KEY:-$selected_model_api_key}"
