@@ -62,7 +62,7 @@
 | `src/experiment/preflight.py` | source、device、外部资产和 protocol gate；不生成 Store |
 | `src/experiment/observation_evidence.py` | observation、截图、transfer coverage 证据封存 |
 | `src/experiment/source_assets.py` | source evidence 验证与 legacy input 的内存转换；不创建平行 source pool |
-| `src/experiment/local_data.py` | 唯一 `data/current.json` materializer/loader；不要增加 index/snapshot |
+| `src/experiment/artifact_index.py` | 唯一 `data/current.json` materializer/loader；不要增加 index/snapshot |
 | `src/experiment/result_schema.py` | compact public result row；字段改动必须 schema/stat 独立 commit |
 | `src/experiment/result_registry.py` | immutable result registration ledger；不负责调度或汇总 |
 | `src/experiment/batch_outcomes.py` | 一次 attempt 的 outcome/summary；不成为运行时选择器 |

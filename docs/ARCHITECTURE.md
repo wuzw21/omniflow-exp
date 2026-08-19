@@ -17,7 +17,7 @@
 | 任务执行 | `scripts/exp/run_androidworld.sh` → `src/experiment/e2e_task_pipeline.py` → `src/experiment/androidworld.py` | 选择任务、方法、设备，并运行一个原子结果 |
 | Native episode | `src/integrations/android_world/launch.py` | 创建 AndroidWorld/B-MoCA 环境、调用官方 validator、封存 RunLog |
 | Function 生命周期 | `omniflow/functions/assets.py::save_function` | 从一份成功 RunLog 编译、验证并原子写入一个 Function Store |
-| 本地证据索引 | `src/experiment/local_data.py` | 物化并读取 `data/current.json`；运行时不扫描替代索引 |
+| 本地证据索引 | `src/experiment/artifact_index.py` | 物化并读取 `data/current.json`；运行时不扫描替代索引 |
 
 ## 2. 唯一运行路径
 
@@ -88,7 +88,7 @@ OmniTransfer、checker、证据封存和结果归档。这样保留旁路价值�
 | --- | --- | --- |
 | `launch.py` 中的 direct Function 调用与普通 OmniFlow 运行 | 真旁路：生命周期相似、调用语义可共享 | 通过 E2E 请求 seam 收敛，不删除直跑能力 |
 | `script_replay.py` 与 runtime execution | 不是重复 mapper；前者是薄适配器，后者是核心实现 | 保留，继续用测试锁住“无私有 mapping” |
-| `local_data.py` 与 result ledger | 读写对象不同，不能粗暴合并 | 保留职责，拆出只在有测试证明时进行 |
+| `artifact_index.py` 与 result ledger | 读写对象不同，不能粗暴合并 | 保留职责，拆出只在有测试证明时进行 |
 | `batch_outcomes.py` 与 `result_registry.py` | 汇总和注册是两个不可互换的写入语义 | 先记录公共 path helper 重复，再局部收敛 |
 | `omniflow/runlog.py` 与 `src/integrations/runlog.py` | canonical loader 与历史外部导入 adapter | 旧适配层按要求暂不清理 |
 | `mobilegpt_source.py` / `appagent_source.py` | 两个外部协议不同 | 不合并；只共享纯证据 helper |

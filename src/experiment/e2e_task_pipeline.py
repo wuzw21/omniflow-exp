@@ -30,7 +30,7 @@ from src.experiment.batch_outcomes import (
     record_result_outcome,
     summarize_results,
 )
-from src.experiment.local_data import (
+from src.experiment.artifact_index import (
     canonical_mobilegpt_memory_from_memory,
     load_local_data,
     registered_result_plan_from_memory,

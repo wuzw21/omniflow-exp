@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from src.experiment.local_data import (
+from src.experiment.artifact_index import (
     load_local_data,
     refresh_local_data,
 )

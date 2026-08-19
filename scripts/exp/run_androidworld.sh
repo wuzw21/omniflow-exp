@@ -1128,7 +1128,7 @@ if [[ "$refresh_memory" -eq 1 ]]; then
     exit 1
   fi
   memory_args=(
-    -m src.experiment.local_data
+    -m src.experiment.artifact_index
     refresh
     --memory-root "$memory_root"
   )
@@ -1322,7 +1322,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
-from src.experiment.local_data import load_local_data
+from src.experiment.artifact_index import load_local_data
 
 load_local_data(Path(sys.argv[2]).expanduser().resolve())
 PY
@@ -1518,7 +1518,7 @@ if lineage is not None:
 candidate_validator = None
 if sys.argv[7] == "omniflow.mobilegpt-runlog-direct-memory.v1":
     from src.experiment.androidworld import validate_mobilegpt_adapted_memory
-    from src.experiment.local_data import (
+    from src.experiment.artifact_index import (
         canonical_mobilegpt_memory_from_memory,
     )
     from src.experiment.mobilegpt_contract import (

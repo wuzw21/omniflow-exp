@@ -11,7 +11,7 @@ from PIL import Image
 import pytest
 from runlog_fixtures import androidworld_run_log
 
-from src.experiment.local_data import refresh_local_data
+from src.experiment.artifact_index import refresh_local_data
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_MEMORY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
@@ -1017,7 +1017,7 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
     assert completed.returncode == 0, completed.stderr
     assert captured.read_text(encoding="utf-8").splitlines() == [
         "-m",
-        "src.experiment.local_data",
+        "src.experiment.artifact_index",
         "refresh",
         "--memory-root",
         str(memory_root),
@@ -1043,7 +1043,7 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
     )
     assert captured.read_text(encoding="utf-8").splitlines() == [
         "-m",
-        "src.experiment.local_data",
+        "src.experiment.artifact_index",
         "refresh",
         "--memory-root",
         str(memory_root),
@@ -1070,7 +1070,7 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
     assert from_existing_memory.returncode == 0, from_existing_memory.stderr
     assert captured.read_text(encoding="utf-8").splitlines() == [
         "-m",
-        "src.experiment.local_data",
+        "src.experiment.artifact_index",
         "refresh",
         "--memory-root",
         str(memory_root),

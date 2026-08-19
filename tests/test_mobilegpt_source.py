@@ -10,7 +10,7 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment import androidworld as pipeline
 from src.experiment import mobilegpt_source, preflight
-from src.experiment.local_data import (
+from src.experiment.artifact_index import (
     canonical_mobilegpt_memory_from_memory,
     refresh_local_data,
 )
