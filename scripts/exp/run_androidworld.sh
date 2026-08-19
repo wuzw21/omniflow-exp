@@ -1324,9 +1324,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
-from src.experiment.data_index import load_artifact_index
+from src.experiment.data_index import load_data_index
 
-load_artifact_index(Path(sys.argv[2]).expanduser().resolve())
+load_data_index(Path(sys.argv[2]).expanduser().resolve())
 PY
 export OMNIFLOW_EXP_MEMORY_INDEX="$memory_index"
 requires_function_asset=0
@@ -1477,7 +1477,7 @@ fi
 export JAVA_HOME="$java_home"
 export PATH="$java_home/bin:$PATH"
 echo "[java] home=$java_home major=$java_major version=$java_version_line"
-select_source_asset_revision() {
+select_source_revision() {
   local hash_index="${4:-$source_index}"
   local expected_source_model="${5:-}"
   local expected_schema_version="${6:-}"
@@ -1488,7 +1488,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
-from src.experiment.source_evidence import select_source_asset_revision
+from src.experiment.source_evidence import select_source_revision
 from src.experiment.protocol import SOURCE_SEED
 
 source_index = json.loads(
@@ -1584,7 +1584,7 @@ elif sys.argv[7] == "omniflow.appagent.memory.v3":
             and payload.get("source_emulator_used") is False
         )
 try:
-    selected = select_source_asset_revision(
+    selected = select_source_revision(
         sys.argv[2],
         manifest_name=sys.argv[3],
         expected_source_sha256=source_sha256,
@@ -1621,7 +1621,7 @@ PY
 if [[ "$all_tasks" -eq 0 && "$requires_mobilegpt_source_memory" -eq 1 && -z "$mobilegpt_source_memory_root" ]]; then
   mobilegpt_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${formal_source_seed}/$task/mobilegpt"
   mobilegpt_source_attempt_root="$(
-    select_source_asset_revision \
+    select_source_revision \
       "$mobilegpt_source_base" \
       "$mobilegpt_source_manifest_name" \
       "$task" \
@@ -1635,7 +1635,7 @@ fi
 if [[ "$all_tasks" -eq 0 && "$requires_appagent_source_memory" -eq 1 && -z "$appagent_memory_root" ]]; then
   appagent_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${formal_source_seed}/$task/appagent"
   appagent_memory_root="$(
-    select_source_asset_revision \
+    select_source_revision \
       "$appagent_source_base" \
       "appagent_manifest.json" \
       "$task" \

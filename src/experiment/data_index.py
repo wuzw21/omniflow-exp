@@ -1585,7 +1585,7 @@ def _load_baseline_batch_reports(
     return records, results
 
 
-def _refresh_artifact_index_unlocked(
+def _refresh_data_index_unlocked(
     *,
     memory_root: str | Path,
     source_index: str | Path,
@@ -1864,7 +1864,7 @@ def _refresh_artifact_index_unlocked(
     return registry
 
 
-def refresh_artifact_index(
+def refresh_data_index(
     *,
     memory_root: str | Path,
     source_index: str | Path,
@@ -1878,7 +1878,7 @@ def refresh_artifact_index(
 
     root = Path(memory_root).expanduser().resolve()
     with _memory_lock(root):
-        return _refresh_artifact_index_unlocked(
+        return _refresh_data_index_unlocked(
             memory_root=root,
             source_index=source_index,
             runlog_roots=runlog_roots,
@@ -1889,7 +1889,7 @@ def refresh_artifact_index(
         )
 
 
-def load_artifact_index(memory_index: str | Path) -> dict[str, Any]:
+def load_data_index(memory_index: str | Path) -> dict[str, Any]:
     """Load and verify the single canonical data index."""
 
     pointer_path = Path(memory_index).expanduser().resolve()
@@ -1916,7 +1916,7 @@ def registered_result_plan_from_memory(
 ) -> dict[str, list[tuple[str, str]]]:
     """Resolve completed formal results without rescanning historical results."""
 
-    registry = load_artifact_index(memory_index)
+    registry = load_data_index(memory_index)
     results = registry["canonical"]["result_cells"]
     expected = [(method, device) for method in methods for device in devices]
     completed: list[tuple[str, str]] = []
@@ -1985,7 +1985,7 @@ def canonical_prepared_memory_from_index(
 ) -> dict[str, Any] | None:
     """Resolve one validated prepared memory from the local data index."""
 
-    registry = load_artifact_index(memory_index)
+    registry = load_data_index(memory_index)
     record = registry.get("canonical", {}).get("prepared_memories", {}).get(str(task_name))
     if record is None:
         return None
@@ -2004,7 +2004,7 @@ def canonical_prepared_memory_from_index(
     return dict(record)
 
 
-def refresh_artifact_index_from_pointer(
+def refresh_data_index_from_pointer(
     *,
     memory_index: str | Path,
     source_screenshot_roots: Sequence[str | Path] = (),
@@ -2018,7 +2018,7 @@ def refresh_artifact_index_from_pointer(
 
     pointer_path = Path(memory_index).expanduser().resolve()
     with _memory_lock(pointer_path.parent):
-        registry = load_artifact_index(pointer_path)
+        registry = load_data_index(pointer_path)
         inputs = registry["inputs"]
         resolved_runlog_roots = {
             str(Path(value).expanduser().resolve())
@@ -2074,7 +2074,7 @@ def refresh_artifact_index_from_pointer(
                 ),
             }
         )
-        return _refresh_artifact_index_unlocked(
+        return _refresh_data_index_unlocked(
             memory_root=pointer_path.parent,
             source_index=str(inputs["source_index"]),
             runlog_roots=runlog_roots,
@@ -2134,7 +2134,7 @@ def main(argv: list[str] | None = None) -> int:
         memory_root = Path(args.memory_root).expanduser().resolve()
         pointer_path = memory_root / "current.json"
         if pointer_path.is_file():
-            report = refresh_artifact_index_from_pointer(
+            report = refresh_data_index_from_pointer(
                 memory_index=pointer_path,
                 source_screenshot_roots=args.source_screenshot_root,
                 additional_runlog_roots=_split_values(args.runlog_root),
@@ -2152,7 +2152,7 @@ def main(argv: list[str] | None = None) -> int:
                 refresh_parser.error(
                     "--source-index is required when initializing memory"
                 )
-            report = refresh_artifact_index(
+            report = refresh_data_index(
                 memory_root=memory_root,
                 source_index=args.source_index,
                 source_screenshot_roots=args.source_screenshot_root,
@@ -2184,10 +2184,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 __all__ = [
-    "load_artifact_index",
+    "load_data_index",
     "canonical_prepared_memory_from_index",
-    "refresh_artifact_index",
-    "refresh_artifact_index_from_pointer",
+    "refresh_data_index",
+    "refresh_data_index_from_pointer",
     "registered_result_plan_from_memory",
 ]
 

@@ -243,9 +243,9 @@ def _register_mobilegpt_memory(
     bundle_root: str | Path,
     task_name: str,
 ) -> dict[str, Any]:
-    from src.experiment.data_index import refresh_artifact_index_from_pointer
+    from src.experiment.data_index import refresh_data_index_from_pointer
 
-    report = refresh_artifact_index_from_pointer(
+    report = refresh_data_index_from_pointer(
         memory_index=memory_index,
         additional_prepared_memory_roots=(bundle_root,),
     )

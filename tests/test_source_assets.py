@@ -11,7 +11,7 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 from src.experiment.source_evidence import (
     build_grounded_teacher_run_log,
     build_grounded_teacher_run_log_from_item,
-    select_source_asset_revision,
+    select_source_revision,
 )
 from src.integrations.appagent import (
     build_appagent_teacher_source,
@@ -1264,7 +1264,7 @@ def test_source_revision_reuses_frozen_asset_or_advances_past_failures(
     (failed / "prep_failure.json").write_text("{}", encoding="utf-8")
 
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="appagent_manifest.json",
         )
@@ -1281,7 +1281,7 @@ def test_source_revision_reuses_frozen_asset_or_advances_past_failures(
     incomplete.mkdir()
 
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="appagent_manifest.json",
         )
@@ -1309,7 +1309,7 @@ def test_source_revision_is_stable_for_one_exact_source_hash(
     selected = base / f"source_{expected[:12]}"
 
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,
@@ -1321,7 +1321,7 @@ def test_source_revision_is_stable_for_one_exact_source_hash(
     (selected / "generation_failure.json").write_text("{}", encoding="utf-8")
     revision_two = base / f"source_{expected[:12]}_r2"
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,
@@ -1335,7 +1335,7 @@ def test_source_revision_is_stable_for_one_exact_source_hash(
         encoding="utf-8",
     )
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,
@@ -1358,7 +1358,7 @@ def test_source_revision_reuses_explicit_conversion_lineage_hash(
     )
 
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=canonical,
@@ -1388,7 +1388,7 @@ def test_source_revision_skips_frozen_asset_from_wrong_model(
     selected = base / f"source_{expected[:12]}"
 
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,
@@ -1409,7 +1409,7 @@ def test_source_revision_skips_frozen_asset_from_wrong_model(
         encoding="utf-8",
     )
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,
@@ -1439,7 +1439,7 @@ def test_source_revision_skips_incompatible_mobilegpt_memory_contract(
         encoding="utf-8",
     )
 
-    selected = select_source_asset_revision(
+    selected = select_source_revision(
         base,
         manifest_name="cold_memory_manifest.json",
         expected_source_sha256=expected,
@@ -1470,7 +1470,7 @@ def test_source_revision_skips_frozen_asset_rejected_by_validator(
     )
     validated: list[tuple[Path, dict]] = []
 
-    selected = select_source_asset_revision(
+    selected = select_source_revision(
         base,
         manifest_name="cold_memory_manifest.json",
         expected_source_sha256=expected,
@@ -1508,7 +1508,7 @@ def test_source_revision_ignores_terminal_failure_from_old_method(
     )
 
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,
@@ -1540,7 +1540,7 @@ def test_source_revision_rejects_terminal_failure_for_exact_source_hash(
         match="source_asset_retry_forbidden:.*"
         "mobilegpt_cold_memory_official_source_failed",
     ):
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,
@@ -1560,7 +1560,7 @@ def test_source_revision_advances_beyond_two_digit_failure_revision(
         (attempt / "prep_failure.json").write_text("{}", encoding="utf-8")
 
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,

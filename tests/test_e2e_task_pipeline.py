@@ -148,7 +148,7 @@ def test_dry_run_has_fixed_task_method_device_schedule(
     args = _args(tmp_path)
     args.dry_run = True
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.load_artifact_index",
+        "src.experiment.e2e_task_pipeline.load_data_index",
         lambda _: {"canonical": {"source_run_logs": {}, "function_stores": {}}},
     )
     monkeypatch.setattr(

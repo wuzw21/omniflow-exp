@@ -26,7 +26,7 @@ from src.integrations.runlog import (
 
 SOURCE_EVIDENCE_SCHEMA = "omniflow.source.evidence.v2"
 
-def select_source_asset_revision(
+def select_source_revision(
     base_root: str | Path,
     *,
     manifest_name: str,

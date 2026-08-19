@@ -2,7 +2,7 @@
 
 `e2e_task_pipeline.py` is the only scheduler. `androidworld.py` handles one
 task/method/device result. `data_index.py` owns the sole `data/current.json`
-index and exposes `load_artifact_index`/`refresh_artifact_index` operations.
+index and exposes `load_data_index`/`refresh_data_index` operations.
 `result_registry.py` writes the immutable ledger. `checks.py` checks inputs;
 `source_evidence.py` validates source evidence only; the MobileGPT and AppAgent
 source files call their own provider conversion functions and prepare native
