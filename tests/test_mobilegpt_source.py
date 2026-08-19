@@ -23,6 +23,7 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
     MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS,
 )
+from src.integrations import mobilegpt_memory
 from src.integrations.mobilegpt import validate_memory_manifest
 
 
@@ -471,7 +472,7 @@ def test_strict_reader_validates_canonical_memory(
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        pipeline,
+        mobilegpt_memory,
         "_validate_mobilegpt_converted_memory",
         lambda *args, **kwargs: {"schema_version": MOBILEGPT_MEMORY_SCHEMA},
     )
@@ -486,7 +487,7 @@ def test_strict_reader_validates_canonical_memory(
         validate_strict,
     )
 
-    result = pipeline.validate_mobilegpt_adapted_memory(
+    result = mobilegpt_memory.validate_mobilegpt_adapted_memory(
         memory,
         task_name="SystemBluetoothTurnOn",
         source_seed=111,
@@ -511,7 +512,7 @@ def test_runtime_rejects_archived_mobilegpt_schema(tmp_path: Path) -> None:
         ValueError,
         match="mobilegpt_cold_memory_manifest_schema_invalid",
     ):
-        pipeline.validate_mobilegpt_adapted_memory(
+        mobilegpt_memory.validate_mobilegpt_adapted_memory(
             memory,
             task_name="SystemBluetoothTurnOn",
             source_seed=111,

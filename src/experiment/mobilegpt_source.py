@@ -10,13 +10,13 @@ from pathlib import Path
 import time
 from typing import Any
 
-from src.experiment import androidworld as pipeline
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
 )
+from src.experiment import androidworld as pipeline
 from src.experiment.protocol import SOURCE_SEED
 from src.integrations.mobilegpt import (
     MobileGPTConversionError,
@@ -25,6 +25,7 @@ from src.integrations.mobilegpt import (
     validate_prepared_memory,
     write_conversion_failure_audit,
 )
+from src.integrations import mobilegpt_memory
 from src.integrations.runlog import import_run_log
 
 _IGNORED_SOURCE_PACKAGES = {
@@ -398,7 +399,7 @@ def convert_runlog_to_mobilegpt_bundle(
         )
         raise
     wall_sec = round(time.monotonic() - started, 6)
-    stats_summary = pipeline.summarize_mobilegpt_stats(stats_path)
+    stats_summary = mobilegpt_memory.summarize_mobilegpt_stats(stats_path)
     stats_summary_path.write_text(
         json.dumps(stats_summary, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -444,7 +445,7 @@ def _write_failure_marker(output_root: str | Path, error: BaseException) -> None
         return
     stats_path = root / "source_stats.jsonl"
     stats_summary = (
-        pipeline.summarize_mobilegpt_stats(stats_path)
+        mobilegpt_memory.summarize_mobilegpt_stats(stats_path)
         if stats_path.is_file()
         else {}
     )

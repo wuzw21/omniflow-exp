@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 from PIL import Image
 
 from src.experiment import androidworld as pipeline
+from src.integrations import mobilegpt_memory
 from src.integrations.android_world.launch import (
     _mobilegpt_runtime_integrity_error,
     _mobilegpt_runtime_integrity_exit_code,
@@ -385,7 +386,7 @@ def test_mobilegpt_memory_only_guard_stops_instead_of_calling_fallback(
         "derive",
     ]
     assert all(event["event"] == "mobilegpt_memory_only_miss" for event in events)
-    summary = pipeline.summarize_mobilegpt_stats(stats_path)
+    summary = mobilegpt_memory.summarize_mobilegpt_stats(stats_path)
     assert summary["memory_only_miss_count"] == 3
     assert summary["memory_only_stage_counts"] == {
         "derive": 1,

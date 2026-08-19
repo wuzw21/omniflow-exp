@@ -205,12 +205,10 @@ def validate_prepared_memory(
     """Validate one MobileGPT prepared memory at the provider seam.
 
     The experiment index depends on this provider contract, not on the
-    AndroidWorld result runner. The implementation remains temporarily
-    delegated to the existing validator while that legacy validation block is
-    moved into this adapter in a later focused change.
+    AndroidWorld result runner.
     """
 
-    from src.experiment.androidworld import validate_mobilegpt_adapted_memory
+    from src.integrations.mobilegpt_memory import validate_mobilegpt_adapted_memory
 
     return validate_mobilegpt_adapted_memory(
         memory_root,

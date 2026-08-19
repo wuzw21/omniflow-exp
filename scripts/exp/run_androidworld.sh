@@ -1519,7 +1519,7 @@ if lineage is not None:
     compatible_source_sha256s.append(str(lineage.get("source_sha256") or ""))
 candidate_validator = None
 if sys.argv[7] == "omniflow.mobilegpt.memory.v2":
-    from src.experiment.androidworld import validate_mobilegpt_adapted_memory
+    from src.integrations.mobilegpt_memory import validate_mobilegpt_adapted_memory
     from src.experiment.data_index import (
         canonical_prepared_memory_from_index,
     )
