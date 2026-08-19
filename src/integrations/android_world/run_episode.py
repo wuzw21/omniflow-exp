@@ -1551,11 +1551,24 @@ def prepare_androidworld_environment(
             )
             or "<none>",
         )
-        _run_androidworld_setup_apps(
-            env,
-            setup_module=setup_module,
-            setup_apps=tuple(setup_apps),
-        )
+        controller = getattr(env, "controller", None)
+        controller_type = None
+        if _is_oob_control_backend():
+            controller_type = importlib.import_module(
+                "android_world.env.android_world_controller"
+            )
+        previous_a11y_method = getattr(controller, "_a11y_method", None)
+        if controller_type is not None and controller is not None:
+            controller._a11y_method = controller_type.A11yMethod.UIAUTOMATOR
+        try:
+            _run_androidworld_setup_apps(
+                env,
+                setup_module=setup_module,
+                setup_apps=tuple(setup_apps),
+            )
+        finally:
+            if controller_type is not None and controller is not None:
+                controller._a11y_method = previous_a11y_method
     if _is_oob_control_backend():
         _ensure_oob_control_app(console_port=int(console_port), adb_path=str(adb_path or ""))
     _prepare_androidworld_snapshot_restore(env, tuple(setup_apps))
