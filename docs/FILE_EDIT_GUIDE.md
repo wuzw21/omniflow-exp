@@ -128,8 +128,8 @@ rg --files -g '*.py' | sort
 | `src/experiment/batch_outcomes.py` | 一次 attempt 的 outcome/summary；不成为运行时选择器 |
 | `src/experiment/performance_metrics.py` | 明确 opt-in 的 performance side channel；不改 public result row |
 | `src/experiment/mobilegpt_contract.py` | MobileGPT 证据常量和协议标签 |
-| `src/experiment/mobilegpt_source.py` | MobileGPT source preparation 和 `MobileGPTMemoryAdapter` |
-| `src/experiment/appagent_source.py` | AppAgent source preparation 和 `AppAgentMemoryAdapter` |
+| `src/experiment/mobilegpt_source.py` | AndroidWorld 的 MobileGPT source preparation |
+| `src/experiment/appagent_source.py` | AndroidWorld 的 AppAgent source preparation |
 
 ## `src/integrations/`：外部契约适配器
 

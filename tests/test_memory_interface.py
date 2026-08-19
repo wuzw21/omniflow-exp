@@ -1,14 +1,11 @@
 from pathlib import Path
 
 from src.experiment.memory_interface import (
-    MemoryAdapter,
     MemoryCheck,
     MemoryPackage,
     MemoryRequest,
     operation_name,
 )
-from src.experiment.appagent_source import AppAgentMemoryAdapter
-from src.experiment.mobilegpt_source import MobileGPTMemoryAdapter
 
 
 def test_memory_request_is_provider_neutral() -> None:
@@ -50,10 +47,3 @@ def test_memory_package_and_check_have_stable_records() -> None:
 def test_operation_name_is_the_external_interface_label() -> None:
     assert operation_name("prepare") == "prepare"
     assert operation_name("check") == "check"
-
-
-def test_provider_adapters_implement_the_same_interface() -> None:
-    assert isinstance(AppAgentMemoryAdapter(), MemoryAdapter)
-    assert isinstance(MobileGPTMemoryAdapter(), MemoryAdapter)
-    assert AppAgentMemoryAdapter().name == "appagent"
-    assert MobileGPTMemoryAdapter().name == "mobilegpt"
