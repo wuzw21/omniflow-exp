@@ -140,7 +140,8 @@ rg --files -g '*.py' | sort
 | `src/integrations/mobilegpt.py` | 唯一 MobileGPT native memory converter |
 | `src/integrations/mobilegpt_memory.py` | MobileGPT Prepared Memory 的统计、图检查、manifest/evidence 校验；不拥有 task 调度 |
 | `src/integrations/mobilegpt_format.py` | 只调用 MobileGPT 官方 XML Encoder；不运行、不 patch MobileGPT |
-| `src/integrations/appagent.py` | AppAgent native conversion/runtime；不拥有调度 |
+| `src/integrations/appagent.py` | AppAgent native memory conversion/validation；不拥有执行调度 |
+| `src/integrations/official_forward.py` | 唯一外部 baseline forwarder；只准备临时 workspace、设备和官方入口，不实现 parser/controller/action loop |
 | `src/integrations/bmoca.py` | B-MoCA DeviceDriver、episode 和 official reward adapter |
 | `src/integrations/script_replay.py` | 完整 Function 的共享 replay 薄适配器；禁止私有 mapper/executor |
 | `src/integrations/skilldroid_replay.py` | DroidRun v0.5.6 官方 MacroPlayer adapter |

@@ -53,6 +53,22 @@ def test_run_process_allows_unbounded_command_when_timeout_is_none(
     assert result["timed_out"] is False
 
 
+def test_run_process_can_forward_one_interactive_input(tmp_path: Path) -> None:
+    result = run_process(
+        ["/bin/sh", "-c", "read value; printf 'received=%s\\n' \"$value\""],
+        cwd=tmp_path,
+        environment={},
+        timeout_sec=5,
+        log_path=tmp_path / "stdin.log",
+        stdin_text="official-task\n",
+    )
+
+    assert result["returncode"] == 0
+    assert (tmp_path / "stdin.log").read_text(encoding="utf-8") == (
+        "received=official-task\n"
+    )
+
+
 def test_background_process_uses_shared_group_lifecycle(tmp_path: Path) -> None:
     log_path = tmp_path / "background.log"
     process = start_process(

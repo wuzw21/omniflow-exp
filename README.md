@@ -63,13 +63,12 @@ modes of that launcher, not alternate executors. Function creation has one route
 `save_function` validates and writes the Store, then `--refresh-memory` updates
 `data/current.json`; runtime only reads that index and the registered Store.
 
-MobileGPT is not an OmniFlow AndroidWorld action adapter. The only local
-integration is the RunLog-to-native-memory conversion in
-`src/integrations/mobilegpt.py`, which calls the official XML Encoder through
-`src/integrations/mobilegpt_format.py`. Start the official MobileGPT checkout
-from its own `Server/main.py` and Android app; its Explore, Select, Derive, and
-Subtask code remains upstream-owned. Do not add a second runner or action
-schema.
+MobileGPT and AppAgent are external baselines, not OmniFlow AndroidWorld action
+adapters. OmniFlow prepares their native memory/configuration and launches the
+pinned upstream process; their Explore/Select/Derive/Subtask or AppAgent action
+loop remains upstream-owned. The exact forwarding contract is in
+[`docs/EXTERNAL_BASELINES.md`](docs/EXTERNAL_BASELINES.md). Do not add a second
+runner, parser, controller, or action schema.
 
 Install the B-MoCA replay dependency with `uv sync --extra bmoca`. The protocol
 pins DroidRun v0.5.6. `skilldroid_replay` converts the qualified env100 RunLog to

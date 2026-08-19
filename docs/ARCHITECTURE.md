@@ -31,10 +31,12 @@ scripts/exp/run_androidworld.sh       # 唯一公开入口
                  └─ src/integrations/android_world/methods.py
                       ├─ fixed_replay
                       ├─ omniflow
-                      ├─ mobilegpt
-                      ├─ appagent
                       └─ t3a_hint
 ```
+
+MobileGPT and AppAgent leave this native episode path after `run_task.py` and
+are launched through [`EXTERNAL_BASELINES.md`](EXTERNAL_BASELINES.md). They are
+formal experiment labels, but not AndroidWorld agent adapters.
 
 The boundaries inside this path are intentionally different:
 
@@ -131,7 +133,7 @@ baseline 记录时经过的五个位置：
 | 文件 | 只应该回答的问题 | 不应该知道的事情 |
 | --- | --- | --- |
 | `source_evidence.py` | 这份 Source RunLog 的截图、XML、动作和 revision 是否可信？ | AppAgent/MobileGPT 的转换规则 |
-| `appagent.py` | 如何把可信 source 转成 AppAgent 的 Prepared Memory？ | task 调度、Local Index、AndroidWorld episode 生命周期 |
+| `appagent.py` | 如何把可信 source 转成 AppAgent 的 Prepared Memory？ | task 调度、Local Index、AndroidWorld episode 生命周期；执行由官方 AppAgent 进程完成 |
 | `mobilegpt.py` | 如何把可信 source 转成 MobileGPT 的 Prepared Memory？ | AppAgent 规则、Local Index 选择策略 |
 | `mobilegpt_memory.py` | MobileGPT Prepared Memory 的统计、图检查和完整校验 | task 调度、AndroidWorld episode 生命周期 |
 | `checks.py` | 这次运行的依赖、设备和 Prepared Memory 是否 ready？ | 具体 provider 的转换实现 |

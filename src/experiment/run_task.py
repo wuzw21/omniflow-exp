@@ -113,6 +113,7 @@ class CommandSpec:
     output_path: Path | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     timeout_sec: float | None = None
+    stdin_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2118,16 +2119,27 @@ def build_mobilegpt_server_command(
 
     resolved_action = str(action or "").strip().lower()
     if resolved_action == "server":
+        if resolved_memory_root is None:
+            raise ValueError("mobilegpt_server_memory_required")
+        from src.integrations.official_forward import prepare_mobilegpt_server
+
+        staged = resolved_memory_root.parent / "official_server_workspace"
+        forward = prepare_mobilegpt_server(
+            official_root=root,
+            memory_root=resolved_memory_root,
+            workspace=staged,
+        )
+        staged_server_root = Path(forward["server_root"])
         env["MOBILEGPT_STATS_JSONL"] = str(resolve_path(stats_jsonl, root=repo_root))
         argv = [
             python_executable,
-            str(server_root / "main.py"),
+            str(staged_server_root / "main.py"),
         ]
         return CommandSpec(
-            label="mobilegpt:server",
+            label="mobilegpt:official-server",
             argv=argv,
             env=env,
-            cwd=server_root,
+            cwd=staged_server_root,
             output_path=None,
             metadata={
                 "mobilegpt_root": str(root),
@@ -2137,6 +2149,9 @@ def build_mobilegpt_server_command(
                 "target_app": str(target_app or "").strip(),
                 "state_backend": "official_mobilegpt",
                 "official_server": str(server_root / "main.py"),
+                "official_staged_server": str(staged_server_root / "main.py"),
+                "external_forward_only": True,
+                "log_path": str(staged_server_root.parent / "official_server.log"),
             },
         )
 
@@ -2153,6 +2168,10 @@ def run_command(spec: CommandSpec, *, dry_run: bool = False) -> int:
         cwd=spec.cwd,
         environment=_subprocess_env(spec.env),
         timeout_sec=spec.timeout_sec,
+        log_path=Path(str(spec.metadata["log_path"]))
+        if spec.metadata.get("log_path")
+        else None,
+        stdin_text=spec.stdin_text,
     )
     spec.metadata["wall_sec"] = round(float(result["wall_sec"]), 3)
     if result["timed_out"]:
@@ -3677,6 +3696,9 @@ def _start_background_command(
         spec.argv,
         cwd=spec.cwd,
         environment=_subprocess_env(spec.env),
+        log_path=Path(str(spec.metadata["log_path"]))
+        if spec.metadata.get("log_path")
+        else None,
     )
     if warmup_sec > 0:
         time.sleep(float(warmup_sec))
@@ -4432,6 +4454,7 @@ def build_mobilegpt_command(
     android_world_root: str | Path,
     output_root: str | Path,
     stats_jsonl: str | Path,
+    mobilegpt_root: str | Path,
     server_host: str,
     server_port: int,
     target_package: str,
@@ -4450,64 +4473,73 @@ def build_mobilegpt_command(
     run_dir_suffix: str = "",
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
-    spec = build_task_command(
-        item,
-        android_world_root=android_world_root,
-        output_root=output_root,
-        method_name=method_name,
-        agent_name="mobilegpt",
-        device_label=target.label,
-        run_dir_suffix=run_dir_suffix,
+    del android_world_root, task_random_seed, fixed_task_seed
+    del fixed_task_params, task_params_override, perform_emulator_setup
+    resolved_output = _experiment_run_dir(
+        output_root,
+        task=item.task,
+        method=_safe_stem(method_name, fallback="mobilegpt"),
+        device=target.label,
         serial=target.serial,
         console_port=target.console_port,
-        adb_path=adb_path,
-        max_steps=max_steps,
-        task_random_seed=task_random_seed,
-        fixed_task_seed=fixed_task_seed,
-        fixed_task_params=fixed_task_params,
-        task_params_override=task_params_override,
-        perform_emulator_setup=perform_emulator_setup,
         repo_root=repo_root,
     )
-    client_host = str(server_host or "127.0.0.1").strip()
-    if client_host in {"0.0.0.0", "::", "[::]"}:
-        client_host = "127.0.0.1"
+    if str(run_dir_suffix or "").strip():
+        resolved_output = resolved_output / _safe_relative_path(
+            run_dir_suffix,
+            fallback="run",
+        )
+    client_host = str(
+        os.environ.get("MOBILEGPT_CLIENT_HOST") or "10.0.2.2"
+    ).strip()
+    if client_host in {"0.0.0.0", "::", "[::]", "127.0.0.1"}:
+        client_host = "10.0.2.2"
+    client_output = resolved_output / "official_client"
+    client_argv = [
+        sys.executable,
+        "-m",
+        "src.integrations.official_forward",
+        "--root",
+        str(resolve_path(mobilegpt_root, root=repo_root)),
+        "--serial",
+        target.serial,
+        "--adb",
+        str(adb_path or "adb"),
+        "--host",
+        client_host,
+        "--instruction",
+        item.goal,
+        "--output",
+        str(client_output),
+        "--timeout",
+        str(float(finish_timeout_sec)),
+    ]
     return CommandSpec(
-        label=f"mobilegpt:cross-device:{target.label}:androidworld-episode",
-        argv=spec.argv,
+        label=f"mobilegpt:official:{target.label}",
+        argv=client_argv,
         env={
-            **spec.env,
             "ANDROID_SERIAL": target.serial,
             "MOBILEGPT_STATS_JSONL": str(resolve_path(stats_jsonl, root=repo_root)),
-            "MOBILEGPT_RUNTIME_OBSERVE_BACKEND": "androidworld",
-            "MOBILEGPT_SERVER_HOST": client_host,
-            "MOBILEGPT_SERVER_PORT": str(int(server_port)),
-            "MOBILEGPT_TARGET_PACKAGE": str(target_package or "").strip(),
-            "MOBILEGPT_WAIT_START_TIMEOUT_SEC": str(float(start_timeout_sec)),
-            "MOBILEGPT_WAIT_FINISH_TIMEOUT_SEC": str(float(finish_timeout_sec)),
-            "MOBILEGPT_APP_READY_TIMEOUT_SEC": str(float(app_ready_timeout_sec)),
-            "MOBILEGPT_APP_READY_POLL_SEC": str(float(app_ready_poll_sec)),
         },
-        cwd=spec.cwd,
-        output_path=spec.output_path,
+        cwd=repo_root,
+        output_path=resolved_output,
         timeout_sec=(
             float(timeout_sec) if timeout_sec is not None and timeout_sec > 0 else None
         ),
         metadata={
-            **dict(spec.metadata),
-            "mode": "mobilegpt_androidworld_episode",
+            "mode": "mobilegpt_official_client_forward",
             "device_target": target.to_dict(),
             "mobilegpt_stats_jsonl": str(stats_jsonl),
-            "mobilegpt_server_host": client_host,
+            "mobilegpt_server_host": str(server_host),
             "mobilegpt_server_port": int(server_port),
-            "mobilegpt_app_ready_timeout_sec": float(app_ready_timeout_sec),
-            "mobilegpt_app_ready_poll_sec": float(app_ready_poll_sec),
             "target_package": str(target_package or "").strip(),
-            "official_lifecycle": True,
-            "state_backend": "androidworld",
-            "action_backend": "androidworld",
-            "androidworld_lifecycle_backend": "androidworld",
-            "native_androidworld_agent_io": True,
+            "official_lifecycle": "mobilegpt_server_and_client",
+            "official_server_entry": "Server/main.py",
+            "official_client_entry": "App/app",
+            "official_client_host": client_host,
+            "external_forward_only": True,
+            "app_ready_timeout_sec": float(app_ready_timeout_sec),
+            "app_ready_poll_sec": float(app_ready_poll_sec),
         },
     )
 
@@ -4535,83 +4567,103 @@ def build_appagent_command(
     python_executable: str = sys.executable,
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
-    teacher_mode = teacher_source is not None
-    if teacher_mode and workspace_root is None:
-        raise ValueError("appagent_teacher_workspace_required")
-    if teacher_mode and docs_root is not None:
-        raise ValueError("appagent_teacher_docs_forbidden")
-    if not teacher_mode and docs_root is None:
+    if teacher_source is not None:
+        raise ValueError("official_appagent_deployment_does_not_run_teacher_mode")
+    if docs_root is None:
         raise ValueError("appagent_native_memory_required")
-    selector = "appagent"
-    spec = build_task_command(
-        item,
-        android_world_root=android_world_root,
-        output_root=output_root,
-        method_name=method_name,
-        agent_name=selector,
-        device_label=target.label,
+    del android_world_root, task_random_seed, fixed_task_seed
+    del fixed_task_params, task_params_override, perform_emulator_setup, workspace_root
+    del demo_name
+    resolved_appagent_root = resolve_path(appagent_root, root=repo_root)
+    resolved_docs_root = resolve_path(docs_root, root=repo_root)
+    resolved_device = _device_label(
+        explicit_label=target.label,
         serial=target.serial,
         console_port=target.console_port,
-        adb_path=adb_path,
-        max_steps=max_steps,
-        timeout_sec=timeout_sec,
-        task_random_seed=task_random_seed,
-        fixed_task_seed=fixed_task_seed,
-        fixed_task_params=fixed_task_params,
-        task_params_override=task_params_override,
-        perform_emulator_setup=perform_emulator_setup,
-        python_executable=python_executable,
+    )
+    resolved_output = _experiment_run_dir(
+        output_root,
+        task=item.task,
+        method=_safe_stem(method_name, fallback="appagent"),
+        device=resolved_device,
+        serial=target.serial,
+        console_port=target.console_port,
         repo_root=repo_root,
     )
-    resolved_appagent_root = resolve_path(appagent_root, root=repo_root)
-    argv = [*spec.argv, "--appagent-root", str(resolved_appagent_root)]
-    resolved_docs_root: Path | None = None
-    resolved_teacher_source: Path | None = None
-    resolved_workspace_root: Path | None = None
-    if docs_root is not None:
-        resolved_docs_root = resolve_path(docs_root, root=repo_root)
-        argv.extend(["--appagent-docs-root", str(resolved_docs_root)])
-    if teacher_mode:
-        resolved_teacher_source = resolve_path(teacher_source, root=repo_root)
-        resolved_workspace_root = resolve_path(workspace_root, root=repo_root)
-        argv.extend(
-            [
-                "--appagent-teacher-source",
-                str(resolved_teacher_source),
-                "--appagent-workspace-root",
-                str(resolved_workspace_root),
-                "--appagent-name",
-                str(demo_name or f"demo_{item.task}_seed{task_random_seed}"),
-            ]
-        )
+    app_name = resolved_docs_root.parent.name
+    workspace = resolved_output / "official_workspace"
+    runtime_env = _subprocess_env({})
+    endpoint = str(
+        runtime_env.get("OPENAI_BASE_URL")
+        or runtime_env.get("OMNIFLOW_OPENAI_BASE_URL")
+        or "https://api.openai.com/v1/chat/completions"
+    ).rstrip("/")
+    if not endpoint.endswith("/chat/completions"):
+        endpoint += "/chat/completions"
+    model = str(runtime_env.get("OPENAI_MODEL") or "").strip()
+    from src.integrations.official_forward import prepare_appagent_workspace
+
+    forward = prepare_appagent_workspace(
+        official_root=resolved_appagent_root,
+        docs_root=resolved_docs_root,
+        workspace=workspace,
+        app_name=app_name,
+        serial=target.serial,
+        adb_path=adb_path or "adb",
+        config={
+            "MODEL": "OpenAI",
+            "OPENAI_API_BASE": endpoint,
+            "OPENAI_API_KEY": str(runtime_env.get("OPENAI_API_KEY") or ""),
+            "OPENAI_API_MODEL": model,
+            "MAX_TOKENS": 1024,
+            "TEMPERATURE": 0.0,
+            "REQUEST_INTERVAL": 0.0,
+            "DASHSCOPE_API_KEY": "",
+            "QWEN_MODEL": model,
+            "ANDROID_SCREENSHOT_DIR": "/sdcard",
+            "ANDROID_XML_DIR": "/sdcard",
+            "DOC_REFINE": False,
+            "MAX_ROUNDS": int(max_steps or MAX_STEPS),
+            "DARK_MODE": False,
+            "MIN_DIST": 30,
+        },
+    )
+    argv = [
+        python_executable,
+        str(resolved_appagent_root / "run.py"),
+        "--app",
+        app_name,
+        "--root_dir",
+        str(workspace),
+    ]
+    log_path = resolved_output / "official_appagent.log"
     return CommandSpec(
-        label=f"appagent:{'teacher' if teacher_mode else 'warm'}:{target.label}",
+        label=f"appagent:official:{target.label}",
         argv=argv,
-        env={**spec.env, "ANDROID_SERIAL": target.serial},
-        cwd=spec.cwd,
-        output_path=spec.output_path,
+        env={
+            "ANDROID_SERIAL": target.serial,
+            "PATH": str(Path(forward["adb_proxy"]).parent)
+            + os.pathsep
+            + runtime_env.get("PATH", ""),
+        },
+        cwd=workspace,
+        output_path=resolved_output,
         timeout_sec=float(timeout_sec) if timeout_sec and timeout_sec > 0 else None,
+        stdin_text=item.goal + "\n",
         metadata={
-            **dict(spec.metadata),
-            "mode": (
-                "appagent_source_human_demo"
-                if teacher_mode
-                else "appagent_native_deployment"
-            ),
-            "agent": selector,
+            "mode": "appagent_official_deployment",
+            "agent": "official_appagent",
             "device_target": target.to_dict(),
             "appagent_root": str(resolved_appagent_root),
             "appagent_docs_root": str(resolved_docs_root or ""),
-            "appagent_teacher_source": str(resolved_teacher_source or ""),
-            "appagent_workspace_root": str(resolved_workspace_root or ""),
-            "uses_omniflow_function": False,
-            "uses_appagent_docs": resolved_docs_root is not None,
-            "teacher_mode": teacher_mode,
-            "official_lifecycle": True,
-            "state_backend": "androidworld",
-            "action_backend": "androidworld",
-            "androidworld_lifecycle_backend": "androidworld",
-            "native_androidworld_agent_io": True,
+            "official_entry": str(resolved_appagent_root / "run.py"),
+            "official_executor": str(
+                resolved_appagent_root / "scripts" / "task_executor.py"
+            ),
+            "official_workspace": str(workspace),
+            "official_app_name": app_name,
+            "external_forward_only": True,
+            "log_path": str(log_path),
         },
     )
 
@@ -4940,6 +4992,7 @@ def _run_result_mobilegpt(
                     android_world_root=args.android_world_root,
                     output_root=output_root,
                     stats_jsonl=stats_jsonl,
+                    mobilegpt_root=args.mobilegpt_root,
                     server_host=args.mobilegpt_server_host,
                     server_port=int(args.mobilegpt_port),
                     target_package=target_package,
@@ -5448,7 +5501,8 @@ def run_task(args: argparse.Namespace) -> int:
     )
     result_registration: dict[str, Any] = {}
     summary_path = output_root / _safe_stem(item.task) / RESULT_SUMMARY_FILE
-    if not bool(args.dry_run):
+    external_only_method = method in {"appagent", "mobilegpt"}
+    if not bool(args.dry_run) and not external_only_method:
         result_registry_root = _result_registry_root(
             args,
             attempt_root=attempt_root,
@@ -5462,6 +5516,12 @@ def run_task(args: argparse.Namespace) -> int:
             ).expanduser()
             if os.environ.get("OMNIFLOW_EXP_MEMORY_INDEX")
             else None,
+        )
+    elif external_only_method and not bool(args.dry_run):
+        print(
+            "[result] registration=skipped reason=external_official_runner_has_no_"
+            "androidworld_validator",
+            flush=True,
         )
     _print_result_summary(summary)
     print(

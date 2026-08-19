@@ -109,63 +109,16 @@ def test_appagent_asset_use_is_distinct_from_document_utilization() -> None:
     assert metrics["reuse_unit"] == "decision_round"
 
 
-def test_appagent_uses_upstream_model_factory_not_generic_wrapper(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from src.integrations import appagent
-
-    captured: dict[str, object] = {}
-
-    class Runtime:
-        def __init__(self, root: str) -> None:
-            captured["root"] = root
-
-        def build_controller(self, device: str) -> object:
-            captured["controller_device"] = device
-            return object()
-
-        def build_model(self, **kwargs: object) -> object:
-            captured["model"] = kwargs
-            return object()
-
-    def build_agent(**kwargs: object) -> SimpleNamespace:
-        captured["agent"] = kwargs
-        return SimpleNamespace(**kwargs)
-
-    monkeypatch.setattr(appagent, "OfficialAppAgentRuntime", Runtime)
-    monkeypatch.setattr(appagent, "AppAgentAndroidWorldAgent", build_agent)
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.test/v1")
-    monkeypatch.setenv("OPENAI_MODEL", "paper-model")
-
-    generic_factory_calls = 0
-
-    def generic_factory() -> object:
-        nonlocal generic_factory_calls
-        generic_factory_calls += 1
-        return object()
-
-    default_method_adapter_registry().build(
-        MethodAdapterContext(
-            selector="appagent",
-            env=SimpleNamespace(),
-            store_path="store.json",
-            adb_serial="emulator-5554",
-            appagent_root="/upstream/AppAgent",
-            appagent_output_root="/attempt/appagent",
-            appagent_docs_root="/memory/demo_docs",
-            appagent_llm_factory=generic_factory,
+def test_appagent_is_not_an_androidworld_agent_adapter() -> None:
+    with pytest.raises(ValueError, match="Unsupported AndroidWorld agent selector"):
+        default_method_adapter_registry().build(
+            MethodAdapterContext(
+                selector="appagent",
+                env=SimpleNamespace(),
+                store_path="store.json",
+                adb_serial="emulator-5554",
+            )
         )
-    )
-
-    assert generic_factory_calls == 0
-    assert captured["model"] == {
-        "api_key": "test-key",
-        "base_url": "https://example.test/v1",
-        "model": "paper-model",
-    }
-    assert captured["controller_device"] == "emulator-5554"
-    assert captured["agent"]["docs_root"] == "/memory/demo_docs"
 
 
 def test_omniflow_adapter_preserves_launcher_step_cap() -> None:

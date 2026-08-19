@@ -17,7 +17,8 @@ from src.experiment.protocol import (
 
 _UNSUPPORTED_SELECTOR_ERROR = (
     "Unsupported AndroidWorld agent selector. Use `omniflow`, `fixed_replay`, "
-    "`appagent`, or `official:<name>`."
+    "or `official:<name>`. AppAgent and MobileGPT are launched by the external "
+    "baseline forwarder."
 )
 
 REUSE_METRICS_SCHEMA = "omniflow.androidworld.reuse-metrics.v1"
@@ -281,11 +282,6 @@ def default_method_adapter_registry() -> MethodAdapterRegistry:
                 build=_build_omniflow,
             ),
             MethodAdapter(
-                name="appagent",
-                accepts=lambda selector: selector == "appagent",
-                build=_build_appagent,
-            ),
-            MethodAdapter(
                 name="official_androidworld",
                 accepts=lambda selector: selector.startswith("official:"),
                 build=_build_official,
@@ -373,47 +369,10 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
 
 
 def _build_appagent(context: MethodAdapterContext) -> Any:
-    from src.integrations.appagent import (
-        AppAgentAndroidWorldAgent,
-        AppAgentTeacherAgent,
-        OfficialAppAgentRuntime,
-    )
-
-    runtime = OfficialAppAgentRuntime(context.appagent_root)
-    if context.appagent_teacher_source:
-        if not str(context.appagent_workspace_root or "").strip():
-            raise ValueError(
-                "appagent teacher workspace is required"
-            )
-        return AppAgentTeacherAgent(
-            env=context.env,
-            official_runtime=runtime,
-            teacher_source=context.appagent_teacher_source,
-            workspace_root=context.appagent_workspace_root,
-            demo_name=context.appagent_name,
-        )
-    llm_factory = _required_dependency(
-        runtime.build_model,
-        "appagent_official_model_factory",
-    )
-    api_key, base_url = resolve_openai_compatible_config(
-        profile=context.model_endpoint_profile or None,
-        base_url=os.environ.get("OPENAI_BASE_URL"),
-    )
-    return AppAgentAndroidWorldAgent(
-        env=context.env,
-        official_runtime=runtime,
-        controller=runtime.build_controller(context.adb_serial),
-        llm=llm_factory(
-            api_key=api_key,
-            base_url=base_url,
-            model=(
-                str(context.planner_model or "").strip()
-                or str(os.environ.get("OPENAI_MODEL") or "").strip()
-            ),
-        ),
-        output_root=context.appagent_output_root,
-        docs_root=(context.appagent_docs_root or None),
+    del context
+    raise ValueError(
+        "appagent_is_external_only: use scripts/exp/run_androidworld.sh "
+        "with OMNIFLOW_ANDROIDWORLD_METHOD=appagent"
     )
 
 

@@ -1453,22 +1453,15 @@ def test_appagent_memory_rejects_manifest_teacher_count_mismatch(
 
 def test_appagent_warm_command_mounts_native_docs_memory(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source_run_log = tmp_path / "source.run_log.json"
     source_run_log.write_text("{}", encoding="utf-8")
-    base_spec = pipeline.CommandSpec(
-        label="base",
-        argv=["python", "launch.py"],
-        env={},
-        cwd=tmp_path,
-        output_path=tmp_path / "output",
-    )
-    monkeypatch.setattr(
-        pipeline,
-        "build_task_command",
-        lambda *_args, **_kwargs: base_spec,
-    )
+    appagent_root = tmp_path / "AppAgent"
+    (appagent_root / "scripts").mkdir(parents=True)
+    (appagent_root / "run.py").write_text("print('official')\n", encoding="utf-8")
+    docs_root = tmp_path / "apps" / "audiorecorder" / "demo_docs"
+    docs_root.mkdir(parents=True)
+    (docs_root / "button.txt").write_text("{}", encoding="utf-8")
     item = CanonicalRunLog(
         task="BrowserDraw",
         goal="Open task.html and draw.",
@@ -1485,8 +1478,8 @@ def test_appagent_warm_command_mounts_native_docs_memory(
         target=pipeline.DeviceTarget("small5554", "emulator-5554", 5554),
         android_world_root=tmp_path / "android_world",
         output_root=tmp_path / "output",
-        appagent_root=tmp_path / "AppAgent",
-        docs_root=tmp_path / "docs",
+        appagent_root=appagent_root,
+        docs_root=docs_root,
         max_steps=20,
         timeout_sec=60,
         task_random_seed=113,
@@ -1498,8 +1491,12 @@ def test_appagent_warm_command_mounts_native_docs_memory(
         repo_root=tmp_path,
     )
 
-    docs_root_index = spec.argv.index("--appagent-docs-root")
-    assert spec.argv[docs_root_index + 1] == str((tmp_path / "docs").resolve())
-    assert spec.metadata["appagent_docs_root"] == str(
-        (tmp_path / "docs").resolve()
-    )
+    assert spec.argv[-4:] == [
+        "--app",
+        "audiorecorder",
+        "--root_dir",
+        spec.metadata["official_workspace"],
+    ]
+    assert spec.metadata["appagent_docs_root"] == str(docs_root.resolve())
+    assert spec.stdin_text == "Open task.html and draw.\n"
+    assert spec.metadata["external_forward_only"] is True

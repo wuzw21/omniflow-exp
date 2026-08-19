@@ -1172,7 +1172,7 @@ fi
 default_method="$formal_default_method"
 method="${selected_method_arg:-${OMNIFLOW_ANDROIDWORLD_METHOD:-$default_method}}"
 case ",$all_methods," in
-  *",$method,"*)
+  *,${method},*)
     ;;
   *)
     echo "Unsupported paper method: $method" >&2
@@ -1362,6 +1362,10 @@ case "$method" in
       ;;
     fixed_replay)
       need_native_preflight=1
+      ;;
+    mobilegpt)
+      need_mobilegpt_preflight=1
+      requires_mobilegpt_source_memory=1
       ;;
     appagent)
       need_appagent_preflight=1

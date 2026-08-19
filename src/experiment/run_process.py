@@ -82,6 +82,7 @@ def run_process(
     timeout_sec: float | None,
     log_path: Path | None = None,
     stdin_devnull: bool = False,
+    stdin_text: str | None = None,
 ) -> dict[str, Any]:
     """Run one command with one timeout and one process-group policy.
 
@@ -122,20 +123,36 @@ def run_process(
                 command_list,
                 cwd=cwd,
                 env=environment,
-                stdin=subprocess.DEVNULL if stdin_devnull else None,
+                stdin=(
+                    subprocess.PIPE
+                    if stdin_text is not None
+                    else subprocess.DEVNULL
+                    if stdin_devnull
+                    else None
+                ),
                 stdout=log_file,
                 stderr=subprocess.STDOUT if log_file is not None else None,
                 text=True,
                 start_new_session=True,
             )
             try:
-                process.wait(
-                    timeout=(
-                        None
-                        if timeout_sec is None
-                        else max(0.1, float(timeout_sec))
+                if stdin_text is not None:
+                    process.communicate(
+                        input=stdin_text,
+                        timeout=(
+                            None
+                            if timeout_sec is None
+                            else max(0.1, float(timeout_sec))
+                        ),
                     )
-                )
+                else:
+                    process.wait(
+                        timeout=(
+                            None
+                            if timeout_sec is None
+                            else max(0.1, float(timeout_sec))
+                        )
+                    )
                 timed_out = False
             except subprocess.TimeoutExpired:
                 timed_out = True
