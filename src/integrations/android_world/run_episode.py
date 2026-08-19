@@ -68,6 +68,11 @@ ANDROIDWORLD_A11Y_FORWARDER_PACKAGE = (
 ANDROIDWORLD_A11Y_FORWARDER_SHA256 = (
     "97a56a544e44d79f9b3181fc7dbdd72cffa908efd3d53c82afad1773061a350a"
 )
+OOB_CONTROL_PACKAGE = "cn.com.omnimind.bot.debug"
+OOB_CONTROL_ACCESSIBILITY_SERVICE = (
+    "cn.com.omnimind.bot.debug/"
+    "cn.com.omnimind.accessibility.service.AssistsService"
+)
 ANDROID_PERMISSION_DENY_RESOURCE_IDS = (
     "com.android.permissioncontroller:id/permission_deny_button",
     "com.android.permissioncontroller:id/permission_deny_and_dont_ask_again_button",
@@ -1363,6 +1368,85 @@ def _ensure_androidworld_a11y_forwarder(
     )
 
 
+def _ensure_oob_control_app(*, console_port: int, adb_path: str) -> bool:
+    """Restore OOB after AndroidWorld snapshot setup resets user packages."""
+
+    adb_bin = os.path.expanduser(str(adb_path or "").strip()) or "adb"
+    serial = f"emulator-{int(console_port)}"
+    package_path = subprocess.run(
+        [adb_bin, "-s", serial, "shell", "pm", "path", OOB_CONTROL_PACKAGE],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    apk_path = Path(str(os.environ.get("OMNIFLOW_OOB_APK") or "")).expanduser()
+    if package_path.returncode != 0 or not any(
+        line.strip().startswith("package:")
+        for line in str(package_path.stdout or "").splitlines()
+    ):
+        if not apk_path.is_file():
+            raise RuntimeError(
+                "oob_control_package_missing_after_androidworld_setup:"
+                f"{serial}; set OMNIFLOW_OOB_APK"
+            )
+        installed = subprocess.run(
+            [adb_bin, "-s", serial, "install", "-r", "-t", str(apk_path)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        if installed.returncode != 0:
+            raise RuntimeError(
+                "oob_control_package_install_failed:"
+                f"{serial}:{str(installed.stdout or installed.stderr or '').strip()}"
+            )
+    enabled = subprocess.run(
+        [adb_bin, "-s", serial, "shell", "settings", "get", "secure", "enabled_accessibility_services"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    services = [
+        value
+        for value in str(enabled.stdout or "").strip().split(":")
+        if value and value != "null"
+    ]
+    if OOB_CONTROL_ACCESSIBILITY_SERVICE not in services:
+        services.append(OOB_CONTROL_ACCESSIBILITY_SERVICE)
+        update = subprocess.run(
+            [
+                adb_bin,
+                "-s",
+                serial,
+                "shell",
+                "settings",
+                "put",
+                "secure",
+                "enabled_accessibility_services",
+                ":".join(services),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if update.returncode != 0:
+            raise RuntimeError(f"oob_control_accessibility_enable_failed:{serial}")
+    enabled_flag = subprocess.run(
+        [adb_bin, "-s", serial, "shell", "settings", "put", "secure", "accessibility_enabled", "1"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if enabled_flag.returncode != 0:
+        raise RuntimeError(f"oob_control_accessibility_flag_failed:{serial}")
+    return True
+
+
 def _is_oob_control_backend() -> bool:
     backend = str(
         os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "androidworld")
@@ -1472,6 +1556,8 @@ def prepare_androidworld_environment(
             setup_module=setup_module,
             setup_apps=tuple(setup_apps),
         )
+    if _is_oob_control_backend():
+        _ensure_oob_control_app(console_port=int(console_port), adb_path=str(adb_path or ""))
     _prepare_androidworld_snapshot_restore(env, tuple(setup_apps))
     _reset_androidworld_file_picker_state(
         env,

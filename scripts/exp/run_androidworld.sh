@@ -214,9 +214,20 @@ if [[ -z "${OMNIFLOW_MOBILEGPT_ROOT:-}" ]]; then
   done
 fi
 if [[ -z "${OMNIFLOW_APPAGENT_ROOT:-}" ]]; then
-  for candidate in "$appagent_root" "$workspace_root/OmniFlow/runtime/external/appagent"; do
+  for candidate in "$appagent_root" "$workspace_root/appagent-official" "$workspace_root/OmniFlow/runtime/external/appagent"; do
     if [[ -d "$candidate" ]]; then
       appagent_root="$candidate"
+      break
+    fi
+  done
+fi
+if [[ -z "${OMNIFLOW_OOB_APK:-}" ]]; then
+  for candidate in \
+    "$workspace_root/oob-downloads/v0.5.8.4/OpenOmniBot-v0.5.8.4-develop-standard-debug.apk" \
+    "$workspace_root/OpenOmniBot/app/build/outputs/apk/developStandard/debug/app-develop-standard-debug.apk" \
+    "$asset_root/runtime/assets/oob-x86_64-debug.apk"; do
+    if [[ -f "$candidate" ]]; then
+      export OMNIFLOW_OOB_APK="$candidate"
       break
     fi
   done
