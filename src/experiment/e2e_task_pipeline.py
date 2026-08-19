@@ -2055,7 +2055,7 @@ def _function_enhancement_transport(
         response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            max_completion_tokens=2048,
+            max_completion_tokens=4096,
             temperature=0,
             tools=[tool],
             tool_choice={
