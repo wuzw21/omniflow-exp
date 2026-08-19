@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from typing import Any, Callable
 
+from omniflow.core.model import ToolCall
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from src.experiment.protocol import (
     FORMAL_MODEL_BASE_URL,
@@ -232,6 +233,8 @@ class MethodAdapterContext:
     task_seed: int | None = None
     evidence_root: str = ""
     performance_metrics: Any | None = None
+    direct_function_id: str = ""
+    direct_function_arguments: dict[str, Any] | None = None
     build_omniflow_agent: Callable[..., Any] | None = None
     apply_fixed_replay: Callable[..., Any] | None = None
     build_official_agent: Callable[..., Any] | None = None
@@ -267,6 +270,42 @@ class MethodAdapterRegistry:
                 f"androidworld_method_adapter_ambiguous:{context.selector}:{names}"
             )
         return matches[0].build(context)
+
+
+class FunctionReplayAgent:
+    """Expose one registered Function through the normal agent lifecycle.
+
+    Direct Function execution is a useful source-qualification and replay
+    mode, not a second AndroidWorld runner.  This small adapter changes only
+    the method decision: reset, evidence recording, host access, and the
+    official episode wrapper remain owned by the launcher.
+    """
+
+    def __init__(
+        self,
+        agent: Any,
+        *,
+        function_id: str,
+        arguments: dict[str, Any],
+    ) -> None:
+        normalized_id = str(function_id or "").strip()
+        if not normalized_id or not callable(getattr(agent, "call_tool", None)):
+            raise ValueError("direct_function_requires_omniflow_agent")
+        store = getattr(agent, "store", None)
+        if store is None or store.get_function(normalized_id) is None:
+            raise ValueError(f"direct_function_not_found:{normalized_id}")
+        self._agent = agent
+        self.function_id = normalized_id
+        self.arguments = dict(arguments)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._agent, name)
+
+    def run(self, _goal: str, *, experiment: Any = None) -> Any:
+        return self._agent.call_tool(
+            ToolCall(self.function_id, dict(self.arguments)),
+            experiment=experiment,
+        )
 
 
 def default_method_adapter_registry() -> MethodAdapterRegistry:
@@ -330,7 +369,7 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
         resolved_planner_model
         or resolved_planner_provider
         or _read_env_bool("OMNIFLOW_ENABLE_ONLINE_PLANNER", False)
-    ):
+    ) and not str(context.direct_function_id or "").strip():
         from omniflow.vlm.planner import VLMPlanner
 
         planner = VLMPlanner(
@@ -353,6 +392,15 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
     if planner is not None:
         build_kwargs["planner"] = planner
     built_agent = build_agent(**build_kwargs)
+    if str(context.direct_function_id or "").strip():
+        arguments = context.direct_function_arguments
+        if arguments is not None and not isinstance(arguments, dict):
+            raise ValueError("direct_function_arguments_must_be_object")
+        return FunctionReplayAgent(
+            built_agent,
+            function_id=context.direct_function_id,
+            arguments=dict(arguments or {}),
+        )
     if context.selector != "fixed_replay":
         return built_agent
     if not str(context.raw_replay_run_log or "").strip():

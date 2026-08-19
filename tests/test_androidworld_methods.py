@@ -189,6 +189,60 @@ def test_omniflow_adapter_preserves_launcher_step_cap() -> None:
     assert captured["max_steps"] == 20
 
 
+def test_direct_function_is_a_method_adapter_not_a_runner_override() -> None:
+    calls: list[object] = []
+
+    class Store:
+        def get_function(self, function_id: str) -> object:
+            return object() if function_id == "complete_task" else None
+
+    class Agent:
+        store = Store()
+
+        def call_tool(self, tool_call: object, *, experiment: object = None) -> object:
+            calls.append((tool_call, experiment))
+            return "function-result"
+
+    context = MethodAdapterContext(
+        selector="omniflow",
+        env=SimpleNamespace(),
+        store_path="store.json",
+        adb_serial="emulator-5554",
+        direct_function_id="complete_task",
+        direct_function_arguments={"target": "Alarm"},
+        planner_model="must-not-build",
+        build_omniflow_agent=lambda **_options: Agent(),
+    )
+
+    replay_agent = default_method_adapter_registry().build(context)
+
+    assert replay_agent.run("ignored", experiment="episode") == "function-result"
+    assert calls[0][0].name == "complete_task"
+    assert calls[0][0].arguments == {"target": "Alarm"}
+    assert calls[0][1] == "episode"
+
+
+def test_direct_function_replay_rejects_missing_registered_function() -> None:
+    class Store:
+        def get_function(self, _function_id: str) -> None:
+            return None
+
+    with pytest.raises(ValueError, match="direct_function_not_found:missing"):
+        default_method_adapter_registry().build(
+            MethodAdapterContext(
+                selector="omniflow",
+                env=SimpleNamespace(),
+                store_path="store.json",
+                adb_serial="emulator-5554",
+                direct_function_id="missing",
+                build_omniflow_agent=lambda **_options: SimpleNamespace(
+                    store=Store(),
+                    call_tool=lambda *_args, **_kwargs: None,
+                ),
+            )
+        )
+
+
 def test_omniflow_adapter_uses_canonical_planner_configuration(
     monkeypatch,
 ) -> None:

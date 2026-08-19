@@ -30,7 +30,6 @@ import urllib.request
 
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import token_usage_status
-from omniflow.core.model import ToolCall
 from src.experiment.observation_evidence import (
     persist_target_run_evidence,
     transfer_state_coverage_audit,
@@ -3403,26 +3402,13 @@ def _build_launch_agent(
             task_seed=task_seed,
             evidence_root=evidence_root,
             performance_metrics=performance_metrics,
+            direct_function_id=direct_function_id,
+            direct_function_arguments=direct_function_arguments,
             build_omniflow_agent=build_agent,
             apply_fixed_replay=_apply_fixed_replay,
             build_official_agent=_build_official_androidworld_agent,
         )
     )
-    if direct_function_id:
-        function_id = str(direct_function_id).strip()
-        arguments = dict(direct_function_arguments or {})
-        if not function_id or not hasattr(agent_instance, "call_tool"):
-            raise ValueError("direct_function_requires_omniflow_agent")
-        if agent_instance.store.get_function(function_id) is None:
-            raise ValueError(f"direct_function_not_found:{function_id}")
-
-        def run_complete_function(_goal: str, *, experiment: Any = None) -> Any:
-            return agent_instance.call_tool(
-                ToolCall(function_id, dict(arguments)),
-                experiment=experiment,
-            )
-
-        agent_instance.run = run_complete_function
     return agent_instance
 
 
