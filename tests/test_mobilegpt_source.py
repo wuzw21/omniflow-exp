@@ -11,7 +11,7 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 from src.experiment import androidworld as pipeline
 from src.experiment import mobilegpt_source, checks
 from src.experiment.data_index import (
-    canonical_mobilegpt_memory_from_memory,
+    canonical_prepared_memory_from_index,
     refresh_artifact_index,
 )
 from src.experiment.mobilegpt_contract import (
@@ -233,7 +233,7 @@ def test_converted_memory_seals_and_registers(tmp_path: Path) -> None:
         bundle_root=bundle,
         task_name="SystemBluetoothTurnOn",
     )
-    resolved = canonical_mobilegpt_memory_from_memory(
+    resolved = canonical_prepared_memory_from_index(
         memory_index=registry_root / "current.json",
         task_name="SystemBluetoothTurnOn",
     )

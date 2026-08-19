@@ -24,7 +24,7 @@ from src.experiment.androidworld import (
     build_fixed_replay_command,
 )
 from src.experiment.data_index import (
-    canonical_mobilegpt_memory_from_memory,
+    canonical_prepared_memory_from_index,
     load_artifact_index,
     registered_result_plan_from_memory,
 )
@@ -837,7 +837,7 @@ def prepare_mobilegpt_memory(
     attempt_root: Path,
     deadline: Deadline,
 ) -> tuple[Path, dict[str, Any]]:
-    existing = canonical_mobilegpt_memory_from_memory(
+    existing = canonical_prepared_memory_from_index(
         memory_index=args.memory_index,
         task_name=args.task,
     )
@@ -897,7 +897,7 @@ def prepare_mobilegpt_memory(
             f"mobilegpt_memory_prep_failed:{result['returncode']}",
             phase,
         )
-    existing = canonical_mobilegpt_memory_from_memory(
+    existing = canonical_prepared_memory_from_index(
         memory_index=args.memory_index,
         task_name=args.task,
     )

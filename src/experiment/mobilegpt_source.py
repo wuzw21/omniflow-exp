@@ -246,9 +246,9 @@ def _register_mobilegpt_memory(
 
     report = refresh_artifact_index_from_pointer(
         memory_index=memory_index,
-        additional_mobilegpt_memory_roots=(bundle_root,),
+        additional_prepared_memory_roots=(bundle_root,),
     )
-    registered = report.get("canonical", {}).get("mobilegpt_memories", {}).get(
+    registered = report.get("canonical", {}).get("prepared_memories", {}).get(
         str(task_name)
     )
     if not isinstance(registered, dict):

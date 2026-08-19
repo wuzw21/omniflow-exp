@@ -207,7 +207,7 @@ def test_mobilegpt_preparation_is_an_internal_pipeline_phase(
         return {"returncode": 0, "timed_out": False, "wall_sec": 0.1}
 
     monkeypatch.setattr(
-        "src.experiment.e2e_task_pipeline.canonical_mobilegpt_memory_from_memory",
+        "src.experiment.e2e_task_pipeline.canonical_prepared_memory_from_index",
         canonical,
     )
     monkeypatch.setattr(

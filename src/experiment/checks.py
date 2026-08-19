@@ -519,7 +519,7 @@ def _validate_source_index(
     payload = json.loads(resolved_index.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("source_index_must_be_object")
-    if payload.get("schema_version") == "omniflow.local-artifact-index.v1":
+    if payload.get("schema_version") == "omniflow.data-index.v2":
         payload = payload.get("source_index")
         if not isinstance(payload, dict):
             raise ValueError("current_source_index_must_be_object")
@@ -1081,24 +1081,41 @@ def main(argv: list[str] | None = None) -> int:
     warnings = [check for check in checks if check.status == "warning"]
     fingerprint_files = memory_files
     fingerprint_root = repo if memory_root is None else memory_root
+    memory_provider = (
+        "appagent"
+        if appagent_mode and memory_root is not None
+        else "mobilegpt"
+        if memory_root is not None
+        else "none"
+    )
+    memory_condition = (
+        "prepared_memory"
+        if memory_root is not None
+        else "empty_memory"
+    )
     report = {
-        "schema_version": "omniflow.androidworld_runtime_preflight.v1",
+        "schema_version": "omniflow.run-check.v2",
         "ready": not failures,
         "host": socket.gethostname(),
         "platform": platform.platform(),
-        "repo": str(repo),
-        "code_root": str(code_root),
-        "serial": args.serial,
-        "profile": profile,
-        "initial_memory_condition": (
-            "appagent_memory"
-            if appagent_mode and memory_root is not None
-            else "native_memory"
-            if memory_root is not None
-            else "empty_memory"
-        ),
-        "source_memory_root": str(memory_root or ""),
-        "memory_fingerprint": _hash_files(fingerprint_files, relative_to=fingerprint_root) if fingerprint_files else "",
+        "paths": {
+            "repo": str(repo),
+            "code_root": str(code_root),
+        },
+        "target": {
+            "serial": args.serial,
+            "profile": profile,
+        },
+        "memory": {
+            "provider": memory_provider,
+            "condition": memory_condition,
+            "root": str(memory_root or ""),
+            "fingerprint": (
+                _hash_files(fingerprint_files, relative_to=fingerprint_root)
+                if fingerprint_files
+                else ""
+            ),
+        },
         "checks": [asdict(check) for check in checks],
         "failure_count": len(failures),
         "warning_count": len(warnings),

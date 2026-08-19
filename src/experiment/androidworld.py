@@ -674,7 +674,7 @@ def load_canonical_source_index(
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"Canonical data index must be a JSON object: {path}")
-    if data.get("schema_version") == "omniflow.local-artifact-index.v1":
+    if data.get("schema_version") == "omniflow.data-index.v2":
         data = data.get("source_index")
         if not isinstance(data, dict):
             raise ValueError(f"Current data index has no source index: {path}")

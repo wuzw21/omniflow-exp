@@ -38,8 +38,8 @@ from src.experiment.protocol import (
 )
 from src.integrations.runlog import adapt_source_run_log
 
-MEMORY_SCHEMA = "omniflow.local-data-registry.v3"
-CURRENT_SCHEMA = "omniflow.local-artifact-index.v1"
+MEMORY_SCHEMA = "omniflow.data.v4"
+CURRENT_SCHEMA = "omniflow.data-index.v2"
 _MISSING = object()
 FUNCTION_SOURCE_LINEAGE_SCHEMA = "omniflow.function-store-source-lineage.v1"
 RESULT_FILE_NAMES = (
@@ -1103,13 +1103,13 @@ def _load_results(
                 str(result_row.get("prep_manifest") or "")
             ).expanduser()
             prep_manifest = _load_object(prep_manifest_path)
-            candidate["mobilegpt_memory_schema"] = str(
+            candidate["memory_schema"] = str(
                 prep_manifest.get("schema_version") or ""
             )
-            candidate["mobilegpt_source_method"] = str(
+            candidate["memory_source_method"] = str(
                 prep_manifest.get("source_method") or ""
             )
-            candidate["mobilegpt_prep_type"] = str(
+            candidate["memory_prep_type"] = str(
                 result_row.get("prep_type") or ""
             )
         if method == "fixed_replay":
@@ -1136,7 +1136,7 @@ def _load_results(
             value
             for value in ordered
             if value[3]["method"] == "mobilegpt"
-            and value[3].get("mobilegpt_memory_schema")
+            and value[3].get("memory_schema")
             in MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS
         ]
         canonical[result] = (current_mobilegpt or ordered)[0][3]
@@ -1283,7 +1283,7 @@ def _memory_lock(memory_root: Path):
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
-def _load_mobilegpt_memories(
+def _load_prepared_memories(
     memory_root: Path,
     roots: Sequence[Path],
     *,
@@ -1335,6 +1335,7 @@ def _load_mobilegpt_memories(
             memory_sha256,
             {
                 "task": task,
+                "provider": "mobilegpt",
                 "schema_version": schema_version,
                 "source_seed": SOURCE_SEED,
                 "source_method": source_method,
@@ -1384,7 +1385,7 @@ def _load_mobilegpt_memories(
 
     canonical: dict[str, dict[str, Any]] = {}
     for task, memory_sha256s in sorted(candidates.items()):
-        canonical[task] = _select_canonical_mobilegpt_memory(
+        canonical[task] = _select_canonical_prepared_memory(
             task=task,
             memory_sha256s=memory_sha256s,
             records=records,
@@ -1392,7 +1393,7 @@ def _load_mobilegpt_memories(
     return records, canonical
 
 
-def _select_canonical_mobilegpt_memory(
+def _select_canonical_prepared_memory(
     *,
     task: str,
     memory_sha256s: set[str],
@@ -1590,7 +1591,7 @@ def _refresh_artifact_index_unlocked(
     source_index: str | Path,
     runlog_roots: Sequence[str | Path],
     result_roots: Sequence[str | Path],
-    mobilegpt_memory_roots: Sequence[str | Path] = (),
+    prepared_memory_roots: Sequence[str | Path] = (),
     baseline_batch_reports: Sequence[str | Path] = (),
     source_screenshot_roots: Sequence[str | Path] = (),
     existing_function_store_identities: dict[str, str] | None = None,
@@ -1733,16 +1734,16 @@ def _refresh_artifact_index_unlocked(
     resolved_result_roots = sorted(
         {Path(value).expanduser().resolve() for value in result_roots}
     )
-    resolved_mobilegpt_memory_roots = sorted(
-        {Path(value).expanduser().resolve() for value in mobilegpt_memory_roots}
+    resolved_prepared_memory_roots = sorted(
+        {Path(value).expanduser().resolve() for value in prepared_memory_roots}
     )
     resolved_baseline_batch_reports = sorted(
         {Path(value).expanduser().resolve() for value in baseline_batch_reports}
     )
-    for mobilegpt_memory_root in resolved_mobilegpt_memory_roots:
-        if not mobilegpt_memory_root.is_dir():
+    for prepared_memory_root in resolved_prepared_memory_roots:
+        if not prepared_memory_root.is_dir():
             raise FileNotFoundError(
-                f"mobilegpt_memory_root_missing:{mobilegpt_memory_root}"
+                f"prepared_memory_root_missing:{prepared_memory_root}"
             )
     function_records, canonical_function_stores = _load_function_stores(
         root,
@@ -1765,10 +1766,10 @@ def _refresh_artifact_index_unlocked(
         task_names=task_names,
     )
     canonical_result_cells.update(baseline_result_cells)
-    mobilegpt_memory_records, canonical_mobilegpt_memories = (
-        _load_mobilegpt_memories(
+    prepared_memory_records, canonical_prepared_memories = (
+        _load_prepared_memories(
             root,
-            resolved_mobilegpt_memory_roots,
+            resolved_prepared_memory_roots,
             canonical_sources=canonical_sources,
         )
     )
@@ -1823,8 +1824,8 @@ def _refresh_artifact_index_unlocked(
                 str(Path(value).expanduser().resolve()) for value in runlog_roots
             ),
             "result_roots": [str(path) for path in resolved_result_roots],
-            "mobilegpt_memory_roots": [
-                str(path) for path in resolved_mobilegpt_memory_roots
+            "prepared_memory_roots": [
+                str(path) for path in resolved_prepared_memory_roots
             ],
             "baseline_batch_reports": [
                 str(path) for path in resolved_baseline_batch_reports
@@ -1846,14 +1847,14 @@ def _refresh_artifact_index_unlocked(
             "canonical_result_cells": len(canonical_result_cells),
             "baseline_batch_reports": len(baseline_report_records),
             "baseline_validator_results": len(baseline_result_cells),
-            "unique_mobilegpt_memories": len(mobilegpt_memory_records),
-            "mobilegpt_memory_tasks": len(canonical_mobilegpt_memories),
+            "unique_prepared_memories": len(prepared_memory_records),
+            "prepared_memory_tasks": len(canonical_prepared_memories),
         },
         "canonical": {
             "source_run_logs": canonical_sources,
             "function_stores": canonical_function_stores,
             "result_cells": canonical_result_cells,
-            "mobilegpt_memories": canonical_mobilegpt_memories,
+            "prepared_memories": canonical_prepared_memories,
         },
     }
     registry["schema_version"] = CURRENT_SCHEMA
@@ -1869,7 +1870,7 @@ def refresh_artifact_index(
     source_index: str | Path,
     runlog_roots: Sequence[str | Path],
     result_roots: Sequence[str | Path],
-    mobilegpt_memory_roots: Sequence[str | Path] = (),
+    prepared_memory_roots: Sequence[str | Path] = (),
     baseline_batch_reports: Sequence[str | Path] = (),
     source_screenshot_roots: Sequence[str | Path] = (),
 ) -> dict[str, Any]:
@@ -1882,7 +1883,7 @@ def refresh_artifact_index(
             source_index=source_index,
             runlog_roots=runlog_roots,
             result_roots=result_roots,
-            mobilegpt_memory_roots=mobilegpt_memory_roots,
+            prepared_memory_roots=prepared_memory_roots,
             baseline_batch_reports=baseline_batch_reports,
             source_screenshot_roots=source_screenshot_roots,
         )
@@ -1911,7 +1912,7 @@ def registered_result_plan_from_memory(
     source_seed: int,
     evaluation_seed: int,
     formal_max_steps: int | None = None,
-    mobilegpt_memory_schemas: Sequence[str] | None = None,
+    prepared_memory_schemas: Sequence[str] | None = None,
 ) -> dict[str, list[tuple[str, str]]]:
     """Resolve completed formal results without rescanning historical results."""
 
@@ -1926,10 +1927,10 @@ def registered_result_plan_from_memory(
             continue
         if (
             method == "mobilegpt"
-            and mobilegpt_memory_schemas is not None
+            and prepared_memory_schemas is not None
             and record.get("selection_reason") != BASELINE_BATCH_REPORT_SELECTION
-            and str(record.get("mobilegpt_memory_schema") or "")
-            not in set(mobilegpt_memory_schemas)
+            and str(record.get("memory_schema") or "")
+            not in set(prepared_memory_schemas)
         ):
             continue
         if formal_max_steps is not None:
@@ -1976,25 +1977,29 @@ def registered_result_plan_from_memory(
     }
 
 
-def canonical_mobilegpt_memory_from_memory(
+def canonical_prepared_memory_from_index(
     *,
     memory_index: str | Path,
     task_name: str,
+    provider: str = "mobilegpt",
 ) -> dict[str, Any] | None:
-    """Resolve one validated task-local MobileGPT memory from current.json."""
+    """Resolve one validated prepared memory from the local data index."""
 
     registry = load_artifact_index(memory_index)
-    record = registry.get("canonical", {}).get("mobilegpt_memories", {}).get(
-        str(task_name)
-    )
+    record = registry.get("canonical", {}).get("prepared_memories", {}).get(str(task_name))
     if record is None:
         return None
     if not isinstance(record, dict):
-        raise ValueError(f"mobilegpt_memory_index_record_invalid:{task_name}")
+        raise ValueError(f"prepared_memory_index_record_invalid:{task_name}")
+    if str(record.get("provider") or "") != str(provider or "").strip():
+        raise ValueError(
+            f"prepared_memory_provider_mismatch:{task_name}:"
+            f"expected={provider}:actual={record.get('provider')}"
+        )
     memory_root = Path(str(record.get("memory_root") or "")).expanduser()
     if not memory_root.is_absolute() or not memory_root.is_dir():
         raise FileNotFoundError(
-            f"mobilegpt_memory_index_root_missing:{task_name}:{memory_root}"
+            f"prepared_memory_index_root_missing:{task_name}:{memory_root}"
         )
     return dict(record)
 
@@ -2005,7 +2010,7 @@ def refresh_artifact_index_from_pointer(
     source_screenshot_roots: Sequence[str | Path] = (),
     additional_runlog_roots: Sequence[str | Path] = (),
     additional_result_roots: Sequence[str | Path] = (),
-    additional_mobilegpt_memory_roots: Sequence[str | Path] = (),
+    additional_prepared_memory_roots: Sequence[str | Path] = (),
     additional_baseline_batch_reports: Sequence[str | Path] = (),
     replace_recorded_roots: bool = False,
 ) -> dict[str, Any]:
@@ -2039,9 +2044,9 @@ def refresh_artifact_index_from_pointer(
                     *resolved_result_roots,
                 }
             )
-        resolved_mobilegpt_memory_roots = {
+        resolved_prepared_memory_roots = {
             str(Path(value).expanduser().resolve())
-            for value in additional_mobilegpt_memory_roots
+            for value in additional_prepared_memory_roots
         }
         if replace_recorded_roots:
             # An explicit refresh may replace stale task-local MobileGPT
@@ -2049,15 +2054,15 @@ def refresh_artifact_index_from_pointer(
             # roots in the scan would validate them against the newly
             # selected canonical source and fail lineage checks before the
             # replacement bundles can be selected.
-            mobilegpt_memory_roots = sorted(resolved_mobilegpt_memory_roots)
+            prepared_memory_roots = sorted(resolved_prepared_memory_roots)
         else:
-            mobilegpt_memory_roots = sorted(
+            prepared_memory_roots = sorted(
                 {
                     *(
                         str(value)
-                        for value in inputs.get("mobilegpt_memory_roots") or []
+                        for value in inputs.get("prepared_memory_roots") or []
                     ),
-                    *resolved_mobilegpt_memory_roots,
+                    *resolved_prepared_memory_roots,
                 }
             )
         baseline_batch_reports = sorted(
@@ -2074,7 +2079,7 @@ def refresh_artifact_index_from_pointer(
             source_index=str(inputs["source_index"]),
             runlog_roots=runlog_roots,
             result_roots=result_roots,
-            mobilegpt_memory_roots=mobilegpt_memory_roots,
+            prepared_memory_roots=prepared_memory_roots,
             baseline_batch_reports=baseline_batch_reports,
             source_screenshot_roots=(
                 source_screenshot_roots
@@ -2134,7 +2139,7 @@ def main(argv: list[str] | None = None) -> int:
                 source_screenshot_roots=args.source_screenshot_root,
                 additional_runlog_roots=_split_values(args.runlog_root),
                 additional_result_roots=_split_values(args.result_root),
-                additional_mobilegpt_memory_roots=_split_values(
+                additional_prepared_memory_roots=_split_values(
                     args.mobilegpt_memory_root
                 ),
                 additional_baseline_batch_reports=_split_values(
@@ -2153,7 +2158,7 @@ def main(argv: list[str] | None = None) -> int:
                 source_screenshot_roots=args.source_screenshot_root,
                 runlog_roots=_split_values(args.runlog_root),
                 result_roots=_split_values(args.result_root),
-                mobilegpt_memory_roots=_split_values(
+                prepared_memory_roots=_split_values(
                     args.mobilegpt_memory_root
                 ),
                 baseline_batch_reports=_split_values(
@@ -2180,7 +2185,7 @@ def main(argv: list[str] | None = None) -> int:
 
 __all__ = [
     "load_artifact_index",
-    "canonical_mobilegpt_memory_from_memory",
+    "canonical_prepared_memory_from_index",
     "refresh_artifact_index",
     "refresh_artifact_index_from_pointer",
     "registered_result_plan_from_memory",

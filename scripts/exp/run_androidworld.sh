@@ -1288,7 +1288,7 @@ from pathlib import Path
 index_path = Path(sys.argv[1]).expanduser().resolve()
 task_name = sys.argv[2]
 payload = json.loads(index_path.read_text(encoding="utf-8"))
-if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.local-artifact-index.v1":
+if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.data-index.v2":
     payload = payload.get("canonical", {}).get("function_stores", {})
 row = payload.get(task_name) if isinstance(payload, dict) else None
 if not isinstance(row, dict):
@@ -1494,7 +1494,7 @@ from src.experiment.protocol import SOURCE_SEED
 source_index = json.loads(
     Path(sys.argv[4]).read_text(encoding="utf-8")
 )
-if source_index.get("schema_version") == "omniflow.local-artifact-index.v1":
+if source_index.get("schema_version") == "omniflow.data-index.v2":
     source_index = source_index["source_index"]
 source_row = source_index.get(sys.argv[5])
 if not isinstance(source_row, dict):
@@ -1521,7 +1521,7 @@ candidate_validator = None
 if sys.argv[7] == "omniflow.mobilegpt.memory.v2":
     from src.experiment.androidworld import validate_mobilegpt_adapted_memory
     from src.experiment.data_index import (
-        canonical_mobilegpt_memory_from_memory,
+        canonical_prepared_memory_from_index,
     )
     from src.experiment.mobilegpt_contract import (
         MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
@@ -1534,7 +1534,7 @@ if sys.argv[7] == "omniflow.mobilegpt.memory.v2":
     ).strip()
     memory_index = Path(sys.argv[9]).expanduser().resolve()
     if memory_index.is_file():
-        indexed_memory = canonical_mobilegpt_memory_from_memory(
+        indexed_memory = canonical_prepared_memory_from_index(
             memory_index=memory_index,
             task_name=sys.argv[5],
         )
@@ -1702,7 +1702,7 @@ from pathlib import Path
 index_path = Path(sys.argv[1]).expanduser().resolve()
 task_filter = sys.argv[2].strip()
 payload = json.loads(index_path.read_text(encoding="utf-8"))
-if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.local-artifact-index.v1":
+if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.data-index.v2":
     payload = payload["source_index"]
 if not isinstance(payload, dict) or (not task_filter and len(payload) != 116):
     raise SystemExit(
@@ -1832,7 +1832,7 @@ from src.integrations.android_world.apps import resolve_androidworld_package
 from src.integrations.runlog import import_run_log
 
 payload = json.loads(index_path.read_text(encoding="utf-8"))
-if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.local-artifact-index.v1":
+if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.data-index.v2":
     payload = payload["source_index"]
 row = payload.get(task_name) if isinstance(payload, dict) else None
 if not isinstance(row, dict):
@@ -2331,7 +2331,7 @@ import sys
 from pathlib import Path
 
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.local-artifact-index.v1":
+if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.data-index.v2":
     payload = payload.get("source_index", {})
 if not isinstance(payload, dict) or not payload:
     raise SystemExit("source_index_empty")
