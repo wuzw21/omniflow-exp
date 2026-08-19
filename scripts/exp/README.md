@@ -12,6 +12,7 @@ modules are implementation seams and must not be invoked as alternate runners.
 | Read-only static gate | `run_androidworld.sh --check-only [--all-tasks]` |
 | Bounded `omniflow` development | `run_androidworld.sh --development-run --tasks TASK` |
 | Source refresh | `run_androidworld.sh --collect-source --tasks TASK` |
+| Provider contract tests | `bash scripts/exp/test_provider.sh mobilegpt|appagent|all` |
 | OOB development/source transport | `run_androidworld.sh --control-backend oob --development-run --tasks TASK` |
 | B-MoCA one reuse method | `run_androidworld.sh --environment bmoca --method ours_replay\|mobilegpt_replay\|skilldroid_replay --tasks TASK` |
 | B-MoCA campaign | `run_androidworld.sh --environment bmoca --all-tasks [--tasks TASK1,TASK2]` |
@@ -41,6 +42,28 @@ locator lookup or state verification.
 One formal result is one task, one method, and one device. The E2E pipeline is
 the only method/device scheduler. Direct `--method` and `--device` options are
 internal single-result controls and cannot be combined with matrix modes.
+
+## Provider integration: one place to start, one command to test
+
+MobileGPT and AppAgent are different upstream contracts, so their conversion
+implementations remain separate. Each provider has one public preparation
+owner:
+
+| Provider | Start editing here | Provider-specific implementation | Test command |
+| --- | --- | --- | --- |
+| MobileGPT | `src/experiment/mobilegpt_source.py` | `src/integrations/mobilegpt.py` and `src/integrations/mobilegpt_memory.py` | `bash scripts/exp/test_provider.sh mobilegpt` |
+| AppAgent | `src/experiment/appagent_source.py` | `src/integrations/appagent.py` | `bash scripts/exp/test_provider.sh appagent` |
+
+The source file is the provider's public seam: it owns `prepare`, `validate`,
+and `preflight`, and is the first place to change when the provider's input or
+output contract changes. Only follow the integration file when the failure is
+inside the upstream format or runtime mapping. Do not add a provider branch to
+`androidworld.py`, `e2e_task_pipeline.py`, or the shell scheduler.
+
+The shared harness runs the provider's focused tests, the matching shell
+integration tests, and its CLI help check. It is offline: it does not start an
+emulator, call a model, create memory, or write `data/current.json`. Formal
+execution still has exactly one entry, `run_androidworld.sh`.
 
 ## Required roots
 

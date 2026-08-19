@@ -159,6 +159,7 @@ rg --files -g '*.py' | sort
 | 路径 | owner / 修改方式 |
 | --- | --- |
 | `scripts/exp/run_androidworld.sh` | 唯一公共入口；只做环境、协议读取、进程 dispatch |
+| `scripts/exp/test_provider.sh` | provider 离线合同 harness；只编排现有 focused tests 和 CLI 检查，不启动 emulator、不写数据、不成为第二运行入口 |
 | `scripts/exp/README.md` | shell 命令合同；flags 改动与脚本同 commit |
 | `schemas/oob/*.json` | 外部 wire contract；任何字段/版本修改单独 schema commit |
 | `schemas/oob/README.md` | schema 语义和禁止事项 |
@@ -173,6 +174,27 @@ rg --files -g '*.py' | sort
 | `tests/test_mobilegpt_*.py` / `tests/test_appagent_source.py` | 外部 baseline adapter 合同 |
 | `tests/test_script_replay.py` / `tests/test_skilldroid_replay.py` | replay adapter 合同，尤其验证无私有 mapper |
 | 其余 `tests/test_*.py` | 按被测 owner 放置；删除 retired alias 时删除对应测试，不为兼容保留测试 |
+
+### Provider 修改的最短路径
+
+每个 provider 只维护一个公开 source owner：MobileGPT 改
+`src/experiment/mobilegpt_source.py`，AppAgent 改
+`src/experiment/appagent_source.py`。需要改变上游格式时，再进入对应的
+`src/integrations/*.py`；不要把同一个变化复制到 scheduler、AndroidWorld
+result runner 和 shell。
+
+修改后运行：
+
+```bash
+bash scripts/exp/test_provider.sh mobilegpt
+bash scripts/exp/test_provider.sh appagent
+# 或一次运行两者
+bash scripts/exp/test_provider.sh all
+```
+
+这个 harness 只测试现有 provider seam，不生成 memory、不调用模型、不启动
+模拟器。正式端到端测试仍然只能从
+`bash scripts/exp/run_androidworld.sh ...` 进入。
 
 ## 变更与提交规则
 
