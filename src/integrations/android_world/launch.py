@@ -2913,8 +2913,9 @@ def _raw_replay_observation_record(
     xml = str(getattr(observation, "xml", "") or "")
     package_name = str(getattr(observation, "package_name", "") or "")
     activity_name = str(getattr(observation, "activity_name", "") or "")
-    if not xml and not package_name and not activity_name:
-        raise RuntimeError("raw replay observe returned no usable state")
+    # Observation capture is a measurement sidecar for fixed replay.  An
+    # empty transient page must not change the replay action sequence; keep an
+    # explicit empty sample and let the action use the device target size.
     extra = dict(getattr(observation, "extra", {}) or {})
     androidworld_state = extra.get("androidworld_state")
     if androidworld_state is not None and not isinstance(androidworld_state, dict):
