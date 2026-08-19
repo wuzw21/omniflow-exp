@@ -20,7 +20,7 @@ import numpy as np
 from omniflow.core.model import Observation
 
 _LATEST_PAGE_CHECKPOINT_SHA256 = (
-    "0494224f76c410f17d47b4aaaeacf99e2060c1174da628884c287a6922882ada"
+    "c262f03c32c4b88d2933323fe2b33007281224ef1a8aae1418a9844d354de232"
 )
 
 

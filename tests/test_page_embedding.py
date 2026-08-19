@@ -15,7 +15,7 @@ def test_page_encoder_uses_canonical_unified_contextual_checkpoint() -> None:
 
     assert encoder.checkpoint_path.name == "relation_slots_l3_h64_seed17.npz"
     assert encoder.checkpoint_sha256 == (
-        "0494224f76c410f17d47b4aaaeacf99e2060c1174da628884c287a6922882ada"
+        "c262f03c32c4b88d2933323fe2b33007281224ef1a8aae1418a9844d354de232"
     )
     assert encoder.dimension == 64
     assert page.element_count == 2
