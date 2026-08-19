@@ -18,7 +18,10 @@ import time
 from typing import Any, Callable, Sequence
 
 from omniflow.core.trajectory import require_complete_source_run_log
-from omniflow.functions.assets import save_function
+from omniflow.functions.assets import (
+    FunctionEnhancerResponseError,
+    save_function,
+)
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from src.experiment.androidworld import ArchivedRunLog, build_fixed_replay_command
 from src.experiment.local_data import (
@@ -2076,13 +2079,19 @@ def _function_enhancement_transport(
         message = getattr(choices[0], "message", None) if choices else None
         calls = getattr(message, "tool_calls", None) or ()
         if len(calls) != 1:
-            raise ValueError("function_enhancer_tool_call_invalid")
+            raise FunctionEnhancerResponseError(
+                "function_enhancer_tool_call_invalid"
+            )
         function = getattr(calls[0], "function", None)
         if str(getattr(function, "name", "") or "") != tool_name:
-            raise ValueError("function_enhancer_tool_name_invalid")
+            raise FunctionEnhancerResponseError(
+                "function_enhancer_tool_name_invalid"
+            )
         arguments = getattr(function, "arguments", None)
         if not isinstance(arguments, str):
-            raise ValueError("function_enhancer_arguments_invalid")
+            raise FunctionEnhancerResponseError(
+                "function_enhancer_arguments_invalid"
+            )
         return arguments
 
     return complete_json

@@ -25,6 +25,15 @@ FUNCTION_ARTIFACT_VERSION = "omniflow.function.v2"
 STORE_VERSION = "omniflow.store.v2"
 _AUTHORING_STAGE_ATTEMPTS = 3
 
+
+class FunctionEnhancerResponseError(ValueError):
+    """The model returned an invalid response for the current draft stage.
+
+    This is a bounded authoring-decision rejection, not a transport failure.
+    The current stage may retry with deterministic feedback while preserving
+    the same in-memory draft.
+    """
+
 _TOP_LEVEL_FIELDS = {
     "schema_version",
     "function_id",
@@ -1306,6 +1315,12 @@ def _authoring_correction_prompt(
             " Bind different source values with distinct parameter names. Reuse one "
             "parameter name only when every bound source value is exactly equal."
         )
+    elif isinstance(error, FunctionEnhancerResponseError):
+        correction = (
+            " Return exactly one edit_function_draft tool call with the requested "
+            "stage schema. Do not return commentary, multiple tool calls, or a "
+            "different tool name."
+        )
     return (
         f"{stage_prompt}\n\n"
         "The previous small decision was rejected: "
@@ -1331,6 +1346,9 @@ def _request_authoring_decision(
         )
         try:
             raw = complete_json(request, tool)
+        except FunctionEnhancerResponseError as error:
+            validation_error = error
+            continue
         except Exception as error:
             raise ValueError(
                 f"function_enhancement_{label}_model_failed:"

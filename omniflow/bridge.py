@@ -23,7 +23,10 @@ from omniflow.core.model import (
     ToolCall,
 )
 from omniflow.core.trajectory import canonicalize_run_log
-from omniflow.functions.assets import save_function
+from omniflow.functions.assets import (
+    FunctionEnhancerResponseError,
+    save_function,
+)
 from omniflow.runtime.engine import InputRequired, OmniFlow
 from omniflow.vlm.planner import VLMPlanner
 
@@ -478,19 +481,25 @@ class JsonLineBridge:
                         raise ValueError("function_enhancer_response_invalid")
                     tool_calls = response.get("tool_calls")
                     if not isinstance(tool_calls, list) or len(tool_calls) != 1:
-                        raise ValueError("function_enhancer_tool_call_invalid")
+                        raise FunctionEnhancerResponseError(
+                            "function_enhancer_tool_call_invalid"
+                        )
                     function = tool_calls[0].get("function")
                     if (
                         not isinstance(function, dict)
                         or function.get("name") != tool_name
                     ):
-                        raise ValueError("function_enhancer_tool_name_invalid")
+                        raise FunctionEnhancerResponseError(
+                            "function_enhancer_tool_name_invalid"
+                        )
                     arguments = (
                         function.get("arguments")
                         if isinstance(function, dict) else None
                     )
                     if not isinstance(arguments, str):
-                        raise ValueError("function_enhancer_arguments_invalid")
+                        raise FunctionEnhancerResponseError(
+                            "function_enhancer_arguments_invalid"
+                        )
                     return arguments
 
             report = save_function(

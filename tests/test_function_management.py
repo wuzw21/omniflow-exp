@@ -6,7 +6,12 @@ import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from omniflow.bridge import JsonLineBridge
-from omniflow.functions.assets import FunctionStore, function_authoring_tool, save_function
+from omniflow.functions.assets import (
+    FunctionEnhancerResponseError,
+    FunctionStore,
+    function_authoring_tool,
+    save_function,
+)
 
 
 def _function(function_id: str = "open_settings") -> dict:
@@ -307,6 +312,36 @@ def test_stage_validation_allows_three_bounded_attempts(tmp_path) -> None:
         complete_json=complete,
     )
     assert split_calls == 3
+
+
+def test_invalid_model_tool_call_gets_stage_correction(tmp_path) -> None:
+    prompts: list[str] = []
+    split_calls = 0
+
+    def complete(prompt: str, tool: dict) -> str:
+        nonlocal split_calls
+        prompts.append(prompt)
+        if tool["function"]["parameters"]["required"] == [
+            "complete_function",
+            "subsegments",
+        ]:
+            split_calls += 1
+            if split_calls == 1:
+                raise FunctionEnhancerResponseError(
+                    "function_enhancer_tool_call_invalid"
+                )
+        return _draft_enhancer(prompt, tool)
+
+    save_function(
+        _authoring_run_log(),
+        tmp_path / "store.json",
+        enhance=True,
+        complete_json=complete,
+    )
+
+    assert split_calls == 2
+    assert "exactly one edit_function_draft tool call" in prompts[1]
+    assert "function_enhancer_tool_call_invalid" in prompts[1]
 
 
 def test_single_click_subsegment_is_deterministically_omitted(tmp_path) -> None:
