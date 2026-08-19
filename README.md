@@ -54,10 +54,12 @@ scripts/exp/run_androidworld.sh
   -> src/integrations/android_world/run_episode.py  # one native episode
 ```
 
-The B-MoCA campaign uses the same shell and scheduler; each environment result
-re-enters the shell's single-result B-MoCA branch and ends at the same native
-launcher. Development and source collection are bounded modes of that
-launcher, not alternate executors. Function creation has one route:
+The shell is the only public entry point. After it hands off to the scheduler,
+the scheduler calls the single-result runner directly; it never calls the
+shell again. AndroidWorld results continue through `run_task.py` into the
+native launcher. B-MoCA results call the same native launcher directly with
+its own benchmark parameters. Development and source collection are bounded
+modes of that launcher, not alternate executors. Function creation has one route:
 `save_function` validates and writes the Store, then `--refresh-memory` updates
 `data/current.json`; runtime only reads that index and the registered Store.
 

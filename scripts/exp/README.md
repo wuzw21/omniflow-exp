@@ -28,6 +28,12 @@ recorded 720x1280 action contract is replayed at its original geometry.
 The shell provisions the configured source AVD before handing control to the
 pipeline; an emulator process that exits during boot is an immediate failure.
 
+The shell is not an internal scheduler API. Formal AndroidWorld cells are
+started by `run_tasks.py` with a direct `python -m src.experiment.run_task
+result` command. B-MoCA cells are started directly with
+`python -m src.integrations.android_world.run_episode --environment bmoca`.
+This keeps one public shell entry while preventing a scheduler-to-shell loop.
+
 The B-MoCA campaign measures oracle-memory-hit reuse rather than retrieval.
 `ours_replay` directly invokes the complete Function with its saved source-call
 arguments and canonical checker/OmniTransfer runtime. `mobilegpt_replay` uses
