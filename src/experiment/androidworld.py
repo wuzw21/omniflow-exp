@@ -42,10 +42,10 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
 )
 from src.experiment.protocol import (
+    ANDROIDWORLD_REVISION,
     DEFAULT_DEVICE,
     DEFAULT_METHOD,
     EPISODE_TIMEOUT_SEC,
-    ANDROIDWORLD_REVISION,
     MAX_STEPS,
     METHODS,
     RESULT_COMMANDS_FILE,
@@ -1334,6 +1334,8 @@ def build_e2e_command(
     planner_timeout_sec: float | None = None,
     store_path: str | Path | None = None,
     omnitransfer_root: str | Path | None = None,
+    function_id: str = "",
+    function_arguments: dict[str, Any] | None = None,
     python_executable: str = sys.executable,
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
@@ -1350,6 +1352,11 @@ def build_e2e_command(
     )
     resolved_method = _safe_stem(method_name, fallback="e2e")
     resolved_agent = str(agent_name or "omniflow").strip() or "omniflow"
+    resolved_function_id = str(function_id or "").strip()
+    if resolved_function_id and resolved_agent != "omniflow":
+        raise ValueError("direct_function_requires_omniflow_agent")
+    if function_arguments is not None and not isinstance(function_arguments, dict):
+        raise ValueError("direct_function_arguments_must_be_object")
     resolved_output = _experiment_run_dir(
         output_root,
         task=item.task,
@@ -1374,7 +1381,7 @@ def build_e2e_command(
     resolved_task_seed = int(
         item.replay_seed if task_random_seed is None else task_random_seed
     )
-    if resolved_agent == "omniflow":
+    if resolved_agent == "omniflow" and not resolved_function_id:
         planner_provider, model = _resolve_planner_provider_and_model(
             planner_provider,
             model,
@@ -1432,14 +1439,40 @@ def build_e2e_command(
         argv.append("--perform-emulator-setup")
     if resolved_agent == "omniflow":
         argv.extend(["--store-path", str(resolved_store_path)])
-        if planner_provider.strip():
+        if resolved_function_id:
+            argv.extend(
+                [
+                    "--function-id",
+                    resolved_function_id,
+                    "--function-arguments-json",
+                    json.dumps(
+                        dict(function_arguments or {}),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                ]
+            )
+        elif planner_provider.strip():
             argv.extend(["--planner-provider", planner_provider.strip()])
-        if model.strip():
+        if not resolved_function_id and model.strip():
             argv.extend(["--model", model.strip()])
-        if planner_timeout_sec is not None and float(planner_timeout_sec) > 0:
+        if (
+            not resolved_function_id
+            and planner_timeout_sec is not None
+            and float(planner_timeout_sec) > 0
+        ):
             argv.extend(["--planner-timeout-sec", str(float(planner_timeout_sec))])
     if adb_path.strip():
         argv.extend(["--adb-path", adb_path.strip()])
+    execution_mode = (
+        "direct_function_e2e"
+        if resolved_function_id
+        else (
+            "normal_omniflow_e2e"
+            if resolved_agent == "omniflow"
+            else "normal_androidworld_episode"
+        )
+    )
     return CommandSpec(
         label=f"e2e:{item.task}",
         argv=argv,
@@ -1450,9 +1483,7 @@ def build_e2e_command(
             float(timeout_sec) if timeout_sec is not None and timeout_sec > 0 else None
         ),
         metadata={
-            "mode": "normal_omniflow_e2e"
-            if resolved_agent == "omniflow"
-            else "normal_androidworld_episode",
+            "mode": execution_mode,
             "agent": resolved_agent,
             "method": resolved_method,
             "device": resolved_device,
@@ -1484,6 +1515,10 @@ def build_e2e_command(
             ),
             "planner_provider": planner_provider,
             "model": model,
+            "function_id": resolved_function_id,
+            "function_arguments": (
+                dict(function_arguments or {}) if resolved_function_id else None
+            ),
             "state_backend": "androidworld",
             "action_backend": "androidworld",
             "native_androidworld_agent_io": True,

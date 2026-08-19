@@ -12,14 +12,15 @@ import pytest
 from runlog_fixtures import androidworld_run_log
 
 from omniflow.functions.assets import function_authoring_tool
+from src.experiment.androidworld import CanonicalRunLog, build_e2e_command
 from src.experiment.batch_outcomes import record_result_outcome
 from src.experiment.e2e_task_pipeline import (
     Deadline,
     PipelinePhaseError,
-    _function_enhancement_transport,
-    _fixed_replay_source_step_width,
-    _function_replay_success,
     _bmoca_source_replay_qualified,
+    _fixed_replay_source_step_width,
+    _function_enhancement_transport,
+    _function_replay_success,
     _max_live_bmoca_results,
     _parse_source_device,
     _report,
@@ -32,8 +33,8 @@ from src.experiment.e2e_task_pipeline import (
     ensure_source_device,
     prepare_mobilegpt_memory,
     qualify_source_function,
-    run_logged_command,
     run_bmoca_pipeline,
+    run_logged_command,
     run_pipeline,
     run_target_workers,
 )
@@ -80,6 +81,64 @@ def _args(tmp_path: Path) -> SimpleNamespace:
         source_only=False,
         dry_run=False,
     )
+
+
+def test_e2e_command_exposes_direct_function_without_planner_or_second_runner(
+    tmp_path: Path,
+) -> None:
+    item = CanonicalRunLog(
+        task="BrowserDraw",
+        goal="Draw a shape",
+        params={"seed": 111},
+        source_run_log=tmp_path / "source.run_log.json",
+        replay_seed=111,
+        step_count=1,
+        meta={},
+    )
+
+    spec = build_e2e_command(
+        item,
+        android_world_root=tmp_path / "android-world",
+        output_root=tmp_path / "data",
+        method_name="function_replay",
+        device_label="source5560",
+        serial="emulator-5560",
+        console_port=5560,
+        store_path=tmp_path / "function_store.json",
+        omnitransfer_root=tmp_path / "OmniTransfer",
+        function_id="complete_task",
+        function_arguments={"target": "Alarm"},
+    )
+
+    assert spec.metadata["mode"] == "direct_function_e2e"
+    assert spec.metadata["function_id"] == "complete_task"
+    assert spec.argv[spec.argv.index("--function-id") + 1] == "complete_task"
+    assert json.loads(
+        spec.argv[spec.argv.index("--function-arguments-json") + 1]
+    ) == {"target": "Alarm"}
+    assert "--planner-provider" not in spec.argv
+    assert "--model" not in spec.argv
+
+
+def test_e2e_command_rejects_direct_function_for_non_omniflow_agent(
+    tmp_path: Path,
+) -> None:
+    item = CanonicalRunLog(
+        task="BrowserDraw",
+        goal="Draw a shape",
+        params={},
+        source_run_log=tmp_path / "source.run_log.json",
+        replay_seed=111,
+        step_count=1,
+        meta={},
+    )
+
+    with pytest.raises(ValueError, match="direct_function_requires_omniflow_agent"):
+        build_e2e_command(
+            item,
+            agent_name="official:t3a_gpt4",
+            function_id="complete_task",
+        )
 
 
 def test_dry_run_has_fixed_task_method_device_schedule(

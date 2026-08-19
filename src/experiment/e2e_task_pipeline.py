@@ -20,16 +20,20 @@ from typing import Any, Callable, Sequence
 from omniflow.core.trajectory import require_complete_source_run_log
 from omniflow.functions.assets import save_function
 from omniflow.vlm.model_config import resolve_openai_compatible_config
-from src.experiment.androidworld import CanonicalRunLog, build_fixed_replay_command
-from src.experiment.local_data import (
-    canonical_mobilegpt_memory_from_memory,
-    load_local_data,
-    registered_result_plan_from_memory,
+from src.experiment.androidworld import (
+    CanonicalRunLog,
+    build_e2e_command,
+    build_fixed_replay_command,
 )
 from src.experiment.batch_outcomes import (
     concluded_result_keys,
     record_result_outcome,
     summarize_results,
+)
+from src.experiment.local_data import (
+    canonical_mobilegpt_memory_from_memory,
+    load_local_data,
+    registered_result_plan_from_memory,
 )
 from src.experiment.protocol import (
     BMOCA_RESULT_TIMEOUT_SEC,
@@ -785,47 +789,52 @@ def qualify_source_function(
     deadline: Deadline,
     round_index: int,
 ) -> dict[str, Any]:
-    output_root = attempt_root / "source_qualification" / f"round_{round_index:02d}"
+    source_label, source_serial, source_console_port = args.source_device
     store_path = Path(str(function_store["store_path"])).resolve()
-    command = [
-        str(args.python_bin),
-        "-m",
-        "src.integrations.android_world.launch",
-        "--function-id",
-        str(source_call["function_id"]),
-        "--function-arguments-json",
-        json.dumps(source_call["arguments"], ensure_ascii=False),
-        "--android-world-root",
-        str(args.android_world_root),
-        "--tasks",
-        args.task,
-        "--task-random-seed",
-        str(SOURCE_SEED),
-        "--n-task-combinations",
-        "1",
-        "--console-port",
-        str(args.source_device[2]),
-        "--agent",
-        "omniflow",
-        "--max-steps",
-        str(SOURCE_MAX_STEPS),
-        "--output-path",
-        str(output_root),
-        "--store-path",
-        str(store_path),
-        "--task-params-json",
-        json.dumps(run_log["task_parameters"], ensure_ascii=False),
-        "--fixed-task-seed",
-        "--perform-emulator-setup",
-        "--adb-path",
-        str(args.adb_path),
-    ]
+    task_parameters = run_log.get("task_parameters")
+    task_parameters = task_parameters if isinstance(task_parameters, dict) else {}
+    source_steps = run_log.get("steps")
+    source_steps = source_steps if isinstance(source_steps, list) else []
+    item = CanonicalRunLog(
+        task=args.task,
+        goal=str(run_log.get("goal") or args.task),
+        params=dict(task_parameters),
+        source_run_log=source_path,
+        replay_seed=SOURCE_SEED,
+        step_count=len(source_steps),
+        meta={"source_function_qualification": True},
+    )
+    command_spec = build_e2e_command(
+        item,
+        android_world_root=args.android_world_root,
+        output_root=attempt_root / "source_qualification",
+        method_name="function_replay",
+        device_label=source_label,
+        serial=source_serial,
+        console_port=source_console_port,
+        adb_path=str(args.adb_path),
+        max_steps=SOURCE_MAX_STEPS,
+        timeout_sec=int(TASK_DEADLINE_SEC),
+        max_fallback_steps=0,
+        task_random_seed=SOURCE_SEED,
+        fixed_task_seed=True,
+        fixed_task_params=True,
+        perform_emulator_setup=True,
+        store_path=store_path,
+        omnitransfer_root=args.omnitransfer_root,
+        function_id=str(source_call["function_id"]),
+        function_arguments=dict(source_call["arguments"]),
+        python_executable=str(args.python_bin),
+        repo_root=args.repo,
+        run_dir_suffix=f"round_{round_index:02d}",
+    )
+    if command_spec.output_path is None:
+        raise RuntimeError("function_qualification_output_path_required")
+    output_root = command_spec.output_path
     environment = dict(os.environ)
     environment.update(
         {
-            "ANDROID_SERIAL": args.source_device[1],
-            "OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS": "0",
-            "OMNITRANSFER_ROOT": str(args.omnitransfer_root),
+            **command_spec.env,
             "PYTHONPATH": f"{args.repo}:{args.repo / 'src'}:{args.android_world_root}",
         }
     )
@@ -838,7 +847,7 @@ def qualify_source_function(
     ):
         environment.pop(key, None)
     result = run_logged_command(
-        command,
+        command_spec.argv,
         cwd=args.repo,
         environment=environment,
         log_path=output_root.parent / "qualification.log",
