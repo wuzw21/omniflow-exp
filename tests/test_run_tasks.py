@@ -15,6 +15,7 @@ from omniflow.functions.assets import function_authoring_tool
 from src.experiment.run_task import (
     _function_lineage_item,
     _read_object,
+    _t3a_hint_source_node,
     build_mobilegpt_server_command,
     build_task_command,
 )
@@ -148,6 +149,46 @@ def test_t3a_hint_uses_function_store_source_lineage(tmp_path: Path) -> None:
     assert aligned.source_run_log == source.resolve()
     assert aligned.step_count == 1
     assert aligned.goal == "Complete the task."
+
+
+def test_t3a_hint_reads_native_ui_element_bounds() -> None:
+    source_node = _t3a_hint_source_node(
+        {
+            "action": {"action_type": "click", "x": 360, "y": 1112},
+            "observation": {
+                "forest": {"windows": []},
+                "ui_elements": [
+                    {
+                        "class_name": "android.view.View",
+                        "resource_name": "com.android.camera2:id/preview_overlay",
+                        "bbox_pixels": {
+                            "x_min": 0,
+                            "y_min": 0,
+                            "x_max": 720,
+                            "y_max": 1232,
+                        },
+                        "is_clickable": False,
+                    },
+                    {
+                        "class_name": "android.widget.ImageView",
+                        "content_description": "Shutter",
+                        "resource_name": "com.android.camera2:id/shutter_button",
+                        "bbox_pixels": {
+                            "x_min": 0,
+                            "y_min": 992,
+                            "x_max": 720,
+                            "y_max": 1232,
+                        },
+                        "is_clickable": True,
+                    },
+                ],
+            },
+        },
+        forbidden_values=(),
+    )
+
+    assert source_node["content_description"] == "Shutter"
+    assert source_node["resource_id"] == "com.android.camera2:id/shutter_button"
 
 
 def test_e2e_command_exposes_direct_function_without_planner_or_second_runner(

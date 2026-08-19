@@ -3126,6 +3126,52 @@ def _t3a_hint_source_node(
                 evidence[target_key] = value
         if evidence:
             return evidence
+    if isinstance(elements, list):
+        x = params.get("x")
+        y = params.get("y")
+        if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+            ui_candidates: list[tuple[tuple[bool, bool, float], dict[str, str]]] = []
+            for element in elements:
+                if not isinstance(element, dict):
+                    continue
+                bbox = element.get("bbox_pixels")
+                if not isinstance(bbox, dict):
+                    continue
+                try:
+                    left = float(bbox["x_min"])
+                    top = float(bbox["y_min"])
+                    right = float(bbox["x_max"])
+                    bottom = float(bbox["y_max"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if not left <= x <= right or not top <= y <= bottom:
+                    continue
+                if editable_only and not bool(element.get("is_editable")):
+                    continue
+                evidence: dict[str, str] = {}
+                for source_key, target_key in (
+                    ("class_name", "class_name"),
+                    ("text", "text"),
+                    ("content_description", "content_description"),
+                    ("resource_id", "resource_id"),
+                    ("resource_name", "resource_id"),
+                    ("package_name", "package_name"),
+                ):
+                    value = _t3a_hint_redacted_text(
+                        element.get(source_key),
+                        forbidden_values=forbidden_values,
+                        max_len=120,
+                    )
+                    if value and target_key not in evidence:
+                        evidence[target_key] = value
+                actionable = any(
+                    bool(element.get(key))
+                    for key in ("is_clickable", "is_editable", "is_scrollable")
+                )
+                area = max(0.0, right - left) * max(0.0, bottom - top)
+                ui_candidates.append(((not actionable, not bool(evidence), area), evidence))
+            if ui_candidates:
+                return min(ui_candidates, key=lambda candidate: candidate[0])[1]
     forest = next(
         (
             value
