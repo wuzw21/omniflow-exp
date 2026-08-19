@@ -109,6 +109,7 @@ baseline 记录时经过的五个位置：
 | `source_evidence.py` | 这份 Source RunLog 的截图、XML、动作和 revision 是否可信？ | AppAgent/MobileGPT 的转换规则 |
 | `appagent.py` | 如何把可信 source 转成 AppAgent 的 Prepared Memory？ | task 调度、Local Index、AndroidWorld episode 生命周期 |
 | `mobilegpt.py` | 如何把可信 source 转成 MobileGPT 的 Prepared Memory？ | AppAgent 规则、Local Index 选择策略 |
+| `mobilegpt_memory.py` | MobileGPT Prepared Memory 的统计、图检查和完整校验 | task 调度、AndroidWorld episode 生命周期 |
 | `checks.py` | 这次运行的依赖、设备和 Prepared Memory 是否 ready？ | 具体 provider 的转换实现 |
 | `data_index.py` | 如何物化和读取唯一 Local Index？ | AndroidWorld runner 和 provider 内部校验细节 |
 

@@ -136,6 +136,7 @@ rg --files -g '*.py' | sort
 | `src/integrations/__init__.py` | 适配器包标记 |
 | `src/integrations/runlog.py` | 外部/历史 RunLog 投影；canonical loader 在 `omniflow/runlog.py` |
 | `src/integrations/mobilegpt.py` | 唯一 MobileGPT native memory converter |
+| `src/integrations/mobilegpt_memory.py` | MobileGPT Prepared Memory 的统计、图检查、manifest/evidence 校验；不拥有 task 调度 |
 | `src/integrations/mobilegpt_runtime.py` | pinned MobileGPT upstream runtime seam |
 | `src/integrations/appagent.py` | AppAgent native conversion/runtime；不拥有调度 |
 | `src/integrations/bmoca.py` | B-MoCA DeviceDriver、episode 和 official reward adapter |
