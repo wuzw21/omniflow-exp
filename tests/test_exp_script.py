@@ -19,8 +19,8 @@ from src.experiment.mobilegpt_contract import (
 from src.experiment.checks import (
     APPAGENT_REQUIRED_MODULES,
     REQUIRED_DISTRIBUTION_VERSIONS,
-    _valid_appagent_manifest,
 )
+from src.integrations.appagent import is_memory_manifest_valid
 from src.experiment.protocol import DROIDRUN_VERSION
 
 REPO = Path(__file__).resolve().parents[1]
@@ -59,7 +59,7 @@ def test_bmoca_skilldroid_uses_pinned_droidrun_runtime() -> None:
 
 
 def test_preflight_accepts_offline_appagent_memory() -> None:
-    assert _valid_appagent_manifest(
+    assert is_memory_manifest_valid(
         {
             "schema_version": "omniflow.appagent.memory.v3",
             "official_appagent_revision": (

@@ -17,7 +17,13 @@ import time
 from typing import Any, Callable, Iterator, Sequence
 import xml.etree.ElementTree as ET
 
-from src.experiment.mobilegpt_contract import MOBILEGPT_AUDIT_SCHEMA
+from src.experiment.mobilegpt_contract import (
+    MOBILEGPT_AUDIT_SCHEMA,
+    MOBILEGPT_LEARNING_MODE,
+    MOBILEGPT_MEMORY_MANIFEST,
+    MOBILEGPT_MEMORY_SCHEMA,
+)
+from src.experiment.protocol import SOURCE_SEED
 from src.integrations.android_world.host import (
     androidworld_observation_package,
     androidworld_observation_xml,
@@ -35,6 +41,7 @@ __all__ = [
     "MobileGPTConversionError",
     "convert_runlog_to_mobilegpt_memory",
     "preflight_runlog_conversion",
+    "validate_memory_manifest",
     "validate_prepared_memory",
     "validate_mobilegpt_memory",
     "write_conversion_failure_audit",
@@ -70,6 +77,119 @@ class MobileGPTConversionError(RuntimeError):
         self.details = details
         suffix = ":" + json.dumps(details, ensure_ascii=False, sort_keys=True) if details else ""
         super().__init__(self.code + suffix)
+
+
+def _memory_files(root: Path) -> tuple[list[Path], list[Path]]:
+    if not root.is_dir():
+        return [], []
+    files = sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    )
+    task_files = [
+        path
+        for path in files
+        if path.name == "tasks.csv" and path.parent.parent == root
+    ]
+    return files, task_files
+
+
+def _hash_memory_files(files: list[Path], *, root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(files, key=lambda item: item.relative_to(root).parts):
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
+    """Validate the MobileGPT manifest and its sealed evidence files."""
+
+    root = Path(memory_root).expanduser().resolve()
+    manifest_path = root.parent / MOBILEGPT_MEMORY_MANIFEST
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get(
+        "schema_version"
+    ) != MOBILEGPT_MEMORY_SCHEMA:
+        raise ValueError("mobilegpt_memory_manifest_schema_invalid")
+    if payload.get("source_seed") != SOURCE_SEED:
+        raise ValueError("mobilegpt_memory_source_seed_invalid")
+    provenance = payload.get("provenance")
+    if not isinstance(provenance, dict):
+        raise ValueError("mobilegpt_memory_provenance_missing")
+    required_provenance = {
+        "native_mobilegpt_learning": False,
+        "task_local_memory": True,
+        "learning_mode": MOBILEGPT_LEARNING_MODE,
+        "teacher_forcing": False,
+        "synthetic_subtasks": True,
+        "semantic_subtasks": False,
+        "original_mobilegpt_prompts": False,
+        "actions_supplied_to_mobilegpt": True,
+        "source_transitions_supplied": True,
+        "source_success_boundary_supplied": True,
+        "runlog_transition_compilation": True,
+        "complete_transition_mapping": True,
+        "official_reader_validation": True,
+        "source_emulator_used": False,
+        "function_store_used": False,
+    }
+    if any(provenance.get(key) != value for key, value in required_provenance.items()):
+        raise ValueError("mobilegpt_memory_provenance_incomplete")
+    forbidden = [
+        key
+        for key in (
+            "function_conversion_enabled",
+            "target_inputs_read",
+            "target_observations_read",
+            "validator_state_read",
+            "coordinate_replay",
+        )
+        if bool(provenance.get(key))
+    ]
+    if forbidden:
+        raise ValueError("mobilegpt_memory_forbidden:" + ",".join(forbidden))
+    memory = payload.get("memory")
+    if not isinstance(memory, dict):
+        raise ValueError("mobilegpt_memory_record_missing")
+    recorded_root = (root.parent / str(memory.get("relative_path") or "")).resolve()
+    if recorded_root != root:
+        raise ValueError("mobilegpt_memory_path_mismatch")
+    files, task_files = _memory_files(root)
+    digest = _hash_memory_files(files, root=root)
+    if digest != str(memory.get("sha256") or ""):
+        raise ValueError("mobilegpt_memory_hash_mismatch")
+    if len(files) != int(memory.get("file_count") or -1):
+        raise ValueError("mobilegpt_memory_file_count_mismatch")
+    for label in ("source_run_log", "source_stats", "trajectory_audit"):
+        record = payload.get(label)
+        if not isinstance(record, dict):
+            raise ValueError(f"mobilegpt_memory_{label}_missing")
+        path = (root.parent / str(record.get("relative_path") or "")).resolve()
+        try:
+            path.relative_to(root.parent)
+        except ValueError as error:
+            raise ValueError(f"mobilegpt_memory_{label}_outside_bundle") from error
+        if not path.is_file():
+            raise ValueError(f"mobilegpt_memory_{label}_file_missing")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != str(
+            record.get("sha256") or ""
+        ):
+            raise ValueError(f"mobilegpt_memory_{label}_hash_mismatch")
+    if "official_source_result" in payload:
+        raise ValueError("mobilegpt_memory_official_source_forbidden")
+    return {
+        "manifest": str(manifest_path),
+        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        "task_name": str(payload.get("task_name") or ""),
+        "source_seed": int(payload["source_seed"]),
+        "memory_sha256": digest,
+        "memory_file_count": len(files),
+        "task_file_count": len(task_files),
+    }
 
 
 def validate_prepared_memory(

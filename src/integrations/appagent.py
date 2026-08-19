@@ -50,6 +50,68 @@ APPAGENT_SUPPORTED_SOURCE_TYPES = APPAGENT_ACTION_TYPES | {
     "press_key",
 }
 
+
+def is_memory_manifest_valid(payload: Any) -> bool:
+    """Return whether one AppAgent prepared-memory manifest is complete."""
+
+    if not isinstance(payload, dict):
+        return False
+    source_metrics = payload.get("source_episode_metrics")
+    doc_usage = payload.get("doc_generation_usage")
+    if not isinstance(source_metrics, dict) or not isinstance(doc_usage, dict):
+        return False
+    try:
+        teacher_action_count = int(payload.get("teacher_action_count") or 0)
+        teacher_actions_consumed = int(payload.get("teacher_actions_consumed") or 0)
+        demo_action_count = int(payload.get("demo_action_count") or 0)
+        source_prompt = int(source_metrics.get("prompt_tokens") or 0)
+        source_completion = int(source_metrics.get("completion_tokens") or 0)
+        source_total = int(source_metrics.get("total_tokens") or 0)
+        doc_prompt = int(doc_usage.get("prompt_tokens") or 0)
+        doc_completion = int(doc_usage.get("completion_tokens") or 0)
+        doc_total = int(doc_usage.get("total_tokens") or 0)
+        offline_conversion = (
+            payload.get("conversion_mode") == "canonical_runlog_offline"
+            and payload.get("source_emulator_used") is False
+        )
+        return (
+            payload.get("schema_version") == APPAGENT_MEMORY_SCHEMA
+            and payload.get("official_appagent_revision")
+            == APPAGENT_OFFICIAL_REVISION
+            and payload.get("source_seed") == APPAGENT_SOURCE_SEED
+            and (
+                offline_conversion
+                or payload.get("official_source_success") is True
+            )
+            and payload.get("teacher_complete") is True
+            and teacher_action_count > 0
+            and teacher_actions_consumed == teacher_action_count
+            and 0 < demo_action_count <= teacher_action_count
+            and (
+                offline_conversion
+                or float(source_metrics.get("duration_sec") or 0.0) > 0
+            )
+            and (
+                offline_conversion
+                or float(source_metrics.get("wall_sec") or 0.0) > 0
+            )
+            and source_total == source_prompt + source_completion
+            and int(doc_usage.get("model_calls") or 0) > 0
+            and doc_total == doc_prompt + doc_completion
+            and doc_total > 0
+            and (
+                offline_conversion
+                or float(doc_usage.get("wall_sec") or 0.0) > 0
+            )
+            and float(payload.get("prep_wall_sec") or 0.0) > 0
+            and payload.get("uses_omniflow_function") is False
+            and payload.get("target_inputs_read") is False
+            and payload.get("target_observations_read") is False
+            and payload.get("validator_state_read_for_memory") is False
+        )
+    except (TypeError, ValueError):
+        return False
+
 _NON_PRIMITIVE_SOURCE_TYPES = {
     "done",
     "finish",
@@ -2364,6 +2426,7 @@ __all__ = [
     "appagent_record_line",
     "build_appagent_teacher_source",
     "ground_appagent_teacher_action",
+    "is_memory_manifest_valid",
     "load_appagent_teacher_source",
     "seal_appagent_memory",
     "validate_appagent_memory",

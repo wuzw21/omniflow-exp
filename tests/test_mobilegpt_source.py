@@ -9,7 +9,7 @@ import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment import androidworld as pipeline
-from src.experiment import mobilegpt_source, checks
+from src.experiment import mobilegpt_source
 from src.experiment.data_index import (
     canonical_prepared_memory_from_index,
     refresh_data_index,
@@ -23,6 +23,7 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
     MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS,
 )
+from src.integrations.mobilegpt import validate_memory_manifest
 
 
 def _write_source_index(
@@ -264,7 +265,7 @@ def test_converted_memory_seals_and_registers(tmp_path: Path) -> None:
     assert sealed["manifest"]["provenance"]["semantic_subtasks"] is False
     assert sealed["manifest"]["provenance"]["actions_supplied_to_mobilegpt"] is True
     assert sealed["memory_validation"]["native_memory_complete"] is True
-    assert checks._validate_mobilegpt_manifest(memory)["task_name"] == (
+    assert validate_memory_manifest(memory)["task_name"] == (
         "SystemBluetoothTurnOn"
     )
     assert resolved is not None

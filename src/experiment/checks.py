@@ -19,12 +19,9 @@ import time
 from typing import Any
 
 from omniflow.core.trajectory import canonicalize_run_log as import_run_log
-from src.experiment.mobilegpt_contract import (
-    MOBILEGPT_LEARNING_MODE,
-    MOBILEGPT_MEMORY_MANIFEST,
-    MOBILEGPT_MEMORY_SCHEMA,
-)
 from src.experiment.protocol import SOURCE_SEED
+from src.integrations.appagent import is_memory_manifest_valid
+from src.integrations.mobilegpt import validate_memory_manifest
 
 APPAGENT_OFFICIAL_REVISION = "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
 APPAGENT_REQUIRED_MODULES = (
@@ -54,6 +51,24 @@ def _run(command: list[str], timeout: float = 10.0) -> subprocess.CompletedProce
         stderr=subprocess.STDOUT,
         timeout=timeout,
     )
+
+
+def _collect_memory_files(root: Path) -> tuple[list[Path], list[Path]]:
+    """Collect files for generic check reporting without knowing a provider schema."""
+
+    if not root.is_dir():
+        return [], []
+    files = sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    )
+    task_files = [
+        path
+        for path in files
+        if path.name == "tasks.csv" and path.parent.parent == root
+    ]
+    return files, task_files
 
 
 def _command_targets_serial(command: str, serial: str) -> bool:
@@ -149,173 +164,6 @@ def _hash_files(paths: list[Path], *, relative_to: Path) -> str:
         digest.update(path.read_bytes())
         digest.update(b"\0")
     return digest.hexdigest()
-
-
-def _source_memory_files(memory_root: Path) -> tuple[list[Path], list[Path]]:
-    if not memory_root.is_dir():
-        return [], []
-    files = sorted(
-        path
-        for path in memory_root.rglob("*")
-        if path.is_file() and "__pycache__" not in path.parts
-    )
-    app_task_files = [
-        path
-        for path in files
-        if path.name == "tasks.csv" and path.parent.parent == memory_root
-    ]
-    task_files = app_task_files or [
-        path
-        for path in files
-        if path.name == "tasks.csv" and path.parent == memory_root
-    ]
-    return files, task_files
-
-
-def _validate_mobilegpt_manifest(memory_root: Path) -> dict[str, Any]:
-    root = memory_root.expanduser().resolve()
-    manifest_path = root.parent / MOBILEGPT_MEMORY_MANIFEST
-    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or payload.get(
-        "schema_version"
-    ) != MOBILEGPT_MEMORY_SCHEMA:
-        raise ValueError("mobilegpt_cold_memory_manifest_schema_invalid")
-    if payload.get("source_seed") != SOURCE_SEED:
-        raise ValueError("mobilegpt_cold_memory_source_seed_invalid")
-    provenance = payload.get("provenance")
-    if not isinstance(provenance, dict):
-        raise ValueError("mobilegpt_cold_memory_provenance_missing")
-    required_provenance = {
-        "native_mobilegpt_learning": False,
-        "task_local_memory": True,
-        "learning_mode": MOBILEGPT_LEARNING_MODE,
-        "teacher_forcing": False,
-        "synthetic_subtasks": True,
-        "semantic_subtasks": False,
-        "original_mobilegpt_prompts": False,
-        "actions_supplied_to_mobilegpt": True,
-        "source_transitions_supplied": True,
-        "source_success_boundary_supplied": True,
-        "runlog_transition_compilation": True,
-        "complete_transition_mapping": True,
-        "official_reader_validation": True,
-        "source_emulator_used": False,
-        "function_store_used": False,
-    }
-    if any(provenance.get(key) != value for key, value in required_provenance.items()):
-        raise ValueError("mobilegpt_cold_memory_native_learning_incomplete")
-    forbidden = [
-        key
-        for key in (
-            "function_conversion_enabled",
-            "target_inputs_read",
-            "target_observations_read",
-            "validator_state_read",
-            "coordinate_replay",
-        )
-        if bool(provenance.get(key))
-    ]
-    if forbidden:
-        raise ValueError("mobilegpt_cold_memory_forbidden:" + ",".join(forbidden))
-    memory = payload.get("memory")
-    if not isinstance(memory, dict):
-        raise ValueError("mobilegpt_cold_memory_record_missing")
-    recorded_root = (root.parent / str(memory.get("relative_path") or "")).resolve()
-    if recorded_root != root:
-        raise ValueError("mobilegpt_cold_memory_path_mismatch")
-    files, task_files = _source_memory_files(root)
-    digest = _hash_files(files, relative_to=root)
-    if digest != str(memory.get("sha256") or ""):
-        raise ValueError("mobilegpt_cold_memory_hash_mismatch")
-    if len(files) != int(memory.get("file_count") or -1):
-        raise ValueError("mobilegpt_cold_memory_file_count_mismatch")
-    for label in ("source_run_log", "source_stats", "trajectory_audit"):
-        record = payload.get(label)
-        if not isinstance(record, dict):
-            raise ValueError(f"mobilegpt_cold_memory_{label}_missing")
-        path = (root.parent / str(record.get("relative_path") or "")).resolve()
-        try:
-            path.relative_to(root.parent)
-        except ValueError as error:
-            raise ValueError(
-                f"mobilegpt_cold_memory_{label}_outside_bundle"
-            ) from error
-        if not path.is_file():
-            raise ValueError(f"mobilegpt_cold_memory_{label}_file_missing")
-        actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
-        if actual_sha256 != str(record.get("sha256") or ""):
-            raise ValueError(f"mobilegpt_cold_memory_{label}_hash_mismatch")
-    if "official_source_result" in payload:
-        raise ValueError("mobilegpt_cold_memory_official_source_forbidden")
-    return {
-        "manifest": str(manifest_path),
-        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
-        "task_name": str(payload.get("task_name") or ""),
-        "source_seed": int(payload["source_seed"]),
-        "memory_sha256": digest,
-        "memory_file_count": len(files),
-        "task_file_count": len(task_files),
-    }
-
-
-def _valid_appagent_manifest(payload: Any) -> bool:
-    if not isinstance(payload, dict):
-        return False
-    source_metrics = payload.get("source_episode_metrics")
-    doc_usage = payload.get("doc_generation_usage")
-    if not isinstance(source_metrics, dict) or not isinstance(doc_usage, dict):
-        return False
-    try:
-        teacher_action_count = int(payload.get("teacher_action_count") or 0)
-        teacher_actions_consumed = int(payload.get("teacher_actions_consumed") or 0)
-        demo_action_count = int(payload.get("demo_action_count") or 0)
-        source_prompt = int(source_metrics.get("prompt_tokens") or 0)
-        source_completion = int(source_metrics.get("completion_tokens") or 0)
-        source_total = int(source_metrics.get("total_tokens") or 0)
-        doc_prompt = int(doc_usage.get("prompt_tokens") or 0)
-        doc_completion = int(doc_usage.get("completion_tokens") or 0)
-        doc_total = int(doc_usage.get("total_tokens") or 0)
-        offline_conversion = (
-            payload.get("conversion_mode") == "canonical_runlog_offline"
-            and payload.get("source_emulator_used") is False
-        )
-        return (
-            payload.get("schema_version") == "omniflow.appagent.memory.v3"
-            and payload.get("official_appagent_revision")
-            == APPAGENT_OFFICIAL_REVISION
-            and payload.get("source_seed") == SOURCE_SEED
-            and (
-                offline_conversion
-                or payload.get("official_source_success") is True
-            )
-            and payload.get("teacher_complete") is True
-            and teacher_action_count > 0
-            and teacher_actions_consumed == teacher_action_count
-            and 0 < demo_action_count <= teacher_action_count
-            and (
-                offline_conversion
-                or float(source_metrics.get("duration_sec") or 0.0) > 0
-            )
-            and (
-                offline_conversion
-                or float(source_metrics.get("wall_sec") or 0.0) > 0
-            )
-            and source_total == source_prompt + source_completion
-            and int(doc_usage.get("model_calls") or 0) > 0
-            and doc_total == doc_prompt + doc_completion
-            and doc_total > 0
-            and (
-                offline_conversion
-                or float(doc_usage.get("wall_sec") or 0.0) > 0
-            )
-            and float(payload.get("prep_wall_sec") or 0.0) > 0
-            and payload.get("uses_omniflow_function") is False
-            and payload.get("target_inputs_read") is False
-            and payload.get("target_observations_read") is False
-            and payload.get("validator_state_read_for_memory") is False
-        )
-    except (TypeError, ValueError):
-        return False
 
 
 def _port_is_free(port: int) -> bool:
@@ -753,7 +601,7 @@ def main(argv: list[str] | None = None) -> int:
             detail = str(manifest)
             try:
                 payload = json.loads(manifest.read_text(encoding="utf-8"))
-                valid = _valid_appagent_manifest(payload)
+                valid = is_memory_manifest_valid(payload)
                 detail = f"sealed manifest at {manifest}"
             except (OSError, ValueError, json.JSONDecodeError) as error:
                 detail = str(error)
@@ -825,7 +673,7 @@ def main(argv: list[str] | None = None) -> int:
         if memory_root is None:
             add("initial_memory", True, "empty_memory")
         else:
-            memory_files, memory_tasks = _source_memory_files(memory_root)
+            memory_files, memory_tasks = _collect_memory_files(memory_root)
             expected_memory_tasks = args.expected_memory_tasks
             task_count_valid = (
                 len(memory_tasks) == expected_memory_tasks
@@ -855,7 +703,7 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
             try:
-                mobilegpt_manifest = _validate_mobilegpt_manifest(memory_root)
+                mobilegpt_manifest = validate_memory_manifest(memory_root)
             except (OSError, ValueError, json.JSONDecodeError) as error:
                 add("mobilegpt_memory_manifest", False, str(error))
             else:
