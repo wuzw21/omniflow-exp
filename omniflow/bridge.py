@@ -8,7 +8,6 @@ import sys
 import time
 from typing import Any, TextIO
 
-from omniflow.catalog import CatalogSnapshot, load_catalog, load_default_catalog
 from omniflow.core.config import (
     ANDROIDWORLD_PROTOCOL,
     DEFAULT_MAX_STEPS,
@@ -31,7 +30,7 @@ PROTOCOL_VERSION = "2025-11-25"
 _DEFAULT_GUI_MAX_STEPS = DEFAULT_MAX_STEPS
 _MAX_GUI_MAX_STEPS = 64
 
-_FUNCTION_CATALOG_ACTIONS = {
+_FUNCTION_MANAGEMENT_ACTIONS = {
     "list_functions": "list",
     "get_function": "get",
     "delete_function": "delete",
@@ -40,7 +39,7 @@ _FUNCTION_CATALOG_ACTIONS = {
 
 _MANAGEMENT_TOOL_NAMES = frozenset(
     {
-        *_FUNCTION_CATALOG_ACTIONS,
+        *_FUNCTION_MANAGEMENT_ACTIONS,
         "save_function",
         "list_run_logs",
         "get_run_log",
@@ -58,25 +57,16 @@ class JsonLineBridge:
         *,
         reader: TextIO = sys.stdin,
         writer: TextIO = sys.stdout,
-        catalog: CatalogSnapshot | None = None,
     ):
         self.reader = reader
         self.writer = writer
-        self.catalog = catalog
-        self.flow = OmniFlow(store_path, catalog=catalog)
+        self.flow = OmniFlow(store_path)
         self._host_call_index = 0
 
     def serve_forever(self) -> None:
         for line in self.reader:
             request = self._parse(line)
             if request is not None and self._serve_request(request):
-                return
-
-    def serve_once(self) -> None:
-        for line in self.reader:
-            request = self._parse(line)
-            if request is not None:
-                self._serve_request(request)
                 return
 
     def _serve_request(self, request: dict[str, Any]) -> bool:
@@ -163,9 +153,11 @@ class JsonLineBridge:
         if tool not in _MANAGEMENT_TOOL_NAMES:
             return self._execute_tool(request_id, call, body.get("_meta"))
 
-        catalog_action = _FUNCTION_CATALOG_ACTIONS.get(tool)
-        if catalog_action is not None:
-            result = self._catalog({**args, "action": catalog_action})
+        management_action = _FUNCTION_MANAGEMENT_ACTIONS.get(tool)
+        if management_action is not None:
+            result = self._function_management(
+                {**args, "action": management_action}
+            )
             if tool == "get_function" and result.get("success") is True:
                 function = result.get("function")
                 return dict(function) if isinstance(function, dict) else {}
@@ -273,7 +265,6 @@ class JsonLineBridge:
             planner=planner,
             installed_apps=installed_apps,
             config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=max_steps)),
-            catalog=self.catalog,
         )
         return _run_result(flow.run(goal), body=body, function=None)
 
@@ -312,13 +303,12 @@ class JsonLineBridge:
             planner=planner,
             installed_apps=host.installed_apps(),
             config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=max_steps)),
-            catalog=self.catalog,
         )
         function = flow.store.get_function(tool_call.name)
         result = flow.call_tool(tool_call)
         return _run_result(result, body=run_metadata, function=function)
 
-    def _catalog(self, body: dict[str, Any]) -> dict[str, Any]:
+    def _function_management(self, body: dict[str, Any]) -> dict[str, Any]:
         self.flow.store.reload()
         action = str(body.get("action") or "list")
         if action == "list":
@@ -384,7 +374,7 @@ class JsonLineBridge:
                 "deleted_count": self.flow.store.clear_functions(),
                 "source": "omniflow_python",
             }
-        raise ValueError(f"unsupported_catalog_action:{action}")
+        raise ValueError(f"unsupported_function_management_action:{action}")
 
     def _save_function(
         self,
@@ -1047,29 +1037,14 @@ def _bridge_identity() -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--store")
-    parser.add_argument(
-        "--catalog",
-        help="Catalog release directory, or 'default' for the packaged release.",
-    )
-    parser.add_argument("--once", action="store_true")
     parser.add_argument("--self-test", action="store_true")
     arguments = parser.parse_args(argv)
     if arguments.self_test:
         return self_test()
     if not arguments.store:
         parser.error("the following arguments are required: --store")
-    catalog = None
-    if arguments.catalog:
-        catalog = (
-            load_default_catalog()
-            if arguments.catalog == "default"
-            else load_catalog(arguments.catalog)
-        )
-    bridge = JsonLineBridge(arguments.store, catalog=catalog)
-    if arguments.once:
-        bridge.serve_once()
-    else:
-        bridge.serve_forever()
+    bridge = JsonLineBridge(arguments.store)
+    bridge.serve_forever()
     return 0
 
 

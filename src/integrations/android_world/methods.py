@@ -9,12 +9,15 @@ from pathlib import Path
 from typing import Any, Callable
 
 from omniflow.vlm.model_config import resolve_openai_compatible_config
-from src.experiment.protocol import MAX_STEPS
+from src.experiment.protocol import (
+    FORMAL_MODEL_BASE_URL,
+    FORMAL_MODEL_ENDPOINT_PROFILE,
+    MAX_STEPS,
+)
 
 _UNSUPPORTED_SELECTOR_ERROR = (
     "Unsupported AndroidWorld agent selector. Use `omniflow`, `fixed_replay`, "
-    "`external:mobilegpt`, `external:appagent`, "
-    "`external:appagent_teacher`, or `official:<name>`."
+    "`appagent`, or `official:<name>`."
 )
 
 REUSE_METRICS_SCHEMA = "omniflow.androidworld.reuse-metrics.v1"
@@ -46,7 +49,7 @@ def reuse_metrics(
         unit = "gui_action"
         evidence = "exact_source_replay_actions" if actions else "unavailable"
         artifact_used = actions > 0
-    elif normalized in {"ours", "omniflow"}:
+    elif normalized == "omniflow":
         trace = _canonical_execution_trace(canonical_run)
         numerator = sum(
             1
@@ -57,7 +60,7 @@ def reuse_metrics(
         unit = "gui_action"
         evidence = "exact_function_trace" if trace or actions == 0 else "unavailable"
         artifact_used = bool(canonical_run) or numerator > 0
-    elif normalized in {"mobilegpt_offline_retrieval", "external:mobilegpt"}:
+    elif normalized == "mobilegpt":
         stats = dict(mobilegpt_stats or {})
         denominator = max(0, int(stats.get("memory_lookup_count") or 0))
         numerator = min(
@@ -67,7 +70,7 @@ def reuse_metrics(
         unit = "memory_lookup"
         evidence = "exact_native_memory_events" if denominator else "unavailable"
         artifact_used = denominator > 0
-    elif normalized in {"appagent_demo", "external:appagent"}:
+    elif normalized == "appagent":
         result = dict(appagent_result or {})
         if appagent_log and not result:
             result = _appagent_log_usage(Path(appagent_log).expanduser())
@@ -224,10 +227,13 @@ class MethodAdapterContext:
     appagent_workspace_root: str = ""
     appagent_docs_root: str = ""
     appagent_teacher_source: str = ""
-    appagent_demo_name: str = ""
+    appagent_name: str = ""
     appagent_output_root: str = ""
     task_seed: int | None = None
     evidence_root: str = ""
+    performance_metrics: Any | None = None
+    direct_function_id: str = ""
+    direct_function_arguments: dict[str, Any] | None = None
     build_omniflow_agent: Callable[..., Any] | None = None
     apply_fixed_replay: Callable[..., Any] | None = None
     build_official_agent: Callable[..., Any] | None = None
@@ -270,19 +276,13 @@ def default_method_adapter_registry() -> MethodAdapterRegistry:
     return MethodAdapterRegistry(
         (
             MethodAdapter(
-                name="omniflow_replay",
+                name="omniflow",
                 accepts=lambda selector: selector in {"omniflow", "fixed_replay"},
-                build=_build_omniflow_replay,
-            ),
-            MethodAdapter(
-                name="mobilegpt",
-                accepts=lambda selector: selector == "external:mobilegpt",
-                build=_build_mobilegpt,
+                build=_build_omniflow,
             ),
             MethodAdapter(
                 name="appagent",
-                accepts=lambda selector: selector
-                in {"external:appagent", "external:appagent_teacher"},
+                accepts=lambda selector: selector == "appagent",
                 build=_build_appagent,
             ),
             MethodAdapter(
@@ -294,7 +294,7 @@ def default_method_adapter_registry() -> MethodAdapterRegistry:
     )
 
 
-def _build_omniflow_replay(context: MethodAdapterContext) -> Any:
+def _build_omniflow(context: MethodAdapterContext) -> Any:
     build_agent = _required_dependency(
         context.build_omniflow_agent,
         "build_omniflow_agent",
@@ -310,15 +310,24 @@ def _build_omniflow_replay(context: MethodAdapterContext) -> Any:
         or os.environ.get("OMNIFLOW_PLANNER_TIMEOUT_SEC")
         or 60.0
     )
+    resolved_endpoint_profile = (
+        str(context.model_endpoint_profile or FORMAL_MODEL_ENDPOINT_PROFILE).strip()
+        or FORMAL_MODEL_ENDPOINT_PROFILE
+    )
     planner_api_key, planner_base_url = resolve_openai_compatible_config(
-        profile=context.model_endpoint_profile or None,
+        profile=resolved_endpoint_profile,
+        base_url=(
+            FORMAL_MODEL_BASE_URL
+            if resolved_endpoint_profile == FORMAL_MODEL_ENDPOINT_PROFILE
+            else None
+        ),
     )
     planner = None
     if (
         resolved_planner_model
         or resolved_planner_provider
         or _read_env_bool("OMNIFLOW_ENABLE_ONLINE_PLANNER", False)
-    ):
+    ) and not str(context.direct_function_id or "").strip():
         from omniflow.vlm.planner import VLMPlanner
 
         planner = VLMPlanner(
@@ -336,7 +345,15 @@ def _build_omniflow_replay(context: MethodAdapterContext) -> Any:
         "max_steps": context.max_steps,
         "task_seed": context.task_seed,
         "evidence_root": context.evidence_root or None,
+        "performance_metrics": context.performance_metrics,
     }
+    if context.selector == "fixed_replay":
+        build_kwargs["allow_empty_store"] = True
+    if str(context.direct_function_id or "").strip():
+        build_kwargs["direct_function_id"] = str(context.direct_function_id).strip()
+        build_kwargs["direct_function_arguments"] = dict(
+            context.direct_function_arguments or {}
+        )
     if planner is not None:
         build_kwargs["planner"] = planner
     built_agent = build_agent(**build_kwargs)
@@ -355,38 +372,25 @@ def _build_omniflow_replay(context: MethodAdapterContext) -> Any:
     )
 
 
-def _build_mobilegpt(context: MethodAdapterContext) -> Any:
-    from src.integrations.android_world.mobilegpt_agent import build_mobilegpt_agent
-
-    return build_mobilegpt_agent(
-        env=context.env,
-        evidence_root=context.evidence_root or None,
-    )
-
-
 def _build_appagent(context: MethodAdapterContext) -> Any:
-    from src.integrations.appagent_adapter import (
+    from src.integrations.appagent import (
         AppAgentAndroidWorldAgent,
         AppAgentTeacherAgent,
         OfficialAppAgentRuntime,
     )
 
     runtime = OfficialAppAgentRuntime(context.appagent_root)
-    if context.selector == "external:appagent_teacher":
-        if not str(context.appagent_teacher_source or "").strip():
-            raise ValueError(
-                "external:appagent_teacher requires --appagent-teacher-source"
-            )
+    if context.appagent_teacher_source:
         if not str(context.appagent_workspace_root or "").strip():
             raise ValueError(
-                "external:appagent_teacher requires --appagent-workspace-root"
+                "appagent teacher workspace is required"
             )
         return AppAgentTeacherAgent(
             env=context.env,
             official_runtime=runtime,
             teacher_source=context.appagent_teacher_source,
             workspace_root=context.appagent_workspace_root,
-            demo_name=context.appagent_demo_name,
+            demo_name=context.appagent_name,
         )
     llm_factory = _required_dependency(
         runtime.build_model,
@@ -394,6 +398,7 @@ def _build_appagent(context: MethodAdapterContext) -> Any:
     )
     api_key, base_url = resolve_openai_compatible_config(
         profile=context.model_endpoint_profile or None,
+        base_url=os.environ.get("OPENAI_BASE_URL"),
     )
     return AppAgentAndroidWorldAgent(
         env=context.env,

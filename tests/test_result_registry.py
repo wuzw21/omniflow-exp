@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from src.experiment.artifact_memory import (
-    load_artifact_memory,
-    refresh_artifact_memory,
+from src.experiment.data_index import (
+    load_data_index,
+    refresh_data_index,
 )
 from src.experiment.result_registry import (
     register_attempt_summary,
@@ -53,7 +53,7 @@ def _write_registered_result(
     manifest_path = result / "registration_manifest.json"
     task_params = {"seed": 1859998934}
     command = (
-        "python -m src.integrations.android_world.launch "
+        "python -m src.integrations.android_world.run_episode "
         f"--task-random-seed {evaluation_seed} --max-steps {max_steps} "
         "--fixed-task-seed --perform-emulator-setup"
     )
@@ -157,7 +157,7 @@ def test_registered_result_plan_skips_any_result_with_a_verified_conclusion(
     _write_registered_result(
         runs_root,
         task=task,
-        method="ours",
+        method="omniflow",
         device="fold5564",
         success=False,
     )
@@ -165,7 +165,7 @@ def test_registered_result_plan_skips_any_result_with_a_verified_conclusion(
     plan = registered_result_plan(
         runs_root=runs_root,
         task_name=task,
-        methods=("fixed_replay", "ours"),
+        methods=("fixed_replay", "omniflow"),
         devices=("small5554", "fold5564"),
         source_seed=111,
         evaluation_seed=113,
@@ -174,11 +174,11 @@ def test_registered_result_plan_skips_any_result_with_a_verified_conclusion(
 
     assert plan["completed"] == [
         ("fixed_replay", "small5554"),
-        ("ours", "fold5564"),
+        ("omniflow", "fold5564"),
     ]
     assert plan["pending"] == [
         ("fixed_replay", "fold5564"),
-        ("ours", "small5554"),
+        ("omniflow", "small5554"),
     ]
 
 
@@ -270,7 +270,7 @@ def test_registered_result_plan_does_not_skip_a_different_evaluation_seed(
     _write_registered_result(
         runs_root,
         task=task,
-        method="ours",
+        method="omniflow",
         device="small5554",
         success=True,
         source_seed=111,
@@ -280,14 +280,14 @@ def test_registered_result_plan_does_not_skip_a_different_evaluation_seed(
     plan = registered_result_plan(
         runs_root=runs_root,
         task_name=task,
-        methods=("ours",),
+        methods=("omniflow",),
         devices=("small5554",),
         source_seed=111,
         evaluation_seed=114,
     )
 
     assert plan["completed"] == []
-    assert plan["pending"] == [("ours", "small5554")]
+    assert plan["pending"] == [("omniflow", "small5554")]
 
 
 def test_registered_result_plan_retries_rows_without_validator_coverage(
@@ -298,7 +298,7 @@ def test_registered_result_plan_retries_rows_without_validator_coverage(
     _write_registered_result(
         runs_root,
         task=task,
-        method="ours",
+        method="omniflow",
         device="small5554",
         success=False,
         validator_task_count=0,
@@ -308,14 +308,14 @@ def test_registered_result_plan_retries_rows_without_validator_coverage(
     plan = registered_result_plan(
         runs_root=runs_root,
         task_name=task,
-        methods=("ours",),
+        methods=("omniflow",),
         devices=("small5554",),
         source_seed=111,
         evaluation_seed=113,
     )
 
     assert plan["completed"] == []
-    assert plan["pending"] == [("ours", "small5554")]
+    assert plan["pending"] == [("omniflow", "small5554")]
 
 
 def test_registered_result_plan_keeps_validator_rows_with_environment_error(
@@ -441,10 +441,10 @@ def test_registered_result_plan_keeps_validator_failure_with_parser_error(
 @pytest.mark.parametrize(
     ("method", "runtime_integrity_error", "environment_failure", "error"),
     (
-        ("ours", "mobilegpt_app_ui_not_ready", False, ""),
-        ("ours", "", True, ""),
+        ("omniflow", "mobilegpt_app_ui_not_ready", False, ""),
+        ("omniflow", "", True, ""),
         (
-            "mobilegpt_offline_retrieval",
+            "mobilegpt",
             "",
             False,
             "RuntimeError: mobilegpt_app_ui_not_ready:wrong_app",
@@ -569,10 +569,9 @@ def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
         },
     )
     memory_root = tmp_path / "memory"
-    refresh_artifact_memory(
+    refresh_data_index(
         memory_root=memory_root,
         source_index=source_index,
-        function_catalogs=(),
         runlog_roots=(tmp_path / "evidence",),
         result_roots=(),
     )
@@ -585,7 +584,7 @@ def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
             "rows": [
                 {
                     "task_name": "TaskOne",
-                    "method": "ours",
+                    "method": "omniflow",
                     "device": "small5554",
                     "serial": "emulator-5554",
                     "console_port": 5554,
@@ -603,7 +602,7 @@ def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
                     "fixed_task_params": False,
                     "perform_emulator_setup": True,
                     "command": (
-                        "python -m src.integrations.android_world.launch "
+                        "python -m src.integrations.android_world.run_episode "
                         "--task-random-seed 113 --max-steps 20 "
                         "--fixed-task-seed --perform-emulator-setup"
                     ),
@@ -626,13 +625,13 @@ def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
         summary_path=summary,
         attempt_manifest_path=attempt_manifest,
         runs_root=results_root / "androidworld_validator" / "runs",
-        artifact_memory_index=memory_root / "current.json",
+        local_data_index=memory_root / "current.json",
     )
 
-    assert registration["artifact_memory_updated"] is True
-    memory = load_artifact_memory(memory_root / "current.json")
+    assert registration["local_data_updated"] is True
+    memory = load_data_index(memory_root / "current.json")
     result = memory["canonical"]["result_cells"][
-        "TaskOne|ours|small5554|111|113"
+        "TaskOne|omniflow|small5554|111|113"
     ]
     assert result["official_validator_success"] is False
 
@@ -647,7 +646,7 @@ def test_result_registration_keeps_runtime_integrity_evidence_after_conclusion(
             "task_name": "ContactsNewContactDraft",
             "rows": [
                 {
-                    "method": "mobilegpt_offline_retrieval",
+                    "method": "mobilegpt",
                     "device": "small5554",
                     "official_validator_used": True,
                     "official_validator_success": False,
@@ -748,7 +747,7 @@ def test_result_registration_keeps_parser_failure_after_validator_conclusion(
             "task_name": "ExpenseAddSingle",
             "rows": [
                 {
-                    "method": "mobilegpt_offline_retrieval",
+        "method": "mobilegpt",
                     "device": "small5554",
                     "official_validator_used": True,
                     "official_validator_success": False,

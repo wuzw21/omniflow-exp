@@ -12,14 +12,16 @@ from omniflow.core.model import (
     Observation,
     TransferResult,
 )
+from omniflow.runtime.core import prepare_action
 from omniflow.runtime.execution import (
     execute_function,
     execute_robust_action,
-    prepare_action,
 )
 
 
-def test_function_uses_catalog_state_when_host_state_is_missing(monkeypatch) -> None:
+def test_function_uses_explicit_state_loader_when_host_state_is_missing(
+    monkeypatch,
+) -> None:
     import omniflow.runtime.core as core
 
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
@@ -48,9 +50,9 @@ def test_function_uses_catalog_state_when_host_state_is_missing(monkeypatch) -> 
             return current
 
     function = Function(
-        function_id="catalog_function",
-        name="catalog function",
-        description="catalog state fallback",
+        function_id="state_loader_function",
+        name="state loader function",
+        description="explicit state loader fallback",
         steps=(
             FunctionStep(0, Action("click", {"x": 50, "y": 50}), "source-1"),
         ),
@@ -339,7 +341,10 @@ def test_open_app_waits_for_cold_launch_target_package(monkeypatch) -> None:
         def __init__(self) -> None:
             self.observations = [
                 Observation(package_name="com.android.launcher"),
-                Observation(package_name="com.sankuai.meituan"),
+                Observation(
+                    package_name="com.sankuai.meituan",
+                    xml="<hierarchy />",
+                ),
             ]
             self.observe_calls = 0
 

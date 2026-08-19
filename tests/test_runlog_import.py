@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 import sys
@@ -10,13 +9,13 @@ from PIL import Image
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from src.experiment.source_runlogs import convert_source_index
-from src.integrations.android_world.launch import (
+from src.integrations.android_world.run_episode import (
     _apply_fixed_replay,
     _fixed_replay_bind_action_parameters,
     _fixed_replay_goal_parameter_bindings,
     _launch_raw_replay_app,
     _raw_replay_action_to_payload,
+    _raw_replay_visible_setup_recovery,
     _raw_replay_observation_record,
     _raw_replay_step_actions,
 )
@@ -740,150 +739,6 @@ def test_legacy_start_activity_uses_following_observation_package(
     }
 
 
-def test_source_index_accepts_official_runlog_without_screenshot_roots(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "official.run_log.json"
-    run_log = androidworld_run_log(
-        [{"action_type": "wait"}],
-        task_name="OfficialTask",
-    )
-    source.write_text(json.dumps(run_log), encoding="utf-8")
-    index = tmp_path / "source-index.json"
-    index.write_text(
-        json.dumps(
-            {
-                "OfficialTask": {
-                    "retained_source_run_log": str(source),
-                    "params": {},
-                    "task_random_seed": 111,
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    converted = convert_source_index(
-        source_index=index,
-        output_root=tmp_path / "converted",
-        screenshot_roots=(),
-    )
-
-    assert converted["task_count"] == 1
-    output_index = json.loads(
-        Path(converted["output_index"]).read_text(encoding="utf-8")
-    )
-    output_run_log = json.loads(
-        Path(output_index["OfficialTask"]["retained_source_run_log"]).read_text(
-            encoding="utf-8"
-        )
-    )
-    assert output_run_log == run_log
-
-
-def test_source_index_hydrates_state_catalog_and_denormalizes_legacy_points(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "legacy.run_log.json"
-    source.write_text(
-        json.dumps(
-            {
-                "schema_version": "omniflow.canonical_run_log.v1",
-                "run_id": "legacy-source",
-                "goal": "Tap Continue.",
-                "success": True,
-                "steps": [
-                    {
-                        "step_index": 0,
-                        "before_state_id": "state-before",
-                        "after_state_id": "state-after",
-                        "action": {
-                            "tool": "click",
-                            "args": {"x": 500, "y": 250},
-                        },
-                        "result": {"success": True},
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    state_catalog = tmp_path / "transfer_states.json"
-    state_catalog.write_text(
-        json.dumps(
-            {
-                "schema_version": "omniflow.transfer-state-catalog.v1",
-                "run_id": "legacy-source",
-                "states": {
-                    "state-before": {
-                        "state_id": "state-before",
-                        "xml": (
-                            '<hierarchy><node text="Continue" clickable="true" '
-                            'bounds="[0,0][720,1280]" /></hierarchy>'
-                        ),
-                        "package_name": "com.example.app",
-                        "activity_name": ".MainActivity",
-                        "display": {"width": 720, "height": 1280},
-                    },
-                    "state-after": {
-                        "state_id": "state-after",
-                        "xml": "<hierarchy />",
-                        "package_name": "com.example.app",
-                        "activity_name": ".MainActivity",
-                        "display": {"width": 720, "height": 1280},
-                    },
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    state_catalog_sha256 = hashlib.sha256(state_catalog.read_bytes()).hexdigest()
-    index = tmp_path / "source-index.json"
-    index.write_text(
-        json.dumps(
-            {
-                "LegacyTask": {
-                    "retained_source_run_log": str(source),
-                    "transfer_state_catalog": str(state_catalog),
-                    "transfer_state_catalog_sha256": state_catalog_sha256,
-                    "params": {},
-                    "task_random_seed": 111,
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    converted = convert_source_index(
-        source_index=index,
-        output_root=tmp_path / "converted",
-        screenshot_roots=(),
-    )
-
-    output_index = json.loads(
-        Path(converted["output_index"]).read_text(encoding="utf-8")
-    )
-    output_row = output_index["LegacyTask"]
-    output_run_log = json.loads(
-        Path(output_row["retained_source_run_log"]).read_text(encoding="utf-8")
-    )
-    observation = output_run_log["steps"][0]["observation"]
-    assert observation["forest"].startswith("<hierarchy>")
-    assert observation["auxiliaries"] == {
-        "state_id": "state-before",
-        "package_name": "com.example.app",
-        "activity_name": ".MainActivity",
-        "display": {"width": 720, "height": 1280},
-    }
-    assert output_run_log["steps"][0]["action"] == {
-        "action_type": "click",
-        "x": 360,
-        "y": 320,
-    }
-    assert output_row["source_state_catalog"] == str(state_catalog)
-    assert output_row["source_state_catalog_sha256"] == state_catalog_sha256
-
-
 def test_explicit_converter_marks_unavailable_screenshot_as_null(
     tmp_path: Path,
 ) -> None:
@@ -1362,6 +1217,39 @@ def test_fixed_replay_preserves_androidworld_directional_gestures() -> None:
         source_size=(720, 1280),
         target_size=(2208, 1840),
     ) == ({"action_type": "swipe", "direction": "right"}, None)
+
+
+def test_fixed_replay_recovers_chrome_chooser_by_visible_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    class Controller:
+        def get_ui_elements(self):
+            return [
+                SimpleNamespace(text=label, content_description=None)
+                for label in ("Open with", "Chrome", "HTML Viewer", "Just once", "Always")
+            ]
+
+    class AndroidToolController:
+        def __init__(self, controller):
+            assert controller is environment.controller
+
+        def click_element(self, label: str) -> None:
+            calls.append(label)
+
+    tools_module = ModuleType("android_world.env.tools")
+    tools_module.AndroidToolController = AndroidToolController
+    monkeypatch.setitem(sys.modules, "android_world.env.tools", tools_module)
+
+    environment = SimpleNamespace(controller=Controller())
+    agent = SimpleNamespace(env=environment)
+
+    assert _raw_replay_visible_setup_recovery(
+        agent,
+        goal_text="open the file with Chrome",
+    ) == "android_app_chooser:Chrome"
+    assert calls == ["Chrome", "Just once"]
 
 
 def test_fixed_replay_requires_recorded_click_coordinates() -> None:

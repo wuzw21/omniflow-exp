@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-from omniflow.catalog import CatalogSnapshot
 from omniflow.core.config import Experiment, OmniFlowConfig
 from omniflow.core.model import (
     Action,
@@ -26,7 +25,6 @@ from omniflow.runtime.execution import (
     execute_robust_action,
     record_execution,
 )
-from omniflow.transfer.page_embedding import OmniTransferPageEncoder
 from omniflow.vlm.usage import merge_usage, token_usage_status
 
 
@@ -72,10 +70,8 @@ class OmniFlow:
         planner: Planner | None = None,
         installed_apps: dict[str, str] | None = None,
         config: OmniFlowConfig | None = None,
-        catalog: CatalogSnapshot | None = None,
     ):
         self.config = config or OmniFlowConfig()
-        self.catalog = catalog
         self.store = FunctionStore(store_path)
         self.host = host
         self.planner = planner
@@ -94,7 +90,6 @@ class OmniFlow:
             else None
         )
         self.plugins = self.config.resolved_plugins()
-        self._page_encoder: OmniTransferPageEncoder | None = None
 
     async def _execute(
         self,
@@ -122,7 +117,7 @@ class OmniFlow:
         function_session = _FunctionSession()
         observation = await self._observe(screenshot=True)
         planner_functions: tuple[Function, ...] = ()
-        planner_function_catalog: dict[str, Function] = {}
+        planner_functions_by_name: dict[str, Function] = {}
         recall_events: list[dict[str, Any]] = []
         recall_source_states: dict[str, Observation | None] = {}
         function_resolution: dict[str, Any] = {
@@ -202,9 +197,6 @@ class OmniFlow:
                     plugins=self.plugins,
                     observation=observation,
                     installed_packages=self.installed_packages,
-                    state_loader=(
-                        self.catalog.get_state if self.catalog is not None else None
-                    ),
                     checker_target_threshold=(
                         self.config.runtime.checker_target_threshold
                     ),
@@ -406,7 +398,7 @@ class OmniFlow:
                 source_states=recall_source_states,
             )
             planner_functions = recall_result.functions
-            planner_function_catalog = {
+            planner_functions_by_name = {
                 function.id: function for function in planner_functions
             }
             recall_event = {
@@ -456,7 +448,7 @@ class OmniFlow:
                 fallback_steps += 1
             planner_metadata = _take_planner_metadata(self.planner)
             _merge_planner_diagnostics(planner_diagnostics, planner_metadata)
-            selected_function = planner_function_catalog.get(planned_call.name)
+            selected_function = planner_functions_by_name.get(planned_call.name)
             if selected_function is not None:
                 retry_step_index = (
                     function_session.failed_step_index
@@ -529,9 +521,6 @@ class OmniFlow:
                     trace_start_index=len(trace),
                     resume_metadata=retry_metadata,
                     installed_packages=self.installed_packages,
-                    state_loader=(
-                        self.catalog.get_state if self.catalog is not None else None
-                    ),
                     checker_target_threshold=(
                         self.config.runtime.checker_target_threshold
                     ),
@@ -783,29 +772,6 @@ class OmniFlow:
         source_states: dict[str, Observation | None],
         limit: int | None = None,
     ) -> RecallResult:
-        for function in self.store.functions.values():
-            if not function.steps:
-                continue
-            source_state_id = function.steps[0].source_state_id
-            if source_state_id in source_states:
-                continue
-            source_state = (
-                self.catalog.get_state(source_state_id)
-                if self.catalog is not None
-                else None
-            )
-            if source_state is None and self.host is not None:
-                get_state = getattr(self.host, "get_state", None)
-                if callable(get_state):
-                    try:
-                        value = await _await(get_state(source_state_id))
-                        source_state = (
-                            Observation.from_value(value) if value is not None else None
-                        )
-                    except Exception:  # noqa: BLE001
-                        source_state = None
-            source_states[source_state_id] = source_state
-
         resolved_limit = (
             self.config.runtime.max_function_tools if limit is None else int(limit)
         )
@@ -815,13 +781,7 @@ class OmniFlow:
             functions=self.store.functions,
             source_states=source_states,
             limit=max(0, int(resolved_limit)),
-            page_encoder=self._get_page_encoder(),
         )
-
-    def _get_page_encoder(self) -> OmniTransferPageEncoder:
-        if self._page_encoder is None:
-            self._page_encoder = OmniTransferPageEncoder()
-        return self._page_encoder
 
     def call_tool(
         self,
@@ -910,7 +870,7 @@ class OmniFlow:
 def _experiment(value: Experiment | str | None) -> Experiment:
     if isinstance(value, Experiment):
         return value
-    return Experiment.for_method(str(value or "ours"))
+    return Experiment.for_method(str(value or "omniflow"))
 
 
 def _action_from_tool_call(tool_call: ToolCall) -> Action:

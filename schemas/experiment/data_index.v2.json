@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omniflow.local/schemas/experiment/data_index.v2.json",
+  "title": "OmniFlow local data index",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "inputs", "counts", "canonical", "source_index"],
+  "properties": {
+    "schema_version": {"const": "omniflow.data-index.v2"},
+    "policy": {"type": "object", "additionalProperties": true},
+    "inputs": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["source_index", "prepared_memory_roots"],
+      "properties": {
+        "source_index": {"type": "string", "minLength": 1},
+        "prepared_memory_roots": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "counts": {"type": "object", "additionalProperties": true},
+    "canonical": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["source_run_logs", "function_stores", "result_cells", "prepared_memories"],
+      "properties": {
+        "source_run_logs": {"type": "object"},
+        "function_stores": {"type": "object"},
+        "result_cells": {"type": "object"},
+        "prepared_memories": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/prepared_memory"}
+        }
+      }
+    },
+    "source_index": {"type": "object"}
+  },
+  "$defs": {
+    "prepared_memory": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["provider", "task", "memory_root", "memory_sha256"],
+      "properties": {
+        "provider": {"type": "string", "minLength": 1},
+        "task": {"type": "string", "minLength": 1},
+        "memory_root": {"type": "string", "minLength": 1},
+        "memory_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

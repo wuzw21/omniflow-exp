@@ -4,9 +4,9 @@
   "protocol": {
     "methods": [
       "fixed_replay",
-      "ours",
-      "mobilegpt_offline_retrieval",
-      "appagent_demo",
+      "omniflow",
+      "mobilegpt",
+      "appagent",
       "t3a_hint"
     ],
     "devices": [
@@ -30,6 +30,12 @@
     "checker": {
       "target_probability_threshold": 0.9
     },
+    "droidrun": {
+      "version": "0.5.6",
+      "commit": "f726708fed2af56ef9311981effd74658fbf77c7",
+      "portal_version": "0.6.1",
+      "portal_commit": "db73fc7c2ff617e47e8952b2872674358da6c694"
+    },
     "function_enhancement_timeout_sec": 300,
     "bmoca_result_timeout_sec": 600,
     "task_deadline_sec": 1800,
@@ -40,6 +46,7 @@
     "fold_state": 2,
     "fold_size": "2208x1840",
     "model": "GLM-5.1",
+    "appagent_model": "GLM-4.6V",
     "model_endpoint_profile": "llmthu",
     "model_base_url": "https://llmapi.paratera.com/v1",
     "androidworld_revision": "632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"

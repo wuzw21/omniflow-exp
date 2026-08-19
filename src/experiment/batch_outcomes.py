@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import datetime as dt
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -15,7 +13,7 @@ import tempfile
 from typing import Any, Iterable
 
 from src.experiment.mobilegpt_contract import MOBILEGPT_SUPPORTED_SOURCE_METHODS
-from src.experiment.result_schema import RESULT_FIELDS, compact_result_row
+from src.experiment.paths import safe_component, sha256_file
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
 
 SCHEMA_VERSION = "omniflow.androidworld.result_outcome.v2"
@@ -23,15 +21,6 @@ LEGACY_SCHEMA_VERSION = "omniflow.androidworld.cell_outcome.v1"
 _MOBILEGPT_SOURCE_STATS_PATTERN = re.compile(
     r"MOBILEGPT_STATS_JSONL=(?P<path>[^\s'\"]+source_stats\.jsonl)"
 )
-
-
-def _safe_component(value: str, *, fallback: str) -> str:
-    normalized = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or "").strip())
-    return normalized.strip("._") or fallback
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _json_object(path: Path) -> dict[str, Any]:
@@ -120,7 +109,7 @@ def _stats_metrics(artifact_root: Path | None) -> dict[str, int | float]:
 def _recover_mobilegpt_source_accounting(
     outcome: dict[str, Any],
 ) -> tuple[dict[str, int | float], Path | None]:
-    if str(outcome.get("method") or "") != "mobilegpt_offline_retrieval":
+    if str(outcome.get("method") or "") != "mobilegpt":
         return {}, None
     task_log = Path(str(outcome.get("task_log") or "")).expanduser()
     candidates: list[Path] = []
@@ -203,10 +192,10 @@ def record_result_outcome(
     )
     destination = (
         root
-        / _safe_component(task_name, fallback="task")
-        / _safe_component(method, fallback="method")
-        / _safe_component(device, fallback="device")
-        / _safe_component(attempt_id, fallback="attempt")
+        / safe_component(task_name, fallback="task")
+        / safe_component(method, fallback="method")
+        / safe_component(device, fallback="device")
+        / safe_component(attempt_id, fallback="attempt")
     )
     metrics = _stats_metrics(artifact_path)
     payload: dict[str, Any] = {
@@ -238,7 +227,7 @@ def record_result_outcome(
         "recorded_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "task_log": str(log_path) if log_path is not None else "",
         "task_log_sha256": (
-            _sha256(log_path) if log_path is not None and log_path.is_file() else ""
+            sha256_file(log_path) if log_path is not None and log_path.is_file() else ""
         ),
         "artifact_root": str(artifact_path) if artifact_path is not None else "",
     }
@@ -282,7 +271,7 @@ def concluded_result_keys(
     accepted_methods = {str(value) for value in methods}
     accepted_devices = {str(value) for value in devices}
     concluded: set[tuple[str, str]] = set()
-    task_root = root / _safe_component(task_name, fallback="task")
+    task_root = root / safe_component(task_name, fallback="task")
     if not task_root.is_dir():
         return concluded
     for outcome_path in sorted(task_root.rglob("outcome.json")):
@@ -308,11 +297,10 @@ def concluded_result_keys(
 
 
 def _registered_result_rows(memory_index: Path) -> dict[str, dict[str, Any]]:
-    pointer = _json_object(memory_index)
-    result_cells_path = Path(str(pointer.get("result_cells") or "")).expanduser()
-    if not result_cells_path.is_absolute():
-        result_cells_path = (memory_index.parent / result_cells_path).resolve()
-    result_cells = _json_object(result_cells_path)
+    current = _json_object(memory_index)
+    result_cells = current.get("canonical", {}).get("result_cells", {})
+    if not isinstance(result_cells, dict):
+        return {}
     rows: dict[str, dict[str, Any]] = {}
     for key, record in result_cells.items():
         if not isinstance(record, dict):
@@ -504,55 +492,10 @@ def _failure_report_row(
     }
 
 
-def _markdown_cell(value: Any) -> str:
-    if value is None:
-        return ""
-    return str(value).replace("|", "\\|").replace("\n", " ").strip()
-
-
-def _write_markdown_report(
-    path: Path,
+def summarize_results(
     *,
-    rows: list[dict[str, Any]],
-    counts: dict[str, int],
-    model_calls: int,
-    total_tokens: int,
-) -> None:
-    lines = [
-        "# AndroidWorld Result Comparison",
-        "",
-        f"- Planned results: {counts['planned']}",
-        f"- Validator success: {counts['validator_success']}",
-        f"- Validator failure: {counts['validator_failure']}",
-        f"- Non-validator failure: {counts['non_validator_failure']}",
-        f"- Pending: {counts['pending']}",
-        f"- Model calls: {model_calls}",
-        f"- Total tokens: {total_tokens}",
-        "",
-        "| " + " | ".join(RESULT_FIELDS) + " |",
-        "|" + "|".join("---" for _ in RESULT_FIELDS) + "|",
-    ]
-    for row in rows:
-        lines.append(
-            "| "
-            + " | ".join(
-                _markdown_cell(value)
-                for value in (
-                    row.get(field, "")
-                    for field in RESULT_FIELDS
-                )
-            )
-            + " |"
-        )
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def write_batch_report(
-    *,
-    report_root: str | Path,
     memory_index: str | Path,
     outcomes_root: str | Path,
-    source_index: str | Path,
     tasks: Iterable[str],
     methods: Iterable[str],
     devices: Iterable[str],
@@ -560,13 +503,9 @@ def write_batch_report(
     evaluation_seed: int,
     attempt_id: str,
 ) -> dict[str, Any]:
-    """Write one complete per-result report from results and failure outcomes."""
+    """Summarize immutable result conclusions without creating a second table."""
 
-    destination = Path(report_root).expanduser().resolve()
     memory_path = Path(memory_index).expanduser().resolve()
-    source_path = Path(source_index).expanduser().resolve()
-    if not source_path.is_file():
-        raise FileNotFoundError(f"source index missing: {source_path}")
     registered = _registered_result_rows(memory_path)
     outcomes = _outcome_rows(
         Path(outcomes_root).expanduser().resolve(),
@@ -638,44 +577,10 @@ def write_batch_report(
                     }
                     counts["pending"] += 1
                 rows.append(row)
-    destination.mkdir(parents=True, exist_ok=False)
-    detailed_results_jsonl = destination / "details.jsonl"
-    detailed_results_jsonl.write_text(
-        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
-        encoding="utf-8",
-    )
-    public_rows = [
-        compact_result_row(
-            row,
-            source_seed=source_seed,
-            evaluation_seed=evaluation_seed,
-        )
-        for row in rows
-    ]
-    results_jsonl = destination / "results.jsonl"
-    results_jsonl.write_text(
-        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in public_rows),
-        encoding="utf-8",
-    )
-    results_csv = destination / "results.csv"
-    with results_csv.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=list(RESULT_FIELDS))
-        if public_rows:
-            writer.writeheader()
-            writer.writerows(public_rows)
-    model_calls = sum(int(row["model_calls"]) for row in public_rows)
-    total_tokens = sum(int(row["total_tokens"]) for row in public_rows)
-    results_markdown = destination / "results.md"
-    _write_markdown_report(
-        results_markdown,
-        rows=public_rows,
-        counts=counts,
-        model_calls=model_calls,
-        total_tokens=total_tokens,
-    )
+    model_calls = sum(int(row["model_calls"]) for row in rows)
+    total_tokens = sum(int(row["total_tokens"]) for row in rows)
     summary = {
-        "schema_version": "omniflow.androidworld.batch_report.v2",
-        "immutable": True,
+        "schema_version": "omniflow.androidworld.result-summary.v1",
         "attempt_id": str(attempt_id),
         "source_seed": int(source_seed),
         "evaluation_seed": int(evaluation_seed),
@@ -688,17 +593,8 @@ def write_batch_report(
         "outer_wall_sec": round(
             sum(_number(row["outer_wall_sec"]) for row in rows), 6
         ),
-        "results_jsonl": str(results_jsonl),
-        "details_jsonl": str(detailed_results_jsonl),
-        "results_csv": str(results_csv),
-        "results_markdown": str(results_markdown),
     }
-    summary_path = destination / "summary.json"
-    summary_path.write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    return {**summary, "summary": str(summary_path)}
+    return summary
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -727,17 +623,6 @@ def _build_parser() -> argparse.ArgumentParser:
     concluded.add_argument("--source-seed", type=int, required=True)
     concluded.add_argument("--evaluation-seed", type=int, required=True)
 
-    report = subparsers.add_parser("report")
-    report.add_argument("--report-root", required=True)
-    report.add_argument("--memory-index", required=True)
-    report.add_argument("--outcomes-root", required=True)
-    report.add_argument("--source-index", required=True)
-    report.add_argument("--tasks", required=True)
-    report.add_argument("--methods", required=True)
-    report.add_argument("--devices", required=True)
-    report.add_argument("--source-seed", type=int, required=True)
-    report.add_argument("--evaluation-seed", type=int, required=True)
-    report.add_argument("--attempt-id", required=True)
     return parser
 
 
@@ -772,26 +657,14 @@ def main(argv: list[str] | None = None) -> int:
         for method, device in sorted(result):
             print(f"{method}\t{device}")
     else:
-        result = write_batch_report(
-            report_root=args.report_root,
-            memory_index=args.memory_index,
-            outcomes_root=args.outcomes_root,
-            source_index=args.source_index,
-            tasks=tuple(args.tasks.split(",")),
-            methods=tuple(args.methods.split(",")),
-            devices=tuple(args.devices.split(",")),
-            source_seed=args.source_seed,
-            evaluation_seed=args.evaluation_seed,
-            attempt_id=args.attempt_id,
-        )
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        raise AssertionError(f"unsupported_batch_outcome_command:{args.command}")
     return 0
 
 
 __all__ = [
     "concluded_result_keys",
     "record_result_outcome",
-    "write_batch_report",
+    "summarize_results",
 ]
 
 

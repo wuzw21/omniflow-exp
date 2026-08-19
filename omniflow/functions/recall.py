@@ -5,11 +5,8 @@ import re
 from typing import Any, Mapping
 
 from omniflow.core.model import Function, Observation
-from omniflow.transfer.page_embedding import OmniTransferPageEncoder, PageEmbedding
-
 RECALL_AUDIT_VERSION = "omniflow.function-recall.v1"
-PAGE_SIMILARITY_WEIGHT = 0.30
-GOAL_LEXICAL_WEIGHT = 0.70
+GOAL_LEXICAL_WEIGHT = 1.0
 
 
 @dataclass(frozen=True)
@@ -25,12 +22,17 @@ def recall_functions(
     functions: dict[str, Function] | list[Function] | tuple[Function, ...],
     source_states: Mapping[str, Observation | None],
     limit: int = 8,
-    page_encoder: OmniTransferPageEncoder | None = None,
+    page_encoder: object | None = None,
 ) -> RecallResult:
-    """Recall Planner tools using page and lexical evidence without page gating."""
+    """Recall Planner tools from task semantics only.
 
-    encoder = page_encoder or OmniTransferPageEncoder()
-    current_page = _embed_if_available(encoder, observation)
+    Page embeddings are intentionally not part of Function selection.  They are
+    too easy to trigger on an unrelated but visually similar page; OmniTransfer
+    remains the sole mechanism for mapping an action after a Function has been
+    selected.
+    """
+
+    del observation, source_states, page_encoder
     values = functions.values() if isinstance(functions, dict) else functions
     candidates: list[tuple[float, Function, dict[str, Any]]] = []
     decisions: list[dict[str, Any]] = []
@@ -39,9 +41,6 @@ def recall_functions(
         decision = _score_function(
             str(goal),
             function,
-            current_page=current_page,
-            source_states=source_states,
-            encoder=encoder,
         )
         decisions.append(decision)
         candidates.append((float(decision["score"]), function, decision))
@@ -58,21 +57,8 @@ def recall_functions(
         tuple(function for _score, function, _audit in selected),
         {
             "schema_version": RECALL_AUDIT_VERSION,
-            "encoder": {
-                "name": encoder.name,
-                "version": encoder.encoder_version,
-                "dimension": encoder.dimension,
-                "checkpoint_path": str(encoder.checkpoint_path),
-                "checkpoint_sha256": encoder.checkpoint_sha256,
-            },
-            "current_page": {
-                "available": current_page is not None,
-                "element_count": (
-                    current_page.element_count if current_page is not None else 0
-                ),
-            },
+            "selection_policy": "goal_lexical_only",
             "ranking_weights": {
-                "page_similarity": PAGE_SIMILARITY_WEIGHT,
                 "goal_lexical": GOAL_LEXICAL_WEIGHT,
             },
             "candidate_function_ids": [
@@ -86,46 +72,19 @@ def recall_functions(
 def _score_function(
     goal: str,
     function: Function,
-    *,
-    current_page: PageEmbedding | None,
-    source_states: Mapping[str, Observation | None],
-    encoder: OmniTransferPageEncoder,
 ) -> dict[str, Any]:
-    source_state_id = function.steps[0].source_state_id if function.steps else ""
-    source_observation = source_states.get(source_state_id)
-    source_page = _embed_if_available(encoder, source_observation)
-    page_similarity = (
-        current_page.similarity(source_page)
-        if current_page is not None and source_page is not None
-        else 0.0
-    )
     goal_score = _jaccard(
         _tokens(goal),
         _tokens(f"{function.name} {function.description}"),
     )
-    score = (
-        PAGE_SIMILARITY_WEIGHT * page_similarity
-        + GOAL_LEXICAL_WEIGHT * goal_score
-    )
 
     return {
         "function_id": function.id,
-        "source_state_id": source_state_id,
-        "page_similarity": page_similarity,
         "goal_lexical_score": goal_score,
-        "score": score,
+        "score": goal_score,
         "selected": False,
         "rejection_reason": None,
     }
-
-
-def _embed_if_available(
-    encoder: OmniTransferPageEncoder,
-    observation: Observation | None,
-) -> PageEmbedding | None:
-    if observation is None or not str(observation.xml or "").strip():
-        return None
-    return encoder.embed(observation)
 
 
 def _tokens(value: str) -> set[str]:
@@ -148,7 +107,6 @@ def _jaccard(left: set[str], right: set[str]) -> float:
 
 __all__ = [
     "GOAL_LEXICAL_WEIGHT",
-    "PAGE_SIMILARITY_WEIGHT",
     "RECALL_AUDIT_VERSION",
     "RecallResult",
     "recall_functions",

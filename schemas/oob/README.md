@@ -25,10 +25,12 @@ per-rule condition, trigger DSL, step-index trigger, global checker list, or
 default recovery rule.
 
 The offline Agent may author complete semantic Functions through the internal
-split, parameter-binding, and checker-review stages. Split runs once; parameter
-and checker decisions are returned separately for each Function. The core
+split, source-action/parameter, and checker-review stages. Split runs once;
+action/parameter and checker decisions are returned separately for each
+Function. The action stage may include direct source-indexed actions for
+exploration, but only exact RunLog-grounded actions are accepted. The core
 verifies RunLog evidence, validates the schema, and stores the final bundle
-through `save_function`.
+through `save_function`; the complete Function is the only recall candidate.
 
 Canonical actions use relative `0..1000` coordinates. The VLM boundary uses
 pixels in the current display frame, with conversion owned only by

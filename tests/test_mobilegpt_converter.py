@@ -9,7 +9,7 @@ import sys
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from src.integrations.mobilegpt_converter import (
+from src.integrations.mobilegpt import (
     MobileGPTConversionError,
     _load_runlog_trajectory,
     _mobilegpt_action_from_runlog,
@@ -20,7 +20,7 @@ from src.integrations.mobilegpt_converter import (
     validate_mobilegpt_memory,
     write_conversion_failure_audit,
 )
-from src.integrations.mobilegpt_runtime import mobilegpt_compatible_xml
+from src.integrations.mobilegpt_format import encode_xml
 
 MOBILEGPT_ROOT = Path(
     os.environ.get(
@@ -71,6 +71,92 @@ def test_conversion_uses_first_open_app_as_task_app(tmp_path: Path) -> None:
 
     assert trajectory["target_package"] == "com.android.documentsui"
     assert len(trajectory["transitions"]) == 1
+
+
+def test_preflight_accepts_compact_bmoca_runlog_with_state_catalog(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "runlog.json"
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.canonical_run_log.v1",
+                "run_id": "bmoca-source",
+                "goal": "Save the item",
+                "status": "succeeded",
+                "success": True,
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "before_state_id": "before",
+                        "action": {
+                            "tool": "click",
+                            "args": {"x": 999, "y": 999},
+                        },
+                        "result": {"success": True},
+                        "after_state_id": "before",
+                    },
+                    {
+                        "step_index": 1,
+                        "before_state_id": "before",
+                        "action": {
+                            "tool": "click",
+                            "args": {"x": 500, "y": 250},
+                        },
+                        "result": {"success": True},
+                        "after_state_id": "after",
+                    }
+                ],
+                "diagnostics": {
+                    "official_success": True,
+                    "task_id": "example/save_item",
+                },
+                "final_state_id": "after",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "transfer_states.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.transfer-state-catalog.v1",
+                "run_id": "bmoca-source",
+                "states": {
+                    "before": {
+                        "state_id": "before",
+                        "xml": (
+                            '<hierarchy bounds="[0,0][200,400]">'
+                            '<node package="com.example" clickable="true" '
+                            'bounds="[80,80][120,120]" /></hierarchy>'
+                        ),
+                        "package_name": "com.example",
+                        "activity_name": ".MainActivity",
+                        "display": {"width": 200, "height": 400},
+                    },
+                    "after": {
+                        "state_id": "after",
+                        "xml": '<hierarchy bounds="[0,0][200,400]" />',
+                        "package_name": "com.example",
+                        "activity_name": ".MainActivity",
+                        "display": {"width": 200, "height": 400},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = preflight_runlog_conversion(source)
+    trajectory = _load_runlog_trajectory(source)
+
+    assert report["ready"] is True
+    assert report["transition_count"] == 1
+    assert trajectory["task_name"] == "example/save_item"
+    assert trajectory["transitions"][0].action == {
+        "action_type": "click",
+        "x": 100,
+        "y": 100,
+    }
 
 
 def test_open_app_only_conversion_uses_final_observation_as_finish_page(
@@ -245,7 +331,7 @@ def test_conversion_writes_runlog_action_and_official_reader_loads_it(
         "0": ["source_step_000_click", "finish"]
     }
     assert first_action["name"] == "click"
-    assert first_action["parameters"]["text"] == "<target_text__-1>"
+    assert first_action["parameters"]["index"] == "0"
     assert json.loads(action_rows[1]["action"])["name"] == "finish"
     assert result["validated_transition_count"] == 1
     assert result["official_reader_validation"]["loadable"] is True
@@ -305,7 +391,47 @@ def test_direct_conversion_uses_runlog_actions_without_semantic_agents(
     assert payload["select_agent_used"] is False
     assert payload["derive_agent_fallback_allowed"] is True
     assert payload["validated_transition_count"] == 2
-    assert result["official_reader_validation"]["source_direct_hit_count"] == 2
+    assert result["official_reader_validation"]["source_direct_hit_count"] == 1
+
+
+def test_runlog_index_click_is_grounded_from_ui_element_bounds(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.json"
+    source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [{"action_type": "click", "index": 1}],
+                observations=[
+                    androidworld_state(
+                        "indexed",
+                        forest=(
+                            '<hierarchy><node text="Get started" '
+                            'clickable="true" bounds="[20,30][80,90]" />'
+                            "</hierarchy>"
+                        ),
+                        ui_elements=[
+                            {},
+                            {
+                                "bbox_pixels": {
+                                    "x_min": 20,
+                                    "y_min": 30,
+                                    "x_max": 80,
+                                    "y_max": 90,
+                                }
+                            },
+                        ],
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    trajectory = _load_runlog_trajectory(source)
+
+    assert trajectory["transitions"][0].action["x"] == 50
+    assert trajectory["transitions"][0].action["y"] == 60
 
 
 def test_direct_conversion_grounds_container_click_to_visible_child(
@@ -339,7 +465,7 @@ def test_direct_conversion_grounds_container_click_to_visible_child(
     assert row["selected_subtask"]["parameters"] == {
         "target_text": "task.html"
     }
-    assert result["official_reader_validation"]["source_direct_hit_count"] == 1
+    assert result["official_reader_validation"]["source_direct_hit_count"] == 0
 
 
 def test_conversion_preserves_native_example_when_action_cannot_adapt(
@@ -378,7 +504,7 @@ def test_conversion_preserves_native_example_when_action_cannot_adapt(
 
     assert response["action"] == {
         "name": "click",
-        "parameters": {"index": "2"},
+        "parameters": {"index": "3"},
     }
     assert payload["derive_agent_fallback_allowed"] is True
     assert payload["source_example_fallback_count"] == 1
@@ -419,8 +545,7 @@ def test_conversion_grounds_coordinate_free_input_to_focused_field(
         action_rows = list(csv.DictReader(handle))
     first_action = json.loads(action_rows[0]["action"])
     assert first_action["name"] == "input"
-    assert first_action["parameters"]["input_text"] == "<input_text__-1>"
-    assert first_action["parameters"]["text"] == "<target_text__-1>"
+    assert first_action["parameters"]["input_text"] == "5558642097"
 
 
 def test_conversion_grounds_input_from_verified_text_change(
@@ -450,9 +575,7 @@ def test_conversion_grounds_input_from_verified_text_change(
     server_root = MOBILEGPT_ROOT / "Server"
     if str(server_root) not in sys.path:
         sys.path.insert(0, str(server_root))
-    from screenParser.parseXML import reformat_xml
-
-    parsed_xml = reformat_xml(mobilegpt_compatible_xml(transition.forest))
+    parsed_xml, _, _ = encode_xml(transition.forest, mobilegpt_root=MOBILEGPT_ROOT)
     target = _target_element(
         transition.action,
         parsed_xml,
@@ -489,9 +612,7 @@ def test_conversion_preserves_empty_input_for_verified_text_change(
     server_root = MOBILEGPT_ROOT / "Server"
     if str(server_root) not in sys.path:
         sys.path.insert(0, str(server_root))
-    from screenParser.parseXML import reformat_xml
-
-    parsed_xml = reformat_xml(mobilegpt_compatible_xml(transition.forest))
+    parsed_xml, _, _ = encode_xml(transition.forest, mobilegpt_root=MOBILEGPT_ROOT)
     target = _target_element(
         transition.action,
         parsed_xml,
@@ -528,9 +649,7 @@ def test_anonymous_verified_input_avoids_unrelated_children_generalization(
     server_root = MOBILEGPT_ROOT / "Server"
     if str(server_root) not in sys.path:
         sys.path.insert(0, str(server_root))
-    from screenParser.parseXML import reformat_xml
-
-    parsed_xml = reformat_xml(mobilegpt_compatible_xml(transition.forest))
+    parsed_xml, _, _ = encode_xml(transition.forest, mobilegpt_root=MOBILEGPT_ROOT)
     converted, _, _ = _mobilegpt_action_from_runlog(
         transition,
         parsed_xml,
@@ -575,9 +694,7 @@ def test_action_generalization_avoids_nested_native_placeholders(
     server_root = MOBILEGPT_ROOT / "Server"
     if str(server_root) not in sys.path:
         sys.path.insert(0, str(server_root))
-    from screenParser.parseXML import reformat_xml
-
-    parsed_xml = reformat_xml(mobilegpt_compatible_xml(transition.forest))
+    parsed_xml, _, _ = encode_xml(transition.forest, mobilegpt_root=MOBILEGPT_ROOT)
     calls: list[dict[str, str]] = []
 
     def generalize(action: dict, subtask: dict, _screen: str) -> dict:
@@ -606,13 +723,8 @@ def test_action_generalization_avoids_nested_native_placeholders(
         generalize_action=generalize,
     )
 
-    assert calls == [
-        {},
-        {"target_text": "Description"},
-        {"input_text": "A useful description"},
-    ]
+    assert calls == []
     assert converted["parameters"]["input_text"] == "<input_text__-1>"
-    assert converted["parameters"]["text"] == "<target_text__-1>"
 
 
 def test_action_generalization_rejects_invalid_native_placeholder(
@@ -630,9 +742,7 @@ def test_action_generalization_rejects_invalid_native_placeholder(
     server_root = MOBILEGPT_ROOT / "Server"
     if str(server_root) not in sys.path:
         sys.path.insert(0, str(server_root))
-    from screenParser.parseXML import reformat_xml
-
-    parsed_xml = reformat_xml(mobilegpt_compatible_xml(transition.forest))
+    parsed_xml, _, _ = encode_xml(transition.forest, mobilegpt_root=MOBILEGPT_ROOT)
 
     with pytest.raises(
         MobileGPTConversionError,
@@ -744,7 +854,7 @@ def test_conversion_preserves_repeated_runlog_actions(
         "0": ["source_step_000_click", "source_step_001_click", "finish"]
     }
     assert [int(row["step"]) for row in action_rows] == [0, 1, 0, 1]
-    assert result["official_reader_validation"]["source_direct_hit_count"] == 2
+    assert result["official_reader_validation"]["source_direct_hit_count"] == 0
 
 
 def test_conversion_rejects_removed_semantic_mode(

@@ -10,20 +10,25 @@ from pathlib import Path
 import time
 from typing import Any
 
-from src.experiment import androidworld as pipeline
 from src.experiment.mobilegpt_contract import (
+    MOBILEGPT_EMBEDDING_MODEL,
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
 )
+from src.experiment import run_task as pipeline
+from src.experiment.paths import sha256_file
+from src.experiment.source_records import CanonicalRunLog
 from src.experiment.protocol import SOURCE_SEED
-from src.integrations.mobilegpt_converter import (
+from src.integrations.mobilegpt import (
     MobileGPTConversionError,
     convert_runlog_to_mobilegpt_memory,
     preflight_runlog_conversion,
+    validate_prepared_memory,
     write_conversion_failure_audit,
 )
+from src.integrations import mobilegpt_memory
 from src.integrations.runlog import import_run_log
 
 _IGNORED_SOURCE_PACKAGES = {
@@ -37,10 +42,10 @@ def load_canonical_source_item(
     index_path: str | Path,
     *,
     task_name: str,
-) -> pipeline.ArchivedRunLog:
+) -> CanonicalRunLog:
     matches = [
         item
-        for item in pipeline.load_archive_index(index_path)
+        for item in pipeline.load_canonical_source_index(index_path)
         if item.task == str(task_name)
     ]
     if len(matches) != 1:
@@ -54,7 +59,10 @@ def load_canonical_source_item(
         raise ValueError(
             f"mobilegpt_source_official_success_required:task={task_name}"
         )
-    if source_kind and source_kind != "androidworld_validator_success_source_runlog":
+    if source_kind and source_kind not in {
+        "androidworld_validator_success_source_runlog",
+        "one_time_canonicalized_seed111_screenshot_source",
+    }:
         raise ValueError(
             "mobilegpt_source_kind_invalid:"
             f"task={task_name}:actual={source_kind}"
@@ -68,7 +76,7 @@ def load_canonical_source_item(
         or item.meta.get("source_run_log_sha256")
         or ""
     ).strip()
-    actual_sha256 = pipeline._file_sha256(item.source_run_log)
+    actual_sha256 = sha256_file(item.source_run_log)
     if not expected_sha256 or expected_sha256 != actual_sha256:
         raise ValueError(
             f"mobilegpt_source_runlog_hash_mismatch:task={task_name}"
@@ -89,7 +97,7 @@ def load_canonical_source_item(
 
 def _mobilegpt_source_target(
     *,
-    item: pipeline.ArchivedRunLog,
+    item: CanonicalRunLog,
     source: dict[str, Any],
 ) -> dict[str, str]:
     inferred = pipeline._infer_mobilegpt_target_from_source_run_log(item)
@@ -130,10 +138,10 @@ def _mobilegpt_source_target(
 
 
 def _source_preflight(
-    item: pipeline.ArchivedRunLog,
+    item: CanonicalRunLog,
 ) -> tuple[Path, tuple[str, ...], dict[str, Any], dict[str, str]]:
     source_run_log = item.source_run_log
-    source_sha256 = pipeline._file_sha256(source_run_log)
+    source_sha256 = sha256_file(source_run_log)
     source = import_run_log(
         json.loads(source_run_log.read_text(encoding="utf-8"))
     )
@@ -149,7 +157,7 @@ def _source_preflight(
             **dict(report.get("failure_details") or {}),
         )
     audit = {
-        "schema_version": "omniflow.mobilegpt-conversion-preflight.v1",
+        "schema_version": "omniflow.mobilegpt.source-check.v2",
         "grounding_source": "canonical_androidworld_run_log",
         "source_run_log": str(source_run_log),
         "source_run_log_sha256": source_sha256,
@@ -169,7 +177,7 @@ def preflight_mobilegpt_source(
     _, _, source_audit, target_info = _source_preflight(item)
     report = dict(source_audit["report"])
     return {
-        "schema_version": "omniflow.mobilegpt-source-preflight.v4",
+        "schema_version": "omniflow.mobilegpt.source-check.v2",
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
         "source_method": MOBILEGPT_SOURCE_METHOD,
@@ -209,7 +217,7 @@ def validate_mobilegpt_source_memory(
     schema_version = str(manifest.get("schema_version") or "")
     if schema_version != MOBILEGPT_MEMORY_SCHEMA:
         raise ValueError("mobilegpt_source_memory_schema_invalid")
-    validated = pipeline.validate_mobilegpt_adapted_memory(
+    validated = validate_prepared_memory(
         memory_root,
         task_name=item.task,
         source_seed=SOURCE_SEED,
@@ -219,7 +227,7 @@ def validate_mobilegpt_source_memory(
         expected_source_method=MOBILEGPT_SOURCE_METHOD,
     )
     result = {
-        "schema_version": "omniflow.mobilegpt-source-validation.v4",
+        "schema_version": "omniflow.mobilegpt.memory-check.v2",
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
         "source_method": MOBILEGPT_SOURCE_METHOD,
@@ -242,13 +250,13 @@ def _register_mobilegpt_memory(
     bundle_root: str | Path,
     task_name: str,
 ) -> dict[str, Any]:
-    from src.experiment.artifact_memory import refresh_artifact_memory_from_pointer
+    from src.experiment.data_index import refresh_data_index_from_pointer
 
-    report = refresh_artifact_memory_from_pointer(
+    report = refresh_data_index_from_pointer(
         memory_index=memory_index,
-        additional_mobilegpt_memory_roots=(bundle_root,),
+        additional_prepared_memory_roots=(bundle_root,),
     )
-    registered = report.get("canonical", {}).get("mobilegpt_memories", {}).get(
+    registered = report.get("canonical", {}).get("prepared_memories", {}).get(
         str(task_name)
     )
     if not isinstance(registered, dict):
@@ -263,14 +271,14 @@ def prepare_mobilegpt_source_memory(
     mobilegpt_root: str | Path,
     output_root: str | Path,
     model: str,
-    embedding_model: str = "text-embedding-v4",
+    embedding_model: str = MOBILEGPT_EMBEDDING_MODEL,
     memory_index: str | Path | None = None,
 ) -> dict[str, Any]:
     normalized_model = str(model or "").strip()
     if not normalized_model:
         raise ValueError("mobilegpt_source_model_required")
     normalized_embedding_model = (
-        str(embedding_model or "").strip() or "text-embedding-v4"
+        str(embedding_model or "").strip() or MOBILEGPT_EMBEDDING_MODEL
     )
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_run_log, _, source_audit, target_info = _source_preflight(item)
@@ -286,7 +294,7 @@ def prepare_mobilegpt_source_memory(
     )
     result.update(
         {
-            "schema_version": "omniflow.mobilegpt-source-prepare.v7",
+            "schema_version": "omniflow.mobilegpt.memory-prepare.v2",
             "source_method": MOBILEGPT_SOURCE_METHOD,
             "learning_mode": MOBILEGPT_LEARNING_MODE,
             "teacher_forcing": False,
@@ -316,7 +324,7 @@ def convert_runlog_to_mobilegpt_bundle(
     mobilegpt_root: str | Path,
     output_root: str | Path,
     model: str,
-    embedding_model: str = "text-embedding-v4",
+    embedding_model: str = MOBILEGPT_EMBEDDING_MODEL,
     target_package: str = "",
     target_app: str = "",
     preflight_audit: dict[str, Any] | None = None,
@@ -327,7 +335,7 @@ def convert_runlog_to_mobilegpt_bundle(
     if not normalized_model:
         raise ValueError("mobilegpt_source_model_required")
     normalized_embedding_model = (
-        str(embedding_model or "").strip() or "text-embedding-v4"
+        str(embedding_model or "").strip() or MOBILEGPT_EMBEDDING_MODEL
     )
     source_path = Path(source_run_log).expanduser().resolve()
     source = import_run_log(json.loads(source_path.read_text(encoding="utf-8")))
@@ -349,10 +357,10 @@ def convert_runlog_to_mobilegpt_bundle(
             **dict(report.get("failure_details") or {}),
         )
     source_audit = preflight_audit or {
-        "schema_version": "omniflow.mobilegpt-conversion-preflight.v1",
+        "schema_version": "omniflow.mobilegpt.source-check.v2",
         "grounding_source": "canonical_androidworld_run_log",
         "source_run_log": str(source_path),
-        "source_run_log_sha256": pipeline._file_sha256(source_path),
+        "source_run_log_sha256": sha256_file(source_path),
         "actions_supplied_to_mobilegpt": True,
         "function_store_used": False,
         "report": report,
@@ -397,7 +405,7 @@ def convert_runlog_to_mobilegpt_bundle(
         )
         raise
     wall_sec = round(time.monotonic() - started, 6)
-    stats_summary = pipeline.summarize_mobilegpt_stats(stats_path)
+    stats_summary = mobilegpt_memory.summarize_mobilegpt_stats(stats_path)
     stats_summary_path.write_text(
         json.dumps(stats_summary, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -416,8 +424,8 @@ def convert_runlog_to_mobilegpt_bundle(
         memory_schema=MOBILEGPT_MEMORY_SCHEMA,
     )
     return {
-        "schema_version": "omniflow.runlog-memory-conversion.v1",
-        "method": "mobilegpt_offline_retrieval",
+        "schema_version": "omniflow.mobilegpt.memory-prepare.v2",
+        "method": "mobilegpt",
         "task_name": str(source["task_name"]),
         "source_seed": SOURCE_SEED,
         "source_run_log": str(source_path),
@@ -443,7 +451,7 @@ def _write_failure_marker(output_root: str | Path, error: BaseException) -> None
         return
     stats_path = root / "source_stats.jsonl"
     stats_summary = (
-        pipeline.summarize_mobilegpt_stats(stats_path)
+        mobilegpt_memory.summarize_mobilegpt_stats(stats_path)
         if stats_path.is_file()
         else {}
     )
@@ -468,7 +476,7 @@ def _write_failure_marker(output_root: str | Path, error: BaseException) -> None
     marker.write_text(
         json.dumps(
             {
-                "schema_version": "omniflow.mobilegpt-source-failure.v1",
+                "schema_version": "omniflow.mobilegpt.memory-failure.v2",
                 "failed_at": datetime.datetime.now(
                     datetime.timezone.utc
                 ).isoformat(),
@@ -484,256 +492,6 @@ def _write_failure_marker(output_root: str | Path, error: BaseException) -> None
         + "\n",
         encoding="utf-8",
     )
-
-
-def _selected_source_tasks(
-    index_path: str | Path,
-    task_names: Sequence[str] = (),
-) -> list[str]:
-    path = Path(index_path).expanduser().resolve()
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError(f"mobilegpt_source_index_invalid:{path}")
-    available = [str(name) for name in payload]
-    if not task_names:
-        return available
-    requested = [str(name).strip() for name in task_names]
-    if any(not name for name in requested):
-        raise ValueError("mobilegpt_source_task_filter_empty")
-    if len(set(requested)) != len(requested):
-        raise ValueError("mobilegpt_source_task_filter_duplicate")
-    unknown = [name for name in requested if name not in payload]
-    if unknown:
-        raise ValueError("mobilegpt_source_task_unknown:" + ",".join(unknown))
-    return requested
-
-
-def preflight_mobilegpt_source_batch(
-    *,
-    index_path: str | Path,
-    task_names: Sequence[str] = (),
-) -> dict[str, Any]:
-    rows: list[dict[str, Any]] = []
-    for task_name in _selected_source_tasks(index_path, task_names):
-        try:
-            result = preflight_mobilegpt_source(
-                index_path=index_path,
-                task_name=task_name,
-            )
-        except BaseException as error:
-            rows.append(
-                {
-                    "task_name": task_name,
-                    "ready": False,
-                    "error_type": type(error).__name__,
-                    "error": str(error),
-                    "failure_code": (
-                        error.code
-                        if isinstance(error, MobileGPTConversionError)
-                        else type(error).__name__
-                    ),
-                    "failure_details": (
-                        dict(error.details)
-                        if isinstance(error, MobileGPTConversionError)
-                        else {}
-                    ),
-                }
-            )
-            continue
-        rows.append(
-            {
-                "task_name": task_name,
-                "ready": True,
-                "transition_count": int(result["transition_count"]),
-                "action_type_counts": dict(result["action_type_counts"]),
-                "target_package": str(result["target_package"]),
-            }
-        )
-    ready = sum(row["ready"] is True for row in rows)
-    return {
-        "schema_version": "omniflow.mobilegpt-source-batch-preflight.v2",
-        "planned": len(rows),
-        "ready": ready,
-        "blocked": len(rows) - ready,
-        "model_calls": 0,
-        "source_emulator_used": False,
-        "rows": rows,
-    }
-
-
-def _batch_task_evidence(task_root: Path) -> dict[str, Any]:
-    manifest_path = task_root / MOBILEGPT_MEMORY_MANIFEST
-    failure_path = task_root / "prep_failure.json"
-    if manifest_path.is_file():
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        source_stats = dict(manifest.get("source_stats") or {})
-        return {
-            "status": "sealed",
-            "manifest": str(manifest_path),
-            "schema_version": str(manifest.get("schema_version") or ""),
-            "model_calls": int(source_stats.get("model_calls") or 0),
-            "prompt_tokens": int(source_stats.get("prompt_tokens") or 0),
-            "completion_tokens": int(source_stats.get("completion_tokens") or 0),
-            "total_tokens": int(source_stats.get("total_tokens") or 0),
-            "task_elapsed_sec": float(source_stats.get("task_elapsed_sec") or 0.0),
-            "wall_sec": float(source_stats.get("wall_sec") or 0.0),
-            "memory_inventory": dict(
-                (manifest.get("memory") or {}).get("inventory") or {}
-            ),
-        }
-    if failure_path.is_file():
-        failure = json.loads(failure_path.read_text(encoding="utf-8"))
-        stats = dict(failure.get("stats") or {})
-        trajectory = dict(failure.get("trajectory_audit") or {})
-        return {
-            "status": "failed",
-            "failure": str(failure_path),
-            "error_type": str(failure.get("error_type") or ""),
-            "error": str(failure.get("error") or ""),
-            "model_calls": int(stats.get("model_calls") or 0),
-            "prompt_tokens": int(stats.get("prompt_tokens") or 0),
-            "completion_tokens": int(stats.get("completion_tokens") or 0),
-            "total_tokens": int(stats.get("total_tokens") or 0),
-            "task_elapsed_sec": float(stats.get("task_elapsed_sec") or 0.0),
-            "wall_sec": float(trajectory.get("wall_sec") or 0.0),
-            "transition_count": int(trajectory.get("transition_count") or 0),
-            "validated_transition_count": int(
-                trajectory.get("validated_transition_count") or 0
-            ),
-            "failure_code": str(trajectory.get("failure_code") or ""),
-            "failure_details": dict(trajectory.get("failure_details") or {}),
-        }
-    return {"status": "incomplete"}
-
-
-def _write_batch_report(path: Path, report: dict[str, Any]) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    temporary.replace(path)
-
-
-def prepare_mobilegpt_source_batch(
-    *,
-    index_path: str | Path,
-    mobilegpt_root: str | Path,
-    output_root: str | Path,
-    model: str,
-    memory_index: str | Path,
-    task_names: Sequence[str] = (),
-) -> dict[str, Any]:
-    from src.experiment.artifact_memory import canonical_mobilegpt_memory_from_memory
-
-    tasks = _selected_source_tasks(index_path, task_names)
-    batch_root = Path(output_root).expanduser().resolve()
-    batch_root.mkdir(parents=True, exist_ok=True)
-    manifest_path = batch_root / "batch_manifest.json"
-    expected_manifest = {
-        "schema_version": "omniflow.mobilegpt-source-batch.v3",
-        "source_memory_schema": MOBILEGPT_MEMORY_SCHEMA,
-        "source_method": MOBILEGPT_SOURCE_METHOD,
-        "model": str(model),
-        "index_path": str(Path(index_path).expanduser().resolve()),
-        "memory_index": str(Path(memory_index).expanduser().resolve()),
-        "tasks": tasks,
-        "model_max_attempts": 1,
-        "source_emulator_used": False,
-    }
-    if manifest_path.exists():
-        if json.loads(manifest_path.read_text(encoding="utf-8")) != expected_manifest:
-            raise ValueError(f"mobilegpt_source_batch_manifest_mismatch:{manifest_path}")
-    else:
-        manifest_path.write_text(
-            json.dumps(expected_manifest, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-    rows: list[dict[str, Any]] = []
-    report_path = batch_root / "batch_report.json"
-    for ordinal, task_name in enumerate(tasks, start=1):
-        canonical = canonical_mobilegpt_memory_from_memory(
-            memory_index=memory_index,
-            task_name=task_name,
-        )
-        task_root = batch_root / task_name
-        if (
-            canonical is not None
-            and canonical.get("schema_version") == MOBILEGPT_MEMORY_SCHEMA
-            and canonical.get("source_method") == MOBILEGPT_SOURCE_METHOD
-        ):
-            row = {
-                "task_name": task_name,
-                "ordinal": ordinal,
-                "status": "canonical_skipped",
-                "memory_root": str(canonical["memory_root"]),
-                "memory_sha256": str(canonical["memory_sha256"]),
-            }
-        elif task_root.exists():
-            evidence = _batch_task_evidence(task_root)
-            if evidence["status"] == "sealed":
-                validate_mobilegpt_source_memory(
-                    index_path=index_path,
-                    task_name=task_name,
-                    memory_root=task_root / "memory",
-                    model=model,
-                    memory_index=memory_index,
-                )
-            elif evidence["status"] == "incomplete":
-                _write_failure_marker(
-                    task_root,
-                    RuntimeError("immutable_mobilegpt_source_attempt_incomplete"),
-                )
-                evidence = _batch_task_evidence(task_root)
-            row = {"task_name": task_name, "ordinal": ordinal, **evidence}
-        else:
-            try:
-                preflight_mobilegpt_source(
-                    index_path=index_path,
-                    task_name=task_name,
-                )
-            except BaseException as error:
-                task_root.mkdir(parents=True, exist_ok=False)
-                _write_failure_marker(task_root, error)
-            else:
-                try:
-                    prepare_mobilegpt_source_memory(
-                        index_path=index_path,
-                        task_name=task_name,
-                        mobilegpt_root=mobilegpt_root,
-                        output_root=task_root,
-                        model=model,
-                        memory_index=memory_index,
-                    )
-                except BaseException as error:
-                    _write_failure_marker(task_root, error)
-            row = {
-                "task_name": task_name,
-                "ordinal": ordinal,
-                **_batch_task_evidence(task_root),
-            }
-        rows.append(row)
-        counts = {
-            "planned": len(tasks),
-            "processed": len(rows),
-            "pending": len(tasks) - len(rows),
-            "sealed": sum(row["status"] == "sealed" for row in rows),
-            "canonical_skipped": sum(
-                row["status"] == "canonical_skipped" for row in rows
-            ),
-            "failed": sum(row["status"] == "failed" for row in rows),
-        }
-        _write_batch_report(
-            report_path,
-            {
-                "schema_version": "omniflow.mobilegpt-source-batch-report.v3",
-                "batch_root": str(batch_root),
-                "complete": counts["pending"] == 0,
-                "counts": counts,
-                "rows": rows,
-            },
-        )
-    return json.loads(report_path.read_text(encoding="utf-8"))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -755,16 +513,6 @@ def build_parser() -> argparse.ArgumentParser:
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument("--index", required=True)
     preflight.add_argument("--task", required=True)
-    preflight_batch = subparsers.add_parser("preflight-batch")
-    preflight_batch.add_argument("--index", required=True)
-    preflight_batch.add_argument("--task", action="append", default=[])
-    batch = subparsers.add_parser("batch")
-    batch.add_argument("--index", required=True)
-    batch.add_argument("--mobilegpt-root", required=True)
-    batch.add_argument("--output-root", required=True)
-    batch.add_argument("--model", required=True)
-    batch.add_argument("--memory-index", required=True)
-    batch.add_argument("--task", action="append", default=[])
     return parser
 
 
@@ -793,20 +541,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 index_path=args.index,
                 task_name=args.task,
             )
-        elif args.command == "preflight-batch":
-            result = preflight_mobilegpt_source_batch(
-                index_path=args.index,
-                task_names=args.task,
-            )
         else:
-            result = prepare_mobilegpt_source_batch(
-                index_path=args.index,
-                mobilegpt_root=args.mobilegpt_root,
-                output_root=args.output_root,
-                model=args.model,
-                memory_index=args.memory_index,
-                task_names=args.task,
-            )
+            raise ValueError(f"unsupported_mobilegpt_source_command:{args.command}")
     except BaseException as error:
         if args.command == "prepare":
             _write_failure_marker(args.output_root, error)

@@ -30,7 +30,7 @@ from omniflow.vlm.planner import (
     parse_model_turn_response,
 )
 from omniflow.vlm_coordinates import canonical_action_to_screen_pixels
-from src.integrations.android_world import launch as androidworld_launch
+from src.integrations.android_world import run_episode as androidworld_run_episode
 from src.integrations.android_world.agent import (
     _TaskHost,
     build_agent,
@@ -1832,6 +1832,7 @@ def test_androidworld_launcher_configures_one_unified_planner(
     monkeypatch,
 ) -> None:
     planner_options: dict[str, object] = {}
+    performance_metrics = object()
 
     class CapturingPlanner:
         def __init__(self, **options: object) -> None:
@@ -1839,42 +1840,43 @@ def test_androidworld_launcher_configures_one_unified_planner(
 
     monkeypatch.setattr("omniflow.vlm.planner.VLMPlanner", CapturingPlanner)
     monkeypatch.setattr(
-        androidworld_launch,
+        androidworld_run_episode,
         "build_agent",
         lambda **options: SimpleNamespace(**options),
     )
     monkeypatch.setenv("OPENAI_API_KEY", "not-required")
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.setenv("LLMTHU_API_KEY", "unified-key")
-    monkeypatch.setenv("LLMTHU_BASE_URL", "https://llmapi.example/v1")
 
-    flow = androidworld_launch._build_launch_agent(
+    flow = androidworld_run_episode._build_launch_agent(
         agent="omniflow",
         env=SimpleNamespace(),
         store_path="store.json",
         adb_serial="emulator-5554",
         planner_provider="openai",
         planner_model="test-model",
+        performance_metrics=performance_metrics,
     )
 
     assert planner_options["api_key"] == "unified-key"
-    assert planner_options["base_url"] == "https://llmapi.example/v1"
+    assert planner_options["base_url"] == "https://llmapi.paratera.com/v1"
     assert flow.planner is not None
+    assert flow.performance_metrics is performance_metrics
 
 
 def test_llmthu_endpoint_profile_ignores_conflicting_openai_variables() -> None:
     api_key, base_url = resolve_openai_compatible_config(
+        base_url="https://llmapi.paratera.com/v1",
         environment={
             "OPENAI_API_KEY": "dashscope-key",
             "OPENAI_BASE_URL": "https://dashscope.example/v1",
             "LLMTHU_API_KEY": "llmthu-key",
-            "LLMTHU_BASE_URL": "https://llmthu.example/v1",
         },
         profile="llmthu",
     )
 
     assert api_key == "llmthu-key"
-    assert base_url == "https://llmthu.example/v1"
+    assert base_url == "https://llmapi.paratera.com/v1"
 
 
 def test_llmthu_endpoint_profile_does_not_fall_back_to_openai() -> None:

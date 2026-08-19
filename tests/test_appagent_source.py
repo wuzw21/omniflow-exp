@@ -11,10 +11,10 @@ from PIL import Image
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from src.experiment import androidworld as pipeline
+from src.experiment import run_task as pipeline
 from src.experiment import appagent_source
-from src.experiment.source_assets import convert_runlog_memory
-from src.integrations import appagent_adapter
+from src.experiment.source_records import CanonicalRunLog
+from src.integrations import appagent as appagent_adapter
 
 
 def _write_appagent_teacher_source(
@@ -29,7 +29,7 @@ def _write_appagent_teacher_source(
     teacher_source.write_text(
         json.dumps(
             {
-                "schema_version": appagent_adapter.APPAGENT_TEACHER_SOURCE_SCHEMA,
+                "schema_version": appagent_adapter.APPAGENT_SOURCE_SCHEMA,
                 "task_name": task_name,
                 "source_seed": 111,
                 "source_run_id": "source",
@@ -666,7 +666,7 @@ def _write_source_index(root: Path) -> Path:
                     "replay_seed": 111,
                     "step_count": 1,
                     "retained_source_run_log": str(source_run_log),
-                    "method": "ours",
+                    "method": "omniflow",
                     "latest_official_success_source": True,
                     "source_kind": (
                         "androidworld_validator_success_source_runlog"
@@ -705,10 +705,10 @@ def test_appagent_preflight_uses_canonical_runlog_not_store_provenance(
     )
 
     assert result["ready"] is True
-    assert result["source_run_log"] == str(
+    assert result["source"]["run_log"] == str(
         (tmp_path / "source" / "source.run_log.json").resolve()
     )
-    assert result["grounding"]["grounding_source"] == (
+    assert result["grounding"]["source"] == (
         "canonical_androidworld_run_log"
     )
 
@@ -753,21 +753,21 @@ def test_appagent_source_generation_is_offline_conversion(
     bundle = tmp_path / "bundle"
     captured: dict[str, object] = {}
 
-    def convert(method: str, **kwargs: object) -> dict[str, object]:
-        captured.update({"method": method, **kwargs})
+    def convert(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
         return {
             "task_name": "SystemBluetoothTurnOn",
             "source_run_log": str(kwargs["source_run_log"]),
-            "memory_root": str(kwargs["output_root"]),
+            "memory_root": str(kwargs["memory_root"]),
             "manifest": {"source_method": kwargs["source_method"]},
         }
 
     monkeypatch.setattr(
-        "src.experiment.source_assets.convert_runlog_memory",
+        "src.experiment.appagent_source.convert_runlog_to_appagent_memory",
         convert,
     )
 
-    result = appagent_source.prepare_appagent_demo_memory(
+    result = appagent_source.prepare_appagent_memory(
         index_path=index,
         task_name="SystemBluetoothTurnOn",
         appagent_root=tmp_path / "appagent",
@@ -777,16 +777,15 @@ def test_appagent_source_generation_is_offline_conversion(
         evidence_roots=[tmp_path / "unused-old-evidence"],
     )
 
-    assert captured["method"] == "appagent_demo"
-    assert captured["source_method"] == "ours"
-    assert captured["upstream_root"] == tmp_path / "appagent"
-    assert captured["output_root"] == bundle
-    assert result["source_method"] == "ours"
+    assert captured["source_method"] == "omniflow"
+    assert captured["appagent_root"] == tmp_path / "appagent"
+    assert captured["memory_root"] == bundle
+    assert result["source_method"] == "omniflow"
     assert result["source_emulator_used"] is False
     assert result["native_memory_evidence"] is None
 
 
-def test_convert_runlog_memory_builds_native_appagent_demo(
+def test_appagent_source_builds_native_memory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -891,11 +890,10 @@ def test_convert_runlog_memory_builds_native_appagent_demo(
         generate_docs,
     )
 
-    result = convert_runlog_memory(
-        "appagent_demo",
+    result = appagent_source.convert_runlog_to_appagent_memory(
         source_run_log=source,
-        output_root=tmp_path / "bundle",
-        upstream_root=tmp_path / "appagent",
+        memory_root=tmp_path / "bundle",
+        appagent_root=tmp_path / "appagent",
         model="qwen3-vl-plus",
     )
 
@@ -909,7 +907,7 @@ def test_convert_runlog_memory_builds_native_appagent_demo(
     assert len(list((demo / "raw_screenshots").glob("*.png"))) == 2
 
 
-def test_convert_runlog_memory_reports_missing_appagent_screenshot(
+def test_appagent_source_rejects_missing_screenshot(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "source.run_log.json"
@@ -938,11 +936,10 @@ def test_convert_runlog_memory_reports_missing_appagent_screenshot(
         ValueError,
         match="appagent_source_screenshot_missing:0:before",
     ):
-        convert_runlog_memory(
-            "appagent_demo",
+        appagent_source.convert_runlog_to_appagent_memory(
             source_run_log=source,
-            output_root=tmp_path / "bundle",
-            upstream_root=tmp_path / "appagent",
+            memory_root=tmp_path / "bundle",
+            appagent_root=tmp_path / "appagent",
             model="qwen3-vl-plus",
         )
 
@@ -1033,6 +1030,13 @@ def test_androidworld_ui_elements_supply_appagent_package() -> None:
     ) == "com.google.android.contacts"
 
 
+def test_appagent_treats_source_app_ime_as_auxiliary_window() -> None:
+    assert appagent_source._appagent_demo_package(
+        {"package_name": "com.google.android.inputmethod.latin"},
+        "com.dimowner.audiorecorder",
+    ) == "com.dimowner.audiorecorder"
+
+
 def test_appagent_source_failure_marker_forbids_retry(tmp_path: Path) -> None:
     bundle = tmp_path / "bundle"
     bundle.mkdir()
@@ -1089,7 +1093,7 @@ def test_native_memory_evidence_accepts_shared_runlog_provenance(
         json.dumps({"model": "qwen3-vl-plus"}) + "\n",
         encoding="utf-8",
     )
-    manifest = evidence / "appagent_demo_manifest.json"
+    manifest = evidence / "appagent_manifest.json"
     manifest.write_text(
         json.dumps(
             {
@@ -1360,7 +1364,7 @@ def test_appagent_teacher_waits_for_stable_androidworld_observation(
     assert actions == [{"action_type": "click", "x": 120, "y": 55}]
 
 
-def test_appagent_demo_memory_rejects_manifest_teacher_count_mismatch(
+def test_appagent_memory_rejects_manifest_teacher_count_mismatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1381,7 +1385,7 @@ def test_appagent_demo_memory_rejects_manifest_teacher_count_mismatch(
     monkeypatch.setattr(appagent_adapter, "_validate_demo_artifacts", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(appagent_adapter, "_validate_demo_docs", lambda *_args: 1)
     manifest = {
-        "schema_version": appagent_adapter.APPAGENT_DEMO_MEMORY_SCHEMA,
+        "schema_version": appagent_adapter.APPAGENT_MEMORY_SCHEMA,
         "official_appagent_revision": appagent_adapter.APPAGENT_OFFICIAL_REVISION,
         "task_name": "BrowserDraw",
         "source_seed": 111,
@@ -1431,16 +1435,16 @@ def test_appagent_demo_memory_rejects_manifest_teacher_count_mismatch(
             source_run_log.read_bytes()
         ).hexdigest(),
     }
-    (tmp_path / appagent_adapter.APPAGENT_DEMO_MANIFEST).write_text(
+    (tmp_path / appagent_adapter.APPAGENT_MANIFEST).write_text(
         json.dumps(manifest),
         encoding="utf-8",
     )
 
     with pytest.raises(
         ValueError,
-        match="appagent_demo_memory_teacher_action_count_mismatch",
+        match="appagent_memory_teacher_action_count_mismatch",
     ):
-        appagent_adapter.validate_appagent_demo_memory(
+        appagent_adapter.validate_appagent_memory(
             tmp_path,
             task_name="BrowserDraw",
             source_run_log=source_run_log,
@@ -1462,10 +1466,10 @@ def test_appagent_warm_command_mounts_native_docs_memory(
     )
     monkeypatch.setattr(
         pipeline,
-        "build_e2e_command",
+        "build_task_command",
         lambda *_args, **_kwargs: base_spec,
     )
-    item = pipeline.ArchivedRunLog(
+    item = CanonicalRunLog(
         task="BrowserDraw",
         goal="Open task.html and draw.",
         params={},
@@ -1475,9 +1479,9 @@ def test_appagent_warm_command_mounts_native_docs_memory(
         meta={},
     )
 
-    spec = pipeline.build_appagent_androidworld_command(
+    spec = pipeline.build_appagent_command(
         item,
-        method_name="appagent_demo",
+        method_name="appagent",
         target=pipeline.DeviceTarget("small5554", "emulator-5554", 5554),
         android_world_root=tmp_path / "android_world",
         output_root=tmp_path / "output",

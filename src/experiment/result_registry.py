@@ -15,6 +15,7 @@ import shutil
 import tempfile
 from typing import Any
 
+from src.experiment.paths import safe_component, sha256_file
 from src.experiment.protocol import DEVICES, RESULT_COMMANDS_FILE
 from src.experiment.result_schema import compact_result_row
 
@@ -36,21 +37,6 @@ def _commands_path_for_summary(summary_path: Path) -> Path:
     if current.exists():
         return current
     return summary_path.with_name("one_task_commands.jsonl")
-
-
-def _safe_component(value: str, *, fallback: str) -> str:
-    normalized = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value).strip()).strip(
-        "._-"
-    )
-    return normalized or fallback
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as file:
-        for chunk in iter(lambda: file.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _load_verified_registered_result(summary_path: Path) -> dict[str, Any]:
@@ -78,7 +64,7 @@ def _load_verified_registered_result(summary_path: Path) -> dict[str, Any]:
     ):
         raise ValueError(f"registration manifest invalid: {manifest_path}")
     expected_sha256 = str(manifest.get("registered_result_sha256") or "")
-    if not expected_sha256 or _sha256(summary_path) != expected_sha256:
+    if not expected_sha256 or sha256_file(summary_path) != expected_sha256:
         raise ValueError(f"registered result checksum mismatch: {summary_path}")
     for field in (
         "registration_id",
@@ -388,7 +374,7 @@ def register_attempt_summary(
     summary_path: Path,
     attempt_manifest_path: Path,
     runs_root: Path,
-    artifact_memory_index: Path | None = None,
+    local_data_index: Path | None = None,
 ) -> dict[str, Any]:
     """Register compact public rows and one detailed evidence block."""
 
@@ -413,8 +399,8 @@ def register_attempt_summary(
         raise ValueError("task_name and attempt_id are required for result registration")
     source_seed = int(attempt_manifest.get("source_seed") or 0)
     evaluation_seed = int(attempt_manifest.get("evaluation_seed") or 0)
-    source_summary_sha256 = _sha256(summary_path)
-    attempt_manifest_sha256 = _sha256(attempt_manifest_path)
+    source_summary_sha256 = sha256_file(summary_path)
+    attempt_manifest_sha256 = sha256_file(attempt_manifest_path)
     commands_path = _commands_path_for_summary(summary_path)
     registered_at = _utc_now()
     rows = [row for row in summary.get("rows") or [] if isinstance(row, dict)]
@@ -474,21 +460,25 @@ def register_attempt_summary(
                 method=method,
                 device=device,
             )
-            safe_attempt = _safe_component(attempt_id, fallback=fingerprint[:12])
+            safe_attempt = safe_component(
+                attempt_id,
+                fallback=fingerprint[:12],
+                strip_chars="._-",
+            )
             registration_id = ".".join(
                 (
-                    _safe_component(task_name, fallback="task"),
-                    _safe_component(method, fallback="method"),
-                    _safe_component(device, fallback="device"),
+                    safe_component(task_name, fallback="task", strip_chars="._-"),
+                    safe_component(method, fallback="method", strip_chars="._-"),
+                    safe_component(device, fallback="device", strip_chars="._-"),
                     safe_attempt,
                     fingerprint[:12],
                 )
             )
             destination = (
                 runs_root
-                / _safe_component(task_name, fallback="task")
-                / _safe_component(method, fallback="method")
-                / _safe_component(device, fallback="device")
+                / safe_component(task_name, fallback="task", strip_chars="._-")
+                / safe_component(method, fallback="method", strip_chars="._-")
+                / safe_component(device, fallback="device", strip_chars="._-")
                 / safe_attempt
             )
             manifest_path = destination / "registration_manifest.json"
@@ -510,7 +500,7 @@ def register_attempt_summary(
                 "attempt_manifest_sha256": attempt_manifest_sha256,
                 "source_commands": str(commands_path) if commands_path.exists() else "",
                 "source_commands_sha256": (
-                    _sha256(commands_path) if commands_path.exists() else ""
+                    sha256_file(commands_path) if commands_path.exists() else ""
                 ),
                 "registered_at": registered_at,
             }
@@ -542,7 +532,7 @@ def register_attempt_summary(
                     raise FileExistsError(
                         f"immutable result registration conflict: {destination}"
                     )
-                if _sha256(result_path) != registered_sha256:
+                if sha256_file(result_path) != registered_sha256:
                     raise ValueError(
                         f"registered result checksum mismatch: {result_path}"
                     )
@@ -572,15 +562,15 @@ def register_attempt_summary(
 
         appended = _append_ledger_records(runs_root / "registry.jsonl", ledger_records)
 
-    artifact_memory_updated = False
-    if artifact_memory_index is not None:
-        from src.experiment.artifact_memory import refresh_artifact_memory_from_pointer
+    local_data_updated = False
+    if local_data_index is not None:
+        from src.experiment.data_index import refresh_data_index_from_pointer
 
-        refresh_artifact_memory_from_pointer(
-            memory_index=artifact_memory_index,
+        refresh_data_index_from_pointer(
+            memory_index=local_data_index,
             additional_result_roots=(runs_root,),
         )
-        artifact_memory_updated = True
+        local_data_updated = True
 
     return {
         "task_name": task_name,
@@ -588,7 +578,7 @@ def register_attempt_summary(
         "registered_results_count": len(registered_paths),
         "ledger_records_appended": appended,
         "registered_results": registered_paths,
-        "artifact_memory_updated": artifact_memory_updated,
+        "local_data_updated": local_data_updated,
     }
 
 

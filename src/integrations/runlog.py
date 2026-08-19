@@ -232,6 +232,8 @@ def _is_legacy_run_log(value: dict[str, Any]) -> bool:
                 "observation_before_act",
                 "executed_actions",
                 "actions",
+                "before_state_id",
+                "after_state_id",
             )
         )
         for step in steps
@@ -711,12 +713,27 @@ def _legacy_action_to_androidworld(
     package_resolver: Callable[[str], str] | None,
     default_coordinate_space: str = "",
 ) -> dict[str, Any]:
+    raw_value = _map(value)
     tool, args = _legacy_action_tool_and_args(value)
     for key in _EXECUTION_TIMING_ARGS:
         args.pop(key, None)
     if default_coordinate_space and not args.get("coordinate_space"):
         args["coordinate_space"] = default_coordinate_space
     if tool in {"click", "tap", "double_tap", "long_press", "longpress"}:
+        index = args.get("index")
+        if index is None:
+            index = raw_value.get("index")
+        if index is not None and args.get("x") is None and args.get("y") is None:
+            return {
+                "action_type": (
+                    "double_tap"
+                    if tool == "double_tap"
+                    else "long_press"
+                    if tool in {"long_press", "longpress"}
+                    else "click"
+                ),
+                "index": int(index),
+            }
         x, y = _legacy_point(args, observation)
         return {
             "action_type": (
@@ -754,10 +771,18 @@ def _legacy_action_to_androidworld(
             raise ValueError(f"legacy_action_direction_required:{tool}")
         return {"action_type": gesture_type, "direction": direction}
     if tool in {"open_app", "start_activity", "launch_app", "openapp"}:
-        app_name = str(args.get("app_name") or args.get("app") or "").strip()
+        app_name = str(
+            args.get("app_name")
+            or args.get("app")
+            or raw_value.get("app_name")
+            or raw_value.get("app")
+            or ""
+        ).strip()
         package = str(
             args.get("package_name")
             or args.get("package")
+            or raw_value.get("package_name")
+            or raw_value.get("package")
             or inferred_package_name
             or ""
         ).strip()

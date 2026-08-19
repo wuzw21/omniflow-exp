@@ -65,15 +65,14 @@ def _draft_input(prompt: str) -> dict:
 
 def _draft_enhancer(prompt: str, tool: dict) -> str:
     required = tool["function"]["parameters"]["required"]
-    if required == ["complete_function", "subsegments"]:
+    if required == ["complete_function"]:
         return json.dumps(
             {
                 "complete_function": {
                     "function_id": "complete_note_entry",
                     "name": "Complete note entry",
                     "description": "Enter text and wait.",
-                },
-                "subsegments": [],
+                }
             }
         )
 
@@ -133,9 +132,7 @@ def test_enhancer_edits_one_draft_in_three_small_stages(tmp_path) -> None:
     ]
     assert len(prompts) == 3
     assert "Prefer one reusable text-entry operation." in prompts[0]
-    assert "Subsegments are optional" in prompts[0]
-    assert "Omit any uncertain candidate" in prompts[0]
-    assert "stable precondition and repeatable semantic effect" in prompts[0]
+    assert "mandatory complete-RunLog Function" in prompts[0]
     assert any(
         "current source-state value clicked only to open a picker" in prompt
         for prompt in prompts
@@ -150,7 +147,53 @@ def test_enhancer_edits_one_draft_in_three_small_stages(tmp_path) -> None:
     assert all('"schema_version":"omniflow.function.v2"' not in p for p in prompts)
 
 
-def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> None:
+def test_enhancer_accepts_runlog_grounded_direct_actions(tmp_path) -> None:
+    def complete(prompt: str, tool: dict) -> str:
+        required = tool["function"]["parameters"]["required"]
+        if required == ["complete_function"]:
+            return json.dumps(
+                {
+                    "complete_function": {
+                        "function_id": "complete_note_entry",
+                        "name": "Complete note entry",
+                        "description": "Enter text and wait.",
+                    }
+                }
+            )
+        if required == ["action_edits", "bindings"]:
+            return json.dumps(
+                {
+                    "action_edits": [],
+                    "bindings": [],
+                    "actions": [
+                        {
+                            "function_id": "complete_note_entry",
+                            "step_index": 1,
+                            "action": {
+                                "tool": "input_text",
+                                "args": {"text": "meeting notes"},
+                            },
+                        }
+                    ],
+                }
+            )
+        return json.dumps({"checker_steps": []})
+
+    save_function(
+        _authoring_run_log(),
+        tmp_path / "store.json",
+        enhance=True,
+        complete_json=complete,
+    )
+    saved = FunctionStore(tmp_path / "store.json").get_function(
+        "complete_note_entry"
+    )
+    assert saved is not None
+    assert saved.steps[1].action.tool == "input_text"
+    assert saved.steps[1].action.args["text"] == "meeting notes"
+
+
+def test_enhancer_compiles_one_large_function(tmp_path) -> None:
     run_log = androidworld_run_log(
         [
             {"action_type": "click", "x": 500, "y": 500},
@@ -173,32 +216,18 @@ def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> 
 
     def complete(prompt: str, tool: dict) -> str:
         required = tool["function"]["parameters"]["required"]
-        if required == ["complete_function", "subsegments"]:
+        if required == ["complete_function"]:
             return json.dumps(
                 {
                     "complete_function": {
                         "function_id": "search_for_a_place",
                         "name": "Search for a place",
                         "description": "Enter a place query and show its results.",
-                    },
-                    "subsegments": [
-                        {
-                            "function_id": "enter_search_query",
-                            "name": "Enter a search query",
-                            "description": "Enter and submit a search query.",
-                            "stability_reason": (
-                                "A visible search field is the stable precondition; "
-                                "entering and submitting text has a repeatable effect, "
-                                "and the query is caller-provided."
-                            ),
-                            "start_step_index": 1,
-                            "end_step_index": 3,
-                        },
-                    ],
+                    }
                 }
             )
         draft = _draft_input(prompt)
-        function_id = draft["function"]["function_id"]
+        function_id = "search_for_a_place"
         source_indices = tuple(
             action["step_index"] for action in draft["source_actions"]
         )
@@ -221,10 +250,7 @@ def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> 
                                 "description": "Place query to enter",
                             }
                         ]
-                        if function_id in {
-                            "search_for_a_place",
-                            "enter_search_query",
-                        }
+                        if function_id == "search_for_a_place"
                         else []
                     ),
                 }
@@ -233,33 +259,29 @@ def test_enhancer_compiles_large_function_and_reusable_subsegments(tmp_path) -> 
             {
                 "checker_steps": (
                     [{"function_id": function_id, "step_index": 0}]
-                    if function_id == "search_for_a_place"
-                    else []
+                    if function_id == "search_for_a_place" else []
                 )
             }
         )
 
     store_path = tmp_path / "store.json"
     result = save_function(run_log, store_path, enhance=True, complete_json=complete)
-    assert result["function_ids"] == [
-        "search_for_a_place",
-        "enter_search_query",
-    ]
+    assert result["function_ids"] == ["search_for_a_place"]
     store = FunctionStore(store_path)
     assert len(store.get_function("search_for_a_place").checker_rules) == 1
-    assert store.get_function("enter_search_query").checker_rules == ()
-    assert store.get_function("enter_search_query").input_schema["required"] == [
-        "query"
+    assert store.source_calls == [
+        {
+            "function_id": "search_for_a_place",
+            "arguments": {"query": "museum"},
+        }
     ]
     assert stage_calls == [
         (("action_edits", "bindings"), "search_for_a_place", (0, 1, 2, 3), ()),
-        (("action_edits", "bindings"), "enter_search_query", (1, 2), ()),
-        (("checker_steps",), "search_for_a_place", (0, 1, 2, 3), (0,)),
-        (("checker_steps",), "enter_search_query", (1, 2), ()),
+        (("checker_steps",), "search_for_a_place", (0, 1, 2, 3), (0, 2)),
     ]
 
 
-def test_stage_validation_gets_one_small_correction(tmp_path) -> None:
+def test_stage_validation_can_make_multiple_small_corrections(tmp_path) -> None:
     prompts: list[str] = []
     split_calls = 0
 
@@ -268,10 +290,9 @@ def test_stage_validation_gets_one_small_correction(tmp_path) -> None:
         prompts.append(prompt)
         if tool["function"]["parameters"]["required"] == [
             "complete_function",
-            "subsegments",
         ]:
             split_calls += 1
-            if split_calls == 1:
+            if split_calls < 3:
                 return '{"unexpected":true}'
         return _draft_enhancer(prompt, tool)
 
@@ -281,44 +302,11 @@ def test_stage_validation_gets_one_small_correction(tmp_path) -> None:
         enhance=True,
         complete_json=complete,
     )
-    assert split_calls == 2
+    assert split_calls == 3
     assert "previous small decision was rejected" in prompts[1]
     assert "function_split_contract_invalid" in prompts[1]
-
-
-def test_enhancer_rejects_subsegment_without_stability_reason(tmp_path) -> None:
-    def complete(_prompt: str, tool: dict) -> str:
-        required = tool["function"]["parameters"]["required"]
-        assert required == ["complete_function", "subsegments"]
-        return json.dumps(
-            {
-                "complete_function": {
-                    "function_id": "complete_note_entry",
-                    "name": "Complete note entry",
-                    "description": "Enter note text and wait for the result.",
-                },
-                "subsegments": [
-                    {
-                        "function_id": "enter_note",
-                        "name": "Enter a note",
-                        "description": "Enter note text.",
-                        "stability_reason": "",
-                        "start_step_index": 1,
-                        "end_step_index": 3,
-                    }
-                ],
-            }
-        )
-
-    with pytest.raises(
-        ValueError, match="function_subsegment_stability_reason_required"
-    ):
-        save_function(
-            _authoring_run_log(),
-            tmp_path / "store.json",
-            enhance=True,
-            complete_json=complete,
-        )
+    assert "previous small decision was rejected" in prompts[2]
+    assert "function_split_contract_invalid" in prompts[2]
 
 
 def test_enhancer_compiles_source_proven_launcher_click_to_open_app(tmp_path) -> None:
@@ -343,15 +331,14 @@ def test_enhancer_compiles_source_proven_launcher_click_to_open_app(tmp_path) ->
 
     def complete(_prompt: str, tool: dict) -> str:
         required = tool["function"]["parameters"]["required"]
-        if required == ["complete_function", "subsegments"]:
+        if required == ["complete_function"]:
             return json.dumps(
                 {
                     "complete_function": {
                         "function_id": "open_clock",
                         "name": "Open Clock",
                         "description": "Open the Clock application.",
-                    },
-                    "subsegments": [],
+                    }
                 }
             )
         if required == ["action_edits", "bindings"]:
@@ -362,7 +349,6 @@ def test_enhancer_compiles_source_proven_launcher_click_to_open_app(tmp_path) ->
                             "function_id": "open_clock",
                             "step_index": 0,
                             "operation": "open_app",
-                            "value": "com.example.clock",
                         }
                     ],
                     "bindings": [],
@@ -394,15 +380,14 @@ def test_enhancer_does_not_reedit_an_existing_open_app_action(tmp_path) -> None:
 
     def complete(prompt: str, tool: dict) -> str:
         required = tool["function"]["parameters"]["required"]
-        if required == ["complete_function", "subsegments"]:
+        if required == ["complete_function"]:
             return json.dumps(
                 {
                     "complete_function": {
                         "function_id": "open_contacts",
                         "name": "Open Contacts",
                         "description": "Open the Contacts application.",
-                    },
-                    "subsegments": [],
+                    }
                 }
             )
         if required == ["action_edits", "bindings"]:
@@ -418,7 +403,6 @@ def test_enhancer_does_not_reedit_an_existing_open_app_action(tmp_path) -> None:
                                 "function_id": "open_contacts",
                                 "step_index": 0,
                                 "operation": "open_app",
-                                "value": "com.example.contacts",
                             }
                         ]
                     ),
@@ -454,15 +438,14 @@ def test_enhancer_binds_source_proven_semantic_target(tmp_path) -> None:
 
     def complete(_prompt: str, tool: dict) -> str:
         required = tool["function"]["parameters"]["required"]
-        if required == ["complete_function", "subsegments"]:
+        if required == ["complete_function"]:
             return json.dumps(
                 {
                     "complete_function": {
                         "function_id": "select_hour",
                         "name": "Select an hour",
                         "description": "Select a caller-provided visible hour.",
-                    },
-                    "subsegments": [],
+                    }
                 }
             )
         if required == ["action_edits", "bindings"]:
@@ -473,7 +456,6 @@ def test_enhancer_binds_source_proven_semantic_target(tmp_path) -> None:
                             "function_id": "select_hour",
                             "step_index": 0,
                             "operation": "set_target",
-                            "value": "6",
                         }
                     ],
                     "bindings": [
@@ -522,15 +504,14 @@ def test_enhancer_rejects_source_state_value_as_parameter(tmp_path) -> None:
 
     def complete(_prompt: str, tool: dict) -> str:
         required = tool["function"]["parameters"]["required"]
-        if required == ["complete_function", "subsegments"]:
+        if required == ["complete_function"]:
             return json.dumps(
                 {
                     "complete_function": {
                         "function_id": "open_minute_picker",
                         "name": "Open minute picker",
                         "description": "Open the minute picker from its current value.",
-                    },
-                    "subsegments": [],
+                    }
                 }
             )
         if required == ["action_edits", "bindings"]:
@@ -541,7 +522,6 @@ def test_enhancer_rejects_source_state_value_as_parameter(tmp_path) -> None:
                             "function_id": "open_minute_picker",
                             "step_index": 0,
                             "operation": "set_target",
-                            "value": "27",
                         }
                     ],
                     "bindings": [
@@ -567,7 +547,7 @@ def test_enhancer_rejects_source_state_value_as_parameter(tmp_path) -> None:
         )
 
 
-def test_enhancer_rejects_invented_action_semantics(tmp_path) -> None:
+def test_enhancer_rejects_agent_authored_action_value(tmp_path) -> None:
     def invalid(prompt: str, tool: dict) -> str:
         value = json.loads(_draft_enhancer(prompt, tool))
         if "action_edits" in value:
@@ -576,12 +556,12 @@ def test_enhancer_rejects_invented_action_semantics(tmp_path) -> None:
                     "function_id": "complete_note_entry",
                     "step_index": 0,
                     "operation": "set_target",
-                    "value": "Invented target",
+                    "value": "Agent must not copy or invent evidence",
                 }
             ]
         return json.dumps(value)
 
-    with pytest.raises(ValueError, match="function_action_target_not_source_proven"):
+    with pytest.raises(ValueError, match="function_action_edit_contract_invalid"):
         save_function(
             _authoring_run_log(),
             tmp_path / "store.json",
@@ -643,15 +623,14 @@ def test_checker_cannot_replace_a_task_progress_action(tmp_path) -> None:
 
     def complete(_prompt: str, tool: dict) -> str:
         required = tool["function"]["parameters"]["required"]
-        if required == ["complete_function", "subsegments"]:
+        if required == ["complete_function"]:
             return json.dumps(
                 {
                     "complete_function": {
                         "function_id": "add_alarm",
                         "name": "Add alarm",
                         "description": "Open the Add alarm picker.",
-                    },
-                    "subsegments": [],
+                    }
                 }
             )
         if required == ["action_edits", "bindings"]:
@@ -667,58 +646,6 @@ def test_checker_cannot_replace_a_task_progress_action(tmp_path) -> None:
     with pytest.raises(ValueError, match="checker_action_is_task_progress"):
         save_function(
             run_log,
-            tmp_path / "store.json",
-            enhance=True,
-            complete_json=complete,
-        )
-
-
-def test_same_source_action_cannot_be_checker_and_formal_across_functions(
-    tmp_path,
-) -> None:
-    def complete(prompt: str, tool: dict) -> str:
-        required = tool["function"]["parameters"]["required"]
-        if required == ["complete_function", "subsegments"]:
-            return json.dumps(
-                {
-                    "complete_function": {
-                        "function_id": "complete_note_entry",
-                        "name": "Complete note entry",
-                        "description": "Enter meeting notes.",
-                    },
-                    "subsegments": [
-                        {
-                            "function_id": "enter_note",
-                            "name": "Enter note",
-                            "description": "Enter meeting notes.",
-                            "stability_reason": (
-                                "The note field is stable and the text is parameterized."
-                            ),
-                            "start_step_index": 0,
-                            "end_step_index": 2,
-                        }
-                    ],
-                }
-            )
-        draft = _draft_input(prompt)
-        function_id = draft["function"]["function_id"]
-        if required == ["action_edits", "bindings"]:
-            return json.dumps({"action_edits": [], "bindings": []})
-        return json.dumps(
-            {
-                "checker_steps": (
-                    [{"function_id": function_id, "step_index": 0}]
-                    if function_id == "complete_note_entry"
-                    else []
-                )
-            }
-        )
-
-    with pytest.raises(
-        ValueError, match="checker_action_role_inconsistent_across_functions"
-    ):
-        save_function(
-            _authoring_run_log(),
             tmp_path / "store.json",
             enhance=True,
             complete_json=complete,
@@ -750,7 +677,7 @@ def test_save_function_requires_functions_without_enhance(tmp_path) -> None:
     assert result["error"]["code"] == "FUNCTIONS_REQUIRED"
 
 
-def test_save_function_accepts_one_runlog_and_multiple_functions(tmp_path) -> None:
+def test_save_function_rejects_multiple_functions(tmp_path) -> None:
     run_log = androidworld_run_log(
         [{"action_type": "open_app", "app_name": "com.android.settings"}],
         observations=[androidworld_state("state-1")],
@@ -767,8 +694,9 @@ def test_save_function_accepts_one_runlog_and_multiple_functions(tmp_path) -> No
             ],
         },
     )
-    assert result["success"] is True
-    assert result["function_ids"] == ["open_settings", "open_system_settings"]
+    assert result["success"] is False
+    assert result["error"]["code"] == "RUN_LOG_COMPILE_FAILED"
+    assert "function_single_function_required" in result["error"]["message"]
 
 
 def test_bridge_enhancement_edits_one_draft_in_three_stages(tmp_path) -> None:
@@ -799,7 +727,7 @@ def test_bridge_enhancement_edits_one_draft_in_three_stages(tmp_path) -> None:
     )
     assert result["success"] is True
     assert required_fields == [
-        ["complete_function", "subsegments"],
+        ["complete_function"],
         ["action_edits", "bindings"],
         ["checker_steps"],
     ]
@@ -808,7 +736,7 @@ def test_bridge_enhancement_edits_one_draft_in_three_stages(tmp_path) -> None:
 def test_function_authoring_tool_is_three_small_draft_edits() -> None:
     assert function_authoring_tool(stage="split")["function"]["parameters"][
         "required"
-    ] == ["complete_function", "subsegments"]
+    ] == ["complete_function"]
     assert function_authoring_tool(stage="parameters")["function"]["parameters"][
         "required"
     ] == ["action_edits", "bindings"]
@@ -822,6 +750,15 @@ def test_function_authoring_tool_is_three_small_draft_edits() -> None:
     binding_schema = function_authoring_tool(stage="parameters")["function"][
         "parameters"
     ]["properties"]["bindings"]["items"]
+    action_edit_schema = function_authoring_tool(stage="parameters")["function"][
+        "parameters"
+    ]["properties"]["action_edits"]["items"]
+    assert action_edit_schema["required"] == [
+        "function_id",
+        "step_index",
+        "operation",
+    ]
+    assert "value" not in action_edit_schema["properties"]
     assert binding_schema["required"] == [
         "function_id",
         "step_index",

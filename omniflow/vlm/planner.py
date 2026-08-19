@@ -112,8 +112,8 @@ def parse_model_turn_response(
         for item in vlm_action_tools()
         if isinstance(item, dict) and isinstance(item.get("function"), dict)
     }
-    function_catalog = {function.id: function for function in functions}
-    model_visible_tools.update(function_catalog)
+    functions_by_id = {function.id: function for function in functions}
+    model_visible_tools.update(functions_by_id)
     if tool not in model_visible_tools:
         raise ModelToolCallError(f"model_turn_tool_not_visible:{tool}")
     raw_arguments = function.get("arguments")
@@ -141,8 +141,8 @@ def parse_model_turn_response(
     resolved_model = str(value.get("resolved_model") or requested_model).strip()
     adapter_metadata = None
     try:
-        if tool in function_catalog:
-            validate_arguments(function_catalog[tool].input_schema, arguments)
+        if tool in functions_by_id:
+            validate_arguments(functions_by_id[tool].input_schema, arguments)
         else:
             arguments, adapter_metadata = adapt_tool_arguments(
                 tool=tool,

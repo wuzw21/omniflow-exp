@@ -67,11 +67,12 @@
           }
         },
         "save_function_arguments": {
-          "required": ["functions"],
-          "one_of_required": ["run_id", "run_log"],
+          "required": [],
+          "any_of_required": ["run_id", "run_log"],
+          "any_of_function_input": ["functions", "enhance=true"],
           "optional": ["arguments", "enhance", "instruction"],
-          "functions_semantics": "One or more complete Functions grounded in the same successful RunLog.",
-          "enhance_semantics": "The Agent selects checker steps only; core validation and persistence use the normal save path."
+          "functions_semantics": "Exactly one complete Function grounded in the successful RunLog.",
+          "enhance_semantics": "The Agent edits one staged in-memory draft: name the complete Function, edit source-grounded direct actions and parameter declarations, then register Function-local checker registrations. save_function deterministically compiles, validates, and atomically persists that one Function."
         },
         "tools": [
           "run_gui",

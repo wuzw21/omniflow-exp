@@ -5,6 +5,7 @@ import importlib
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from omniflow import (
@@ -15,6 +16,7 @@ from omniflow import (
     RuntimeSettings,
 )
 from omniflow.core.config import DEFAULT_MAX_STEPS, Experiment
+from omniflow.core.model import ToolCall
 from omniflow.core.trajectory import state_id
 from omniflow.transfer.runtime import (
     TRANSFER_STATE_CATALOG_FILENAME,
@@ -24,6 +26,7 @@ from omniflow.transfer.runtime import (
 from omniflow.transfer.runtime import (
     capture_transfer_state as _transfer_state,
 )
+from src.experiment.performance_metrics import PerformanceMetrics
 from src.integrations.android_world.host import AndroidWorldHost, make_agent_result
 
 MODE_OMNIFLOW = "omniflow"
@@ -88,22 +91,41 @@ def build_agent(
     post_action_wait_seconds: float = 0.0,
     task_seed: int | None = None,
     evidence_root: str | Path | None = None,
-) -> OmniFlow:
+    performance_metrics: PerformanceMetrics | None = None,
+    direct_function_id: str = "",
+    direct_function_arguments: dict[str, Any] | None = None,
+    allow_empty_store: bool = False,
+) -> OmniFlow | SimpleNamespace:
     if env is None:
         raise TypeError("build_agent requires env parameter")
     del runtime
-    default_store = (
-        Path(os.environ.get("OMNIFLOW_RUNTIME_DIR") or "runtime") / "omniflow.json"
-    )
-    resolved_store_path = Path(store_path or default_store).expanduser().resolve()
-    transfer_state_path = resolved_store_path.parent / TRANSFER_STATE_CATALOG_FILENAME
+    if not store_path and not allow_empty_store:
+        raise ValueError("function_store_required")
     raw_host = AndroidWorldHost(
         env,
         adb_serial=adb_serial,
         adb_path=adb_path,
         post_action_wait_seconds=post_action_wait_seconds,
         evidence_root=evidence_root,
+        performance_metrics=performance_metrics,
+        control_backend=os.environ.get(
+            "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "androidworld"
+        ),
     )
+    if not store_path:
+        # Fixed replay owns its action sequence in _apply_fixed_replay.  It
+        # still needs the canonical AndroidWorld Host and lifecycle wrapper,
+        # but it has no Function Store to load.  Keep the adapter object small
+        # and let the shared replay seam remain the only executor.
+        return SimpleNamespace(
+            env=env,
+            host=raw_host,
+            name=MODE_OMNIFLOW,
+            set_max_steps=lambda _step_budget: None,
+            reset=lambda go_home=False: raw_host.reset(go_home=go_home),
+        )
+    resolved_store_path = Path(store_path).expanduser().resolve()
+    transfer_state_path = resolved_store_path.parent / TRANSFER_STATE_CATALOG_FILENAME
     state: dict[str, Any] = {
         "task_name": "",
         "goal": "",
@@ -145,6 +167,30 @@ def build_agent(
     flow.name = MODE_OMNIFLOW
     flow.env = env
     flow.transition_pause = None
+
+    direct_id = str(direct_function_id or "").strip()
+    if direct_id:
+        if direct_function_arguments is not None and not isinstance(
+            direct_function_arguments, dict
+        ):
+            raise ValueError("direct_function_arguments_must_be_object")
+        if flow.store.get_function(direct_id) is None:
+            raise ValueError(f"direct_function_not_found:{direct_id}")
+        direct_arguments = dict(direct_function_arguments or {})
+
+        def run_direct_function(
+            _goal: str,
+            *,
+            experiment: Experiment | str | None = None,
+        ) -> RunResult:
+            return flow.call_tool(
+                ToolCall(direct_id, dict(direct_arguments)),
+                experiment=experiment,
+            )
+
+        run_cycle = run_direct_function
+    else:
+        run_cycle = None
 
     def reset(go_home: bool = False) -> None:
         state.update(
@@ -201,7 +247,8 @@ def build_agent(
                 },
             )
         state["goal"] = goal_text
-        result = flow.run(
+        cycle = run_cycle or flow.run
+        result = cycle(
             goal_text,
             experiment=Experiment(name="androidworld"),
         )

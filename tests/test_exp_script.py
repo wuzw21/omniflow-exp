@@ -11,16 +11,17 @@ from PIL import Image
 import pytest
 from runlog_fixtures import androidworld_run_log
 
-from src.experiment.artifact_memory import refresh_artifact_memory
+from src.experiment.data_index import refresh_data_index
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_MEMORY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
 )
-from src.experiment.preflight import (
+from src.experiment.checks import (
     APPAGENT_REQUIRED_MODULES,
     REQUIRED_DISTRIBUTION_VERSIONS,
-    _valid_appagent_demo_manifest,
 )
+from src.integrations.appagent import is_memory_manifest_valid
+from src.experiment.protocol import DROIDRUN_VERSION
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "exp" / "run_androidworld.sh"
@@ -41,15 +42,26 @@ def test_android_env_version_is_locked_and_preflight_enforced() -> None:
     )
     lock_text = (REPO / "uv.lock").read_text(encoding="utf-8")
     assert 'name = "android-env"\nversion = "1.2.3"' in lock_text
+    assert f'name = "droidrun"\nversion = "{DROIDRUN_VERSION}"' in lock_text
     assert '"android_world.registry"' in (
-        REPO / "src" / "experiment" / "preflight.py"
+        REPO / "src" / "experiment" / "checks.py"
     ).read_text(encoding="utf-8")
 
 
+def test_bmoca_skilldroid_uses_pinned_droidrun_runtime() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+    assert "from src.experiment.protocol import DROIDRUN_VERSION" in script_text
+    assert 'version("droidrun")' in script_text
+    assert "load_official_droidrun_macro_player" in script_text
+    assert '[[ -z "$selected_method_arg" || "$selected_method_arg" == "skilldroid_replay" ]]' in script_text
+    assert 'uv sync --extra bmoca' in script_text
+    assert "B-MoCA campaign requires the official env100 source AVD" in script_text
+
+
 def test_preflight_accepts_offline_appagent_memory() -> None:
-    assert _valid_appagent_demo_manifest(
+    assert is_memory_manifest_valid(
         {
-            "schema_version": "omniflow.appagent-demo-memory.v2",
+            "schema_version": "omniflow.appagent.memory.v3",
             "official_appagent_revision": (
                 "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
             ),
@@ -81,12 +93,15 @@ def test_preflight_accepts_offline_appagent_memory() -> None:
     )
 
 
-def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
+def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:
     scripts = sorted(
         path.relative_to(REPO).as_posix()
         for path in (REPO / "scripts").rglob("*.sh")
     )
-    assert scripts == ["scripts/exp/run_androidworld.sh"]
+    assert scripts == [
+        "scripts/exp/run_androidworld.sh",
+        "scripts/exp/test_provider.sh",
+    ]
 
     completed = subprocess.run(
         ["bash", str(SCRIPT), "--help"],
@@ -103,13 +118,14 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "OMNIFLOW_BMOCA_WORKERS" not in completed.stdout
     assert "OMNIFLOW_BMOCA_ENVIRONMENT_RETRIES" not in completed.stdout
     assert "--development-run" in completed.stdout
+    assert "--control-backend" in completed.stdout
     assert "--all-tasks" in completed.stdout
     assert "--method" in completed.stdout
     assert "--device" in completed.stdout
     assert "--methods" not in completed.stdout
     assert "--devices" not in completed.stdout
     assert "--tasks" in completed.stdout
-    assert "--convert-ours-assets" not in completed.stdout
+    assert "--convert-omniflow-assets" not in completed.stdout
     assert "--convert-runlog-memory" not in completed.stdout
     assert "--convert-source-runlogs" not in completed.stdout
     assert "--prepare-mobilegpt-memory" not in completed.stdout
@@ -122,7 +138,7 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "--task-deadline-sec" in completed.stdout
     assert "OMNIFLOW_EXP_ASSET_ROOT" in completed.stdout
     assert "OMNIFLOW_EXP_MEMORY_ROOT" in completed.stdout
-    assert "OMNIFLOW_OURS_AUTHORING_MANIFEST" not in completed.stdout
+    assert "AUTHORING_MANIFEST" not in completed.stdout
     assert "OMNIFLOW_RUNLOG_MEMORY_OUTPUT_ROOT" not in completed.stdout
     assert "OMNIFLOW_SOURCE_SELECTION_MANIFEST" not in completed.stdout
     assert "OMNIFLOW_FUNCTION_STORE_SELECTION_MANIFEST" not in completed.stdout
@@ -132,16 +148,13 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert completed.stderr == ""
     script_text = SCRIPT.read_text(encoding="utf-8")
     assert 'workspace_root="$(cd "$repo/.." && pwd)"' in script_text
-    assert 'default_asset_root="$workspace_root/OmniFlow"' in script_text
-    assert 'default_python="$workspace_root/OmniFlow/.venv/bin/python"' in script_text
+    assert 'default_asset_root="$repo/data"' in script_text
+    assert 'default_python="$repo/.venv/bin/python"' in script_text
     assert "miniconda3/envs/omniflow-py31113" not in script_text
     assert 'python_bin="${PYTHON_BIN:-$default_python}"' in script_text
     assert "validate_page_encoder_runtime" in script_text
     assert "OMNIFLOW_APPAGENT_NATIVE_MEMORY_ROOTS" not in script_text
-    assert (
-        'default_memory_root="$workspace_root/assets/'
-        'androidworld-experiment-memory-v1"' in script_text
-    )
+    assert 'default_memory_root="$repo/data"' in script_text
     assert "validate_model_endpoint_auth" in script_text
     assert 'f\"{base_url}/models\"' in script_text
     assert 'omnitransfer_root="${OMNITRANSFER_ROOT:-$workspace_root/OmniTransfer}"' in (
@@ -164,7 +177,7 @@ def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
     assert "from src.experiment.result_registry import registered_result_plan" not in script_text
     assert "--master-progress-root" not in script_text
     assert script_text.count("registered_result_plan_from_memory(") == 0
-    assert "-m src.experiment.e2e_task_pipeline" in script_text
+    assert "-m src.experiment.run_tasks" in script_text
     assert '(( e2e_task_deadline_sec > 1800 ))' in script_text
     native_preflight = script_text.split(
         'if [[ "$profile" == "androidworld_native" ]]; then',
@@ -195,20 +208,20 @@ def test_selected_model_profile_is_exported_for_native_openai_clients() -> None:
     assert 'export OPENAI_BASE_URL="$selected_model_base_url"' in script_text
 
 
-def test_mobilegpt_runtime_uses_sealed_embedding_contract_and_split_endpoints() -> None:
+def test_mobilegpt_uses_the_official_server_without_a_runtime_patch() -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
-    runtime_text = (
-        REPO / "src" / "integrations" / "mobilegpt_runtime.py"
-    ).read_text(encoding="utf-8")
 
-    assert 'mobilegpt_embedding_api_key="${OPENAI_API_KEY:-}"' in script_text
+    assert (
+        'mobilegpt_embedding_api_key="${MOBILEGPT_EMBEDDING_API_KEY:-$selected_model_api_key}"'
+        in script_text
+    )
     assert 'export MOBILEGPT_CHAT_API_KEY="$selected_model_api_key"' in script_text
     assert (
         'export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"'
         in script_text
     )
-    assert "preflight-endpoints" in script_text
-    assert "mobilegpt_embedding_dimension_mismatch" in runtime_text
+    assert "src.integrations.mobilegpt_runtime" not in script_text
+    assert "GLM-Embedding-2" in script_text
 
 
 def test_formal_dry_run_exits_before_output_and_emulator_management() -> None:
@@ -264,7 +277,7 @@ def test_androidworld_defaults_to_pinned_immutable_release_without_fallback(
     )
 
     expected_release = (
-        tmp_path
+        REPO.parent
         / "releases"
         / "android-world-632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"
     )
@@ -349,7 +362,7 @@ def test_development_run_routes_through_the_only_script_without_repeated_setup(
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert "src.integrations.android_world.launch" in completed.stdout
+    assert "src.integrations.android_world.run_episode" in completed.stdout
     assert "ExpenseAddMultipleFromGallery" in completed.stdout
     assert "GLM-5.1" in completed.stdout
     assert "model_endpoint_profile=llmthu" in completed.stdout
@@ -522,13 +535,20 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
     memory_index = memory / "current.json"
     memory_index.write_text("{}", encoding="utf-8")
     env_file = assets / ".env"
-    env_file.write_text("LLMTHU_API_KEY=test-only\n", encoding="utf-8")
+    env_file.write_text(
+        "LLMTHU_API_KEY=test-only\nHTTPS_PROXY=socks5://127.0.0.1:9\n",
+        encoding="utf-8",
+    )
     capture = tmp_path / "invocation.txt"
+    capture_proxy = tmp_path / "proxy.txt"
     fake_python = tmp_path / "python"
     fake_python.write_text(
         "#!/bin/sh\n"
         "if [ \"${1:-}\" = \"-\" ]; then\n"
         "  exec \"$REAL_PYTHON\" \"$@\"\n"
+        "fi\n"
+        "if [ \"${1:-}\" = \"-m\" ]; then\n"
+        "  printf '%s|%s|%s|%s\\n' \"${ALL_PROXY-}\" \"${all_proxy-}\" \"${HTTPS_PROXY-}\" \"${https_proxy-}\" > \"$CAPTURE_PROXY\"\n"
         "fi\n"
         "printf '%s\\n' \"$@\" > \"$CAPTURE\"\n",
         encoding="utf-8",
@@ -553,6 +573,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
             **os.environ,
             "HOME": str(account_root),
             "CAPTURE": str(capture),
+            "CAPTURE_PROXY": str(capture_proxy),
             "REAL_PYTHON": sys.executable,
             "PYTHON_BIN": str(fake_python),
             "OMNIFLOW_EXP_ASSET_ROOT": str(assets),
@@ -573,7 +594,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
 
     assert completed.returncode == 0, completed.stderr
     invocation = capture.read_text(encoding="utf-8").splitlines()
-    assert invocation[:2] == ["-m", "src.experiment.e2e_task_pipeline"]
+    assert invocation[:2] == ["-m", "src.experiment.run_tasks"]
     assert invocation[invocation.index("--task") + 1] == "BrowserDraw"
     assert "--source-backend" not in invocation
     assert invocation[invocation.index("--task-deadline-sec") + 1] == "1800"
@@ -581,6 +602,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
         "source5560:emulator-5560:5560"
     )
     assert invocation[-1] == "--dry-run"
+    assert capture_proxy.read_text(encoding="utf-8").strip() == "|||"
 
 
 @pytest.mark.parametrize(
@@ -912,10 +934,9 @@ def test_check_only_is_read_only_before_any_runtime_output(
     fake_java.chmod(0o755)
     results = tmp_path / "results-never-created"
     memory_root = tmp_path / "memory"
-    refresh_artifact_memory(
+    refresh_data_index(
         memory_root=memory_root,
         source_index=source_index,
-        function_catalogs=(),
         runlog_roots=(assets,),
         result_roots=(),
     )
@@ -974,19 +995,9 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
     runlogs.mkdir()
     results.mkdir()
     assets = tmp_path / "assets"
-    source_index = (
-        assets
-        / "runtime"
-        / "evals"
-        / "androidworld_validator"
-        / "core_archive"
-        / "success_source_runlogs"
-        / "index_by_task.json"
-    )
+    source_index = assets / "inputs" / "final_source_index.json"
     source_index.parent.mkdir(parents=True)
     source_index.write_text("{}", encoding="utf-8")
-    catalog = tmp_path / "catalog.json"
-    catalog.write_text("{}", encoding="utf-8")
     memory_root = tmp_path / "memory"
     captured = tmp_path / "python-args.txt"
     fake_python = tmp_path / "python"
@@ -1004,7 +1015,6 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
         "OMNIFLOW_MEMORY_RUNLOG_ROOTS": str(runlogs),
         "OMNIFLOW_MEMORY_RESULT_ROOTS": str(results),
         "OMNIFLOW_EXP_RESULTS_ROOT": str(results),
-        "OMNIFLOW_MEMORY_FUNCTION_CATALOGS": str(catalog),
     }
 
     completed = subprocess.run(
@@ -1019,7 +1029,7 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
     assert completed.returncode == 0, completed.stderr
     assert captured.read_text(encoding="utf-8").splitlines() == [
         "-m",
-        "src.experiment.artifact_memory",
+        "src.experiment.data_index",
         "refresh",
         "--memory-root",
         str(memory_root),
@@ -1029,12 +1039,9 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
         str(runlogs),
         "--result-root",
         str(results),
-        "--function-catalog",
-        str(catalog),
     ]
 
-    environment.pop("OMNIFLOW_MEMORY_FUNCTION_CATALOGS")
-    without_catalog = subprocess.run(
+    without_external_function_index = subprocess.run(
         ["bash", str(SCRIPT), "--refresh-memory"],
         cwd=REPO,
         env=environment,
@@ -1043,10 +1050,12 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
         text=True,
     )
 
-    assert without_catalog.returncode == 0, without_catalog.stderr
+    assert without_external_function_index.returncode == 0, (
+        without_external_function_index.stderr
+    )
     assert captured.read_text(encoding="utf-8").splitlines() == [
         "-m",
-        "src.experiment.artifact_memory",
+        "src.experiment.data_index",
         "refresh",
         "--memory-root",
         str(memory_root),
@@ -1073,7 +1082,7 @@ def test_memory_refresh_routes_all_evidence_through_the_only_script(
     assert from_existing_memory.returncode == 0, from_existing_memory.stderr
     assert captured.read_text(encoding="utf-8").splitlines() == [
         "-m",
-        "src.experiment.artifact_memory",
+        "src.experiment.data_index",
         "refresh",
         "--memory-root",
         str(memory_root),

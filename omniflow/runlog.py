@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 import re
 from typing import Any
@@ -27,7 +28,13 @@ def import_run_log_evidence(
             value,
             Path(evidence_root).expanduser().resolve(),
         )
-    run_log = _hydrate_run_log_display(canonicalize_run_log(value))
+    prepared = value
+    if evidence_root is not None:
+        prepared = _relocate_v1_screenshot_paths(
+            value,
+            Path(evidence_root).expanduser().resolve(),
+        )
+    run_log = _hydrate_run_log_display(canonicalize_run_log(prepared))
     states: dict[str, dict[str, Any]] = {}
     for step in run_log["steps"]:
         # Function actions transfer only from the observation immediately before
@@ -170,6 +177,57 @@ def _resolve_evidence_path(root: Path, value: Any) -> Path:
                 raise ValueError(f"canonical_run_log_screenshot_empty:{resolved}")
             return resolved
     raise FileNotFoundError(f"canonical_run_log_screenshot_missing:{text}")
+
+
+def _relocate_v1_screenshot_paths(
+    value: dict[str, Any],
+    evidence_root: Path,
+) -> dict[str, Any]:
+    """Resolve moved absolute screenshot paths against immutable evidence."""
+
+    prepared = json.loads(json.dumps(value, ensure_ascii=False))
+    observations: list[dict[str, Any]] = []
+    for step in prepared.get("steps") or ():
+        if not isinstance(step, dict):
+            continue
+        for field in ("observation", "next_observation"):
+            observation = step.get(field)
+            if isinstance(observation, dict):
+                observations.append(observation)
+    final_observation = prepared.get("final_observation")
+    if isinstance(final_observation, dict):
+        observations.append(final_observation)
+
+    for observation in observations:
+        pixels = observation.get("pixels")
+        if not isinstance(pixels, dict):
+            continue
+        raw_path = str(pixels.get("path") or "").strip()
+        if not raw_path:
+            continue
+        source = Path(raw_path).expanduser()
+        if source.is_file():
+            pixels["path"] = str(source.resolve())
+            continue
+        basename = source.name
+        candidates = sorted(
+            candidate.resolve()
+            for candidate in evidence_root.rglob(basename)
+            if candidate.is_file()
+        )
+        expected_hash = str(pixels.get("sha256") or "").strip().lower()
+        if expected_hash and len(expected_hash) == 64:
+            candidates = [
+                candidate
+                for candidate in candidates
+                if hashlib.sha256(candidate.read_bytes()).hexdigest() == expected_hash
+            ]
+        if len(candidates) != 1:
+            if not candidates:
+                raise FileNotFoundError(f"run_log_screenshot_missing:{raw_path}")
+            raise ValueError(f"run_log_screenshot_ambiguous:{raw_path}")
+        pixels["path"] = str(candidates[0])
+    return prepared
 
 
 def project_androidworld_step_actions(value: dict[str, Any]) -> list[dict[str, Any]]:

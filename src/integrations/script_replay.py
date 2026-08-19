@@ -28,29 +28,13 @@ def run_script_replay(
             )
         )
     visible = store.list_functions(include_hidden=False, limit=500)
-    if not visible:
-        raise ValueError("script_replay_full_function_missing")
-    coverage_sizes = {
-        function.id: len(function.steps) + len(function.checker_rules)
-        for function in visible
-    }
-    largest_coverage = max(coverage_sizes.values())
-    complete = [
-        function
-        for function in visible
-        if coverage_sizes[function.id] == largest_coverage
-    ]
-    if len(complete) != 1:
-        ids = ",".join(sorted(function.id for function in complete))
-        raise ValueError(f"script_replay_full_function_ambiguous:{ids}")
-    source_calls = [
-        call for call in store.source_calls if call["function_id"] == complete[0].id
-    ]
-    if len(source_calls) > 1:
-        raise ValueError(
-            f"script_replay_source_call_ambiguous:{complete[0].id}"
-        )
-    arguments = source_calls[0]["arguments"] if source_calls else {}
+    if len(visible) != 1 or len(store.source_calls) != 1:
+        raise ValueError("script_replay_single_function_required")
+    complete = visible[0]
+    source_call = store.source_calls[0]
+    if source_call["function_id"] != complete.id:
+        raise ValueError("script_replay_source_call_function_mismatch")
+    arguments = source_call["arguments"]
 
     flow = OmniFlow(
         store_path,
@@ -61,7 +45,7 @@ def run_script_replay(
         ),
     )
     return flow.call_tool(
-        ToolCall(complete[0].id, arguments),
+        ToolCall(complete.id, arguments),
         experiment=Experiment(name="bmoca"),
     )
 

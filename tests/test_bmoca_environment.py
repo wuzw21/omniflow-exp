@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from omniflow import Action
-from src.integrations.android_world.launch import _run_bmoca_e2e, build_parser
+from src.integrations.android_world.run_episode import _run_bmoca_e2e, build_parser
 from src.integrations.bmoca import (
     BMocaHost,
     discover_bmoca_episodes,
@@ -58,7 +58,7 @@ class _Environment:
         return _TimeStep(reward=1.0, done=True)
 
 
-def test_bmoca_planner_budget_belongs_only_to_runtime_settings() -> None:
+def test_bmoca_reuse_only_runner_contains_no_planner() -> None:
     tree = ast.parse(textwrap.dedent(inspect.getsource(_run_bmoca_e2e)))
     planner_calls = [
         node
@@ -68,10 +68,7 @@ def test_bmoca_planner_budget_belongs_only_to_runtime_settings() -> None:
         and node.func.id == "VLMPlanner"
     ]
 
-    assert len(planner_calls) == 1
-    assert "max_steps" not in {
-        keyword.arg for keyword in planner_calls[0].keywords
-    }
+    assert planner_calls == []
 
 
 def test_bmoca_host_is_only_an_omniflow_host_adapter() -> None:
@@ -188,7 +185,7 @@ def test_bmoca_cli_is_one_isolated_public_method_environment_result() -> None:
             "--tasks",
             "open_settings",
             "--agent",
-            "script_replay",
+            "ours_replay",
             "--environment-ids",
             "104",
             "--appium-port",
@@ -204,14 +201,14 @@ def test_bmoca_cli_is_one_isolated_public_method_environment_result() -> None:
         ]
     )
 
-    assert args.agent == "script_replay"
+    assert args.agent == "ours_replay"
     assert args.environment_ids == "104"
     assert args.appium_port == 4727
     assert args.emulator_console_port == 5562
 
 
 def test_bmoca_single_result_runner_has_no_campaign_scheduler_or_retry() -> None:
-    launch = Path("src/integrations/android_world/launch.py").read_text(
+    launch = Path("src/integrations/android_world/run_episode.py").read_text(
         encoding="utf-8"
     )
 

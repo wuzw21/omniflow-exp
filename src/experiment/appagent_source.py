@@ -19,29 +19,30 @@ from typing import Any
 from PIL import Image
 
 from omniflow.core.trajectory import require_complete_source_run_log
-from src.experiment import androidworld as pipeline
 from src.experiment.mobilegpt_source import (
     load_canonical_source_item,
 )
-from src.experiment.protocol import SOURCE_SEED
-from src.experiment.source_assets import (
+from src.experiment.paths import sha256_file
+from src.experiment.protocol import DEFAULT_METHOD, SOURCE_SEED
+from src.experiment.source_evidence import (
     build_grounded_teacher_run_log_from_canonical_item,
 )
+from src.experiment.source_records import CanonicalRunLog
 from src.integrations.android_world.host import (
     androidworld_observation_package,
     androidworld_observation_xml,
 )
-from src.integrations.appagent_adapter import (
-    APPAGENT_DEMO_ACTION_TYPES,
-    APPAGENT_DEMO_MANIFEST,
+from src.integrations.appagent import (
+    APPAGENT_ACTION_TYPES,
+    APPAGENT_MANIFEST,
     APPAGENT_OFFICIAL_REVISION,
     OfficialAppAgentRuntime,
     appagent_elements_from_xml,
     appagent_record_line,
     build_appagent_teacher_source,
     ground_appagent_teacher_action,
-    seal_appagent_demo_memory,
-    validate_appagent_demo_memory,
+    seal_appagent_memory,
+    validate_appagent_memory,
 )
 
 
@@ -49,8 +50,30 @@ def _appagent_observation_xml(observation: dict[str, Any]) -> str:
     return androidworld_observation_xml(observation)
 
 
-def _appagent_source_method_label(item: pipeline.ArchivedRunLog) -> str:
-    return str(item.meta.get("method") or "").strip() or pipeline.DEFAULT_SOURCE_METHOD
+_APPAGENT_AUXILIARY_PACKAGE_PREFIXES = (
+    "com.google.android.inputmethod.",
+)
+
+
+def _appagent_demo_package(
+    observation: dict[str, Any],
+    source_package: str,
+) -> str:
+    """Treat the active IME as an auxiliary window of the source app."""
+
+    package = androidworld_observation_package(observation)
+    if (
+        source_package
+        and package
+        and package != source_package
+        and package.startswith(_APPAGENT_AUXILIARY_PACKAGE_PREFIXES)
+    ):
+        return source_package
+    return package
+
+
+def _appagent_source_method_label(item: CanonicalRunLog) -> str:
+    return str(item.meta.get("method") or "").strip() or DEFAULT_METHOD
 
 
 def _chat_completions_url(base_url: str) -> str:
@@ -67,6 +90,7 @@ def _write_runtime_config(
     endpoint: str,
     model: str,
     timeout_sec: float,
+    max_tokens: int = 1024,
 ) -> None:
     try:
         import yaml
@@ -78,7 +102,10 @@ def _write_runtime_config(
         "OPENAI_API_BASE": endpoint,
         "OPENAI_API_KEY": api_key,
         "OPENAI_API_MODEL": model,
-        "MAX_TOKENS": 300,
+        # GLM-4.6V may spend part of a short completion budget on visual
+        # reasoning before emitting the AppAgent action description.  The
+        # official generator reads this value from its temporary config.
+        "MAX_TOKENS": int(max_tokens),
         "TEMPERATURE": 0.0,
         "REQUEST_INTERVAL": 0.0,
         "DASHSCOPE_API_KEY": "",
@@ -103,7 +130,7 @@ def run_official_document_generation(
     log_path: str | Path,
     usage_path: str | Path,
     model: str,
-    timeout_sec: float = 60.0,
+    timeout_sec: float = 180.0,
 ) -> dict[str, Any]:
     """Run the pinned official generator once and record exact API usage."""
 
@@ -147,6 +174,7 @@ def run_official_document_generation(
             endpoint=endpoint,
             model=normalized_model,
             timeout_sec=float(timeout_sec),
+            max_tokens=1024,
         )
         previous_cwd = Path.cwd()
         previous_argv = list(sys.argv)
@@ -269,12 +297,12 @@ def _runlog_lineage(payload: dict[str, Any], content_sha256: str) -> set[str]:
     return lineage
 
 
-def _source_lineage(item: pipeline.ArchivedRunLog) -> tuple[str, set[str]]:
+def _source_lineage(item: CanonicalRunLog) -> tuple[str, set[str]]:
     payload = json.loads(item.source_run_log.read_text(encoding="utf-8"))
     run_id = str(payload.get("run_id") or "").strip()
     source_sha256s = _runlog_lineage(
         payload,
-        pipeline._file_sha256(item.source_run_log),
+        sha256_file(item.source_run_log),
     )
     if not run_id:
         raise ValueError("appagent_native_memory_lineage_missing")
@@ -291,7 +319,7 @@ def _jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _native_memory_evidence(
     *,
-    item: pipeline.ArchivedRunLog,
+    item: CanonicalRunLog,
     teacher_source: dict[str, Any],
     evidence_roots: Sequence[str | Path],
     model: str,
@@ -302,7 +330,7 @@ def _native_memory_evidence(
         root = Path(raw_root).expanduser().resolve()
         if not root.is_dir():
             raise FileNotFoundError(f"appagent_native_memory_root_missing:{root}")
-        for manifest_path in root.rglob(APPAGENT_DEMO_MANIFEST):
+        for manifest_path in root.rglob(APPAGENT_MANIFEST):
             try:
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
@@ -327,7 +355,7 @@ def _native_memory_evidence(
                     manifest_lineage.update(
                         _runlog_lineage(
                             manifest_payload,
-                            pipeline._file_sha256(evidence_runlog),
+                            sha256_file(evidence_runlog),
                         )
                     )
                 except (OSError, json.JSONDecodeError):
@@ -462,7 +490,7 @@ def _appagent_source_observation(
     raise ValueError(f"appagent_source_after_observation_missing:{step_index}")
 
 
-def _write_appagent_demo_state(
+def _write_appagent_state(
     *,
     observation: dict[str, Any],
     demo_root: Path,
@@ -483,7 +511,7 @@ def _write_appagent_demo_state(
         source_run_log=source_run_log,
     )
     expected_sha256 = str(pixels.get("sha256") or "").strip()
-    if not expected_sha256 or pipeline._file_sha256(screenshot) != expected_sha256:
+    if not expected_sha256 or sha256_file(screenshot) != expected_sha256:
         raise ValueError(
             f"appagent_source_screenshot_hash_mismatch:{source_step_index}:{phase}"
         )
@@ -525,7 +553,7 @@ def _require_appagent_observation_evidence(
         source_run_log=source_run_log,
     )
     expected_sha256 = str(pixels.get("sha256") or "").strip()
-    if not expected_sha256 or pipeline._file_sha256(screenshot) != expected_sha256:
+    if not expected_sha256 or sha256_file(screenshot) != expected_sha256:
         raise ValueError(
             f"appagent_source_screenshot_hash_mismatch:{source_step_index}:{phase}"
         )
@@ -593,7 +621,7 @@ def convert_runlog_to_appagent_memory(
     demo_records = [
         record
         for record in teacher_source["actions"]
-        if str(record["action"].get("type") or "") in APPAGENT_DEMO_ACTION_TYPES
+        if str(record["action"].get("type") or "") in APPAGENT_ACTION_TYPES
     ]
     if not demo_records:
         raise ValueError("appagent_official_demo_actions_required")
@@ -621,6 +649,14 @@ def convert_runlog_to_appagent_memory(
         source_run_log=source_path,
     )
     runtime = OfficialAppAgentRuntime(appagent_root)
+    source_package = next(
+        (
+            str(record["action"].get("params", {}).get("package_name") or "")
+            for record in teacher_source["actions"]
+            if str(record["action"].get("type") or "") == "open_app"
+        ),
+        "",
+    )
     packages = []
     for record in demo_records:
         observation = _appagent_source_observation(
@@ -628,7 +664,7 @@ def convert_runlog_to_appagent_memory(
             step_index=int(record["source_step_index"]),
             after=False,
         )
-        package_name = androidworld_observation_package(observation)
+        package_name = _appagent_demo_package(observation, source_package)
         if package_name and package_name not in packages:
             packages.append(package_name)
     if len(packages) > 1:
@@ -664,9 +700,9 @@ def convert_runlog_to_appagent_memory(
             "source_coordinates_used": False,
             "conversion_mode": "canonical_runlog_offline",
         }
-        if action_type in APPAGENT_DEMO_ACTION_TYPES:
+        if action_type in APPAGENT_ACTION_TYPES:
             state_index = len(record_lines) + 1
-            xml_text, _ = _write_appagent_demo_state(
+            xml_text, _ = _write_appagent_state(
                 observation=_appagent_source_observation(
                     source,
                     step_index=int(record["source_step_index"]),
@@ -695,7 +731,7 @@ def convert_runlog_to_appagent_memory(
             )
         trace_rows.append(trace)
     final_record = demo_records[-1]
-    _write_appagent_demo_state(
+    _write_appagent_state(
         observation=_appagent_source_observation(
             source,
             step_index=int(final_record["source_step_index"]),
@@ -732,7 +768,7 @@ def convert_runlog_to_appagent_memory(
         model=normalized_model,
     )
     prep_wall_sec = max(round(time.monotonic() - prep_started, 6), 0.000001)
-    manifest = seal_appagent_demo_memory(
+    manifest = seal_appagent_memory(
         memory_root=root,
         app_name=app_name,
         demo_name=demo_name,
@@ -751,7 +787,7 @@ def convert_runlog_to_appagent_memory(
     )
     return {
         "schema_version": "omniflow.runlog-memory-conversion.v1",
-        "method": "appagent_demo",
+        "method": "appagent",
         "task_name": str(source["task_name"]),
         "source_run_log": str(source_path),
         "memory_root": str(root),
@@ -768,15 +804,15 @@ def validate_appagent_source_memory(
 ) -> dict[str, Any]:
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_method = _appagent_source_method_label(item)
-    manifest = validate_appagent_demo_memory(
+    manifest = validate_appagent_memory(
         memory_root,
         task_name=item.task,
         source_run_log=item.source_run_log,
     )
     if str(manifest.get("source_method") or "") != source_method:
-        raise ValueError("appagent_demo_memory_source_method_invalid")
+        raise ValueError("appagent_memory_source_method_invalid")
     if str(manifest.get("document_generation_model") or "") != str(model):
-        raise ValueError("appagent_demo_memory_model_invalid")
+        raise ValueError("appagent_memory_model_invalid")
     models = {
         str(value or "").strip()
         for value in (
@@ -786,7 +822,7 @@ def validate_appagent_source_memory(
     }
     if models != {str(model)}:
         raise ValueError(
-            "appagent_demo_memory_usage_model_invalid:"
+            "appagent_memory_usage_model_invalid:"
             f"expected={model}:actual={sorted(models)}"
         )
     return manifest
@@ -794,7 +830,7 @@ def validate_appagent_source_memory(
 
 def _preflight_appagent_teacher(
     *,
-    item: pipeline.ArchivedRunLog,
+    item: CanonicalRunLog,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     grounded, grounding_audit = build_grounded_teacher_run_log_from_canonical_item(
         item
@@ -811,7 +847,7 @@ def _preflight_appagent_teacher(
             grounded_path,
             task_name=item.task,
             source_seed=SOURCE_SEED,
-            provenance_source_run_log=grounding_audit["source_run_log"],
+            provenance_source_run_log=grounding_audit["source"]["run_log"],
         )
     grounded_steps = {
         int(step.get("step_index", index)): step
@@ -821,7 +857,7 @@ def _preflight_appagent_teacher(
     groundable_action_count = 0
     for record in teacher_source.get("actions") or []:
         action = dict(record.get("action") or {})
-        if str(action.get("type") or "").strip() not in APPAGENT_DEMO_ACTION_TYPES:
+        if str(action.get("type") or "").strip() not in APPAGENT_ACTION_TYPES:
             continue
         step_index = int(record.get("source_step_index") or 0)
         step = grounded_steps.get(step_index) or {}
@@ -859,7 +895,7 @@ def _preflight_appagent_teacher(
     demo_records = [
         record
         for record in teacher_source["actions"]
-        if str(record["action"].get("type") or "") in APPAGENT_DEMO_ACTION_TYPES
+        if str(record["action"].get("type") or "") in APPAGENT_ACTION_TYPES
     ]
     for record in demo_records:
         step_index = int(record["source_step_index"])
@@ -884,7 +920,7 @@ def _preflight_appagent_teacher(
         phase="after",
         source_run_log=Path(item.source_run_log).expanduser().resolve(),
     )
-    grounding_audit["appagent_groundable_action_count"] = (
+    grounding_audit["grounding"]["appagent_groundable_action_count"] = (
         groundable_action_count
     )
     return grounded, grounding_audit, teacher_source
@@ -912,14 +948,15 @@ def preflight_appagent_source(
             model=str(model or "").strip(),
         )
     return {
-        "schema_version": "omniflow.appagent-source-preflight.v1",
+        "schema_version": "omniflow.appagent.source-check.v2",
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
         "source_method": _appagent_source_method_label(item),
-        "source_run_log": str(grounding_audit["source_run_log"]),
+        "source": dict(grounding_audit["source"]),
         "action_count": int(teacher_source["action_count"]),
         "demo_action_count": int(teacher_source["demo_action_count"]),
-        "grounding": grounding_audit,
+        "grounding": dict(grounding_audit["grounding"]),
+        "safety": dict(grounding_audit["safety"]),
         "conversion_mode": "canonical_runlog_offline",
         "source_emulator_used": False,
         "native_memory_evidence": str(evidence["manifest"]) if evidence else None,
@@ -927,7 +964,7 @@ def preflight_appagent_source(
     }
 
 
-def prepare_appagent_demo_memory(
+def prepare_appagent_memory(
     *,
     index_path: str | Path,
     task_name: str,
@@ -960,19 +997,16 @@ def prepare_appagent_demo_memory(
     )
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_method = _appagent_source_method_label(item)
-    from src.experiment.source_assets import convert_runlog_memory
-
-    result = convert_runlog_memory(
-        "appagent_demo",
+    result = convert_runlog_to_appagent_memory(
         source_run_log=item.source_run_log,
-        output_root=memory_root,
-        upstream_root=appagent_root,
+        appagent_root=appagent_root,
+        memory_root=memory_root,
         model=normalized_model,
         source_method=source_method,
     )
     result.update(
         {
-            "schema_version": "omniflow.appagent-source-prepare.v3",
+            "schema_version": "omniflow.appagent.memory-prepare.v2",
             "source_seed": SOURCE_SEED,
             "source_method": source_method,
             "model": normalized_model,
@@ -986,7 +1020,7 @@ def prepare_appagent_demo_memory(
 
 def _write_failure_marker(memory_root: str | Path, error: BaseException) -> None:
     root = Path(memory_root).expanduser().resolve()
-    if not root.is_dir() or (root / APPAGENT_DEMO_MANIFEST).exists():
+    if not root.is_dir() or (root / APPAGENT_MANIFEST).exists():
         return
     marker = root / "prep_failure.json"
     if marker.exists():
@@ -994,7 +1028,7 @@ def _write_failure_marker(memory_root: str | Path, error: BaseException) -> None
     marker.write_text(
         json.dumps(
             {
-                "schema_version": "omniflow.appagent-source-failure.v1",
+                "schema_version": "omniflow.appagent.memory-failure.v2",
                 "failed_at": datetime.datetime.now(
                     datetime.timezone.utc
                 ).isoformat(),
@@ -1047,7 +1081,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
     try:
         if args.command == "prepare":
-            result = prepare_appagent_demo_memory(
+            result = prepare_appagent_memory(
                 index_path=args.index,
                 task_name=args.task,
                 appagent_root=args.appagent_root,

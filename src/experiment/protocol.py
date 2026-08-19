@@ -56,11 +56,17 @@ FIXED_TASK_PARAMS = bool(ANDROIDWORLD_PROTOCOL["fixed_task_params"])
 FOLD_STATE = int(ANDROIDWORLD_PROTOCOL["fold_state"])
 FOLD_SIZE = str(ANDROIDWORLD_PROTOCOL["fold_size"])
 FORMAL_MODEL = str(ANDROIDWORLD_PROTOCOL["model"])
+APPAGENT_MODEL = str(ANDROIDWORLD_PROTOCOL["appagent_model"])
 FORMAL_MODEL_ENDPOINT_PROFILE = str(
     ANDROIDWORLD_PROTOCOL["model_endpoint_profile"]
 )
 FORMAL_MODEL_BASE_URL = str(ANDROIDWORLD_PROTOCOL["model_base_url"])
 ANDROIDWORLD_REVISION = str(ANDROIDWORLD_PROTOCOL["androidworld_revision"])
+_DROIDRUN = ANDROIDWORLD_PROTOCOL["droidrun"]
+DROIDRUN_VERSION = str(_DROIDRUN["version"])
+DROIDRUN_COMMIT = str(_DROIDRUN["commit"])
+DROIDRUN_PORTAL_VERSION = str(_DROIDRUN["portal_version"])
+DROIDRUN_PORTAL_COMMIT = str(_DROIDRUN["portal_commit"])
 
 # Active result vocabulary. The registry reads the old one_task names only for
 # immutable historical attempts and never writes them again.

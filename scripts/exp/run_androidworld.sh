@@ -4,20 +4,20 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 workspace_root="$(cd "$repo/.." && pwd)"
-default_asset_root="$workspace_root/OmniFlow"
-default_memory_root="$workspace_root/assets/androidworld-experiment-memory-v1"
+default_asset_root="$repo/data"
+default_memory_root="$repo/data"
 asset_root="${OMNIFLOW_EXP_ASSET_ROOT:-$default_asset_root}"
-results_root="${OMNIFLOW_EXP_RESULTS_ROOT:-$asset_root/runtime/evals}"
+results_root="${OMNIFLOW_EXP_RESULTS_ROOT:-$repo/data}"
 account_root="$(cd && pwd)"
-default_python="$workspace_root/OmniFlow/.venv/bin/python"
+default_python="$repo/.venv/bin/python"
 python_bin="${PYTHON_BIN:-$default_python}"
 if [[ "$python_bin" != /* || ! -x "$python_bin" ]]; then
   echo "Python runtime missing: set PYTHON_BIN to one absolute executable (default: $default_python)." >&2
   exit 2
 fi
 env_file="${OMNIFLOW_ENV_FILE:-${asset_root:+$asset_root/.env}}"
-master_source_index="${asset_root:+$asset_root/runtime/evals/androidworld_validator/core_archive/success_source_runlogs/index_by_task.json}"
-source_index="$master_source_index"
+source_index_input="${asset_root:+$asset_root/inputs/final_source_index.json}"
+source_index="$source_index_input"
 source_index_expected_tasks=""
 formal_source_seed=""
 formal_task_seed=""
@@ -44,19 +44,49 @@ bmoca_appium_system_port="${OMNIFLOW_BMOCA_APPIUM_SYSTEM_PORT:-}"
 bmoca_emulator_console_port="${OMNIFLOW_BMOCA_EMULATOR_CONSOLE_PORT:-}"
 bmoca_emulator_adb_port="${OMNIFLOW_BMOCA_EMULATOR_ADB_PORT:-}"
 bmoca_emulator_grpc_port="${OMNIFLOW_BMOCA_EMULATOR_GRPC_PORT:-}"
+bmoca_reuse_memory_path="${OMNIFLOW_BMOCA_REUSE_MEMORY_PATH:-}"
 android_world_revision="$(PYTHONPATH="$repo:$repo/src${PYTHONPATH:+:$PYTHONPATH}" "$python_bin" - <<'PY'
 from src.experiment.protocol import ANDROIDWORLD_REVISION
 
 print(ANDROIDWORLD_REVISION)
 PY
 )"
-mobilegpt_source_schema="omniflow.mobilegpt-runlog-direct-memory.v1"
+droidrun_version="$(PYTHONPATH="$repo:$repo/src${PYTHONPATH:+:$PYTHONPATH}" "$python_bin" - <<'PY'
+from src.experiment.protocol import DROIDRUN_VERSION
+
+print(DROIDRUN_VERSION)
+PY
+)"
+validate_droidrun_runtime() {
+  "$python_bin" - "$droidrun_version" <<'PY'
+import sys
+from importlib.metadata import PackageNotFoundError, version
+
+expected = sys.argv[1]
+try:
+    actual = version("droidrun")
+except PackageNotFoundError as error:
+    raise SystemExit(
+        "DroidRun is missing; install the B-MoCA runtime with "
+        "`uv sync --extra bmoca`."
+    ) from error
+if actual != expected:
+    raise SystemExit(
+        f"DroidRun version mismatch: expected={expected} actual={actual}"
+    )
+from src.integrations.skilldroid_replay import load_official_droidrun_macro_player
+
+player = load_official_droidrun_macro_player()
+print(f"[droidrun] version={actual} player={player.__name__}")
+PY
+}
+mobilegpt_source_schema="omniflow.mobilegpt.memory.v2"
 mobilegpt_source_method="mobilegpt_runlog_direct_memory"
 mobilegpt_source_manifest_name="mobilegpt_memory_manifest.json"
 expected_source_seed=""
 task_seed=""
 omnitransfer_root="${OMNITRANSFER_ROOT:-$workspace_root/OmniTransfer}"
-android_world_release_root="${OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT:-$(dirname "$asset_root")/releases/android-world-$android_world_revision}"
+android_world_release_root="${OMNIFLOW_ANDROIDWORLD_RELEASE_ROOT:-$workspace_root/releases/android-world-$android_world_revision}"
 android_world_root="${OMNIFLOW_ANDROID_WORLD_ROOT:-$android_world_release_root}"
 export PYTHONPATH="$repo:$repo/src${android_world_root:+:$android_world_root}${PYTHONPATH:+:$PYTHONPATH}"
 validate_page_encoder_runtime() {
@@ -73,6 +103,7 @@ from src.experiment.protocol import (
     DEVICE_AVDS,
     DEVICES,
     EMULATOR_AVD_SPECS,
+    APPAGENT_MODEL,
     FORMAL_MODEL,
     FORMAL_MODEL_BASE_URL,
     FORMAL_MODEL_ENDPOINT_PROFILE,
@@ -100,6 +131,7 @@ print(
     VALIDATOR_FLUSH_GRACE_SEC,
     TASK_DEADLINE_SEC,
     FORMAL_MODEL,
+    APPAGENT_MODEL,
     FORMAL_MODEL_ENDPOINT_PROFILE,
     FORMAL_MODEL_BASE_URL,
     int(FIXED_TASK_PARAMS),
@@ -125,16 +157,18 @@ PY
 read -r formal_source_seed formal_task_seed formal_max_steps \
   formal_max_fallback_steps formal_step_timeout_sec \
   official_validator_flush_grace_sec \
-  formal_task_deadline_sec formal_model formal_model_endpoint_profile \
+  formal_task_deadline_sec formal_model formal_appagent_model formal_model_endpoint_profile \
   formal_model_base_url formal_fixed_task_params formal_fold_state formal_fold_size \
   formal_default_method all_methods \
   source_device default_device source_avd emulator_avds \
   emulator_avd_profiles fold_serial <<< "$protocol_values"
+appagent_model="${OMNIFLOW_APPAGENT_MODEL:-$formal_appagent_model}"
 expected_source_seed="$formal_source_seed"
 task_seed="$formal_task_seed"
-preflight="$repo/src/experiment/preflight.py"
+preflight="$repo/src/experiment/checks.py"
 selected_method_arg=""
 selected_device_arg=""
+control_backend="${OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND:-androidworld}"
 task="${OMNIFLOW_ANDROIDWORLD_TASK:-SystemBluetoothTurnOn}"
 batch_attempt_id="${OMNIFLOW_BATCH_ATTEMPT_ID:-}"
 device_target="${OMNIFLOW_ANDROIDWORLD_DEVICE:-$default_device}"
@@ -144,12 +178,10 @@ preflight_minimum_free_gb="${OMNIFLOW_PREFLIGHT_MINIMUM_FREE_GB:-20}"
 max_steps="${OMNIFLOW_ANDROIDWORLD_MAX_STEPS:-$formal_max_steps}"
 max_fallback_steps="${OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS:-$formal_max_fallback_steps}"
 store_path="${OMNIFLOW_ANDROIDWORLD_STORE_PATH:-}"
-ours_store_index=""
 memory_root="${OMNIFLOW_EXP_MEMORY_ROOT:-$default_memory_root}"
 memory_index="${OMNIFLOW_EXP_MEMORY_INDEX:-${memory_root:+$memory_root/current.json}}"
-memory_function_catalogs="${OMNIFLOW_MEMORY_FUNCTION_CATALOGS:-}"
-memory_runlog_roots="${OMNIFLOW_MEMORY_RUNLOG_ROOTS:-${asset_root:+$asset_root/runtime/evals}}"
-memory_result_roots="${OMNIFLOW_MEMORY_RESULT_ROOTS:-${asset_root:+$asset_root/runtime/evals}}"
+memory_runlog_roots="${OMNIFLOW_MEMORY_RUNLOG_ROOTS:-$repo/data}"
+memory_result_roots="${OMNIFLOW_MEMORY_RESULT_ROOTS:-$repo/data}"
 memory_mobilegpt_roots="${OMNIFLOW_MEMORY_MOBILEGPT_ROOTS:-}"
 memory_baseline_batch_reports="${OMNIFLOW_MEMORY_BASELINE_BATCH_REPORTS:-}"
 if [[ -n "$results_root" && ":$memory_result_roots:" != *":$results_root:"* ]]; then
@@ -158,7 +190,7 @@ fi
 mobilegpt_root="${OMNIFLOW_MOBILEGPT_ROOT:-${asset_root:+$asset_root/runtime/external/mobilegpt}}"
 mobilegpt_source_memory_root="${OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT:-}"
 appagent_root="${OMNIFLOW_APPAGENT_ROOT:-${asset_root:+$asset_root/runtime/external/appagent}}"
-appagent_demo_memory_root="${OMNIFLOW_APPAGENT_DEMO_MEMORY_ROOT:-}"
+appagent_memory_root="${OMNIFLOW_APPAGENT_MEMORY_ROOT:-}"
 preflight_profile=""
 preflight_serials=""
 manage_emulators="${OMNIFLOW_ANDROIDWORLD_MANAGE_EMULATORS:-1}"
@@ -369,7 +401,6 @@ PY
   export OMNIFLOW_MODEL_ENDPOINT_PROFILE="$profile"
   if [[ "$profile" == "llmthu" ]]; then
     export LLMTHU_API_KEY="$selected_model_api_key"
-    export LLMTHU_BASE_URL="$selected_model_base_url"
   fi
 }
 
@@ -442,14 +473,16 @@ Options:
                             only the official environment, never the method.
   --check-only              Validate the complete selected run without creating
                             assets, attempts, result directories, or emulators.
-  --development-run         Run one unregistered `ours` episode through this
+  --development-run         Run one unregistered `omniflow` episode through this
                             script for bounded method debugging.
   --dry-run                 Build one task command without executing it.
   --all-tasks               Run the selected task set in task-major order.
   --method METHOD           Run one method in the single-result runner. B-MoCA
-                            accepts public labels ours or script_replay.
+                            accepts ours_replay or skilldroid_replay.
   --device LABEL:SERIAL:PORT
                             Run one target in the single-result runner.
+  --control-backend NAME    Use androidworld (default) or explicit oob transport
+                            for bounded development/source/E2E runs.
   --tasks TASK1,TASK2,...   Select an ordered task-major subset. Implies
                             --all-tasks during experiment execution.
   --e2e-task TASK           Run one bounded source-to-matrix task pipeline.
@@ -463,10 +496,10 @@ Options:
                             method assets, and existing results.
   -h, --help                Show this help and exit.
 
-Required external roots:
+Required roots:
   OMNIFLOW_EXP_ASSET_ROOT   Absolute root containing frozen experiment assets.
-  OMNIFLOW_EXP_RESULTS_ROOT Absolute root for immutable results.
-  OMNIFLOW_EXP_MEMORY_ROOT  Absolute content-addressed long-term-memory root.
+  OMNIFLOW_EXP_RESULTS_ROOT Absolute local result root (default: repo/data).
+  OMNIFLOW_EXP_MEMORY_ROOT  Absolute local memory root (default: repo/data).
   OMNITRANSFER_ROOT         Canonical/versioned OmniTransfer checkout.
 
 Optional runtime overrides:
@@ -487,7 +520,6 @@ Optional runtime overrides:
 Long-term-memory refresh inputs:
   OMNIFLOW_MEMORY_RUNLOG_ROOTS       Colon-separated evidence roots.
   OMNIFLOW_MEMORY_RESULT_ROOTS       Colon-separated result roots.
-  OMNIFLOW_MEMORY_FUNCTION_CATALOGS  Colon-separated Function catalogs.
   OMNIFLOW_SOURCE_SCREENSHOT_ROOTS   Optional screenshot roots for legacy repairs.
 
 Environment adapters:
@@ -552,6 +584,14 @@ while [[ "$#" -gt 0 ]]; do
       fi
       selected_device_arg="$1"
       ;;
+    --control-backend)
+      shift
+      if [[ "$#" -eq 0 || ( "$1" != "androidworld" && "$1" != "oob" ) ]]; then
+        echo "--control-backend requires androidworld or oob." >&2
+        exit 2
+      fi
+      control_backend="$1"
+      ;;
     --refresh-memory)
       refresh_memory=1
       ;;
@@ -592,6 +632,17 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
+if [[ "$control_backend" == "oob" && "$execution_environment" != "androidworld" ]]; then
+  echo "--control-backend oob is only supported for AndroidWorld." >&2
+  exit 2
+fi
+if [[ "$control_backend" == "oob" && "$development_run" -eq 0 && "$source_collection" -eq 0 && -z "$e2e_task" ]]; then
+  if [[ "$selected_method_arg" != "fixed_replay" || -z "$selected_device_arg" ]]; then
+    echo "--control-backend oob formal execution requires fixed_replay and an explicit device." >&2
+    exit 2
+  fi
+fi
+export OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND="$control_backend"
 if [[ "$execution_environment" != "bmoca" && ( -n "$selected_method_arg" || -n "$selected_device_arg" ) ]] && {
   [[ "$development_run" -eq 1 || "$source_collection" -eq 1 ||
     "$all_tasks" -eq 1 || -n "$e2e_task" || -n "$batch_task_filter" ||
@@ -656,13 +707,16 @@ if [[ "$execution_environment" == "bmoca" ]]; then
   fi
   export PYTHONPATH="$repo:$repo/src:$bmoca_root:$bmoca_android_env_root${PYTHONPATH:+:$PYTHONPATH}"
   export OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS=0
+  if [[ -z "$selected_method_arg" || "$selected_method_arg" == "skilldroid_replay" ]]; then
+    validate_droidrun_runtime
+  fi
   if [[ -n "$selected_method_arg" ]]; then
     if [[ "$all_tasks" -eq 1 || -z "$batch_task_filter" || "$batch_task_filter" == *,* ]]; then
       echo "A B-MoCA single result requires exactly one task and cannot use --all-tasks." >&2
       exit 2
     fi
-    if [[ "$selected_method_arg" != "ours" && "$selected_method_arg" != "script_replay" ]]; then
-      echo "B-MoCA --method must be ours or script_replay." >&2
+    if [[ "$selected_method_arg" != "ours_replay" && "$selected_method_arg" != "skilldroid_replay" ]]; then
+      echo "B-MoCA --method must be ours_replay or skilldroid_replay." >&2
       exit 2
     fi
     if [[ -z "$bmoca_single_environment_id" || ! "$bmoca_single_environment_id" =~ ^10[0-9]$ ]]; then
@@ -673,12 +727,17 @@ if [[ "$execution_environment" == "bmoca" ]]; then
       echo "A B-MoCA single result requires positive isolated runtime ports." >&2
       exit 2
     fi
-    if [[ -z "$store_path" || "$store_path" != /* || ! -f "$store_path" ]]; then
-      echo "A B-MoCA single result requires an existing absolute Function Store." >&2
+    if [[ "$selected_method_arg" == "ours_replay" ]]; then
+      if [[ -z "$store_path" || "$store_path" != /* || ! -f "$store_path" ]]; then
+        echo "B-MoCA ours_replay requires an existing absolute Function Store." >&2
+        exit 2
+      fi
+    elif [[ -z "$bmoca_reuse_memory_path" || "$bmoca_reuse_memory_path" != /* || ! -e "$bmoca_reuse_memory_path" ]]; then
+      echo "A B-MoCA reuse baseline requires OMNIFLOW_BMOCA_REUSE_MEMORY_PATH." >&2
       exit 2
     fi
     bmoca_command=(
-      "$python_bin" -m src.integrations.android_world.launch
+      "$python_bin" -m src.integrations.android_world.run_episode
       --environment bmoca
       --bmoca-root "$bmoca_root"
       --environment-ids "$bmoca_single_environment_id"
@@ -694,22 +753,8 @@ if [[ "$execution_environment" == "bmoca" ]]; then
       --store-path "$store_path"
       --output-path "$bmoca_output_path"
     )
-    if [[ "$selected_method_arg" == "ours" ]]; then
-      if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
-        echo "B-MoCA ours requires an existing absolute OMNIFLOW_ENV_FILE." >&2
-        exit 2
-      fi
-      set -a
-      source "$env_file"
-      set +a
-      select_model_endpoint "$formal_model_endpoint_profile"
-      validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
-      bmoca_command+=(
-        --model "$formal_model"
-        --model-endpoint-profile "$formal_model_endpoint_profile"
-        --planner-provider openai_compatible
-        --planner-timeout-sec 60
-      )
+    if [[ "$selected_method_arg" != "ours_replay" ]]; then
+      bmoca_command+=(--reuse-memory-path "$bmoca_reuse_memory_path")
     fi
     cd "$repo"
     exec "${bmoca_command[@]}"
@@ -723,6 +768,23 @@ if [[ "$execution_environment" == "bmoca" ]]; then
     echo "B-MoCA campaign requires an absolute OMNIFLOW_BMOCA_CORPUS_MANIFEST." >&2
     exit 2
   fi
+  bmoca_source_avd="$("$python_bin" - "$bmoca_root/asset/environments/config/environments_test.csv" <<'PY'
+import csv
+import sys
+from pathlib import Path
+
+with Path(sys.argv[1]).open(newline="", encoding="utf-8") as stream:
+    rows = {str(row["idx"]): str(row["device_id"]) for row in csv.DictReader(stream)}
+device_id = rows.get("100", "").strip()
+if not device_id:
+    raise SystemExit("bmoca_env100_catalog_missing")
+print(f"{device_id}_test_00")
+PY
+)"
+  if [[ ! -d "$bmoca_avd_home/$bmoca_source_avd.avd" || ! -f "$bmoca_avd_home/$bmoca_source_avd.ini" ]]; then
+    echo "B-MoCA campaign requires the official env100 source AVD: $bmoca_avd_home/$bmoca_source_avd.avd" >&2
+    exit 2
+  fi
   if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
     echo "B-MoCA campaign enhancement requires an absolute OMNIFLOW_ENV_FILE." >&2
     exit 2
@@ -730,11 +792,12 @@ if [[ "$execution_environment" == "bmoca" ]]; then
   set -a
   source "$env_file"
   set +a
+  unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
   select_model_endpoint "$formal_model_endpoint_profile"
   validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
   bmoca_task_selection="${batch_task_filter:-*}"
   bmoca_pipeline_args=(
-    -m src.experiment.e2e_task_pipeline
+    -m src.experiment.run_tasks
     --environment bmoca
     --repo "$repo"
     --script "$repo/scripts/exp/run_androidworld.sh"
@@ -775,7 +838,7 @@ if [[ "$development_run" -eq 1 ]]; then
   development_planner_timeout="${OMNIFLOW_PLANNER_TIMEOUT_SEC:-60}"
   development_runtime_files=(
     "src/experiment/development_emulator.py"
-    "src/integrations/android_world/launch.py"
+    "src/integrations/android_world/run_episode.py"
   )
   missing_development_runtime_files=()
   for relative_path in "${development_runtime_files[@]}"; do
@@ -840,10 +903,12 @@ if [[ "$development_run" -eq 1 ]]; then
   set +a
   select_model_endpoint "$development_model_endpoint_profile"
   validate_experiment_model "$development_model" "$development_model_endpoint_profile"
-  validate_page_encoder_runtime
+  if [[ "$dry_run" -eq 0 ]]; then
+    validate_page_encoder_runtime
+  fi
   echo "[model] model=$development_model model_endpoint_profile=$development_model_endpoint_profile model_endpoint=$selected_model_base_url"
   development_command=(
-    "$python_bin" -m src.integrations.android_world.launch
+    "$python_bin" -m src.integrations.android_world.run_episode
     --android-world-root "$android_world_root"
     --tasks "$task"
     --task-random-seed "$task_seed"
@@ -880,7 +945,7 @@ if [[ "$development_run" -eq 1 ]]; then
   exec "${development_command[@]}"
 fi
 if [[ -n "$e2e_task" ]]; then
-  if [[ "$refresh_memory" -eq 1 || "$check_only" -eq 1 || "$all_tasks" -eq 1 || -n "$batch_task_filter" ]]; then
+  if [[ "$refresh_memory" -eq 1 || "$all_tasks" -eq 1 || -n "$batch_task_filter" ]]; then
     echo "--e2e-task cannot be combined with maintenance or matrix-selection options." >&2
     exit 2
   fi
@@ -910,11 +975,7 @@ if [[ -n "$e2e_task" ]]; then
     echo "--e2e-task requires canonical OmniTransfer: $canonical_omnitransfer_root." >&2
     exit 2
   fi
-  if [[ -z "$mobilegpt_root" || "$mobilegpt_root" != /* || ! -d "$mobilegpt_root" ]]; then
-    echo "--e2e-task requires an absolute native MobileGPT root." >&2
-    exit 2
-  fi
-  if [[ -z "$appagent_root" || "$appagent_root" != /* || ! -d "$appagent_root" ]]; then
+  if [[ "$dry_run" -ne 1 && "$check_only" -ne 1 && ( -z "$appagent_root" || "$appagent_root" != /* || ! -d "$appagent_root" ) ]]; then
     echo "--e2e-task requires an absolute native AppAgent root." >&2
     exit 2
   fi
@@ -942,25 +1003,35 @@ if [[ -n "$e2e_task" ]]; then
     echo "--e2e-task source AVD is unavailable: $source_avd" >&2
     exit 2
   fi
-  if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
-    echo "--e2e-task requires an existing absolute OMNIFLOW_ENV_FILE." >&2
-    exit 2
+  if [[ "$check_only" -ne 1 ]]; then
+    if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
+      echo "--e2e-task requires an existing absolute OMNIFLOW_ENV_FILE." >&2
+      exit 2
+    fi
+    set -a
+    source "$env_file"
+    set +a
+    # The formal endpoint must not inherit a developer SOCKS/HTTP proxy.
+    # httpx otherwise constructs a proxy transport before the provider call,
+    # which makes MobileGPT preparation fail when socksio is not installed.
+    unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
+    select_model_endpoint "$formal_model_endpoint_profile"
+    validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
+    export OPENAI_MODEL="$formal_model"
+    export OMNIFLOW_PLANNER_MODEL="$formal_model"
   fi
-  set -a
-  source "$env_file"
-  set +a
   normalized_e2e_model="$(printf '%s' "$formal_model" | tr '[:upper:]' '[:lower:]')"
   if [[ "$normalized_e2e_model" != "glm-5.1" ]]; then
     echo "AndroidWorld E2E requires GLM-5.1 for the formal model, got: $formal_model" >&2
     exit 2
   fi
-  e2e_output_root="${OMNIFLOW_E2E_OUTPUT_ROOT:-$results_root/androidworld_e2e_task_attempts}"
+  e2e_output_root="${OMNIFLOW_E2E_OUTPUT_ROOT:-$results_root/androidworld}"
   if [[ "$e2e_output_root" != /* ]]; then
     echo "OMNIFLOW_E2E_OUTPUT_ROOT must be absolute." >&2
     exit 2
   fi
   e2e_args=(
-    -m src.experiment.e2e_task_pipeline
+    -m src.experiment.run_tasks
     --repo "$repo"
     --script "$repo/scripts/exp/run_androidworld.sh"
     --task "$e2e_task"
@@ -981,8 +1052,9 @@ if [[ -n "$e2e_task" ]]; then
     --source-device "$source_device"
     --source-avd "$source_avd"
     --emulator-gpu "$emulator_gpu"
-    --runtime-preflight "$repo/src/experiment/preflight.py"
+    --runtime-preflight "$repo/src/experiment/checks.py"
     --formal-model "$formal_model"
+    --appagent-model "$appagent_model"
   )
   if [[ -n "${OMNIFLOW_E2E_ATTEMPT_ID:-}" ]]; then
     e2e_args+=(--attempt-id "$OMNIFLOW_E2E_ATTEMPT_ID")
@@ -993,8 +1065,8 @@ if [[ -n "$e2e_task" ]]; then
   if [[ "$source_collection" -eq 1 ]]; then
     e2e_args+=(--source-only)
   fi
-  if [[ -n "$appagent_demo_memory_root" ]]; then
-    e2e_args+=(--appagent-memory-root "$appagent_demo_memory_root")
+  if [[ -n "$appagent_memory_root" ]]; then
+    e2e_args+=(--appagent-memory-root "$appagent_memory_root")
   fi
   if [[ "$dry_run" -eq 1 ]]; then
     e2e_args+=(--dry-run)
@@ -1016,8 +1088,8 @@ if [[ "$refresh_memory" -eq 1 ]]; then
     exit 2
   fi
   memory_pointer="$memory_root/current.json"
-  if [[ ! -f "$memory_pointer" && ! -f "$master_source_index" ]]; then
-    echo "Canonical master source index missing: $master_source_index" >&2
+  if [[ ! -f "$memory_pointer" && ! -f "$source_index_input" ]]; then
+    echo "Canonical source input missing: $source_index_input" >&2
     exit 2
   fi
   if [[ -z "$memory_runlog_roots" ]]; then
@@ -1029,12 +1101,12 @@ if [[ "$refresh_memory" -eq 1 ]]; then
     exit 1
   fi
   memory_args=(
-    -m src.experiment.artifact_memory
+    -m src.experiment.data_index
     refresh
     --memory-root "$memory_root"
   )
   if [[ ! -f "$memory_pointer" ]]; then
-    memory_args+=(--source-index "$master_source_index")
+    memory_args+=(--source-index "$source_index_input")
   fi
   if [[ -n "$source_screenshot_roots" ]]; then
     IFS=':' read -r -a configured_screenshot_roots <<< "$source_screenshot_roots"
@@ -1091,44 +1163,9 @@ if [[ "$refresh_memory" -eq 1 ]]; then
       memory_args+=(--baseline-batch-report "$configured_report")
     done
   fi
-  if [[ -n "$memory_function_catalogs" ]]; then
-    IFS=':' read -r -a configured_function_catalogs <<< "$memory_function_catalogs"
-    for configured_catalog in "${configured_function_catalogs[@]}"; do
-      if [[ -z "$configured_catalog" ]]; then
-        continue
-      fi
-      if [[ "$configured_catalog" != /* || ! -f "$configured_catalog" ]]; then
-        echo "Memory Function catalog must be an existing absolute file: $configured_catalog" >&2
-        exit 2
-      fi
-      memory_args+=(--function-catalog "$configured_catalog")
-    done
-  fi
   cd "$repo"
   exec "$python_bin" "${memory_args[@]}"
 fi
-load_memory_paths() {
-  "$python_bin" - "$repo" "$memory_index" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
-from src.experiment.artifact_memory import load_artifact_memory
-
-index_path = Path(sys.argv[2]).expanduser().resolve()
-load_artifact_memory(index_path)
-pointer = json.loads(index_path.read_text(encoding="utf-8"))
-print(
-    "\t".join(
-        (
-            str(pointer["source_index"]),
-            str(pointer["ours_store_index"]),
-        )
-    )
-)
-PY
-}
 if [[ -n "$batch_task_filter" && "$all_tasks" -eq 0 ]]; then
   all_tasks=1
 fi
@@ -1210,10 +1247,10 @@ if ! python_bin="$(command -v "$python_bin")"; then
   exit 1
 fi
 indexed_store_path_for_task() {
-  if [[ -z "$ours_store_index" ]]; then
+  if [[ -z "$memory_index" ]]; then
     return 1
   fi
-  "$python_bin" - "$ours_store_index" "$1" <<'PY'
+  "$python_bin" - "$memory_index" "$1" <<'PY'
 import hashlib
 import json
 import sys
@@ -1222,6 +1259,8 @@ from pathlib import Path
 index_path = Path(sys.argv[1]).expanduser().resolve()
 task_name = sys.argv[2]
 payload = json.loads(index_path.read_text(encoding="utf-8"))
+if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.data-index.v2":
+    payload = payload.get("canonical", {}).get("function_stores", {})
 row = payload.get(task_name) if isinstance(payload, dict) else None
 if not isinstance(row, dict):
     raise SystemExit(3)
@@ -1235,29 +1274,34 @@ for path_field, hash_field in fields:
     expected = str(row.get(hash_field) or "").strip()
     if not path.is_absolute() or not path.is_file():
         raise SystemExit(
-            f"ours_store_index_file_missing:{task_name}:{path_field}:{path}"
+            f"omniflow_store_index_file_missing:{task_name}:{path_field}:{path}"
         )
     actual = hashlib.sha256(path.read_bytes()).hexdigest()
     if not expected or actual != expected:
         raise SystemExit(
-            f"ours_store_index_hash_mismatch:{task_name}:{path_field}:"
+            f"omniflow_store_index_hash_mismatch:{task_name}:{path_field}:"
             f"expected={expected or 'missing'}:actual={actual}"
         )
 store_path = Path(str(row["store_path"])).resolve()
 transfer_path = Path(str(row["transfer_states_path"])).resolve()
 if transfer_path != store_path.with_name("transfer_states.json"):
-    raise SystemExit(f"ours_store_index_catalog_mismatch:{task_name}")
+            raise SystemExit(f"omniflow_store_index_catalog_mismatch:{task_name}")
 print(store_path)
 PY
 }
-memory_paths="$(load_memory_paths)"
-IFS=$'\t' read -r memory_source_index memory_store_index <<< "$memory_paths"
-master_source_index="$memory_source_index"
-source_index="$memory_source_index"
-ours_store_index="$memory_store_index"
+source_index="$memory_index"
+"$python_bin" - "$repo" "$memory_index" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
+from src.experiment.data_index import load_data_index
+
+load_data_index(Path(sys.argv[2]).expanduser().resolve())
+PY
 export OMNIFLOW_EXP_MEMORY_INDEX="$memory_index"
 requires_function_asset=0
-if [[ "$method" == "ours" ]]; then
+if [[ "$method" == "omniflow" ]]; then
   requires_function_asset=1
 fi
 prepare_function_asset_for_task() {
@@ -1312,18 +1356,14 @@ need_mobilegpt_preflight=0
 need_appagent_preflight=0
 
 case "$method" in
-    ours)
+    omniflow)
       requires_omnitransfer=1
       need_native_preflight=1
       ;;
     fixed_replay)
       need_native_preflight=1
       ;;
-    mobilegpt_offline_retrieval)
-      need_mobilegpt_preflight=1
-      requires_mobilegpt_source_memory=1
-      ;;
-    appagent_demo)
+    appagent)
       need_appagent_preflight=1
       requires_appagent_source_memory=1
       ;;
@@ -1337,7 +1377,7 @@ case "$method" in
 esac
 
 if [[ -z "$asset_root" || -z "$results_root" ]]; then
-  echo "Set OMNIFLOW_EXP_ASSET_ROOT and OMNIFLOW_EXP_RESULTS_ROOT to external absolute paths." >&2
+  echo "Set OMNIFLOW_EXP_ASSET_ROOT and OMNIFLOW_EXP_RESULTS_ROOT to absolute paths." >&2
   exit 2
 fi
 if [[ "$asset_root" != /* || "$results_root" != /* ]]; then
@@ -1404,7 +1444,7 @@ fi
 export JAVA_HOME="$java_home"
 export PATH="$java_home/bin:$PATH"
 echo "[java] home=$java_home major=$java_major version=$java_version_line"
-select_source_asset_revision() {
+select_source_revision() {
   local hash_index="${4:-$source_index}"
   local expected_source_model="${5:-}"
   local expected_schema_version="${6:-}"
@@ -1415,12 +1455,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
-from src.experiment.source_assets import select_source_asset_revision
+from src.experiment.source_evidence import select_source_revision
 from src.experiment.protocol import SOURCE_SEED
 
 source_index = json.loads(
     Path(sys.argv[4]).read_text(encoding="utf-8")
 )
+if source_index.get("schema_version") == "omniflow.data-index.v2":
+    source_index = source_index["source_index"]
 source_row = source_index.get(sys.argv[5])
 if not isinstance(source_row, dict):
     raise SystemExit(f"canonical_source_task_missing:{sys.argv[5]}")
@@ -1443,10 +1485,10 @@ if lineage is not None:
         raise SystemExit(f"canonical_source_run_log_lineage_invalid:{sys.argv[5]}")
     compatible_source_sha256s.append(str(lineage.get("source_sha256") or ""))
 candidate_validator = None
-if sys.argv[7] == "omniflow.mobilegpt-runlog-direct-memory.v1":
-    from src.experiment.androidworld import validate_mobilegpt_adapted_memory
-    from src.experiment.artifact_memory import (
-        canonical_mobilegpt_memory_from_memory,
+if sys.argv[7] == "omniflow.mobilegpt.memory.v2":
+    from src.integrations.mobilegpt_memory import validate_mobilegpt_adapted_memory
+    from src.experiment.data_index import (
+        canonical_prepared_memory_from_index,
     )
     from src.experiment.mobilegpt_contract import (
         MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
@@ -1459,7 +1501,7 @@ if sys.argv[7] == "omniflow.mobilegpt-runlog-direct-memory.v1":
     ).strip()
     memory_index = Path(sys.argv[9]).expanduser().resolve()
     if memory_index.is_file():
-        indexed_memory = canonical_mobilegpt_memory_from_memory(
+        indexed_memory = canonical_prepared_memory_from_index(
             memory_index=memory_index,
             task_name=sys.argv[5],
         )
@@ -1502,14 +1544,14 @@ if sys.argv[7] == "omniflow.mobilegpt-runlog-direct-memory.v1":
         except (OSError, TypeError, ValueError):
             return False
         return True
-elif sys.argv[7] == "omniflow.appagent-demo-memory.v2":
+elif sys.argv[7] == "omniflow.appagent.memory.v3":
     def candidate_validator(_candidate, payload):
         return (
             payload.get("conversion_mode") == "canonical_runlog_offline"
             and payload.get("source_emulator_used") is False
         )
 try:
-    selected = select_source_asset_revision(
+    selected = select_source_revision(
         sys.argv[2],
         manifest_name=sys.argv[3],
         expected_source_sha256=source_sha256,
@@ -1544,9 +1586,9 @@ raise SystemExit(0 if payload.get("retry_allowed") is False else 1)
 PY
 }
 if [[ "$all_tasks" -eq 0 && "$requires_mobilegpt_source_memory" -eq 1 && -z "$mobilegpt_source_memory_root" ]]; then
-  mobilegpt_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${formal_source_seed}/$task/mobilegpt_offline_retrieval"
+  mobilegpt_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${formal_source_seed}/$task/mobilegpt"
   mobilegpt_source_attempt_root="$(
-    select_source_asset_revision \
+    select_source_revision \
       "$mobilegpt_source_base" \
       "$mobilegpt_source_manifest_name" \
       "$task" \
@@ -1557,21 +1599,20 @@ if [[ "$all_tasks" -eq 0 && "$requires_mobilegpt_source_memory" -eq 1 && -z "$mo
   )"
   mobilegpt_source_memory_root="$mobilegpt_source_attempt_root/memory"
 fi
-if [[ "$all_tasks" -eq 0 && "$requires_appagent_source_memory" -eq 1 && -z "$appagent_demo_memory_root" ]]; then
-  appagent_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${formal_source_seed}/$task/appagent_demo"
-  appagent_demo_memory_root="$(
-    select_source_asset_revision \
+if [[ "$all_tasks" -eq 0 && "$requires_appagent_source_memory" -eq 1 && -z "$appagent_memory_root" ]]; then
+  appagent_source_base="$asset_root/runtime/evals/androidworld_single_task_assets/source_seed_${formal_source_seed}/$task/appagent"
+  appagent_memory_root="$(
+    select_source_revision \
       "$appagent_source_base" \
-      "appagent_demo_manifest.json" \
+      "appagent_manifest.json" \
       "$task" \
       "$source_index" \
       "" \
-      "omniflow.appagent-demo-memory.v2"
+      "omniflow.appagent.memory.v3"
   )"
 fi
 for external_path in \
   "$env_file" \
-  "$master_source_index" \
   "$source_index" \
   "$android_world_root" \
   "$output_root" \
@@ -1588,8 +1629,8 @@ if [[ "$all_tasks" -eq 0 ]]; then
     echo "Experiment task asset paths must be absolute: $mobilegpt_source_memory_root" >&2
     exit 2
   fi
-  if [[ "$requires_appagent_source_memory" -eq 1 && "$appagent_demo_memory_root" != /* ]]; then
-    echo "Experiment task asset paths must be absolute: $appagent_demo_memory_root" >&2
+  if [[ "$requires_appagent_source_memory" -eq 1 && "$appagent_memory_root" != /* ]]; then
+    echo "Experiment task asset paths must be absolute: $appagent_memory_root" >&2
     exit 2
   fi
 fi
@@ -1598,7 +1639,7 @@ if [[ "$requires_omnitransfer" -eq 1 && "$omnitransfer_root" != /* ]]; then
   exit 2
 fi
 if [[ "$requires_omnitransfer" -eq 1 && "$all_tasks" -eq 0 && "$store_path" != /* ]]; then
-  echo "Ours Store must be an absolute path." >&2
+  echo "OmniFlow Store must be an absolute path." >&2
   exit 2
 fi
 if [[ "$all_tasks" -eq 1 ]]; then
@@ -1628,6 +1669,8 @@ from pathlib import Path
 index_path = Path(sys.argv[1]).expanduser().resolve()
 task_filter = sys.argv[2].strip()
 payload = json.loads(index_path.read_text(encoding="utf-8"))
+if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.data-index.v2":
+    payload = payload["source_index"]
 if not isinstance(payload, dict) or (not task_filter and len(payload) != 116):
     raise SystemExit(
         f"formal_task_index_invalid:expected="
@@ -1684,7 +1727,9 @@ PY
   batch_status=0
   for batch_task in "${batch_tasks[@]}"; do
     child_args=(--e2e-task "$batch_task" --task-deadline-sec "$e2e_task_deadline_sec")
-    if [[ "$check_only" -eq 1 || "$dry_run" -eq 1 ]]; then
+    if [[ "$check_only" -eq 1 ]]; then
+      child_args+=(--check-only)
+    elif [[ "$dry_run" -eq 1 ]]; then
       child_args+=(--dry-run)
     fi
     if [[ -n "${OMNIFLOW_E2E_ATTEMPT_ID:-}" ]]; then
@@ -1699,43 +1744,30 @@ PY
   exit "$batch_status"
 fi
 if [[ "${OMNIFLOW_BATCH_CHILD:-0}" != "1" ]]; then
-"$python_bin" - "$attempt_series_root" "$(dirname "$output_root")" <<'PY'
+"$python_bin" - "$output_root" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-roots = {Path(value).expanduser().resolve() for value in sys.argv[1:]}
-matches = []
-for root in roots:
-    if not root.is_dir():
-        continue
-    for manifest_path in root.glob("*/attempt_manifest.json"):
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if (
-            manifest.get("dry_run") is not True
-            and manifest.get("task_name")
-        ):
-            matches.append(str(manifest_path))
-if matches:
-    raise SystemExit(
-        "task_result_already_executed:"
-        f"manifests={','.join(sorted(matches))}"
-    )
+root = Path(sys.argv[1]).expanduser().resolve()
+manifest_path = root / "attempt_manifest.json"
+if manifest_path.is_file():
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        manifest = {}
+    if manifest.get("dry_run") is not True and manifest.get("task_name"):
+        raise SystemExit(
+            "task_result_already_executed:manifest=" + str(manifest_path)
+        )
 PY
 fi
-if [[ ! -f "$env_file" ]]; then
+if [[ "$check_only" -ne 1 && ! -f "$env_file" ]]; then
   echo "Model environment file missing: $env_file" >&2
   exit 1
 fi
 if [[ ! -f "$source_index" ]]; then
   echo "Canonical source index missing: $source_index" >&2
-  exit 1
-fi
-if [[ ! -f "$master_source_index" ]]; then
-  echo "Canonical master source index missing: $master_source_index" >&2
   exit 1
 fi
 "$python_bin" - \
@@ -1758,6 +1790,8 @@ from src.integrations.android_world.apps import resolve_androidworld_package
 from src.integrations.runlog import import_run_log
 
 payload = json.loads(index_path.read_text(encoding="utf-8"))
+if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.data-index.v2":
+    payload = payload["source_index"]
 row = payload.get(task_name) if isinstance(payload, dict) else None
 if not isinstance(row, dict):
     raise SystemExit(f"canonical_source_task_missing:{task_name}")
@@ -1768,7 +1802,10 @@ if row.get("latest_official_success_source") is not True:
 actual_kind = str(row.get("source_kind") or "").strip()
 if (
     actual_kind
-    and actual_kind != "androidworld_validator_success_source_runlog"
+    and actual_kind not in {
+        "androidworld_validator_success_source_runlog",
+        "one_time_canonicalized_seed111_screenshot_source",
+    }
 ):
     raise SystemExit(
         f"formal_source_kind_mismatch:{task_name}:actual={actual_kind or 'missing'}"
@@ -1825,17 +1862,26 @@ if [[ -e "$output_root" ]]; then
   exit 1
 fi
 
-set -a
-source "$env_file"
-set +a
-mobilegpt_embedding_api_key="${OPENAI_API_KEY:-}"
-mobilegpt_embedding_base_url="${OPENAI_BASE_URL:-}"
+if [[ "$check_only" -ne 1 ]]; then
+  set -a
+  source "$env_file"
+  set +a
+  unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
+fi
+select_model_endpoint "$formal_model_endpoint_profile"
+mobilegpt_embedding_api_key="${MOBILEGPT_EMBEDDING_API_KEY:-$selected_model_api_key}"
+mobilegpt_embedding_base_url="${MOBILEGPT_EMBEDDING_BASE_URL:-$selected_model_base_url}"
 paper_model="$formal_model"
 export OPENAI_MODEL="$paper_model"
 export OMNIFLOW_PLANNER_MODEL="$paper_model"
 export MOBILEGPT_CHAT_MODEL="$paper_model"
 export OMNITRANSFER_ROOT="$omnitransfer_root"
 unset MOBILEGPT_MEMORY_ONLY
+if [[ "$need_mobilegpt_preflight" -eq 1 ]]; then
+  export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"
+  export MOBILEGPT_EMBEDDING_BASE_URL="$mobilegpt_embedding_base_url"
+  export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
+fi
 missing_assets=()
 require_file() {
   local label="$1"
@@ -1860,7 +1906,7 @@ if [[ "$manage_emulators" -eq 1 ]]; then
 fi
 if [[ "$requires_omnitransfer" -eq 1 ]]; then
   require_file "omnitransfer_runtime" "$omnitransfer_root/src/omnitransfer/runtime.py"
-  require_file "ours_store" "$store_path"
+  require_file "omniflow_store" "$store_path"
 fi
 if [[ "$need_mobilegpt_preflight" -eq 1 ]]; then
   require_file "mobilegpt_server" "$mobilegpt_root/Server/main.py"
@@ -1878,13 +1924,13 @@ if [[ "$requires_omnitransfer" -eq 1 ]]; then
 import json
 import sys
 
-from src.experiment.androidworld import validate_ours_transfer_assets
+from src.experiment.run_task import validate_omniflow_transfer_assets
 
-audit = validate_ours_transfer_assets(
+audit = validate_omniflow_transfer_assets(
     sys.argv[1],
     require_action_transfer=True,
 )
-print("[ours-assets] " + json.dumps(audit, sort_keys=True))
+print("[omniflow-assets] " + json.dumps(audit, sort_keys=True))
 PY
 fi
 
@@ -1901,13 +1947,13 @@ if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
     mobilegpt_source_generation_required=1
   fi
 fi
-appagent_source_manifest="$appagent_demo_memory_root/appagent_demo_manifest.json"
+appagent_source_manifest="$appagent_memory_root/appagent_manifest.json"
 appagent_source_generation_required=0
 if [[ "$requires_appagent_source_memory" -eq 1 ]]; then
   if [[ -f "$appagent_source_manifest" ]]; then
     :
-  elif [[ -e "$appagent_demo_memory_root" ]]; then
-    echo "Immutable AppAgent source attempt is incomplete and cannot be retried: $appagent_demo_memory_root" >&2
+  elif [[ -e "$appagent_memory_root" ]]; then
+    echo "Immutable AppAgent source attempt is incomplete and cannot be retried: $appagent_memory_root" >&2
     exit 1
   else
     appagent_source_generation_required=1
@@ -1936,13 +1982,13 @@ if [[ "$requires_appagent_source_memory" -eq 1 ]]; then
     "$python_bin" -m src.experiment.appagent_source preflight \
       --index "$source_index" \
       --task "$task" \
-      --model "$paper_model"
+      --model "$appagent_model"
   else
     "$python_bin" -m src.experiment.appagent_source validate \
       --index "$source_index" \
       --task "$task" \
-      --memory-root "$appagent_demo_memory_root" \
-      --model "$paper_model"
+      --memory-root "$appagent_memory_root" \
+      --model "$appagent_model"
   fi
 fi
 if [[ "$check_only" -eq 1 ]]; then
@@ -1971,17 +2017,11 @@ if [[ "$need_mobilegpt_preflight" -eq 1 ]]; then
   export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"
   export MOBILEGPT_EMBEDDING_BASE_URL="$mobilegpt_embedding_base_url"
   if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
-    mobilegpt_embedding_contract="$($python_bin -m src.integrations.mobilegpt_runtime \
-      preflight-endpoints \
-      --manifest "$mobilegpt_source_manifest" \
-      --memory-root "$mobilegpt_source_memory_root" \
-      --chat-model "$paper_model")"
-    IFS=$'\t' read -r mobilegpt_runtime_embedding_model mobilegpt_runtime_embedding_dimension <<< "$mobilegpt_embedding_contract"
-    export MOBILEGPT_EMBEDDING_MODEL="$mobilegpt_runtime_embedding_model"
-    echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=$mobilegpt_runtime_embedding_model embedding_dimension=$mobilegpt_runtime_embedding_dimension"
+    export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
+    echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=GLM-Embedding-2"
   else
-    export MOBILEGPT_EMBEDDING_MODEL="text-embedding-v4"
-    echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=text-embedding-v4"
+    export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
+    echo "[mobilegpt-endpoints] chat_model=$paper_model embedding_model=GLM-Embedding-2"
   fi
 fi
 echo "[model] model=$paper_model model_endpoint_profile=$formal_model_endpoint_profile model_endpoint=$selected_model_base_url"
@@ -2250,6 +2290,8 @@ import sys
 from pathlib import Path
 
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.data-index.v2":
+    payload = payload.get("source_index", {})
 if not isinstance(payload, dict) or not payload:
     raise SystemExit("source_index_empty")
 print(len(payload))
@@ -2262,8 +2304,8 @@ if [[ "$appagent_source_generation_required" -eq 1 ]]; then
     --index "$source_index" \
     --task "$task" \
     --appagent-root "$appagent_root" \
-    --memory-root "$appagent_demo_memory_root" \
-    --model "$paper_model"
+      --memory-root "$appagent_memory_root" \
+    --model "$appagent_model"
 fi
 for serial in "${target_serials[@]}"; do
   ensure_emulator "$serial"
@@ -2274,6 +2316,9 @@ for serial in $preflight_serials; do
   preflight_args=(
     --repo "$asset_root"
     --code-root "$repo"
+    --android-world-root "$android_world_root"
+    --source-index "$source_index"
+    --source-task "$task"
     --profile "$profile"
     --serial "$serial"
     --require-kvm
@@ -2302,8 +2347,8 @@ for serial in $preflight_serials; do
   fi
   if [[ "$profile" == "appagent" ]]; then
     preflight_args+=(--appagent-root "$appagent_root")
-    if [[ -n "$appagent_demo_memory_root" ]]; then
-      preflight_args+=(--appagent-demo-memory-root "$appagent_demo_memory_root")
+    if [[ -n "$appagent_memory_root" ]]; then
+      preflight_args+=(--appagent-memory-root "$appagent_memory_root")
     fi
   fi
   if [[ "$profile" == "mobilegpt" && "$task" == Contacts* ]]; then
@@ -2316,7 +2361,7 @@ done
 command=(
   "$python_bin"
   -m
-  src.experiment.androidworld
+  src.experiment.run_task
   result
   --index "$source_index"
   --android-world-root "$android_world_root"
@@ -2324,11 +2369,10 @@ command=(
   --task "$task"
   --source-seed "$expected_source_seed"
   --output-path "$output_root"
-  --master-source-index "$master_source_index"
   --result-registry-root "$results_root/androidworld_validator/runs"
   --omnitransfer-root "$omnitransfer_root"
   --store-path "$store_path"
-  --store-index "$ours_store_index"
+  --store-index "$memory_index"
   --mobilegpt-root "$mobilegpt_root"
   --mobilegpt-source-memory-root "$mobilegpt_source_memory_root"
   --appagent-root "$appagent_root"
@@ -2344,7 +2388,7 @@ if [[ "$fixed_task_params" != "1" ]]; then
   command+=(--no-fixed-task-params --task-params-json "")
 fi
 command+=(--device "$device_target")
-if [[ -n "$appagent_demo_memory_root" ]]; then
-  command+=(--appagent-demo-memory-root "$appagent_demo_memory_root")
+if [[ -n "$appagent_memory_root" ]]; then
+  command+=(--appagent-memory-root "$appagent_memory_root")
 fi
 exec "${command[@]}"

@@ -8,16 +8,28 @@ from types import SimpleNamespace
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from src.experiment.source_assets import (
+from src.experiment.source_evidence import (
     build_grounded_teacher_run_log,
     build_grounded_teacher_run_log_from_item,
-    select_source_asset_revision,
+    select_source_revision,
 )
-from src.integrations.appagent_adapter import (
+from src.integrations.appagent import (
     build_appagent_teacher_source,
     ground_appagent_teacher_action,
 )
-from src.integrations.mobilegpt_converter import preflight_runlog_conversion
+from src.integrations.mobilegpt import preflight_runlog_conversion
+
+
+def _source(report: dict) -> dict:
+    return report["source"]
+
+
+def _grounding(report: dict) -> dict:
+    return report["grounding"]
+
+
+def _safety(report: dict) -> dict:
+    return report["safety"]
 from src.integrations.runlog import convert_legacy_run_log
 
 
@@ -120,11 +132,12 @@ def test_frozen_source_evidence_grounds_appagent_teacher(
         provenance_source_run_log=source,
     )
 
+    assert audit["schema_version"] == "omniflow.source.evidence.v2"
     assert appagent["action_count"] == 2
     assert appagent["source_run_log"] == str(source)
     assert appagent["source_run_log_sha256"] == source_sha256
-    assert audit["target_inputs_read"] is False
-    assert audit["target_observations_read"] is False
+    assert _safety(audit)["target_inputs_read"] is False
+    assert _safety(audit)["target_observations_read"] is False
     assert hashlib.sha256(source.read_bytes()).hexdigest() == source_sha256
 
 
@@ -236,8 +249,8 @@ def test_source_and_store_indexes_join_without_rewriting_frozen_assets(
     assert (
         grounded["steps"][0]["metadata"]["source_context"]["element"]["text"] == "Save"
     )
-    assert audit["source_state_catalog"] == str(states)
-    assert audit["source_state_catalog_source"] == "frozen_catalog"
+    assert _source(audit)["state_catalog"] == str(states)
+    assert _source(audit)["catalog_source"] == "frozen_catalog"
     assert "provenance_manifest" not in audit
 
 
@@ -349,11 +362,11 @@ def test_baseline_grounding_uses_complete_states_embedded_in_source_runlog(
         "text": "Continue",
         "resource_id": "app:id/continue",
     }
-    assert audit["source_state_catalog_source"] == "embedded_source_run_log"
-    assert audit["source_state_count"] == 2
+    assert _source(audit)["catalog_source"] == "embedded_source_run_log"
+    assert _source(audit)["state_count"] == 2
 
 
-def test_canonical_runlog_grounds_mobilegpt_without_ours_store(
+def test_canonical_runlog_grounds_mobilegpt_without_omniflow_store(
     tmp_path: Path,
 ) -> None:
     xml = (
@@ -406,7 +419,7 @@ def test_canonical_runlog_grounds_mobilegpt_without_ours_store(
         "text": "Continue",
         "resource_id": "app:id/continue",
     }
-    assert audit["grounding_source"] == "canonical_androidworld_run_log"
+    assert _grounding(audit)["source"] == "canonical_androidworld_run_log"
     assert "provenance_manifest" not in audit
 
 
@@ -483,9 +496,9 @@ def test_canonical_grounding_recovers_unique_verified_legacy_target(
         "text": "Continue",
         "resource_id": "app:id/continue",
     }
-    assert audit["source_target_evidence_source"] == ("verified_legacy_provenance")
-    assert audit["source_target_evidence_count"] == 1
-    assert audit["verified_source_target_count"] == 1
+    assert _grounding(audit)["source_target_evidence_source"] == ("verified_legacy_provenance")
+    assert _grounding(audit)["source_target_evidence_count"] == 1
+    assert _grounding(audit)["verified_source_target_count"] == 1
 
 
 def test_canonical_grounding_reuses_observations_for_state_id_provenance(
@@ -560,7 +573,7 @@ def test_canonical_grounding_reuses_observations_for_state_id_provenance(
         "text": "Continue",
         "resource_id": "app:id/continue",
     }
-    assert audit["source_target_evidence_source"] == "verified_legacy_provenance"
+    assert _grounding(audit)["source_target_evidence_source"] == "verified_legacy_provenance"
 
 
 def test_canonical_grounding_rejects_legacy_provenance_hash_mismatch(
@@ -667,7 +680,7 @@ def test_canonical_grounding_accepts_removed_legacy_wait_steps(
         "text": "Continue",
         "resource_id": "app:id/continue",
     }
-    assert audit["source_target_evidence_source"] == "verified_legacy_provenance"
+    assert _grounding(audit)["source_target_evidence_source"] == "verified_legacy_provenance"
 
 
 def test_canonical_grounding_rejects_removed_non_wait_step(
@@ -724,9 +737,9 @@ def test_canonical_grounding_does_not_use_ambiguous_legacy_target(
     )
 
     assert "element" not in grounded["steps"][0]["metadata"]["source_context"]
-    assert audit["source_target_evidence_count"] == 1
-    assert audit["verified_source_target_count"] == 0
-    assert audit["semantic_action_count"] == 0
+    assert _grounding(audit)["source_target_evidence_count"] == 1
+    assert _grounding(audit)["verified_source_target_count"] == 0
+    assert _grounding(audit)["semantic_action_count"] == 0
 
 
 @pytest.mark.parametrize("action_type", ["answer", "status", "unknown"])
@@ -765,7 +778,7 @@ def test_canonical_grounding_preserves_non_ui_terminal_actions(
     assert grounded["steps"][0]["metadata"]["source_context"] == {
         "package_name": "com.example.app"
     }
-    assert audit["semantic_action_count"] == 0
+    assert _grounding(audit)["semantic_action_count"] == 0
 
 
 def test_canonical_grounding_uses_input_text_action_point(
@@ -811,7 +824,7 @@ def test_canonical_grounding_uses_input_text_action_point(
         "text": "Second",
         "resource_id": "app:id/second",
     }
-    assert audit["semantic_action_count"] == 1
+    assert _grounding(audit)["semantic_action_count"] == 1
 
 
 def test_canonical_grounding_uses_unique_structural_child_target(
@@ -860,8 +873,8 @@ def test_canonical_grounding_uses_unique_structural_child_target(
     grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
     preflight = preflight_runlog_conversion(grounded_path)
     assert preflight["ready"] is True
-    assert preflight["transition_count"] == audit["semantic_action_count"]
-    assert audit["semantic_action_count"] == 1
+    assert preflight["transition_count"] == _grounding(audit)["semantic_action_count"]
+    assert _grounding(audit)["semantic_action_count"] == 1
 
 
 def test_canonical_grounding_uses_unique_anonymous_editable_role(
@@ -917,8 +930,8 @@ def test_canonical_grounding_uses_unique_anonymous_editable_role(
     grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
     preflight = preflight_runlog_conversion(grounded_path)
     assert preflight["ready"] is True
-    assert preflight["transition_count"] == audit["semantic_action_count"]
-    assert audit["semantic_action_count"] == 1
+    assert preflight["transition_count"] == _grounding(audit)["semantic_action_count"]
+    assert _grounding(audit)["semantic_action_count"] == 1
 
 
 def test_canonical_grounding_inherits_adjacent_unique_editable_target(
@@ -982,8 +995,8 @@ def test_canonical_grounding_inherits_adjacent_unique_editable_target(
     grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
     preflight = preflight_runlog_conversion(grounded_path)
     assert preflight["ready"] is True
-    assert preflight["transition_count"] == audit["semantic_action_count"]
-    assert audit["semantic_action_count"] == 2
+    assert preflight["transition_count"] == _grounding(audit)["semantic_action_count"]
+    assert _grounding(audit)["semantic_action_count"] == 2
 
 
 def test_canonical_grounding_uses_verified_input_text_change(
@@ -1044,7 +1057,7 @@ def test_canonical_grounding_uses_verified_input_text_change(
     )
     assert appagent_target.tag == 1
     assert appagent_target.match_reason == "exact_visible_identity"
-    assert audit["semantic_action_count"] == 2
+    assert _grounding(audit)["semantic_action_count"] == 2
 
 
 def test_canonical_grounding_does_not_inherit_editable_across_packages(
@@ -1097,7 +1110,7 @@ def test_canonical_grounding_does_not_inherit_editable_across_packages(
     )
 
     assert "element" not in grounded["steps"][1]["metadata"]["source_context"]
-    assert audit["semantic_action_count"] == 1
+    assert _grounding(audit)["semantic_action_count"] == 1
 
 
 def test_canonical_grounding_recovers_source_display_from_xml(
@@ -1150,8 +1163,8 @@ def test_canonical_grounding_recovers_source_display_from_xml(
     grounded_path.write_text(json.dumps(grounded), encoding="utf-8")
     preflight = preflight_runlog_conversion(grounded_path)
     assert preflight["ready"] is True
-    assert preflight["transition_count"] == audit["semantic_action_count"]
-    assert audit["semantic_action_count"] == 1
+    assert preflight["transition_count"] == _grounding(audit)["semantic_action_count"]
+    assert _grounding(audit)["semantic_action_count"] == 1
 
 
 def test_canonical_grounding_reuses_unique_source_display_for_dialog_xml(
@@ -1199,7 +1212,7 @@ def test_canonical_grounding_reuses_unique_source_display_for_dialog_xml(
         "text": "Create folder",
         "resource_id": "app:id/create_folder",
     }
-    assert audit["semantic_action_count"] == 1
+    assert _grounding(audit)["semantic_action_count"] == 1
 
 
 def test_canonical_grounding_distinguishes_page_input_from_browser_chrome(
@@ -1239,28 +1252,28 @@ def test_canonical_grounding_distinguishes_page_input_from_browser_chrome(
         "text": "Enter the product",
         "resource_id": "answer",
     }
-    assert audit["semantic_action_count"] == 1
+    assert _grounding(audit)["semantic_action_count"] == 1
 
 
 def test_source_revision_reuses_frozen_asset_or_advances_past_failures(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "appagent_demo"
+    base = tmp_path / "appagent"
     failed = base / "native_source_r3"
     failed.mkdir(parents=True)
     (failed / "prep_failure.json").write_text("{}", encoding="utf-8")
 
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
-            manifest_name="appagent_demo_manifest.json",
+            manifest_name="appagent_manifest.json",
         )
         == base / "native_source_r4"
     )
 
     frozen = base / "native_source_r4"
     frozen.mkdir()
-    (frozen / "appagent_demo_manifest.json").write_text(
+    (frozen / "appagent_manifest.json").write_text(
         "{}",
         encoding="utf-8",
     )
@@ -1268,9 +1281,9 @@ def test_source_revision_reuses_frozen_asset_or_advances_past_failures(
     incomplete.mkdir()
 
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
-            manifest_name="appagent_demo_manifest.json",
+            manifest_name="appagent_manifest.json",
         )
         == frozen
     )
@@ -1279,7 +1292,7 @@ def test_source_revision_reuses_frozen_asset_or_advances_past_failures(
 def test_source_revision_is_stable_for_one_exact_source_hash(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "mobilegpt_offline_retrieval"
+    base = tmp_path / "mobilegpt"
     old = base / "native_source_r3"
     old.mkdir(parents=True)
     (old / "cold_memory_manifest.json").write_text(
@@ -1296,7 +1309,7 @@ def test_source_revision_is_stable_for_one_exact_source_hash(
     selected = base / f"source_{expected[:12]}"
 
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,
@@ -1308,7 +1321,7 @@ def test_source_revision_is_stable_for_one_exact_source_hash(
     (selected / "generation_failure.json").write_text("{}", encoding="utf-8")
     revision_two = base / f"source_{expected[:12]}_r2"
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,
@@ -1322,7 +1335,7 @@ def test_source_revision_is_stable_for_one_exact_source_hash(
         encoding="utf-8",
     )
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,
@@ -1334,7 +1347,7 @@ def test_source_revision_is_stable_for_one_exact_source_hash(
 def test_source_revision_reuses_explicit_conversion_lineage_hash(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "mobilegpt_offline_retrieval"
+    base = tmp_path / "mobilegpt"
     canonical = "2" * 64
     legacy = "1" * 64
     frozen = base / f"source_{legacy[:12]}"
@@ -1345,7 +1358,7 @@ def test_source_revision_reuses_explicit_conversion_lineage_hash(
     )
 
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=canonical,
@@ -1358,7 +1371,7 @@ def test_source_revision_reuses_explicit_conversion_lineage_hash(
 def test_source_revision_skips_frozen_asset_from_wrong_model(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "mobilegpt_offline_retrieval"
+    base = tmp_path / "mobilegpt"
     expected = "2" * 64
     legacy = "1" * 64
     frozen = base / "native_source_r2"
@@ -1375,7 +1388,7 @@ def test_source_revision_skips_frozen_asset_from_wrong_model(
     selected = base / f"source_{expected[:12]}"
 
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,
@@ -1396,7 +1409,7 @@ def test_source_revision_skips_frozen_asset_from_wrong_model(
         encoding="utf-8",
     )
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,
@@ -1410,7 +1423,7 @@ def test_source_revision_skips_frozen_asset_from_wrong_model(
 def test_source_revision_skips_incompatible_mobilegpt_memory_contract(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "mobilegpt_offline_retrieval"
+    base = tmp_path / "mobilegpt"
     expected = "2" * 64
     old = base / f"source_{expected[:12]}"
     old.mkdir(parents=True)
@@ -1426,7 +1439,7 @@ def test_source_revision_skips_incompatible_mobilegpt_memory_contract(
         encoding="utf-8",
     )
 
-    selected = select_source_asset_revision(
+    selected = select_source_revision(
         base,
         manifest_name="cold_memory_manifest.json",
         expected_source_sha256=expected,
@@ -1441,7 +1454,7 @@ def test_source_revision_skips_incompatible_mobilegpt_memory_contract(
 def test_source_revision_skips_frozen_asset_rejected_by_validator(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "mobilegpt_offline_retrieval"
+    base = tmp_path / "mobilegpt"
     expected = "2" * 64
     frozen = base / f"source_{expected[:12]}"
     frozen.mkdir(parents=True)
@@ -1457,7 +1470,7 @@ def test_source_revision_skips_frozen_asset_rejected_by_validator(
     )
     validated: list[tuple[Path, dict]] = []
 
-    selected = select_source_asset_revision(
+    selected = select_source_revision(
         base,
         manifest_name="cold_memory_manifest.json",
         expected_source_sha256=expected,
@@ -1476,7 +1489,7 @@ def test_source_revision_skips_frozen_asset_rejected_by_validator(
 def test_source_revision_ignores_terminal_failure_from_old_method(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "mobilegpt_offline_retrieval"
+    base = tmp_path / "mobilegpt"
     expected = "2" * 64
     failed = base / f"source_{expected[:12]}"
     failed.mkdir(parents=True)
@@ -1495,7 +1508,7 @@ def test_source_revision_ignores_terminal_failure_from_old_method(
     )
 
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,
@@ -1508,7 +1521,7 @@ def test_source_revision_ignores_terminal_failure_from_old_method(
 def test_source_revision_rejects_terminal_failure_for_exact_source_hash(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "mobilegpt_offline_retrieval"
+    base = tmp_path / "mobilegpt"
     expected = "2" * 64
     failed = base / f"source_{expected[:12]}"
     failed.mkdir(parents=True)
@@ -1527,7 +1540,7 @@ def test_source_revision_rejects_terminal_failure_for_exact_source_hash(
         match="source_asset_retry_forbidden:.*"
         "mobilegpt_cold_memory_official_source_failed",
     ):
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,
@@ -1537,7 +1550,7 @@ def test_source_revision_rejects_terminal_failure_for_exact_source_hash(
 def test_source_revision_advances_beyond_two_digit_failure_revision(
     tmp_path: Path,
 ) -> None:
-    base = tmp_path / "mobilegpt_offline_retrieval"
+    base = tmp_path / "mobilegpt"
     expected = "2" * 64
     prefix = f"source_{expected[:12]}"
     for revision in range(1, 11):
@@ -1547,7 +1560,7 @@ def test_source_revision_advances_beyond_two_digit_failure_revision(
         (attempt / "prep_failure.json").write_text("{}", encoding="utf-8")
 
     assert (
-        select_source_asset_revision(
+        select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,

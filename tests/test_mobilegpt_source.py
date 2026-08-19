@@ -8,11 +8,11 @@ from PIL import Image
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from src.experiment import androidworld as pipeline
-from src.experiment import mobilegpt_source, preflight
-from src.experiment.artifact_memory import (
-    canonical_mobilegpt_memory_from_memory,
-    refresh_artifact_memory,
+from src.experiment import run_task as pipeline
+from src.experiment import mobilegpt_source
+from src.experiment.data_index import (
+    canonical_prepared_memory_from_index,
+    refresh_data_index,
 )
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
@@ -23,7 +23,8 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
     MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS,
 )
-from src.experiment.source_assets import convert_runlog_memory
+from src.integrations import mobilegpt_memory
+from src.integrations.mobilegpt import validate_memory_manifest
 
 
 def _write_source_index(
@@ -77,7 +78,7 @@ def _write_source_index(
                     "replay_seed": 111,
                     "step_count": 1,
                     "retained_source_run_log": str(source_run_log),
-                    "method": "ours",
+                    "method": "omniflow",
                     "latest_official_success_source": True,
                     "source_kind": "androidworld_validator_success_source_runlog",
                     "source_run_log_sha256": hashlib.sha256(
@@ -205,10 +206,9 @@ def _write_audit(path: Path, *, matched: bool = True) -> None:
 def test_converted_memory_seals_and_registers(tmp_path: Path) -> None:
     index, source_run_log = _write_source_index(tmp_path / "source")
     registry_root = tmp_path / "registry"
-    refresh_artifact_memory(
+    refresh_data_index(
         memory_root=registry_root,
         source_index=index,
-        function_catalogs=(),
         runlog_roots=(source_run_log.parent,),
         result_roots=(),
     )
@@ -235,7 +235,7 @@ def test_converted_memory_seals_and_registers(tmp_path: Path) -> None:
         bundle_root=bundle,
         task_name="SystemBluetoothTurnOn",
     )
-    resolved = canonical_mobilegpt_memory_from_memory(
+    resolved = canonical_prepared_memory_from_index(
         memory_index=registry_root / "current.json",
         task_name="SystemBluetoothTurnOn",
     )
@@ -248,7 +248,7 @@ def test_converted_memory_seals_and_registers(tmp_path: Path) -> None:
 
     assert sealed["manifest"]["schema_version"] == MOBILEGPT_MEMORY_SCHEMA
     assert sealed["manifest"]["schema_version"] == (
-        "omniflow.mobilegpt-runlog-direct-memory.v1"
+        "omniflow.mobilegpt.memory.v2"
     )
     assert sealed["manifest"]["source_method"] == MOBILEGPT_SOURCE_METHOD
     assert sealed["manifest"]["source_model"] == ""
@@ -266,7 +266,7 @@ def test_converted_memory_seals_and_registers(tmp_path: Path) -> None:
     assert sealed["manifest"]["provenance"]["semantic_subtasks"] is False
     assert sealed["manifest"]["provenance"]["actions_supplied_to_mobilegpt"] is True
     assert sealed["memory_validation"]["native_memory_complete"] is True
-    assert preflight._validate_mobilegpt_manifest(memory)["task_name"] == (
+    assert validate_memory_manifest(memory)["task_name"] == (
         "SystemBluetoothTurnOn"
     )
     assert resolved is not None
@@ -360,21 +360,6 @@ def test_source_preflight_is_read_only_and_uses_no_function_store(
     assert result["transition_count"] == 1
 
 
-def test_batch_preflight_records_unsupported_action(tmp_path: Path) -> None:
-    index, _ = _write_source_index(
-        tmp_path / "source",
-        action={"action_type": "navigate_home"},
-    )
-
-    result = mobilegpt_source.preflight_mobilegpt_source_batch(index_path=index)
-
-    assert result["planned"] == 1
-    assert result["ready"] == 0
-    assert result["blocked"] == 1
-    assert result["model_calls"] == 0
-    assert result["rows"][0]["failure_code"] == "source_action_unsupported"
-
-
 def test_source_conversion_calls_only_converter_and_sealer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -415,7 +400,7 @@ def test_source_conversion_calls_only_converter_and_sealer(
     assert result["source_emulator_used"] is False
 
 
-def test_convert_runlog_memory_dispatches_to_mobilegpt_native_converter(
+def test_mobilegpt_source_uses_native_converter(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -454,11 +439,10 @@ def test_convert_runlog_memory_dispatches_to_mobilegpt_native_converter(
         raising=False,
     )
 
-    result = convert_runlog_memory(
-        "mobilegpt_offline_retrieval",
+    result = mobilegpt_source.convert_runlog_to_mobilegpt_bundle(
         source_run_log=source,
         output_root=tmp_path / "bundle",
-        upstream_root=tmp_path / "mobilegpt",
+        mobilegpt_root=tmp_path / "mobilegpt",
         model="qwen3-vl-plus",
         embedding_model="GLM-Embedding-3",
     )
@@ -488,7 +472,7 @@ def test_strict_reader_validates_canonical_memory(
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        pipeline,
+        mobilegpt_memory,
         "_validate_mobilegpt_converted_memory",
         lambda *args, **kwargs: {"schema_version": MOBILEGPT_MEMORY_SCHEMA},
     )
@@ -499,11 +483,11 @@ def test_strict_reader_validates_canonical_memory(
         return {"native_memory_complete": True}
 
     monkeypatch.setattr(
-        "src.integrations.mobilegpt_converter.validate_mobilegpt_memory",
+        "src.integrations.mobilegpt.validate_mobilegpt_memory",
         validate_strict,
     )
 
-    result = pipeline.validate_mobilegpt_adapted_memory(
+    result = mobilegpt_memory.validate_mobilegpt_adapted_memory(
         memory,
         task_name="SystemBluetoothTurnOn",
         source_seed=111,
@@ -528,7 +512,7 @@ def test_runtime_rejects_archived_mobilegpt_schema(tmp_path: Path) -> None:
         ValueError,
         match="mobilegpt_cold_memory_manifest_schema_invalid",
     ):
-        pipeline.validate_mobilegpt_adapted_memory(
+        mobilegpt_memory.validate_mobilegpt_adapted_memory(
             memory,
             task_name="SystemBluetoothTurnOn",
             source_seed=111,

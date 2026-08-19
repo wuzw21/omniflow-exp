@@ -16,6 +16,7 @@ from omniflow.core.trajectory import (
     state_id,
 )
 from omniflow.transfer.runtime import TRANSFER_STATE_CATALOG_VERSION
+from src.experiment.performance_metrics import PerformanceMetrics
 from src.integrations.android_world.state import snapshot_androidworld_state
 
 _ANDROIDWORLD_ACTION_FIELDS = (
@@ -41,6 +42,7 @@ class AndroidWorldEpisodeRecorder:
         execute_action: Callable[..., Any],
         *,
         evidence_root: str | Path,
+        performance_metrics: PerformanceMetrics | None = None,
     ):
         if not callable(get_state):
             raise TypeError("episode_recorder_get_state_callable_required")
@@ -55,6 +57,7 @@ class AndroidWorldEpisodeRecorder:
         self._observations: list[dict[str, Any]] = []
         self._steps: list[dict[str, Any]] = []
         self._recording_action = False
+        self.performance_metrics = performance_metrics
 
     @property
     def episode_started(self) -> bool:
@@ -71,18 +74,64 @@ class AndroidWorldEpisodeRecorder:
         self._started_at_ms = int(time.time() * 1000)
 
     def get_state(self, *args: Any, **kwargs: Any) -> Any:
-        state = self._get_state(*args, **kwargs)
+        if self.performance_metrics is None:
+            state = self._get_state(*args, **kwargs)
+            if self._active:
+                self._capture_state(state)
+            return state
+        started_ns = time.perf_counter_ns()
+        success = False
+        try:
+            with self.performance_metrics.timed("native_observe_get_state"):
+                state = self._get_state(*args, **kwargs)
+            if self._active:
+                with self.performance_metrics.timed("native_observe_record"):
+                    self._capture_state(state)
+            success = True
+            return state
+        finally:
+            if self._active:
+                self.performance_metrics.record(
+                    "native_observe",
+                    (time.perf_counter_ns() - started_ns) / 1_000_000.0,
+                    success=success,
+                )
+
+    def record_host_observation(self, state: Any) -> None:
         if self._active:
             self._capture_state(state)
-        return state
 
     def execute_action(self, action: Any, *args: Any, **kwargs: Any) -> Any:
-        if not self._active or self._recording_action:
-            return self._execute_action(action, *args, **kwargs)
-        return self._record_action(
-            androidworld_json_action_dict(action),
-            lambda: self._execute_action(action, *args, **kwargs),
-        )
+        if self.performance_metrics is None:
+            if not self._active or self._recording_action:
+                return self._execute_action(action, *args, **kwargs)
+            return self._record_action(
+                androidworld_json_action_dict(action),
+                lambda: self._execute_action(action, *args, **kwargs),
+            )
+        started_ns = time.perf_counter_ns()
+        success = False
+        try:
+            if not self._active or self._recording_action:
+                result = self._execute_action(action, *args, **kwargs)
+            else:
+                result = self._record_action(
+                    androidworld_json_action_dict(action),
+                    lambda: self._execute_action(action, *args, **kwargs),
+                )
+            success = (
+                result.get("success") is not False
+                if isinstance(result, dict)
+                else getattr(result, "success", True) is not False
+            )
+            return result
+        finally:
+            if self._active:
+                self.performance_metrics.record(
+                    "native_act",
+                    (time.perf_counter_ns() - started_ns) / 1_000_000.0,
+                    success=success,
+                )
 
     def execute_host_action(
         self,
@@ -90,22 +139,30 @@ class AndroidWorldEpisodeRecorder:
         *,
         execute: Callable[[], Any],
         project: Callable[[Any], Any],
+        after_observation: Callable[[], Any] | None = None,
     ) -> Any:
         if not self._active or self._recording_action:
             return execute()
         return self._record_action(
             androidworld_json_action_dict(project(action)),
             execute,
+            after_observation=after_observation,
         )
 
     def _record_action(
         self,
         canonical_action: dict[str, Any],
         execute: Callable[[], Any],
+        after_observation: Callable[[], Any] | None = None,
     ) -> Any:
+        metrics = self.performance_metrics
         before = self._latest_observation
         if before is None:
-            before = self._capture_state(self._get_state())
+            if metrics is None:
+                before = self._capture_state(self._get_state())
+            else:
+                with metrics.timed("native_act_before_observe"):
+                    before = self._capture_state(self._get_state())
         step: dict[str, Any] = {
             "step_index": len(self._steps),
             "observation": _json_copy(before),
@@ -115,7 +172,11 @@ class AndroidWorldEpisodeRecorder:
         self._steps.append(step)
         self._recording_action = True
         try:
-            result = execute()
+            if metrics is None:
+                result = execute()
+            else:
+                with metrics.timed("native_act_dispatch"):
+                    result = execute()
         except Exception as error:
             step["result"]["error"] = str(error) or type(error).__name__
             raise
@@ -135,7 +196,19 @@ class AndroidWorldEpisodeRecorder:
         if explicit_success is False and str(explicit_error or "").strip():
             step["result"]["error"] = str(explicit_error)
         try:
-            next_observation = self._capture_state(self._get_state())
+            if metrics is None:
+                next_observation = self._capture_state(
+                    after_observation()
+                    if after_observation is not None
+                    else self._get_state()
+                )
+            else:
+                with metrics.timed("native_act_after_observe"):
+                    next_observation = self._capture_state(
+                        after_observation()
+                        if after_observation is not None
+                        else self._get_state()
+                    )
         except Exception as error:
             step["metadata"] = {
                 "next_observation_error": str(error) or type(error).__name__

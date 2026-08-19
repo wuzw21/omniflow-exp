@@ -98,7 +98,18 @@ class ManualAndroidWorld:
             )
             sys.path.insert(0, str(import_root))
         from android_world import registry
+        from android_world.env import android_world_controller
         from android_world.env import env_launcher
+        from android_world.env.setup_device import setup as android_world_setup
+        from src.integrations.android_world.apps import resolve_androidworld_app_name
+        from src.integrations.android_world.run_episode import (
+            _patch_androidworld_adb_output_sanitizer,
+            _rehydrate_task_params,
+        )
+        task_types = registry.TaskRegistry().get_registry(family="android_world")
+        if args.task not in task_types:
+            raise ValueError(f"unknown AndroidWorld task: {args.task}")
+        task_type = task_types[args.task]
 
         self._json_action = __import__(
             "android_world.env.json_action", fromlist=["JSONAction"]
@@ -110,15 +121,32 @@ class ManualAndroidWorld:
             grpc_port=args.grpc_port or args.console_port + 3000,
             install_a11y_forwarding_app=args.install_a11y_forwarder,
         )
-        task_types = registry.TaskRegistry().get_registry(family="android_world")
-        if args.task not in task_types:
-            raise ValueError(f"unknown AndroidWorld task: {args.task}")
-        task_type = task_types[args.task]
+        # Keep AndroidWorld's official controller/action path, but use its
+        # native UIAutomator observation backend when the forwarder's optional
+        # host gRPC tree is unavailable on a fresh local AVD.
+        self._env.controller._a11y_method = (  # pylint: disable=protected-access
+            android_world_controller.A11yMethod.UIAUTOMATOR
+        )
+        if args.emulator_setup:
+            _patch_androidworld_adb_output_sanitizer(self._env.controller)
+            app_names = {
+                str(name).strip().lower()
+                for name in getattr(task_type, "app_names", ())
+            }
+            app_list = tuple(
+                app
+                for app in android_world_setup._APPS
+                if str(app.app_name).strip().lower() in app_names
+            )
+            android_world_setup.setup_apps(self._env, app_list=app_list or None)
         task_type.set_device_time(self._env)
         params = json.loads(args.task_params_json or "{}")
+        params = _rehydrate_task_params(params=params, task_type=task_type)
         params.setdefault("seed", args.seed)
         self._task = task_type(params)
         self._task.initialize_task(self._env)
+        _patch_androidworld_adb_output_sanitizer(self._env.controller)
+        self._resolve_androidworld_app_name = resolve_androidworld_app_name
         self._root = Path(args.output).expanduser().resolve()
         self._images = self._root / "observations" / "objects"
         self._images.mkdir(parents=True, exist_ok=True)
@@ -230,14 +258,24 @@ class ManualAndroidWorld:
             action_record = action.as_dict()
         before = self._last_observation
         if action is not None:
-            self._env.execute_action(action)
+            execution_action = action
+            if action_payload.get("action_type") == "open_app":
+                package_name = str(action_payload.get("app_name") or "").strip()
+                resolved_name = self._resolve_androidworld_app_name(
+                    package_name,
+                    self._env.controller,
+                )
+                execution_action = self._json_action.JSONAction(
+                    action_type="open_app",
+                    app_name=resolved_name,
+                )
+            self._env.execute_action(execution_action)
         if action_payload.get("action_type") == "wait" and "duration" in action_payload:
             time.sleep(max(0.0, duration))
         after = self.observe()["observation"]
         self._steps.append(
             {
                 "step_index": len(self._steps),
-                "before_state_id": f"state-{len(self._steps)}",
                 "observation": before,
                 "action": action_record,
                 "result": {"success": True},
@@ -303,6 +341,11 @@ def main() -> int:
         "--install-a11y-forwarder",
         action="store_true",
         help="Install the official forwarder APK during startup when absent.",
+    )
+    parser.add_argument(
+        "--emulator-setup",
+        action="store_true",
+        help="Run AndroidWorld's official emulator setup before task initialization.",
     )
     args = parser.parse_args()
     harness = ManualAndroidWorld(args)

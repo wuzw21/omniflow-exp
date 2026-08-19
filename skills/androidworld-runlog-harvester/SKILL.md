@@ -5,9 +5,8 @@ description: "Create reusable OmniFlow Functions from one official-successful An
 
 # Function authoring
 
-Use `save_function` as the only Function creation or update path. One
-successful RunLog may produce the mandatory complete Function and zero or more
-reusable subsegment Functions atomically.
+Use `save_function` as the only Function creation or update path. One successful
+RunLog produces exactly one complete Function atomically.
 
 ## Procedure
 
@@ -21,12 +20,15 @@ reusable subsegment Functions atomically.
 ## Enhancement contract
 
 The Agent edits one in-memory draft through three stages. Stage 1 runs once;
-stages 2 and 3 run separately for each identified Function. It does not make
-one model call per action and never writes complete Function artifacts, source
-states, complete source actions, bindings, checker rules, or Store entries.
+stages 2 and 3 run for that one Function. It does not make
+one model call per action and never writes source states or Store entries. The
+action stage may return source-indexed direct actions, but only when copied from
+RunLog evidence and accepted by the deterministic `save_function` validator.
 
 Return only the strict schema supplied for the current
-`edit_function_draft` call.
+`edit_function_draft` call. The stages still produce one atomic
+`save_function` bundle: the complete Function is mandatory, while direct source
+actions, parameters, and checker registrations are optional additions.
 
 ### Stage 1: semantic ranges
 
@@ -38,35 +40,18 @@ Return:
     "function_id": "search_for_a_place",
     "name": "Search for a place",
     "description": "Enter a place query and show its results."
-  },
-  "subsegments": [
-    {
-      "function_id": "enter_search_query",
-      "name": "Enter a search query",
-      "description": "Enter caller-provided text in the search field.",
-      "stability_reason": "The same visible search field and input action form a deterministic sequence; the query is parameterized.",
-      "start_step_index": 1,
-      "end_step_index": 3
-    }
-  ]
+  }
 }
 ```
 
 Rules:
 
 - `complete_function` is mandatory and covers the entire successful RunLog.
-- A subsegment is an independently useful contiguous semantic operation.
-- `start_step_index` is inclusive and `end_step_index` is exclusive.
-- Select a subsegment only after identifying it as stably reproducible.
-- `stability_reason` is mandatory. It must explain why the source-state/action
-  sequence is deterministic across environments and remains replayable after
-  caller-varying content is parameterized.
+- The saved source replay calls only `complete_function`.
+- The complete Function preserves every successful source action in order.
 - Describe only effects caused by actions inside the selected range. Treat a
   condition already true in the first state as a precondition, not an effect.
-- Do not select a range whose behavior depends on a transient dialog, task
-  completion, validator state, target device, or task-specific coincidence.
-- Do not create isolated click or long-press fragments.
-- Return an empty `subsegments` list when no stable reusable range exists.
+- Do not split the complete trajectory or return a second Function.
 
 ### Stage 2: source-proven actions and parameters
 
@@ -82,14 +67,12 @@ Return:
     {
       "function_id": "search_for_a_place",
       "step_index": 0,
-      "operation": "open_app",
-      "value": "com.example.maps"
+      "operation": "open_app"
     },
     {
       "function_id": "enter_search_query",
       "step_index": 2,
-      "operation": "set_target",
-      "value": "Search"
+      "operation": "set_target"
     }
   ],
   "bindings": [
@@ -99,6 +82,13 @@ Return:
       "name": "query",
       "description": "Place query to enter"
     }
+  ],
+  "actions": [
+    {
+      "function_id": "enter_search_query",
+      "step_index": 1,
+      "action": {"tool": "input_text", "args": {"text": "museum"}}
+    }
   ]
 }
 ```
@@ -106,10 +96,16 @@ Return:
 Rules:
 
 - `action_edits` may contain only `open_app` and `set_target`.
-- Use `open_app` only for a launcher click whose `after_page.package` is a
-  different non-empty package. Copy that package exactly into `value`.
-- Use `set_target` only when `source_target` is non-empty. Copy that label
-  exactly into `value`; do not paraphrase it.
+- `actions` is optional for exploration-style authoring. Each action must be
+  copied from the shown RunLog source step, using its original index;
+  `save_function` rejects any changed coordinate, package, wait, direction, or
+  other ungrounded action.
+- Use `open_app` only for a listed eligible launcher click whose
+  `after_page.package` is a different non-empty package.
+- Use `set_target` only for a listed eligible click whose `source_target` is
+  non-empty.
+- Do not return a package, target, label, or `value` field. The compiler copies
+  the exact value from validated RunLog evidence.
 - Declare caller-varying values already present after the validated action edit.
 - Bind only source values stated directly in the RunLog goal. A current page
   value absent from the goal is source state, not caller input.
@@ -165,9 +161,12 @@ registered checker actions from formal steps, creates parameter schemas and
 bindings, validates every Function, and writes the Store atomically. The Agent
 supplies decisions only; it cannot invent or modify source evidence.
 
-A rejected stage edit receives at most one correction of that same stage.
-Transport failure, missing source evidence, or a second invalid edit fails the
-save without partial persistence.
+Each stage gets at most three model attempts. A rejected decision receives only
+that stage's deterministic validation error before the Agent revises the same
+in-memory draft. Transport failure, missing source evidence, or a third invalid
+decision fails the save without partial persistence. Never edit a generated
+Function or Store directly; repair this shared policy and regenerate from the
+same successful RunLog through `save_function`.
 
 Runtime evaluates every unexecuted Function-local checker before every pending
 formal action. OmniTransfer must find a target above the one configured high

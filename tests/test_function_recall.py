@@ -7,7 +7,6 @@ from omniflow.core.model import FunctionStep
 from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION
 from omniflow.functions.recall import (
     GOAL_LEXICAL_WEIGHT,
-    PAGE_SIMILARITY_WEIGHT,
     recall_functions,
 )
 
@@ -77,7 +76,7 @@ def _function(
     )
 
 
-def test_function_recall_uses_one_lexical_and_page_score() -> None:
+def test_function_recall_uses_goal_semantics_without_page_similarity() -> None:
     current = _page("Account details", "account_form")
     matching = _function(
         "submit_current_form",
@@ -114,19 +113,15 @@ def test_function_recall_uses_one_lexical_and_page_score() -> None:
         item["function_id"]: item for item in result.audit["decisions"]
     }
     assert decisions[matching.id]["goal_lexical_score"] == 0.0
-    assert decisions[matching.id]["page_similarity"] == 1.0
-    assert decisions[matching.id]["score"] == PAGE_SIMILARITY_WEIGHT
+    assert "page_similarity" not in decisions[matching.id]
+    assert decisions[matching.id]["score"] == 0.0
     assert decisions[lexical_but_wrong_page.id]["score"] > decisions[matching.id][
         "score"
     ]
-    assert result.audit["ranking_weights"] == {
-        "page_similarity": PAGE_SIMILARITY_WEIGHT,
-        "goal_lexical": GOAL_LEXICAL_WEIGHT,
-    }
-    assert GOAL_LEXICAL_WEIGHT > PAGE_SIMILARITY_WEIGHT
+    assert result.audit["ranking_weights"] == {"goal_lexical": GOAL_LEXICAL_WEIGHT}
 
 
-def test_open_app_function_uses_the_same_page_weighted_score() -> None:
+def test_open_app_function_uses_the_same_goal_score() -> None:
     current = _page("Bluetooth settings", "bluetooth_switch")
     open_app_function = _function(
         "z_open_settings",
@@ -153,15 +148,15 @@ def test_open_app_function_uses_the_same_page_weighted_score() -> None:
         limit=1,
     )
 
-    assert result.functions == (open_app_function,)
+    assert result.functions == (click_function,)
     decisions = {item["function_id"]: item for item in result.audit["decisions"]}
-    assert decisions[open_app_function.id]["page_similarity"] == 1.0
-    assert decisions[open_app_function.id]["score"] > decisions[click_function.id][
+    assert "page_similarity" not in decisions[open_app_function.id]
+    assert decisions[open_app_function.id]["score"] == decisions[click_function.id][
         "score"
     ]
 
 
-def test_missing_page_evidence_contributes_zero() -> None:
+def test_missing_page_evidence_does_not_change_recall() -> None:
     function = _function(
         "tap_continue",
         "Tap continue",
@@ -178,7 +173,7 @@ def test_missing_page_evidence_contributes_zero() -> None:
 
     assert result.functions == (function,)
     decision = result.audit["decisions"][0]
-    assert decision["page_similarity"] == 0.0
+    assert "page_similarity" not in decision
     assert decision["score"] == GOAL_LEXICAL_WEIGHT * decision["goal_lexical_score"]
 
 
@@ -248,16 +243,10 @@ def test_runtime_recalls_again_after_page_changes(tmp_path) -> None:
         tmp_path / "store.json",
         (
             _function(
-            "first_page_action",
-            "Use first page control",
-            "Operate the visible first-page control.",
-            "source_first",
-            ),
-            _function(
-            "second_page_action",
-            "Use second page control",
-            "Operate the visible second-page control.",
-            "source_second",
+                "complete_page_action",
+                "Complete the page action",
+                "Operate the visible page control.",
+                "source_first",
             ),
         ),
     )
@@ -268,13 +257,13 @@ def test_runtime_recalls_again_after_page_changes(tmp_path) -> None:
 
     assert result.success is True
     assert planner.visible == [
-        ("first_page_action", "second_page_action"),
-        ("second_page_action", "first_page_action"),
+        ("complete_page_action",),
+        ("complete_page_action",),
     ]
     assert [
         event["candidate_function_ids"]
         for event in result.detail["function_resolution"]["recall"]["events"]
     ] == [
-        ["first_page_action", "second_page_action"],
-        ["second_page_action", "first_page_action"],
+        ["complete_page_action"],
+        ["complete_page_action"],
     ]
