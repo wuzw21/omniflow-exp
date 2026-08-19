@@ -1509,6 +1509,27 @@ def test_observe_uses_official_stable_state() -> None:
     assert calls == [True]
 
 
+def test_observe_can_disable_stabilization_for_diagnostic_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OMNIFLOW_ANDROIDWORLD_WAIT_TO_STABILIZE", "false")
+    calls: list[bool] = []
+
+    class Env:
+        device_screen_size = (4, 3)
+        logical_screen_size = (4, 3)
+        foreground_activity_name = "com.android.settings/.Settings"
+
+        def get_state(self, wait_to_stabilize: bool = False):
+            calls.append(wait_to_stabilize)
+            return _official_state(ui_elements=[_ui_element()])
+
+    observation = AndroidWorldHost(Env()).observe()
+
+    assert observation.package_name == "com.android.settings"
+    assert calls == [False]
+
+
 def test_observe_does_not_replace_failed_official_state() -> None:
     class Env:
         controller = SimpleNamespace(
