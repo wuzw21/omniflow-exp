@@ -4,6 +4,61 @@
 文件、为什么、不能改什么”。新增文件前先证明现有 owner 的接口无法承载；
 如果只是为了复用，优先把实现放进已有 owner，而不是加一层旁路。
 
+## Python 文件的修改权限
+
+仓库当前有 104 个 Python 文件。下面的规则覆盖全部 `omniflow/**/*.py`、
+`src/**/*.py`、`tests/**/*.py` 和 `tools/**/*.py`；新增 Python 文件必须先
+放入一个已有 owner 的语义边界，并在本表补充路径。这里的“可改”不是任何人
+可以随意改，而是允许修改实现；真正的判断还要看该文件所属的变更级别。
+
+| 级别 | 可以做什么 | 必须满足 | 禁止做什么 |
+| --- | --- | --- | --- |
+| A · owner 可重构 | 修复实现、删重复代码、抽深模块、改善命名和测试 | 只改变该 owner 的语义；focused tests、`git diff --check`、完整回归 | 增加第二入口、第二 writer、第二 mapper 或私有旁路 |
+| B · contract-controlled | 修改 runtime 合同、适配器协议、索引/ledger 行为 | 先更新 owner 文档和 focused tests；schema、public result row、统计输出必须另一个独立 commit | 在普通清理 commit 中悄悄改变字段、版本、统计口径 |
+| C · frozen / read-only | 只能读取、诊断或迁移；不能为了新功能修补 | 如确实需要改变，先证明上游合同或用户授权已变化，并单独记录 | 改历史 baseline、外部 pinned runtime、生成证据、模型/数据文件 |
+| D · test-only | 增补能证明 surviving owner 的行为测试 | 测试必须锁定真实不变量，不得为了过测删除断言 | 用测试替代生产逻辑，或把失败路径改成“通过” |
+
+### 按 Python 路径的默认级别
+
+| Python 路径 | 默认级别 | 语义 owner 和边界 |
+| --- | --- | --- |
+| `omniflow/core/model.py`, `schemas.py`, `trajectory.py` | B | 核心领域对象、wire/schema、RunLog 不变量；实现可修，合同变更单独 commit |
+| `omniflow/core/config.py`, `omniflow/vlm/model_config.py`, `omniflow/vlm/planner.py`, `omniflow/vlm/usage.py` | B | runtime/model-facing 合同与 accounting；不能恢复 retired credential、tool 或隐式 retry |
+| `omniflow/functions/assets.py`, `omniflow/functions/recall.py` | B | 唯一 Function compiler、validator、writer、recall；允许深模块重构，禁止第二 Store writer/catalog |
+| `omniflow/runtime/*.py` | A/B | canonical execution、checker、fallback、semantic grounding；可以精简实现，不能绕过 OmniTransfer 或把 source 坐标当 target 执行 |
+| `omniflow/transfer/*.py` | B/C | 唯一 page encoder 和 transfer-state reader；只能使用 canonical checkpoint，禁止新增 encoder/lookup 旁路 |
+| `omniflow/bridge.py`, `omniflow/runlog.py`, `omniflow/vlm/context.py`, `omniflow/vlm_coordinates.py` | B | 对外 bridge、canonical RunLog 和 Planner evidence；适配必须回到现有合同 |
+| `omniflow/**/__init__.py`, `src/**/__init__.py` | A | 只维护稳定导出和包边界，不放调度、业务实现或隐式兼容层 |
+| `src/experiment/e2e_task_pipeline.py`, `androidworld.py`, `process_runner.py` | A | scheduler、一个原子结果、统一子进程生命周期；不得新增 runner 或重复 `Popen` policy |
+| `src/experiment/artifact_index.py`, `preflight.py`, `source_assets.py`, `observation_evidence.py` | B | 唯一 `data/current.json`、source/设备 gate、证据转换；不得增加 index、snapshot 或 source pool |
+| `src/experiment/protocol.py`, `result_schema.py`, `result_registry.py`, `batch_outcomes.py` | B | 正式 protocol、public row、ledger、汇总；字段/版本/统计口径必须独立 commit |
+| `src/experiment/development_emulator.py`, `emulator_processes.py`, `performance_metrics.py` | A/B | 开发 preflight、进程诊断、opt-in 性能侧通道；不能写 formal result 或改变 public row |
+| `src/experiment/mobilegpt_contract.py`, `mobilegpt_source.py`, `appagent_source.py` | B | 外部 baseline 的 source/contract owner；适配可以改，不能把 baseline 变成 Function 或共用结果表 |
+| `src/integrations/android_world/agent.py`, `methods.py`, `host.py`, `environment.py`, `apps.py`, `state.py` | A/B | AndroidWorld native adapter；可重构实现，但必须复用 Host、官方 validator 和唯一 method registry |
+| `src/integrations/android_world/launch.py` | B | 唯一 native lifecycle；可修 setup/episode/evidence，但不能在这里增加 scheduler 或临时 executor |
+| `src/integrations/android_world/mobilegpt_agent.py`, `oob_control.py` | C/B | 外部/旧适配边界；只有对应外部合同或明确实验需求变化时才改，不能复制成新适配层 |
+| `src/integrations/bmoca.py`, `mobilegpt_converter.py`, `mobilegpt_runtime.py`, `appagent_adapter.py` | B/C | 外部协议 adapter；只修映射和验证，不改 pinned upstream 语义，不引入第二 converter |
+| `src/integrations/runlog.py`, `script_replay.py`, `skilldroid_replay.py` | C/B | 历史/官方 replay 薄适配；不能加私有 mapper、坐标 passthrough 或第二 executor |
+| `tests/**/*.py` | D | 所有测试都可增补或随 surviving owner 迁移；不得削弱断言来掩盖功能变化 |
+| `tools/manual_androidworld_harness.py` | C | 人工诊断工具；不能生成 formal result、刷新 canonical index 或替代公共 shell |
+
+### 修改决策
+
+对任意 Python 文件，先回答：
+
+1. 这是实现重复，还是两个不同的领域语义？只有前者才能合并。
+2. 这个文件是否拥有入口、Store、schema、ledger、统计或外部合同？若是，按 B
+   处理，不要把改动混入普通清理。
+3. 这个文件是否只是 adapter？先改共同 owner 或 adapter seam；不要在调用方
+   加一层包装来掩盖重复。
+4. 改动能否通过 surviving owner 的 focused test 证明？不能证明就不能删除。
+
+快速检查全部 Python 文件是否仍落在本表范围内：
+
+```bash
+rg --files -g '*.py' | sort
+```
+
 ## 入口和契约
 
 | 文件 | owner / 修改方式 |
