@@ -7,6 +7,7 @@
       "omniflow",
       "mobilegpt",
       "appagent",
+      "autodroid",
       "t3a_hint"
     ],
     "devices": [
