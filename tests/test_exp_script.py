@@ -93,12 +93,15 @@ def test_preflight_accepts_offline_appagent_memory() -> None:
     )
 
 
-def test_experiment_script_is_the_only_shell_entry_and_has_safe_help() -> None:
+def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:
     scripts = sorted(
         path.relative_to(REPO).as_posix()
         for path in (REPO / "scripts").rglob("*.sh")
     )
-    assert scripts == ["scripts/exp/run_androidworld.sh"]
+    assert scripts == [
+        "scripts/exp/run_androidworld.sh",
+        "scripts/exp/test_provider.sh",
+    ]
 
     completed = subprocess.run(
         ["bash", str(SCRIPT), "--help"],
