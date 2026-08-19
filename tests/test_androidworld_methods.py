@@ -192,6 +192,25 @@ def test_omniflow_adapter_uses_canonical_planner_configuration(
     assert planner_options
 
 
+def test_fixed_replay_never_builds_a_planner(monkeypatch) -> None:
+    def fail_if_built(**_options: object) -> None:
+        raise AssertionError("fixed_replay_planner_built")
+
+    monkeypatch.setattr("omniflow.vlm.planner.VLMPlanner", fail_if_built)
+    context = MethodAdapterContext(
+        selector="fixed_replay",
+        env=SimpleNamespace(),
+        store_path="store.json",
+        adb_serial="emulator-5554",
+        planner_model="must-not-build",
+        raw_replay_run_log="run_log.json",
+        build_omniflow_agent=lambda **options: SimpleNamespace(**options),
+        apply_fixed_replay=lambda agent, **_options: agent,
+    )
+
+    assert default_method_adapter_registry().build(context) is not None
+
+
 def test_androidworld_complexity_budget_cannot_raise_omniflow_step_cap(
     monkeypatch,
 ) -> None:

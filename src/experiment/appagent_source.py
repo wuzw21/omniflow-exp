@@ -31,6 +31,7 @@ from src.experiment.source_records import CanonicalRunLog
 from src.integrations.android_world.host import (
     androidworld_observation_package,
     androidworld_observation_xml,
+    androidworld_elements_xml,
 )
 from src.integrations.appagent import (
     APPAGENT_ACTION_TYPES,
@@ -47,7 +48,41 @@ from src.integrations.appagent import (
 
 
 def _appagent_observation_xml(observation: dict[str, Any]) -> str:
-    return androidworld_observation_xml(observation)
+    forest_xml = androidworld_observation_xml(observation)
+    elements = observation.get("ui_elements")
+    if not forest_xml or not isinstance(elements, list) or not elements:
+        return forest_xml
+    missing_interactive_identity = any(
+        bool(
+            str(
+                element.get("resource_name")
+                or element.get("resource_id")
+                or element.get("content_description")
+                or element.get("text")
+                or ""
+            ).strip()
+        )
+        and bool(
+            element.get("is_clickable")
+            or element.get("is_focusable")
+            or element.get("is_editable")
+            or element.get("is_long_clickable")
+        )
+        and not any(
+            str(value or "").strip() in forest_xml
+            for value in (
+                element.get("resource_name"),
+                element.get("resource_id"),
+                element.get("content_description"),
+                element.get("text"),
+            )
+        )
+        for element in elements
+        if isinstance(element, dict)
+    )
+    if missing_interactive_identity:
+        return androidworld_elements_xml(elements).strip()
+    return forest_xml
 
 
 _APPAGENT_AUXILIARY_PACKAGE_PREFIXES = (
@@ -102,7 +137,7 @@ def _write_runtime_config(
         "OPENAI_API_BASE": endpoint,
         "OPENAI_API_KEY": api_key,
         "OPENAI_API_MODEL": model,
-        # GLM-4.6V may spend part of a short completion budget on visual
+        # GLM-5.1 may spend part of a short completion budget on visual
         # reasoning before emitting the AppAgent action description.  The
         # official generator reads this value from its temporary config.
         "MAX_TOKENS": int(max_tokens),
@@ -979,6 +1014,7 @@ def prepare_appagent_memory(
     timeout_sec: int = 600,
     request_timeout_sec: float = 60.0,
     perform_emulator_setup: bool = True,
+    source_run_log: str | Path | None = None,
 ) -> dict[str, Any]:
     """Convert one canonical RunLog to AppAgent's native demo memory."""
 
@@ -996,9 +1032,17 @@ def prepare_appagent_memory(
         perform_emulator_setup,
     )
     item = load_canonical_source_item(index_path, task_name=task_name)
+    selected_source = item.source_run_log
+    if source_run_log is not None:
+        selected_source = Path(source_run_log).expanduser().resolve()
+        source = require_complete_source_run_log(
+            json.loads(selected_source.read_text(encoding="utf-8"))
+        )
+        if source.get("task_name") != task_name or source.get("seed") != SOURCE_SEED:
+            raise ValueError("appagent_source_lineage_task_or_seed_mismatch")
     source_method = _appagent_source_method_label(item)
     result = convert_runlog_to_appagent_memory(
-        source_run_log=item.source_run_log,
+        source_run_log=selected_source,
         appagent_root=appagent_root,
         memory_root=memory_root,
         model=normalized_model,
@@ -1055,6 +1099,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--android-world-root")
     prepare.add_argument("--memory-root", required=True)
     prepare.add_argument("--model", required=True)
+    prepare.add_argument("--source-run-log")
     prepare.add_argument("--evidence-root", action="append", default=[])
     prepare.add_argument("--serial", default="emulator-5560")
     prepare.add_argument("--console-port", type=int, default=5560)
@@ -1088,6 +1133,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 android_world_root=args.android_world_root,
                 memory_root=args.memory_root,
                 model=args.model,
+                source_run_log=args.source_run_log,
                 evidence_roots=args.evidence_root,
                 serial=args.serial,
                 console_port=args.console_port,

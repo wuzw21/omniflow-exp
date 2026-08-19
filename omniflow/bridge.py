@@ -401,11 +401,6 @@ class JsonLineBridge:
             supplied_functions, list
         ):
             return _save_error("FUNCTIONS_INVALID", "functions must be an array")
-        if not enhance and not supplied_functions:
-            return _save_error(
-                "FUNCTIONS_REQUIRED",
-                "functions are required unless enhance=true",
-            )
         supplied_arguments = body.get("arguments")
         if supplied_arguments is not None and not isinstance(supplied_arguments, dict):
             return _save_error("FUNCTION_ARGUMENTS_INVALID", "arguments must be an object")

@@ -6,7 +6,7 @@
 2. `docs/ARCHITECTURE.md`
 3. `docs/FILE_EDIT_GUIDE.md`
 4. `scripts/exp/README.md`
-5. 对应目录 README 和 owner 测试
+5. 直接阅读对应 owner 代码和 focused tests
 
 ## 不可破坏的运行合同
 
@@ -34,6 +34,9 @@
 - B-MoCA env100 必须先通过 official success、method success、`model_calls=0`、`fallback_steps=0`，才可创建/运行其他环境。
 - 所有 Python/Torch 命令使用 `~/Projects/Omni/OmniFlow-exp/.venv/bin/python`；正式执行不使用邻近环境。
 - 所有实验资产、RunLog、截图、Store、transfer states、memory 和结果都在 `data/`；不要提交它们、credentials、APK、权重或 emulator image。
+- 项目长期记忆：`OmniFlow-AndroidWorld-Experiments` 的唯一关键主表事实是 `OmniFlow_AndroidWorld_116Tasks_10cell.xlsx` 固定为 116 个任务 × 10 个实验格 = 1160 个实验格；主矩阵不得因补充 baseline 或新实验而扩展。该目录 `~/Desktop/OmniFlow-AndroidWorld-Experiments` 是权威归档源；恢复或同步 10-cell 资产时，必须检查主表、对应的 `.inspect.ndjson` 和 `RESULT_GROUPS.md`。
+- 10-cell 历史结果、测试结果和表格不能因目录迁移而丢失；合并到仓库时必须保留原始文件、来源路径、文件时间和 SHA-256 等 provenance，并去重而不是覆盖冲突版本。
+- 桌面端 10-cell 归档是历史证据源，不是运行时选择器；归档副本放在 `data/`，运行时仍只读取注册的资产和 `data/current.json`。
 - 旧适配层和历史输入可按只读迁移路径保留；不要为了兼容重新加 alias、旧 writer、旧 index 或旧 runner。
 - 单 Function 直跑是有价值的旁路，但必须复用共同 Host、OmniTransfer、checker、证据封存和结果路径；不要删除它，也不要复制执行实现。
 

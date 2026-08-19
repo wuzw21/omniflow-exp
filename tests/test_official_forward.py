@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import pytest
 
 from src.integrations.official_forward import (
+    _autodroid_task_app_name,
     prepare_appagent_workspace,
     prepare_mobilegpt_server,
     resolve_mobilegpt_client_host,
@@ -111,6 +113,7 @@ def test_mobilegpt_forwarder_configures_models_only_in_staging(
         encoding="utf-8"
     )
     assert "MOBILEGPT_EMBEDDING_MODEL" in staged_utils
+    assert "write_omniflow_mobilegpt_event" in staged_utils
     assert "MOBILEGPT_CHAT_MODEL" in staged_main
     assert "MOBILEGPT_CHAT_MODEL" in staged_param
     assert "text-embedding-3-small" in (
@@ -150,3 +153,23 @@ def test_autodroid_memory_manifest_is_validated_without_conversion(
     assert result["app_count"] == 1
     assert result["memory_root"] == str(root.resolve())
     assert len(result["manifest_sha256"]) == 64
+
+
+def test_autodroid_task_app_name_maps_androidworld_alias() -> None:
+    assert _autodroid_task_app_name(
+        type("Task", (), {"app_names": ("simple sms messenger",)})()
+    ) == "sms"
+
+
+def test_autodroid_task_app_name_rejects_ambiguous_task() -> None:
+    with pytest.raises(
+        ValueError,
+        match="autodroid_task_app_ambiguous:expense,gallery",
+    ):
+        _autodroid_task_app_name(
+            type(
+                "Task",
+                (),
+                {"app_names": ("pro expense", "simple gallery pro")},
+            )()
+        )

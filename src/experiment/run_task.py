@@ -24,7 +24,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from omniflow.core.trajectory import canonicalize_run_log
+from omniflow.core.trajectory import (
+    canonicalize_run_log,
+    require_complete_source_run_log,
+)
 from omniflow.functions.assets import FunctionStore
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
@@ -55,6 +58,7 @@ from src.experiment.protocol import (
     RESULT_SCHEMA,
     RESULT_SUMMARY_FILE,
     SOURCE_SEED,
+    SUPPLEMENTAL_METHODS,
     STEP_TIMEOUT_SEC,
     TASK_SEED,
 )
@@ -458,6 +462,13 @@ def _read_json(path: Path) -> dict[str, Any]:
         if isinstance(decoded, dict)
         else {"_read_error": "JSON root is not an object"}
     )
+
+
+def _read_object(path: Path) -> dict[str, Any]:
+    decoded = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(decoded, dict):
+        raise ValueError(f"JSON root is not an object: {path}")
+    return decoded
 
 
 def _card_tool_name(card: Any) -> str:
@@ -2083,10 +2094,14 @@ def _start_mobilegpt_browser_task_server(
     return prepare, process
 
 
-def _mobilegpt_memory_embedding_model(memory_root: Path) -> str:
+def _mobilegpt_memory_embedding_model(
+    memory_root: Path,
+    *,
+    manifest_path: Path | None = None,
+) -> str:
     """Return the embedding model sealed with one MobileGPT memory bundle."""
 
-    manifest_path = memory_root.parent / MOBILEGPT_MEMORY_MANIFEST
+    manifest_path = manifest_path or memory_root.parent / MOBILEGPT_MEMORY_MANIFEST
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -2126,6 +2141,7 @@ def build_mobilegpt_server_command(
     *,
     mobilegpt_root: str | Path = DEFAULT_MOBILEGPT_ROOT,
     mobilegpt_memory_root: str | Path | None = None,
+    mobilegpt_memory_manifest: str | Path | None = None,
     serial: str = "",
     adb_path: str = "",
     server_host: str = "0.0.0.0",
@@ -2164,7 +2180,14 @@ def build_mobilegpt_server_command(
     if resolved_action == "server":
         if resolved_memory_root is None:
             raise ValueError("mobilegpt_server_memory_required")
-        embedding_model = _mobilegpt_memory_embedding_model(resolved_memory_root)
+        embedding_model = _mobilegpt_memory_embedding_model(
+            resolved_memory_root,
+            manifest_path=(
+                resolve_path(mobilegpt_memory_manifest)
+                if mobilegpt_memory_manifest
+                else None
+            ),
+        )
         runtime_env = _subprocess_env({})
         chat_model = str(
             runtime_env.get("MOBILEGPT_CHAT_MODEL")
@@ -2326,6 +2349,7 @@ def _task_result_path_context(path: Path) -> dict[str, str]:
         "mobilegpt",
         "t3a_hint",
         "appagent",
+        *SUPPLEMENTAL_METHODS,
     }
     stage = ""
     run_dir = path.parent
@@ -2433,6 +2457,9 @@ def _canonical_run_has_replay_material(canonical: dict[str, Any]) -> bool:
 
 
 def _canonical_replay_completed(row: dict[str, Any]) -> bool | None:
+    direct_value = row.get("replay_completed")
+    if isinstance(direct_value, bool):
+        return direct_value
     canonical = row.get("canonical_run")
     if not isinstance(canonical, dict) or not _canonical_run_has_replay_material(
         canonical
@@ -2446,6 +2473,13 @@ def _canonical_replay_completed(row: dict[str, Any]) -> bool | None:
 
 
 def _extract_replay_step_stats(row: dict[str, Any]) -> tuple[int, int]:
+    direct_total = _coerce_int(row.get("replay_step_total"), 0)
+    direct_completed = min(
+        _coerce_int(row.get("replay_step_completed_count"), 0),
+        direct_total,
+    )
+    if direct_total > 0:
+        return direct_completed, direct_total
     canonical = row.get("canonical_run")
     if not isinstance(canonical, dict):
         return (0, 0)
@@ -2527,8 +2561,8 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
         device = row.get("device") or path_context.get("device")
         row_actions_executed = _coerce_int(row.get("actions_executed"))
         if row_actions_executed <= 0 and (
-            str(row.get("agent") or "").startswith("official:")
-            or str(method or "") == "t3a_hint"
+            str(row.get("agent") or "").startswith(("official:", "autodroid_"))
+            or str(method or "") in {"autodroid", "t3a_hint"}
         ):
             row_actions_executed = max(
                 row_actions_executed,
@@ -5149,6 +5183,7 @@ def _run_result_mobilegpt(
                 "server",
                 mobilegpt_root=args.mobilegpt_root,
                 mobilegpt_memory_root=episode_memory_root,
+                mobilegpt_memory_manifest=source_manifest_path,
                 stats_jsonl=stats_jsonl,
                 server_host=args.mobilegpt_server_host,
                 port=int(args.mobilegpt_port),
@@ -5356,9 +5391,11 @@ def run_task(args: argparse.Namespace) -> int:
     if len(targets) != 1:
         raise ValueError("result requires exactly one device")
     mobilegpt_source_run_log = item.source_run_log
-    mobilegpt_source_run_log_sha256s = (
-        sha256_file(mobilegpt_source_run_log),
-    )
+    mobilegpt_source_run_log_sha256s: tuple[str, ...] = ()
+    if args.method != "autodroid":
+        mobilegpt_source_run_log_sha256s = (
+            sha256_file(mobilegpt_source_run_log),
+        )
     attempt_root, _ = _task_managed_output_root(args.output_path)
     source_seed = int(args.source_seed)
     output_root = _source_seed_output_root(attempt_root, source_seed)
@@ -5453,10 +5490,24 @@ def run_task(args: argparse.Namespace) -> int:
             if not source_memory_text:
                 raise ValueError("appagent requires --appagent-memory-root")
             source_memory_root = resolve_path(source_memory_text)
+            appagent_manifest = _read_object(
+                source_memory_root / "appagent_manifest.json"
+            )
+            appagent_source = Path(
+                str(appagent_manifest.get("source_run_log") or "")
+            ).expanduser().resolve()
+            appagent_source_payload = require_complete_source_run_log(
+                _read_object(appagent_source)
+            )
+            if (
+                appagent_source_payload.get("task_name") != item.task
+                or appagent_source_payload.get("seed") != SOURCE_SEED
+            ):
+                raise ValueError("appagent_memory_source_lineage_invalid")
             provenance = validate_appagent_memory(
                 source_memory_root,
                 task_name=item.task,
-                source_run_log=item.source_run_log,
+                source_run_log=appagent_source,
             )
             appagent_docs_root = Path(provenance["demo_docs_root"]).resolve()
             source_metrics = dict(provenance["source_episode_metrics"])
@@ -5545,7 +5596,6 @@ def run_task(args: argparse.Namespace) -> int:
                 source_seed=source_seed,
                 evaluation_seed=task_seed,
                 attempt_id=attempt_id,
-                source_run_log=item.source_run_log,
                 artifacts={
                     "autodroid_root": str(
                         resolve_path(
@@ -5557,6 +5607,8 @@ def run_task(args: argparse.Namespace) -> int:
                     "source_memory_manifest_sha256": memory_validation[
                         "manifest_sha256"
                     ],
+                    "task_reference_index": str(args.index),
+                    "task_reference_params": dict(item.params),
                     "source_memory_app_count": memory_validation["app_count"],
                     "uses_autodroid_memory": True,
                     "uses_omniflow_function": False,
@@ -5877,7 +5929,7 @@ def build_parser() -> argparse.ArgumentParser:
     result_parser.add_argument("--source-seed", type=int, default=SOURCE_SEED)
     result_parser.add_argument(
         "--method",
-        choices=METHODS,
+        choices=(*METHODS, *SUPPLEMENTAL_METHODS),
         default=DEFAULT_SOURCE_METHOD,
         help="One paper method for this AndroidWorld result.",
     )

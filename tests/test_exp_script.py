@@ -24,6 +24,7 @@ from src.experiment.checks import (
 )
 from src.integrations.appagent import is_memory_manifest_valid
 from src.experiment.protocol import DROIDRUN_VERSION
+from src.experiment.device_setup import _devices
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "exp" / "run_androidworld.sh"
@@ -131,9 +132,13 @@ def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:
         for path in (REPO / "scripts").rglob("*.sh")
     )
     assert scripts == [
+        "scripts/exp/migrate_authoritative_data.sh",
         "scripts/exp/run_androidworld.sh",
         "scripts/exp/test_provider.sh",
     ]
+    assert "run_androidworld.sh" not in (
+        REPO / "scripts" / "exp" / "migrate_authoritative_data.sh"
+    ).read_text(encoding="utf-8")
 
     completed = subprocess.run(
         ["bash", str(SCRIPT), "--help"],
@@ -163,6 +168,7 @@ def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:
     assert "--prepare-mobilegpt-memory" not in completed.stdout
     assert "--refresh-memory" in completed.stdout
     assert "--e2e-task" in completed.stdout
+    assert "--setup-device" in completed.stdout
     assert "--source-backend" not in completed.stdout
     assert "--page-store" not in completed.stdout
     assert "--mobilegpt-native-cold-warm" not in completed.stdout
@@ -178,6 +184,14 @@ def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:
     assert "OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP" in completed.stdout
     assert "cold-restarted before every pending result" in completed.stdout
     assert completed.stderr == ""
+
+
+def test_setup_uses_all_protocol_devices() -> None:
+    devices = _devices()
+
+    assert set(devices) == {"small5554", "small5562", "fold5564", "source5560"}
+    assert devices["fold5564"].profile == "pixel_fold"
+    assert devices["fold5564"].avd == "OmniFlowTargetFold"
     script_text = SCRIPT.read_text(encoding="utf-8")
     assert 'workspace_root="$(cd "$repo/.." && pwd)"' in script_text
     assert 'default_asset_root="$repo/data"' in script_text
@@ -244,9 +258,24 @@ def test_selected_model_profile_is_exported_for_native_openai_clients() -> None:
     assert 'export OPENAI_BASE_URL="$selected_model_base_url"' in script_text
 
 
+def test_formal_protocol_uses_glm_chat_and_embedding_models() -> None:
+    protocol = json.loads(
+        (REPO / "config" / "paper_androidworld.json").read_text(encoding="utf-8")
+    )["protocol"]
+
+    assert protocol["model"] == "GLM-5.1"
+    assert protocol["appagent_model"] == "GLM-5.1"
+    assert 'export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"' in SCRIPT.read_text(
+        encoding="utf-8"
+    )
+
+
 def test_mobilegpt_uses_the_official_server_without_a_runtime_patch() -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
 
+    assert "configure_model_stack()" in script_text
+    assert 'export OPENAI_EMBEDDING_MODEL="$embedding_model"' in script_text
+    assert 'export MOBILEGPT_CHAT_MODEL="$chat_model"' in script_text
     assert (
         'mobilegpt_embedding_api_key="${MOBILEGPT_EMBEDDING_API_KEY:-$selected_model_api_key}"'
         in script_text
@@ -256,6 +285,7 @@ def test_mobilegpt_uses_the_official_server_without_a_runtime_patch() -> None:
         'export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"'
         in script_text
     )
+    assert 'export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"' in script_text
     assert "src.integrations.mobilegpt_runtime" not in script_text
     assert "GLM-Embedding-2" in script_text
 
@@ -344,6 +374,20 @@ def test_e2e_source_collection_runs_the_sqlite_fts4_gate_before_dispatch() -> No
     e2e_dispatch = script_text.index('exec "$python_bin" "${e2e_args[@]}"')
     e2e_gate = script_text.index("ensure_androidworld_sqlite_fts4\n", e2e_dispatch - 800)
     assert e2e_gate < e2e_dispatch
+
+
+def test_oob_source_collection_uses_source_only_e2e_defaults() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+
+    oob_gate = script_text.index(
+        'if [[ "$control_backend" == "oob" && "$development_run" -eq 0'
+    )
+    source_collection = script_text.index(
+        'if [[ "$execution_environment" != "bmoca" && "$source_collection" -eq 1 ]]'
+    )
+    assert '"$source_collection" -eq 0' in script_text[oob_gate:source_collection]
+    assert 'e2e_method="${e2e_method:-omniflow}"' in script_text[source_collection:]
+    assert 'e2e_device="${e2e_device:-$default_device}"' in script_text[source_collection:]
 
 
 def test_unified_script_discovers_android_studio_jbr_on_macos() -> None:
@@ -600,6 +644,14 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
             str(SCRIPT),
             "--e2e-task",
             "BrowserDraw",
+            "--e2e-method",
+            "omniflow",
+            "--e2e-device",
+            "small5562:emulator-5562:5562",
+            "--e2e-source-seed",
+            "111",
+            "--e2e-evaluation-seed",
+            "113",
             "--task-deadline-sec",
             "1800",
             "--dry-run",
@@ -637,6 +689,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
     assert invocation[invocation.index("--source-device") + 1] == (
         "source5560:emulator-5560:5560"
     )
+    assert "--ensure-function" in invocation
     assert invocation[-1] == "--dry-run"
     assert capture_proxy.read_text(encoding="utf-8").strip() == "|||"
 

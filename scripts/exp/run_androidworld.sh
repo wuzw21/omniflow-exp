@@ -176,6 +176,7 @@ task_seed="$formal_task_seed"
 preflight="$repo/src/experiment/checks.py"
 selected_method_arg=""
 selected_device_arg=""
+selected_supplemental_method_arg="${OMNIFLOW_ANDROIDWORLD_SUPPLEMENTAL_METHOD:-}"
 control_backend="${OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND:-androidworld}"
 require_root_device="${OMNIFLOW_REQUIRE_ROOT_DEVICE:-1}"
 configure_device="${OMNIFLOW_CONFIGURE_DEVICE:-1}"
@@ -402,6 +403,12 @@ setup_device=""
 function_replay_device="${OMNIFLOW_FUNCTION_REPLAY_DEVICE:-small5554:emulator-5554:5554}"
 function_replay_avd="${OMNIFLOW_FUNCTION_REPLAY_AVD:-OmniFlowTargetSmall}"
 
+normalize_model_environment() {
+  if [[ -z "${LLMTHU_API_KEY:-}" && -n "${LLMTHU_KEY:-}" ]]; then
+    export LLMTHU_API_KEY="$LLMTHU_KEY"
+  fi
+}
+
 select_model_endpoint() {
   local profile="$1"
   local selected_model_config
@@ -537,6 +544,9 @@ Options:
   --all-tasks               Run the selected task set in task-major order.
   --method METHOD           Run one method in the single-result runner. B-MoCA
                             accepts ours_replay or skilldroid_replay.
+  --supplemental-method METHOD
+                            Run a supplemental method for --all-tasks/--tasks.
+                            Currently only autodroid is supported.
   --device LABEL:SERIAL:PORT
                             Run one target in the single-result runner.
   --control-backend NAME    Use androidworld (default) or explicit oob transport
@@ -650,6 +660,14 @@ while [[ "$#" -gt 0 ]]; do
         exit 2
       fi
       selected_method_arg="$1"
+      ;;
+    --supplemental-method)
+      shift
+      if [[ "$#" -eq 0 || -z "$1" ]]; then
+        echo "--supplemental-method requires one supplemental method." >&2
+        exit 2
+      fi
+      selected_supplemental_method_arg="$1"
       ;;
     --device)
       shift
@@ -971,6 +989,7 @@ PY
   set -a
   source "$env_file"
   set +a
+  normalize_model_environment
   unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
   select_model_endpoint "$formal_model_endpoint_profile"
   validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
@@ -1081,6 +1100,7 @@ if [[ "$development_run" -eq 1 ]]; then
   set -a
   source "$env_file"
   set +a
+  normalize_model_environment
   select_model_endpoint "$development_model_endpoint_profile"
   validate_experiment_model "$development_model" "$development_model_endpoint_profile"
   configure_model_stack "$development_model"
@@ -1138,6 +1158,10 @@ if [[ -n "$e2e_task" ]]; then
     echo "--e2e-task requires --e2e-device LABEL:SERIAL:PORT." >&2
     exit 2
   fi
+  supplemental_autodroid=0
+  if [[ "$e2e_method" == "autodroid" ]]; then
+    supplemental_autodroid=1
+  fi
   if [[ "$e2e_source_seed" != "$formal_source_seed" ]]; then
     echo "--e2e-task requires source seed $formal_source_seed." >&2
     exit 2
@@ -1163,16 +1187,20 @@ if [[ -n "$e2e_task" ]]; then
     exit 2
   fi
   canonical_omnitransfer_root="$account_root/Projects/Omni/OmniTransfer"
-  if [[ ! -d "$canonical_omnitransfer_root" || -z "$omnitransfer_root" || ! -d "$omnitransfer_root" ]]; then
+  if [[ "$supplemental_autodroid" -eq 0 && ( ! -d "$canonical_omnitransfer_root" || -z "$omnitransfer_root" || ! -d "$omnitransfer_root" ) ]]; then
     echo "--e2e-task requires OMNITRANSFER_ROOT=$canonical_omnitransfer_root." >&2
     exit 2
   fi
-  resolved_omnitransfer_root="$(cd "$omnitransfer_root" && pwd -P)"
-  if [[ "$resolved_omnitransfer_root" != "$(cd "$canonical_omnitransfer_root" && pwd -P)" ]]; then
-    echo "--e2e-task requires canonical OmniTransfer: $canonical_omnitransfer_root." >&2
-    exit 2
+  if [[ "$supplemental_autodroid" -eq 0 ]]; then
+    resolved_omnitransfer_root="$(cd "$omnitransfer_root" && pwd -P)"
+    if [[ "$resolved_omnitransfer_root" != "$(cd "$canonical_omnitransfer_root" && pwd -P)" ]]; then
+      echo "--e2e-task requires canonical OmniTransfer: $canonical_omnitransfer_root." >&2
+      exit 2
+    fi
+  else
+    resolved_omnitransfer_root="$canonical_omnitransfer_root"
   fi
-  if [[ "$function_replay_collection" -eq 0 && "$dry_run" -ne 1 && "$check_only" -ne 1 && ( -z "$appagent_root" || "$appagent_root" != /* || ! -d "$appagent_root" ) ]]; then
+  if [[ "$supplemental_autodroid" -eq 0 && "$function_replay_collection" -eq 0 && "$dry_run" -ne 1 && "$check_only" -ne 1 && ( -z "$appagent_root" || "$appagent_root" != /* || ! -d "$appagent_root" ) ]]; then
     echo "--e2e-task requires an absolute native AppAgent root." >&2
     exit 2
   fi
@@ -1192,7 +1220,7 @@ if [[ -n "$e2e_task" ]]; then
     echo "--e2e-task requires an executable absolute emulator path: $e2e_emulator_bin" >&2
     exit 2
   fi
-  if [[ "$function_replay_collection" -eq 0 && "$dry_run" -ne 1 ]] && ! ensure_avd_installed \
+  if [[ "$supplemental_autodroid" -eq 0 && "$function_replay_collection" -eq 0 && "$dry_run" -ne 1 ]] && ! ensure_avd_installed \
     "$source_avd" \
     "$e2e_emulator_bin" \
     "$e2e_avdmanager_bin" \
@@ -1208,7 +1236,7 @@ if [[ -n "$e2e_task" ]]; then
     echo "--function-replay-collection replay AVD is unavailable: $function_replay_avd" >&2
     exit 2
   fi
-  if [[ "$check_only" -ne 1 && "$function_replay_collection" -eq 0 ]]; then
+  if [[ "$supplemental_autodroid" -eq 0 && "$check_only" -ne 1 && "$function_replay_collection" -eq 0 ]]; then
     if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
       echo "--e2e-task requires an existing absolute OMNIFLOW_ENV_FILE." >&2
       exit 2
@@ -1216,6 +1244,7 @@ if [[ -n "$e2e_task" ]]; then
     set -a
     source "$env_file"
     set +a
+    normalize_model_environment
     # The formal endpoint must not inherit a developer SOCKS/HTTP proxy.
     # httpx otherwise constructs a proxy transport before the provider call,
     # which makes MobileGPT preparation fail when socksio is not installed.
@@ -1225,11 +1254,15 @@ if [[ -n "$e2e_task" ]]; then
     configure_model_stack "$formal_model"
   fi
   normalized_e2e_model="$(printf '%s' "$formal_model" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$normalized_e2e_model" != "glm-5.1" ]]; then
+  if [[ "$supplemental_autodroid" -eq 0 && "$normalized_e2e_model" != "glm-5.1" ]]; then
     echo "AndroidWorld E2E requires GLM-5.1 for the formal model, got: $formal_model" >&2
     exit 2
   fi
-  e2e_output_root="${OMNIFLOW_E2E_OUTPUT_ROOT:-$results_root/androidworld}"
+  if [[ "$supplemental_autodroid" -eq 1 ]]; then
+    e2e_output_root="${OMNIFLOW_AUTODROID_OUTPUT_ROOT:-$results_root/androidworld_validator/supplemental/autodroid_9207}"
+  else
+    e2e_output_root="${OMNIFLOW_E2E_OUTPUT_ROOT:-$results_root/androidworld}"
+  fi
   if [[ "$e2e_output_root" != /* ]]; then
     echo "OMNIFLOW_E2E_OUTPUT_ROOT must be absolute." >&2
     exit 2
@@ -1263,8 +1296,13 @@ if [[ -n "$e2e_task" ]]; then
     --e2e-device "$e2e_device"
     --e2e-source-seed "$e2e_source_seed"
     --e2e-evaluation-seed "$e2e_evaluation_seed"
-    --ensure-function
+    --autodroid-root "$autodroid_root"
+    --autodroid-memory-root "$autodroid_memory_root"
+    --autodroid-app "$autodroid_app"
   )
+  if [[ "$supplemental_autodroid" -eq 0 ]]; then
+    e2e_args+=(--ensure-function)
+  fi
   if [[ "$function_replay_collection" -eq 1 ]]; then
     e2e_args+=(
       --function-replay-collection
@@ -1387,15 +1425,29 @@ if [[ -n "$batch_task_filter" && "$all_tasks" -eq 0 ]]; then
   all_tasks=1
 fi
 default_method="$formal_default_method"
-method="${selected_method_arg:-${OMNIFLOW_ANDROIDWORLD_METHOD:-$default_method}}"
-case ",$all_methods," in
-  *,${method},*)
-    ;;
-  *)
-    echo "Unsupported paper method: $method" >&2
+supplemental_batch=0
+if [[ -n "$selected_supplemental_method_arg" ]]; then
+  if [[ "$all_tasks" -ne 1 || "$selected_supplemental_method_arg" != "autodroid" ]]; then
+    echo "--supplemental-method currently requires --all-tasks or --tasks and supports only autodroid." >&2
     exit 2
-    ;;
-esac
+  fi
+  if [[ -n "$selected_method_arg" || -n "$selected_device_arg" ]]; then
+    echo "--supplemental-method cannot be combined with --method or --device." >&2
+    exit 2
+  fi
+  supplemental_batch=1
+  method="$selected_supplemental_method_arg"
+else
+  method="${selected_method_arg:-${OMNIFLOW_ANDROIDWORLD_METHOD:-$default_method}}"
+  case ",$all_methods," in
+    *,${method},*)
+      ;;
+    *)
+      echo "Unsupported paper method: $method" >&2
+      exit 2
+      ;;
+  esac
+fi
 device_target="${selected_device_arg:-${OMNIFLOW_ANDROIDWORLD_DEVICE:-$default_device}}"
 target_serials=()
 target_labels_seen=","
@@ -1590,6 +1642,8 @@ case "$method" in
       ;;
     t3a_hint)
       need_native_preflight=1
+      ;;
+    autodroid)
       ;;
     *)
       echo "Unsupported paper method: $method" >&2
@@ -1954,6 +2008,16 @@ PY
         --e2e-method omniflow
         --e2e-device "$function_replay_device"
       )
+    elif [[ "$supplemental_batch" -eq 1 ]]; then
+      child_args+=(
+        --e2e-method autodroid
+        --e2e-device all
+      )
+    else
+      child_args+=(
+        --e2e-method all
+        --e2e-device all
+      )
     fi
     if [[ "$check_only" -eq 1 ]]; then
       child_args+=(--check-only)
@@ -2094,6 +2158,7 @@ if [[ "$check_only" -ne 1 ]]; then
   set -a
   source "$env_file"
   set +a
+  normalize_model_environment
   unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
 fi
 select_model_endpoint "$formal_model_endpoint_profile"

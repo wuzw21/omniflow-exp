@@ -510,6 +510,83 @@ def test_target_evidence_provenance_survives_metrics_aggregation(tmp_path) -> No
     assert row["target_transfer_state_audit"] == {"complete": True}
 
 
+def test_metrics_preserve_autodroid_replay_action_count(tmp_path) -> None:
+    result_path = (
+        tmp_path
+        / "CameraTakePhoto"
+        / "autodroid"
+        / "autodroid9207"
+        / "task_results.jsonl"
+    )
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps(
+            {
+                "task_name": "CameraTakePhoto",
+                "method": "autodroid",
+                "device": "autodroid9207",
+                "agent": "autodroid_official_replay",
+                "official_validator_used": True,
+                "official_validator_success": False,
+                "actions_executed": 20,
+                "step_count": 20,
+                "model_calls": 0,
+                "fallback_steps": 0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = aggregate_task_results([result_path])
+
+    assert summary["actions_executed"] == 20
+    assert summary["per_task"][0]["actions_executed"] == 20
+    assert summary["model_calls"] == 0
+    assert summary["fallback_steps"] == 0
+
+
+def test_metrics_preserve_autodroid_replay_completion_and_duration(tmp_path) -> None:
+    result_path = (
+        tmp_path
+        / "SystemWifiTurnOn"
+        / "autodroid"
+        / "autodroid9207"
+        / "task_results.jsonl"
+    )
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps(
+            {
+                "task_name": "SystemWifiTurnOn",
+                "method": "autodroid",
+                "device": "autodroid9207",
+                "official_validator_used": True,
+                "official_validator_success": False,
+                "actions_executed": 20,
+                "duration_ms": 38907.396,
+                "replay_completed": True,
+                "replay_step_completed_count": 20,
+                "replay_step_total": 20,
+                "model_calls": 0,
+                "fallback_steps": 0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = aggregate_task_results([result_path])
+    row = summary["per_task"][0]
+
+    assert summary["replay_task_count"] == 1
+    assert summary["replay_completed_count"] == 1
+    assert summary["replay_step_completed_count"] == 20
+    assert summary["replay_step_total"] == 20
+    assert row["replay_completed"] is True
+    assert row["duration_sec"] == 38.907
+
+
 def test_metrics_preserve_missing_validator_as_unknown(tmp_path) -> None:
     result_path = tmp_path / "Task" / "fixed_replay" / "fold5564" / "task_results.jsonl"
     result_path.parent.mkdir(parents=True)

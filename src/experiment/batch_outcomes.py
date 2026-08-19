@@ -182,6 +182,11 @@ def record_result_outcome(
     task_log: str | Path | None = None,
     artifact_root: str | Path | None = None,
     outer_wall_sec: float = 0.0,
+    official_validator_used: bool = False,
+    official_validator_success: bool | None = None,
+    official_validator_coverage_rate: float = 0.0,
+    actions_executed: int = 0,
+    episode_duration_sec: float = 0.0,
 ) -> Path:
     """Write one immutable non-validator result conclusion."""
 
@@ -211,17 +216,19 @@ def record_result_outcome(
         "status": str(status),
         "stage": str(stage),
         "failure_summary": _failure_summary(log_path, artifact_path),
-        "official_validator_used": False,
-        "official_validator_success": None,
-        "official_validator_coverage_rate": 0.0,
+        "official_validator_used": bool(official_validator_used),
+        "official_validator_success": official_validator_success,
+        "official_validator_coverage_rate": round(
+            float(official_validator_coverage_rate or 0.0), 6
+        ),
         "model_calls": 0,
         "chat_model_calls": 0,
         "embedding_model_calls": 0,
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "total_tokens": 0,
-        "actions_executed": 0,
-        "episode_duration_sec": 0.0,
+        "actions_executed": int(actions_executed or 0),
+        "episode_duration_sec": round(float(episode_duration_sec or 0.0), 6),
         "outer_wall_sec": round(float(outer_wall_sec or 0.0), 6),
         "retry_count": 0,
         "recorded_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -232,6 +239,10 @@ def record_result_outcome(
         "artifact_root": str(artifact_path) if artifact_path is not None else "",
     }
     payload.update(metrics)
+    if actions_executed:
+        payload["actions_executed"] = int(actions_executed)
+    if episode_duration_sec:
+        payload["episode_duration_sec"] = round(float(episode_duration_sec), 6)
     text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     outcome_path = destination / "outcome.json"
     if destination.exists():
@@ -458,6 +469,17 @@ def _failure_report_row(
     evaluation_seed: int,
     outcome: dict[str, Any],
 ) -> dict[str, Any]:
+    if outcome.get("official_validator_used") is True and isinstance(
+        outcome.get("official_validator_success"), bool
+    ):
+        return _registered_report_row(
+            task=task,
+            method=method,
+            device=device,
+            source_seed=source_seed,
+            evaluation_seed=evaluation_seed,
+            row=outcome,
+        )
     return {
         "task_name": task,
         "method": method,
@@ -533,7 +555,7 @@ def summarize_results(
                         evaluation_seed=evaluation_seed,
                         outcome=outcomes[key],
                     )
-                    counts["non_validator_failure"] += 1
+                    counts[str(row["conclusion"])] += 1
                 elif key in registered:
                     row = _registered_report_row(
                         task=task,

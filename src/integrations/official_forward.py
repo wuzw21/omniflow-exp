@@ -30,6 +30,37 @@ from src.experiment.autodroid_contract import (
 )
 
 
+_AUTODROID_APP_ALIASES = {
+    "audio recorder": "audio",
+    "broccoli app": "recipe",
+    "pro expense": "expense",
+    "retro music": "retro",
+    "simple calendar pro": "calendar",
+    "simple draw pro": "draw",
+    "simple gallery pro": "gallery",
+    "simple sms messenger": "sms",
+}
+
+
+def _autodroid_memory_app_name(app_name: str) -> str:
+    normalized = " ".join(str(app_name or "").strip().lower().split())
+    return _AUTODROID_APP_ALIASES.get(normalized, normalized)
+
+
+def _autodroid_task_app_name(task: Any) -> str:
+    declared = [
+        " ".join(str(value or "").strip().lower().split())
+        for value in tuple(getattr(task, "app_names", ()) or ())
+    ]
+    declared = [value for value in declared if value]
+    if not declared:
+        raise ValueError("autodroid_task_app_missing")
+    mapped = list(dict.fromkeys(_autodroid_memory_app_name(value) for value in declared))
+    if len(mapped) != 1:
+        raise ValueError("autodroid_task_app_ambiguous:" + ",".join(mapped))
+    return mapped[0]
+
+
 @contextmanager
 def _androidworld_task_startup(
     *,
@@ -134,12 +165,12 @@ def _autodroid_memory_for_app(
     adb_path: str,
     serial: str,
     app_name: str = "",
-) -> dict[str, str]:
+) -> dict[str, Any]:
     root = Path(memory_root).expanduser().resolve()
     validate_autodroid_memory_root(root)
     runs_root = root / "runs"
     apks_root = root / "apks"
-    requested = str(app_name or "").strip()
+    requested = _autodroid_memory_app_name(app_name)
     candidates = sorted(
         path for path in runs_root.iterdir() if path.is_dir()
     ) if runs_root.is_dir() else []
@@ -401,6 +432,20 @@ def _configure_mobilegpt_server(
     utils_path = server_root / "utils" / "utils.py"
     if normalized_embedding and utils_path.is_file():
         source = utils_path.read_text(encoding="utf-8")
+        if "def write_omniflow_mobilegpt_event" not in source:
+            source += (
+                "\n\nimport time\n\ndef write_omniflow_mobilegpt_event(event):\n"
+                "    path = os.environ.get(\"MOBILEGPT_STATS_JSONL\", \"\").strip()\n"
+                "    if not path:\n"
+                "        return\n"
+                "    parent = os.path.dirname(path)\n"
+                "    if parent:\n"
+                "        os.makedirs(parent, exist_ok=True)\n"
+                "    payload = dict(event) if isinstance(event, dict) else {\"event\": str(event)}\n"
+                "    payload.setdefault(\"ts\", time.time())\n"
+                "    with open(path, \"a\", encoding=\"utf-8\") as handle:\n"
+                "        handle.write(json.dumps(payload, ensure_ascii=False) + \"\\n\")\n"
+            )
         source = re.sub(
             r'def get_openai_embedding\(text: str, model="text-embedding-3-small", \*\*kwargs\)(?: -> [^:]+)?:',
             'def get_openai_embedding(text: str, model=None, **kwargs):\n'
@@ -526,16 +571,22 @@ def _run_mobilegpt_client(
         )
         gradle = str(candidates[0]) if candidates else ""
     if not gradle:
-        raise RuntimeError(
-            "official_mobilegpt_client_requires_gradle:"
-            " install Gradle or provide the official App debug APK"
+        prebuilt_apk = root / "App/app/build/outputs/apk/debug/app-debug.apk"
+        if str(host).strip() != "10.0.2.2" or not prebuilt_apk.is_file():
+            raise RuntimeError(
+                "official_mobilegpt_client_requires_gradle:"
+                " install Gradle or provide the official App debug APK"
+            )
+        apk = client_root / "app/build/outputs/apk/debug/app-debug.apk"
+        apk.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(prebuilt_apk, apk)
+    else:
+        subprocess.run(
+            [gradle, ":app:assembleDebug"],
+            cwd=client_root,
+            check=True,
+            text=True,
         )
-    subprocess.run(
-        [gradle, ":app:assembleDebug"],
-        cwd=client_root,
-        check=True,
-        text=True,
-    )
     apk = client_root / "app/build/outputs/apk/debug/app-debug.apk"
     if not apk.is_file():
         raise FileNotFoundError(f"official_mobilegpt_apk_missing:{apk}")
@@ -721,6 +772,9 @@ def run_autodroid_replay(
     output.mkdir(parents=True, exist_ok=True)
     if not (root / "droidbot" / "start.py").is_file():
         raise FileNotFoundError(f"official_autodroid_entry_missing:{root}")
+    task_params = json.loads(str(task_params_json or "{}"))
+    if not isinstance(task_params, dict):
+        raise ValueError("autodroid_task_params_must_be_object")
     memory_info = None
     started = time.monotonic()
     with _androidworld_task_startup(
@@ -733,11 +787,29 @@ def run_autodroid_replay(
         adb_path=adb_path,
         perform_emulator_setup=perform_emulator_setup,
     ) as (env, task):
+        explicit_app_name = _autodroid_memory_app_name(app_name)
+        task_app_names = [
+            " ".join(str(value or "").strip().lower().split())
+            for value in tuple(getattr(task, "app_names", ()) or ())
+        ]
+        task_app_names = [value for value in task_app_names if value]
+        task_app_name = (
+            _autodroid_task_app_name(task) if not explicit_app_name else ""
+        )
         memory_info = _autodroid_memory_for_app(
             memory_root=memory_root,
             adb_path=adb_path,
             serial=serial,
-            app_name=app_name,
+            app_name=explicit_app_name or task_app_name,
+        )
+        memory_info.update(
+            {
+                "task_app_names": task_app_names,
+                "task_app_name": task_app_name,
+                "task_app_selection": (
+                    "explicit_app_name" if explicit_app_name else "task_declared_unique"
+                ),
+            }
         )
         droidbot_output = output / "droidbot"
         # This AutoDroid checkout contains an old replay-policy method
@@ -800,27 +872,57 @@ def run_autodroid_replay(
             returncode = int(process.returncode)
         except subprocess.TimeoutExpired:
             returncode = 124
-        reward = float(task.is_successful(env)) if returncode == 0 else 0.0
-        success = returncode == 0 and reward > 0.5
+        validator_used = returncode == 0
+        reward = float(task.is_successful(env)) if validator_used else 0.0
+        success = validator_used and reward > 0.5
         replayed_event_count = min(
             int(memory_info["event_count"]), max(1, int(max_events))
         )
         result = {
             "schema_version": AUTODROID_RESULT_SCHEMA,
             "task": task_name,
+            "task_params": task_params,
+            "task_params_sha256": hashlib.sha256(
+                json.dumps(
+                    task_params,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest(),
             "method": "autodroid",
             "device": serial,
+            "task_random_seed": int(task_seed),
+            "fixed_task_seed": True,
+            "fixed_task_params": True,
+            "max_steps": max(1, int(max_events)),
             "memory": memory_info,
-            "official_validator_used": True,
+            "official_validator_used": validator_used,
             "official_validator_success": success,
+            "official_validator_coverage_rate": 1.0 if validator_used else 0.0,
             "androidworld_validator_result": {
                 "validator": "androidworld_official",
                 "success": success,
                 "reward": reward,
             },
             "process_returncode": returncode,
+            "classification": (
+                "success"
+                if success
+                else "method_failure"
+                if returncode == 0
+                else "environment_failure"
+            ),
             "actions_executed": replayed_event_count,
             "replay_event_limit": max(1, int(max_events)),
+            "replay_completed": validator_used,
+            "replay_step_completed_count": (
+                replayed_event_count if validator_used else 0
+            ),
+            "replay_step_total": replayed_event_count,
+            "replay_step_completed_rate": (
+                1.0 if validator_used and replayed_event_count else 0.0
+            ),
             "model_calls": 0,
             "fallback_steps": 0,
             "duration_ms": round((time.monotonic() - started) * 1000.0, 3),

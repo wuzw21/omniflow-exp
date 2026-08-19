@@ -31,11 +31,13 @@ scripts/exp/run_androidworld.sh       # 唯一公开入口
                  └─ src/integrations/android_world/methods.py
                       ├─ fixed_replay
                       ├─ omniflow
+                      ├─ mobilegpt
+                      ├─ appagent
                       └─ t3a_hint
 ```
 
-MobileGPT and AppAgent leave this native episode path after `run_task.py` and
-are launched through [`EXTERNAL_BASELINES.md`](EXTERNAL_BASELINES.md). They are
+MobileGPT and AppAgent leave this native episode path after
+`run_task.py` and are launched from their pinned external checkouts. They are
 formal experiment labels, but not AndroidWorld agent adapters.
 
 The boundaries inside this path are intentionally different:
@@ -136,6 +138,7 @@ baseline 记录时经过的五个位置：
 | `appagent.py` | 如何把可信 source 转成 AppAgent 的 Prepared Memory？ | task 调度、Local Index、AndroidWorld episode 生命周期；执行由官方 AppAgent 进程完成 |
 | `mobilegpt.py` | 如何把可信 source 转成 MobileGPT 的 Prepared Memory？ | AppAgent 规则、Local Index 选择策略 |
 | `mobilegpt_memory.py` | MobileGPT Prepared Memory 的统计、图检查和完整校验 | task 调度、AndroidWorld episode 生命周期 |
+| `official_forward.py` | 如何在统一 task 生命周期中启动官方 MobileGPT/AppAgent/AutoDroid？ | provider memory 转换、官方 agent/action loop |
 | `checks.py` | 这次运行的依赖、root 设备、已安装 Accessibility 服务和 Prepared Memory 是否 ready？ | 具体 provider 的转换实现 |
 | `data_index.py` | 如何物化和读取唯一 Local Index？ | AndroidWorld runner 和 provider 内部校验细节 |
 | `source_records.py` | Source RunLog 的共享数据模型是什么？ | 读取、执行或转换 RunLog |
@@ -154,6 +157,7 @@ baseline 记录时经过的五个位置：
 | `batch_outcomes.py` 与 `result_registry.py` | 汇总和注册是两个不可互换的写入语义 | 先记录公共 path helper 重复，再局部收敛 |
 | `omniflow/runlog.py` 与 `src/integrations/runlog.py` | canonical loader 与历史外部导入 adapter | 旧适配层按要求暂不清理 |
 | `mobilegpt_source.py` / `appagent_source.py` | 两个外部协议不同 | 不合并；只共享纯证据 helper |
+| AutoDroid DroidBot memory | 官方事件/UTG replay，不是 OmniFlow Function | 不转换为 OmniFlow schema；只校验 manifest、事件和 APK |
 | 2430 行 shell、3093 行 scheduler、4619 行 launcher | 复杂文件，但都是现有唯一 owner | 先补 seam 和测试，再按模块内聚拆分；不复制入口 |
 | 已删除的 packaged catalog、old source pool、direct launcher 文件 | 最近提交已清掉的死路径 | 不恢复 alias 或兼容副本 |
 

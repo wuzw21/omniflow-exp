@@ -670,11 +670,11 @@ def test_tools_expose_one_function_save_interface(tmp_path) -> None:
     assert "Function draft" in save["description"]
 
 
-def test_save_function_requires_functions_without_enhance(tmp_path) -> None:
+def test_save_function_compiles_without_supplied_functions(tmp_path) -> None:
     bridge = JsonLineBridge(tmp_path / "functions.json")
     result = bridge._save_function("request-1", {"run_log": _authoring_run_log()})
-    assert result["success"] is False
-    assert result["error"]["code"] == "FUNCTIONS_REQUIRED"
+    assert result["success"] is True
+    assert result["function_ids"] == ["replay_task"]
 
 
 def test_save_function_rejects_multiple_functions(tmp_path) -> None:

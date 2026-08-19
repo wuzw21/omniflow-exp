@@ -23,6 +23,7 @@ from src.integrations.runlog import (
     infer_input_text_target,
     project_androidworld_step_actions,
 )
+from src.integrations.android_world.host import androidworld_elements_xml
 
 SOURCE_EVIDENCE_SCHEMA = "omniflow.source.evidence.v2"
 
@@ -423,6 +424,24 @@ def _identity_at_action_point(
     }
 
 
+def _identity_target_is_actionable(xml_text: str, target: dict[str, Any]) -> bool:
+    if not target:
+        return False
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return False
+    for node in root.iter():
+        identity = _node_identity(node)
+        if identity and all(
+            _normalized_semantic_text(identity.get(key))
+            == _normalized_semantic_text(value)
+            for key, value in target.items()
+        ):
+            return _node_is_actionable(node)
+    return False
+
+
 def _editable_identity_at_action_point(
     xml_text: str,
     *,
@@ -811,6 +830,30 @@ def _ground_source_actions(
             or targets_by_step.get(step_index)
             or {}
         )
+        if (
+            action_type in {"click", "double_tap", "long_press"}
+            and not _identity_target_is_actionable(xml_text, target)
+        ):
+            ui_elements = observation.get("ui_elements")
+            if isinstance(ui_elements, list) and ui_elements:
+                elements_xml = androidworld_elements_xml(ui_elements).strip()
+                if elements_xml:
+                    xml_text = elements_xml
+                    display = _display_from_xml(xml_text) or display
+            point_action = next(
+                (
+                    action
+                    for action in projected_actions
+                    if action["tool"] in {"click", "long_press"}
+                ),
+                None,
+            )
+            if point_action is not None:
+                target = _identity_at_action_point(
+                    xml_text,
+                    action_args=point_action["args"],
+                    display=display,
+                ) or target
         if not target and action_type in {
             "click",
             "double_tap",

@@ -12,16 +12,24 @@ import pytest
 from runlog_fixtures import androidworld_run_log
 
 from omniflow.functions.assets import function_authoring_tool
-from src.experiment.run_task import build_task_command
+from src.experiment.run_task import (
+    _read_object,
+    build_mobilegpt_server_command,
+    build_task_command,
+)
 from src.experiment.source_records import CanonicalRunLog
 from src.experiment.batch_outcomes import record_result_outcome
 from src.experiment.run_tasks import (
     Deadline,
     PipelinePhaseError,
     _bmoca_source_replay_qualified,
+    _cached_source_function_qualification,
     _fixed_replay_source_step_width,
     _function_enhancement_transport,
     _function_replay_success,
+    _e2e_devices,
+    _e2e_methods,
+    _supplemental_outcomes_root,
     _max_live_bmoca_results,
     _parse_source_device,
     _report,
@@ -32,6 +40,7 @@ from src.experiment.run_tasks import (
     build_parser,
     collect_replayed_source,
     ensure_source_device,
+    prepare_function_asset,
     prepare_mobilegpt_memory,
     qualify_source_function,
     run_bmoca_pipeline,
@@ -51,6 +60,9 @@ from src.experiment.protocol import (
     SOURCE_DEVICE,
     SOURCE_MAX_STEPS,
     SOURCE_SEED,
+    SUPPLEMENTAL_DEVICES,
+    SUPPLEMENTAL_METHODS,
+    SUPPLEMENTAL_RESULTS_NAMESPACE,
     STEP_TIMEOUT_SEC,
     TASK_DEADLINE_SEC,
     TASK_SEED,
@@ -121,6 +133,32 @@ def test_e2e_command_exposes_direct_function_without_planner_or_second_runner(
     assert "--model" not in spec.argv
 
 
+def test_mobilegpt_server_uses_sealed_source_manifest_for_episode_memory(
+    tmp_path: Path,
+) -> None:
+    mobilegpt_root = tmp_path / "MobileGPT"
+    (mobilegpt_root / "Server" / "memory").mkdir(parents=True)
+    (mobilegpt_root / "Server" / "main.py").write_text("print('server')\n")
+    memory_root = tmp_path / "episode" / "mobilegpt_memory"
+    memory_root.mkdir(parents=True)
+    (memory_root / "tasks.csv").write_text("name,app\nCameraTakePhoto,camera\n")
+    source_manifest = tmp_path / "source" / "mobilegpt_memory_manifest.json"
+    source_manifest.parent.mkdir()
+    source_manifest.write_text(
+        json.dumps({"source_stats": {"embedding_models": ["GLM-Embedding-2"]}})
+    )
+
+    spec = build_mobilegpt_server_command(
+        "server",
+        mobilegpt_root=mobilegpt_root,
+        mobilegpt_memory_root=memory_root,
+        mobilegpt_memory_manifest=source_manifest,
+        repo_root=tmp_path,
+    )
+
+    assert spec.env["MOBILEGPT_EMBEDDING_MODEL"] == "GLM-Embedding-2"
+
+
 def test_e2e_command_rejects_direct_function_for_non_omniflow_agent(
     tmp_path: Path,
 ) -> None:
@@ -164,7 +202,7 @@ def test_dry_run_has_fixed_task_method_device_schedule(
 
     plan = run_pipeline(args)
 
-    assert len(plan["pending"]) == 10
+    assert len(plan["pending"]) == len(METHODS) * len(DEVICES)
     assert plan["source_seed"] == SOURCE_SEED == 111
     assert plan["evaluation_seed"] == TASK_SEED == 113
     assert plan["methods"] == list(METHODS)
@@ -177,6 +215,234 @@ def test_dry_run_has_fixed_task_method_device_schedule(
     assert MAX_STEPS == 20
     assert SOURCE_DEVICE == ("source5560", "emulator-5560", 5560)
     assert plan["writes"] is False
+
+
+def test_e2e_selection_runs_only_one_method_and_device(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.e2e_method = "omniflow"
+    args.e2e_device = DEVICES[1]
+    args.e2e_source_seed = SOURCE_SEED
+    args.e2e_evaluation_seed = TASK_SEED
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "src.experiment.run_tasks._concluded_results",
+        lambda *_: set(),
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.record_result_outcome",
+        lambda **_: tmp_path / "outcome.json",
+    )
+
+    def runner(command: list[str], **kwargs: object) -> dict[str, object]:
+        environment = kwargs["environment"]
+        calls.append(
+            (
+                str(environment["OMNIFLOW_ANDROIDWORLD_METHOD"]),
+                str(environment["OMNIFLOW_ANDROIDWORLD_DEVICE"]),
+            )
+        )
+        return {"returncode": 0, "timed_out": False, "wall_sec": 0}
+
+    run_target_workers(
+        args=args,
+        deadline=Deadline(10),
+        attempt_id="attempt-test",
+        attempt_root=tmp_path / "attempt",
+        outcomes_root=tmp_path / "outcomes",
+        store_path=tmp_path / "store.json",
+        mobilegpt_memory=None,
+        appagent_memory=None,
+        blocked_methods={},
+        command_runner=runner,
+    )
+
+    assert calls == [("omniflow", "small5562:emulator-5562:5562")]
+
+
+def test_e2e_selection_accepts_method_and_device_lists_or_all() -> None:
+    selected = SimpleNamespace(
+        e2e_method="omniflow,appagent",
+        e2e_device=(
+            "small5554:emulator-5554:5554,"
+            "fold5564:emulator-5564:5564"
+        ),
+    )
+    assert _e2e_methods(selected) == ("omniflow", "appagent")
+    assert [device[0] for device in _e2e_devices(selected)] == [
+        "small5554",
+        "fold5564",
+    ]
+    all_selected = SimpleNamespace(e2e_method="all", e2e_device="all")
+    assert _e2e_methods(all_selected) == METHODS
+    assert _e2e_devices(all_selected) == DEVICES
+
+
+def test_autodroid_is_explicit_supplemental_only() -> None:
+    selected = SimpleNamespace(
+        e2e_method="autodroid",
+        e2e_device="all",
+    )
+
+    assert _e2e_methods(selected) == SUPPLEMENTAL_METHODS == ("autodroid",)
+    assert _e2e_devices(selected) == SUPPLEMENTAL_DEVICES
+    assert _supplemental_outcomes_root(
+        SimpleNamespace(
+            e2e_method="autodroid",
+            results_root=Path("/tmp/omniflow-results"),
+        )
+    ) == Path("/tmp/omniflow-results") / SUPPLEMENTAL_RESULTS_NAMESPACE / "result_outcomes"
+
+    with pytest.raises(ValueError, match="supplemental_method_must_run_alone"):
+        _e2e_methods(SimpleNamespace(e2e_method="omniflow,autodroid"))
+    with pytest.raises(ValueError, match="device_invalid"):
+        _e2e_devices(
+            SimpleNamespace(
+                e2e_method="autodroid",
+                e2e_device="small5554:emulator-5554:5554",
+            )
+        )
+
+    all_selected = SimpleNamespace(e2e_method="all", e2e_device="all")
+    assert _e2e_methods(all_selected) == METHODS
+    assert _e2e_devices(all_selected) == DEVICES
+
+
+def test_e2e_function_check_creates_and_validates_missing_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.ensure_function = True
+    args.formal_model = "GLM-5.1"
+    source_path = tmp_path / "source.run_log.json"
+    source_path.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [{"action_type": "click", "x": 1, "y": 2}],
+                task_name=args.task,
+            )
+        ),
+        encoding="utf-8",
+    )
+    indexed: dict[str, object] = {"value": None}
+    calls: list[dict[str, object]] = []
+
+    def load_index(_path: Path) -> dict[str, object]:
+        value = indexed["value"]
+        return {
+            "canonical": {
+                "function_stores": {args.task: value} if value else {},
+            }
+        }
+
+    def writer(run_log: Path, store_path: Path, **kwargs: object) -> dict[str, object]:
+        calls.append({"run_log": run_log, "store_path": store_path, **kwargs})
+        store_path.parent.mkdir(parents=True)
+        store_path.write_text("{}", encoding="utf-8")
+        indexed["value"] = {
+            "store_path": str(store_path),
+            "source_run_log_path": str(source_path),
+            "source_run_log_sha256": hashlib.sha256(
+                source_path.read_bytes()
+            ).hexdigest(),
+            "source_calls": [
+                {"function_id": "complete", "arguments": {}}
+            ],
+        }
+        return {"enhanced": True, "function_ids": ["complete"]}
+
+    monkeypatch.setattr("src.experiment.run_tasks.load_data_index", load_index)
+    monkeypatch.setattr("src.experiment.run_tasks.save_function", writer)
+    monkeypatch.setattr(
+        "src.experiment.run_tasks._function_enhancement_transport",
+        lambda **_: (lambda _prompt, _tool: "{}"),
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.refresh_data_index_from_pointer",
+        lambda **_: {},
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.validate_omniflow_transfer_assets",
+        lambda *_args, **_kwargs: {"complete": True, "required_state_count": 1},
+    )
+
+    function_store, phase = prepare_function_asset(
+        args=args,
+        source_path=source_path,
+        run_log={},
+        attempt_root=tmp_path / "attempt",
+        deadline=Deadline(60),
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["run_log"] == source_path
+    assert calls[0]["enhance"] is True
+    assert function_store["store_path"] == str(calls[0]["store_path"])
+    assert phase["status"] == "created"
+    assert phase["enhanced"] is True
+    assert phase["transfer_audit"]["complete"] is True
+
+
+def test_function_store_reuses_its_own_valid_source_lineage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.task = "BrowserDraw"
+    canonical_source = tmp_path / "canonical.run_log.json"
+    canonical_source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [{"action_type": "click", "x": 1, "y": 2}],
+                task_name=args.task,
+                run_id="canonical",
+            )
+        ),
+        encoding="utf-8",
+    )
+    function_source = tmp_path / "function-source.run_log.json"
+    function_source.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [{"action_type": "click", "x": 3, "y": 4}],
+                task_name=args.task,
+                run_id="function-source",
+            )
+        ),
+        encoding="utf-8",
+    )
+    store_path = tmp_path / "function_store.json"
+    store_path.write_text("{}", encoding="utf-8")
+    function_store = {
+        "store_path": str(store_path),
+        "source_run_log_path": str(function_source),
+        "source_run_log_sha256": hashlib.sha256(
+            function_source.read_bytes()
+        ).hexdigest(),
+        "source_calls": [{"function_id": "complete", "arguments": {}}],
+    }
+    monkeypatch.setattr(
+        "src.experiment.run_tasks._canonical_function_store",
+        lambda *_args, **_kwargs: function_store,
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.validate_omniflow_transfer_assets",
+        lambda *_args, **_kwargs: {"complete": True, "required_state_count": 1},
+    )
+
+    reused, phase = prepare_function_asset(
+        args=args,
+        source_path=canonical_source,
+        run_log=json.loads(canonical_source.read_text(encoding="utf-8")),
+        attempt_root=tmp_path / "attempt",
+        deadline=Deadline(60),
+    )
+
+    assert reused is function_store
+    assert phase["status"] == "reused"
 
 
 def test_mobilegpt_preparation_is_an_internal_pipeline_phase(
@@ -751,7 +1017,7 @@ def test_bmoca_enhancement_uses_the_shared_draft_edit_tool(
         "base_url": "https://llmapi.paratera.com/v1",
     }
     assert captured["tools"] == [tool]
-    assert captured["max_completion_tokens"] == 2048
+    assert captured["max_completion_tokens"] == 4096
     assert captured["reasoning_effort"] == "none"
     assert captured["tool_choice"] == {
         "type": "function",
@@ -1014,8 +1280,8 @@ def test_target_workers_parallelize_devices_and_serialize_methods(
         command_runner=runner,
     )
 
-    assert len(calls) == 10
-    assert len(commands) == 10
+    assert len(calls) == len(METHODS) * len(DEVICES)
+    assert len(commands) == len(METHODS) * len(DEVICES)
     assert all(
         command[:4]
         == [str(args.python_bin), "-m", "src.experiment.run_task", "result"]
@@ -1026,9 +1292,16 @@ def test_target_workers_parallelize_devices_and_serialize_methods(
         rows = sorted((row for row in calls if row[0] == device), key=lambda row: row[2])
         assert [row[1] for row in rows] == list(METHODS)
         assert all(current[3] <= following[2] for current, following in zip(rows, rows[1:]))
-    small_first = next(row for row in calls if row[:2] == ("small5554", METHODS[0]))
-    fold_first = next(row for row in calls if row[:2] == ("fold5564", METHODS[0]))
-    assert max(small_first[2], fold_first[2]) < min(small_first[3], fold_first[3])
+    device_windows = [
+        (min(row[2] for row in calls if row[0] == device),
+         max(row[3] for row in calls if row[0] == device))
+        for device, _, _ in DEVICES
+    ]
+    assert any(
+        left_start < right_end and right_start < left_end
+        for index, (left_start, left_end) in enumerate(device_windows)
+        for right_start, right_end in device_windows[index + 1 :]
+    )
 
 
 def test_target_workers_fail_stop_after_pending_environment_failure(
@@ -1082,6 +1355,60 @@ def test_target_workers_fail_stop_after_pending_environment_failure(
         assert len([call for call in calls if call[0] == device]) <= 1
 
 
+def test_target_workers_continue_after_method_result_conclusion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    calls: list[tuple[str, str]] = []
+    recorded: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "src.experiment.run_tasks._concluded_results",
+        lambda *_: set(),
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.concluded_result_keys",
+        lambda **_: set(),
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.record_result_outcome",
+        lambda **kwargs: recorded.append(kwargs) or tmp_path / "outcome.json",
+    )
+
+    def runner(command: list[str], **kwargs: object) -> dict[str, object]:
+        environment = kwargs["environment"]
+        assert isinstance(environment, dict)
+        method = str(environment["OMNIFLOW_ANDROIDWORLD_METHOD"])
+        device = str(environment["OMNIFLOW_ANDROIDWORLD_DEVICE"]).split(":")[0]
+        calls.append((device, method))
+        if method == "mobilegpt":
+            output_root = Path(str(environment["OMNIFLOW_ANDROIDWORLD_OUTPUT_PATH"]))
+            output_root.mkdir(parents=True, exist_ok=True)
+            (output_root / "result_summary.json").write_text(
+                json.dumps({"rows": []})
+            )
+            return {"returncode": 1, "timed_out": False, "wall_sec": 0.01}
+        return {"returncode": 0, "timed_out": False, "wall_sec": 0.01}
+
+    run_target_workers(
+        args=args,
+        deadline=Deadline(10),
+        attempt_id="attempt-test",
+        attempt_root=tmp_path / "attempt",
+        outcomes_root=tmp_path / "outcomes",
+        store_path=tmp_path / "store.json",
+        mobilegpt_memory=tmp_path / "mobilegpt",
+        appagent_memory=tmp_path / "appagent",
+        blocked_methods={},
+        command_runner=runner,
+    )
+
+    assert len(calls) == len(METHODS) * len(DEVICES)
+    assert len([row for row in recorded if row["status"] == "method_failed"]) == len(
+        DEVICES
+    )
+
+
 def test_blocked_cells_do_not_duplicate_shared_prep_accounting(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1128,7 +1455,7 @@ def test_blocked_cells_do_not_duplicate_shared_prep_accounting(
     )
 
     omniflow = [row for row in recorded if row["method"] == "omniflow"]
-    assert len(omniflow) == 2
+    assert len(omniflow) == len(DEVICES)
     assert all(row["artifact_root"] is None for row in omniflow)
 
 
@@ -1379,6 +1706,45 @@ def test_pipeline_does_not_collect_missing_canonical_source(
     assert collected is False
 
 
+def test_autodroid_pipeline_uses_task_reference_without_source_runlog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.e2e_method = "autodroid"
+    args.e2e_device = "autodroid9207:emulator-5590:5590"
+    args.source_only = True
+    args.memory_index.parent.mkdir(parents=True)
+    args.memory_index.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.data-index.v2",
+                "canonical": {
+                    "source_run_logs": {
+                        args.task: {
+                            "goal": "Draw a shape",
+                            "params": {"shape": "circle"},
+                        }
+                    }
+                },
+                "source_index": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks._report",
+        lambda **kwargs: kwargs["phases"],
+    )
+
+    phases = run_pipeline(args)
+
+    assert phases["source_device"]["status"] == "skipped"
+    assert phases["source"]["status"] == "skipped"
+    assert phases["source"]["task_params"] == {"shape": "circle"}
+    assert phases["source"]["task_reference_index"] == str(args.memory_index)
+
+
 def test_source_only_pipeline_collects_replayed_source_and_stops(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1583,6 +1949,56 @@ def test_pipeline_qualifies_one_source_function_before_target_workers(
 
     assert events == ["qualify", "targets"]
     assert phases["source_qualification"]["qualified"] is True
+
+
+def test_cached_source_function_qualification_requires_matching_hashes(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path)
+    source_path = tmp_path / "source.json"
+    source_path.write_text("source", encoding="utf-8")
+    store_path = tmp_path / "store.json"
+    store_path.write_text("store", encoding="utf-8")
+    qualification_path = (
+        args.output_root
+        / args.task
+        / "previous"
+        / "source_qualification"
+        / "CameraTakePhoto"
+        / "function_replay"
+        / "source5560"
+        / "qualification.json"
+    )
+    qualification_path.parent.mkdir(parents=True)
+    qualification_path.write_text(
+        json.dumps(
+            {
+                "qualified": True,
+                "source_run_log_sha256": hashlib.sha256(b"source").hexdigest(),
+                "store_sha256": hashlib.sha256(b"store").hexdigest(),
+                "model_calls": 0,
+                "fallback_steps": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cached = _cached_source_function_qualification(
+        args=args,
+        source_path=source_path,
+        function_store={"store_path": str(store_path)},
+    )
+
+    assert cached is not None
+    assert cached["status"] == "reused"
+    assert cached["cached_from"] == str(qualification_path.resolve())
+
+
+def test_run_task_reads_json_objects_strictly(tmp_path: Path) -> None:
+    path = tmp_path / "object.json"
+    path.write_text('{"ready": true}', encoding="utf-8")
+
+    assert _read_object(path) == {"ready": True}
 
 
 def test_source_qualification_only_stops_before_baselines_and_targets(
@@ -1972,11 +2388,11 @@ def test_pipeline_report_always_materializes_four_report_formats(tmp_path: Path)
         phases={"source": {"status": "failed", "model_calls": 1, "total_tokens": 7}},
     )
 
-    assert summary["counts"]["planned"] == 10
+    assert summary["counts"]["planned"] == len(METHODS) * len(DEVICES)
     assert summary["counts"]["pending"] == 0
     assert summary["model_calls"] == 1
     assert summary["total_tokens"] == 7
     assert (attempt_root / "pipeline_summary.json").is_file()
-    assert summary["result_summary"]["counts"]["non_validator_failure"] == 10
+    assert summary["result_summary"]["counts"]["non_validator_failure"] == len(METHODS) * len(DEVICES)
     assert "tool_calls" not in summary
     assert "tokens" not in summary

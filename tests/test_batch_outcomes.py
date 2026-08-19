@@ -123,6 +123,82 @@ def test_record_outcome_accepts_empty_integer_token_totals(tmp_path: Path) -> No
     assert outcome["total_tokens"] == 0
 
 
+def test_autodroid_validator_conclusion_is_not_non_validator_failure(
+    tmp_path: Path,
+) -> None:
+    outcome_path = record_result_outcome(
+        outcomes_root=tmp_path / "outcomes",
+        task_name="CameraTakePhoto",
+        method="autodroid",
+        device="autodroid9207",
+        device_serial="emulator-5590",
+        attempt_id="autodroid-smoke",
+        source_seed=111,
+        evaluation_seed=113,
+        status="method_failed",
+        stage="androidworld_validate",
+        official_validator_used=True,
+        official_validator_success=False,
+        official_validator_coverage_rate=1.0,
+        actions_executed=7,
+        episode_duration_sec=12.5,
+    )
+
+    outcome = json.loads(outcome_path.read_text(encoding="utf-8"))
+    assert outcome["official_validator_used"] is True
+    assert outcome["official_validator_success"] is False
+
+    report = summarize_results(
+        memory_index=tmp_path / "current.json",
+        outcomes_root=tmp_path / "outcomes",
+        tasks=("CameraTakePhoto",),
+        methods=("autodroid",),
+        devices=("autodroid9207",),
+        source_seed=111,
+        evaluation_seed=113,
+        attempt_id="autodroid-smoke",
+    )
+
+    assert report["counts"] == {
+        "planned": 1,
+        "validator_success": 0,
+        "validator_failure": 1,
+        "non_validator_failure": 0,
+        "pending": 0,
+    }
+    assert report["total_tokens"] == 0
+    assert report["episode_duration_sec"] == 12.5
+
+
+def test_autodroid_explicit_metrics_survive_empty_stats_artifact(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "autodroid"
+    artifact_root.mkdir()
+
+    outcome_path = record_result_outcome(
+        outcomes_root=tmp_path / "outcomes",
+        task_name="SystemWifiTurnOn",
+        method="autodroid",
+        device="autodroid9207",
+        device_serial="emulator-5590",
+        attempt_id="autodroid-v8",
+        source_seed=111,
+        evaluation_seed=113,
+        status="method_failed",
+        stage="androidworld_validate",
+        artifact_root=artifact_root,
+        official_validator_used=True,
+        official_validator_success=False,
+        official_validator_coverage_rate=1.0,
+        actions_executed=20,
+        episode_duration_sec=38.907,
+    )
+
+    outcome = json.loads(outcome_path.read_text(encoding="utf-8"))
+
+    assert outcome["actions_executed"] == 20
+    assert outcome["episode_duration_sec"] == 38.907
+
+
 def test_concluded_result_keys_skip_immutable_failure_on_resume(tmp_path: Path) -> None:
     record_result_outcome(
         outcomes_root=tmp_path / "outcomes",

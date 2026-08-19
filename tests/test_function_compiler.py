@@ -71,15 +71,21 @@ def _enhancer(
     return complete
 
 
-def test_compiler_requires_skill_bundle(
+def test_no_enhance_compiles_complete_function_from_run_log(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(ValueError, match="functions_required"):
-        _save(
-            _run_log(1),
-            tmp_path / "output",
-            source_states={"state_0": {"state_id": "state_0"}},
-        )
+    result = _save(_run_log(2), tmp_path / "output")
+
+    assert result["success"] is True
+    assert result["enhanced"] is False
+    assert result["function_count"] == 1
+    assert result["source_arguments"] == {"replay_task": {}}
+    store = FunctionStore(tmp_path / "output" / "store.json")
+    function = store.get_function("replay_task")
+    assert [step.action.tool for step in function.steps] == ["open_app", "wait"]
+    assert store.source_calls == [
+        {"function_id": "replay_task", "arguments": {}}
+    ]
 
 def test_compiler_freezes_only_function_referenced_states(
     tmp_path: Path,

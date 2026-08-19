@@ -1,302 +1,122 @@
-# AndroidWorld experiment entry point
+# AndroidWorld experiment launcher
 
-`run_androidworld.sh` is the only public AndroidWorld/B-MoCA launcher. Python
-modules are implementation seams and must not be invoked as alternate runners.
+`run_androidworld.sh` 是唯一公开实验入口。普通使用只需要指定 task、method
+和 device；protocol 中的 seed、模型和设备定义由代码读取，不需要手动复制。
 
-## Commands
+正式 AndroidWorld 矩阵固定使用五个方法：`fixed_replay`、`omniflow`、
+`mobilegpt`、`appagent`、`t3a_hint`。历史 AutoDroid/DroidBot replay 仅保留为
+只读兼容边界，不进入正式矩阵。
 
-| Purpose | Command |
-| --- | --- |
-| Task-major formal run | `run_androidworld.sh --tasks TASK` |
-| Full indexed run | `run_androidworld.sh --all-tasks` |
-| Read-only static gate | `run_androidworld.sh --check-only [--all-tasks]` |
-| Bounded `omniflow` development | `run_androidworld.sh --development-run --tasks TASK` |
-| Source refresh | `run_androidworld.sh --collect-source --tasks TASK` |
-| Provider contract tests | `bash scripts/exp/test_provider.sh mobilegpt|appagent|all` |
-| OOB development/source transport | `run_androidworld.sh --control-backend oob --development-run --tasks TASK` |
-| B-MoCA one reuse method | `run_androidworld.sh --environment bmoca --method ours_replay\|mobilegpt_replay\|skilldroid_replay --tasks TASK` |
-| B-MoCA campaign | `run_androidworld.sh --environment bmoca --all-tasks [--tasks TASK1,TASK2]` |
-| Memory refresh | `run_androidworld.sh --refresh-memory` |
-
-Source refresh validates the selected task and its frozen source lineage; it
-does not require unrelated tasks to exist in the source index.
-The historical successful RunLog supplies only the fixed action template. The
-new capture runs at source seed 111, records screenshots, makes zero model
-calls, and must pass the official validator before it is reported as collected.
-Its isolated source AVD uses the canonical API-33 `small_phone` profile so the
-recorded 720x1280 action contract is replayed at its original geometry.
-The shell provisions the configured source AVD before handing control to the
-pipeline; an emulator process that exits during boot is an immediate failure.
-
-The shell is not an internal scheduler API. Formal AndroidWorld cells are
-started by `run_tasks.py` with a direct `python -m src.experiment.run_task
-result` command. B-MoCA cells are started directly with
-`python -m src.integrations.android_world.run_episode --environment bmoca`.
-This keeps one public shell entry while preventing a scheduler-to-shell loop.
-
-The B-MoCA campaign measures oracle-memory-hit reuse rather than retrieval.
-`ours_replay` directly invokes the complete Function with its saved source-call
-arguments and canonical checker/OmniTransfer runtime. `mobilegpt_replay` uses
-MobileGPT's native task memory and parameter-filling reuse path with exploration
-disabled. `skilldroid_replay` compiles the env100 RunLog into DroidRun v0.5.6's
-official `macro.json` format and replays it through DroidRun's native
-`MacroPlayer`, with every model fallback disabled. Its B-MoCA `DeviceDriver`
-adapter preserves official benchmark action/reward recording while keeping the
-macro's source absolute pixels unchanged; DroidRun macro replay performs no
-locator lookup or state verification.
-
-One formal result is one task, one method, and one device. The E2E pipeline is
-the only method/device scheduler. Direct `--method` and `--device` options are
-internal single-result controls and cannot be combined with matrix modes.
-
-## Provider integration: one place to start, one command to test
-
-MobileGPT and AppAgent are different upstream contracts, so their conversion
-implementations remain separate. Each provider has one public preparation
-owner:
-
-| Provider | Start editing here | Provider-specific implementation | Test command |
-| --- | --- | --- | --- |
-| MobileGPT | `src/experiment/mobilegpt_source.py` | `src/integrations/mobilegpt.py` and `src/integrations/mobilegpt_memory.py` | `bash scripts/exp/test_provider.sh mobilegpt` |
-| AppAgent | `src/experiment/appagent_source.py` | `src/integrations/appagent.py` | `bash scripts/exp/test_provider.sh appagent` |
-
-The source file is the provider's public seam: it owns `prepare`, `validate`,
-and `preflight`, and is the first place to change when the provider's input or
-output contract changes. Only follow the integration file when the failure is
-inside the upstream format or runtime mapping. Do not add a provider branch to
-`run_task.py`, `run_tasks.py`, or the shell scheduler.
-
-The shared harness runs the provider's focused tests, the matching shell
-integration tests, and its CLI help check. It is offline: it does not start an
-emulator, call a model, create memory, or write `data/current.json`. Formal
-execution still has exactly one entry, `run_androidworld.sh`.
-
-## Required roots
+## 一键测试一个 task
 
 ```bash
-export OMNIFLOW_EXP_ASSET_ROOT=/Users/wuzewen/Projects/Omni/OmniFlow-exp/data
-export OMNIFLOW_EXP_RESULTS_ROOT=/Users/wuzewen/Projects/Omni/OmniFlow-exp/data
-export OMNIFLOW_EXP_MEMORY_ROOT=/Users/wuzewen/Projects/Omni/OmniFlow-exp/data
+bash scripts/exp/run_androidworld.sh \
+  --e2e-task TASK \
+  --e2e-method omniflow \
+  --e2e-device small5554:emulator-5554:5554,small5562:emulator-5562:5562,fold5564:emulator-5564:5564 \
+  --e2e-source-seed 111 \
+  --e2e-evaluation-seed 113 \
+  --control-backend oob
+```
+
+这个命令会：
+
+1. 查找 task 对应的 Function；
+2. 缺失时从成功 source RunLog 生成并校验 Function；
+3. 刷新 `data/current.json`；
+4. 只启动选中的 method/device E2E。
+
+检查失败会安全停止，不会启动 target episode。
+
+## 一键安装并启动设备
+
+同一个入口也负责设备 setup；它会安装 OOB、MobileGPT 和 accessibility
+forwarder，启用服务，检查 AndroidWorld/OmniTransfer/AppAgent/MobileGPT 的
+host 环境，并用当前 OOB observe bridge 做最小通信探针：
+
+```bash
+PYTHON_BIN=/absolute/.venv/bin/python \
+OMNIFLOW_ANDROID_SDK_ROOT=/absolute/Android/Sdk \
+OMNIFLOW_ANDROIDWORLD_A11Y_APK=/absolute/accessibility_forwarder.apk \
+bash scripts/exp/run_androidworld.sh --setup-device small5554
+```
+
+`--setup-device` 可接单个 label、逗号列表或 `all`；`all` 包含三个 target
+和 source 设备。报告写到 `data/setup/<UTC>/setup_report.json`。缺少 OOB
+的当前 `OBSERVE_OMNIFLOW`/`CONTROL_OMNIFLOW` receiver、缺少 APK、协议版本
+不匹配或 accessibility 未 bound 都会失败，不会开始实验。默认会补齐 Python
+依赖；只做已有环境验收时设 `OMNIFLOW_SETUP_INSTALL_PYTHON=0`。
+
+## 选择范围
+
+```bash
+# 只测 OmniFlow
+--e2e-method omniflow
+
+# 全部正式 method 和设备
+--e2e-method all --e2e-device all
+
+# 逗号分隔的子集
+--e2e-method omniflow,mobilegpt \
+--e2e-device small5562:emulator-5562:5562,fold5564:emulator-5564:5564
+```
+
+当前 AndroidWorld target 设备：
+
+| label | serial | profile |
+| --- | --- | --- |
+| `small5554` | `emulator-5554` | `small_phone` |
+| `small5562` | `emulator-5562` | `small_phone` |
+| `fold5564` | `emulator-5564` | `pixel_fold` |
+
+## AutoDroid 补充基线（9207）
+
+AutoDroid 不属于正式五方法，也不进入 `--e2e-method all` 或 116 × 10 主表。
+它只能显式使用 9207 上的独立设备标签和独立结果命名空间：
+
+```bash
+OMNIFLOW_AUTODROID_ROOT=/absolute/OmniFlow-exp/data/runtime/external/autodroid \
+OMNIFLOW_AUTODROID_MEMORY_ROOT=/absolute/OmniFlow-exp/data/runtime/autodroid/androidworld_apps \
+bash scripts/exp/run_androidworld.sh \
+  --e2e-task CameraTakePhoto \
+  --e2e-method autodroid \
+  --e2e-device autodroid9207:emulator-5590:5590 \
+  --e2e-source-seed 111 \
+  --e2e-evaluation-seed 113
+```
+
+结果写入 `data/androidworld_validator/supplemental/autodroid_9207/`，使用
+原生 DroidBot/UTG replay 和 AndroidWorld 官方 validator，不转换 Function、
+不使用 OmniTransfer，且 `model_calls=0`、`fallback_steps=0`。完整公平比较
+合同见 [`docs/AUTODROID_9207_COMPARISON_PLAN.md`](../../docs/AUTODROID_9207_COMPARISON_PLAN.md)。
+
+固定实验值：source seed `111`、evaluation seed `113`、formal model
+`GLM-5.1`。`--control-backend oob` 用于 OOB observe/act transport。
+
+## 环境变量
+
+```bash
+export OMNIFLOW_EXP_ASSET_ROOT=/absolute/OmniFlow-exp/data
+export OMNIFLOW_EXP_RESULTS_ROOT=/absolute/OmniFlow-exp/data
+export OMNIFLOW_EXP_MEMORY_ROOT=/absolute/OmniFlow-exp/data
 export OMNIFLOW_ENV_FILE=/absolute/model.env
 export OMNITRANSFER_ROOT="$HOME/Projects/Omni/OmniTransfer"
 ```
 
-The launcher uses the single runtime at `OmniFlow-exp/.venv/bin/python` by
-default. Set `PYTHON_BIN` only for an explicitly provisioned equivalent test
-runtime; the formal experiment must use the repository-local environment.
+`model.env` 至少提供 `LLMTHU_API_KEY`。外部 AndroidWorld、Android SDK、
+MobileGPT 和 AppAgent 路径由 launcher 的环境变量或机器默认值提供。
 
-Before each device preflight, the launcher now expects a root-capable Android
-device and enables every installed service used by the experiment: the
-AndroidWorld accessibility forwarder, OmniFlow's accessibility service, and
-MobileGPT's official accessibility service. The operation preserves unrelated
-user-enabled services and is idempotent. Override only when using a deliberately
-restricted device:
+## 其他命令
 
 ```bash
-OMNIFLOW_REQUIRE_ROOT_DEVICE=0 OMNIFLOW_CONFIGURE_DEVICE=0 \
-  bash scripts/exp/run_androidworld.sh --check-only
-```
-
-MobileGPT uses `10.0.2.2` automatically for emulators. On a rooted physical
-device the launcher derives the host-side LAN address from the device route;
-`MOBILEGPT_CLIENT_HOST` remains the explicit override when the host has more
-than one network interface.
-
-Install the B-MoCA baseline runtime with `uv sync --extra bmoca`; the launcher
-checks the installed DroidRun version against the protocol-pinned v0.5.6 before
-running a B-MoCA campaign or a direct `skilldroid_replay` result.
-The campaign also requires the env100 source AVD produced by B-MoCA's official
-environment installer before Function enhancement begins. This is a read-only
-asset gate: the E2E scheduler still creates its isolated env100 clone only after
-enhancement succeeds, and it does not clone env101--109 until env100 qualifies.
-Development preflight loads the canonical
-OmniTransfer page encoder before starting an emulator, so a broken Torch or
-checkpoint installation fails without consuming an episode.
-
-AndroidWorld, MobileGPT, and AppAgent checkouts may be supplied through their
-documented absolute root variables. Credentials remain in `OMNIFLOW_ENV_FILE`.
-Formal protocol values are not environment configuration: they come only from
-`config/paper_androidworld.json`.
-The GLM-5.1 credential name is `LLMTHU_API_KEY`; the endpoint is read only from
-the protocol configuration.
-
-## Function preparation
-
-Function authoring does not run through a shell conversion mode. Use the bridge
-`save_function` API with one successful RunLog. The Store contains exactly one
-complete Function; set `enhance=true` so the Agent edits one in-memory draft
-through three stages: name the complete trajectory, edit source actions plus
-parameter declarations, then register Function-local checkers.
-The middle edit may mark an eligible launcher click as `open_app`, an eligible
-visible click as `set_target`, or return a direct action copied from the shown
-RunLog source step for exploration. The compiler copies or validates the exact
-RunLog package, target, coordinates, and action; ungrounded direct actions are
-rejected. `save_function` preserves exact evidence and action order, rejects
-invented semantic edits, and deterministically compiles the complete Function,
-bindings, and checker rules. Normal and enhanced saves share one validation and
-Store writer. Each stage gets at most three model attempts; a rejected decision
-receives only that stage's deterministic validation error before revising the
-same in-memory draft. A timeout or transport failure is not retried, and nothing
-is persisted until the complete Function passes the same validator.
-For an enhanced Store, `source_calls` contains exactly the complete Function
-call that reproduces the successful RunLog.
-Descriptions may claim only effects caused inside the selected source range.
-A bound value must appear directly in the RunLog goal; an unrequested current
-page value is source state rather than caller input.
-The compiler derives parameter paths from validated actions: `input_text`
-binds `text`, and a source-proven semantic click binds `target_description`.
-The Agent does not author a path.
-
-The explicit B-MoCA campaign is the only launcher-owned preparation path: for
-each corpus task it calls that same `save_function(enhance=true)` writer once,
-then qualifies `ours_replay` on env100 with official success, method success,
-`model_calls=0`, and `fallback_steps=0`. A failed source gate ends that task
-without launching env101--109. A passing gate compiles the MobileGPT and
-DroidRun memories from the same env100 RunLog, then runs `ours_replay` on
-env101--109 and both baselines on env100--109. All lineage and hashes are
-registered in `data/current.json`; no Function or replay bundle writes a
-provenance sidecar. The scheduler creates no AVD
-clone before enhancement succeeds, clones env100 for the source gate, and
-clones env101--109 only after that gate passes. It writes
-`progress.csv`,
-`progress.jsonl`, per-attempt RunLogs, and the terminal
-`campaign_summary.json` under the new output root.
-
-After saving, refresh the local data index with `--refresh-memory`.
-Experiment execution resolves the task's Store from `current.json`. If no Store
-is registered, the command fails with an explicit message; it never calls a
-converter or model to create one.
-
-## Runtime flow
-
-For each unfinished task, the pipeline:
-
-1. resolves the official-successful source-seed-111 RunLog and exact hash;
-2. resolves the registered Function Store and transfer states;
-3. qualifies `omniflow` on the source device with official validator success,
-   `model_calls=0`, and `fallback_steps=0`;
-4. resolves method-native MobileGPT and AppAgent memory from the same RunLog;
-5. runs the fixed five methods on SmallPhone and unfolded Pixel Fold; and
-6. registers each official-validator conclusion immediately.
-
-The task deadline is shared by the whole pipeline. Existing immutable results
-are skipped before emulator startup. Formal runs use cold restart and official
-AndroidWorld setup; only repeated development runs may set
-`OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP=0` for an already initialized
-live emulator.
-
-The shared lifecycle seam keeps AndroidWorld directory cleanup idempotent when
-host gRPC diagnostics pollute ADB stdout. It accepts Markor's absent final `OK`
-only after the Markor main activity is already foregrounded; every other setup
-error remains a failure. When official Contacts setup is blocked by Android's
-chooser, the seam requires `Just once` and accepts either `Open with` plus a
-visible `Contacts` choice or the already-selected title `Open with Contacts`.
-It selects only the missing choice, confirms `Just once`, then resumes the
-official onboarding `Skip`; any other chooser state remains a failure. The
-same seam removes only gRPC fork diagnostics from
-AndroidWorld ADB response payloads before official task code parses them, and
-retries APK installation without `--bypass-low-target-sdk-block` only when the
-emulator explicitly reports that option as unknown.
-
-`open_app` keeps the RunLog package as its stored contract. The adapters derive
-the official launcher name from the pinned AndroidWorld registry when present;
-otherwise the same official launcher receives the package and uses its package
-fallback. AndroidWorld's own ADB helper closes stale tasks. There is no local
-app registry, pre-launch gate, or second launcher.
-
-For `omniflow`, the AndroidWorld Method Adapter invokes one complete
-`OmniFlow.run()` cycle on the task. The official episode runner contributes the
-native lifecycle and may lower the canonical step budget; it does not split the
-Planner into repeated one-step OmniFlow runs or maintain separate resume and
-fallback state.
-
-## Checker execution
-
-Only rules registered on the active Function are considered. Before each
-pending formal Function action, OmniTransfer maps every unexecuted rule's source
-action onto the current observation. It executes only when the selected target
-passes the one configured high-probability threshold. A rule
-contains only `source_state_id` and `action`; a failed condition skips it and
-keeps it eligible for a later formal action. An executed rule remains complete
-if that Function invocation resumes. Pair confidence is not a trigger.
-Source coordinates are evidence only and never execute on a target.
-
-AndroidWorld episode preparation resolves a visible system app chooser and
-permission obstruction through the shared native adapter before the first
-observation. This setup recovery is state-based experiment plumbing; it must
-never be encoded into a generated Function or task-specific prompt.
-
-The only configurable checker choices are the rules registered in each
-Function and the one global `protocol.checker` target threshold. Evaluation
-cadence is fixed: all still-unexecuted rules are checked before every pending
-formal action. A Function with no registered rules performs no checker
-evaluation, and rules registered on another Function are never considered.
-An action whose source target is named by the task goal or Function semantics
-is task progress and cannot be registered as a checker.
-The same RunLog action cannot have checker and formal roles across two emitted
-Functions.
-
-Formal Function actions use canonical OmniTransfer target mapping directly.
-A missing or rejected mapping fails the Function into the normal Planner
-fallback. Page-embedding similarity is not a checker or Function-step trigger.
-
-## Configuration ownership
-
-The `protocol` block in `config/paper_androidworld.json` owns methods, devices,
-seeds, budgets, timeouts, model endpoint, fold state, AVD names, API levels,
-emulator profiles, and pinned revisions.
-`src/experiment/protocol.py` and this shell only read those values. Active user
-configuration is limited to external roots, credentials, task selection, and
-explicit development inputs.
-
-Retired source backend, source format, accepted/first/limit filters, cell modes,
-authoring manifests, conversion output roots, and revision-reason flags are not
-accepted. Historical readers may recognize old evidence fields but no new
-command or metadata emits them.
-
-## Long-term memory
-
-`OMNIFLOW_EXP_MEMORY_ROOT/current.json` is the sole runtime index. The default
-root is `../OmniFlow-exp/data`; refresh it
-with:
-
-```bash
-OMNIFLOW_MEMORY_RUNLOG_ROOTS=/absolute/runlogs \
-OMNIFLOW_MEMORY_RESULT_ROOTS=/absolute/results \
+bash scripts/exp/run_androidworld.sh --tasks TASK
+bash scripts/exp/run_androidworld.sh --check-only --all-tasks
 bash scripts/exp/run_androidworld.sh --refresh-memory
+./.venv/bin/pytest -q
 ```
 
-Memory is content-addressed by exact SHA-256. Refresh atomically rewrites the
-single `data/current.json` index and does not rewrite original evidence.
-Function bundles are discovered from their canonical directory and contain the
-RunLog, Function Store, and transfer states together. Ambiguous, missing, or
-corrupt entries are preflight failures.
+结果和中间证据写入 `data/`；Function 只通过 `save_function` 写入 Store，
+运行时只读取 `data/current.json`。内部实现路径不是额外入口。
 
-## Result records
-
-New public rows use only the 16 fields defined in `AGENTS.md`. Preparation,
-reuse, baseline conversion, and component-level details are stored once in the
-attempt evidence. Registration writes those compact rows, their single details
-block, and one immutable ledger. It does not maintain parallel master-progress
-tables. Formal attempts and validator conclusions are immutable.
-
-Performance measurement is an explicit side channel. The launcher option
-`--collect-performance` writes one `performance_sidecar.json` beside the
-episode artifacts. It reports Host/native `observe`/`act` timing and optional
-ADB energy diagnostics, but does not modify task results, batch details, or the
-public result rows. ADB charge-counter estimates are diagnostic only and are
-not a replacement for hardware power-analyzer measurements.
-
-## Development example
-
-```bash
-OMNIFLOW_ANDROID_WORLD_ROOT=/absolute/AndroidWorld \
-OMNIFLOW_ANDROIDWORLD_STORE_PATH=/absolute/store.json \
-OMNIFLOW_DEVELOPMENT_OUTPUT_PATH=/absolute/new-attempt \
-OMNIFLOW_DEVELOPMENT_MODEL=GLM-4.6V \
-bash scripts/exp/run_androidworld.sh \
-  --development-run --tasks ExpenseAddMultipleFromGallery
-```
-
-Development is unregistered and bounded. It must not change frozen prompts,
-baseline policies, official validation, or the formal protocol.
+失败 source RunLog 的本地逐条重采集、系统提示词、截图和推理证据要求见
+[`docs/MANUAL_RUNLOG_RECOLLECTION_WORKFLOW.md`](../../docs/MANUAL_RUNLOG_RECOLLECTION_WORKFLOW.md)。

@@ -39,6 +39,7 @@ from src.experiment.performance_metrics import (
     write_performance_metrics,
 )
 from src.experiment.protocol import (
+    FORMAL_MODEL_BASE_URL,
     FORMAL_MODEL_ENDPOINT_PROFILE,
     MAX_STEPS,
 )
@@ -82,6 +83,13 @@ _LLM_USAGE_COUNTER_KEYS = (
     "responses_without_usage",
     "failed_calls",
 )
+
+
+def _model_base_url_for_profile(profile: str | None) -> str | None:
+    resolved_profile = str(profile or "auto").strip().lower()
+    if resolved_profile == FORMAL_MODEL_ENDPOINT_PROFILE:
+        return FORMAL_MODEL_BASE_URL
+    return None
 
 
 def _normalize_androidworld_setup_label(value: Any) -> Any:
@@ -1604,7 +1612,26 @@ def _repair_androidworld_chrome_first_run(
             "next",
             "skip",
             "use chrome without an account",
+            "use without an account",
         }
+        onboarding_deadline = time.monotonic() + 20.0
+        while (
+            not visible_labels.intersection(onboarding_labels)
+            and time.monotonic() < onboarding_deadline
+        ):
+            # A clean API-33 image can expose only Chrome's loading spinner for
+            # several seconds before the first-run controls become accessible.
+            # Keep the official setup app open until that state settles.
+            time.sleep(0.5)
+            visible_labels = {
+                str(value or "").strip().casefold()
+                for element in get_ui_elements() or ()
+                for value in (
+                    getattr(element, "text", None),
+                    getattr(element, "content_description", None),
+                )
+                if str(value or "").strip()
+            }
         if not visible_labels.intersection(onboarding_labels):
             adb_utils.close_app("chrome", env.controller)
             return
@@ -1621,6 +1648,7 @@ def _repair_androidworld_chrome_first_run(
                 "Accept & continue",
                 "Accept & Continue",
                 "No thanks",
+                "Use without an account",
                 "NEXT",
                 "Next",
                 "Skip",
@@ -1778,6 +1806,7 @@ def _run_androidworld_setup_apps(
     setup_env = SetupEnvironment(env)
     if file_utils is not None:
         file_utils.copy_file_to_device = copy_file_to_device
+    original_adb_controller_install = _patch_androidworld_adb_controller_install_compat()
     original_install_apk = _patch_androidworld_apk_install_compat(setup_module)
     original_issue_generic_request = _patch_androidworld_chcon_compat(setup_module)
     optional_setup_patch = _patch_androidworld_optional_setup_click()
@@ -1829,6 +1858,9 @@ def _run_androidworld_setup_apps(
             file_utils.copy_file_to_device = original_copy_file_to_device
         if original_install_apk is not None:
             setup_module.adb_utils.install_apk = original_install_apk
+        if original_adb_controller_install is not None:
+            controller_type, original_execute_command = original_adb_controller_install
+            controller_type.execute_command = original_execute_command
         if original_issue_generic_request is not None:
             setup_module.adb_utils.issue_generic_request = (
                 original_issue_generic_request
@@ -1836,6 +1868,61 @@ def _run_androidworld_setup_apps(
         if optional_setup_patch is not None:
             controller_type, original_click_element = optional_setup_patch
             controller_type.click_element = original_click_element
+
+
+def _patch_androidworld_adb_controller_install_compat() -> tuple[Any, Any] | None:
+    """Retry AndroidWorld APK installs without an unsupported adb flag."""
+
+    try:
+        controller_module = importlib.import_module(
+            "android_env.components.adb_controller"
+        )
+    except ImportError:
+        return None
+    controller_type = getattr(controller_module, "AdbController", None)
+    original = getattr(controller_type, "execute_command", None)
+    if controller_type is None or not callable(original):
+        return None
+
+    def execute_command(
+        self: Any,
+        args: list[str],
+        timeout: float | None = None,
+        device_specific: bool = True,
+    ) -> bytes:
+        normalized = [str(value) for value in args]
+        if "--bypass-low-target-sdk-block" not in normalized:
+            return original(self, args, timeout=timeout, device_specific=device_specific)
+        try:
+            return original(self, args, timeout=timeout, device_specific=device_specific)
+        except Exception as error:
+            details = [repr(error), str(error)]
+            for attribute in ("stdout", "stderr", "output", "cmd"):
+                value = getattr(error, attribute, None)
+                if value is not None:
+                    details.append(
+                        value.decode("utf-8", errors="replace")
+                        if isinstance(value, bytes)
+                        else str(value)
+                    )
+            if "Unknown option --bypass-low-target-sdk-block" not in "\n".join(
+                details
+            ):
+                raise
+            fallback_args = [
+                value
+                for value in normalized
+                if value != "--bypass-low-target-sdk-block"
+            ]
+            return original(
+                self,
+                fallback_args,
+                timeout=timeout,
+                device_specific=device_specific,
+            )
+
+    controller_type.execute_command = execute_command
+    return controller_type, original
 
 
 def _patch_androidworld_apk_install_compat(setup_module: Any) -> Any | None:
@@ -4536,6 +4623,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                         ).strip() or None
                         _, model_base_url = resolve_openai_compatible_config(
                             profile=str(args.model_endpoint_profile or "auto"),
+                            base_url=_model_base_url_for_profile(
+                                args.model_endpoint_profile
+                            ),
                         )
                 if selected_agent.startswith("official:") or selected_agent == "appagent":
                     official_agent_usage = _diff_llm_usage(

@@ -997,6 +997,9 @@ def save_function(
     facts = {
         "schema_version": "omniflow.function-compilation-facts.v1",
         "run_id": str(payload.get("run_id") or "successful-source"),
+        "task_name": str(
+            payload.get("task_name") or payload.get("task") or ""
+        ).strip(),
         "goal": goal,
         "status": "succeeded",
         "success": True,
@@ -1026,10 +1029,15 @@ def save_function(
             raw_functions[0].get("function_id") or ""
         ).strip()
     else:
-        if not functions:
-            raise ValueError("functions_required")
-        raw_functions = json.loads(json.dumps(functions, ensure_ascii=False))
-        arguments_by_function = dict(arguments or {})
+        if functions:
+            raw_functions = json.loads(json.dumps(functions, ensure_ascii=False))
+            arguments_by_function = dict(arguments or {})
+        else:
+            raw_function, generated_arguments = _compile_deterministic_function(facts)
+            raw_functions = [raw_function]
+            arguments_by_function = generated_arguments
+            if arguments:
+                arguments_by_function.update(dict(arguments))
     parsed_functions = [parse_function_artifact(value) for value in raw_functions]
     if len(parsed_functions) != 1:
         raise ValueError("function_single_function_required")
@@ -2202,6 +2210,40 @@ def _compile_function_draft(
         ],
     )
     return [function], {function_id: source_arguments}
+
+
+def _compile_deterministic_function(
+    facts: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Compile one complete source-grounded Function without model authoring."""
+
+    task_name = str(facts.get("task_name") or "").strip()
+    label = task_name or str(facts.get("goal") or "successful_task").strip()
+    normalized = re.sub(r"[^a-z0-9]+", "_", label.casefold()).strip("_")
+    if not normalized:
+        normalized = "successful_task"
+    if not normalized[0].isalpha():
+        normalized = f"task_{normalized}"
+    function_id = f"replay_{normalized}"
+    if len(function_id) > 64:
+        digest = hashlib.sha256(label.encode("utf-8")).hexdigest()[:10]
+        function_id = f"replay_{normalized[:64 - len(digest) - 8]}_{digest}"
+    display_label = task_name or "successful task"
+    metadata = {
+        "function_id": function_id,
+        "name": f"Replay {display_label}"[:120],
+        "description": str(facts.get("goal") or display_label).strip(),
+    }
+    function, source_arguments = _compile_draft_function(
+        facts,
+        metadata=metadata,
+        source_indices=tuple(range(len(facts["steps"]))),
+        action_edits=[],
+        action_overrides=[],
+        parameter_bindings=[],
+        checker_indices=[],
+    )
+    return function, {function_id: source_arguments}
 
 
 def _compile_draft_function(

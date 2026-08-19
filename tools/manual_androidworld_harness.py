@@ -123,10 +123,12 @@ class ManualAndroidWorld:
         self._images = self._root / "observations" / "objects"
         self._images.mkdir(parents=True, exist_ok=True)
         self._run_id = f"manual_{uuid.uuid4().hex}"
+        self._device_serial = f"emulator-{int(args.console_port)}"
         self._started_ms = int(time.time() * 1000)
         self._steps: list[dict[str, Any]] = []
         self._last_observation: dict[str, Any] | None = None
         self._finished = False
+        self._validation_reasoning = ""
         self._write_run_log(status="running", success=False, reward=0.0)
 
     @property
@@ -170,6 +172,7 @@ class ManualAndroidWorld:
 
     def click_target(self, selector: dict[str, Any]) -> dict[str, Any]:
         """Click one element resolved from the latest native observation."""
+        reasoning = str(selector.get("reasoning") or "").strip()
         # Refresh the native state immediately before resolving the selector so
         # a delayed manual decision cannot click an index from an old screen.
         self.observe()
@@ -179,45 +182,52 @@ class ManualAndroidWorld:
             text=selector.get("text"),
             content_description=selector.get("content_description"),
         )
-        return self.act({"action_type": "click", "index": index})
+        return self.act(
+            {"action_type": "click", "index": index, "reasoning": reasoning}
+        )
 
     def act(self, action_payload: dict[str, Any]) -> dict[str, Any]:
         if self._last_observation is None:
             self.observe()
+        reasoning = str(action_payload.get("reasoning") or "").strip()
+        if not reasoning:
+            raise ValueError("reasoning_required_for_every_action")
+        clean_action_payload = dict(action_payload)
+        clean_action_payload.pop("reasoning", None)
         action_record: dict[str, Any]
-        if action_payload.get("action_type") == "wait" and "duration" in action_payload:
+        if clean_action_payload.get("action_type") == "wait" and "duration" in clean_action_payload:
             # JSONAction's public wait action has no duration field.  Keep the
             # native action contract and make the interactive protocol tolerant
             # of a human-friendly duration by sleeping after the official wait.
-            duration = float(action_payload["duration"])
+            duration = float(clean_action_payload["duration"])
             action = self._json_action.JSONAction(action_type="wait")
-            action_record = dict(action_payload)
-        elif action_payload.get("action_type") == "swipe_xy":
+            action_record = dict(clean_action_payload)
+        elif clean_action_payload.get("action_type") == "swipe_xy":
             # Coordinate-bounded swipe through AndroidWorld's own ADB
             # actuation helper.  This is needed for canvas widgets: the
             # release's JSONAction swipe is full-screen and cannot reach the
             # widget without triggering system navigation.
             from android_world.env import adb_utils
 
-            start = action_payload.get("start_xy")
-            end = action_payload.get("end_xy")
+            start = clean_action_payload.get("start_xy")
+            end = clean_action_payload.get("end_xy")
             if not (isinstance(start, (list, tuple)) and len(start) == 2
                     and isinstance(end, (list, tuple)) and len(end) == 2):
                 raise ValueError("swipe_xy requires start_xy and end_xy")
-            duration_ms = int(action_payload.get("duration_ms", 500))
+            duration_ms = int(clean_action_payload.get("duration_ms", 500))
             command = adb_utils.generate_swipe_command(
                 int(start[0]), int(start[1]), int(end[0]), int(end[1]), duration_ms
             )
             adb_utils.issue_generic_request(command, self._env.controller)
             action = None
-            action_record = dict(action_payload)
-        elif action_payload.get("action_type") == "drag_and_drop":
+            action_record = dict(clean_action_payload)
+        elif clean_action_payload.get("action_type") == "drag_and_drop":
             # AndroidWorld's actuation layer already implements drag-and-drop, but
             # this release's JSONAction parser omits that action from its public
             # enum.  Keep the interactive protocol explicit and construct the
             # official action object through the same env.execute_action seam.
-            touch = action_payload.get("touch_xy")
-            lift = action_payload.get("lift_xy")
+            touch = clean_action_payload.get("touch_xy")
+            lift = clean_action_payload.get("lift_xy")
             if not (isinstance(touch, (list, tuple)) and len(touch) == 2
                     and isinstance(lift, (list, tuple)) and len(lift) == 2):
                 raise ValueError("drag_and_drop requires touch_xy and lift_xy")
@@ -226,13 +236,13 @@ class ManualAndroidWorld:
             action.touch_xy = tuple(int(v) for v in touch)
             action.lift_xy = tuple(int(v) for v in lift)
         else:
-            action = self._json_action.JSONAction(**action_payload)
+            action = self._json_action.JSONAction(**clean_action_payload)
             action_record = action.as_dict()
         before = self._last_observation
         if action is not None:
             execution_action = action
-            if action_payload.get("action_type") == "open_app":
-                package_name = str(action_payload.get("app_name") or "").strip()
+            if clean_action_payload.get("action_type") == "open_app":
+                package_name = str(clean_action_payload.get("app_name") or "").strip()
                 resolved_name = self._resolve_androidworld_app_name(
                     package_name,
                     self._env.controller,
@@ -242,9 +252,14 @@ class ManualAndroidWorld:
                     app_name=resolved_name,
                 )
             self._env.execute_action(execution_action)
-        if action_payload.get("action_type") == "wait" and "duration" in action_payload:
+        if clean_action_payload.get("action_type") == "wait" and "duration" in clean_action_payload:
             time.sleep(max(0.0, duration))
         after = self.observe()["observation"]
+        after_pixels = (
+            after.get("pixels")
+            if isinstance(after, dict) and isinstance(after.get("pixels"), dict)
+            else {}
+        )
         self._steps.append(
             {
                 "step_index": len(self._steps),
@@ -252,13 +267,25 @@ class ManualAndroidWorld:
                 "action": action_record,
                 "result": {"success": True},
                 "next_observation": after,
-                "metadata": {"decision": "manual_codex", "source": "native_androidworld"},
+                "metadata": {
+                    "decision": "manual_codex",
+                    "source": "native_androidworld",
+                    "reasoning": reasoning,
+                    "screenshot_path": after_pixels.get("path"),
+                    "screenshot_sha256": after_pixels.get("sha256"),
+                },
             }
         )
         self._write_run_log(status="running", success=False, reward=0.0)
         return {"ok": True, "action": action_record, "observation": after}
 
-    def validate(self) -> dict[str, Any]:
+    def validate(self, reasoning: str = "") -> dict[str, Any]:
+        self._validation_reasoning = str(reasoning or "").strip()
+        if any(
+            not str(step.get("metadata", {}).get("reasoning") or "").strip()
+            for step in self._steps
+        ):
+            return {"ok": False, "error": "reasoning_required_for_every_action"}
         reward = float(self._task.is_successful(self._env))
         success = reward > 0.5
         self._finished = True
@@ -276,12 +303,30 @@ class ManualAndroidWorld:
             "status": status,
             "success": success,
             "validator": {"official": True, "success": success, "reward": reward},
-            "provenance": {"kind": "manual_native_androidworld"},
+            "provenance": {
+                "kind": "manual_native_androidworld",
+            },
             "started_at_ms": self._started_ms,
             "finished_at_ms": int(time.time() * 1000),
             "steps": self._steps,
             "final_observation": self._last_observation,
-            "diagnostics": {"model_calls": 0, "decision_owner": "codex_manual"},
+            "diagnostics": {
+                "model_calls": 0,
+                "decision_owner": "codex_manual",
+                "workflow_version": "androidworld_manual_recollection.v1",
+                "device_serial": self._device_serial,
+                "same_environment": True,
+                "reasoning_count": sum(
+                    bool(str(step.get("metadata", {}).get("reasoning") or "").strip())
+                    for step in self._steps
+                ),
+                "screenshot_count": sum(
+                    bool(step.get("metadata", {}).get("screenshot_path"))
+                    for step in self._steps
+                )
+                + bool(self._last_observation),
+                "validation_reasoning": self._validation_reasoning,
+            },
         }
         self._root.mkdir(parents=True, exist_ok=True)
         (self._root / "run_log.json").write_text(
@@ -304,7 +349,7 @@ def main() -> int:
     parser.add_argument("--android-world-root", required=True)
     parser.add_argument("--task", required=True)
     parser.add_argument("--task-params-json", default="{}")
-    parser.add_argument("--seed", type=int, default=113)
+    parser.add_argument("--seed", type=int, default=111)
     parser.add_argument("--console-port", type=int, default=5560)
     parser.add_argument("--grpc-port", type=int, default=0)
     parser.add_argument("--adb-path", required=True)
@@ -331,7 +376,7 @@ def main() -> int:
                 elif kind == "act":
                     result = harness.act(dict(command["action"]))
                 elif kind == "validate":
-                    result = harness.validate()
+                    result = harness.validate(str(command.get("reasoning") or ""))
                 elif kind == "quit":
                     result = {"ok": True}
                     print(json.dumps(result, ensure_ascii=False), flush=True)

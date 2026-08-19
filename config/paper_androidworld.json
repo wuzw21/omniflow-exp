@@ -7,12 +7,26 @@
       "omniflow",
       "mobilegpt",
       "appagent",
-      "autodroid",
       "t3a_hint"
     ],
+    "supplemental": {
+      "methods": ["autodroid"],
+      "devices": [
+        {
+          "label": "autodroid9207",
+          "serial": "emulator-5590",
+          "console_port": 5590,
+          "host": "9207",
+          "avd": "AutoDroidSmallPhone",
+          "api_level": 33,
+          "profile": "small_phone"
+        }
+      ],
+      "results_namespace": "androidworld_validator/supplemental/autodroid_9207"
+    },
     "devices": [
       {"label": "small5554", "serial": "emulator-5554", "console_port": 5554, "avd": "OmniFlowTargetSmall", "api_level": 33, "profile": "small_phone"},
-      {"label": "small5562", "serial": "emulator-5562", "console_port": 5562, "avd": "OmniFlowAW_r25", "api_level": 33, "profile": "small_phone"},
+      {"label": "small5562", "serial": "emulator-5562", "console_port": 5562, "avd": "OmniFlowTargetSmall", "api_level": 33, "profile": "small_phone"},
       {"label": "fold5564", "serial": "emulator-5564", "console_port": 5564, "avd": "OmniFlowTargetFold", "api_level": 34, "profile": "pixel_fold"}
     ],
     "source_device": {
@@ -48,7 +62,7 @@
     "fold_state": 2,
     "fold_size": "2208x1840",
     "model": "GLM-5.1",
-    "appagent_model": "GLM-4.6V",
+    "appagent_model": "GLM-5.1",
     "model_endpoint_profile": "llmthu",
     "model_base_url": "https://llmapi.paratera.com/v1",
     "androidworld_revision": "632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"

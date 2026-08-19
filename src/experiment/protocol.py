@@ -5,6 +5,10 @@ from __future__ import annotations
 from omniflow.core.config import ANDROIDWORLD_PROTOCOL, DEFAULT_MAX_STEPS
 
 METHODS = tuple(str(value) for value in ANDROIDWORLD_PROTOCOL["methods"])
+_SUPPLEMENTAL = dict(ANDROIDWORLD_PROTOCOL.get("supplemental") or {})
+SUPPLEMENTAL_METHODS = tuple(
+    str(value) for value in (_SUPPLEMENTAL.get("methods") or [])
+)
 
 DEVICES = tuple(
     (
@@ -13,6 +17,18 @@ DEVICES = tuple(
         int(device["console_port"]),
     )
     for device in ANDROIDWORLD_PROTOCOL["devices"]
+)
+SUPPLEMENTAL_DEVICES = tuple(
+    (
+        str(device["label"]),
+        str(device["serial"]),
+        int(device["console_port"]),
+    )
+    for device in (_SUPPLEMENTAL.get("devices") or [])
+)
+SUPPLEMENTAL_RESULTS_NAMESPACE = str(
+    _SUPPLEMENTAL.get("results_namespace")
+    or "androidworld_validator/supplemental/autodroid_9207"
 )
 DEVICE_AVDS = tuple(
     (str(device["serial"]), str(device["avd"]))

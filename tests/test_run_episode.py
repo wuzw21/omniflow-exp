@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import os
 from pathlib import Path
 import subprocess
@@ -24,6 +25,7 @@ from src.integrations.android_world.run_episode import (
     _ensure_androidworld_a11y_forwarder,
     _ExperimentAgentAdapter,
     _patch_androidworld_adb_output_sanitizer,
+    _patch_androidworld_adb_controller_install_compat,
     _patch_androidworld_apk_install_compat,
     _patch_androidworld_app_launch,
     _patch_androidworld_chcon_compat,
@@ -35,8 +37,24 @@ from src.integrations.android_world.run_episode import (
     _result_has_official_validator_conclusion,
     _run_androidworld_setup_apps,
     _runtime_execution_trace,
+    _model_base_url_for_profile,
     _wait_for_androidworld_a11y,
 )
+
+
+def test_formal_model_profile_uses_protocol_base_url_without_env_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from omniflow.vlm.model_config import resolve_openai_compatible_config
+
+    monkeypatch.setenv("LLMTHU_API_KEY", "test-key")
+    api_key, base_url = resolve_openai_compatible_config(
+        profile="llmthu",
+        base_url=_model_base_url_for_profile("llmthu"),
+    )
+
+    assert api_key == "test-key"
+    assert base_url == "https://llmapi.paratera.com/v1"
 
 
 def test_system_package_resolves_from_official_registry_when_not_enumerated(
@@ -350,6 +368,46 @@ def test_androidworld_apk_install_retries_without_unsupported_flag() -> None:
     assert calls == [
         ("official", "/tmp/app.apk"),
         ("compat", ("install", "/tmp/app.apk"), 30.0),
+    ]
+
+
+def test_androidworld_adb_controller_retries_without_unsupported_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    class Controller:
+        def execute_command(self, args, timeout=None, device_specific=True):
+            del timeout, device_specific
+            calls.append(tuple(args))
+            if "--bypass-low-target-sdk-block" in args:
+                raise RuntimeError(
+                    "adb stdout: [Unknown option --bypass-low-target-sdk-block]"
+                )
+            return b"installed"
+
+    original_import = importlib.import_module
+
+    def import_module(name):
+        if name == "android_env.components.adb_controller":
+            return SimpleNamespace(AdbController=Controller)
+        return original_import(name)
+
+    monkeypatch.setattr(importlib, "import_module", import_module)
+    original = _patch_androidworld_adb_controller_install_compat()
+    assert original is not None
+    controller_type, original_execute = original
+    try:
+        result = controller_type().execute_command(
+            ["install", "--bypass-low-target-sdk-block", "/tmp/app.apk"]
+        )
+    finally:
+        controller_type.execute_command = original_execute
+
+    assert result == b"installed"
+    assert calls == [
+        ("install", "--bypass-low-target-sdk-block", "/tmp/app.apk"),
+        ("install", "/tmp/app.apk"),
     ]
 
 

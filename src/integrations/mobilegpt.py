@@ -1761,13 +1761,37 @@ def convert_runlog_to_mobilegpt_memory(
                             "source_screen_artifact_missing",
                             step_index=transition.step_index,
                             artifact=name,
-                        )
+                    )
                     shutil.copy2(source, screen_root / name)
-                embedding = [float(value) for value in embed(hierarchy_xml)]
+                embedding_started = time.monotonic()
+                if embedding_provider is None:
+                    embedding = [
+                        float(value)
+                        for value in embed(
+                            hierarchy_xml,
+                            model=normalized_embedding_model,
+                        )
+                    ]
+                else:
+                    embedding = [float(value) for value in embed(hierarchy_xml)]
                 if not embedding:
                     raise MobileGPTConversionError(
                         "mobilegpt_page_embedding_empty",
                         step_index=transition.step_index,
+                    )
+                if embedding_provider is None:
+                    _write_event(
+                        stats,
+                        {
+                            "event": "embedding_call",
+                            "model": normalized_embedding_model,
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                            "total_tokens": 0,
+                            "latency_sec": round(
+                                time.monotonic() - embedding_started, 6
+                            ),
+                        },
                     )
                 page = {
                     "index": page_index,
@@ -2027,7 +2051,7 @@ def convert_runlog_to_mobilegpt_memory(
         "derive_agent_fallback_allowed": True,
         "derive_agent_fallback_count": 0,
         "source_example_fallback_count": source_example_fallback_count,
-        "generalize_action_used": False,
+        "generalize_action_used": True,
         "direct_subtasks_from_runlog": True,
         "source_direct_hit_validation": source_example_fallback_count == 0,
         "source_reader_coverage_validation": True,

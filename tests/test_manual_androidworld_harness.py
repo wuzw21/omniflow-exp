@@ -75,9 +75,35 @@ def test_wait_duration_uses_native_json_action_and_sleeps(monkeypatch):
     slept = []
     monkeypatch.setattr(_MODULE.time, "sleep", slept.append)
 
-    result = harness.act({"action_type": "wait", "duration": 2.5})
+    result = harness.act(
+        {
+            "action_type": "wait",
+            "duration": 2.5,
+            "reasoning": "The page is transitioning, so I wait before observing again.",
+        }
+    )
 
     assert result["action"]["duration"] == 2.5
     assert [action.action_type for action in harness._env.actions] == ["wait"]
     assert slept == [2.5]
     assert harness._steps[0]["action"] == {"action_type": "wait", "duration": 2.5}
+    assert harness._steps[0]["metadata"]["reasoning"]
+
+
+def test_act_requires_reasoning_before_executing_action():
+    class FakeJSONAction:
+        def __init__(self, **kwargs):
+            self.action_type = kwargs["action_type"]
+
+    class FakeEnv:
+        def execute_action(self, action):
+            raise AssertionError("action must not execute")
+
+    harness = ManualAndroidWorld.__new__(ManualAndroidWorld)
+    harness._json_action = type("JsonActionModule", (), {"JSONAction": FakeJSONAction})
+    harness._env = FakeEnv()
+    harness._last_observation = {"pixels": None, "forest": {}, "ui_elements": [], "auxiliaries": {}}
+    harness._steps = []
+
+    with pytest.raises(ValueError, match="reasoning_required"):
+        harness.act({"action_type": "wait"})
