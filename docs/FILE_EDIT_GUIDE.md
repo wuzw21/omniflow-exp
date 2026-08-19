@@ -57,6 +57,7 @@
 | `src/experiment/protocol.py` | `config/paper_androidworld.json` 的 typed view；不复制常量 |
 | `src/experiment/e2e_task_pipeline.py` | 唯一 task + method + device scheduler；旁路应作为这里的请求模式进入共同 launcher |
 | `src/experiment/androidworld.py` | 一个 AndroidWorld `task + method + device` 结果；不是第二 scheduler |
+| `src/experiment/process_runner.py` | 所有 experiment command 的子进程组、timeout、终止和 immutable log seam；不要复制 `Popen` 生命周期 |
 | `src/experiment/development_emulator.py` | 有界开发 emulator preflight |
 | `src/experiment/emulator_processes.py` | managed emulator 进程识别；诊断命令不写结果 |
 | `src/experiment/preflight.py` | source、device、外部资产和 protocol gate；不生成 Store |
@@ -84,12 +85,12 @@
 | `src/integrations/script_replay.py` | 完整 Function 的共享 replay 薄适配器；禁止私有 mapper/executor |
 | `src/integrations/skilldroid_replay.py` | DroidRun v0.5.6 官方 MacroPlayer adapter |
 | `src/integrations/android_world/__init__.py` | AndroidWorld adapter 包标记 |
-| `src/integrations/android_world/agent.py` | OmniFlow AndroidWorld Method Adapter |
+| `src/integrations/android_world/agent.py` | OmniFlow Host/runtime 构造和一个完整 `step()` cycle；direct Function 必须在这里进入 canonical runtime |
 | `src/integrations/android_world/apps.py` | AndroidWorld app setup helper |
 | `src/integrations/android_world/environment.py` | official task environment/validator adapter |
 | `src/integrations/android_world/host.py` | native observe/act/reset Host |
-| `src/integrations/android_world/launch.py` | 唯一 native lifecycle/launcher；直跑 Function 只能复用此生命周期 |
-| `src/integrations/android_world/methods.py` | 五个正式方法的 adapter registry |
+| `src/integrations/android_world/launch.py` | 唯一 native lifecycle/launcher；直跑 Function 只能复用此生命周期，不得 patch `agent.run` |
+| `src/integrations/android_world/methods.py` | 五个正式方法的 adapter registry，以及 direct Function intent；不得增加第二个 executor |
 | `src/integrations/android_world/mobilegpt_agent.py` | MobileGPT episode adapter |
 | `src/integrations/android_world/oob_control.py` | 仅显式选择的 development/source/OOB transport adapter |
 | `src/integrations/android_world/state.py` | native state normalization |

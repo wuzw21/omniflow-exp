@@ -36,6 +36,20 @@ scripts/exp/run_androidworld.sh       # 唯一公开入口
                       └─ t3a_hint
 ```
 
+The boundaries inside this path are intentionally different:
+
+- `e2e_task_pipeline.py` schedules one task-major attempt and interprets the
+  result; it does not own AndroidWorld lifecycle or a second replay runner.
+- `androidworld.py` translates protocol records into command specifications and
+  collects result evidence; it does not own child-process lifecycle.
+- `process_runner.py` is the single process-group, timeout, and immutable-log
+  seam shared by AndroidWorld and B-MoCA experiment commands.
+- `launch.py` owns one native AndroidWorld episode, including setup,
+  observation/action recording, official validation, and teardown.
+- `methods.py` resolves one method adapter. Direct Function replay is carried
+  into `agent.py` as an execution decision, not implemented by launcher-side
+  mutation of an agent instance.
+
 普通 `omniflow` 的运行核心继续是：
 
 ```text
@@ -60,14 +74,12 @@ resume state 或结果格式。
 
 当前保留的复用点是 `src/integrations/script_replay.py`：它只选择一个完整
 Function，随后调用 `agent_instance.call_tool()` / canonical runtime，测试中
-必须能证明它没有私有 action mapping。
-
-下一步精简的目标 seam 是把“直接调用完整 Function”作为 E2E 的一种明确
-`run_mode`/请求字段，由 `e2e_task_pipeline.py` 传到共同的 launcher；launcher
-仍只创建一次环境，Function 直跑和普通 `OmniFlow.run()` 共享同一个 Host、
-OmniTransfer、checker、证据封存和结果归档。这样保留旁路价值，但消除重复的
-命令拼装和生命周期分支。此变更必须先补 focused tests，不得改变 schema 或
-正式结果字段。
+必须能证明它没有私有 action mapping。AndroidWorld source qualification
+通过 `build_e2e_command(function_id=..., function_arguments=...)` 进入同一
+launcher；`methods.py` 把这个意图交给 `agent.py`，由正常 `step()` cycle
+注入 `ToolCall`。因此 direct replay 和普通 `OmniFlow.run()` 共享 Host、
+OmniTransfer、checker、证据封存和结果归档，且不会因为 CLI 入口不同而产生
+第二个 executor。
 
 ## 4. 索引、ledger 和历史输入的区别
 
