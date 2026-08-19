@@ -107,9 +107,10 @@ def _stale_processes(serial: str) -> list[str]:
         timeout=3,
     )
     stale: list[str] = []
+    ignored_pids = {os.getpid(), os.getppid()}
     for line in result.stdout.splitlines():
         match = re.match(r"\s*(\d+)\s+(.*)", line)
-        if not match or int(match.group(1)) == os.getpid():
+        if not match or int(match.group(1)) in ignored_pids:
             continue
         if _command_targets_serial(match.group(2), serial):
             stale.append(match.group(1))
@@ -756,7 +757,12 @@ def main(argv: list[str] | None = None) -> int:
             )
     add("jq", True, f"not required by {profile} profile")
     add("java", bool(shutil.which("java")), shutil.which("java") or "missing")
-    add("model_key", bool(os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY")), "configured" if os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY") else "missing")
+    model_key = (
+        os.getenv("LLMTHU_API_KEY")
+        or os.getenv("DASHSCOPE_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+    )
+    add("model_key", bool(model_key), "configured" if model_key else "missing")
     if appagent_mode or native_mode:
         add("server_port", True, f"not required by {profile} profile")
     else:
