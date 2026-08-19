@@ -121,15 +121,15 @@ rg --files -g '*.py' | sort
 | `src/experiment/observation_evidence.py` | observation、截图、transfer coverage 证据封存 |
 | `src/experiment/source_evidence.py` | source evidence 验证与 legacy input 的统一投影；不负责 AppAgent/MobileGPT 转换，不创建平行 source pool |
 | `src/experiment/source_records.py` | `CanonicalRunLog`/`SourceRunLogProfile` 纯数据模型；不读取 index、不执行任务 |
-| `src/experiment/memory_interface.py` | provider-neutral memory contract；只定义接口和公共 envelope，不写 MobileGPT/AppAgent 规则 |
+| `src/experiment/memory_ref.py` | 可选的 provider-neutral memory 引用；不强迫无 memory 的方法创建适配器 |
 | `src/experiment/data_index.py` | 唯一 `data/current.json` materializer/loader；不要增加 index/snapshot |
 | `src/experiment/result_schema.py` | compact public result row；字段改动必须 schema/stat 独立 commit |
 | `src/experiment/result_registry.py` | immutable result registration ledger；不负责调度或汇总 |
 | `src/experiment/batch_outcomes.py` | 一次 attempt 的 outcome/summary；不成为运行时选择器 |
 | `src/experiment/performance_metrics.py` | 明确 opt-in 的 performance side channel；不改 public result row |
 | `src/experiment/mobilegpt_contract.py` | MobileGPT 证据常量和协议标签 |
-| `src/experiment/mobilegpt_source.py` | MobileGPT source preparation 和 `MobileGPTMemoryAdapter` |
-| `src/experiment/appagent_source.py` | AppAgent source preparation 和 `AppAgentMemoryAdapter` |
+| `src/experiment/mobilegpt_source.py` | MobileGPT source preparation；只在 MobileGPT 方法需要时使用 |
+| `src/experiment/appagent_source.py` | AppAgent source preparation；只在 AppAgent 方法需要时使用 |
 
 ## `src/integrations/`：外部契约适配器
 

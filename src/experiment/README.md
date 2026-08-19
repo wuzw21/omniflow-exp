@@ -8,9 +8,10 @@ index and exposes `load_data_index`/`refresh_data_index` operations.
 source files call their own provider conversion functions and prepare native
 evidence without owning lifecycle.
 There is no shared `method` string dispatcher in the source module.
-Provider memory is connected through `memory_interface.py`; the common
-execution flow consumes its envelope, while each provider keeps its own
-conversion and validation rules.
+Provider memory is optional. When a method needs it, the common execution flow
+only carries a `MemoryRef`; each provider keeps its own conversion and
+validation rules. Methods without memory do not create an adapter or memory
+record.
 
 Path rules live in `paths.py`: repository-relative inputs use `resolve_path`,
 index evidence uses `resolve_reference`, and task/method/device names use
