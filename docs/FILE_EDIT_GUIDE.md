@@ -88,6 +88,7 @@ rg --files -g '*.py' | sort
 | `omniflow/core/trajectory.py` | RunLog/trajectory 的结构、顺序、hash 不变量 |
 | `omniflow/functions/__init__.py` | Function 导出 |
 | `omniflow/functions/assets.py` | 唯一 compiler、validator、`save_function`、Store writer；禁止第二 writer 或手改 Store |
+| `omniflow/functions/migrate_store.py` | 旧 Function JSON 的一次性迁移器；只能调用 current writer，必须保留 source evidence，禁止兼容运行时直接读取旧 Store |
 | `omniflow/functions/recall.py` | 只从已加载 Store 选择完整 Function；不创建 catalog |
 | `omniflow/runtime/__init__.py` | runtime 导出 |
 | `omniflow/runtime/core.py` | 单个 canonical action primitive |
@@ -166,6 +167,7 @@ rg --files -g '*.py' | sort
 | `tools/manual_androidworld_harness.py` | 人工诊断；不能创建 formal result、刷新 index 或代替 launcher |
 | `tests/runlog_fixtures.py` | 共用 RunLog fixture |
 | `tests/test_function_*.py` | Function compiler、writer、recall 和 management 合同 |
+| `tests/test_function_store_migration.py` | 旧 Store/bundle 到新版 Store 的迁移合同；迁移行为改变时同步修改，不要把旧格式重新接回 runtime |
 | `tests/test_runtime_*.py` | runtime/checker/transfer/fallback 合同 |
 | `tests/test_transfer_*.py` / `tests/test_visual_transfer_pipeline.py` | OmniTransfer candidate/page encoder 合同 |
 | `tests/test_androidworld_*.py` | AndroidWorld Host、environment、method 合同 |

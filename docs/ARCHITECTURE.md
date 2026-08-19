@@ -97,6 +97,19 @@ OmniTransfer、checker、证据封存和结果归档，且不会因为 CLI 入�
 因此“只保留一套索引”不是删除所有 manifest 或 ledger，而是保证只有
 `current.json` 参与运行时解析；其他文件各自只承担证据或统计语义。
 
+### 旧 Function JSON 的迁移
+
+运行时只读取新版 `omniflow.store.v2`。迁移器
+`omniflow.functions.migrate_store` 是离线一次性工具，不是新的 runtime
+入口：它把旧 `function-bundle.v2` 重新对齐到成功 RunLog，把旧多 Function
+Store 拆成一个 Function 一个 Store，并保留每个 Function 实际引用的
+transfer states。迁移失败时不应放宽校验；没有 source state、无法唯一对齐
+或缺少 transfer states 都必须停止。
+
+`function-asset-catalog.v1` 只是历史索引，不是 Store。它不能通过改名字或
+改 schema_version 伪装成 Store；迁移完成后仍由 `data_index.py` 重新生成唯一
+运行时索引 `data/current.json`。
+
 ## 5. 当前精简候选与保留决定
 
 ### 五个大文件的直白职责

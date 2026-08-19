@@ -623,6 +623,50 @@ def _write_store(
     temporary.replace(path)
 
 
+def write_function_store(
+    path: str | Path,
+    functions: Iterable[Function | dict[str, Any]],
+    source_calls: Iterable[dict[str, Any]] = (),
+) -> Path:
+    """Validate and write one current-version Function Store."""
+
+    parsed: dict[str, Function] = {}
+    for value in functions:
+        function = (
+            value if isinstance(value, Function) else parse_function_artifact(value)
+        )
+        validate_function_artifact(function)
+        if function.id in parsed:
+            raise ValueError(f"function_store_duplicate_function:{function.id}")
+        parsed[function.id] = function
+    if len(parsed) > 1:
+        raise ValueError("function_store_single_function_required")
+
+    normalized_calls: list[dict[str, Any]] = []
+    for call in source_calls:
+        if (
+            not isinstance(call, dict)
+            or set(call) != {"function_id", "arguments"}
+            or not str(call.get("function_id") or "").strip()
+            or not isinstance(call.get("arguments"), dict)
+        ):
+            raise ValueError("function_store_source_calls_invalid")
+        if str(call["function_id"]) not in parsed:
+            raise ValueError("function_store_source_call_function_missing")
+        normalized_calls.append(
+            {
+                "function_id": str(call["function_id"]),
+                "arguments": _copy_value(call["arguments"]),
+            }
+        )
+    if len(normalized_calls) > 1:
+        raise ValueError("function_store_single_source_call_required")
+
+    destination = Path(path).expanduser().resolve()
+    _write_store(destination, parsed, normalized_calls)
+    return destination
+
+
 def _write_json_artifact(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     content = (
