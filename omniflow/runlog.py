@@ -223,9 +223,35 @@ def _relocate_v1_screenshot_paths(
                 if hashlib.sha256(candidate.read_bytes()).hexdigest() == expected_hash
             ]
         if len(candidates) != 1:
-            if not candidates:
-                raise FileNotFoundError(f"run_log_screenshot_missing:{raw_path}")
-            raise ValueError(f"run_log_screenshot_ambiguous:{raw_path}")
+            if not candidates and expected_hash and len(expected_hash) == 64:
+                suffix = {
+                    "image/jpeg": ".jpg",
+                    "image/png": ".png",
+                    "image/webp": ".webp",
+                }.get(str(pixels.get("mime_type") or "").strip())
+                if suffix is None:
+                    raise ValueError("run_log_screenshot_metadata_invalid")
+                for parent in (evidence_root, *evidence_root.parents):
+                    if parent.name != "data":
+                        continue
+                    object_path = (
+                        parent
+                        / "objects"
+                        / "sha256"
+                        / expected_hash[:2]
+                        / f"{expected_hash}{suffix}"
+                    )
+                    if (
+                        object_path.is_file()
+                        and hashlib.sha256(object_path.read_bytes()).hexdigest()
+                        == expected_hash
+                    ):
+                        candidates = [object_path.resolve()]
+                        break
+                if not candidates:
+                    raise FileNotFoundError(f"run_log_screenshot_missing:{raw_path}")
+            if len(candidates) != 1:
+                raise ValueError(f"run_log_screenshot_ambiguous:{raw_path}")
         pixels["path"] = str(candidates[0])
     return prepared
 

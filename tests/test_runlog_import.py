@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -8,6 +9,7 @@ from types import ModuleType, SimpleNamespace
 from PIL import Image
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
+from omniflow.runlog import import_run_log_evidence as import_v1_run_log_evidence
 
 from src.integrations.android_world.run_episode import (
     _apply_fixed_replay,
@@ -266,6 +268,45 @@ def test_runlog_import_keeps_one_screenshot_for_repeated_structural_state() -> N
 
     assert source_states["states"]["same-page"]["screenshot_path"] == (
         "/evidence/first.jpg"
+    )
+
+
+def test_v1_runlog_import_resolves_stale_screenshot_from_data_objects(
+    tmp_path: Path,
+) -> None:
+    data_root = tmp_path / "data"
+    evidence_root = data_root / "androidworld" / "CameraTakePhoto" / "source"
+    evidence_root.mkdir(parents=True)
+    screenshot_bytes = b"canonical screenshot"
+    digest = hashlib.sha256(screenshot_bytes).hexdigest()
+    object_path = (
+        data_root
+        / "objects"
+        / "sha256"
+        / digest[:2]
+        / f"{digest}.png"
+    )
+    object_path.parent.mkdir(parents=True)
+    object_path.write_bytes(screenshot_bytes)
+    payload = androidworld_run_log(
+        [{"action_type": "click", "x": 10, "y": 10}],
+        observations=[androidworld_state("screen", with_pixels=True)],
+    )
+    payload["steps"][0]["observation"]["pixels"].update(
+        {
+            "path": "/Users/stale/data/screen.png",
+            "sha256": digest,
+            "mime_type": "image/png",
+        }
+    )
+
+    _run_log, source_states = import_v1_run_log_evidence(
+        payload,
+        evidence_root=evidence_root,
+    )
+
+    assert source_states["states"]["screen"]["screenshot_path"] == str(
+        object_path.resolve()
     )
 
 
