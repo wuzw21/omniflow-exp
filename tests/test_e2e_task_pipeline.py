@@ -226,7 +226,7 @@ def test_mobilegpt_preparation_is_an_internal_pipeline_phase(
         str(args.python_bin),
         "-m",
         "src.experiment.mobilegpt_source",
-        "batch",
+        "prepare",
     ]
     assert "bash" not in captured
     assert "--prepare-mobilegpt-memory" not in captured

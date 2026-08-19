@@ -59,7 +59,10 @@ def load_canonical_source_item(
         raise ValueError(
             f"mobilegpt_source_official_success_required:task={task_name}"
         )
-    if source_kind and source_kind != "androidworld_validator_success_source_runlog":
+    if source_kind and source_kind not in {
+        "androidworld_validator_success_source_runlog",
+        "one_time_canonicalized_seed111_screenshot_source",
+    }:
         raise ValueError(
             "mobilegpt_source_kind_invalid:"
             f"task={task_name}:actual={source_kind}"

@@ -856,7 +856,7 @@ def prepare_mobilegpt_memory(
             str(args.python_bin),
             "-m",
             "src.experiment.mobilegpt_source",
-            "batch",
+            "prepare",
             "--index",
             str(source_index),
             "--task",
