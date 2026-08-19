@@ -1584,7 +1584,7 @@ def _load_baseline_batch_reports(
     return records, results
 
 
-def _refresh_local_data_unlocked(
+def _refresh_artifact_index_unlocked(
     *,
     memory_root: str | Path,
     source_index: str | Path,
@@ -1877,7 +1877,7 @@ def refresh_artifact_index(
 
     root = Path(memory_root).expanduser().resolve()
     with _memory_lock(root):
-        return _refresh_local_data_unlocked(
+        return _refresh_artifact_index_unlocked(
             memory_root=root,
             source_index=source_index,
             runlog_roots=runlog_roots,
@@ -2069,7 +2069,7 @@ def refresh_artifact_index_from_pointer(
                 ),
             }
         )
-        return _refresh_local_data_unlocked(
+        return _refresh_artifact_index_unlocked(
             memory_root=pointer_path.parent,
             source_index=str(inputs["source_index"]),
             runlog_roots=runlog_roots,
