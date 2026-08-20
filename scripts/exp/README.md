@@ -124,7 +124,8 @@ supplemental campaign 强制执行 AndroidWorld setup 和每 task snapshot resto
 单独初始化、单独封存 validator/replay evidence；AutoDroid 结果仍只写入
 `androidworld/<task>/autodroid/<device_model_seed>/`。
 
-固定实验值：source seed `111`、evaluation seed `113`、formal model
+固定实验值：source seed `111`、evaluation seed `113`、formal chat model
+`GLM-5.1`；AppAgent 因需要原生图像输入使用同一 GLM endpoint 的视觉模型
 `GLM-4.6V`。`--control-backend oob` 用于 OOB observe/act transport。
 
 ## 环境变量

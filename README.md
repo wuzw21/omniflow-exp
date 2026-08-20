@@ -35,7 +35,8 @@ bash scripts/exp/run_androidworld.sh \
 4. 校验通过后，在指定设备上执行 E2E。
 
 Function 检查失败时不会启动 target episode。source seed 固定为 `111`，
-evaluation seed 固定为 `113`，正式模型为 `GLM-4.6V`。
+evaluation seed 固定为 `113`，正式 chat 模型为 `GLM-5.1`；需要图像输入的
+AppAgent 使用同一 GLM endpoint 上的视觉模型 `GLM-4.6V`。
 
 ## 数据目录
 
