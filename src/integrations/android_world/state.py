@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import hashlib
 import io
 from pathlib import Path
 from typing import Any
@@ -102,14 +101,12 @@ def _screenshot_reference(
     if evidence_root is None:
         raise ValueError("androidworld_state_evidence_root_required")
     image_bytes, width, height = _png_bytes(pixels)
-    digest = hashlib.sha256(image_bytes).hexdigest()
     root = Path(evidence_root).expanduser().resolve()
     screenshot_root = root / "screenshots"
     screenshot_root.mkdir(parents=True, exist_ok=True)
     destination = _write_next_screenshot(screenshot_root, image_bytes)
     return {
         "path": str(destination),
-        "sha256": digest,
         "width": width,
         "height": height,
         "mime_type": "image/png",
