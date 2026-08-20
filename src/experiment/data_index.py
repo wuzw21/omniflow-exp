@@ -2006,6 +2006,7 @@ def _refresh_data_index_unlocked(
             memory_source_index[str(task)] = item
             continue
         item["retained_source_run_log"] = canonical_source["object_path"]
+        item["retained_source_run_log_sha256"] = canonical_source["sha256"]
         source_state_catalog = raw_item.get("source_state_catalog") or raw_item.get(
             "transfer_state_catalog"
         )
