@@ -4862,6 +4862,7 @@ def build_appagent_command(
     demo_name: str = "",
     max_steps: int,
     timeout_sec: int,
+    model: str = "",
     task_random_seed: int | None,
     fixed_task_seed: bool,
     fixed_task_params: bool,
@@ -4903,7 +4904,7 @@ def build_appagent_command(
     ).rstrip("/")
     if not endpoint.endswith("/chat/completions"):
         endpoint += "/chat/completions"
-    model = str(runtime_env.get("OPENAI_MODEL") or "").strip()
+    model = str(model or runtime_env.get("OPENAI_MODEL") or "").strip()
     from src.integrations.official_forward import prepare_appagent_workspace
 
     forward = prepare_appagent_workspace(
@@ -4980,6 +4981,7 @@ def build_appagent_command(
         argv=argv,
         env={
             "ANDROID_SERIAL": target.serial,
+            "OPENAI_MODEL": model,
             "PATH": str(Path(forward["adb_proxy"]).parent)
             + os.pathsep
             + runtime_env.get("PATH", ""),
@@ -5945,6 +5947,9 @@ def run_task(args: argparse.Namespace) -> int:
                     docs_root=appagent_docs_root,
                     max_steps=int(args.max_steps or MAX_STEPS),
                     timeout_sec=int(args.timeout_sec or 0),
+                    model=str(
+                        getattr(args, "appagent_model", APPAGENT_MODEL)
+                    ),
                     task_random_seed=task_seed,
                     fixed_task_seed=not bool(args.no_fixed_task_seed),
                     fixed_task_params=not bool(args.no_fixed_task_params),

@@ -1515,6 +1515,7 @@ def test_appagent_warm_command_mounts_native_docs_memory(
         docs_root=docs_root,
         max_steps=20,
         timeout_sec=60,
+        model="GLM-4.6V",
         task_random_seed=113,
         fixed_task_seed=True,
         fixed_task_params=True,
@@ -1538,3 +1539,4 @@ def test_appagent_warm_command_mounts_native_docs_memory(
     assert spec.metadata["official_wrapper"].endswith("/run.py")
     assert spec.stdin_text == ""
     assert spec.metadata["external_forward_only"] is True
+    assert spec.env["OPENAI_MODEL"] == "GLM-4.6V"
