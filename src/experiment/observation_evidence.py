@@ -114,15 +114,22 @@ class AndroidWorldEpisodeRecorder:
         the official agent.  Persistent missing XML remains a hard evidence
         failure; this does not fabricate UI data or replay an old observation.
         """
-        try:
-            self._capture_state(state)
-            return state
-        except ValueError as error:
-            if str(error) != "androidworld_run_log_observation_xml_required":
-                raise
-            refreshed_state = self._get_state(*args, **kwargs)
-            self._capture_state(refreshed_state)
-            return refreshed_state
+        candidate = state
+        for attempt in range(4):
+            try:
+                self._capture_state(candidate)
+                return candidate
+            except ValueError as error:
+                if str(error) != "androidworld_run_log_observation_xml_required":
+                    raise
+                if attempt >= 3:
+                    raise
+                # The official accessibility forwarder can lag one or two
+                # frames behind an app transition.  Re-read the official
+                # state instead of persisting an incomplete observation.
+                time.sleep(0.25)
+                candidate = self._get_state(*args, **kwargs)
+        raise AssertionError("unreachable_androidworld_observation_retry")
 
     def execute_action(self, action: Any, *args: Any, **kwargs: Any) -> Any:
         if self.performance_metrics is None:
