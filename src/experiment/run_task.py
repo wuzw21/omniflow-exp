@@ -52,6 +52,7 @@ from src.experiment.androidworld_paths import (
 )
 from src.experiment.protocol import (
     ANDROIDWORLD_REVISION,
+    APPAGENT_MODEL,
     DEFAULT_DEVICE,
     DEFAULT_METHOD,
     EPISODE_TIMEOUT_SEC,
