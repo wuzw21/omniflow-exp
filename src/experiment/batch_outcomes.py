@@ -600,6 +600,8 @@ def summarize_results(
                     counts["pending"] += 1
                 rows.append(row)
     model_calls = sum(int(row["model_calls"]) for row in rows)
+    prompt_tokens = sum(int(row["prompt_tokens"]) for row in rows)
+    completion_tokens = sum(int(row["completion_tokens"]) for row in rows)
     total_tokens = sum(int(row["total_tokens"]) for row in rows)
     summary = {
         "schema_version": "omniflow.androidworld.result-summary.v1",
@@ -608,6 +610,8 @@ def summarize_results(
         "evaluation_seed": int(evaluation_seed),
         "counts": counts,
         "model_calls": model_calls,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
         "episode_duration_sec": round(
             sum(_number(row["episode_duration_sec"]) for row in rows), 6

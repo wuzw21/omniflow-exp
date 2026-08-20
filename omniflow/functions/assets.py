@@ -721,7 +721,9 @@ def _materialize_canonical_run_log(
 
     def visit(value: Any) -> None:
         if isinstance(value, dict):
-            pixels = value.get("pixels")
+            pixels = value.get("screenshot")
+            if pixels is None:
+                pixels = value.get("pixels")
             if isinstance(pixels, dict) and pixels.get("path"):
                 digest = str(pixels.get("sha256") or "").strip().lower()
                 mime_type = str(pixels.get("mime_type") or "").strip()
@@ -2410,6 +2412,7 @@ def _source_page_summary(observation: dict[str, Any]) -> dict[str, Any]:
     )
     labels: list[str] = []
     xml = observation_xml(observation)
+    root: ET.Element | None = None
     if xml:
         try:
             root = ET.fromstring(xml)
@@ -2426,14 +2429,23 @@ def _source_page_summary(observation: dict[str, Any]) -> dict[str, Any]:
                 if len(labels) == 20:
                     break
     package = str(auxiliaries.get("package_name") or "")
+    if not package and root is not None:
+        packages = [
+            str(node.attrib.get("package") or "").strip()
+            for node in root.iter()
+            if str(node.attrib.get("package") or "").strip()
+        ]
+        package = (packages or [""])[-1]
     return {
         "package": package,
         "activity": str(auxiliaries.get("activity_name") or ""),
         "is_launcher": "launcher" in package.casefold(),
         "visible_labels": labels,
         "screenshot": (
-            observation.get("pixels", {}).get("path")
-            if isinstance(observation.get("pixels"), dict)
+            (observation.get("screenshot") or observation.get("pixels") or {}).get("path")
+            if isinstance(
+                observation.get("screenshot") or observation.get("pixels"), dict
+            )
             else None
         ),
     }

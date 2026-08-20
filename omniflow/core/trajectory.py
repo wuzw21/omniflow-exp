@@ -48,11 +48,15 @@ def canonicalize_run_log(value: dict[str, Any]) -> dict[str, Any]:
     canonical = _copy(value)
     canonical["steps"] = [canonicalize_run_log_step(step) for step in value["steps"]]
     for step in canonical["steps"]:
-        _validate_screenshot_reference(step["observation"].get("pixels"))
+        _validate_screenshot_reference(observation_screenshot(step["observation"]))
         if "next_observation" in step:
-            _validate_screenshot_reference(step["next_observation"].get("pixels"))
+            _validate_screenshot_reference(
+                observation_screenshot(step["next_observation"])
+            )
     if "final_observation" in canonical:
-        _validate_screenshot_reference(canonical["final_observation"].get("pixels"))
+        _validate_screenshot_reference(
+            observation_screenshot(canonical["final_observation"])
+        )
     provenance = canonical["provenance"]
     if provenance["kind"] == "legacy_import":
         required = {"source_path", "source_sha256", "source_schema_version"}
@@ -131,7 +135,10 @@ def state_id(observation: dict[str, Any]) -> str:
         if explicit:
             return explicit
     identity = _copy(observation)
-    identity["pixels"] = None
+    if "screenshot" in identity:
+        identity["screenshot"] = None
+    if "pixels" in identity:
+        identity["pixels"] = None
     encoded = json.dumps(
         identity,
         ensure_ascii=False,
@@ -142,7 +149,7 @@ def state_id(observation: dict[str, Any]) -> str:
 
 
 def observation_display(observation: dict[str, Any]) -> tuple[int, int] | None:
-    pixels = observation.get("pixels")
+    pixels = observation_screenshot(observation)
     if isinstance(pixels, dict):
         return int(pixels["width"]), int(pixels["height"])
     auxiliaries = observation.get("auxiliaries")
@@ -163,6 +170,9 @@ def observation_display(observation: dict[str, Any]) -> tuple[int, int] | None:
 
 
 def observation_xml(observation: dict[str, Any]) -> str:
+    xml = observation.get("xml")
+    if isinstance(xml, str) and xml.strip():
+        return xml.strip()
     value = observation.get("forest")
     if isinstance(value, str):
         return value
@@ -170,6 +180,12 @@ def observation_xml(observation: dict[str, Any]) -> str:
     if value is None or display is None:
         return ""
     return androidworld_forest_xml(value, screen_size=display)
+
+
+def observation_screenshot(observation: dict[str, Any]) -> Any:
+    """Return the canonical screenshot reference, accepting legacy pixels."""
+    screenshot = observation.get("screenshot")
+    return screenshot if screenshot is not None else observation.get("pixels")
 
 
 def _validate_screenshot_reference(value: Any) -> None:

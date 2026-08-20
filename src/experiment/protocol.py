@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from omniflow.core.config import ANDROIDWORLD_PROTOCOL, DEFAULT_MAX_STEPS
 
 METHODS = tuple(str(value) for value in ANDROIDWORLD_PROTOCOL["methods"])
@@ -28,7 +30,7 @@ SUPPLEMENTAL_DEVICES = tuple(
 )
 SUPPLEMENTAL_RESULTS_NAMESPACE = str(
     _SUPPLEMENTAL.get("results_namespace")
-    or "androidworld_validator/supplemental/autodroid_9207"
+    or "androidworld/.archive/outcomes/autodroid"
 )
 DEVICE_AVDS = tuple(
     (str(device["serial"]), str(device["avd"]))
@@ -77,7 +79,10 @@ FORMAL_MODEL_ENDPOINT_PROFILE = str(
     ANDROIDWORLD_PROTOCOL["model_endpoint_profile"]
 )
 FORMAL_MODEL_BASE_URL = str(ANDROIDWORLD_PROTOCOL["model_base_url"])
-ANDROIDWORLD_REVISION = str(ANDROIDWORLD_PROTOCOL["androidworld_revision"])
+ANDROIDWORLD_REVISION = str(
+    os.environ.get("OMNIFLOW_ANDROIDWORLD_REVISION")
+    or ANDROIDWORLD_PROTOCOL["androidworld_revision"]
+)
 _DROIDRUN = ANDROIDWORLD_PROTOCOL["droidrun"]
 DROIDRUN_VERSION = str(_DROIDRUN["version"])
 DROIDRUN_COMMIT = str(_DROIDRUN["commit"])

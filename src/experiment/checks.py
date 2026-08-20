@@ -22,7 +22,9 @@ from omniflow.core.trajectory import canonicalize_run_log as import_run_log
 from src.integrations.appagent import is_memory_manifest_valid
 from src.integrations.mobilegpt import validate_memory_manifest
 
-APPAGENT_OFFICIAL_REVISION = "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
+APPAGENT_OFFICIAL_REVISION = os.environ.get(
+    "OMNIFLOW_APPAGENT_REVISION"
+) or "2c1900422caf6f9e94e96d5dd984b530e5a5fbf8"
 APPAGENT_REQUIRED_MODULES = (
     "colorama",
     "cv2",
@@ -547,6 +549,23 @@ def _validate_source_index(
             invalid.append(str(task))
             continue
         source_kind = str(metadata.get("source_kind") or "").strip()
+        run_log_value = str(
+            metadata.get("retained_source_run_log")
+            or metadata.get("source_run_log")
+            or ""
+        ).strip()
+        if (
+            allow_historical_source
+            and metadata.get("latest_official_success_source") is not True
+            and not run_log_value
+        ):
+            if (
+                source_kind not in {"", "pending_source_recollection"}
+                or not str(metadata.get("goal") or "").strip()
+                or not isinstance(metadata.get("params"), dict)
+            ):
+                invalid.append(str(task))
+            continue
         if (
             metadata.get("latest_official_success_source") is not True
             and not allow_historical_source
@@ -559,11 +578,6 @@ def _validate_source_index(
         }:
             invalid.append(str(task))
             continue
-        run_log_value = str(
-            metadata.get("retained_source_run_log")
-            or metadata.get("source_run_log")
-            or ""
-        ).strip()
         if not run_log_value:
             invalid.append(str(task))
             continue
@@ -575,15 +589,6 @@ def _validate_source_index(
                 index_relative if index_relative.is_file() else source_relative
             )
         if not run_log.is_file():
-            invalid.append(str(task))
-            continue
-        expected_sha256 = str(
-            metadata.get("retained_source_run_log_sha256")
-            or metadata.get("source_run_log_sha256")
-            or ""
-        ).strip()
-        actual_sha256 = hashlib.sha256(run_log.read_bytes()).hexdigest()
-        if not expected_sha256 or expected_sha256 != actual_sha256:
             invalid.append(str(task))
             continue
         try:

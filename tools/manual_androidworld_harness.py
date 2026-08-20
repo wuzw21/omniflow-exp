@@ -21,7 +21,6 @@ from pathlib import Path
 import sys
 import time
 from typing import Any
-import uuid
 
 
 def _jsonable(value: Any) -> Any:
@@ -114,22 +113,27 @@ class ManualAndroidWorld:
             adb_path=args.adb_path,
             grpc_port=args.grpc_port or args.console_port + 3000,
             install_a11y_forwarding_app=bool(args.install_a11y_forwarder),
-            perform_emulator_setup=True,
-            use_uiautomator=True,
+            perform_emulator_setup=not bool(args.skip_emulator_setup),
+            use_uiautomator=not bool(args.install_a11y_forwarder),
         )
         self._env = startup.env
         self._resolve_androidworld_app_name = resolve_androidworld_app_name
         self._root = Path(args.output).expanduser().resolve()
         self._images = self._root / "observations" / "objects"
         self._images.mkdir(parents=True, exist_ok=True)
-        self._run_id = f"manual_{uuid.uuid4().hex}"
+        self._run_id = self._root.name
         self._device_serial = f"emulator-{int(args.console_port)}"
+        self._source_seed = int(args.seed)
         self._started_ms = int(time.time() * 1000)
         self._steps: list[dict[str, Any]] = []
         self._last_observation: dict[str, Any] | None = None
+        self._last_ui_elements: list[Any] = []
         self._finished = False
         self._validation_reasoning = ""
-        self._write_run_log(status="running", success=False, reward=0.0)
+        # Persist a schema-valid recovery checkpoint while the interactive
+        # attempt is still incomplete. A later official validation overwrites
+        # it with the final succeeded/failed result.
+        self._write_run_log(status="failed", success=False, reward=0.0)
 
     @property
     def goal(self) -> str:
@@ -137,6 +141,9 @@ class ManualAndroidWorld:
 
     def _observation(self, state: Any, index: int) -> dict[str, Any]:
         from PIL import Image
+        from src.experiment.observation_evidence import (
+            canonicalize_run_log_observation,
+        )
 
         image = Image.fromarray(state.pixels)
         raw_path = self._root / "observations" / f"{index:04d}.png"
@@ -147,7 +154,10 @@ class ManualAndroidWorld:
         if not object_path.exists():
             object_path.write_bytes(data)
         raw_path.unlink(missing_ok=True)
-        return {
+        # The AndroidWorld SDK state remains native internally, but the
+        # persisted manual RunLog uses the same compact contract as the main
+        # recorder: screenshot + XML only.
+        return canonicalize_run_log_observation({
             "pixels": {
                 "path": str(object_path),
                 "sha256": digest,
@@ -158,10 +168,11 @@ class ManualAndroidWorld:
             "forest": _jsonable(state.forest),
             "ui_elements": _jsonable(state.ui_elements),
             "auxiliaries": _jsonable(state.auxiliaries or {}),
-        }
+        })
 
     def observe(self, *, stable: bool = True) -> dict[str, Any]:
         state = self._env.get_state(wait_to_stabilize=stable)
+        self._last_ui_elements = list(_jsonable(state.ui_elements) or [])
         self._last_observation = self._observation(state, len(self._steps))
         return {
             "ok": True,
@@ -177,7 +188,7 @@ class ManualAndroidWorld:
         # a delayed manual decision cannot click an index from an old screen.
         self.observe()
         index = _find_ui_element_index(
-            self._last_observation["ui_elements"],
+            self._last_ui_elements,
             resource_name=selector.get("resource_name"),
             text=selector.get("text"),
             content_description=selector.get("content_description"),
@@ -255,8 +266,10 @@ class ManualAndroidWorld:
         if clean_action_payload.get("action_type") == "wait" and "duration" in clean_action_payload:
             time.sleep(max(0.0, duration))
         after = self.observe()["observation"]
-        after_pixels = (
-            after.get("pixels")
+        after_screenshot = (
+            after.get("screenshot")
+            if isinstance(after, dict) and isinstance(after.get("screenshot"), dict)
+            else after.get("pixels")
             if isinstance(after, dict) and isinstance(after.get("pixels"), dict)
             else {}
         )
@@ -271,8 +284,8 @@ class ManualAndroidWorld:
                     "decision": "manual_codex",
                     "source": "native_androidworld",
                     "reasoning": reasoning,
-                    "screenshot_path": after_pixels.get("path"),
-                    "screenshot_sha256": after_pixels.get("sha256"),
+                    "screenshot_path": after_screenshot.get("path"),
+                    "screenshot_sha256": after_screenshot.get("sha256"),
                 },
             }
         )
@@ -299,15 +312,13 @@ class ManualAndroidWorld:
             "task_name": self._task.name,
             "goal": self.goal,
             "task_parameters": _jsonable(self._task.params),
-            "seed": self._task.params.get("seed"),
+            "seed": self._source_seed,
             "status": status,
             "success": success,
             "validator": {"official": True, "success": success, "reward": reward},
             "provenance": {
                 "kind": "manual_native_androidworld",
             },
-            "started_at_ms": self._started_ms,
-            "finished_at_ms": int(time.time() * 1000),
             "steps": self._steps,
             "final_observation": self._last_observation,
             "diagnostics": {
@@ -336,7 +347,7 @@ class ManualAndroidWorld:
     def close(self) -> None:
         try:
             if not self._finished:
-                self._write_run_log(status="aborted", success=False, reward=0.0)
+                self._write_run_log(status="failed", success=False, reward=0.0)
             self._task.tear_down(self._env)
         finally:
             close = getattr(self._env, "close", None)
@@ -358,6 +369,11 @@ def main() -> int:
         "--install-a11y-forwarder",
         action="store_true",
         help="Install the official forwarder APK during startup when absent.",
+    )
+    parser.add_argument(
+        "--skip-emulator-setup",
+        action="store_true",
+        help="Reuse an already prepared source emulator without repeating app setup.",
     )
     args = parser.parse_args()
     harness = ManualAndroidWorld(args)

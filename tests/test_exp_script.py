@@ -843,7 +843,7 @@ def test_missing_protocol_avd_is_provisioned_by_shared_helper(
     assert marker.exists()
 
 
-def test_default_topology_lists_all_distinct_avds(
+def test_default_topology_maps_device_aliases_to_physical_avds(
     tmp_path: Path,
 ) -> None:
     script_prefix = tmp_path / "script-prefix.sh"
@@ -877,7 +877,7 @@ def test_default_topology_lists_all_distinct_avds(
         "source5560:emulator-5560:5560",
         "small5554:emulator-5554:5554",
         (
-            "emulator-5554=OmniFlowTargetSmall,emulator-5562=OmniFlowAW_r25,"
+            "emulator-5554=OmniFlowTargetSmall,emulator-5562=OmniFlowTargetSmall,"
             "emulator-5564=OmniFlowTargetFold,"
             "emulator-5560=OmniFlowSourceSmall"
         ),
@@ -886,7 +886,9 @@ def test_default_topology_lists_all_distinct_avds(
         mapping.split("=", maxsplit=1)[1]
         for mapping in completed.stdout.splitlines()[2].split(",")
     ]
-    assert len(avd_names) == len(set(avd_names)) == 4
+    assert len(avd_names) == 4
+    assert len(set(avd_names)) == 3
+    assert avd_names.count("OmniFlowTargetSmall") == 2
 
 
 @pytest.mark.parametrize(
@@ -976,6 +978,13 @@ def test_check_only_is_read_only_before_any_runtime_output(
         "width": 8,
         "height": 6,
         "mime_type": "image/png",
+    }
+    run_log["steps"][0]["next_observation"] = dict(
+        run_log["steps"][0]["observation"]
+    )
+    run_log["steps"][0]["metadata"] = {
+        "reasoning": "Open Settings and turn Bluetooth on.",
+        "screenshot_path": str(screenshot.resolve()),
     }
     source_run_log = assets / "source.run_log.json"
     source_run_log.write_text(

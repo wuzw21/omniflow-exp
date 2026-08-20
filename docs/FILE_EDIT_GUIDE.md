@@ -141,7 +141,7 @@ rg --files -g '*.py' | sort
 | `src/integrations/mobilegpt_format.py` | 只调用 MobileGPT 官方 XML Encoder；不运行、不 patch MobileGPT |
 | `src/integrations/appagent.py` | AppAgent native memory conversion/validation；不拥有执行调度 |
 | `src/integrations/official_forward.py` | 唯一外部 baseline forwarder；只准备临时 workspace、设备和官方入口，不实现 parser/controller/action loop |
-| `data/runtime/autodroid/androidworld_apps` + `official_forward.py` | AutoDroid 官方 DroidBot memory 与 replay forward；不转换为 OmniFlow schema，不复制 action loop |
+| `vendor/autodroid/androidworld_apps` + `official_forward.py` | AutoDroid 官方 DroidBot memory 与 replay forward；不转换为 OmniFlow schema，不复制 action loop |
 | `src/integrations/bmoca.py` | B-MoCA DeviceDriver、episode 和 official reward adapter |
 | `src/integrations/script_replay.py` | 完整 Function 的共享 replay 薄适配器；禁止私有 mapper/executor |
 | `src/integrations/skilldroid_replay.py` | DroidRun v0.5.6 官方 MacroPlayer adapter |

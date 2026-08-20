@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -107,3 +108,26 @@ def test_act_requires_reasoning_before_executing_action():
 
     with pytest.raises(ValueError, match="reasoning_required"):
         harness.act({"action_type": "wait"})
+
+
+def test_run_log_records_protocol_source_seed_not_task_parameter_seed(tmp_path):
+    harness = ManualAndroidWorld.__new__(ManualAndroidWorld)
+    harness._root = tmp_path
+    harness._run_id = "manual_test"
+    harness._task = SimpleNamespace(
+        name="ExampleTask",
+        goal="Complete the example",
+        params={"seed": 987654321, "value": "kept"},
+    )
+    harness._source_seed = 111
+    harness._started_ms = 1
+    harness._steps = []
+    harness._last_observation = None
+    harness._validation_reasoning = ""
+    harness._device_serial = "emulator-5560"
+
+    harness._write_run_log(status="running", success=False, reward=0.0)
+
+    payload = json.loads((tmp_path / "run_log.json").read_text())
+    assert payload["seed"] == 111
+    assert payload["task_parameters"] == {"seed": 987654321, "value": "kept"}

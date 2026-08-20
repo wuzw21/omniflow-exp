@@ -35,7 +35,23 @@ bash scripts/exp/run_androidworld.sh \
 4. 校验通过后，在指定设备上执行 E2E。
 
 Function 检查失败时不会启动 target episode。source seed 固定为 `111`，
-evaluation seed 固定为 `113`，正式模型为 `GLM-5.1`。
+evaluation seed 固定为 `113`，正式模型为 `GLM-4.6V`。
+
+## 数据目录
+
+AndroidWorld 可见实验证据统一写入：
+
+```text
+data/androidworld/<task>/<method>/<device_model>_seed.../
+```
+
+每个 setting 下按 `runlog/<attempt>/`、`memory/<attempt>/` 和 `result/`
+保存历史版本；设备 CLI alias 只写 provenance，不进入目录名。B-MoCA 始终
+独立位于 `data/bmoca/`，内容寻址原对象和全局调度证据位于
+`data/androidworld/.archive/`。完成情况见
+[`data/androidworld/COMPLETION_STATUS.md`](data/androidworld/COMPLETION_STATUS.md)，
+可直接转换 memory 的 source 候选见
+[`data/androidworld/MEMORY_READY_SOURCES.md`](data/androidworld/MEMORY_READY_SOURCES.md)。
 
 ## 选择方案或全矩阵
 
@@ -69,7 +85,8 @@ bash scripts/exp/run_androidworld.sh --setup-device all
 
 setup 会安装并启动 OOB、MobileGPT、AndroidWorld accessibility forwarder，
 检查 AndroidWorld、AppAgent、MobileGPT、OmniTransfer 和模型环境，并通过
-OOB observe bridge 验收设备；报告位于 `data/setup/<UTC>/setup_report.json`。
+OOB observe bridge 验收设备；报告位于
+`data/androidworld/.archive/setup/<UTC>/setup_report.json`。
 
 ## 其他入口
 

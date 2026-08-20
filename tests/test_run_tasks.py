@@ -13,10 +13,12 @@ from runlog_fixtures import androidworld_run_log
 
 from omniflow.functions.assets import function_authoring_tool
 from src.experiment.run_task import (
+    DeviceTarget,
     _function_lineage_item,
     _read_object,
     _t3a_hint_source_node,
     build_mobilegpt_server_command,
+    build_autodroid_command,
     build_task_command,
 )
 from src.experiment.source_records import CanonicalRunLog
@@ -31,9 +33,12 @@ from src.experiment.run_tasks import (
     _function_replay_success,
     _e2e_devices,
     _e2e_methods,
+    _autodroid_task_params_from_index,
     _supplemental_outcomes_root,
     _max_live_bmoca_results,
+    _next_source_attempt_id,
     _parse_source_device,
+    _published_official_result_row,
     _report,
     _resolve_args,
     _run_bmoca_method_results,
@@ -92,10 +97,29 @@ def _args(tmp_path: Path) -> SimpleNamespace:
         adb_path=tmp_path / "adb",
         source_model="glm-5.1",
         source_device=SOURCE_DEVICE,
+        source_avd=SOURCE_AVD,
         source_qualification_only=False,
         source_only=False,
         dry_run=False,
     )
+
+
+def test_next_source_attempt_id_uses_unified_monotonic_name(tmp_path: Path) -> None:
+    args = _args(tmp_path)
+    root = (
+        args.results_root
+        / "androidworld"
+        / args.task
+        / "source"
+        / f"{args.source_avd}_seed{SOURCE_SEED}"
+        / "runlog"
+    )
+    (root / "legacy_name").mkdir(parents=True)
+    (root / "attempt_001").mkdir()
+    (root / "attempt_007").mkdir()
+    (root / "attempt_invalid").mkdir()
+
+    assert _next_source_attempt_id(args) == "attempt_008"
 
 
 def test_t3a_hint_uses_function_store_source_lineage(tmp_path: Path) -> None:
@@ -388,7 +412,7 @@ def test_autodroid_is_explicit_supplemental_only() -> None:
             e2e_method="autodroid",
             results_root=Path("/tmp/omniflow-results"),
         )
-    ) == Path("/tmp/omniflow-results") / SUPPLEMENTAL_RESULTS_NAMESPACE / "result_outcomes"
+    ) == Path("/tmp/omniflow-results") / SUPPLEMENTAL_RESULTS_NAMESPACE
 
     with pytest.raises(ValueError, match="supplemental_method_must_run_alone"):
         _e2e_methods(SimpleNamespace(e2e_method="omniflow,autodroid"))
@@ -403,6 +427,54 @@ def test_autodroid_is_explicit_supplemental_only() -> None:
     all_selected = SimpleNamespace(e2e_method="all", e2e_device="all")
     assert _e2e_methods(all_selected) == METHODS
     assert _e2e_devices(all_selected) == DEVICES
+
+
+def test_autodroid_task_policy_uses_official_goal_command(
+    tmp_path: Path,
+) -> None:
+    official_root = tmp_path / "autodroid"
+    memory_root = tmp_path / "memory"
+    (official_root / "droidbot").mkdir(parents=True)
+    (official_root / "droidbot" / "start.py").write_text("", encoding="utf-8")
+    memory_root.mkdir()
+    (memory_root / "memory_manifest.json").write_text(
+        '{"format":"autodroid-droidbot-memory-manifest-v1","apps":[{"name":"camera"}],"device":{}}\n',
+        encoding="utf-8",
+    )
+    item = CanonicalRunLog(
+        task="CameraTakePhoto",
+        goal="Take a photo",
+        params={"camera": "rear"},
+        source_run_log=tmp_path / "source.json",
+        replay_seed=111,
+        step_count=0,
+        meta={},
+    )
+
+    spec = build_autodroid_command(
+        item,
+        method_name="autodroid",
+        target=DeviceTarget("autodroid9207", "emulator-5590", 5590),
+        android_world_root=tmp_path / "android-world",
+        output_root=tmp_path / "output",
+        autodroid_root=official_root,
+        autodroid_memory_root=memory_root,
+        autodroid_policy="task",
+        max_steps=20,
+        timeout_sec=100,
+        task_random_seed=113,
+        fixed_task_seed=True,
+        fixed_task_params=True,
+        task_params_override=item.params,
+        perform_emulator_setup=False,
+        adb_path="/usr/bin/adb",
+        repo_root=tmp_path,
+    )
+
+    assert "--policy" in spec.argv
+    assert spec.argv[spec.argv.index("--policy") + 1] == "task"
+    assert spec.argv[spec.argv.index("--goal") + 1] == "Take a photo"
+    assert spec.metadata["official_policy"] == "task"
 
 
 def test_e2e_function_check_creates_and_validates_missing_store(
@@ -1188,11 +1260,13 @@ def test_result_environment_uses_orchestrator_budget_and_child_guard(
         appagent_memory=None,
     )
 
-    result_attempt_id = "attempt-test.t3a_hint.small5554"
     assert environment["OMNIFLOW_BATCH_CHILD"] == "1"
-    assert environment["OMNIFLOW_BATCH_ATTEMPT_ID"] == result_attempt_id
+    assert environment["OMNIFLOW_BATCH_ATTEMPT_ID"] == "attempt_001"
     assert environment["OMNIFLOW_ANDROIDWORLD_MAX_STEPS"] == "7"
     assert environment["OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS"] == "2"
+    assert environment["OMNIFLOW_ANDROIDWORLD_ARCHIVE_ROOT"] == str(
+        args.results_root / "androidworld"
+    )
     assert "OMNIFLOW_ANDROIDWORLD_STORE_PATH" not in environment
 
 
@@ -1502,6 +1576,63 @@ def test_target_workers_continue_after_method_result_conclusion(
     assert len([row for row in recorded if row["status"] == "method_failed"]) == len(
         DEVICES
     )
+
+
+def test_published_result_row_reads_native_summary_and_raw_validator_result(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path)
+    args.task = "CameraTakePhoto"
+    archive = args.results_root / "androidworld" / args.task / "fixed_replay" / "target"
+    archive.mkdir(parents=True)
+    marker = "attempt-test.fixed_replay.small5554"
+    (archive / marker / "result_summary.json").parent.mkdir(parents=True)
+    (archive / marker / "result_summary.json").write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "task": args.task,
+                        "method": "fixed_replay",
+                        "device": "small5554",
+                        "validator_success": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    row = _published_official_result_row(
+        args=args,
+        attempt_id="attempt-test",
+        method="fixed_replay",
+        device="small5554",
+    )
+    assert row["validator_success"] is True
+    assert row["official_validator_success"] is True
+
+    raw_archive = args.results_root / "androidworld" / args.task / "omniflow" / "target"
+    raw_archive.mkdir(parents=True)
+    raw_marker = "attempt-raw.omniflow.small5554"
+    raw_path = raw_archive / raw_marker / "task_results.jsonl"
+    raw_path.parent.mkdir(parents=True)
+    raw_path.write_text(
+        json.dumps(
+            {
+                "official_validator_used": True,
+                "androidworld_validator_result": {"success": False},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    raw_row = _published_official_result_row(
+        args=args,
+        attempt_id="attempt-raw",
+        method="omniflow",
+        device="small5554",
+    )
+    assert raw_row["validator_success"] is False
 
 
 def test_blocked_cells_do_not_duplicate_shared_prep_accounting(
@@ -1838,6 +1969,67 @@ def test_autodroid_pipeline_uses_task_reference_without_source_runlog(
     assert phases["source"]["status"] == "skipped"
     assert phases["source"]["task_params"] == {"shape": "circle"}
     assert phases["source"]["task_reference_index"] == str(args.memory_index)
+
+
+def test_autodroid_task_params_fall_back_to_retained_source_runlog(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "source.run_log.json"
+    source_path.write_text(
+        json.dumps(
+            {
+                "task_parameters": {
+                    "row_objects": [{"name": "Bike Repairs"}],
+                    "seed": 111,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    index_path = tmp_path / "current.json"
+    index_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.data-index.v2",
+                "canonical": {},
+                "source_index": {
+                    "ExpenseDeleteSingle": {
+                        "params": {},
+                        "retained_source_run_log": str(source_path),
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _autodroid_task_params_from_index(
+        index_path,
+        "ExpenseDeleteSingle",
+    ) == {"row_objects": [{"name": "Bike Repairs"}]}
+
+
+def test_autodroid_task_params_skip_missing_retained_source_runlog(
+    tmp_path: Path,
+) -> None:
+    index_path = tmp_path / "current.json"
+    index_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.data-index.v2",
+                "canonical": {},
+                "source_index": {
+                    "MarkorDeleteNote": {
+                        "params": {},
+                        "retained_source_run_log": str(tmp_path / "missing.json"),
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _autodroid_task_params_from_index(index_path, "MarkorDeleteNote") == {}
 
 
 def test_source_only_pipeline_collects_replayed_source_and_stops(

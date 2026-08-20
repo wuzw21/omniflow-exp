@@ -112,6 +112,9 @@ def androidworld_elements_xml(elements: list[Any]) -> str:
 
 
 def androidworld_observation_xml(observation: dict[str, Any]) -> str:
+    xml = observation.get("xml")
+    if isinstance(xml, str) and xml.strip():
+        return xml.strip()
     forest = observation.get("forest")
     if isinstance(forest, str) and forest.strip():
         return forest.strip()
@@ -138,7 +141,10 @@ def androidworld_observation_package(observation: dict[str, Any]) -> str:
     ]
     packages = [package for package in packages if package]
     non_system = [package for package in packages if package != "com.android.systemui"]
-    return (non_system or packages or [""])[-1]
+    package = (non_system or packages or [""])[-1]
+    if package:
+        return package
+    return _package_from_xml(androidworld_observation_xml(observation))
 
 
 def _xml_semantic_score(xml_text: str) -> tuple[int, int, int, int]:

@@ -7,12 +7,12 @@ import json
 from pathlib import Path
 import time
 from typing import Any, Callable
-import uuid
 
 from omniflow.core.trajectory import (
     OMNIFLOW_RUN_LOG_SCHEMA_VERSION,
     canonicalize_androidworld_action,
     canonicalize_run_log,
+    observation_xml,
     state_id,
 )
 from omniflow.transfer.runtime import TRANSFER_STATE_CATALOG_VERSION
@@ -52,7 +52,6 @@ class AndroidWorldEpisodeRecorder:
         self._execute_action = execute_action
         self._evidence_root = Path(evidence_root).expanduser().resolve()
         self._active = False
-        self._started_at_ms: int | None = None
         self._latest_observation: dict[str, Any] | None = None
         self._observations: list[dict[str, Any]] = []
         self._steps: list[dict[str, Any]] = []
@@ -71,7 +70,6 @@ class AndroidWorldEpisodeRecorder:
         if self._active:
             return
         self._active = True
-        self._started_at_ms = int(time.time() * 1000)
 
     def get_state(self, *args: Any, **kwargs: Any) -> Any:
         if self.performance_metrics is None:
@@ -234,7 +232,7 @@ class AndroidWorldEpisodeRecorder:
         final_observation = self._latest_observation
         payload: dict[str, Any] = {
             "schema_version": OMNIFLOW_RUN_LOG_SCHEMA_VERSION,
-            "run_id": f"run_{uuid.uuid4().hex}",
+            "run_id": self._evidence_root.name,
             "task_name": str(task_name or "").strip(),
             "goal": str(goal or ""),
             "task_parameters": _json_copy(task_parameters),
@@ -247,8 +245,6 @@ class AndroidWorldEpisodeRecorder:
                 "reward": max(0.0, float(validator_reward)),
             },
             "provenance": {"kind": "runtime"},
-            "started_at_ms": int(self._started_at_ms or int(time.time() * 1000)),
-            "finished_at_ms": int(time.time() * 1000),
             "steps": _json_copy(self._steps),
         }
         if isinstance(final_observation, dict):
@@ -258,8 +254,10 @@ class AndroidWorldEpisodeRecorder:
         return canonicalize_run_log(payload)
 
     def persist_observations(self) -> list[dict[str, Any]]:
-        observation_dir = self._evidence_root / "observations"
-        records = [
+        # RunLog observations already contain the screenshot path and XML.
+        # Return the compact summary for result reporting without writing a
+        # second observation index beside run_log.json.
+        return [
             _observation_index_record(
                 item,
                 observation_index=index,
@@ -267,17 +265,6 @@ class AndroidWorldEpisodeRecorder:
             )
             for index, item in enumerate(self._observations)
         ]
-        index = {
-            "schema_version": "omniflow.androidworld-observations.v1",
-            "observation_count": len(records),
-            "observations": records,
-        }
-        observation_dir.mkdir(parents=True, exist_ok=True)
-        _write_immutable(
-            observation_dir / "index.json",
-            _stable_json_bytes(index),
-        )
-        return records
 
     def _capture_state(self, state: Any) -> dict[str, Any]:
         observation = snapshot_androidworld_state(
@@ -309,10 +296,28 @@ def androidworld_json_action_dict(value: Any) -> dict[str, Any]:
 
 
 def canonicalize_run_log_observation(value: dict[str, Any]) -> dict[str, Any]:
-    """Copy the OmniFlow-owned AndroidWorld Observation representation."""
+    """Return the compact persisted observation: screenshot reference plus XML.
+
+    The four-field AndroidWorld snapshot remains accepted as a read/import
+    compatibility format, but is never emitted by the recorder.
+    """
+    if set(value) == {"screenshot", "xml"}:
+        if not isinstance(value.get("xml"), str) or not value["xml"].strip():
+            raise ValueError("androidworld_run_log_observation_xml_required")
+        return _json_copy(value)
     if set(value) != {"pixels", "forest", "ui_elements", "auxiliaries"}:
         raise ValueError("androidworld_run_log_observation_fields_invalid")
-    return _json_copy(value)
+    xml = observation_xml(value)
+    if not xml and value.get("ui_elements"):
+        # Some valid historical native AndroidWorld states have a populated
+        # element list but no forest.  Preserve the same UI information as XML
+        # instead of retaining the much larger compatibility representation.
+        from src.integrations.android_world.host import androidworld_elements_xml
+
+        xml = androidworld_elements_xml(list(value["ui_elements"])).strip()
+    if not xml:
+        raise ValueError("androidworld_run_log_observation_xml_required")
+    return {"screenshot": _json_copy(value.get("pixels")), "xml": xml}
 
 
 def persist_target_run_evidence(
@@ -326,12 +331,11 @@ def persist_target_run_evidence(
     root = Path(output_dir).expanduser().resolve()
     canonical_run = canonicalize_run_log(run_log)
     run_id = str(canonical_run["run_id"]).strip()
-    run_log_path = root / "target.run_log.json"
+    run_log_path = root / "run_log.json"
     run_log_bytes = _stable_json_bytes(canonical_run)
     _write_immutable(run_log_path, run_log_bytes)
     evidence = {
-        "target_run_log_path": str(run_log_path),
-        "target_run_log_sha256": hashlib.sha256(run_log_bytes).hexdigest(),
+        "run_log_path": str(run_log_path),
     }
     if captured_transfer_states is None and transfer_state_audit is None:
         return evidence
@@ -410,7 +414,9 @@ def _observation_index_record(
             text = str(auxiliaries.get(key) or "").strip()
             if text:
                 record[key] = text
-    pixels = observation.get("pixels")
+    pixels = observation.get("screenshot")
+    if pixels is None:
+        pixels = observation.get("pixels")
     if isinstance(pixels, dict):
         record.update(
             {

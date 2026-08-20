@@ -199,7 +199,9 @@ def _relocate_v1_screenshot_paths(
         observations.append(final_observation)
 
     for observation in observations:
-        pixels = observation.get("pixels")
+        pixels = observation.get("screenshot")
+        if pixels is None:
+            pixels = observation.get("pixels")
         if not isinstance(pixels, dict):
             continue
         raw_path = str(pixels.get("path") or "").strip()
@@ -332,6 +334,8 @@ def _hydrate_run_log_display(run_log: dict[str, Any]) -> dict[str, Any]:
 
     for observation in observations:
         if observation_display(observation) is not None:
+            continue
+        if "screenshot" in observation and "xml" in observation:
             continue
         auxiliaries = dict(observation.get("auxiliaries") or {})
         auxiliaries["display"] = {"width": width, "height": height}
@@ -552,7 +556,9 @@ def _transfer_state(observation: dict[str, Any]) -> dict[str, Any]:
     xml = observation_xml(observation)
     if xml:
         state["xml"] = xml
-    pixels = observation.get("pixels")
+    pixels = observation.get("screenshot")
+    if pixels is None:
+        pixels = observation.get("pixels")
     if isinstance(pixels, dict) and str(pixels.get("path") or "").strip():
         state["screenshot_path"] = str(pixels["path"]).strip()
     auxiliaries = observation.get("auxiliaries")

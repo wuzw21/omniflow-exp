@@ -69,7 +69,7 @@ def test_compact_result_row_is_idempotent_for_evidence_paths() -> None:
     ) == original
 
 
-def test_episode_recorder_preserves_every_observation_and_deduplicates_images(
+def test_episode_recorder_preserves_every_observation_with_sequential_images(
     tmp_path,
 ) -> None:
     states = [
@@ -105,16 +105,19 @@ def test_episode_recorder_preserves_every_observation_and_deduplicates_images(
     records = recorder.persist_observations()
 
     assert [record["observation_index"] for record in records] == [0, 1]
-    assert records[0]["path"] == records[1]["path"]
+    assert records[0]["path"] == "screenshots/screenshot_000001.png"
+    assert records[1]["path"] == "screenshots/screenshot_000002.png"
     assert records[0]["sha256"] == records[1]["sha256"]
     assert records[0]["display"] == {"width": 4, "height": 3}
-    assert records[0]["package_name"] == "com.android.settings"
-    assert len(list((tmp_path / "observations" / "objects").glob("*.png"))) == 1
-    assert json.loads((tmp_path / "observations" / "index.json").read_text()) == {
-        "schema_version": "omniflow.androidworld-observations.v1",
-        "observation_count": 2,
-        "observations": records,
+    assert set(records[0]) == {
+        "observation_index",
+        "state_id",
+        "display",
+        "path",
+        "sha256",
     }
+    assert len(list((tmp_path / "screenshots").glob("*.png"))) == 2
+    assert not (tmp_path / "observations").exists()
 
 
 def test_episode_recorder_accepts_an_observation_without_pixels(tmp_path) -> None:
@@ -141,8 +144,6 @@ def test_episode_recorder_accepts_an_observation_without_pixels(tmp_path) -> Non
         {
             "observation_index": 0,
             "state_id": records[0]["state_id"],
-            "package_name": "com.android.settings",
-            "activity_name": "com.android.settings/.Settings",
         }
     ]
 
@@ -189,8 +190,8 @@ def test_episode_recorder_records_action_and_official_validator_result(tmp_path)
         "x": 1,
         "y": 2,
     }
-    assert run_log["steps"][0]["observation"]["forest"] == "before"
-    assert run_log["steps"][0]["next_observation"]["forest"] == "after"
+    assert run_log["steps"][0]["observation"]["xml"] == "before"
+    assert run_log["steps"][0]["next_observation"]["xml"] == "after"
 
 
 def test_episode_recorder_records_an_action_exception(tmp_path) -> None:
@@ -456,8 +457,8 @@ def test_target_run_evidence_is_immutable_and_hash_addressable(tmp_path) -> None
     )
 
     assert first == second
+    assert Path(first["run_log_path"]).name == "run_log.json"
     for path_key, sha_key in (
-        ("target_run_log_path", "target_run_log_sha256"),
         ("target_transfer_states_path", "target_transfer_states_sha256"),
     ):
         path = Path(first[path_key])
@@ -477,10 +478,7 @@ def test_baseline_target_run_evidence_does_not_require_transfer_states(tmp_path)
 
     evidence = persist_target_run_evidence(tmp_path, run_log=run_log)
 
-    assert set(evidence) == {
-        "target_run_log_path",
-        "target_run_log_sha256",
-    }
+    assert evidence == {"run_log_path": str(tmp_path / "run_log.json")}
 
 
 def test_target_evidence_provenance_survives_metrics_aggregation(tmp_path) -> None:
@@ -492,8 +490,7 @@ def test_target_evidence_provenance_survives_metrics_aggregation(tmp_path) -> No
                 "task_name": "Task",
                 "official_validator_used": True,
                 "success": True,
-                "target_run_log_path": "/evidence/target.run_log.json",
-                "target_run_log_sha256": "run-sha",
+                "run_log_path": "/evidence/run_log.json",
                 "target_transfer_states_path": "/evidence/target.transfer_states.json",
                 "target_transfer_states_sha256": "states-sha",
                 "target_transfer_state_audit": {"complete": True},
@@ -505,7 +502,7 @@ def test_target_evidence_provenance_survives_metrics_aggregation(tmp_path) -> No
 
     row = aggregate_task_results([result_path])["per_task"][0]
 
-    assert row["target_run_log_sha256"] == "run-sha"
+    assert row["run_log_path"] == "/evidence/run_log.json"
     assert row["target_transfer_states_sha256"] == "states-sha"
     assert row["target_transfer_state_audit"] == {"complete": True}
 

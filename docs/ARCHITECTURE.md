@@ -143,6 +143,12 @@ baseline 记录时经过的五个位置：
 | `data_index.py` | 如何物化和读取唯一 Local Index？ | AndroidWorld runner 和 provider 内部校验细节 |
 | `source_records.py` | Source RunLog 的共享数据模型是什么？ | 读取、执行或转换 RunLog |
 
+### AndroidWorld observation persistence
+
+新采集和新转换的 RunLog observation 统一只保存两项：`screenshot`（带路径、尺寸、MIME 和 SHA-256 的截图引用）与 `xml`（完整 UI XML）。`forest`、`ui_elements` 和 `auxiliaries` 不再写入新的成功 source；旧 RunLog 的 `pixels` 及四字段 native snapshot 只由兼容读取路径接受。动作、结果、validator、reasoning 和截图哈希仍属于 RunLog 证据合同。
+
+这里的 schema `$defs.state` 是这份 compact observation 的复用定义，不是要求 RunLog 额外嵌套一个 JSON `state` 字段。AndroidWorld SDK 的 `get_state()` 仍返回原生 `state.pixels` 和 accessibility tree；只有进入 OmniFlow 持久化边界时，才投影为 `screenshot + xml`。
+
 `source_evidence.py` 曾经暴露 `convert_runlog_memory(method=...)`，让共享 source
 模块根据字符串选择 provider。这是已经删除的浅 seam：AppAgent 直接调用
 `convert_runlog_to_appagent_memory`，MobileGPT 直接调用

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+import json
 from pathlib import Path
+from types import SimpleNamespace
 import pytest
 
 from src.integrations.official_forward import (
@@ -8,8 +11,14 @@ from src.integrations.official_forward import (
     prepare_appagent_workspace,
     prepare_mobilegpt_server,
     resolve_mobilegpt_client_host,
+    run_appagent_executor,
     validate_autodroid_memory_root,
 )
+
+
+@contextmanager
+def _fake_androidworld_session(task: object):
+    yield object(), task
 
 
 def test_appagent_forwarder_only_mounts_official_inputs(tmp_path: Path) -> None:
@@ -41,7 +50,52 @@ def test_appagent_forwarder_only_mounts_official_inputs(tmp_path: Path) -> None:
     assert "Physical size:" in proxy_text
 
 
-def test_mobilegpt_forwarder_keeps_server_code_and_overlays_memory(
+def test_appagent_forwarder_writes_validator_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Task:
+        def is_successful(self, _env: object) -> float:
+            return 1.0
+
+    monkeypatch.setattr(
+        "src.integrations.official_forward._androidworld_task_startup",
+        lambda **_kwargs: _fake_androidworld_session(Task()),
+    )
+    monkeypatch.setattr(
+        "src.integrations.official_forward.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0),
+    )
+
+    output = tmp_path / "result"
+    assert run_appagent_executor(
+        python_executable="python",
+        executor=tmp_path / "task_executor.py",
+        app_name="settings",
+        serial="emulator-5554",
+        workspace=tmp_path / "workspace",
+        goal="Turn on Bluetooth",
+        timeout_sec=10,
+        android_world_root=tmp_path / "android-world",
+        task_name="TurnOffWifiAndTurnOnBluetooth",
+        task_params_json="{}",
+        task_seed=113,
+        console_port=5554,
+        grpc_port=8554,
+        adb_path="adb",
+        output_root=output,
+        perform_emulator_setup=False,
+    ) == 0
+
+    row = json.loads((output / "task_results.jsonl").read_text())
+    assert row["official_validator_used"] is True
+    assert row["official_validator_success"] is True
+    assert row["androidworld_validator_result"]["validator"] == (
+        "androidworld_official"
+    )
+
+
+def test_mobilegpt_forwarder_configures_staged_glm_models_and_overlays_memory(
     tmp_path: Path,
 ) -> None:
     official = tmp_path / "MobileGPT"
@@ -71,7 +125,7 @@ def test_mobilegpt_forwarder_keeps_server_code_and_overlays_memory(
     assert (staged / "memory" / "com.example.app" / "pages.csv").is_file()
 
 
-def test_mobilegpt_forwarder_configures_models_only_in_staging(
+def test_mobilegpt_forwarder_keeps_official_server_source_unchanged(
     tmp_path: Path,
 ) -> None:
     official = tmp_path / "MobileGPT"
@@ -86,8 +140,16 @@ def test_mobilegpt_forwarder_configures_models_only_in_staging(
     )
     (server / "utils" / "utils.py").write_text(
         'import os\n'
+        'import re\n'
         'def get_openai_embedding(text: str, model="text-embedding-3-small", **kwargs):\n'
-        '    return []\n',
+        '    return []\n'
+        'def parse_completion_rate(completion_rate):\n'
+        '    input_str = str(completion_rate).strip()\n'
+        '    if input_str.endswith("%"):\n'
+        '        return int(float(input_str[:-1]))\n'
+        '    else:\n'
+        '        value = float(input_str)\n'
+        '    return int(value)\n',
         encoding="utf-8",
     )
     (server / "agents" / "param_fill_agent.py").write_text(
@@ -107,18 +169,55 @@ def test_mobilegpt_forwarder_configures_models_only_in_staging(
     )
 
     staged = Path(result["server_root"])
-    staged_utils = (staged / "utils" / "utils.py").read_text(encoding="utf-8")
-    staged_main = (staged / "main.py").read_text(encoding="utf-8")
-    staged_param = (staged / "agents" / "param_fill_agent.py").read_text(
-        encoding="utf-8"
-    )
-    assert "MOBILEGPT_EMBEDDING_MODEL" in staged_utils
-    assert "write_omniflow_mobilegpt_event" in staged_utils
-    assert "MOBILEGPT_CHAT_MODEL" in staged_main
-    assert "MOBILEGPT_CHAT_MODEL" in staged_param
-    assert "text-embedding-3-small" in (
+    assert (staged / "main.py").read_bytes() != (server / "main.py").read_bytes()
+    assert "GLM-5.1" in (staged / "main.py").read_text(encoding="utf-8")
+    assert (staged / "utils" / "utils.py").read_bytes() != (
         server / "utils" / "utils.py"
+    ).read_bytes()
+    assert "GLM-Embedding-2" in (
+        staged / "utils" / "utils.py"
     ).read_text(encoding="utf-8")
+    assert (staged / "agents" / "param_fill_agent.py").read_bytes() == (
+        server / "agents" / "param_fill_agent.py"
+    ).read_bytes()
+    assert "gpt-4o" in (server / "main.py").read_text(encoding="utf-8")
+
+
+def test_mobilegpt_forwarder_does_not_patch_task_agent(
+    tmp_path: Path,
+) -> None:
+    official = tmp_path / "MobileGPT"
+    server = official / "Server"
+    (server / "memory").mkdir(parents=True)
+    (server / "agents").mkdir()
+    (server / "main.py").write_text("# official\n", encoding="utf-8")
+    (server / "agents" / "task_agent.py").write_text(
+        "import os\n"
+        "from agents.prompts import task_agent_prompt\n"
+        "from utils.utils import query, log\n\n"
+        "class TaskAgent:\n"
+        "    def get_task(self, instruction):\n"
+        "        known_tasks = []\n"
+        "        response = query(messages=task_agent_prompt.get_prompts(instruction, known_tasks),\n"
+        "                         model=os.getenv(\"TASK_AGENT_GPT_VERSION\"))\n"
+        "        task = response[\"api\"]\n"
+        "        return task, True\n",
+        encoding="utf-8",
+    )
+    memory = tmp_path / "prepared"
+    (memory / "frozen_memory").mkdir(parents=True)
+
+    result = prepare_mobilegpt_server(
+        official_root=official,
+        memory_root=memory,
+        workspace=tmp_path / "workspace",
+        chat_model="GLM-4.6V",
+    )
+
+    staged_source = (
+        Path(result["server_root"]) / "agents" / "task_agent.py"
+    ).read_bytes()
+    assert staged_source == (server / "agents" / "task_agent.py").read_bytes()
 
 
 def test_mobilegpt_host_defaults_to_emulator_alias() -> None:
@@ -161,15 +260,11 @@ def test_autodroid_task_app_name_maps_androidworld_alias() -> None:
     ) == "sms"
 
 
-def test_autodroid_task_app_name_rejects_ambiguous_task() -> None:
-    with pytest.raises(
-        ValueError,
-        match="autodroid_task_app_ambiguous:expense,gallery",
-    ):
-        _autodroid_task_app_name(
-            type(
-                "Task",
-                (),
-                {"app_names": ("pro expense", "simple gallery pro")},
-            )()
-        )
+def test_autodroid_task_app_name_uses_first_declared_app_for_composite_task() -> None:
+    assert _autodroid_task_app_name(
+        type(
+            "Task",
+            (),
+            {"app_names": ("pro expense", "simple gallery pro")},
+        )()
+    ) == "expense"

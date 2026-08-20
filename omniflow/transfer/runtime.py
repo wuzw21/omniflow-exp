@@ -33,7 +33,9 @@ def capture_transfer_state(observation: Any) -> dict[str, Any]:
         else {}
     )
     pixels = (
-        androidworld_state.get("pixels")
+        androidworld_state.get("screenshot")
+        if isinstance(androidworld_state.get("screenshot"), dict)
+        else androidworld_state.get("pixels")
         if isinstance(androidworld_state.get("pixels"), dict)
         else {}
     )

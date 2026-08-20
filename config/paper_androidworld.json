@@ -22,7 +22,7 @@
           "profile": "small_phone"
         }
       ],
-      "results_namespace": "androidworld_validator/supplemental/autodroid_9207"
+      "results_namespace": "androidworld/.archive/outcomes/autodroid"
     },
     "devices": [
       {"label": "small5554", "serial": "emulator-5554", "console_port": 5554, "avd": "OmniFlowTargetSmall", "api_level": 33, "profile": "small_phone"},

@@ -132,7 +132,26 @@
         }
       }
     },
-    "state": {"$ref": "#/$defs/androidworld_state"},
+    "xml_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["screenshot", "xml"],
+      "properties": {
+        "screenshot": {
+          "anyOf": [
+            {"$ref": "#/$defs/screenshot_reference"},
+            {"type": "null"}
+          ]
+        },
+        "xml": {"type": "string", "minLength": 1}
+      }
+    },
+    "state": {
+      "anyOf": [
+        {"$ref": "#/$defs/xml_state"},
+        {"$ref": "#/$defs/androidworld_state"}
+      ]
+    },
     "action": {
       "type": "object",
       "additionalProperties": false,

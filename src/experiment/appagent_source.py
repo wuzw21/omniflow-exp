@@ -138,7 +138,7 @@ def _write_runtime_config(
         "OPENAI_API_BASE": endpoint,
         "OPENAI_API_KEY": api_key,
         "OPENAI_API_MODEL": model,
-        # GLM-5.1 may spend part of a short completion budget on visual
+        # GLM-4.6V may spend part of a short completion budget on visual
         # reasoning before emitting the AppAgent action description.  The
         # official generator reads this value from its temporary config.
         "MAX_TOKENS": int(max_tokens),
@@ -202,6 +202,7 @@ def run_official_document_generation(
         raise FileExistsError("immutable_appagent_doc_generation_output_exists")
 
     started = time.monotonic()
+    errors: list[str] = []
     with tempfile.TemporaryDirectory(prefix="appagent-doc-config-") as temporary:
         temporary_root = Path(temporary)
         _write_runtime_config(
@@ -223,6 +224,10 @@ def run_official_document_generation(
             kwargs.setdefault("timeout", float(timeout_sec))
             response = original_post(*args, **kwargs)
             payload = response.json()
+            if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+                message = str(payload["error"].get("message") or "").strip()
+                if message:
+                    errors.append(message)
             usage_payload = (
                 payload.get("usage") if isinstance(payload, dict) else None
             )
@@ -319,6 +324,7 @@ def run_official_document_generation(
         "log_path": str(output_log),
         "usage_path": str(output_usage),
         "retry_count": 0,
+        "errors": errors,
     }
 
 
@@ -537,7 +543,9 @@ def _write_appagent_state(
     runtime: OfficialAppAgentRuntime,
     source_run_log: Path,
 ) -> tuple[str, list[Any]]:
-    pixels = observation.get("pixels")
+    pixels = observation.get("screenshot")
+    if pixels is None:
+        pixels = observation.get("pixels")
     if not isinstance(pixels, dict):
         raise ValueError(
             f"appagent_source_screenshot_missing:{source_step_index}:{phase}"
@@ -579,7 +587,9 @@ def _require_appagent_observation_evidence(
     phase: str,
     source_run_log: Path,
 ) -> None:
-    pixels = observation.get("pixels")
+    pixels = observation.get("screenshot")
+    if pixels is None:
+        pixels = observation.get("pixels")
     if not isinstance(pixels, dict):
         raise ValueError(
             f"appagent_source_screenshot_missing:{source_step_index}:{phase}"
@@ -820,6 +830,12 @@ def convert_runlog_to_appagent_memory(
         usage_path=document_usage,
         model=normalized_model,
     )
+    if document_result.get("errors"):
+        error = str(document_result["errors"][0]).replace("\n", " ").strip()
+        raise ValueError(
+            "appagent_document_model_request_failed:"
+            f"model={normalized_model}:error={error}"
+        )
     prep_wall_sec = max(round(time.monotonic() - prep_started, 6), 0.000001)
     manifest = seal_appagent_memory(
         memory_root=root,

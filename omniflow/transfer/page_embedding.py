@@ -147,7 +147,9 @@ class OmniTransferPageEncoder:
         pixels: dict[str, Any] = {}
         androidworld_state = observation.extra.get("androidworld_state")
         if isinstance(androidworld_state, dict):
-            raw_pixels = androidworld_state.get("pixels")
+            raw_pixels = androidworld_state.get("screenshot")
+            if raw_pixels is None:
+                raw_pixels = androidworld_state.get("pixels")
             if isinstance(raw_pixels, dict):
                 pixels.update(raw_pixels)
         screenshot_path = observation.extra.get("screenshot_path")

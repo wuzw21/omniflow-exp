@@ -550,15 +550,18 @@ def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
     observation["pixels"]["sha256"] = hashlib.sha256(
         screenshot.read_bytes()
     ).hexdigest()
-    _write_json(
-        source_run_log,
-        androidworld_run_log(
-            [{"action_type": "wait"}],
-            observations=[observation],
-            task_name="TaskOne",
-            goal="Complete task one.",
-        ),
+    source_payload = androidworld_run_log(
+        [{"action_type": "wait"}],
+        observations=[observation],
+        task_name="TaskOne",
+        goal="Complete task one.",
     )
+    source_payload["steps"][0]["next_observation"] = dict(observation)
+    source_payload["steps"][0]["metadata"] = {
+        "reasoning": "Wait for the task state to settle.",
+        "screenshot_path": str(screenshot),
+    }
+    _write_json(source_run_log, source_payload)
     source_index = tmp_path / "source_index.json"
     _write_json(
         source_index,

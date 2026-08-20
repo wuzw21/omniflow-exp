@@ -1041,6 +1041,32 @@ def test_planner_parses_normalized_coordinates_without_conversion() -> None:
     assert metadata == {}
 
 
+def test_glm_planner_coerces_numeric_coordinate_strings() -> None:
+    tool_call, metadata = parse_model_turn_response(
+        {
+            "requested_model": "GLM-4.6V",
+            "resolved_model": "GLM-4.6V",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "click",
+                        "arguments": json.dumps({"x": "876", "y": "869"}),
+                    }
+                }
+            ],
+        },
+        requested_model="GLM-4.6V",
+        turn_index=1,
+        display={"width": 720, "height": 1280},
+    )
+
+    assert tool_call == ToolCall("click", {"x": 876.0, "y": 869.0})
+    assert metadata["model_argument_coercions"] == [
+        {"field": "x", "from": "876", "to": 876.0},
+        {"field": "y", "from": "869", "to": 869.0},
+    ]
+
+
 def test_model_turn_uses_only_generic_planning_context() -> None:
     request = build_model_turn_request(
         goal="Copy every record into another app",

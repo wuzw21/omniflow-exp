@@ -79,6 +79,7 @@ ANDROID_PERMISSION_DENY_RESOURCE_IDS = (
 )
 DEFAULT_ANDROIDWORLD_ADB_FILE_TRANSFER_TIMEOUT_SEC = 300.0
 DEFAULT_ANDROIDWORLD_SETUP_TIMEOUT_SEC = 300.0
+DEFAULT_ANDROIDWORLD_APK_INSTALL_TIMEOUT_SEC = 180.0
 _LLM_USAGE_COUNTER_KEYS = (
     "model_calls",
     "prompt_tokens",
@@ -192,9 +193,27 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
             return original(controller, element_text)
         except ValueError as error:
             message = str(error)
-            if "Target text" not in message or "not found" not in message:
-                raise
             normalized_label = _normalize_androidworld_setup_label(element_text)
+            missing_target = "Target text" in message and "not found" in message
+            empty_a11y_tree = (
+                normalized_label == "NEXT"
+                and "Invalid element index" in message
+            )
+            if empty_a11y_tree:
+                # Camera can still be publishing its accessibility tree while
+                # AndroidWorld starts the app. Give the official setup a
+                # short bounded chance to observe the real NEXT button before
+                # applying the existing optional-click fallback.
+                for _ in range(6):
+                    time.sleep(0.5)
+                    try:
+                        return original(controller, element_text)
+                    except ValueError as retry_error:
+                        message = str(retry_error)
+                        if "Invalid element index" not in message:
+                            break
+            if not missing_target and not empty_a11y_tree:
+                raise
             if normalized_label == "Skip":
                 elements = controller._env.get_ui_elements() or []
                 chooser_clicks = _app_chooser_clicks(
@@ -220,6 +239,60 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
                     "absent OK button"
                 )
                 return None
+            if normalized_label == "NEXT":
+                activity = str(
+                    getattr(controller._env, "foreground_activity_name", "") or ""
+                ).strip()
+                packages = {
+                    str(getattr(element, "package_name", "") or "").strip()
+                    for element in controller._env.get_ui_elements() or ()
+                }
+                camera_is_foreground = activity.startswith("com.android.camera2/")
+                camera_is_visible = "com.android.camera2" in packages
+                if camera_is_foreground or camera_is_visible:
+                    logger.info(
+                        "AndroidWorld Camera setup is already complete; "
+                        "skipping absent NEXT button"
+                    )
+                    return None
+                launcher_is_foreground = activity.startswith(
+                    "com.google.android.apps.nexuslauncher/"
+                )
+                non_app_packages = {
+                    "",
+                    "android",
+                    "com.android.systemui",
+                    "com.google.android.apps.nexuslauncher",
+                }
+                if launcher_is_foreground or (
+                    packages and packages.issubset(non_app_packages)
+                ):
+                    logger.info(
+                        "AndroidWorld optional app setup did not expose NEXT "
+                        "and remains on the launcher; continuing"
+                    )
+                    return None
+            if normalized_label in {
+                "All files",
+                "Allow access to manage all files",
+            }:
+                activity = str(
+                    getattr(controller._env, "foreground_activity_name", "") or ""
+                ).strip()
+                packages = {
+                    str(getattr(element, "package_name", "") or "").strip()
+                    for element in controller._env.get_ui_elements() or ()
+                }
+                gallery_visible = activity.startswith(
+                    "com.simplemobiletools.gallery.pro/"
+                ) or "com.simplemobiletools.gallery.pro" in packages
+                if gallery_visible:
+                    logger.info(
+                        "AndroidWorld Gallery setup is already complete; "
+                        "skipping absent %s button",
+                        normalized_label,
+                    )
+                    return None
             if normalized_label != "Don't allow":
                 raise
             elements = controller._env.get_ui_elements() or []
@@ -630,7 +703,7 @@ class _OpenAICompatibleMultimodalWrapper:
             str(model_name or "").strip()
             or str(os.environ.get("OPENAI_MODEL") or "").strip()
             or str(os.environ.get("OMNIFLOW_PLANNER_MODEL") or "").strip()
-            or "GLM-5.1"
+            or "GLM-4.6V"
         )
         resolved_base_url = (
             str(base_url or "").strip()
@@ -1577,6 +1650,10 @@ def prepare_androidworld_environment(
         setup_module=setup_module,
         setup_apps=tuple(setup_apps),
     )
+    if wait_for_a11y and not _is_oob_control_backend():
+        # AndroidWorld setup can restart or rebind the forwarder after the
+        # initial wait. Verify the post-setup state before the episode reset.
+        _wait_for_androidworld_a11y(env)
     return AndroidWorldEnvironmentStartup(
         env=env,
         adb_output_patches=adb_output_patches,
@@ -1990,10 +2067,26 @@ def _patch_androidworld_adb_controller_install_compat() -> tuple[Any, Any] | Non
         device_specific: bool = True,
     ) -> bytes:
         normalized = [str(value) for value in args]
+        resolved_timeout = timeout
+        if normalized and normalized[0] == "install":
+            resolved_timeout = max(
+                float(timeout or 0.0),
+                DEFAULT_ANDROIDWORLD_APK_INSTALL_TIMEOUT_SEC,
+            )
         if "--bypass-low-target-sdk-block" not in normalized:
-            return original(self, args, timeout=timeout, device_specific=device_specific)
+            return original(
+                self,
+                args,
+                timeout=resolved_timeout,
+                device_specific=device_specific,
+            )
         try:
-            return original(self, args, timeout=timeout, device_specific=device_specific)
+            return original(
+                self,
+                args,
+                timeout=resolved_timeout,
+                device_specific=device_specific,
+            )
         except Exception as error:
             details = [repr(error), str(error)]
             for attribute in ("stdout", "stderr", "output", "cmd"):
@@ -2016,7 +2109,7 @@ def _patch_androidworld_adb_controller_install_compat() -> tuple[Any, Any] | Non
             return original(
                 self,
                 fallback_args,
-                timeout=timeout,
+                timeout=resolved_timeout,
                 device_specific=device_specific,
             )
 
@@ -2057,7 +2150,7 @@ def _patch_androidworld_apk_install_compat(setup_module: Any) -> Any | None:
             response = issue_generic_request(
                 ["install", apk_location],
                 raw_env,
-                timeout_sec=30.0,
+                timeout_sec=DEFAULT_ANDROIDWORLD_APK_INSTALL_TIMEOUT_SEC,
             )
             status = getattr(response, "status", None)
             ok_status = getattr(
@@ -2320,6 +2413,40 @@ def _prepare_androidworld_episode_apps(
         try:
             time.sleep(2.0)
             elements = env.controller.get_ui_elements()
+            if app_name == "osmand":
+                tool_controller = importlib.import_module(
+                    "android_world.env.tools"
+                ).AndroidToolController(env.controller)
+                labels = {
+                    _normalize_androidworld_setup_label(
+                        str(value or "").strip()
+                    )
+                    for element in elements
+                    for value in (
+                        getattr(element, "text", None),
+                        getattr(element, "content_description", None),
+                    )
+                    if str(value or "").strip()
+                }
+                if "SKIP DOWNLOAD" in labels:
+                    tool_controller.click_element("SKIP DOWNLOAD")
+                # OsmAnd creates the map-marker schema asynchronously after
+                # onboarding.  Saving a snapshot before that schema exists
+                # makes OsmAndMarker fail in initialize_task, before the first
+                # observation can be captured.
+                time.sleep(7.0)
+                file_utils = importlib.import_module(
+                    "android_world.utils.file_utils"
+                )
+                if not file_utils.check_file_exists(
+                    "/data/data/net.osmand/databases/map_markers_db",
+                    env.controller,
+                ):
+                    logger.warning(
+                        "AndroidWorld OsmAnd setup has not created the "
+                        "map_markers database yet; continuing because "
+                        "non-marker tasks do not require it"
+                    )
             if app_name == "contacts":
                 chooser_clicks = _app_chooser_clicks(
                     elements,
@@ -2341,33 +2468,32 @@ def _prepare_androidworld_episode_apps(
                 )
                 for element in elements
             )
-            if not permission_dialog:
-                continue
-            actuation.find_and_click_element_by_resource_id(
-                ANDROID_PERMISSION_DENY_RESOURCE_IDS,
-                env.controller,
-                timeout_sec=10.0,
-            )
-            deadline = time.monotonic() + 10.0
-            while True:
-                elements = env.controller.get_ui_elements()
-                packages = {
-                    str(getattr(element, "package_name", "") or "").strip()
-                    for element in elements
-                }
-                permission_dialog = any(
-                    package.endswith(".permissioncontroller")
-                    for package in packages
+            if permission_dialog:
+                actuation.find_and_click_element_by_resource_id(
+                    ANDROID_PERMISSION_DENY_RESOURCE_IDS,
+                    env.controller,
+                    timeout_sec=10.0,
                 )
-                if not permission_dialog and package_name in packages:
-                    break
-                if time.monotonic() >= deadline:
-                    raise RuntimeError(
-                        "AndroidWorld app setup permission dialog did not settle: "
-                        f"app={app_name}:expected={package_name}:"
-                        f"observed={','.join(sorted(packages)) or '<none>'}"
+                deadline = time.monotonic() + 10.0
+                while True:
+                    elements = env.controller.get_ui_elements()
+                    packages = {
+                        str(getattr(element, "package_name", "") or "").strip()
+                        for element in elements
+                    }
+                    permission_dialog = any(
+                        package.endswith(".permissioncontroller")
+                        for package in packages
                     )
-                time.sleep(0.25)
+                    if not permission_dialog and package_name in packages:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(
+                            "AndroidWorld app setup permission dialog did not settle: "
+                            f"app={app_name}:expected={package_name}:"
+                            f"observed={','.join(sorted(packages)) or '<none>'}"
+                        )
+                    time.sleep(0.25)
         finally:
             setup_module.adb_utils.close_app(app_name, env.controller)
         if save_snapshots:
@@ -2633,7 +2759,9 @@ def _raw_replay_source_size(data: dict[str, Any]) -> tuple[int, int] | None:
     run_log = import_run_log(data)
     for step in run_log["steps"]:
         observation = step["observation"]
-        pixels = observation.get("pixels")
+        pixels = observation.get("screenshot")
+        if pixels is None:
+            pixels = observation.get("pixels")
         if isinstance(pixels, dict):
             return int(pixels["width"]), int(pixels["height"])
         auxiliaries = observation.get("auxiliaries")

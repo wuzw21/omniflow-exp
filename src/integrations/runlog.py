@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 
 from PIL import Image
 
+from omniflow.core.androidworld_accessibility import androidworld_forest_xml
 from omniflow.core.schemas import canonicalize_action
 from omniflow.core.trajectory import (
     OMNIFLOW_RUN_LOG_SCHEMA_VERSION,
@@ -226,14 +227,26 @@ def _is_legacy_run_log(value: dict[str, Any]) -> bool:
     steps = value.get("steps")
     return isinstance(steps, list) and any(
         isinstance(step, dict)
-        and any(
-            key in step
-            for key in (
-                "observation_before_act",
-                "executed_actions",
-                "actions",
-                "before_state_id",
-                "after_state_id",
+        and (
+            any(
+                key in step
+                for key in (
+                    "observation_before_act",
+                    "executed_actions",
+                    "actions",
+                    "before_state_id",
+                    "after_state_id",
+                )
+            )
+            or (
+                isinstance(step.get("action"), dict)
+                and (
+                    step["action"].get("action_type") == "swipe_xy"
+                    or any(
+                        key in step["action"]
+                        for key in ("start_xy", "end_xy", "duration")
+                    )
+                )
             )
         )
         for step in steps
@@ -343,6 +356,7 @@ def convert_legacy_run_log(
         == "omniflow.canonical_run_log.v1"
     )
     resolver = ScreenshotResolver(screenshot_roots)
+    final_raw_observation = _legacy_observation(payload.get("final_observation"))
     converted_steps: list[dict[str, Any]] = []
     for raw_step_index, raw_step in enumerate(raw_steps):
         if not isinstance(raw_step, dict):
@@ -357,6 +371,16 @@ def convert_legacy_run_log(
             state_identifier=raw_step.get("after_state_id"),
             source_states=states,
         )
+        if not after and raw_step_index + 1 < len(raw_steps):
+            following_step = raw_steps[raw_step_index + 1]
+            if isinstance(following_step, dict):
+                after = _hydrate_legacy_observation(
+                    _legacy_before_observation(following_step),
+                    state_identifier=following_step.get("before_state_id"),
+                    source_states=states,
+                )
+        if not after and raw_step_index + 1 == len(raw_steps):
+            after = final_raw_observation
         step_index = _integer(raw_step.get("step_index"), raw_step_index)
         observation = _androidworld_state(
             before,
@@ -376,7 +400,7 @@ def convert_legacy_run_log(
                     task_name=task,
                     step_index=step_index,
                     phase="after",
-                    required=False,
+                    required=require_screenshots,
                 ),
             )
             if after
@@ -428,7 +452,8 @@ def convert_legacy_run_log(
                 raw_step,
                 raw_action=raw_action,
             )
-            if action["action_type"] == "unknown":
+            raw_action_type = str(_map(raw_action).get("action_type") or "").strip()
+            if action["action_type"] == "unknown" or raw_action_type == "swipe_xy":
                 metadata["legacy_action"] = json.loads(
                     json.dumps(raw_action, ensure_ascii=False, default=str)
                 )
@@ -488,6 +513,17 @@ def convert_legacy_run_log(
     diagnostics = _map(payload.get("diagnostics"))
     if diagnostics:
         converted["diagnostics"] = diagnostics
+    if final_raw_observation:
+        converted["final_observation"] = _androidworld_state(
+            final_raw_observation,
+            pixels=resolver.resolve(
+                final_raw_observation,
+                task_name=task,
+                step_index=len(raw_steps),
+                phase="final",
+                required=require_screenshots,
+            ),
+        )
     return canonicalize_run_log(converted)
 
 
@@ -868,6 +904,7 @@ def _legacy_after_observation(step: dict[str, Any]) -> dict[str, Any]:
     return _legacy_observation(
         step.get("after_state")
         or step.get("next_state")
+        or step.get("next_observation")
         or step.get("observation_after_act")
         or step.get("after")
     )
@@ -924,47 +961,94 @@ def _androidworld_state(
     *,
     pixels: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    forest = value.get("forest")
-    if forest is None:
-        forest = _first(
-            value,
-            (
-                "xml",
-                "observation_xml",
-                "hierarchy_xml",
-                "raw_xml",
-                "parsed_xml",
-                "encoded_xml",
-                "html_xml",
-                "page",
-                "source_xml",
-            ),
-        )
+    xml = _first(
+        value,
+        (
+            "xml",
+            "observation_xml",
+            "hierarchy_xml",
+            "raw_xml",
+            "parsed_xml",
+            "encoded_xml",
+            "html_xml",
+            "page",
+            "source_xml",
+        ),
+    )
+    if not isinstance(xml, str) or not xml.strip():
+        forest = value.get("forest")
+        if forest is not None:
+            width = _first(value, ("display_width", "screen_width", "width"))
+            height = _first(value, ("display_height", "screen_height", "height"))
+            screenshot = _map(value.get("screenshot"))
+            width = width if _present(width) else _first(
+                screenshot, ("width", "display_width")
+            )
+            height = height if _present(height) else _first(
+                screenshot, ("height", "display_height")
+            )
+            xml = (
+                forest
+                if isinstance(forest, str)
+                else androidworld_forest_xml(
+                    forest,
+                    screen_size=(
+                        int(width) if _present(width) else 1000,
+                        int(height) if _present(height) else 1000,
+                    ),
+                )
+            )
+    if not isinstance(xml, str) or not xml.strip():
+        elements = value.get("ui_elements")
+        if isinstance(elements, list) and elements:
+            from src.integrations.android_world.host import androidworld_elements_xml
+
+            xml = androidworld_elements_xml(elements)
+    if isinstance(xml, str) and xml.strip():
+        if pixels is None:
+            auxiliaries = _map(value.get("auxiliaries"))
+            width = _first(value, ("display_width", "screen_width", "width"))
+            height = _first(value, ("display_height", "screen_height", "height"))
+            if _present(width) and _present(height):
+                auxiliaries["display"] = {
+                    "width": int(width),
+                    "height": int(height),
+                }
+            return {
+                "pixels": pixels,
+                "forest": xml.strip(),
+                "ui_elements": [],
+                "auxiliaries": auxiliaries or None,
+            }
+        return {
+            "screenshot": pixels,
+            "xml": xml.strip(),
+        }
+
+    # Some historical traces contain only a screenshot and display metadata.
+    # They cannot be upgraded to XML without inventing UI information, so keep
+    # their legacy shape readable instead of fabricating an empty hierarchy.
     ui_elements = value.get("ui_elements")
-    if not isinstance(ui_elements, list):
-        ui_elements = []
+    ui_elements = ui_elements if isinstance(ui_elements, list) else []
     auxiliaries = _map(value.get("auxiliaries"))
-    aliases = {
+    for output, names in {
         "state_id": ("state_id",),
         "package_name": ("package_name", "packageName"),
         "activity_name": ("activity_name", "activityName"),
-        "provider": ("provider",),
-    }
-    for output, names in aliases.items():
+    }.items():
         item = _first(value, names)
         if _present(item):
             auxiliaries[output] = item
     width = _first(value, ("display_width", "screen_width", "width"))
     height = _first(value, ("display_height", "screen_height", "height"))
-    screenshot = _map(value.get("screenshot"))
-    width = width if _present(width) else _first(screenshot, ("width", "display_width"))
-    height = height if _present(height) else _first(screenshot, ("height", "display_height"))
     if _present(width) and _present(height):
         auxiliaries["display"] = {"width": int(width), "height": int(height)}
     return {
         "pixels": pixels,
-        "forest": forest,
-        "ui_elements": json.loads(json.dumps(ui_elements, ensure_ascii=False, default=str)),
+        "forest": value.get("forest"),
+        "ui_elements": json.loads(
+            json.dumps(ui_elements, ensure_ascii=False, default=str)
+        ),
         "auxiliaries": auxiliaries or None,
     }
 
@@ -975,7 +1059,9 @@ def _transfer_state(observation: dict[str, Any]) -> dict[str, Any]:
     xml = observation_xml(observation)
     if xml:
         state["xml"] = xml
-    pixels = observation.get("pixels")
+    pixels = observation.get("screenshot")
+    if pixels is None:
+        pixels = observation.get("pixels")
     if isinstance(pixels, dict) and str(pixels.get("path") or "").strip():
         state["screenshot_path"] = str(pixels["path"]).strip()
     auxiliaries = observation.get("auxiliaries")
@@ -986,6 +1072,26 @@ def _transfer_state(observation: dict[str, Any]) -> dict[str, Any]:
         display = auxiliaries.get("display")
         if isinstance(display, dict) and set(display) == {"width", "height"}:
             state["display"] = dict(display)
+    if "display" not in state:
+        display = observation_display(observation)
+        if display is not None:
+            state["display"] = {"width": display[0], "height": display[1]}
+    if xml and "package_name" not in state:
+        try:
+            root = ET.fromstring(xml)
+        except ET.ParseError:
+            root = None
+        if root is not None:
+            packages = [
+                str(element.attrib.get("package") or "").strip()
+                for element in root.iter()
+                if str(element.attrib.get("package") or "").strip()
+            ]
+            non_system = [
+                package for package in packages if package != "com.android.systemui"
+            ]
+            if non_system or packages:
+                state["package_name"] = (non_system or packages)[-1]
     return state
 
 
@@ -1070,7 +1176,7 @@ def _legacy_additional_wait_step_count(
 ) -> int:
     _, args = _legacy_action_tool_and_args(value)
     if action_type == "wait":
-        seconds = _number(args, "time_s", "seconds", "duration_s")
+        seconds = _number(args, "time_s", "seconds", "duration_s", "duration")
         duration_ms = _number(args, "duration_ms", "time_ms")
         if seconds is not None and duration_ms is not None:
             raise ValueError("legacy_action_wait_duration_ambiguous")
@@ -1111,6 +1217,54 @@ def _legacy_action_tool_and_args(value: Any) -> tuple[str, dict[str, Any]]:
         or raw.get("params")
         or function.get("arguments")
     )
+    # Some historical native RunLogs stored AndroidWorld action arguments
+    # directly beside ``action_type`` instead of under ``args``/``params``.
+    # Preserve those recorded values before projecting the legacy action to
+    # the one production RunLog schema.
+    for key in (
+        "app",
+        "app_name",
+        "clear_text",
+        "content",
+        "coordinate_space",
+        "direction",
+        "duration",
+        "duration_ms",
+        "end_x",
+        "end_xy",
+        "end_y",
+        "index",
+        "key",
+        "keycode",
+        "package",
+        "package_name",
+        "start_x",
+        "start_xy",
+        "start_y",
+        "text",
+        "x",
+        "x1",
+        "x2",
+        "y",
+        "y1",
+        "y2",
+    ):
+        if key in raw and key not in args:
+            args[key] = raw[key]
+    if tool == "swipe_xy":
+        start = args.get("start_xy")
+        end = args.get("end_xy")
+        if (
+            isinstance(start, (list, tuple))
+            and len(start) == 2
+            and isinstance(end, (list, tuple))
+            and len(end) == 2
+        ):
+            args.setdefault("start_x", start[0])
+            args.setdefault("start_y", start[1])
+            args.setdefault("end_x", end[0])
+            args.setdefault("end_y", end[1])
+        tool = "swipe"
     if tool == "android_privileged_action":
         tool = str(args.pop("tool", "")).strip().lower()
         args.update(_map(args.pop("arguments", None)))
@@ -1119,10 +1273,17 @@ def _legacy_action_tool_and_args(value: Any) -> tuple[str, dict[str, Any]]:
 
 def _legacy_display(observation: dict[str, Any]) -> tuple[float, float]:
     screenshot = _map(observation.get("screenshot"))
+    pixels = _map(observation.get("pixels"))
+    auxiliaries = _map(observation.get("auxiliaries"))
+    display = _map(auxiliaries.get("display"))
     width = _first(observation, ("display_width", "screen_width", "width"))
     height = _first(observation, ("display_height", "screen_height", "height"))
     width = width if _present(width) else _first(screenshot, ("width", "display_width"))
     height = height if _present(height) else _first(screenshot, ("height", "display_height"))
+    width = width if _present(width) else _first(pixels, ("width", "display_width"))
+    height = height if _present(height) else _first(pixels, ("height", "display_height"))
+    width = width if _present(width) else display.get("width")
+    height = height if _present(height) else display.get("height")
     try:
         converted = float(width), float(height)
     except (TypeError, ValueError) as error:
