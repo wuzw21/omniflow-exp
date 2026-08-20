@@ -37,6 +37,7 @@ from src.experiment.run_tasks import (
     _supplemental_outcomes_root,
     _max_live_bmoca_results,
     _next_source_attempt_id,
+    _next_pipeline_attempt_id,
     _parse_source_device,
     _published_official_result_row,
     _report,
@@ -120,6 +121,30 @@ def test_next_source_attempt_id_uses_unified_monotonic_name(tmp_path: Path) -> N
     (root / "attempt_invalid").mkdir()
 
     assert _next_source_attempt_id(args) == "attempt_008"
+
+
+def test_pipeline_attempt_id_grows_past_historical_outcome(tmp_path: Path) -> None:
+    args = _args(tmp_path)
+    args.attempt_id = "attempt_001"
+    args.e2e_method = "appagent"
+    args.e2e_device = DEVICES[0]
+    outcomes_root = args.results_root / "androidworld" / ".archive" / "outcomes" / "formal"
+    record_result_outcome(
+        outcomes_root=outcomes_root,
+        task_name=args.task,
+        method="appagent",
+        device="small5554",
+        device_serial="emulator-5554",
+        attempt_id="attempt_001",
+        source_seed=111,
+        evaluation_seed=113,
+        status="completed",
+        stage="androidworld_validate",
+        official_validator_used=True,
+        official_validator_success=True,
+    )
+
+    assert _next_pipeline_attempt_id(args, outcomes_root) == "attempt_002"
 
 
 def test_t3a_hint_uses_function_store_source_lineage(tmp_path: Path) -> None:
@@ -1814,7 +1839,10 @@ def test_collect_replayed_source_uses_fixed_replay_and_captures_screenshots(
     assert captured_path.is_file()
     assert captured["steps"][0]["action"] == source["steps"][0]["action"]
     assert captured["seed"] == SOURCE_SEED
-    assert captured["steps"][0]["observation"]["pixels"]["sha256"] == screenshot_hash
+    assert "sha256" not in captured["steps"][0]["observation"]["pixels"]
+    assert captured["steps"][0]["observation"]["pixels"]["path"] == str(
+        screenshot.resolve()
+    )
     assert phase["model_calls"] == 0
     assert phase["total_tokens"] == 0
     assert phase["status"] == "collected"

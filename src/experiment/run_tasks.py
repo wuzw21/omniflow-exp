@@ -6,9 +6,11 @@ import argparse
 import concurrent.futures
 import csv
 import datetime as dt
+import fcntl
 import json
 import os
-from contextlib import nullcontext
+import re
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import subprocess
 import threading
@@ -40,6 +42,10 @@ from src.experiment.androidworld_paths import (
     next_attempt_name,
 )
 from src.experiment.run_process import run_process, start_process
+from src.experiment.observation_evidence import (
+    build_androidworld_run_log,
+    persist_androidworld_run_log,
+)
 from src.experiment.protocol import (
     BMOCA_RESULT_TIMEOUT_SEC,
     APPAGENT_MODEL,
@@ -79,6 +85,24 @@ from src.integrations.official_forward import validate_autodroid_memory_root
 # client/server lifecycles must be serialized so one device cannot bind or
 # consume another device's server.
 _MOBILEGPT_EXECUTION_LOCK = threading.Lock()
+
+
+@contextmanager
+def _manual_source_device_lock(results_root: Path):
+    """Serialize the complete manual source-device lifecycle across processes."""
+
+    lock_path = (
+        Path(results_root).expanduser().resolve()
+        / "androidworld"
+        / ".manual_source_device.lock"
+    )
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _read_object(path: str | Path) -> dict[str, Any]:
@@ -418,7 +442,10 @@ def _canonical_source(
             return registry, fallback[0], fallback[1]
     path = Path(str(record.get("object_path") or "")).expanduser().resolve()
     try:
-        if not path.is_file() or sha256_file(path) != str(record.get("sha256") or ""):
+        expected_sha256 = str(record.get("sha256") or "").strip()
+        if not path.is_file() or (
+            expected_sha256 and sha256_file(path) != expected_sha256
+        ):
             raise ValueError(f"canonical_source_object_invalid:{task}:{path}")
         run_log = require_complete_source_run_log(_read_object(path))
         if run_log["task_name"] != task:
@@ -571,8 +598,7 @@ def _captured_androidworld_state(record: Any) -> dict[str, Any]:
     if not screenshot.is_file():
         raise FileNotFoundError(f"fixed_replay_capture_screenshot_missing:{screenshot}")
     expected = str(pixels.get("sha256") or "").strip().lower()
-    actual = sha256_file(screenshot)
-    if expected != actual:
+    if expected and expected != sha256_file(screenshot):
         raise ValueError(
             "fixed_replay_capture_screenshot_hash_mismatch:"
             f"expected={expected}:actual={actual}"
@@ -632,6 +658,41 @@ def _next_result_attempt_id(
         / "runlog"
     )
     return next_attempt_name(runlog_root)
+
+
+def _next_pipeline_attempt_id(
+    args: argparse.Namespace,
+    outcomes_root: Path,
+) -> str:
+    """Allocate an attempt id that is new in both output and outcome roots."""
+
+    task_root = Path(args.output_root) / safe_component(args.task)
+    candidate = str(
+        getattr(args, "attempt_id", "") or next_attempt_name(task_root)
+    )
+    methods = _e2e_methods(args)
+    devices = _e2e_devices(args)
+    while True:
+        output_collision = (task_root / candidate).exists()
+        outcome_collision = bool(
+            concluded_result_keys(
+                outcomes_root=outcomes_root,
+                task_name=args.task,
+                methods=methods,
+                devices=tuple(device[0] for device in devices),
+                source_seed=_e2e_source_seed(args),
+                evaluation_seed=_e2e_evaluation_seed(args),
+                attempt_id=candidate,
+            )
+        )
+        if not output_collision and not outcome_collision:
+            return candidate
+        match = re.fullmatch(r"(.*?)(\d+)", candidate)
+        if match:
+            prefix, number = match.groups()
+            candidate = f"{prefix}{int(number) + 1:0{len(number)}d}"
+        else:
+            candidate = f"{candidate}_r2"
 
 
 def _captured_source_run_log(
@@ -743,44 +804,27 @@ def _captured_source_run_log(
                         ).get("path")
                         or ""
                     ),
-                    "screenshot_sha256": str(
-                        (
-                            next_observation.get("screenshot")
-                            or next_observation.get("pixels")
-                            or {}
-                        ).get("sha256")
-                        or ""
-                    ),
                 },
             }
         )
-    captured = require_complete_source_run_log(
-        {
-            "schema_version": "omniflow.run_log.v1",
-            "run_id": str(replay.get("run_id") or "fixed_replay_capture"),
-            "task_name": source_run_log["task_name"],
-            "goal": source_run_log["goal"],
-            "task_parameters": dict(source_run_log["task_parameters"]),
-            "seed": SOURCE_SEED,
-            "status": "succeeded",
-            "success": True,
-            "validator": {
-                "official": True,
-                "success": True,
-                "reward": float(reward),
-            },
-            "provenance": {"kind": "runtime"},
-            "steps": steps,
-            "final_observation": final_observation,
-            "diagnostics": {
-                "capture": "fixed_replay",
-                "source_run_log": str(source_path),
-                "source_run_log_sha256": sha256_file(source_path),
-                "model_calls": 0,
-            },
-        }
+    captured = build_androidworld_run_log(
+        run_id=str(replay.get("run_id") or "fixed_replay_capture"),
+        task_name=source_run_log["task_name"],
+        goal=source_run_log["goal"],
+        task_parameters=dict(source_run_log["task_parameters"]),
+        seed=SOURCE_SEED,
+        validator_success=True,
+        validator_reward=float(reward),
+        validator_official=True,
+        provenance={"kind": "runtime"},
+        steps=steps,
+        final_observation=final_observation,
+        diagnostics={
+            "capture": "fixed_replay",
+            "model_calls": 0,
+        },
     )
-    _write_json(output_path, captured)
+    persist_androidworld_run_log(output_path.parent, run_log=captured)
     return captured
 
 
@@ -873,16 +917,11 @@ def collect_replayed_source(
         task_result=row,
         output_path=captured_path,
     )
-    # Source-only collection produces an immutable candidate attempt.  Do not
-    # refresh the long-term memory here: a changed source hash may invalidate
-    # derived baseline assets, and memory selection must be audited after the
-    # complete collection batch.  The caller still gets the fully validated
-    # captured RunLog for the source-only report.
+    # Source-only collection produces one immutable RunLog candidate. The
+    # caller audits and selects it after the collection batch.
     selected_path, selected = captured_path, captured
     result["input_source"] = str(source_path)
-    result["input_source_sha256"] = sha256_file(source_path)
     result["captured_source"] = str(captured_path)
-    result["captured_source_sha256"] = sha256_file(captured_path)
     result["captured_steps"] = len(captured["steps"])
     result["selected_source"] = str(selected_path)
     result["status"] = "collected"
@@ -1499,16 +1538,10 @@ def _concluded_results(
             evaluation_seed=evaluation_seed,
             attempt_id=attempt_id,
         )
-    plan = registered_result_plan_from_memory(
-        memory_index=args.memory_index,
-        task_name=args.task,
-        methods=methods,
-        devices=tuple(device[0] for device in devices),
-        source_seed=source_seed,
-        evaluation_seed=evaluation_seed,
-        formal_max_steps=int(args.max_steps),
-    )
-    return set(plan["completed"]) | concluded_result_keys(
+    # ``current.json`` and older outcome records are historical evidence.
+    # They must not suppress a new attempt; only conclusions carrying this
+    # attempt id are eligible for resume-time worker de-duplication.
+    return concluded_result_keys(
         outcomes_root=outcomes_root,
         task_name=args.task,
         methods=methods,
@@ -2253,7 +2286,10 @@ def run_function_replay_collection(args: argparse.Namespace) -> dict[str, Any]:
     }
     try:
         _, source_path, run_log = _canonical_source(args.memory_index, args.task)
-        source_copy = _write_json(attempt_root / "source" / "run_log.json", run_log)
+        source_copy = persist_androidworld_run_log(
+            attempt_root / "source",
+            run_log=run_log,
+        )
         summary["phases"]["source"] = {
             "status": "reused",
             "source_run_log": str(source_path),
@@ -2593,12 +2629,20 @@ def _report(
 
 
 def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
+    if (
+        getattr(args, "manual_source", False)
+        and not getattr(args, "manual_source_lock_held", False)
+    ):
+        with _manual_source_device_lock(args.results_root):
+            args.manual_source_lock_held = True
+            try:
+                return run_pipeline(args)
+            finally:
+                args.manual_source_lock_held = False
     deadline = Deadline(args.task_deadline_sec)
-    attempt_id = args.attempt_id or next_attempt_name(
-        args.output_root / safe_component(args.task)
-    )
-    attempt_root = args.output_root / safe_component(args.task) / attempt_id
     outcomes_root = _supplemental_outcomes_root(args)
+    attempt_id = _next_pipeline_attempt_id(args, outcomes_root)
+    attempt_root = args.output_root / safe_component(args.task) / attempt_id
     if args.dry_run:
         registry = load_data_index(args.memory_index)
         methods = _e2e_methods(args)
