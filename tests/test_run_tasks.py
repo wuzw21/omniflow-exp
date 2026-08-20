@@ -30,6 +30,7 @@ from src.experiment.run_tasks import (
     PipelinePhaseError,
     _bmoca_source_replay_qualified,
     _cached_source_function_qualification,
+    _concluded_results,
     _fixed_replay_source_step_width,
     _function_enhancement_transport,
     _function_replay_success,
@@ -123,6 +124,31 @@ def test_next_source_attempt_id_uses_unified_monotonic_name(tmp_path: Path) -> N
     (root / "attempt_invalid").mkdir()
 
     assert _next_source_attempt_id(args) == "attempt_008"
+
+
+def test_concluded_results_reuses_registered_formal_cell_across_attempts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.task = "CameraTakePhoto"
+    args.e2e_method = "appagent"
+    args.e2e_device = DEVICES[0]
+    registry_root = args.results_root / "androidworld" / ".archive" / "result_registry"
+    registry_root.mkdir(parents=True)
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.registered_result_plan",
+        lambda **_kwargs: {
+            "completed": [("appagent", "small5554")],
+            "pending": [],
+        },
+    )
+
+    assert _concluded_results(
+        args,
+        args.results_root / "androidworld" / ".archive" / "outcomes" / "formal",
+        "attempt_002",
+    ) == {("appagent", "small5554")}
 
 
 def test_pipeline_attempt_id_grows_past_historical_outcome(tmp_path: Path) -> None:

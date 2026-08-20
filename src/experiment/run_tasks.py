@@ -36,6 +36,7 @@ from src.experiment.batch_outcomes import (
     record_result_outcome,
     summarize_results,
 )
+from src.experiment.result_registry import registered_result_plan
 from src.experiment.paths import resolve_path, safe_component, sha256_file
 from src.experiment.androidworld_paths import (
     canonical_device_seed_name,
@@ -1538,10 +1539,7 @@ def _concluded_results(
             evaluation_seed=evaluation_seed,
             attempt_id=attempt_id,
         )
-    # ``current.json`` and older outcome records are historical evidence.
-    # They must not suppress a new attempt; only conclusions carrying this
-    # attempt id are eligible for resume-time worker de-duplication.
-    return concluded_result_keys(
+    concluded = concluded_result_keys(
         outcomes_root=outcomes_root,
         task_name=args.task,
         methods=methods,
@@ -1550,6 +1548,29 @@ def _concluded_results(
         evaluation_seed=evaluation_seed,
         attempt_id=attempt_id,
     )
+    # A formal cell is reusable across pipeline attempts only when its
+    # immutable registration contains an official validator conclusion.  This
+    # is deliberately independent of current.json: older external-baseline
+    # registrations may be valid evidence even when index refresh was blocked
+    # by an unrelated legacy source.  Registered environment/setup failures
+    # are excluded by registered_result_plan and remain runnable.
+    registry_root = (
+        Path(args.results_root).expanduser().resolve()
+        / "androidworld"
+        / ".archive"
+        / "result_registry"
+    )
+    if registry_root.is_dir():
+        registered = registered_result_plan(
+            runs_root=registry_root,
+            task_name=args.task,
+            methods=methods,
+            devices=tuple(device[0] for device in devices),
+            source_seed=source_seed,
+            evaluation_seed=evaluation_seed,
+        )
+        concluded.update(registered["completed"])
+    return concluded
 
 
 def _e2e_methods(args: argparse.Namespace) -> tuple[str, ...]:
