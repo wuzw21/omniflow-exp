@@ -6123,8 +6123,7 @@ def run_task(args: argparse.Namespace) -> int:
     )
     result_registration: dict[str, Any] = {}
     summary_path = result_root / RESULT_SUMMARY_FILE
-    external_only_method = method in {"appagent", "mobilegpt", "autodroid"}
-    if not bool(args.dry_run) and not external_only_method:
+    if not bool(args.dry_run):
         result_registry_root = _result_registry_root(
             args,
             attempt_root=attempt_root,
@@ -6144,14 +6143,10 @@ def run_task(args: argparse.Namespace) -> int:
             attempt_manifest_path=attempt_manifest_path,
             runs_root=result_registry_root,
             local_data_index=(
-                configured_index if configured_index and configured_index.name == "current.json" else None
+                configured_index
+                if configured_index and configured_index.name == "current.json"
+                else None
             ),
-        )
-    elif external_only_method and not bool(args.dry_run):
-        print(
-            "[result] registration=skipped reason=external_official_runner_has_no_"
-            "androidworld_validator",
-            flush=True,
         )
     _print_result_summary(summary)
     print(
