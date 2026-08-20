@@ -1722,10 +1722,15 @@ def _refresh_data_index_unlocked(
     for task, item in source_payload.items():
         if not isinstance(item, dict):
             raise ValueError(f"source_index_item_invalid:{task}")
+        # A source index may retain an explicitly unqualified/pending source
+        # for provenance.  It is not an input to the canonical run, Function
+        # store, or result registry, and must not make an otherwise valid
+        # refresh fail merely because that historical artifact lacks the
+        # strict source-evidence contract.
+        if item.get("latest_official_success_source") is not True:
+            continue
         reference = item.get("retained_source_run_log") or item.get("source_run_log")
         if not reference:
-            if item.get("latest_official_success_source") is not True:
-                continue
             raise ValueError(f"source_index_run_log_required:{task}")
         path = _resolve_index_reference(index_path, reference)
         if not path.is_file():
