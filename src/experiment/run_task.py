@@ -6107,14 +6107,12 @@ def run_task(args: argparse.Namespace) -> int:
             continue
         aggregate_paths.extend(_formal_result_paths(record))
     aggregate_summary = aggregate_task_results([] if args.dry_run else aggregate_paths)
-    result_root = _experiment_run_dir(
-        output_root,
-        task=item.task,
-        method=method,
-        device=targets[0].label,
-        serial=targets[0].serial,
-        console_port=targets[0].console_port,
-    )
+    # The official AndroidWorld runner owns the published
+    # ``task/method/device/runlog/attempt_NNN`` directory and writes its own
+    # result_summary.json there.  Keep the scheduler's aggregate summary in
+    # the immutable scheduler attempt so the two result contracts cannot
+    # overwrite one another before registration.
+    result_root = attempt_root / "scheduler"
     summary = _write_result_summary(
         result_root=result_root,
         task=item.task,
