@@ -485,13 +485,21 @@ def _canonical_function_store_paths(memory_root: Path) -> list[Path]:
                 and relative[5] == "function_store.json"
                 and not relative[0].startswith(".")
             )
+            androidworld_authoring_layout = (
+                environment == "androidworld"
+                and len(relative) == 6
+                and relative[2] == "function"
+                and relative[3] == "function_authoring"
+                and relative[5] == "function_store.json"
+                and not relative[0].startswith(".")
+            )
             bmoca_layout = (
                 environment == "bmoca"
                 and len(relative) == 6
                 and relative[2] == "function"
                 and relative[5] == "function_store.json"
             )
-            if androidworld_layout or bmoca_layout:
+            if androidworld_layout or androidworld_authoring_layout or bmoca_layout:
                 paths.append(path.resolve())
     return sorted(set(paths))
 
@@ -518,6 +526,20 @@ def _function_bundle_identity(
                 "device": parts[2],
                 "category": "function",
                 "method": parts[1],
+                "attempt_id": parts[4],
+            }
+        if environment == "androidworld" and (
+            len(parts) == 6
+            and parts[2] == "function"
+            and parts[3] == "function_authoring"
+            and parts[5] == "function_store.json"
+        ):
+            return {
+                "environment": environment,
+                "task": parts[0],
+                "device": parts[1],
+                "category": parts[2],
+                "method": parts[3],
                 "attempt_id": parts[4],
             }
         if environment != "bmoca" or (
@@ -1955,6 +1977,9 @@ def _refresh_data_index_unlocked(
             root,
             resolved_prepared_memory_roots,
             canonical_sources=canonical_sources,
+            existing_canonical_memories=previous_registry.get("canonical", {}).get(
+                "prepared_memories", {}
+            ),
         )
     )
     memory_source_index: dict[str, Any] = {}
