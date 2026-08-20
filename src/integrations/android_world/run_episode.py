@@ -199,7 +199,28 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
                 normalized_label == "NEXT"
                 and "Invalid element index" in message
             )
-            if empty_a11y_tree:
+            if normalized_label == "NEXT" and missing_target:
+                activity = str(
+                    getattr(controller._env, "foreground_activity_name", "") or ""
+                ).strip()
+                packages = {
+                    str(getattr(element, "package_name", "") or "").strip()
+                    for element in controller._env.get_ui_elements() or ()
+                }
+                camera_is_foreground = activity.startswith(
+                    "com.android.camera2/"
+                )
+                camera_is_visible = "com.android.camera2" in packages
+                launcher_is_foreground = activity.startswith(
+                    "com.google.android.apps.nexuslauncher/"
+                )
+                if camera_is_foreground or camera_is_visible or launcher_is_foreground:
+                    logger.info(
+                        "AndroidWorld Camera setup is already settled; skipping "
+                        "stale NEXT lookup"
+                    )
+                    return None
+            if missing_target or empty_a11y_tree:
                 # Camera can still be publishing its accessibility tree while
                 # AndroidWorld starts the app. Give the official setup a
                 # short bounded chance to observe the real NEXT button before
@@ -210,7 +231,14 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
                         return original(controller, element_text)
                     except ValueError as retry_error:
                         message = str(retry_error)
-                        if "Invalid element index" not in message:
+                        retry_missing_target = (
+                            "Target text" in message and "not found" in message
+                        )
+                        retry_empty_a11y_tree = (
+                            normalized_label == "NEXT"
+                            and "Invalid element index" in message
+                        )
+                        if not retry_missing_target and not retry_empty_a11y_tree:
                             break
             if not missing_target and not empty_a11y_tree:
                 raise
