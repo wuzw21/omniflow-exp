@@ -1567,7 +1567,6 @@ def _concluded_results(
             devices=tuple(device[0] for device in devices),
             source_seed=source_seed,
             evaluation_seed=evaluation_seed,
-            formal_max_steps=int(args.max_steps),
         )
         concluded.update(registered["completed"])
     return concluded
