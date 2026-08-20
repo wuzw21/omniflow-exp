@@ -4181,6 +4181,7 @@ def _result_summary_rows(
     mobilegpt_teacher_stats: dict[str, dict[str, Any]] = {}
     teacher_wait_by_method: dict[str, dict[str, Any]] = {}
     teacher_wall_sec_by_method: dict[str, float] = {}
+    method_devices: dict[str, set[str]] = {}
     dry_run_summary = any(
         bool((record.get("metadata") or {}).get("dry_run"))
         for record in command_records
@@ -4195,6 +4196,8 @@ def _result_summary_rows(
         serial = str(target.get("serial") or "").strip() if isinstance(target, dict) else ""
         if method and device and serial:
             device_aliases[(method, serial)] = device
+        if method and device:
+            method_devices.setdefault(method, set()).add(device)
 
     for record in command_records:
         metadata = (
@@ -4279,6 +4282,15 @@ def _result_summary_rows(
             existing = by_method_device.get(key)
             if existing is None or _row_rank(row) >= _row_rank(existing):
                 by_method_device[key] = dict(row)
+        elif method:
+            # Native AndroidWorld result rows do not always carry the target
+            # label; in a one-task runner the command record is the unique
+            # authoritative device context for that method.
+            candidates = method_devices.get(method) or set()
+            if len(candidates) == 1:
+                resolved_device = next(iter(candidates))
+                row = {**row, "device": resolved_device}
+                by_method_device[(method, resolved_device)] = dict(row)
 
     grouped_records: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for record in command_records:

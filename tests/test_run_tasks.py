@@ -21,6 +21,7 @@ from src.experiment.run_task import (
     build_autodroid_command,
     build_task_command,
     _formal_result_paths,
+    _result_summary_rows,
 )
 from src.experiment.source_records import CanonicalRunLog
 from src.experiment.batch_outcomes import record_result_outcome
@@ -146,6 +147,40 @@ def test_pipeline_attempt_id_grows_past_historical_outcome(tmp_path: Path) -> No
     )
 
     assert _next_pipeline_attempt_id(args, outcomes_root) == "attempt_002"
+
+
+def test_result_summary_resolves_native_row_to_unique_command_device() -> None:
+    rows = _result_summary_rows(
+        task="CameraTakePhoto",
+        command_records=[
+            {
+                "method": "fixed_replay",
+                "device": "small5554",
+                "status": "completed",
+                "returncode": 0,
+                "command": "run_episode",
+                "output_path": "/tmp/attempt",
+                "metadata": {},
+            }
+        ],
+        aggregate_summary={
+            "per_task": [
+                {
+                    "task_name": "CameraTakePhoto",
+                    "method": "fixed_replay",
+                    "device": "",
+                    "official_validator_used": True,
+                    "official_validator_success": True,
+                    "duration_ms": 1000,
+                    "actions_executed": 4,
+                }
+            ]
+        },
+    )
+
+    assert rows[0]["device"] == "small5554"
+    assert rows[0]["official_validator_used"] is True
+    assert rows[0]["official_validator_success"] is True
 
 
 def test_t3a_hint_uses_function_store_source_lineage(tmp_path: Path) -> None:
