@@ -1709,6 +1709,12 @@ def _refresh_data_index_unlocked(
     if not index_path.is_file():
         raise FileNotFoundError(f"source_index_missing:{index_path}")
     source_payload = _load_source_index(index_path)
+    previous_registry = load_data_index(index_path)
+    previous_sources = previous_registry.get("canonical", {}).get(
+        "source_run_logs", {}
+    )
+    if not isinstance(previous_sources, dict):
+        previous_sources = {}
     task_names = sorted(str(task) for task in source_payload)
     screenshot_roots = tuple(
         sorted(
@@ -1788,6 +1794,16 @@ def _refresh_data_index_unlocked(
                         source_metadata=source_payload[indexed_task],
                     )
                 except (TypeError, ValueError, FileNotFoundError) as migration_error:
+                    # Keep an already-published canonical source for an
+                    # unrelated task when its retained historical artifact
+                    # no longer satisfies the strict collection contract.
+                    # The invalid artifact remains visible in provenance, but
+                    # must not block registration of a new valid Function or
+                    # result cell for another task.
+                    previous = previous_sources.get(indexed_task)
+                    if isinstance(previous, dict):
+                        indexed_paths.pop(path, None)
+                        continue
                     raise ValueError(
                         f"indexed_source_run_log_invalid:{indexed_task}:{path}:"
                         f"{error}:legacy_migration_failed:{migration_error}"
@@ -1848,6 +1864,24 @@ def _refresh_data_index_unlocked(
         canonical_sources[task]["dependencies"] = (
             _materialize_run_log_dependencies(root, canonical_payload)
         )
+
+    for task, previous in previous_sources.items():
+        if task in canonical_sources or task not in source_payload:
+            continue
+        if not isinstance(previous, dict):
+            continue
+        previous_path = Path(str(previous.get("object_path") or "")).expanduser()
+        previous_digest = str(previous.get("sha256") or "").strip().lower()
+        if (
+            not previous_path.is_file()
+            or not previous_digest
+            or sha256_file(previous_path) != previous_digest
+        ):
+            continue
+        preserved = dict(previous)
+        preserved["object_path"] = str(previous_path.resolve())
+        canonical_sources[task] = preserved
+        records.setdefault(previous_digest, preserved)
 
     function_store_paths = _canonical_function_store_paths(root)
     resolved_result_roots = sorted(
