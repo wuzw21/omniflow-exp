@@ -2264,10 +2264,41 @@ def _patch_androidworld_app_launch(adb_utils: Any) -> Any:
     if not callable(original):
         raise RuntimeError("androidworld_launch_app_unavailable")
 
+    def launch_camera_capture_intent(controller: Any) -> Any:
+        """Open the installed Camera2 app through its public capture intent.
+
+        Some official API 29 tablet images ship Camera2 without the legacy
+        ``CameraLauncher`` component used by AndroidWorld's static registry.
+        The public ``IMAGE_CAPTURE`` intent resolves to that same installed
+        Camera2 package (usually ``CaptureActivity``), so this is an
+        environment compatibility fallback rather than a replacement app.
+        """
+
+        issue_generic_request = getattr(adb_utils, "issue_generic_request", None)
+        check_ok = getattr(adb_utils, "check_ok", None)
+        if not callable(issue_generic_request) or not callable(check_ok):
+            raise RuntimeError("androidworld_camera_capture_intent_unavailable")
+        response = issue_generic_request(
+            ["shell", "am", "start", "-a", "android.media.action.IMAGE_CAPTURE"],
+            controller,
+        )
+        check_ok(response, "Failed to launch the AndroidWorld Camera2 capture intent.")
+        return response
+
     def launch_app(app_name: str, controller: Any) -> Any:
         if adb_utils.get_adb_activity(app_name) is not None:
             adb_utils.close_app(app_name, controller)
-        return original(app_name, controller)
+        try:
+            return original(app_name, controller)
+        except Exception:
+            if str(app_name or "").strip().casefold() not in {"camera", "camera2"}:
+                raise
+            logger.warning(
+                "AndroidWorld Camera2 component launch failed; retrying through "
+                "the public IMAGE_CAPTURE intent",
+                exc_info=True,
+            )
+            return launch_camera_capture_intent(controller)
 
     adb_utils.launch_app = launch_app
     return original
