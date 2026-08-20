@@ -28,6 +28,7 @@ from src.experiment.run_task import (
 from src.experiment.data_index import (
     canonical_prepared_memory_from_index,
     load_data_index,
+    registered_result_plan_from_memory,
     refresh_data_index_from_pointer,
 )
 from src.experiment.batch_outcomes import (
@@ -1569,6 +1570,21 @@ def _concluded_results(
             evaluation_seed=evaluation_seed,
         )
         concluded.update(registered["completed"])
+    # Native cells selected into current.json remain part of the same skip
+    # plan.  The registry fallback above is needed for external baseline
+    # registrations that may not be indexable yet.
+    memory_index = Path(args.memory_index).expanduser().resolve()
+    if memory_index.is_file():
+        indexed = registered_result_plan_from_memory(
+            memory_index=memory_index,
+            task_name=args.task,
+            methods=methods,
+            devices=tuple(device[0] for device in devices),
+            source_seed=source_seed,
+            evaluation_seed=evaluation_seed,
+            formal_max_steps=int(args.max_steps),
+        )
+        concluded.update(indexed["completed"])
     return concluded
 
 
