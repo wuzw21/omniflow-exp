@@ -402,6 +402,7 @@ development_run=0
 source_qualification_only=0
 source_collection=0
 manual_source_collection=0
+manual_reuse_source_emulator=0
 function_replay_collection=0
 all_tasks=0
 batch_task_filter=""
@@ -585,6 +586,9 @@ Options:
                             screenshot-backed native RunLog evidence.
   --collect-source-manual  Run one task interactively on the source device;
                             every action is chosen from the current screenshot/XML.
+  --manual-reuse-source-emulator
+                            Reuse a source emulator already prepared for the
+                            current manual task instead of reinstalling its app.
   --function-replay-collection
                             Convert each successful source RunLog with
                             enhance=false and run one official Function replay.
@@ -770,6 +774,9 @@ while [[ "$#" -gt 0 ]]; do
     --collect-source-manual)
       source_collection=1
       manual_source_collection=1
+      ;;
+    --manual-reuse-source-emulator)
+      manual_reuse_source_emulator=1
       ;;
     --function-replay-collection)
       function_replay_collection=1
@@ -1364,6 +1371,9 @@ if [[ -n "$e2e_task" ]]; then
   fi
   if [[ "$manual_source_collection" -eq 1 ]]; then
     e2e_args+=(--manual-source)
+  fi
+  if [[ "$manual_reuse_source_emulator" -eq 1 ]]; then
+    e2e_args+=(--manual-reuse-emulator)
   fi
   if [[ -n "$appagent_memory_root" ]]; then
     e2e_args+=(--appagent-memory-root "$appagent_memory_root")

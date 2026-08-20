@@ -145,8 +145,13 @@ class ManualAndroidWorld:
             canonicalize_run_log_observation,
         )
 
+        # A concurrent archive pass may move an incomplete attempt while this
+        # interactive process is alive. Recreate the canonical writer paths
+        # before every observation so the evidence stream remains usable.
+        self._images.mkdir(parents=True, exist_ok=True)
         image = Image.fromarray(state.pixels)
         raw_path = self._root / "observations" / f"{index:04d}.png"
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
         image.save(raw_path, format="PNG")
         data = raw_path.read_bytes()
         digest = hashlib.sha256(data).hexdigest()

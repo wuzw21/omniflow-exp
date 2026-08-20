@@ -939,6 +939,8 @@ def collect_manual_source(
         str(output_path),
         "--install-a11y-forwarder",
     ]
+    if getattr(args, "manual_reuse_emulator", False):
+        command.append("--skip-emulator-setup")
     environment = dict(os.environ)
     environment.update(
         {
@@ -4481,6 +4483,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-qualification-only", action="store_true")
     parser.add_argument("--source-only", action="store_true")
     parser.add_argument("--manual-source", action="store_true")
+    parser.add_argument("--manual-reuse-emulator", action="store_true")
     parser.add_argument(
         "--function-replay-collection",
         action="store_true",
