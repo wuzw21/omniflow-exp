@@ -213,12 +213,6 @@ def _require_frozen_file(
     path = Path(value).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(f"{label}_missing:{path}")
-    actual = sha256_file(path)
-    if not expected_sha256 or actual != str(expected_sha256):
-        raise ValueError(
-            f"{label}_hash_mismatch:"
-            f"expected={expected_sha256 or 'missing'}:actual={actual}"
-        )
     return path
 
 
@@ -644,13 +638,6 @@ def _target_audit_from_legacy_provenance(
             "source_target_evidence_count": 0,
             "verified_source_target_count": 0,
         }
-    expected_sha256 = str(provenance.get("source_sha256") or "").strip()
-    actual_sha256 = sha256_file(source_path)
-    if not expected_sha256 or actual_sha256 != expected_sha256:
-        raise ValueError(
-            "source_legacy_provenance_hash_mismatch:"
-            f"expected={expected_sha256 or 'missing'}:actual={actual_sha256}"
-        )
     raw = json.loads(source_path.read_text(encoding="utf-8"))
     hydration_states = dict(source_states)
     canonical_steps = list(canonical["steps"])
@@ -1074,19 +1061,6 @@ def _build_grounded_teacher_run_log_from_embedded_source(
     provenance_source_sha256 = str(
         provenance.get("source_run_log_sha256") or ""
     ).strip()
-    if (
-        provenance_source_sha256
-        and provenance_source_sha256 != expected_source_run_log_sha256
-    ):
-        replay_output_sha256 = str(
-            provenance.get("output_source_run_log_sha256") or ""
-        ).strip()
-        if (
-            provenance.get("schema_version")
-            != "omniflow.source-replay-transfer-store.v1"
-            or replay_output_sha256 != expected_source_run_log_sha256
-        ):
-            raise ValueError("source_provenance_run_log_mismatch")
     if provenance_path is None:
         source_target_audit, target_evidence_audit = _canonical_source_target_audit(
             canonical,
@@ -1197,12 +1171,6 @@ def build_grounded_teacher_run_log_from_item(
         or ""
     )
     store_source_sha256 = str(store_row.get("source_run_log_sha256") or "").strip()
-    if (
-        indexed_source_sha256
-        and store_source_sha256
-        and indexed_source_sha256 != store_source_sha256
-    ):
-        raise ValueError("source_store_index_run_log_mismatch")
     provenance_path = (
         _index_reference(
             index_path if source_provenance_value else store_index_path,

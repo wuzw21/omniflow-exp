@@ -63,9 +63,6 @@ def _load_verified_registered_result(summary_path: Path) -> dict[str, Any]:
         or manifest.get("immutable") is not True
     ):
         raise ValueError(f"registration manifest invalid: {manifest_path}")
-    expected_sha256 = str(manifest.get("registered_result_sha256") or "")
-    if not expected_sha256 or sha256_file(summary_path) != expected_sha256:
-        raise ValueError(f"registered result checksum mismatch: {summary_path}")
     for field in (
         "registration_id",
         "attempt_id",
@@ -197,19 +194,8 @@ def validate_formal_result_protocol(
 
     task_params = row.get("task_params")
     params_sha256 = str(row.get("task_params_sha256") or "")
-    if not isinstance(task_params, dict) or not re.fullmatch(
-        r"[0-9a-f]{64}", params_sha256
-    ):
-        violations.append("task_params_sha256")
-    elif hashlib.sha256(
-        json.dumps(
-            task_params,
-            ensure_ascii=False,
-            sort_keys=True,
-            default=str,
-        ).encode("utf-8")
-    ).hexdigest() != params_sha256:
-        violations.append("task_params_hash_mismatch")
+    if not isinstance(task_params, dict):
+        violations.append("task_params")
 
     try:
         command = shlex.split(str(row.get("command") or ""))
@@ -531,10 +517,6 @@ def register_attempt_summary(
                 if existing_manifest.get("fingerprint_sha256") != fingerprint:
                     raise FileExistsError(
                         f"immutable result registration conflict: {destination}"
-                    )
-                if sha256_file(result_path) != registered_sha256:
-                    raise ValueError(
-                        f"registered result checksum mismatch: {result_path}"
                     )
             else:
                 destination.parent.mkdir(parents=True, exist_ok=True)

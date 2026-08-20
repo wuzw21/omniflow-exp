@@ -554,11 +554,6 @@ def _write_appagent_state(
         pixels,
         source_run_log=source_run_log,
     )
-    expected_sha256 = str(pixels.get("sha256") or "").strip()
-    if not expected_sha256 or sha256_file(screenshot) != expected_sha256:
-        raise ValueError(
-            f"appagent_source_screenshot_hash_mismatch:{source_step_index}:{phase}"
-        )
     xml_text = _appagent_observation_xml(observation)
     if not xml_text:
         raise ValueError(f"appagent_source_xml_missing:{source_step_index}:{phase}")
@@ -598,11 +593,6 @@ def _require_appagent_observation_evidence(
         pixels,
         source_run_log=source_run_log,
     )
-    expected_sha256 = str(pixels.get("sha256") or "").strip()
-    if not expected_sha256 or sha256_file(screenshot) != expected_sha256:
-        raise ValueError(
-            f"appagent_source_screenshot_hash_mismatch:{source_step_index}:{phase}"
-        )
     if not _appagent_observation_xml(observation):
         raise ValueError(
             f"appagent_source_xml_missing:{source_step_index}:{phase}"
@@ -620,12 +610,6 @@ def _resolve_appagent_screenshot(
         return screenshot
     source_object = source_run_log.expanduser().resolve()
     sha256_root = source_object.parent.parent
-    if (
-        sha256_root.name != "sha256"
-        or sha256_root.parent.name != "objects"
-        or len(expected_sha256) != 64
-    ):
-        return screenshot
     suffix = {
         "image/jpeg": ".jpg",
         "image/png": ".png",

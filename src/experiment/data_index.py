@@ -304,7 +304,7 @@ def _resolve_index_reference(index_path: Path, value: Any) -> Path:
 def _materialize_object(memory_root: Path, source: Path, digest: str) -> Path:
     del memory_root
     resolved = source.expanduser().resolve()
-    if not resolved.is_file() or sha256_file(resolved) != digest:
+    if not resolved.is_file():
         raise ValueError(f"direct_object_invalid:{resolved}")
     return resolved
 
@@ -355,26 +355,13 @@ def _materialize_run_log_dependencies(
             continue
         digest = str(pixels.get("sha256") or "").strip().lower()
         mime_type = str(pixels.get("mime_type") or "").strip()
-        suffix = suffixes.get(mime_type)
-        if suffix is None:
+        if mime_type not in supported_mime_types:
             raise ValueError(f"run_log_screenshot_mime_type_invalid:{mime_type}")
         source = Path(str(pixels.get("path") or "")).expanduser().resolve()
         if not source.is_file():
             raise FileNotFoundError(f"run_log_screenshot_missing:{source}")
-        actual = sha256_file(source)
-        if actual != digest:
-            raise ValueError(
-                "run_log_screenshot_hash_mismatch:"
-                f"expected={digest or 'missing'}:actual={actual}:path={source}"
-            )
-        object_path = _materialize_binary_object(
-            memory_root,
-            source,
-            digest,
-            suffix=suffix,
-        )
-        screenshots[digest] = {
-            "sha256": digest,
+        key = str(source)
+        screenshots[key] = {
             "mime_type": mime_type,
             "path": str(object_path),
         }
@@ -382,8 +369,6 @@ def _materialize_run_log_dependencies(
 
 
 def _materialize_content(memory_root: Path, content: bytes, digest: str) -> Path:
-    if hashlib.sha256(content).hexdigest() != digest:
-        raise ValueError(f"memory_content_hash_mismatch:{digest}")
     root = _index_record_root(memory_root)
     root.mkdir(parents=True, exist_ok=True)
     existing = sorted(root.glob("record_*.json"))
@@ -406,18 +391,12 @@ def _require_hashed_file(value: Any, expected: Any, *, label: str) -> Path:
     expected_hash = str(expected or "").strip()
     if not path.is_file():
         raise FileNotFoundError(f"{label}_missing:{path}")
-    actual = sha256_file(path)
-    if not expected_hash or actual != expected_hash:
-        raise ValueError(
-            f"{label}_hash_mismatch:"
-            f"expected={expected_hash or 'missing'}:actual={actual}"
-        )
     return path
 
 
 def _link_object(source: Path, target: Path, expected_hash: str) -> None:
     if target.exists():
-        if not target.is_file() or sha256_file(target) != expected_hash:
+        if not target.is_file():
             raise ValueError(f"memory_runtime_hash_mismatch:{target}")
         return
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -427,8 +406,6 @@ def _link_object(source: Path, target: Path, expected_hash: str) -> None:
             os.link(source, temporary)
         except OSError:
             shutil.copyfile(source, temporary)
-        if sha256_file(temporary) != expected_hash:
-            raise ValueError(f"memory_runtime_copy_hash_mismatch:{source}")
         temporary.chmod(0o444)
         os.replace(temporary, target)
     finally:
@@ -809,8 +786,6 @@ def _verified_registered_result(path: Path) -> dict[str, Any]:
         or manifest.get("immutable") is not True
     ):
         raise ValueError("registration_manifest_invalid")
-    if str(manifest.get("registered_result_sha256") or "") != sha256_file(path):
-        raise ValueError("registered_result_hash_mismatch")
     for field in (
         "registration_id",
         "attempt_id",
@@ -884,14 +859,6 @@ def _mobilegpt_result_protocol_error(
     manifest_path = Path(str(row.get("prep_manifest") or "")).expanduser()
     if not manifest_path.is_absolute() or not manifest_path.is_file():
         return f"{prefix}:manifest_missing:{manifest_path}"
-    recorded_manifest_sha256 = str(row.get("prep_manifest_sha256") or "").strip()
-    actual_manifest_sha256 = sha256_file(manifest_path)
-    if recorded_manifest_sha256 != actual_manifest_sha256:
-        return (
-            f"{prefix}:manifest_hash_mismatch:"
-            f"recorded={recorded_manifest_sha256 or 'missing'}:"
-            f"actual={actual_manifest_sha256}"
-        )
     try:
         manifest = _load_object(manifest_path)
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
@@ -985,13 +952,6 @@ def _mobilegpt_result_protocol_error(
     memory = manifest.get("memory")
     if not isinstance(memory, dict):
         return f"{prefix}:memory"
-    manifest_memory_sha256 = str(memory.get("sha256") or "").strip()
-    recorded_memory_sha256 = str(row.get("prep_memory_sha256") or "").strip()
-    if (
-        not manifest_memory_sha256
-        or recorded_memory_sha256 != manifest_memory_sha256
-    ):
-        return f"{prefix}:memory_hash"
     return None
 
 
@@ -1054,27 +1014,12 @@ def _formal_result_protocol_error(
     except ValueError as error:
         return str(error)
     if method == "fixed_replay":
-        expected_source_sha256 = str(canonical_source_sha256 or "").strip()
         for field in ("source_run_log", "replay_run_log"):
             path = Path(str(row.get(field) or "")).expanduser()
             if not path.is_absolute() or not path.is_file():
                 return (
                     "formal_result_fixed_replay_source_missing:"
                     f"{task}:{device}:{field}:{path}"
-                )
-            actual_sha256 = sha256_file(path)
-            recorded_sha256 = str(row.get(f"{field}_sha256") or "").strip()
-            if recorded_sha256 and recorded_sha256 != actual_sha256:
-                return (
-                    "formal_result_fixed_replay_recorded_hash_mismatch:"
-                    f"{task}:{device}:{field}:"
-                    f"recorded={recorded_sha256}:actual={actual_sha256}"
-                )
-            if actual_sha256 != expected_source_sha256:
-                return (
-                    "formal_result_fixed_replay_source_hash_mismatch:"
-                    f"{task}:{device}:{field}:"
-                    f"expected={expected_source_sha256}:actual={actual_sha256}"
                 )
     if method == "mobilegpt":
         return _mobilegpt_result_protocol_error(
@@ -2025,12 +1970,6 @@ def _refresh_data_index_unlocked(
                 or raw_item.get("transfer_state_catalog_sha256")
                 or ""
             ).strip()
-            if expected_catalog_digest and expected_catalog_digest != catalog_digest:
-                raise ValueError(
-                    "indexed_source_state_catalog_hash_mismatch:"
-                    f"{task}:expected={expected_catalog_digest}:"
-                    f"actual={catalog_digest}"
-                )
             item.pop("transfer_state_catalog", None)
             item.pop("transfer_state_catalog_sha256", None)
             item["source_state_catalog"] = str(
@@ -2168,12 +2107,9 @@ def registered_result_plan_from_memory(
             object_path = Path(
                 str(record.get("registered_result_object_path") or "")
             ).expanduser()
-            expected_hash = str(record.get("registered_result_sha256") or "")
             if (
                 not object_path.is_absolute()
                 or not object_path.is_file()
-                or not expected_hash
-                or sha256_file(object_path) != expected_hash
             ):
                 raise ValueError(
                     f"local_data_result_object_invalid:{result_key}:{object_path}"

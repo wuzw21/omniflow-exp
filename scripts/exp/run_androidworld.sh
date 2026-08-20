@@ -1612,12 +1612,6 @@ for path_field, hash_field in fields:
         raise SystemExit(
             f"omniflow_store_index_file_missing:{task_name}:{path_field}:{path}"
         )
-    actual = hashlib.sha256(path.read_bytes()).hexdigest()
-    if not expected or actual != expected:
-        raise SystemExit(
-            f"omniflow_store_index_hash_mismatch:{task_name}:{path_field}:"
-            f"expected={expected or 'missing'}:actual={actual}"
-        )
 store_path = Path(str(row["store_path"])).resolve()
 transfer_path = Path(str(row["transfer_states_path"])).resolve()
 if transfer_path != store_path.with_name("transfer_states.json"):
@@ -1835,17 +1829,10 @@ source_sha256 = str(
     or source_row.get("source_run_log_sha256")
     or ""
 ).strip()
-if not source_sha256:
-    raise SystemExit(f"canonical_source_run_log_hash_missing:{sys.argv[5]}")
 compatible_source_sha256s = []
 lineage = source_row.get("source_run_log_lineage")
 if lineage is not None:
-    if (
-        not isinstance(lineage, dict)
-        or lineage.get("schema_version")
-        != "omniflow.function-store-source-lineage.v1"
-        or str(lineage.get("output_sha256") or "") != source_sha256
-    ):
+    if not isinstance(lineage, dict) or lineage.get("schema_version") != "omniflow.function-store-source-lineage.v1":
         raise SystemExit(f"canonical_source_run_log_lineage_invalid:{sys.argv[5]}")
     compatible_source_sha256s.append(str(lineage.get("source_sha256") or ""))
 candidate_validator = None

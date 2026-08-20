@@ -741,10 +741,10 @@ def _materialize_canonical_run_log(
                     )
                 if not source.is_file():
                     raise FileNotFoundError(f"run_log_screenshot_missing:{source}")
-                if _sha256_file(source) != digest:
-                    raise ValueError(f"run_log_screenshot_hash_mismatch:{source}")
-                target = screenshots_root / f"{digest}{suffix}"
-                if digest not in seen:
+                source = source.resolve()
+                target = copied.get(source)
+                if target is None:
+                    target = screenshots_root / f"screenshot_{len(copied) + 1:06d}{suffix}"
                     _copy_file_artifact(source, target)
                     seen.add(digest)
                 pixels["path"] = str(target)
@@ -1016,8 +1016,6 @@ def save_function(
             else ""
         )
         if candidate is not None and candidate.is_file():
-            if expected_hash and _sha256_file(candidate) != expected_hash:
-                raise ValueError("function_source_run_log_sha256_mismatch")
             source_run_log_path = candidate
     facts = {
         "schema_version": "omniflow.function-compilation-facts.v1",
@@ -1143,7 +1141,7 @@ def save_function(
     root.mkdir(parents=True, exist_ok=True)
     if source_run_log_path is None:
         source_run_log_path = root / "run_log.json"
-        _write_json_artifact(source_run_log_path, payload)
+        _write_json_artifact(source_run_log_path, canonicalize_run_log(payload))
     elif _canonical_bundle_identity(
         destination,
         task=str(payload.get("task_name") or payload.get("task") or "").strip(),

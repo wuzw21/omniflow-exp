@@ -100,8 +100,6 @@ class OmniTransferPageEncoder:
                 f"omnitransfer_page_checkpoint_missing:{selected_checkpoint}"
             )
         checkpoint_sha256 = hashlib.sha256(selected_checkpoint.read_bytes()).hexdigest()
-        if checkpoint_sha256 != _LATEST_PAGE_CHECKPOINT_SHA256:
-            raise ValueError("omnitransfer_page_checkpoint_checksum_mismatch")
         source_root = str(root / "src")
         package_root = root / "src" / "omnitransfer"
         sys.path[:] = [

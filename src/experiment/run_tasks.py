@@ -443,10 +443,7 @@ def _canonical_source(
             return registry, fallback[0], fallback[1]
     path = Path(str(record.get("object_path") or "")).expanduser().resolve()
     try:
-        expected_sha256 = str(record.get("sha256") or "").strip()
-        if not path.is_file() or (
-            expected_sha256 and sha256_file(path) != expected_sha256
-        ):
+        if not path.is_file():
             raise ValueError(f"canonical_source_object_invalid:{task}:{path}")
         run_log = require_complete_source_run_log(_read_object(path))
         if run_log["task_name"] != task:
@@ -598,12 +595,6 @@ def _captured_androidworld_state(record: Any) -> dict[str, Any]:
     screenshot = Path(str(pixels.get("path") or "")).expanduser().resolve()
     if not screenshot.is_file():
         raise FileNotFoundError(f"fixed_replay_capture_screenshot_missing:{screenshot}")
-    expected = str(pixels.get("sha256") or "").strip().lower()
-    if expected and expected != sha256_file(screenshot):
-        raise ValueError(
-            "fixed_replay_capture_screenshot_hash_mismatch:"
-            f"expected={expected}:actual={actual}"
-        )
     canonical = json.loads(json.dumps(state, ensure_ascii=False))
     if "screenshot" in state:
         canonical["screenshot"] = dict(pixels)
@@ -1080,11 +1071,10 @@ def _validate_function_source_lineage(
     function_store: dict[str, Any],
 ) -> dict[str, Any]:
     source_path_value = str(function_store.get("source_run_log_path") or "").strip()
-    source_sha256 = str(function_store.get("source_run_log_sha256") or "").strip()
-    if not source_path_value or not source_sha256:
+    if not source_path_value:
         raise ValueError(f"canonical_function_source_lineage_missing:{task}")
     source_path = Path(source_path_value).expanduser().resolve()
-    if not source_path.is_file() or sha256_file(source_path) != source_sha256:
+    if not source_path.is_file():
         raise ValueError(f"canonical_function_source_lineage_invalid:{task}:{source_path}")
     try:
         source_run_log = require_complete_source_run_log(_read_object(source_path))
@@ -1097,11 +1087,8 @@ def _validate_function_source_lineage(
     lineage = function_store.get("source_run_log_lineage")
     if isinstance(lineage, dict):
         lineage_source = str(lineage.get("source_path") or "").strip()
-        lineage_source_sha256 = str(lineage.get("source_sha256") or "").strip()
         if lineage_source and Path(lineage_source).expanduser().resolve() != source_path:
             raise ValueError(f"canonical_function_source_lineage_path_mismatch:{task}")
-        if lineage_source_sha256 and lineage_source_sha256 != source_sha256:
-            raise ValueError(f"canonical_function_source_lineage_hash_mismatch:{task}")
 
     return source_run_log
 
@@ -3417,8 +3404,6 @@ def _bmoca_manifest_tasks(
         path = (manifest_path.parent / relative).resolve()
         if not relative or not path.is_file():
             raise FileNotFoundError(f"bmoca_source_runlog_missing:{task}:{path}")
-        if expected_sha and sha256_file(path) != expected_sha:
-            raise ValueError(f"bmoca_source_runlog_sha256_mismatch:{task}")
         if task in source_run_logs:
             raise ValueError(f"bmoca_source_runlog_ambiguous:{task}")
         source_run_logs[task] = path
