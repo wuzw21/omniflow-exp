@@ -1277,15 +1277,9 @@ def _load_function_stores(
         source_run_log = store.with_name("run_log.json")
         transfer = store.with_name("transfer_states.json")
         if not source_run_log.is_file():
-            if task in previous_stores:
-                continue
-            raise FileNotFoundError(
-                f"function_source_run_log_missing:{task}:{source_run_log}"
-            )
+            continue
         if not transfer.is_file():
-            if task in previous_stores:
-                continue
-            raise FileNotFoundError(f"function_transfer_states_missing:{task}:{transfer}")
+            continue
         store_payload = _load_object(store)
         if (
             not isinstance(store_payload, dict)
