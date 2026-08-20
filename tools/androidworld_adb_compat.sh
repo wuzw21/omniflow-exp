@@ -12,7 +12,14 @@ if [[ ! -x "$real_adb" ]]; then
 fi
 
 args=("$@")
-if [[ "${args[0]:-}" == "install" ]]; then
+has_install=0
+for arg in "${args[@]}"; do
+  if [[ "$arg" == "install" ]]; then
+    has_install=1
+    break
+  fi
+done
+if [[ "$has_install" == "1" ]]; then
   filtered=()
   for arg in "${args[@]}"; do
     [[ "$arg" == "--bypass-low-target-sdk-block" ]] && continue
