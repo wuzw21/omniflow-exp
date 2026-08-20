@@ -2012,13 +2012,14 @@ if [[ "$all_tasks" -eq 1 ]]; then
   while IFS= read -r batch_task_name; do
     formal_tasks+=("$batch_task_name")
   done < <(
-    "$python_bin" - "$source_index" "$batch_task_filter" <<'PY'
+    "$python_bin" - "$source_index" "$batch_task_filter" "$android_world_root" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 index_path = Path(sys.argv[1]).expanduser().resolve()
 task_filter = sys.argv[2].strip()
+android_world_root = Path(sys.argv[3]).expanduser().resolve()
 payload = json.loads(index_path.read_text(encoding="utf-8"))
 if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.data-index.v2":
     payload = payload["source_index"]
@@ -2028,8 +2029,32 @@ if not isinstance(payload, dict) or (not task_filter and len(payload) != 116):
         f"{'selected slice' if task_filter else 116}:actual="
         f"{len(payload) if isinstance(payload, dict) else 'not_object'}"
     )
-for task_name in payload:
-    print(task_name)
+if not android_world_root.is_dir():
+    raise SystemExit(f"android_world_root_missing:{android_world_root}")
+sys.path.insert(0, str(android_world_root))
+from android_world import registry  # noqa: E402
+
+task_registry = registry.TaskRegistry().get_registry("android_world")
+missing = sorted(set(payload) - set(task_registry))
+if missing:
+    raise SystemExit("formal_task_registry_missing:" + ",".join(missing))
+missing_complexity = sorted(
+    task_name
+    for task_name in payload
+    if not isinstance(getattr(task_registry[task_name], "complexity", None), (int, float))
+)
+if missing_complexity:
+    raise SystemExit("formal_task_complexity_missing:" + ",".join(missing_complexity))
+
+# AndroidWorld's official registry is the source of truth for difficulty.  The
+# task filter is applied after sorting so a filtered run has the same stable
+# order as the corresponding slice of the full 116-task campaign.
+for task_name in sorted(
+    payload,
+    key=lambda name: (float(task_registry[name].complexity), name),
+):
+    if not task_filter or task_name in set(task_filter.replace(",", " ").split()):
+        print(task_name)
 PY
   )
   if [[ -z "$batch_task_filter" && "${#formal_tasks[@]}" -ne 116 ]]; then
