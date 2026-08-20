@@ -1079,7 +1079,11 @@ def run_mobilegpt_client(
             timeout_sec=timeout_sec,
         )
         reward = float(task.is_successful(env))
-        validator_success = returncode == 0 and reward > 0.5
+        # MobileGPT can leave its official client loop alive after the
+        # AndroidWorld task is already successful. Preserve that timeout in
+        # process_returncode, but let the official validator decide whether
+        # the task itself succeeded.
+        validator_success = reward > 0.5
         task_params = json.loads(str(task_params_json or "{}"))
         stats_path = Path(os.environ.get("MOBILEGPT_STATS_JSONL", "")).expanduser()
         actions_executed = 0
