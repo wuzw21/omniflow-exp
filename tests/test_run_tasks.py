@@ -1751,6 +1751,56 @@ def test_published_result_row_reads_native_summary_and_raw_validator_result(
     assert external_row["validator_success"] is True
 
 
+def test_published_result_row_does_not_cross_match_device_attempts(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path)
+    args.task = "CameraTakePhoto"
+    archive = args.results_root / "androidworld" / args.task / "mobilegpt"
+    old_device = archive / "old" / "runlog" / "attempt-shared" / "official_client"
+    new_device = (
+        archive
+        / "AndroidWorldAvd4090_seed111_eval113"
+        / "runlog"
+        / "attempt-shared"
+        / "official_client"
+    )
+    old_device.mkdir(parents=True)
+    new_device.mkdir(parents=True)
+    (old_device / "task_results.jsonl").write_text(
+        json.dumps(
+            {
+                "device": "emulator-5554",
+                "official_validator_used": True,
+                "official_validator_success": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (new_device / "task_results.jsonl").write_text(
+        json.dumps(
+            {
+                "device": "emulator-5576",
+                "official_validator_used": True,
+                "official_validator_success": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    row = _published_official_result_row(
+        args=args,
+        attempt_id="attempt-shared",
+        method="mobilegpt",
+        device="pixel5576",
+    )
+
+    assert row["device"] == "emulator-5576"
+    assert row["validator_success"] is True
+
+
 def test_formal_result_paths_include_published_native_runner_file(
     tmp_path: Path,
 ) -> None:

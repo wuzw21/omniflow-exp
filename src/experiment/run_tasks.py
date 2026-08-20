@@ -1692,6 +1692,31 @@ def _published_official_result_row(
     if not archive_root.is_dir():
         return {}
 
+    def matches_device(row: dict[str, Any]) -> bool:
+        """Reject an older device row sharing the same child attempt id.
+
+        External runners use the serial in ``task_results.jsonl`` while the
+        scheduler summary uses the protocol label.  Compare the stable
+        trailing numeric identity so both forms match, but an old
+        ``emulator-5554`` row cannot satisfy a new ``pixel5576`` request.
+        Rows without a device field retain the path-based compatibility
+        behavior used by older external runners.
+        """
+
+        candidate = str(row.get("device") or "").strip()
+        requested = str(device or "").strip()
+        if not candidate or not requested:
+            return True
+        if candidate == requested:
+            return True
+        candidate_match = re.search(r"(\d+)$", candidate)
+        requested_match = re.search(r"(\d+)$", requested)
+        return bool(
+            candidate_match
+            and requested_match
+            and candidate_match.group(1) == requested_match.group(1)
+        )
+
     def belongs_to_attempt(path: Path) -> bool:
         # Native AndroidWorld uses the scheduler join key in the leaf
         # directory (``attempt.method.device``), while external official
@@ -1719,6 +1744,8 @@ def _published_official_result_row(
         for row in reversed(rows):
             if not isinstance(row, dict):
                 continue
+            if not matches_device(row):
+                continue
             official_success = row.get("validator_success")
             if isinstance(official_success, bool):
                 normalized = dict(row)
@@ -1739,6 +1766,8 @@ def _published_official_result_row(
             except json.JSONDecodeError:
                 continue
             if not isinstance(row, dict):
+                continue
+            if not matches_device(row):
                 continue
             if row.get("official_validator_used") is True:
                 official_success = row.get("official_validator_success")
