@@ -1861,9 +1861,18 @@ def _refresh_data_index_unlocked(
         canonical_payload = _load_object(
             Path(canonical_sources[task]["object_path"])
         )
-        canonical_sources[task]["dependencies"] = (
-            _materialize_run_log_dependencies(root, canonical_payload)
-        )
+        try:
+            canonical_sources[task]["dependencies"] = (
+                _materialize_run_log_dependencies(root, canonical_payload)
+            )
+        except (FileNotFoundError, TypeError, ValueError):
+            previous = previous_sources.get(task)
+            if not isinstance(previous, dict):
+                raise
+            # Older canonical records already point to content-addressed
+            # screenshot dependencies.  Preserve those verified references
+            # when the raw RunLog still contains a stale workstation path.
+            canonical_sources[task] = dict(previous)
 
     for task, previous in previous_sources.items():
         if task in canonical_sources or task not in source_payload:
