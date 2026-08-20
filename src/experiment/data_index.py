@@ -34,6 +34,7 @@ from src.experiment.protocol import (
     RESULT_COMMANDS_FILE,
     RESULT_SUMMARY_FILE,
     SOURCE_SEED,
+    SOURCE_DEVICE,
     TASK_SEED,
 )
 from src.experiment.paths import sha256_file
@@ -1284,7 +1285,7 @@ def _load_function_stores(
     dict[str, dict[str, Any]],
 ]:
     records: dict[str, dict[str, Any]] = {}
-    candidates: dict[str, list[tuple[tuple[int, int], str]]] = {}
+    candidates: dict[str, list[tuple[tuple[int, int, str], str]]] = {}
     previous_stores = existing_canonical_stores or {}
     for store in stores:
         if not store.is_file():
@@ -1371,7 +1372,19 @@ def _load_function_stores(
             },
         )
         record["tasks"].append(task)
-        candidates.setdefault(task, []).append(((1,), identity))
+        # A valid source-authoring bundle is the canonical candidate.  Older
+        # replay bundles and superseded authoring attempts remain in
+        # ``records`` as evidence, but must not make refresh ambiguous.
+        attempt_id = str(bundle_identity.get("attempt_id") or "")
+        attempt_match = re.search(r"(?:^|_)attempt_(\d+)(?:$|[._])", attempt_id)
+        attempt_rank = int(attempt_match.group(1)) if attempt_match else 0
+        source_authoring_rank = int(
+            bundle_identity.get("device") == SOURCE_DEVICE[0]
+            and bundle_identity.get("method") == "function_authoring"
+        )
+        candidates.setdefault(task, []).append(
+            ((source_authoring_rank, attempt_rank, attempt_id), identity)
+        )
 
     for record in records.values():
         record["tasks"] = sorted(set(record["tasks"]))
