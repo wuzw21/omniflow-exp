@@ -702,6 +702,60 @@ def test_result_registration_keeps_runtime_integrity_evidence_after_conclusion(
     )
 
 
+def test_result_registration_keeps_immutable_result_when_index_refresh_is_blocked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summary = tmp_path / "attempt" / "one_task_summary.json"
+    _write_json(
+        summary,
+        {
+            "task_name": "CameraTakePhoto",
+            "rows": [
+                {
+                    "method": "omniflow",
+                    "device": "fold5564",
+                    "official_validator_used": True,
+                    "official_validator_success": False,
+                }
+            ],
+        },
+    )
+    attempt_manifest = summary.with_name("attempt_manifest.json")
+    _write_json(
+        attempt_manifest,
+        {
+            "immutable": True,
+            "attempt_id": "iteration_01",
+            "source_seed": 111,
+            "evaluation_seed": 113,
+        },
+    )
+    memory_index = tmp_path / "current.json"
+    monkeypatch.setattr(
+        "src.experiment.data_index.refresh_data_index_from_pointer",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            ValueError(
+                "indexed_source_run_log_invalid:SimpleSmsReply:"
+                "androidworld_source_run_log_reasoning_required"
+            )
+        ),
+    )
+
+    registration = register_attempt_summary(
+        summary_path=summary,
+        attempt_manifest_path=attempt_manifest,
+        runs_root=tmp_path / "runs",
+        local_data_index=memory_index,
+    )
+
+    assert registration["local_data_updated"] is False
+    assert "indexed_source_run_log_invalid:SimpleSmsReply" in (
+        registration["local_data_update_error"]
+    )
+    assert Path(registration["registered_results"][0]).is_file()
+
+
 def test_result_registration_rejects_missing_boolean_validator_conclusion(
     tmp_path: Path,
 ) -> None:

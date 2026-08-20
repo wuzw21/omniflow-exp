@@ -563,16 +563,27 @@ def register_attempt_summary(
         appended = _append_ledger_records(runs_root / "registry.jsonl", ledger_records)
 
     local_data_updated = False
+    local_data_update_error = ""
     if local_data_index is not None:
         from src.experiment.data_index import refresh_data_index_from_pointer
 
-        refresh_data_index_from_pointer(
-            memory_index=local_data_index,
-            additional_result_roots=(runs_root,),
-        )
-        local_data_updated = True
+        try:
+            refresh_data_index_from_pointer(
+                memory_index=local_data_index,
+                additional_result_roots=(runs_root,),
+            )
+        except ValueError as error:
+            # Registration is already immutable and complete at this point.
+            # A stale unrelated source in current.json must not turn a valid
+            # task result into a process failure; the registry remains the
+            # authoritative fallback for skip planning.
+            if not str(error).startswith("indexed_source_run_log_invalid:"):
+                raise
+            local_data_update_error = str(error)
+        else:
+            local_data_updated = True
 
-    return {
+    result = {
         "task_name": task_name,
         "attempt_id": attempt_id,
         "registered_results_count": len(registered_paths),
@@ -580,6 +591,9 @@ def register_attempt_summary(
         "registered_results": registered_paths,
         "local_data_updated": local_data_updated,
     }
+    if local_data_update_error:
+        result["local_data_update_error"] = local_data_update_error
+    return result
 
 
 __all__ = [
