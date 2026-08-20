@@ -1656,6 +1656,13 @@ def _published_official_result_row(
     if not archive_root.is_dir():
         return {}
 
+    def belongs_to_attempt(path: Path) -> bool:
+        # Native AndroidWorld uses the scheduler join key in the leaf
+        # directory (``attempt.method.device``), while external official
+        # runners publish ``.../runlog/<attempt_id>/...``.  Both layouts are
+        # immutable and already scoped by task and method above.
+        return marker in str(path.parent) or attempt_id in path.parts
+
     # Native AndroidWorld writes the normalized result summary alongside the
     # raw task-results stream.  External runners (MobileGPT/AppAgent) may only
     # write the latter.  Read both forms here so the scheduler has one join
@@ -1663,7 +1670,7 @@ def _published_official_result_row(
     summary_files = sorted(
         path
         for path in archive_root.rglob("result_summary.json")
-        if marker in str(path.parent)
+        if belongs_to_attempt(path)
     )
     for path in reversed(summary_files):
         try:
@@ -1686,7 +1693,7 @@ def _published_official_result_row(
     result_files = sorted(
         path
         for path in archive_root.rglob("task_results.jsonl")
-        if marker in str(path.parent)
+        if belongs_to_attempt(path)
     )
     for path in reversed(result_files):
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()

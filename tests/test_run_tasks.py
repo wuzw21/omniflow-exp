@@ -1659,6 +1659,35 @@ def test_published_result_row_reads_native_summary_and_raw_validator_result(
     )
     assert raw_row["validator_success"] is False
 
+    external_archive = (
+        args.results_root
+        / "androidworld"
+        / args.task
+        / "mobilegpt"
+        / "target"
+        / "runlog"
+        / "attempt-external"
+        / "official_client"
+    )
+    external_archive.mkdir(parents=True)
+    (external_archive / "task_results.jsonl").write_text(
+        json.dumps(
+            {
+                "official_validator_used": True,
+                "official_validator_success": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    external_row = _published_official_result_row(
+        args=args,
+        attempt_id="attempt-external",
+        method="mobilegpt",
+        device="small5554",
+    )
+    assert external_row["validator_success"] is True
+
 
 def test_blocked_cells_do_not_duplicate_shared_prep_accounting(
     tmp_path: Path,
