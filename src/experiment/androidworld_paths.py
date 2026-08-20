@@ -50,16 +50,16 @@ def canonical_device_model(
         return "OmniFlowSourceSmall"
     if label_key in {"small5554", "target5554"}:
         return "OmniFlowTargetSmall"
-    if label_key in {"pixel5570", "target5570"}:
-        return "pixel_5_test_00"
+    if label_key in {"pixel5576", "target5576"}:
+        return "AndroidWorldAvd4090"
     if label_key in {"fold5564", "target5564"}:
         return "OmniFlowTargetFold"
     if serial_key.endswith("5564") or port == 5564:
         return "OmniFlowTargetFold"
     if serial_key.endswith("5554") or port == 5554:
         return "OmniFlowTargetSmall"
-    if serial_key.endswith("5570") or port == 5570:
-        return "pixel_5_test_00"
+    if serial_key.endswith("5576") or port == 5576:
+        return "AndroidWorldAvd4090"
     if serial_key.endswith(("5556", "5560")) or port in {5556, 5560}:
         return "OmniFlowSourceSmall"
     return str(label or serial or f"device{port or 0}").strip() or "device"
@@ -103,7 +103,7 @@ def canonical_device_metadata(
     )
     if model == "OmniFlowTargetFold":
         profile = "pixel_fold"
-    elif model == "pixel_5_test_00":
+    elif model == "AndroidWorldAvd4090":
         profile = "pixel_phone"
     else:
         profile = "small_phone"

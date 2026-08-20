@@ -190,9 +190,9 @@ def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:
 def test_setup_uses_all_protocol_devices() -> None:
     devices = _devices()
 
-    assert set(devices) == {"small5554", "pixel5570", "fold5564", "source5560"}
-    assert devices["pixel5570"].profile == "pixel_phone"
-    assert devices["pixel5570"].avd == "pixel_5_test_00"
+    assert set(devices) == {"small5554", "pixel5576", "fold5564", "source5560"}
+    assert devices["pixel5576"].profile == "pixel_phone"
+    assert devices["pixel5576"].avd == "AndroidWorldAvd4090"
     assert devices["fold5564"].profile == "pixel_fold"
     assert devices["fold5564"].avd == "OmniFlowTargetFold"
     script_text = SCRIPT.read_text(encoding="utf-8")
@@ -650,7 +650,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
             "--e2e-method",
             "omniflow",
             "--e2e-device",
-            "pixel5570:emulator-5570:5570",
+            "pixel5576:emulator-5576:5576",
             "--e2e-source-seed",
             "111",
             "--e2e-evaluation-seed",
@@ -749,14 +749,14 @@ def test_default_avd_system_image_matches_host_architecture(
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.count(
         f"system-images;android-33;google_apis;{expected_abi}"
-    ) == 2
+    ) == 3
     assert completed.stdout.count(
         f"system-images;android-34;google_apis;{expected_abi}"
     ) == 1
     assert "emulator-5554=OmniFlowTargetSmall" in completed.stdout
     assert "emulator-5560=OmniFlowSourceSmall" in completed.stdout
     assert "emulator-5564=OmniFlowTargetFold" in completed.stdout
-    assert "emulator-5570=pixel_5_test_00" in completed.stdout
+    assert "emulator-5576=AndroidWorldAvd4090" in completed.stdout
 
 
 def test_default_android_sdk_root_prefers_macos_standard_path(tmp_path: Path) -> None:
@@ -880,7 +880,7 @@ def test_default_topology_maps_device_aliases_to_physical_avds(
         "source5560:emulator-5560:5560",
         "small5554:emulator-5554:5554",
         (
-            "emulator-5554=OmniFlowTargetSmall,emulator-5570=pixel_5_test_00,"
+            "emulator-5554=OmniFlowTargetSmall,emulator-5576=AndroidWorldAvd4090,"
             "emulator-5564=OmniFlowTargetFold,"
             "emulator-5560=OmniFlowSourceSmall"
         ),

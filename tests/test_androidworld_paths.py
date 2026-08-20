@@ -11,8 +11,8 @@ def test_archive_names_use_avd_model_not_cli_alias() -> None:
         label="small5554", serial="emulator-5554", console_port=5554
     ) == "OmniFlowTargetSmall"
     assert canonical_device_seed_name(
-        label="pixel5570", serial="emulator-5570", console_port=5570
-    ) == "pixel_5_test_00_seed111_eval113"
+        label="pixel5576", serial="emulator-5576", console_port=5576
+    ) == "AndroidWorldAvd4090_seed111_eval113"
     assert canonical_device_seed_name(
         label="fold5564", serial="emulator-5564", console_port=5564
     ) == "OmniFlowTargetFold_seed111_eval113"
