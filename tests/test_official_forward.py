@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.integrations.official_forward import (
+    _count_appagent_actions,
     _autodroid_task_app_name,
     prepare_appagent_workspace,
     prepare_mobilegpt_server,
@@ -93,6 +94,77 @@ def test_appagent_forwarder_writes_validator_evidence(
     assert row["androidworld_validator_result"]["validator"] == (
         "androidworld_official"
     )
+
+
+def test_appagent_action_count_strips_ansi_and_excludes_finish() -> None:
+    log = (
+        "\x1b[33mRound 1\n"
+        "\x1b[33mAction:\n"
+        "\x1b[35mtap(6)\n"
+        "\x1b[33mRound 2\n"
+        "\x1b[33mAction:\n"
+        "\x1b[35mtap(3)\n"
+        "\x1b[33mRound 3\n"
+        "\x1b[33mAction:\n"
+        "\x1b[35mFINISH\n"
+    )
+
+    assert _count_appagent_actions(log) == 2
+
+
+def test_appagent_validator_failure_keeps_clean_process_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Task:
+        def is_successful(self, _env: object) -> float:
+            return 0.0
+
+    monkeypatch.setattr(
+        "src.integrations.official_forward._androidworld_task_startup",
+        lambda **_kwargs: _fake_androidworld_session(Task()),
+    )
+    output = tmp_path / "result"
+    log_path = output / "official_appagent.log"
+    official_output = (
+        "\x1b[33mRound 1\n\x1b[33mAction:\n\x1b[35mtap(6)\n"
+        "\x1b[33mRound 2\n\x1b[33mAction:\n\x1b[35mFINISH\n"
+    )
+
+    def fake_run(*_args, **_kwargs):
+        output.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(official_output, encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(
+        "src.integrations.official_forward.subprocess.run", fake_run
+    )
+
+    assert run_appagent_executor(
+        python_executable="python",
+        executor=tmp_path / "task_executor.py",
+        app_name="settings",
+        serial="emulator-5554",
+        workspace=tmp_path / "workspace",
+        goal="Turn on Bluetooth",
+        timeout_sec=10,
+        android_world_root=tmp_path / "android-world",
+        task_name="TurnOffWifiAndTurnOnBluetooth",
+        task_params_json="{}",
+        task_seed=113,
+        console_port=5554,
+        grpc_port=8554,
+        adb_path="adb",
+        output_root=output,
+        perform_emulator_setup=False,
+    ) == 0
+
+    row = json.loads((output / "task_results.jsonl").read_text())
+    assert row["process_returncode"] == 0
+    assert row["classification"] == "method_failure"
+    assert row["official_validator_success"] is False
+    assert row["actions_executed"] == 1
+    assert row["model_calls"] == 0
 
 
 def test_mobilegpt_forwarder_configures_staged_glm_models_and_overlays_memory(

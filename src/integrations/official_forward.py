@@ -42,6 +42,30 @@ _AUTODROID_APP_ALIASES = {
 }
 
 
+_ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+
+def _count_appagent_actions(log_text: str) -> int:
+    """Count official AppAgent device actions, excluding its FINISH marker."""
+
+    lines = _ANSI_ESCAPE_RE.sub("", str(log_text or "")).splitlines()
+    actions = 0
+    awaiting_action = False
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line == "Action:":
+            awaiting_action = True
+            continue
+        if not awaiting_action:
+            continue
+        if line != "FINISH":
+            actions += 1
+        awaiting_action = False
+    return actions
+
+
 def _autodroid_memory_app_name(app_name: str) -> str:
     normalized = " ".join(str(app_name or "").strip().lower().split())
     return _AUTODROID_APP_ALIASES.get(normalized, normalized)
@@ -1214,11 +1238,8 @@ def run_appagent_executor(
         official_log = output / "official_appagent.log"
         actions_executed = 0
         if official_log.is_file():
-            actions_executed = sum(
-                line.strip().startswith("Round ")
-                for line in official_log.read_text(
-                    encoding="utf-8", errors="replace"
-                ).splitlines()
+            actions_executed = _count_appagent_actions(
+                official_log.read_text(encoding="utf-8", errors="replace")
             )
         result_row = {
             "schema_version": "omniflow.androidworld.result.v1",
@@ -1255,7 +1276,7 @@ def run_appagent_executor(
                 else "method_failure"
             ),
             "actions_executed": actions_executed,
-            "model_calls": actions_executed,
+            "model_calls": 0,
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0,
@@ -1268,7 +1289,11 @@ def run_appagent_executor(
             json.dumps(result_row, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
-        return 0 if validator_success else (process_returncode or 1)
+        # The official process status and AndroidWorld validator conclusion are
+        # separate facts.  Keep a clean executor exit code even when the
+        # validator rejects the resulting device state; the scheduler reads
+        # official_validator_success for the method outcome.
+        return process_returncode
 
 
 def run_autodroid_replay(
