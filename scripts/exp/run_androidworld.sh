@@ -1248,6 +1248,13 @@ if [[ -n "$e2e_task" ]]; then
   fi
   e2e_android_sdk_root="${OMNIFLOW_ANDROID_SDK_ROOT:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$(resolve_default_android_sdk_root)}}}"
   e2e_adb_path="${OMNIFLOW_ADB_PATH:-$e2e_android_sdk_root/platform-tools/adb}"
+  if [[ "${OMNIFLOW_ANDROIDWORLD_ADB_COMPAT:-1}" == "1" ]]; then
+    androidworld_adb_compat="$repo/tools/androidworld_adb_compat.sh"
+    if [[ -x "$androidworld_adb_compat" ]]; then
+      export OMNIFLOW_REAL_ADB_PATH="$e2e_adb_path"
+      e2e_adb_path="$androidworld_adb_compat"
+    fi
+  fi
   e2e_emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$e2e_android_sdk_root/emulator/emulator}"
   e2e_avdmanager_bin="${OMNIFLOW_AVDMANAGER_BIN:-$e2e_android_sdk_root/cmdline-tools/latest/bin/avdmanager}"
   if [[ "$e2e_adb_path" != /* || ! -x "$e2e_adb_path" ]]; then
