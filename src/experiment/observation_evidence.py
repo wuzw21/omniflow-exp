@@ -76,7 +76,7 @@ class AndroidWorldEpisodeRecorder:
         if self.performance_metrics is None:
             state = self._get_state(*args, **kwargs)
             if self._active:
-                self._capture_state(state)
+                state = self._capture_state_with_retry(state, args, kwargs)
             return state
         started_ns = time.perf_counter_ns()
         success = False
@@ -85,7 +85,7 @@ class AndroidWorldEpisodeRecorder:
                 state = self._get_state(*args, **kwargs)
             if self._active:
                 with self.performance_metrics.timed("native_observe_record"):
-                    self._capture_state(state)
+                    state = self._capture_state_with_retry(state, args, kwargs)
             success = True
             return state
         finally:
@@ -99,6 +99,30 @@ class AndroidWorldEpisodeRecorder:
     def record_host_observation(self, state: Any) -> None:
         if self._active:
             self._capture_state(state)
+
+    def _capture_state_with_retry(
+        self,
+        state: Any,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> Any:
+        """Recover one transient empty accessibility snapshot.
+
+        AndroidWorld can return a screenshot with an empty accessibility tree
+        immediately after an action or app launch.  The run-log contract still
+        requires XML, so request one fresh native state and return that state to
+        the official agent.  Persistent missing XML remains a hard evidence
+        failure; this does not fabricate UI data or replay an old observation.
+        """
+        try:
+            self._capture_state(state)
+            return state
+        except ValueError as error:
+            if str(error) != "androidworld_run_log_observation_xml_required":
+                raise
+            refreshed_state = self._get_state(*args, **kwargs)
+            self._capture_state(refreshed_state)
+            return refreshed_state
 
     def execute_action(self, action: Any, *args: Any, **kwargs: Any) -> Any:
         if self.performance_metrics is None:

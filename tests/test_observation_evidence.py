@@ -148,6 +148,31 @@ def test_episode_recorder_accepts_an_observation_without_pixels(tmp_path) -> Non
     ]
 
 
+def test_episode_recorder_refreshes_one_empty_accessibility_snapshot(tmp_path) -> None:
+    empty = SimpleNamespace(
+        pixels=Image.new("RGB", (4, 3), color="black"),
+        forest="",
+        ui_elements=[],
+        auxiliaries={},
+    )
+    ready = SimpleNamespace(
+        pixels=Image.new("RGB", (4, 3), color="white"),
+        forest="<hierarchy />",
+        ui_elements=[],
+        auxiliaries={},
+    )
+    states = iter([empty, ready])
+    recorder = AndroidWorldEpisodeRecorder(
+        lambda: next(states),
+        lambda action: action,
+        evidence_root=tmp_path,
+    )
+    recorder.start_episode()
+
+    assert recorder.get_state() is ready
+    assert len(recorder.persist_observations()) == 1
+
+
 def test_episode_recorder_records_action_and_official_validator_result(tmp_path) -> None:
     states = iter(
         [
