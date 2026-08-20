@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# AndroidWorld's current adb_utils always adds
+# --bypass-low-target-sdk-block to install.  API 33 system images used by the
+# formal 4090 devices reject that option; keep the real adb contract and only
+# remove this unsupported install flag.
+real_adb="${OMNIFLOW_REAL_ADB_PATH:-${ANDROID_SDK_ROOT:-}/platform-tools/adb}"
+if [[ ! -x "$real_adb" ]]; then
+  echo "androidworld_adb_real_binary_missing:$real_adb" >&2
+  exit 127
+fi
+
+args=("$@")
+if [[ "${args[0]:-}" == "install" ]]; then
+  filtered=()
+  for arg in "${args[@]}"; do
+    [[ "$arg" == "--bypass-low-target-sdk-block" ]] && continue
+    filtered+=("$arg")
+  done
+  args=("${filtered[@]}")
+fi
+
+exec "$real_adb" "${args[@]}"

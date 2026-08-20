@@ -1746,6 +1746,13 @@ fi
 export ANDROID_SDK_ROOT="$android_sdk_root"
 export ANDROID_HOME="$android_sdk_root"
 adb_bin="${OMNIFLOW_ADB_PATH:-$android_sdk_root/platform-tools/adb}"
+if [[ "${OMNIFLOW_ANDROIDWORLD_ADB_COMPAT:-1}" == "1" ]]; then
+  androidworld_adb_compat="$repo/tools/androidworld_adb_compat.sh"
+  if [[ -x "$androidworld_adb_compat" ]]; then
+    export OMNIFLOW_REAL_ADB_PATH="$adb_bin"
+    adb_bin="$androidworld_adb_compat"
+  fi
+fi
 export OMNIFLOW_ANDROIDWORLD_A11Y_APK="${OMNIFLOW_ANDROIDWORLD_A11Y_APK:-$repo/vendor/androidworld/2024.05.13-accessibility_forwarder.apk}"
 emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$android_sdk_root/emulator/emulator}"
 avdmanager_bin="${OMNIFLOW_AVDMANAGER_BIN:-$android_sdk_root/cmdline-tools/latest/bin/avdmanager}"
