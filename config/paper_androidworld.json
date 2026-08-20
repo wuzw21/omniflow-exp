@@ -62,7 +62,7 @@
     "fold_state": 2,
     "fold_size": "2208x1840",
     "model": "GLM-5.1",
-    "appagent_model": "GLM-5.1",
+    "appagent_model": "GLM-4.6V",
     "model_endpoint_profile": "llmthu",
     "model_base_url": "https://llmapi.paratera.com/v1",
     "androidworld_revision": "632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"
