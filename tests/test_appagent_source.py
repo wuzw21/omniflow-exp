@@ -1016,6 +1016,39 @@ def test_appagent_projects_androidworld_ui_elements_to_xml() -> None:
     assert 'focused="true"' in xml_text
 
 
+def test_appagent_marks_semantic_androidworld_target_interactive() -> None:
+    xml_text = (
+        '<hierarchy><node text="Network &amp; internet" '
+        'resource-id="android:id/title" clickable="false" '
+        'bounds="[144,579][475,633]" /></hierarchy>'
+    )
+    action = {
+        "type": "click",
+        "params": {
+            "target_description": "Network & internet",
+            "source_context": {
+                "element": {
+                    "text": "Network & internet",
+                    "resource_id": "android:id/title",
+                }
+            },
+        },
+    }
+
+    marked = appagent_adapter.mark_appagent_teacher_target_interactive(
+        xml_text,
+        action,
+    )
+
+    assert 'clickable="true"' in marked
+    grounded = appagent_adapter.ground_appagent_teacher_action(
+        marked,
+        action,
+        min_dist=30.0,
+    )
+    assert grounded.match_reason == "exact_visible_identity"
+
+
 def test_androidworld_ui_elements_supply_appagent_package() -> None:
     assert appagent_source.androidworld_observation_package(
         {

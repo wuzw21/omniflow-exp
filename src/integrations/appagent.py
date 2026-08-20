@@ -1898,6 +1898,31 @@ def _identity_nodes(root: ET.Element, params: dict[str, Any]) -> list[ET.Element
     return []
 
 
+def mark_appagent_teacher_target_interactive(
+    xml_text: str,
+    action: dict[str, Any],
+) -> str:
+    action_type = str(action.get("type") or "").strip()
+    params = action.get("params")
+    if action_type not in APPAGENT_SUPPORTED_SOURCE_TYPES or not isinstance(
+        params, dict
+    ):
+        return xml_text
+    root = ET.fromstring(xml_text)
+    matching_nodes = _identity_nodes(root, params)
+    if len(matching_nodes) != 1:
+        return xml_text
+    node = matching_nodes[0]
+    if action_type in {"click", "long_press"}:
+        node.set("clickable", "true")
+    elif action_type == "input_text":
+        node.set("editable", "true")
+        node.set("focusable", "true")
+    elif action_type == "swipe":
+        node.set("scrollable", "true")
+    return ET.tostring(root, encoding="unicode")
+
+
 def _normalized_identity(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip().casefold()
 

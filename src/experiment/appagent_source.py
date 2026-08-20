@@ -42,6 +42,7 @@ from src.integrations.appagent import (
     appagent_record_line,
     build_appagent_teacher_source,
     ground_appagent_teacher_action,
+    mark_appagent_teacher_target_interactive,
     seal_appagent_memory,
     validate_appagent_memory,
 )
@@ -750,6 +751,23 @@ def convert_runlog_to_appagent_memory(
                 phase="before",
                 runtime=runtime,
                 source_run_log=source_path,
+            )
+            xml_text = mark_appagent_teacher_target_interactive(xml_text, action)
+            state_xml_path = (
+                demo_root
+                / "xml"
+                / f"{demo_name}_{state_index}.xml"
+            )
+            state_xml_path.write_text(xml_text, encoding="utf-8")
+            runtime.draw_elements(
+                demo_root
+                / "raw_screenshots"
+                / f"{demo_name}_{state_index}.png",
+                demo_root
+                / "labeled_screenshots"
+                / f"{demo_name}_{state_index}.png",
+                appagent_elements_from_xml(xml_text, min_dist=runtime.min_dist),
+                record_mode=True,
             )
             grounded = ground_appagent_teacher_action(
                 xml_text,
