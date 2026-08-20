@@ -13,7 +13,7 @@
 bash scripts/exp/run_androidworld.sh \
   --e2e-task TASK \
   --e2e-method omniflow \
-  --e2e-device small5554:emulator-5554:5554,small5562:emulator-5562:5562,fold5564:emulator-5564:5564 \
+  --e2e-device small5554:emulator-5554:5554,pixel5570:emulator-5570:5570,fold5564:emulator-5564:5564 \
   --e2e-source-seed 111 \
   --e2e-evaluation-seed 113 \
   --control-backend oob
@@ -66,7 +66,7 @@ bash scripts/exp/run_androidworld.sh --setup-device small5554
 
 # 逗号分隔的子集
 --e2e-method omniflow,mobilegpt \
---e2e-device small5562:emulator-5562:5562,fold5564:emulator-5564:5564
+--e2e-device pixel5570:emulator-5570:5570,fold5564:emulator-5564:5564
 ```
 
 当前 AndroidWorld target 设备：
@@ -74,7 +74,7 @@ bash scripts/exp/run_androidworld.sh --setup-device small5554
 | label | serial | profile |
 | --- | --- | --- |
 | `small5554` | `emulator-5554` | `small_phone` |
-| `small5562` | `emulator-5562` | `small_phone` |
+| `pixel5570` | `emulator-5570` | `pixel_phone` |
 | `fold5564` | `emulator-5564` | `pixel_fold` |
 
 ## AutoDroid 补充基线（9207）

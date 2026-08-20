@@ -190,7 +190,9 @@ def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:
 def test_setup_uses_all_protocol_devices() -> None:
     devices = _devices()
 
-    assert set(devices) == {"small5554", "small5562", "fold5564", "source5560"}
+    assert set(devices) == {"small5554", "pixel5570", "fold5564", "source5560"}
+    assert devices["pixel5570"].profile == "pixel_phone"
+    assert devices["pixel5570"].avd == "pixel_5_test_00"
     assert devices["fold5564"].profile == "pixel_fold"
     assert devices["fold5564"].avd == "OmniFlowTargetFold"
     script_text = SCRIPT.read_text(encoding="utf-8")
@@ -648,7 +650,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
             "--e2e-method",
             "omniflow",
             "--e2e-device",
-            "small5562:emulator-5562:5562",
+            "pixel5570:emulator-5570:5570",
             "--e2e-source-seed",
             "111",
             "--e2e-evaluation-seed",
@@ -747,13 +749,14 @@ def test_default_avd_system_image_matches_host_architecture(
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.count(
         f"system-images;android-33;google_apis;{expected_abi}"
-    ) == 3
+    ) == 2
     assert completed.stdout.count(
         f"system-images;android-34;google_apis;{expected_abi}"
     ) == 1
     assert "emulator-5554=OmniFlowTargetSmall" in completed.stdout
     assert "emulator-5560=OmniFlowSourceSmall" in completed.stdout
     assert "emulator-5564=OmniFlowTargetFold" in completed.stdout
+    assert "emulator-5570=pixel_5_test_00" in completed.stdout
 
 
 def test_default_android_sdk_root_prefers_macos_standard_path(tmp_path: Path) -> None:
@@ -877,7 +880,7 @@ def test_default_topology_maps_device_aliases_to_physical_avds(
         "source5560:emulator-5560:5560",
         "small5554:emulator-5554:5554",
         (
-            "emulator-5554=OmniFlowTargetSmall,emulator-5562=OmniFlowTargetSmall,"
+            "emulator-5554=OmniFlowTargetSmall,emulator-5570=pixel_5_test_00,"
             "emulator-5564=OmniFlowTargetFold,"
             "emulator-5560=OmniFlowSourceSmall"
         ),
@@ -887,8 +890,8 @@ def test_default_topology_maps_device_aliases_to_physical_avds(
         for mapping in completed.stdout.splitlines()[2].split(",")
     ]
     assert len(avd_names) == 4
-    assert len(set(avd_names)) == 3
-    assert avd_names.count("OmniFlowTargetSmall") == 2
+    assert len(set(avd_names)) == 4
+    assert avd_names.count("OmniFlowTargetSmall") == 1
 
 
 @pytest.mark.parametrize(

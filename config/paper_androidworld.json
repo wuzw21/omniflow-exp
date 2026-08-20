@@ -26,7 +26,7 @@
     },
     "devices": [
       {"label": "small5554", "serial": "emulator-5554", "console_port": 5554, "avd": "OmniFlowTargetSmall", "api_level": 33, "profile": "small_phone"},
-      {"label": "small5562", "serial": "emulator-5562", "console_port": 5562, "avd": "OmniFlowTargetSmall", "api_level": 33, "profile": "small_phone"},
+      {"label": "pixel5570", "serial": "emulator-5570", "console_port": 5570, "avd": "pixel_5_test_00", "api_level": 29, "profile": "pixel_phone"},
       {"label": "fold5564", "serial": "emulator-5564", "console_port": 5564, "avd": "OmniFlowTargetFold", "api_level": 34, "profile": "pixel_fold"}
     ],
     "source_device": {

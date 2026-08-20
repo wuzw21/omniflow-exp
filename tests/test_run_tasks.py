@@ -465,7 +465,7 @@ def test_e2e_selection_runs_only_one_method_and_device(
         command_runner=runner,
     )
 
-    assert calls == [("omniflow", "small5562:emulator-5562:5562")]
+    assert calls == [("omniflow", "pixel5570:emulator-5570:5570")]
 
 
 def test_e2e_selection_accepts_method_and_device_lists_or_all() -> None:
