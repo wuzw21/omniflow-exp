@@ -1529,6 +1529,14 @@ def _concluded_results(
     devices = _e2e_devices(args)
     source_seed = _e2e_source_seed(args)
     evaluation_seed = _e2e_evaluation_seed(args)
+    if os.environ.get("OMNIFLOW_ANDROIDWORLD_RERUN_CONCLUDED", "").strip() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        # Keep old immutable outcomes as evidence, but allow an explicit
+        # recovery run to allocate a fresh scheduler and RunLog attempt.
+        return set()
     if set(methods).issubset(SUPPLEMENTAL_METHODS):
         return concluded_result_keys(
             outcomes_root=outcomes_root,

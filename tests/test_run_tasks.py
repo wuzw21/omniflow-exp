@@ -1801,6 +1801,24 @@ def test_published_result_row_does_not_cross_match_device_attempts(
     assert row["validator_success"] is True
 
 
+def test_rerun_concluded_override_keeps_old_results_runnable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.task = "CameraTakePhoto"
+    args.e2e_method = "fixed_replay"
+    args.e2e_device = "small5554:emulator-5554:5554"
+    outcomes_root = tmp_path / "outcomes"
+    monkeypatch.setenv("OMNIFLOW_ANDROIDWORLD_RERUN_CONCLUDED", "1")
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.concluded_result_keys",
+        lambda **_: {("fixed_replay", "small5554")},
+    )
+
+    assert _concluded_results(args, outcomes_root, "attempt_002") == set()
+
+
 def test_formal_result_paths_include_published_native_runner_file(
     tmp_path: Path,
 ) -> None:
