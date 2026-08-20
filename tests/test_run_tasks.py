@@ -20,6 +20,7 @@ from src.experiment.run_task import (
     build_mobilegpt_server_command,
     build_autodroid_command,
     build_task_command,
+    _formal_result_paths,
 )
 from src.experiment.source_records import CanonicalRunLog
 from src.experiment.batch_outcomes import record_result_outcome
@@ -1687,6 +1688,22 @@ def test_published_result_row_reads_native_summary_and_raw_validator_result(
         device="small5554",
     )
     assert external_row["validator_success"] is True
+
+
+def test_formal_result_paths_include_published_native_runner_file(
+    tmp_path: Path,
+) -> None:
+    result_file = tmp_path / "runlog" / "attempt_002" / "task_results.jsonl"
+    result_file.parent.mkdir(parents=True)
+    result_file.write_text("{}\n", encoding="utf-8")
+    paths = _formal_result_paths(
+        {
+            "status": "completed",
+            "output_path": str(tmp_path / "target_attempt"),
+            "metadata": {"official_result_files": [str(result_file)]},
+        }
+    )
+    assert paths == [result_file.resolve()]
 
 
 def test_blocked_cells_do_not_duplicate_shared_prep_accounting(

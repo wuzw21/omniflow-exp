@@ -2866,6 +2866,15 @@ def _result_record_has_formal_result(record: dict[str, Any]) -> bool:
 def _formal_result_paths(record: dict[str, Any]) -> list[Path]:
     if not _result_record_has_formal_result(record):
         return []
+    metadata = record.get("metadata")
+    if isinstance(metadata, dict):
+        published_files = [
+            resolve_path(str(path))
+            for path in metadata.get("official_result_files") or ()
+            if str(path).strip()
+        ]
+        if published_files:
+            return published_files
     output_path = resolve_path(str(record.get("output_path") or ""))
     if output_path.is_dir():
         result_files = sorted(output_path.rglob("task_results.jsonl"))
@@ -6026,12 +6035,34 @@ def run_task(args: argparse.Namespace) -> int:
             if appagent_prep:
                 spec.metadata["appagent_prep"] = dict(appagent_prep)
             returncode = run_command(spec, dry_run=args.dry_run)
-            official_result_files = (
+            target_result_files = (
                 sorted(spec.output_path.rglob("task_results.jsonl"))
                 if method == "autodroid"
                 and spec.output_path is not None
                 and spec.output_path.is_dir()
                 else []
+            )
+            published_result_files: list[Path] = []
+            if not bool(args.dry_run):
+                published_attempt = str(
+                    os.environ.get("OMNIFLOW_BATCH_ATTEMPT_ID") or ""
+                ).strip()
+                published_root = _experiment_run_dir(
+                    output_root,
+                    task=item.task,
+                    method=method,
+                    device=target.label,
+                    serial=target.serial,
+                    console_port=target.console_port,
+                    attempt_id=published_attempt,
+                )
+                published_result_files = sorted(
+                    published_root.rglob("task_results.jsonl")
+                    if published_root.is_dir()
+                    else []
+                )
+            official_result_files = sorted(
+                set(target_result_files + published_result_files)
             )
             status = "completed" if returncode == 0 else "command_failed"
             command_records.append(
@@ -6042,7 +6073,7 @@ def run_task(args: argparse.Namespace) -> int:
                     device=target.label,
                     returncode=returncode,
                     status=status,
-                    summary_exclude=bool(official_result_files),
+                    summary_exclude=bool(target_result_files),
                     extra_metadata={
                         "device_target": target.to_dict(),
                         "official_result_files": [
