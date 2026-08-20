@@ -1401,6 +1401,7 @@ def _load_prepared_memories(
     roots: Sequence[Path],
     *,
     canonical_sources: dict[str, dict[str, Any]],
+    existing_canonical_memories: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     manifest_paths = sorted(
         {
@@ -1413,6 +1414,7 @@ def _load_prepared_memories(
     )
     records: dict[str, dict[str, Any]] = {}
     candidates: dict[str, set[str]] = {}
+    previous_memories = existing_canonical_memories or {}
     for manifest_path in manifest_paths:
         manifest = _load_object(manifest_path)
         if not isinstance(manifest, dict):
@@ -1434,14 +1436,17 @@ def _load_prepared_memories(
         ).resolve()
         from src.integrations.mobilegpt import validate_prepared_memory
 
-        validated = validate_prepared_memory(
-            memory_path,
-            task_name=task,
-            source_seed=SOURCE_SEED,
-            source_run_log=str(source["object_path"]),
-            expected_model=str(manifest.get("source_model") or ""),
-            expected_source_method=source_method,
-        )
+        try:
+            validated = validate_prepared_memory(
+                memory_path,
+                task_name=task,
+                source_seed=SOURCE_SEED,
+                source_run_log=str(source["object_path"]),
+                expected_model=str(manifest.get("source_model") or ""),
+                expected_source_method=source_method,
+            )
+        except (OSError, TypeError, ValueError):
+            continue
         memory_sha256 = str(validated["memory_sha256"])
         manifest_sha256 = sha256_file(manifest_path)
         record = records.setdefault(
@@ -1503,6 +1508,13 @@ def _load_prepared_memories(
             memory_sha256s=memory_sha256s,
             records=records,
         )
+    for task, previous in sorted(previous_memories.items()):
+        if task in canonical or not isinstance(previous, dict):
+            continue
+        canonical[task] = dict(previous)
+        memory_sha256 = str(previous.get("memory_sha256") or "").strip()
+        if memory_sha256:
+            records.setdefault(memory_sha256, dict(previous))
     return records, canonical
 
 
