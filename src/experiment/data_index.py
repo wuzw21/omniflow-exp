@@ -1256,12 +1256,14 @@ def _load_function_stores(
     screenshot_roots: Sequence[Path],
     run_log_records: dict[str, dict[str, Any]],
     existing_canonical_identities: dict[str, str] | None = None,
+    existing_canonical_stores: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[
     dict[str, dict[str, Any]],
     dict[str, dict[str, Any]],
 ]:
     records: dict[str, dict[str, Any]] = {}
     candidates: dict[str, list[tuple[tuple[int, int], str]]] = {}
+    previous_stores = existing_canonical_stores or {}
     for store in stores:
         if not store.is_file():
             raise FileNotFoundError(f"function_store_missing:{store}")
@@ -1275,10 +1277,14 @@ def _load_function_stores(
         source_run_log = store.with_name("run_log.json")
         transfer = store.with_name("transfer_states.json")
         if not source_run_log.is_file():
+            if task in previous_stores:
+                continue
             raise FileNotFoundError(
                 f"function_source_run_log_missing:{task}:{source_run_log}"
             )
         if not transfer.is_file():
+            if task in previous_stores:
+                continue
             raise FileNotFoundError(f"function_transfer_states_missing:{task}:{transfer}")
         store_payload = _load_object(store)
         if (
@@ -1374,6 +1380,13 @@ def _load_function_stores(
                 f"ambiguous_best_function_store:{task}:{','.join(best_ids)}"
             )
         canonical[task] = dict(records[best_ids[0]])
+    for task, previous in sorted(previous_stores.items()):
+        if task in canonical or not isinstance(previous, dict):
+            continue
+        canonical[task] = dict(previous)
+        identity = str(previous.get("identity_sha256") or "").strip()
+        if identity:
+            records.setdefault(identity, dict(previous))
     return records, canonical
 
 
@@ -1915,6 +1928,9 @@ def _refresh_data_index_unlocked(
         screenshot_roots=screenshot_roots,
         run_log_records=records,
         existing_canonical_identities=existing_function_store_identities,
+        existing_canonical_stores=previous_registry.get("canonical", {}).get(
+            "function_stores", {}
+        ),
     )
     result_paths, result_records, canonical_result_cells = _load_results(
         root,
