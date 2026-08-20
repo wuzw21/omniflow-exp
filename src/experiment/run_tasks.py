@@ -28,7 +28,6 @@ from src.experiment.run_task import (
 from src.experiment.data_index import (
     canonical_prepared_memory_from_index,
     load_data_index,
-    registered_result_plan_from_memory,
     refresh_data_index_from_pointer,
 )
 from src.experiment.batch_outcomes import (
@@ -1568,6 +1567,7 @@ def _concluded_results(
             devices=tuple(device[0] for device in devices),
             source_seed=source_seed,
             evaluation_seed=evaluation_seed,
+            formal_max_steps=int(args.max_steps),
         )
         concluded.update(registered["completed"])
     return concluded
@@ -2693,15 +2693,20 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 ],
             }
         else:
-            plan = registered_result_plan_from_memory(
-                memory_index=args.memory_index,
-                task_name=args.task,
-                methods=methods,
-                devices=tuple(device[0] for device in devices),
-                source_seed=source_seed,
-                evaluation_seed=evaluation_seed,
-                formal_max_steps=int(args.max_steps),
+            completed = _concluded_results(
+                args,
+                _supplemental_outcomes_root(args),
+                args.attempt_id or "",
             )
+            plan = {
+                "completed": sorted(completed),
+                "pending": [
+                    (method, device[0])
+                    for method in methods
+                    for device in devices
+                    if (method, device[0]) not in completed
+                ],
+            }
         return {
             "schema_version": "omniflow.androidworld.e2e-task-plan.v1",
             "task": args.task,
