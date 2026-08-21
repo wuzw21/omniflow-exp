@@ -176,5 +176,78 @@ def test_oob_host_replaces_androidworld_observe_and_act(monkeypatch, tmp_path) -
     assert observation.extra["androidworld_state"]["xml"] == xml
 
 
+def test_omniflow_open_app_records_ready_target_after_async_launch(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    launcher = SimpleNamespace(
+        pixels=Image.new("RGB", (4, 3), color="black"),
+        forest='<hierarchy><node package="com.google.android.apps.nexuslauncher" /></hierarchy>',
+        ui_elements=[],
+        auxiliaries={"package_name": "com.google.android.apps.nexuslauncher"},
+    )
+    camera = SimpleNamespace(
+        pixels=Image.new("RGB", (4, 3), color="blue"),
+        forest='<hierarchy><node package="com.android.camera2" /></hierarchy>',
+        ui_elements=[],
+        auxiliaries={"package_name": "com.android.camera2"},
+    )
+
+    class FakeClient:
+        def __init__(self, *_args, **_kwargs):
+            self.observe_calls = 0
+
+        def observe(self, *, wait_to_stabilize=False):
+            assert wait_to_stabilize is True
+            self.observe_calls += 1
+            state = launcher if self.observe_calls == 1 else camera
+            return {
+                "package_name": state.auxiliaries["package_name"],
+                "activity_name": "",
+                "display": {"width": 4, "height": 3},
+                "xml": state.forest,
+                "image_base64": "",
+            }
+
+        def act(self, _action):
+            return {"success": True}
+
+    class Recorder:
+        def execute_host_action(self, _action, *, execute, project, after_observation):
+            del project
+            result = execute()
+            self.after = after_observation()
+            return result
+
+    monkeypatch.setattr(host_module, "OobControlClient", FakeClient)
+    monkeypatch.setattr(
+        host_module,
+        "oob_state_from_payload",
+        lambda payload, **_kwargs: camera
+        if payload["package_name"] == "com.android.camera2"
+        else launcher,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "resolve_androidworld_package",
+        lambda value: "com.android.camera2" if value == "camera" else value,
+    )
+
+    class Env:
+        device_screen_size = (4, 3)
+        _recorder = Recorder()
+
+    host = host_module.AndroidWorldHost(
+        Env(),
+        evidence_root=tmp_path,
+        control_backend="oob",
+        open_app_ready_timeout_seconds=1.0,
+    )
+    result = host.act(Action("open_app", {"package_name": "camera"}))
+
+    assert result.success is True
+    assert host.recorder.after.auxiliaries["package_name"] == "com.android.camera2"
+
+
 def _completed(*, stdout: str = ""):
     return SimpleNamespace(returncode=0, stdout=stdout, stderr="")

@@ -811,14 +811,36 @@ def _configure_mobilegpt_server(
     server_path = server_root / "server.py"
     if server_path.is_file():
         source = server_path.read_text(encoding="utf-8")
-        task_binding = (
-            "                target_task_name = os.getenv(\"MOBILEGPT_TARGET_TASK_NAME\", \"\").strip()\n"
-            "                if target_task_name:\n"
-            "                    task[\"name\"] = target_task_name\n"
-        )
         task_marker = "                task, is_new_task = task_agent.get_task(instruction)\n"
-        if task_marker in source and "MOBILEGPT_TARGET_TASK_NAME" not in source:
-            source = source.replace(task_marker, task_marker + task_binding, 1)
+        if task_marker in source and "mobilegpt_forced_task_binding" not in source:
+            task_binding = (
+                "                # mobilegpt_forced_task_binding: the formal runner\n"
+                "                # already supplies the exact AndroidWorld task and app.\n"
+                "                # Bind from the staged native tasks.csv before the\n"
+                "                # upstream TaskAgent can call an LLM.\n"
+                "                target_task_name = os.getenv(\"MOBILEGPT_TARGET_TASK_NAME\", \"\").strip()\n"
+                "                forced_target_app = os.getenv(\"MOBILEGPT_TARGET_APP\", \"\").strip()\n"
+                "                forced_target_package = os.getenv(\"MOBILEGPT_TARGET_PACKAGE\", \"\").strip()\n"
+                "                if target_task_name and forced_target_package:\n"
+                "                    task = None\n"
+                "                    for known_task in task_agent.database.to_dict(orient=\"records\"):\n"
+                "                        if (str(known_task.get(\"name\") or \"\").strip() == target_task_name\n"
+                "                                and str(known_task.get(\"app\") or \"\").strip() == forced_target_package):\n"
+                "                            task = dict(known_task)\n"
+                "                            break\n"
+                "                    task = task or {\n"
+                "                        \"name\": target_task_name,\n"
+                "                        \"description\": instruction,\n"
+                "                        \"parameters\": {},\n"
+                "                        \"app\": forced_target_app or forced_target_package,\n"
+                "                    }\n"
+                "                    task[\"name\"] = target_task_name\n"
+                "                    task[\"app\"] = forced_target_app or forced_target_package\n"
+                "                    is_new_task = False\n"
+                "                else:\n"
+                "                    task, is_new_task = task_agent.get_task(instruction)\n"
+            )
+            source = source.replace(task_marker, task_binding, 1)
             server_path.write_text(source, encoding="utf-8")
     if normalized_embedding and utils_path.is_file():
         source = utils_path.read_text(encoding="utf-8")

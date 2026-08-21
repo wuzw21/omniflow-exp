@@ -468,7 +468,9 @@ def test_transfer_delegates_missing_source_label_to_omnitransfer(
     assert "source_element" not in request
 
 
-def test_transfer_executes_any_mapped_result_without_a_confidence_abstain(monkeypatch) -> None:
+def test_transfer_abstains_on_low_confidence_mapped_result_for_vlm_fallback(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(
         execution,
         "transfer_action",
@@ -497,9 +499,9 @@ def test_transfer_executes_any_mapped_result_without_a_confidence_abstain(monkey
         ),
     )
 
-    assert result.action is not None
-    assert result.action.tool == "click"
-    assert result.reason == "omnitransfer_local_alignment_v9"
+    assert result.action is None
+    assert result.reason == "omnitransfer_low_confidence"
+    assert result.detail["fallback"] == "online_vlm"
     assert result.detail["score"] == 0.002186
 
 

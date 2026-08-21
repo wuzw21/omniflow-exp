@@ -279,6 +279,9 @@ class AndroidWorldHost:
         else:
             raise ValueError(f"androidworld_control_backend_invalid:{control_backend}")
         self.performance_metrics = performance_metrics
+        self.open_app_ready_timeout_seconds = max(
+            0.0, float(open_app_ready_timeout_seconds or 0.0)
+        )
 
     def installed_packages(self) -> set[str]:
         setup = importlib.import_module("android_world.env.setup_device.setup")
@@ -574,17 +577,30 @@ class AndroidWorldHost:
                     self.recorder, "execute_host_action", None
                 )
                 if callable(execute_host_action):
+                    def after_observation() -> Any:
+                        if (
+                            action.tool == "open_app"
+                            and self.open_app_ready_timeout_seconds > 0.0
+                        ):
+                            identifier = str(
+                                action.args.get("package_name")
+                                or action.args.get("app_name")
+                                or ""
+                            ).strip()
+                            return self._observe_open_app_ready(identifier)
+                        return oob_state_from_payload(
+                            self.control_client.observe(),
+                            fallback_screen_size=tuple(
+                                int(value) for value in self._screen_size()
+                            ),
+                        )
+
                     return ActionResult.from_value(
                         execute_host_action(
                             action,
                             execute=execute,
                             project=self._json_action,
-                            after_observation=lambda: oob_state_from_payload(
-                                self.control_client.observe(),
-                                fallback_screen_size=tuple(
-                                    int(value) for value in self._screen_size()
-                                ),
-                            ),
+                            after_observation=after_observation,
                         )
                     )
                 return ActionResult.from_value(execute())
@@ -592,6 +608,40 @@ class AndroidWorldHost:
             return ActionResult(True)
         except Exception as error:
             return ActionResult(False, str(error))
+
+    def _observe_open_app_ready(self, identifier: str) -> Any:
+        """Return the first post-launch OOB state owned by the target app.
+
+        The recorder asks for an after-action observation immediately.  App
+        launch is asynchronous, so that sample can still be Launcher even
+        though the dispatch itself succeeded.  OmniFlow needs the ready state
+        in the same action record; otherwise the next Function step can be
+        grounded against stale Launcher XML.
+        """
+
+        expected_package = resolve_androidworld_package(identifier) or str(
+            identifier or ""
+        ).strip()
+        deadline = time.monotonic() + self.open_app_ready_timeout_seconds
+        last_state: Any = None
+        while True:
+            last_state = oob_state_from_payload(
+                self.control_client.observe(wait_to_stabilize=True),
+                fallback_screen_size=tuple(
+                    int(value) for value in self._screen_size()
+                ),
+            )
+            auxiliaries = getattr(last_state, "auxiliaries", None)
+            observed_package = str(
+                auxiliaries.get("package_name")
+                if isinstance(auxiliaries, dict)
+                else ""
+            ).strip()
+            if expected_package and observed_package == expected_package:
+                return last_state
+            if time.monotonic() >= deadline:
+                return last_state
+            time.sleep(0.25)
 
     def reset(self, go_home: bool = False) -> None:
         if self.control_client is not None:

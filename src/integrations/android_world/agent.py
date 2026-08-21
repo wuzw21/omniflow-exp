@@ -108,6 +108,15 @@ def build_agent(
         adb_serial=adb_serial,
         adb_path=adb_path,
         post_action_wait_seconds=post_action_wait_seconds,
+        open_app_ready_timeout_seconds=(
+            float(
+                os.environ.get(
+                    "OMNIFLOW_OPEN_APP_READY_TIMEOUT_SECONDS", "15"
+                )
+            )
+            if store_path
+            else 0.0
+        ),
         evidence_root=evidence_root,
         performance_metrics=performance_metrics,
         control_backend=os.environ.get(

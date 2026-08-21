@@ -39,11 +39,14 @@ _OPEN_APP_READY_MAX_ATTEMPTS = 30
 _GLOBAL_OVERLAY_MAX_ATTEMPTS = 3
 _OBSERVATION_READY_POLL_SECONDS = 0.25
 _OBSERVATION_READY_MAX_ATTEMPTS = 20
-# OmniTransfer already applies the deployment acceptance floor.  Keep only a
-# minimal sanity floor here so OmniFlow does not reject a valid mapped target a
-# second time merely because its confidence is below a conservative benchmark
-# threshold.
-_ALIGNMENT_MIN_PROBABILITY = 0.0
+# OmniTransfer supplies the candidate ranking; OmniFlow still owns the final
+# abstain decision before a device gesture is dispatched.
+# A mapped row without a meaningful pair score is not a usable transfer.  The
+# old value (0.0) accepted root/container candidates when the source control
+# was absent on the target page, which converted a transfer uncertainty into a
+# real tap.  Returning a recoverable failure here lets the normal VLM fallback
+# choose an action from the fresh target observation.
+_ALIGNMENT_MIN_PROBABILITY = 0.5
 StateLoader = Callable[[str], Any]
 
 
