@@ -182,7 +182,7 @@ def test_concluded_results_reuses_registered_formal_cell_across_attempts(
     ) == {("appagent", "small5554")}
 
 
-def test_concluded_results_does_not_reuse_legacy_omniflow_cell(
+def test_concluded_results_reuses_existing_omniflow_cell(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -204,7 +204,7 @@ def test_concluded_results_does_not_reuse_legacy_omniflow_cell(
         args,
         args.results_root / "androidworld" / ".archive" / "outcomes" / "formal",
         "attempt_002",
-    ) == set()
+    ) == {("omniflow", "small5554")}
 
 
 def test_pipeline_attempt_id_grows_past_historical_outcome(tmp_path: Path) -> None:

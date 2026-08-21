@@ -1645,13 +1645,6 @@ def _concluded_results(
             formal_max_steps=int(args.max_steps),
         )
         concluded.update(indexed["completed"])
-    # External baselines may reuse an immutable official conclusion.  OmniFlow
-    # must be re-executed for this campaign because its observe/act contract
-    # is explicitly OOB; older registered OmniFlow rows may have been created
-    # through the native AndroidWorld host and are not interchangeable.
-    concluded = {
-        key for key in concluded if str(key[0]) != "omniflow"
-    }
     return concluded
 
 
