@@ -1624,6 +1624,7 @@ def run_appagent_executor(
     adb_path: str,
     output_root: str | Path,
     perform_emulator_setup: bool = True,
+    max_steps: int = 0,
 ) -> int:
     """Run official AppAgent after the canonical task initialization."""
 
@@ -1644,6 +1645,7 @@ def run_appagent_executor(
         perform_emulator_setup=perform_emulator_setup,
     ) as (env, task):
         process_returncode = 1
+        runtime_integrity_error = ""
         prelaunch_package = ""
         prelaunch_returncode = None
         try:
@@ -1681,24 +1683,60 @@ def run_appagent_executor(
                 prelaunch_returncode = int(prelaunch.returncode)
             staged_executor = Path(workspace).expanduser().resolve() / "scripts" / "task_executor.py"
             executor_path = staged_executor if staged_executor.is_file() else Path(executor)
-            result = subprocess.run(
-                [
-                    str(python_executable),
-                    str(executor_path),
-                    "--app",
-                    str(app_name),
-                    "--root_dir",
-                    str(workspace),
-                ],
-                cwd=str(workspace),
-                input=str(goal) + "\n",
-                text=True,
-                check=False,
-                timeout=max(1.0, float(timeout_sec)),
-            )
-            process_returncode = int(result.returncode)
-        except subprocess.TimeoutExpired:
-            process_returncode = 124
+            official_log = output / "official_appagent.log"
+            with official_log.open("w", encoding="utf-8") as log_file:
+                process = subprocess.Popen(
+                    [
+                        str(python_executable),
+                        "-u",
+                        str(executor_path),
+                        "--app",
+                        str(app_name),
+                        "--root_dir",
+                        str(workspace),
+                    ],
+                    cwd=str(workspace),
+                    stdin=subprocess.PIPE,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                if process.stdin is not None:
+                    process.stdin.write(str(goal) + "\n")
+                    process.stdin.close()
+                deadline = time.monotonic() + max(1.0, float(timeout_sec))
+                while process.poll() is None:
+                    log_file.flush()
+                    action_count = _count_appagent_actions(
+                        official_log.read_text(
+                            encoding="utf-8", errors="replace"
+                        )
+                    )
+                    if max_steps > 0 and action_count >= max_steps:
+                        process.terminate()
+                        try:
+                            process.wait(timeout=5.0)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait(timeout=5.0)
+                        process_returncode = 125
+                        runtime_integrity_error = "appagent_step_budget_exhausted"
+                        break
+                    if time.monotonic() >= deadline:
+                        process.terminate()
+                        try:
+                            process.wait(timeout=5.0)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait(timeout=5.0)
+                        process_returncode = 124
+                        runtime_integrity_error = "appagent_step_timeout"
+                        break
+                    time.sleep(0.5)
+                else:
+                    process_returncode = int(process.returncode or 0)
+        except OSError:
+            process_returncode = 1
         reward = float(task.is_successful(env))
         # The AndroidWorld validator is the single authoritative judge of task
         # success shared by every formal method; a clean subprocess exit is a
@@ -1758,6 +1796,7 @@ def run_appagent_executor(
             "official_log": str(official_log),
             "target_app_prelaunch_package": prelaunch_package,
             "target_app_prelaunch_returncode": prelaunch_returncode,
+            "runtime_integrity_error": runtime_integrity_error,
         }
         (output / "task_results.jsonl").write_text(
             json.dumps(result_row, ensure_ascii=False) + "\n",
@@ -1767,7 +1806,7 @@ def run_appagent_executor(
         # separate facts.  Keep a clean executor exit code even when the
         # validator rejects the resulting device state; the scheduler reads
         # official_validator_success for the method outcome.
-        return process_returncode
+    return process_returncode
 
 
 def run_autodroid_replay(
@@ -2287,6 +2326,7 @@ def main() -> int:
         adb_path=args.adb,
         output_root=args.output,
         perform_emulator_setup=not args.no_perform_emulator_setup,
+        max_steps=args.max_steps,
     )
 
 

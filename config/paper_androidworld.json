@@ -13,11 +13,29 @@
       "methods": ["autodroid"],
       "devices": [
         {
-          "label": "autodroid9207",
-          "serial": "emulator-5590",
-          "console_port": 5590,
+          "label": "autodroidsmall5554",
+          "serial": "emulator-5554",
+          "console_port": 5554,
           "host": "9207",
-          "avd": "AutoDroidSmallPhone",
+          "avd": "OmniFlowTargetSmall",
+          "api_level": 33,
+          "profile": "small_phone"
+        },
+        {
+          "label": "autodroidfold5564",
+          "serial": "emulator-5564",
+          "console_port": 5564,
+          "host": "9207",
+          "avd": "OmniFlowTargetFold",
+          "api_level": 34,
+          "profile": "pixel_fold"
+        },
+        {
+          "label": "autodroidandroidworld5594",
+          "serial": "emulator-5594",
+          "console_port": 5594,
+          "host": "9207",
+          "avd": "AndroidWorldAvd",
           "api_level": 33,
           "profile": "small_phone"
         }

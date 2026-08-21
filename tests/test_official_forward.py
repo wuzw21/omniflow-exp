@@ -155,13 +155,17 @@ def test_appagent_forwarder_writes_validator_evidence(
         lambda *_args, **_kwargs: SimpleNamespace(returncode=0),
     )
 
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    executor = tmp_path / "task_executor.py"
+    executor.write_text("print('official')\n", encoding="utf-8")
     output = tmp_path / "result"
     assert run_appagent_executor(
         python_executable="python",
-        executor=tmp_path / "task_executor.py",
+        executor=executor,
         app_name="settings",
         serial="emulator-5554",
-        workspace=tmp_path / "workspace",
+        workspace=workspace,
         goal="Turn on Bluetooth",
         timeout_sec=10,
         android_world_root=tmp_path / "android-world",
@@ -227,12 +231,18 @@ def test_appagent_validator_failure_keeps_clean_process_status(
         "src.integrations.official_forward.subprocess.run", fake_run
     )
 
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    executor = tmp_path / "task_executor.py"
+    executor.write_text(
+        "print(" + repr(official_output) + ")\n", encoding="utf-8"
+    )
     assert run_appagent_executor(
         python_executable="python",
-        executor=tmp_path / "task_executor.py",
+        executor=executor,
         app_name="settings",
         serial="emulator-5554",
-        workspace=tmp_path / "workspace",
+        workspace=workspace,
         goal="Turn on Bluetooth",
         timeout_sec=10,
         android_world_root=tmp_path / "android-world",
@@ -254,6 +264,57 @@ def test_appagent_validator_failure_keeps_clean_process_status(
     assert row["model_calls"] == 0
     assert row["target_app_prelaunch_package"] == ""
     assert row["target_app_prelaunch_returncode"] is None
+
+
+def test_appagent_step_budget_stops_official_executor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Task:
+        def is_successful(self, _env: object) -> float:
+            return 0.0
+
+    monkeypatch.setattr(
+        "src.integrations.official_forward._androidworld_task_startup",
+        lambda **_kwargs: _fake_androidworld_session(Task()),
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    executor = tmp_path / "task_executor.py"
+    executor.write_text(
+        "import time\n"
+        "for index in range(10):\n"
+        "    print(f'Round {index + 1}', flush=True)\n"
+        "    print('Action:', flush=True)\n"
+        "    print('tap(1)', flush=True)\n"
+        "    time.sleep(0.1)\n",
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "result"
+    assert run_appagent_executor(
+        python_executable="python",
+        executor=executor,
+        app_name="settings",
+        serial="emulator-5554",
+        workspace=workspace,
+        goal="Turn on Bluetooth",
+        timeout_sec=5,
+        android_world_root=tmp_path / "android-world",
+        task_name="TurnOffWifiAndTurnOnBluetooth",
+        task_params_json="{}",
+        task_seed=113,
+        console_port=5554,
+        grpc_port=8554,
+        adb_path="adb",
+        output_root=output,
+        perform_emulator_setup=False,
+        max_steps=2,
+    ) == 125
+
+    row = json.loads((output / "task_results.jsonl").read_text())
+    assert row["runtime_integrity_error"] == "appagent_step_budget_exhausted"
+    assert row["actions_executed"] >= 2
 
 
 def test_mobilegpt_forwarder_configures_staged_glm_models_and_overlays_memory(

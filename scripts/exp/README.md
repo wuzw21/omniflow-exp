@@ -82,7 +82,7 @@ bash scripts/exp/run_androidworld.sh --setup-device small5554
 ## AutoDroid 补充基线（9207）
 
 AutoDroid 不属于正式五方法，也不进入 `--e2e-method all` 或 116 × 10 主表。
-它只能显式使用 9207 上的独立设备标签和独立结果命名空间：
+它只能显式使用 9207 上的三个独立设备标签和独立结果命名空间：
 
 ```bash
 OMNIFLOW_AUTODROID_ROOT=/absolute/OmniFlow-exp/vendor/autodroid/runtime \
@@ -91,10 +91,13 @@ OMNIFLOW_AUTODROID_POLICY=task \
 bash scripts/exp/run_androidworld.sh \
   --e2e-task CameraTakePhoto \
   --e2e-method autodroid \
-  --e2e-device autodroid9207:emulator-5590:5590 \
+  --e2e-device all \
   --e2e-source-seed 111 \
   --e2e-evaluation-seed 113
 ```
+
+The 9207 supplemental devices are `autodroidsmall5554` (small),
+`autodroidfold5564` (fold), and `autodroidandroidworld5594` (AndroidWorldAvd).
 
 结果写入 `data/androidworld/<task>/autodroid/<device_model_seed>/`，调度与汇总元数据写入
 `data/androidworld/.archive/`，使用

@@ -585,6 +585,11 @@ def test_autodroid_is_explicit_supplemental_only() -> None:
 
     assert _e2e_methods(selected) == SUPPLEMENTAL_METHODS == ("autodroid",)
     assert _e2e_devices(selected) == SUPPLEMENTAL_DEVICES
+    assert [device[0] for device in SUPPLEMENTAL_DEVICES] == [
+        "autodroidsmall5554",
+        "autodroidfold5564",
+        "autodroidandroidworld5594",
+    ]
     assert _supplemental_outcomes_root(
         SimpleNamespace(
             e2e_method="autodroid",
@@ -2335,7 +2340,7 @@ def test_autodroid_pipeline_uses_task_reference_without_source_runlog(
 ) -> None:
     args = _args(tmp_path)
     args.e2e_method = "autodroid"
-    args.e2e_device = "autodroid9207:emulator-5590:5590"
+    args.e2e_device = "autodroidsmall5554:emulator-5554:5554"
     args.source_only = True
     args.memory_index.parent.mkdir(parents=True)
     args.memory_index.write_text(

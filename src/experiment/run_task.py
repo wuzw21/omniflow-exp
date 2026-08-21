@@ -5025,6 +5025,8 @@ def build_appagent_command(
         str(int(target.console_port) + 3000),
         "--adb",
         str(adb_path or "adb"),
+        "--max-steps",
+        str(int(max_steps)),
     ]
     if not perform_emulator_setup:
         argv.append("--no-perform-emulator-setup")
