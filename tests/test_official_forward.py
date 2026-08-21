@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 from types import SimpleNamespace
 import pytest
 
@@ -161,7 +162,7 @@ def test_appagent_forwarder_writes_validator_evidence(
     executor.write_text("print('official')\n", encoding="utf-8")
     output = tmp_path / "result"
     assert run_appagent_executor(
-        python_executable="python",
+        python_executable=sys.executable,
         executor=executor,
         app_name="settings",
         serial="emulator-5554",
@@ -238,7 +239,7 @@ def test_appagent_validator_failure_keeps_clean_process_status(
         "print(" + repr(official_output) + ")\n", encoding="utf-8"
     )
     assert run_appagent_executor(
-        python_executable="python",
+        python_executable=sys.executable,
         executor=executor,
         app_name="settings",
         serial="emulator-5554",
@@ -293,7 +294,7 @@ def test_appagent_step_budget_stops_official_executor(
 
     output = tmp_path / "result"
     assert run_appagent_executor(
-        python_executable="python",
+        python_executable=sys.executable,
         executor=executor,
         app_name="settings",
         serial="emulator-5554",
