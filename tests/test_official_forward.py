@@ -3,18 +3,28 @@ from __future__ import annotations
 from contextlib import contextmanager
 import json
 from pathlib import Path
+import re
+import subprocess
 from types import SimpleNamespace
 import pytest
 
 from src.integrations.official_forward import (
     _count_appagent_actions,
     _autodroid_task_app_name,
+    _autodroid_official_memory_key,
     prepare_appagent_workspace,
     prepare_mobilegpt_server,
     resolve_mobilegpt_client_host,
     run_appagent_executor,
     validate_autodroid_memory_root,
+    write_adb_proxy,
 )
+
+
+def test_autodroid_official_memory_key_uses_paper_app_names() -> None:
+    assert _autodroid_official_memory_key("audio") == "voicerecorder"
+    assert _autodroid_official_memory_key("files") == "filemanager"
+    assert _autodroid_official_memory_key("camera") == "camera"
 
 
 @contextmanager
@@ -26,6 +36,13 @@ def test_appagent_forwarder_only_mounts_official_inputs(tmp_path: Path) -> None:
     official = tmp_path / "AppAgent"
     (official / "scripts").mkdir(parents=True)
     (official / "run.py").write_text("print('official')\n", encoding="utf-8")
+    official_executor = (
+        'import os\nimport re\n'
+        'doc_path = os.path.join(docs_dir, f"{elem.uid}.txt")\n'
+    )
+    (official / "scripts" / "task_executor.py").write_text(
+        official_executor, encoding="utf-8"
+    )
     docs = tmp_path / "memory" / "calculator" / "demo_docs"
     docs.mkdir(parents=True)
     (docs / "button.txt").write_text("{}\n", encoding="utf-8")
@@ -41,14 +58,84 @@ def test_appagent_forwarder_only_mounts_official_inputs(tmp_path: Path) -> None:
     )
 
     assert Path(result["workspace"]).is_dir()
-    assert (Path(result["workspace"]) / "scripts").resolve() == (
-        official / "scripts"
-    ).resolve()
+    staged_scripts = Path(result["workspace"]) / "scripts"
+    assert staged_scripts.is_dir()
+    assert not staged_scripts.is_symlink()
+    assert "_omniflow_resolution_agnostic_doc_path" in (
+        staged_scripts / "task_executor.py"
+    ).read_text(encoding="utf-8")
+    compile(
+        (staged_scripts / "task_executor.py").read_text(encoding="utf-8"),
+        str(staged_scripts / "task_executor.py"),
+        "exec",
+    )
+    assert (official / "scripts" / "task_executor.py").read_text(
+        encoding="utf-8"
+    ) == official_executor
     assert Path(result["app_dir"]).is_symlink()
     assert Path(result["app_dir"]).resolve() == docs.parent.resolve()
     proxy_text = Path(result["adb_proxy"]).read_text(encoding="utf-8")
     assert "emulator-5554" in proxy_text
     assert "Physical size:" in proxy_text
+
+
+def test_appagent_adb_proxy_exposes_override_size_for_xml_coordinates(
+    tmp_path: Path,
+) -> None:
+    real_adb = tmp_path / "adb"
+    real_adb.write_text(
+        "#!/bin/sh\n"
+        "printf 'Physical size: 1768x2208\\nOverride size: 2208x1840\\n'\n",
+        encoding="utf-8",
+    )
+    real_adb.chmod(0o755)
+    proxy = write_adb_proxy(
+        tmp_path / "workspace",
+        serial="emulator-5554",
+        adb_path=str(real_adb),
+    )
+    result = subprocess.run(
+        [str(proxy), "-s", "emulator-5554", "shell", "wm", "size"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == "Physical size: 2208x1840"
+
+
+def test_adb_proxy_forwards_implicit_official_calls_to_selected_device(
+    tmp_path: Path,
+) -> None:
+    real_adb = tmp_path / "adb"
+    args_file = tmp_path / "args"
+    real_adb.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$@\" > {args_file}\n"
+        "printf 'device\\n'\n",
+        encoding="utf-8",
+    )
+    real_adb.chmod(0o755)
+
+    proxy = write_adb_proxy(
+        tmp_path / "workspace",
+        serial="emulator-5590",
+        adb_path=str(real_adb),
+    )
+
+    result = subprocess.run(
+        [str(proxy), "wait-for-device"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert args_file.read_text(encoding="utf-8").splitlines() == [
+        "-s",
+        "emulator-5590",
+        "wait-for-device",
+    ]
 
 
 def test_appagent_forwarder_writes_validator_evidence(
@@ -165,6 +252,8 @@ def test_appagent_validator_failure_keeps_clean_process_status(
     assert row["official_validator_success"] is False
     assert row["actions_executed"] == 1
     assert row["model_calls"] == 0
+    assert row["target_app_prelaunch_package"] == ""
+    assert row["target_app_prelaunch_returncode"] is None
 
 
 def test_mobilegpt_forwarder_configures_staged_glm_models_and_overlays_memory(
@@ -205,6 +294,14 @@ def test_mobilegpt_forwarder_keeps_official_server_source_unchanged(
     (server / "memory").mkdir(parents=True)
     (server / "utils").mkdir()
     (server / "agents").mkdir()
+    (server / "memory" / "memory_manager.py").write_text(
+        'import os\n'
+        'def select(candidates):\n'
+        '    highest_similarity = candidates[0]\n'
+        '    if highest_similarity > 0.95:\n'
+        '        return 0\n',
+        encoding="utf-8",
+    )
     (server / "main.py").write_text(
         'os.environ["TASK_AGENT_GPT_VERSION"] = "gpt-4o"\n'
         'os.environ["vision_model"] = "gpt-4o"\n',
@@ -213,8 +310,13 @@ def test_mobilegpt_forwarder_keeps_official_server_source_unchanged(
     (server / "utils" / "utils.py").write_text(
         'import os\n'
         'import re\n'
+        'from openai import OpenAI\n'
         'def get_openai_embedding(text: str, model="text-embedding-3-small", **kwargs):\n'
-        '    return []\n'
+        '    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))\n'
+        '    text = text.replace("\\n", " ")\n'
+        '    response = client.embeddings.create(input=[text], model=model, **kwargs)\n'
+        '\n'
+        '    return response.data[0].embedding\n'
         'def parse_completion_rate(completion_rate):\n'
         '    input_str = str(completion_rate).strip()\n'
         '    if input_str.endswith("%"):\n'
@@ -249,10 +351,72 @@ def test_mobilegpt_forwarder_keeps_official_server_source_unchanged(
     assert "GLM-Embedding-2" in (
         staged / "utils" / "utils.py"
     ).read_text(encoding="utf-8")
+    assert "MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD" in (
+        staged / "memory" / "memory_manager.py"
+    ).read_text(encoding="utf-8")
+    utils_source = (staged / "utils" / "utils.py").read_text(encoding="utf-8")
+    assert "embedding_retry" in utils_source
+    assert "range(1, 4)" in utils_source
+    match = re.search(
+        r"def parse_completion_rate\(completion_rate\).*?(?=\n\ndef |\Z)",
+        utils_source,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    namespace: dict[str, object] = {"re": re}
+    exec(match.group(0), namespace)
+    assert namespace["parse_completion_rate"](
+        "Starting the capture process, so 0% complete"
+    ) == 0
     assert (staged / "agents" / "param_fill_agent.py").read_bytes() == (
         server / "agents" / "param_fill_agent.py"
     ).read_bytes()
     assert "gpt-4o" in (server / "main.py").read_text(encoding="utf-8")
+
+
+def test_mobilegpt_forwarder_bridges_finish_to_official_client_frame(
+    tmp_path: Path,
+) -> None:
+    official = tmp_path / "MobileGPT"
+    server = official / "Server"
+    (server / "memory").mkdir(parents=True)
+    (server / "utils").mkdir()
+    (server / "main.py").write_text("# official\n", encoding="utf-8")
+    server_source = (
+        "from utils.utils import log\n"
+        "OMNIFLOW_INTERNAL_LAUNCH_ACTION = \"__omniflow_launch_package\"\n\n"
+        "def _omniflow_send_action(client_socket, action):\n"
+        "    action_name = (str(action.get(\"name\") or \"\").strip()\n"
+        "                   if isinstance(action, dict) else \"\")\n"
+        "    if (\n"
+        "        isinstance(action, dict)\n"
+        "        and str(action.get(\"name\") or \"\").strip() == OMNIFLOW_INTERNAL_LAUNCH_ACTION\n"
+        "    ):\n"
+        "        client_socket.send(\"launch\".encode())\n"
+        "        return\n"
+        "                task, is_new_task = task_agent.get_task(instruction)\n"
+    )
+    (server / "server.py").write_text(server_source, encoding="utf-8")
+    (server / "utils" / "utils.py").write_text(
+        "import os\nimport json\n\ndef log(*args):\n    pass\n",
+        encoding="utf-8",
+    )
+    memory = tmp_path / "prepared"
+    (memory / "frozen_memory").mkdir(parents=True)
+
+    result = prepare_mobilegpt_server(
+        official_root=official,
+        memory_root=memory,
+        workspace=tmp_path / "workspace",
+    )
+
+    staged_source = (Path(result["server_root"]) / "server.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'action_name == "finish"' in staged_source
+    assert 'client_socket.send("$$$$$".encode())' in staged_source
+    assert "MOBILEGPT_TARGET_TASK_NAME" in staged_source
+    assert (server / "server.py").read_text(encoding="utf-8") == server_source
 
 
 def test_mobilegpt_forwarder_does_not_patch_task_agent(

@@ -832,16 +832,6 @@ def _validate_mobilegpt_converted_memory(
         or source_log_record.get("recorded_seed") != recorded_source_seed
     ):
         raise ValueError("mobilegpt_virtual_memory_source_run_log_invalid")
-    expected_source_sha256 = _file_sha256(_repo_path(source_run_log))
-    accepted_source_sha256s = {expected_source_sha256}
-    for value in compatible_source_sha256s:
-        digest = str(value or "").strip().lower()
-        if not re.fullmatch(r"[0-9a-f]{64}", digest):
-            raise ValueError("mobilegpt_compatible_source_sha256_invalid")
-        accepted_source_sha256s.add(digest)
-    if str(source_log_record.get("sha256") or "") not in accepted_source_sha256s:
-        raise ValueError("mobilegpt_virtual_memory_source_run_log_mismatch")
-
     audit_record = manifest.get("trajectory_audit")
     audit_path = _mobilegpt_manifest_evidence_path(
         bundle_root,

@@ -17,6 +17,7 @@ from omniflow.core.schemas import (
     load_canonical_action_schema,
 )
 from omniflow.core.trajectory import (
+    canonicalize_run_log,
     observation_display,
     observation_xml,
     state_id,
@@ -567,8 +568,6 @@ class FunctionStore:
         raw_functions = payload.get("functions")
         if not isinstance(raw_functions, dict):
             raise ValueError("function_store_functions_must_be_object")
-        if len(raw_functions) > 1:
-            raise ValueError("function_store_single_function_required")
         raw_source_calls = payload.get("source_calls") or []
         if not isinstance(raw_source_calls, list) or any(
             not isinstance(call, dict)
@@ -578,8 +577,6 @@ class FunctionStore:
             for call in raw_source_calls
         ):
             raise ValueError("function_store_source_calls_invalid")
-        if len(raw_source_calls) > 1:
-            raise ValueError("function_store_single_source_call_required")
         loaded: dict[str, Function] = {}
         load_errors: dict[str, str] = {}
         for key, value in raw_functions.items():
@@ -639,9 +636,6 @@ def write_function_store(
         if function.id in parsed:
             raise ValueError(f"function_store_duplicate_function:{function.id}")
         parsed[function.id] = function
-    if len(parsed) > 1:
-        raise ValueError("function_store_single_function_required")
-
     normalized_calls: list[dict[str, Any]] = []
     for call in source_calls:
         if (
@@ -659,9 +653,6 @@ def write_function_store(
                 "arguments": _copy_value(call["arguments"]),
             }
         )
-    if len(normalized_calls) > 1:
-        raise ValueError("function_store_single_source_call_required")
-
     destination = Path(path).expanduser().resolve()
     _write_store(destination, parsed, normalized_calls)
     return destination
@@ -717,7 +708,7 @@ def _materialize_canonical_run_log(
         "image/png": ".png",
         "image/webp": ".webp",
     }
-    seen: set[str] = set()
+    copied: dict[Path, Path] = {}
 
     def visit(value: Any) -> None:
         if isinstance(value, dict):
@@ -728,12 +719,23 @@ def _materialize_canonical_run_log(
                 digest = str(pixels.get("sha256") or "").strip().lower()
                 mime_type = str(pixels.get("mime_type") or "").strip()
                 suffix = suffixes.get(mime_type)
-                if len(digest) != 64 or suffix is None:
+                if suffix is None:
                     raise ValueError("run_log_screenshot_metadata_invalid")
-                source = Path(str(pixels["path"])).expanduser().resolve()
+                raw_source = Path(str(pixels["path"])).expanduser()
+                source = raw_source.resolve()
+                if (
+                    not source.is_file()
+                    and source_run_log_path is not None
+                    and not raw_source.is_absolute()
+                ):
+                    source = (source_run_log_path.parent / raw_source).resolve()
                 if not source.is_file() and source_run_log_path is not None:
                     source = (source_run_log_path.parent / source.name).resolve()
-                if not source.is_file() and source_run_log_path is not None:
+                if (
+                    not source.is_file()
+                    and source_run_log_path is not None
+                    and len(digest) == 64
+                ):
                     source = _content_addressed_screenshot(
                         source_run_log_path=source_run_log_path,
                         digest=digest,
@@ -746,8 +748,9 @@ def _materialize_canonical_run_log(
                 if target is None:
                     target = screenshots_root / f"screenshot_{len(copied) + 1:06d}{suffix}"
                     _copy_file_artifact(source, target)
-                    seen.add(digest)
+                    copied[source] = target
                 pixels["path"] = str(target)
+                pixels.pop("sha256", None)
             for child in value.values():
                 visit(child)
         elif isinstance(value, list):
@@ -755,6 +758,8 @@ def _materialize_canonical_run_log(
                 visit(child)
 
     visit(canonical)
+    if canonical.get("schema_version") == "omniflow.run_log.v1":
+        canonical = canonicalize_run_log(canonical)
     run_log_path = bundle_root / "run_log.json"
     _write_json_artifact(run_log_path, canonical)
     return run_log_path
@@ -780,7 +785,7 @@ def _content_addressed_screenshot(
         if parent.name != "data":
             continue
         candidate = parent / "objects" / "sha256" / digest[:2] / f"{digest}{suffix}"
-        if candidate.is_file() and _sha256_file(candidate) == digest:
+        if candidate.is_file():
             return candidate
     return Path()
 
@@ -861,8 +866,6 @@ def save_function(
             for step in raw["steps"]
         )
     ):
-        if source_run_log_path is None or evidence_root is None:
-            raise ValueError("legacy_run_log_path_required")
         raw = json.loads(json.dumps(raw, ensure_ascii=False))
         for step in raw["steps"]:
             if isinstance(step, dict):
@@ -1169,8 +1172,14 @@ def save_function(
         encoding="utf-8",
     )
     store = FunctionStore(destination)
-    store.functions = {function.id: function for function in parsed_functions}
-    store.source_calls = list(saved_source_calls)
+    for function in parsed_functions:
+        store.functions[function.id] = function
+    replaced_function_ids = {function.id for function in parsed_functions}
+    store.source_calls = [
+        call
+        for call in store.source_calls
+        if call["function_id"] not in replaced_function_ids
+    ] + list(saved_source_calls)
     _write_store(destination, store.functions, store.source_calls)
     temporary_states.replace(transfer_state_catalog_path)
     report = {

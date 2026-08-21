@@ -8,10 +8,22 @@ import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment.data_index import (
+    _ensure_run_log_record_digest,
     load_data_index,
     registered_result_plan_from_memory,
     refresh_data_index,
 )
+
+
+def test_legacy_canonical_source_digest_is_rehydrated(tmp_path: Path) -> None:
+    source = tmp_path / "source.run_log.json"
+    source.write_text('{"schema_version":"omniflow.run_log.v1"}\n', encoding="utf-8")
+    record = {"object_path": str(source)}
+
+    digest = _ensure_run_log_record_digest(record)
+
+    assert digest == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert record["sha256"] == digest
 from src.experiment.result_registry import (
     register_attempt_summary,
     registered_result_plan,
@@ -143,7 +155,7 @@ def _write_registered_result(
     )
 
 
-def test_registered_result_plan_skips_any_result_with_a_verified_conclusion(
+def test_registered_result_plan_skips_success_but_retries_validator_failure(
     tmp_path: Path,
 ) -> None:
     runs_root = tmp_path / "runs"
@@ -173,13 +185,11 @@ def test_registered_result_plan_skips_any_result_with_a_verified_conclusion(
         formal_max_steps=20,
     )
 
-    assert plan["completed"] == [
-        ("fixed_replay", "small5554"),
-        ("omniflow", "fold5564"),
-    ]
+    assert plan["completed"] == [("fixed_replay", "small5554")]
     assert plan["pending"] == [
         ("fixed_replay", "fold5564"),
         ("omniflow", "small5554"),
+        ("omniflow", "fold5564"),
     ]
 
 
@@ -223,16 +233,17 @@ def test_registered_result_plan_rejects_previous_selector_stop_policy(
         fixed_replay_backend="selector_then_scaled_coordinate_replay",
     )
 
-    with pytest.raises(ValueError, match="formal_result_protocol_mismatch"):
-        registered_result_plan(
-            runs_root=runs_root,
-            task_name=task,
-            methods=("fixed_replay",),
-            devices=("small5554",),
-            source_seed=111,
-            evaluation_seed=113,
-            formal_max_steps=20,
-        )
+    plan = registered_result_plan(
+        runs_root=runs_root,
+        task_name=task,
+        methods=("fixed_replay",),
+        devices=("small5554",),
+        source_seed=111,
+        evaluation_seed=113,
+        formal_max_steps=20,
+    )
+    assert plan["completed"] == []
+    assert plan["pending"] == [("fixed_replay", "small5554")]
 
 
 def test_registered_result_plan_accepts_coordinate_replay_missing_redundant_audit_flag(
@@ -259,8 +270,8 @@ def test_registered_result_plan_accepts_coordinate_replay_missing_redundant_audi
         formal_max_steps=20,
     )
 
-    assert plan["completed"] == [("fixed_replay", "small5554")]
-    assert plan["pending"] == []
+    assert plan["completed"] == []
+    assert plan["pending"] == [("fixed_replay", "small5554")]
 
 
 def test_registered_result_plan_does_not_skip_a_different_evaluation_seed(
@@ -342,8 +353,8 @@ def test_registered_result_plan_keeps_validator_rows_with_environment_error(
         evaluation_seed=113,
     )
 
-    assert plan["completed"] == [("fixed_replay", "fold5564")]
-    assert plan["pending"] == []
+    assert plan["completed"] == []
+    assert plan["pending"] == [("fixed_replay", "fold5564")]
 
 
 def test_registered_result_plan_accepts_per_episode_validator_conclusion(
@@ -370,8 +381,8 @@ def test_registered_result_plan_accepts_per_episode_validator_conclusion(
         evaluation_seed=113,
     )
 
-    assert plan["completed"] == [("fixed_replay", "small5554")]
-    assert plan["pending"] == []
+    assert plan["completed"] == []
+    assert plan["pending"] == [("fixed_replay", "small5554")]
 
 
 def test_registered_result_plan_does_not_treat_coverage_as_a_conclusion(
@@ -435,8 +446,8 @@ def test_registered_result_plan_keeps_validator_failure_with_parser_error(
         evaluation_seed=113,
     )
 
-    assert plan["completed"] == [("t3a_hint", "fold5564")]
-    assert plan["pending"] == []
+    assert plan["completed"] == []
+    assert plan["pending"] == [("t3a_hint", "fold5564")]
 
 
 @pytest.mark.parametrize(
@@ -481,8 +492,8 @@ def test_registered_result_plan_keeps_validator_conclusions_with_error_evidence(
         evaluation_seed=113,
     )
 
-    assert plan["completed"] == [(method, "small5554")]
-    assert plan["pending"] == []
+    assert plan["completed"] == []
+    assert plan["pending"] == [(method, "small5554")]
 
 
 def test_registered_result_plan_rejects_incompatible_formal_protocol(
@@ -501,16 +512,17 @@ def test_registered_result_plan_rejects_incompatible_formal_protocol(
         include_task_params=False,
     )
 
-    with pytest.raises(ValueError, match="formal_result_protocol_mismatch"):
-        registered_result_plan(
-            runs_root=runs_root,
-            task_name=task,
-            methods=("t3a_hint",),
-            devices=("small5554",),
-            source_seed=111,
-            evaluation_seed=113,
-            formal_max_steps=20,
-        )
+    plan = registered_result_plan(
+        runs_root=runs_root,
+        task_name=task,
+        methods=("t3a_hint",),
+        devices=("small5554",),
+        source_seed=111,
+        evaluation_seed=113,
+        formal_max_steps=20,
+    )
+    assert plan["completed"] == []
+    assert plan["pending"] == [("t3a_hint", "small5554")]
 
 
 def test_registered_result_plan_uses_earliest_validator_conclusion(
@@ -537,7 +549,7 @@ def test_registered_result_plan_uses_earliest_validator_conclusion(
         source_seed=111,
         evaluation_seed=113,
         formal_max_steps=20,
-    )["completed"] == [("t3a_hint", "small5554")]
+    )["completed"] == []
 
 
 def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
@@ -569,7 +581,12 @@ def test_result_registration_updates_long_term_memory(tmp_path: Path) -> None:
             "TaskOne": {
                 "task": "TaskOne",
                 "retained_source_run_log": str(source_run_log),
-            }
+            },
+            "PendingTask": {
+                "task": "PendingTask",
+                "latest_official_success_source": True,
+                "retained_source_run_log": "",
+            },
         },
     )
     memory_root = tmp_path / "memory"

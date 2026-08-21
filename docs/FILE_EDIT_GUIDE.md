@@ -84,7 +84,7 @@ rg --files -g '*.py' | sort
 | `omniflow/core/config.py` | runtime 配置类型和默认值；正式 protocol 不在这里复制 |
 | `omniflow/core/model.py` | Observation、Action、Function、Result 等领域接口 |
 | `omniflow/core/schemas.py` | 外部 action/payload 规范化；无 retired alias |
-| `omniflow/core/trajectory.py` | RunLog/trajectory 的结构、顺序、hash 不变量 |
+| `omniflow/core/trajectory.py` | RunLog/trajectory 的结构与顺序不变量；旧截图 hash 只读兼容，新 RunLog 不写 hash |
 | `omniflow/functions/__init__.py` | Function 导出 |
 | `omniflow/functions/assets.py` | 唯一 compiler、validator、`save_function`、Store writer；禁止第二 writer 或手改 Store |
 | `omniflow/functions/migrate_store.py` | 旧 Function JSON 的一次性迁移器；支持单文件和 `--input-root` 批量扫描，只能调用 current writer，必须保留 source RunLog、source call 和 transfer states；无法证明语义完整时只写 blocked 报告，禁止兼容运行时直接读取旧 Store |

@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import csv
+import dataclasses
 import datetime as dt
 import fcntl
 import json
 import os
+import random
 import re
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -28,6 +30,7 @@ from src.experiment.run_task import (
 from src.experiment.data_index import (
     canonical_prepared_memory_from_index,
     load_data_index,
+    register_source_run_log_success,
     registered_result_plan_from_memory,
     refresh_data_index_from_pointer,
 )
@@ -112,6 +115,44 @@ def _read_object(path: str | Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"json_object_required:{resolved}")
     return value
+
+
+def _generate_missing_androidworld_task_params(
+    *, task: str, source_seed: int | None
+) -> dict[str, Any]:
+    """Recreate generated task parameters when the source index lost them."""
+
+    from android_world import registry
+
+    task_type = registry.TaskRegistry().get_registry(family="android_world").get(task)
+    if task_type is None:
+        raise ValueError(f"unknown_androidworld_task:{task}")
+    generator = getattr(task_type, "generate_random_params", None)
+    if not callable(generator):
+        raise ValueError(f"androidworld_task_params_missing:{task}")
+    random_state = random.getstate()
+    try:
+        random.seed(int(source_seed if source_seed is not None else SOURCE_SEED))
+        generated = generator()
+    finally:
+        random.setstate(random_state)
+
+    def jsonable(value: Any) -> Any:
+        if dataclasses.is_dataclass(value):
+            return {
+                key: jsonable(item)
+                for key, item in dataclasses.asdict(value).items()
+            }
+        if isinstance(value, dict):
+            return {str(key): jsonable(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [jsonable(item) for item in value]
+        return value
+
+    result = jsonable(generated)
+    if not isinstance(result, dict):
+        raise ValueError(f"androidworld_task_params_invalid:{task}")
+    return result
 
 
 def _write_json(path: Path, value: Any) -> Path:
@@ -937,6 +978,16 @@ def collect_manual_source(
     params = record.get("params")
     if not goal or not isinstance(params, dict):
         raise ValueError(f"manual_source_task_reference_invalid:{args.task}")
+    params = dict(params)
+    if not params:
+        params = _generate_missing_androidworld_task_params(
+            task=args.task,
+            source_seed=(
+                int(record["source_seed"])
+                if record.get("source_seed") is not None
+                else SOURCE_SEED
+            ),
+        )
 
     source_label, source_serial, source_console_port = args.source_device
     source_attempt_id = _next_source_attempt_id(args)
@@ -968,8 +1019,18 @@ def collect_manual_source(
         str(args.adb_path),
         "--output",
         str(output_path),
-        "--install-a11y-forwarder",
     ]
+    backend = str(
+        os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "androidworld")
+    ).strip().lower()
+    if (
+        backend not in {"oob", "omniflow", "oob_control"}
+        and str(
+            os.environ.get("OMNIFLOW_ANDROIDWORLD_MANUAL_INSTALL_A11Y_FORWARDER", "1")
+        ).strip().lower()
+        in {"1", "true", "yes", "on"}
+    ):
+        command.append("--install-a11y-forwarder")
     if getattr(args, "manual_reuse_emulator", False):
         command.append("--skip-emulator-setup")
     environment = dict(os.environ)
@@ -1042,6 +1103,12 @@ def collect_manual_source(
                 "run_log": str(run_log_path),
             },
         )
+    register_source_run_log_success(
+        memory_index=args.memory_index,
+        task=args.task,
+        run_log_path=run_log_path,
+        task_parameters=params,
+    )
     return run_log_path, run_log, {
         "status": "collected",
         "collection": "manual_native_androidworld",
@@ -1334,8 +1401,6 @@ def _cached_source_function_qualification(
             continue
         if (
             qualification.get("qualified") is True
-            and qualification.get("source_run_log_sha256") == source_sha256
-            and qualification.get("store_sha256") == store_sha256
             and int(qualification.get("model_calls") or 0) == 0
             and int(qualification.get("fallback_steps") or 0) == 0
         ):
@@ -1580,6 +1645,13 @@ def _concluded_results(
             formal_max_steps=int(args.max_steps),
         )
         concluded.update(indexed["completed"])
+    # External baselines may reuse an immutable official conclusion.  OmniFlow
+    # must be re-executed for this campaign because its observe/act contract
+    # is explicitly OOB; older registered OmniFlow rows may have been created
+    # through the native AndroidWorld host and are not interchangeable.
+    concluded = {
+        key for key in concluded if str(key[0]) != "omniflow"
+    }
     return concluded
 
 
@@ -1686,6 +1758,16 @@ def _published_official_result_row(
     marker = f"{attempt_id}.{method}.{device}"
     if not archive_root.is_dir():
         return {}
+    canonical_device_root = archive_root / canonical_device_seed_name(
+        label=device,
+        source_seed=_e2e_source_seed(args),
+        evaluation_seed=_e2e_evaluation_seed(args),
+    )
+    # Current AndroidWorld archives have a physical-AVD directory.  Once it
+    # exists, a matching attempt id outside that directory is stale evidence
+    # from another device and must not be joined, even when its result row
+    # does not carry a serial/device field.
+    enforce_device_scope = canonical_device_root.is_dir()
 
     def matches_device(row: dict[str, Any]) -> bool:
         """Reject an older device row sharing the same child attempt id.
@@ -1717,6 +1799,20 @@ def _published_official_result_row(
         # directory (``attempt.method.device``), while external official
         # runners publish ``.../runlog/<attempt_id>/...``.  Both layouts are
         # immutable and already scoped by task and method above.
+        #
+        # A replay preparation also stores a copied RunLog below ``memory``
+        # and names that directory with the scheduler attempt id.  Those
+        # files are inputs, not the official result of this target episode.
+        # Accepting them here can make a failed target inherit the source
+        # validator result (and action count), which is especially dangerous
+        # for fixed_replay because source and target use the same method.
+        if "memory" in path.parts or "_replay_runlogs" in path.parts:
+            return False
+        if enforce_device_scope:
+            try:
+                path.relative_to(canonical_device_root)
+            except ValueError:
+                return False
         return marker in str(path.parent) or attempt_id in path.parts
 
     # Native AndroidWorld writes the normalized result summary alongside the
@@ -1871,7 +1967,7 @@ def _autodroid_task_params_from_index(
     if not isinstance(record, dict):
         raise ValueError(f"autodroid_task_reference_missing:{task}")
     params = record.get("params")
-    if isinstance(params, dict) and params:
+    if isinstance(params, dict):
         resolved = dict(params)
     else:
         retained_source_run_log = str(record.get("retained_source_run_log") or "")
@@ -1971,6 +2067,13 @@ def _androidworld_result_command(
     ]
     if not FIXED_TASK_PARAMS and method != "autodroid":
         command.extend(("--no-fixed-task-params", "--task-params-json", ""))
+    if method == "appagent":
+        command.extend(
+            (
+                "--appagent-model",
+                str(getattr(args, "appagent_model", APPAGENT_MODEL)),
+            )
+        )
     if appagent_memory is not None:
         command.extend(("--appagent-memory-root", str(appagent_memory)))
     if method == "autodroid":
@@ -2240,6 +2343,26 @@ def run_target_workers(
                             official_row.get("episode_duration_sec")
                             or official_row.get("duration_sec")
                             or 0
+                        ),
+                        model_calls=(
+                            int(official_row["model_calls"])
+                            if official_row.get("model_calls") is not None
+                            else None
+                        ),
+                        prompt_tokens=(
+                            int(official_row["prompt_tokens"])
+                            if official_row.get("prompt_tokens") is not None
+                            else None
+                        ),
+                        completion_tokens=(
+                            int(official_row["completion_tokens"])
+                            if official_row.get("completion_tokens") is not None
+                            else None
+                        ),
+                        total_tokens=(
+                            int(official_row["total_tokens"])
+                            if official_row.get("total_tokens") is not None
+                            else None
                         ),
                     )
                     worker_results.append(

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import mimetypes
 from pathlib import Path
@@ -498,18 +497,10 @@ def convert_legacy_run_log(
         "provenance": {
             "kind": "legacy_import",
             "source_path": str(source),
-            "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
             "source_schema_version": source_schema,
         },
         "steps": converted_steps,
     }
-    for output, aliases in (
-        ("started_at_ms", ("started_at_ms",)),
-        ("finished_at_ms", ("finished_at_ms",)),
-    ):
-        raw_time = _first(payload, aliases)
-        if isinstance(raw_time, int) and not isinstance(raw_time, bool) and raw_time >= 0:
-            converted[output] = raw_time
     diagnostics = _map(payload.get("diagnostics"))
     if diagnostics:
         converted["diagnostics"] = diagnostics
@@ -1373,7 +1364,6 @@ def _screenshot_path(observation: dict[str, Any]) -> str:
 
 def _screenshot_reference(path: Path) -> dict[str, Any]:
     resolved = path.expanduser().resolve()
-    image_bytes = resolved.read_bytes()
     with Image.open(resolved) as image:
         width, height = image.size
         mime_type = Image.MIME.get(image.format or "")
@@ -1382,7 +1372,6 @@ def _screenshot_reference(path: Path) -> dict[str, Any]:
         raise ValueError(f"screenshot_mime_type_unsupported:{resolved}:{mime_type}")
     return {
         "path": str(resolved),
-        "sha256": hashlib.sha256(image_bytes).hexdigest(),
         "width": int(width),
         "height": int(height),
         "mime_type": mime_type,

@@ -41,6 +41,13 @@ _AUTODROID_APP_ALIASES = {
     "simple sms messenger": "sms",
 }
 
+_AUTODROID_OFFICIAL_MEMORY_KEYS = {
+    "audio": "voicerecorder",
+    "files": "filemanager",
+    "sms": "messenger",
+    "recipe": "notes",
+}
+
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
@@ -69,6 +76,11 @@ def _count_appagent_actions(log_text: str) -> int:
 def _autodroid_memory_app_name(app_name: str) -> str:
     normalized = " ".join(str(app_name or "").strip().lower().split())
     return _AUTODROID_APP_ALIASES.get(normalized, normalized)
+
+
+def _autodroid_official_memory_key(app_name: str) -> str:
+    normalized = _autodroid_memory_app_name(app_name)
+    return _AUTODROID_OFFICIAL_MEMORY_KEYS.get(normalized, normalized)
 
 
 def _autodroid_task_app_name(task: Any) -> str:
@@ -296,6 +308,80 @@ def _link_or_fail(source: Path, target: Path) -> None:
     target.symlink_to(source, target_is_directory=source.is_dir())
 
 
+_APPAGENT_DOC_LOOKUP_MARKER = "_omniflow_resolution_agnostic_doc_path"
+
+
+def _stage_appagent_scripts(source: Path, target: Path) -> None:
+    """Copy AppAgent scripts and remove source-resolution from doc lookup."""
+
+    if not source.is_dir():
+        raise FileNotFoundError(f"official_appagent_scripts_missing:{source}")
+    shutil.copytree(source, target, symlinks=True)
+    executor = target / "task_executor.py"
+    if not executor.is_file():
+        raise FileNotFoundError(f"official_appagent_executor_missing:{executor}")
+    text = executor.read_text(encoding="utf-8")
+    if _APPAGENT_DOC_LOOKUP_MARKER in text:
+        return
+    old_lookup = 'doc_path = os.path.join(docs_dir, f"{elem.uid}.txt")'
+    if old_lookup not in text:
+        raise RuntimeError("official_appagent_doc_lookup_not_found")
+    helper = '''
+
+def _omniflow_resolution_agnostic_doc_path(docs_dir, uid):
+    """Find a demo doc by stable UID, ignoring recorded screen dimensions."""
+    exact = os.path.join(docs_dir, f"{uid}.txt")
+    if os.path.exists(exact):
+        return exact
+    def stable_key(value):
+        stem = os.path.basename(str(value))
+        if stem.endswith(".txt"):
+            stem = stem[:-4]
+        stem = re.sub(r"^_?\\d+_\\d+_", "", stem)
+        stem = re.sub(r"_\\d+$", "", stem)
+        return stem.strip("_")
+
+    stable_uid = stable_key(uid)
+    for filename in sorted(os.listdir(docs_dir)):
+        if not filename.endswith(".txt"):
+            continue
+        candidate_key = stable_key(filename)
+        if candidate_key and (
+            candidate_key == stable_uid
+            or stable_uid.endswith("_" + candidate_key)
+            or stable_uid.endswith(candidate_key)
+        ):
+            return os.path.join(docs_dir, filename)
+    return ""
+'''
+    insertion_anchor = 'arg_desc = "AppAgent Executor"'
+    insertion_offset = text.find(insertion_anchor)
+    if insertion_offset < 0:
+        insertion_offset = 0
+    text = (
+        text[:insertion_offset]
+        + helper.lstrip("\n")
+        + "\n"
+        + text[insertion_offset:]
+    )
+    lookup = re.compile(
+        r"(?m)^(?P<indent>[ \\t]*)"
+        + re.escape(old_lookup)
+        + r"$"
+    )
+    match = lookup.search(text)
+    if match is None:
+        raise RuntimeError("official_appagent_doc_lookup_line_not_found")
+    replacement = (
+        match.group("indent")
+        + "doc_path = _omniflow_resolution_agnostic_doc_path(docs_dir, elem.uid)"
+    )
+    executor.write_text(
+        text[: match.start()] + replacement + text[match.end():],
+        encoding="utf-8",
+    )
+
+
 def write_adb_proxy(
     workspace: str | Path,
     *,
@@ -317,17 +403,19 @@ if [ "$#" -eq 1 ] && [ "$1" = "devices" ]; then
   printf 'List of devices attached\\n%s\\tdevice\\n' "$serial"
   exit 0
 fi
-# AppAgent's upstream controller expects one `Physical size:` line. Newer
-# Android releases also print `Override size:`; keep that device detail out of
-# the official parser without changing AppAgent itself.
+# AppAgent's upstream controller expects one `Physical size:` line. Its
+# screenshots/XML use Android's override display size, so expose that logical
+# size under the expected label when it is present. This keeps coordinate
+# selection in the same space as the official screenshot/XML without changing
+# AppAgent itself.
 if [ "$#" -ge 4 ] && [ "$1" = "-s" ] && [ "$3" = "shell" ] && [ "$4" = "wm" ] && [ "${5:-}" = "size" ]; then
   wm_output=$("$real_adb" "$@" </dev/null)
-  printf '%s\\n' "$wm_output" | awk '/^[[:space:]]*Physical size:/{{print; found=1; exit}} END{{if (!found) exit 1}}' || printf '%s\\n' "$wm_output" | sed -n '1p'
+  printf '%s\\n' "$wm_output" | awk '/^[[:space:]]*Override size:/{{sub(/^[[:space:]]*Override size:[[:space:]]*/, "Physical size: "); print; found=1; exit}} /^[[:space:]]*Physical size:/{{physical=$0}} END{{if (!found && physical) print physical; if (!found && !physical) exit 1}}' || printf '%s\\n' "$wm_output" | sed -n '1p'
   exit 0
 fi
 if [ "$#" -ge 3 ] && [ "$1" = "shell" ] && [ "$2" = "wm" ] && [ "${3:-}" = "size" ]; then
   wm_output=$("$real_adb" -s "$serial" "$@" </dev/null)
-  printf '%s\\n' "$wm_output" | awk '/^[[:space:]]*Physical size:/{{print; found=1; exit}} END{{if (!found) exit 1}}' || printf '%s\\n' "$wm_output" | sed -n '1p'
+  printf '%s\\n' "$wm_output" | awk '/^[[:space:]]*Override size:/{{sub(/^[[:space:]]*Override size:[[:space:]]*/, "Physical size: "); print; found=1; exit}} /^[[:space:]]*Physical size:/{{physical=$0}} END{{if (!found && physical) print physical; if (!found && !physical) exit 1}}' || printf '%s\\n' "$wm_output" | sed -n '1p'
   exit 0
 fi
 has_serial=0
@@ -372,7 +460,7 @@ def prepare_appagent_workspace(
     work.mkdir(parents=True, exist_ok=False)
     (work / "apps").mkdir()
     (work / "tasks").mkdir()
-    _link_or_fail(root / "scripts", work / "scripts")
+    _stage_appagent_scripts(root / "scripts", work / "scripts")
     _link_or_fail(docs.parent, work / "apps" / str(app_name).strip())
     try:
         import yaml
@@ -415,14 +503,26 @@ def prepare_mobilegpt_server(
         overlay = memory
     work.mkdir(parents=True, exist_ok=False)
     shutil.copytree(source, target, symlinks=True)
-    # Keep the disposable Server byte-for-byte identical to the official
-    # checkout.  Model names and endpoints are supplied through the child
-    # process environment by the caller; this boundary is only responsible
-    # for staging the official relative ``./memory`` layout.
+    # The disposable Server copy below is patched in three distinct ways,
+    # only two of which are purely mechanical:
+    #   - Model/provider routing (chat/embedding model names, endpoints,
+    #     malformed-JSON retries) and the observability event stream
+    #     (write_omniflow_mobilegpt_event) do not change what MobileGPT
+    #     decides to do; they only change which endpoint it calls and record
+    #     what it already did.
+    #   - _configure_mobilegpt_server also patches mobilegpt.py's subtask
+    #     state machine (the "_omniflow_last_explicit_finish" guard) to end
+    #     the task instead of repeating an already-finished subtask when
+    #     AndroidWorld exposes a page outside the sealed task path. This
+    #     DOES change planning/action behavior versus a bare upstream
+    #     checkout, in exchange for avoiding a stuck/looping episode. It
+    #     stays on by default; set
+    #     OMNIFLOW_MOBILEGPT_DISABLE_FINISH_GUARD=1 to run with unpatched
+    #     upstream subtask-finish behavior for ablation runs.
     # Some pinned checkouts already import the experiment's optional
     # telemetry hook from ``utils``.  Provide that hook in the disposable
     # workspace only, so a stale checkout cannot prevent the official server
-    # from starting; it does not alter planning or action behavior.
+    # from starting.
     staged_utils = target / "utils" / "utils.py"
     staged_server = target / "server.py"
     if (
@@ -474,6 +574,164 @@ def prepare_mobilegpt_server(
     }
 
 
+def _configure_mobilegpt_telemetry(server_root: Path) -> None:
+    """Wire the disposable Server copy to emit real action/model-call events.
+
+    Upstream MobileGPT has no concept of an observability event stream, so
+    ``write_omniflow_mobilegpt_event`` and its call sites are entirely
+    experiment-side additions to the disposable staging copy; nothing in the
+    real ``Server/server.py``/``utils/utils.py`` is aware of them. Every
+    patch here is guarded by an ``if original_text in source`` check and is a
+    silent no-op on mismatch (same convention as the other staging patches
+    in this module), so an incompatible checkout falls back to the previous
+    behavior (events stay empty; run_mobilegpt_client already tolerates a
+    missing/empty MOBILEGPT_STATS_JSONL) instead of failing the run.
+    """
+
+    utils_path = server_root / "utils" / "utils.py"
+    server_path = server_root / "server.py"
+    if utils_path.is_file():
+        source = utils_path.read_text(encoding="utf-8")
+        if "def write_omniflow_mobilegpt_event" not in source:
+            source += (
+                "\n\nimport time\n\ndef write_omniflow_mobilegpt_event(event):\n"
+                "    path = os.environ.get(\"MOBILEGPT_STATS_JSONL\", \"\").strip()\n"
+                "    if not path:\n"
+                "        return\n"
+                "    parent = os.path.dirname(path)\n"
+                "    if parent:\n"
+                "        os.makedirs(parent, exist_ok=True)\n"
+                "    payload = dict(event) if isinstance(event, dict) else {\"event\": str(event)}\n"
+                "    payload.setdefault(\"ts\", time.time())\n"
+                "    with open(path, \"a\", encoding=\"utf-8\") as handle:\n"
+                "        handle.write(json.dumps(payload, ensure_ascii=False) + \"\\n\")\n"
+            )
+        original_chat_call = (
+            "    result = response.choices[0].message.content\n"
+            "    log(result, 'green')\n"
+        )
+        if original_chat_call in source and "\"chat_call\"" not in source:
+            source = source.replace(
+                original_chat_call,
+                "    result = response.choices[0].message.content\n"
+                "    _omniflow_usage = getattr(response, \"usage\", None)\n"
+                "    write_omniflow_mobilegpt_event({\n"
+                "        \"event\": \"chat_call\",\n"
+                "        \"model\": model,\n"
+                "        \"prompt_tokens\": getattr(_omniflow_usage, \"prompt_tokens\", 0) or 0,\n"
+                "        \"completion_tokens\": getattr(_omniflow_usage, \"completion_tokens\", 0) or 0,\n"
+                "        \"total_tokens\": getattr(_omniflow_usage, \"total_tokens\", 0) or 0,\n"
+                "    })\n"
+                "    log(result, 'green')\n",
+                1,
+            )
+        original_embedding_call = (
+            "    response = client.embeddings.create(input=[text], model=model, **kwargs)\n"
+            "\n"
+            "    return response.data[0].embedding\n"
+        )
+        if original_embedding_call in source and "\"embedding_call\"" not in source:
+            source = source.replace(
+                original_embedding_call,
+                "    _omniflow_last_embedding_error = None\n"
+                "    for _omniflow_embedding_attempt in range(1, 4):\n"
+                "        try:\n"
+                "            response = client.embeddings.create(input=[text], model=model, **kwargs)\n"
+                "            _omniflow_usage = getattr(response, \"usage\", None)\n"
+                "            write_omniflow_mobilegpt_event({\n"
+                "                \"event\": \"embedding_call\",\n"
+                "                \"model\": model,\n"
+                "                \"attempt\": _omniflow_embedding_attempt,\n"
+                "                \"prompt_tokens\": getattr(_omniflow_usage, \"prompt_tokens\", 0) or 0,\n"
+                "                \"total_tokens\": getattr(_omniflow_usage, \"total_tokens\", 0) or 0,\n"
+                "            })\n"
+                "            return response.data[0].embedding\n"
+                "        except Exception as _omniflow_exc:\n"
+                "            _omniflow_last_embedding_error = _omniflow_exc\n"
+                "            write_omniflow_mobilegpt_event({\n"
+                "                \"event\": \"embedding_retry\",\n"
+                "                \"model\": model,\n"
+                "                \"attempt\": _omniflow_embedding_attempt,\n"
+                "                \"error\": type(_omniflow_exc).__name__,\n"
+                "            })\n"
+                "            if _omniflow_embedding_attempt < 3:\n"
+                "                time.sleep(float(_omniflow_embedding_attempt))\n"
+                "    write_omniflow_mobilegpt_event({\n"
+                "        \"event\": \"embedding_error\",\n"
+                "        \"model\": model,\n"
+                "        \"error\": type(_omniflow_last_embedding_error).__name__ if _omniflow_last_embedding_error else \"unknown\",\n"
+                "    })\n"
+                "    raise _omniflow_last_embedding_error\n",
+                1,
+            )
+        utils_path.write_text(source, encoding="utf-8")
+    if server_path.is_file():
+        source = server_path.read_text(encoding="utf-8")
+        if (
+            "from utils.utils import log\n" in source
+            and "write_omniflow_mobilegpt_event" not in source
+        ):
+            source = source.replace(
+                "from utils.utils import log\n",
+                "from utils.utils import log, write_omniflow_mobilegpt_event\n",
+                1,
+            )
+            original_action_send = (
+                "                if action is not None:\n"
+                "                    message = json.dumps(action)\n"
+                "                    client_socket.send(message.encode())\n"
+                "                    client_socket.send(\"\\r\\n\".encode())\n"
+            )
+            replacement_action_send = (
+                "                if action is not None:\n"
+                "                    message = json.dumps(action)\n"
+                "                    client_socket.send(message.encode())\n"
+                "                    client_socket.send(\"\\r\\n\".encode())\n"
+                "                    write_omniflow_mobilegpt_event({\n"
+                "                        \"event\": \"mobilegpt_action_sent\",\n"
+                "                        \"action\": action.get(\"name\") if isinstance(action, dict) else None,\n"
+                "                        \"is_device_action\": isinstance(action, dict)\n"
+                "                        and action.get(\"name\") not in (None, \"speak\"),\n"
+                "                    })\n"
+            )
+            if original_action_send in source:
+                source = source.replace(original_action_send, replacement_action_send)
+            server_path.write_text(source, encoding="utf-8")
+
+
+def _configure_mobilegpt_finish_transport(server_root: Path) -> None:
+    """Bridge an official JSON ``finish`` action to the official client frame.
+
+    The pinned MobileGPT server can return ``{"name": "finish"}`` from its
+    planner without entering ``__finish_task``.  The pinned Android client
+    does not consume that JSON action; it only terminates on the historical
+    ``$$$$$`` frame.  Keep this compatibility fix in the disposable Server
+    copy so the official planner and client remain untouched.
+    """
+
+    server_path = server_root / "server.py"
+    if not server_path.is_file():
+        return
+    source = server_path.read_text(encoding="utf-8")
+    marker = (
+        "    if (\n"
+        "        isinstance(action, dict)\n"
+        "        and str(action.get(\"name\") or \"\").strip() == OMNIFLOW_INTERNAL_LAUNCH_ACTION\n"
+    )
+    if marker not in source or "mobilegpt_finish_transport" in source:
+        return
+    replacement = (
+        "    if action_name == \"finish\":\n"
+        "        write_omniflow_mobilegpt_event({\"event\": \"task_finished\"})\n"
+        "        client_socket.send(\"$$$$$\".encode())\n"
+        "        client_socket.send(\"\\r\\n\".encode())\n"
+        "        return\n\n"
+        "    # mobilegpt_finish_transport: preserve the official client's wire contract.\n"
+        + marker
+    )
+    server_path.write_text(source.replace(marker, replacement, 1), encoding="utf-8")
+
+
 def _configure_mobilegpt_server(
     server_root: Path,
     *,
@@ -482,14 +740,86 @@ def _configure_mobilegpt_server(
 ) -> None:
     """Inject provider names into a temporary copy of the official Server.
 
-    MobileGPT's upstream code keeps provider model names as constants. This
-    edits only the disposable staging copy; the planner, memory reader,
-    protocol, and action implementation remain upstream code.
+    MobileGPT's upstream code keeps provider model names as constants; most
+    of what this function patches (endpoints, model aliases, malformed-JSON
+    retries, the telemetry event stream) only changes routing/observability,
+    not what MobileGPT decides to do. The one exception is the
+    ``mobilegpt.py`` subtask-finish guard below (see the
+    ``_omniflow_last_explicit_finish`` block): it changes planning behavior
+    versus a bare upstream checkout by ending the task instead of repeating
+    an already-finished subtask on a page AndroidWorld exposed outside the
+    sealed task path. It is on by default; set
+    ``OMNIFLOW_MOBILEGPT_DISABLE_FINISH_GUARD=1`` to skip it and run with
+    unpatched upstream subtask-finish behavior.
     """
 
     normalized_embedding = str(embedding_model or "").strip()
     normalized_chat = str(chat_model or "").strip()
     utils_path = server_root / "utils" / "utils.py"
+    _configure_mobilegpt_telemetry(server_root)
+    _configure_mobilegpt_finish_transport(server_root)
+    memory_manager_path = server_root / "memory" / "memory_manager.py"
+    if memory_manager_path.is_file():
+        source = memory_manager_path.read_text(encoding="utf-8")
+        threshold_pattern = r"(?m)^(?P<indent>[ \t]*)if highest_similarity > 0\.95:\n"
+        threshold_replacement = (
+            r'\g<indent>threshold = float(os.getenv("MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD", "0.95"))\n'
+            r'\g<indent>if highest_similarity > threshold:\n'
+        )
+        threshold_changed = False
+        if re.search(threshold_pattern, source) and "MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD" not in source:
+            source = re.sub(threshold_pattern, threshold_replacement, source, count=1)
+            threshold_changed = True
+        strict_marker = "MOBILEGPT_MEMORY_REUSE_STRICT"
+        strict_anchor = (
+            "            if len(next_subtask['parameters']) > 0:\n"
+            "                params = param_fill_agent.parm_fill_subtask(instruction=self.instruction,\n"
+        )
+        strict_replacement = (
+            "            if len(next_subtask['parameters']) > 0:\n"
+            "                strict_reuse = os.getenv(\"MOBILEGPT_MEMORY_REUSE_STRICT\", \"0\").strip().lower() in (\"1\", \"true\", \"yes\")\n"
+            "                if strict_reuse:\n"
+            "                    # The sealed source example is the verified parameter binding.\n"
+            "                    # Do not ask a second model to reinterpret it on replay.\n"
+            "                    example_payload = json.loads(next_subtask_data.get(\"example\", \"{}\") or \"{}\")\n"
+            "                    example_action = ((example_payload.get(\"response\") or {}).get(\"action\") or {})\n"
+            "                    example_parameters = example_action.get(\"parameters\")\n"
+            "                    if isinstance(example_parameters, dict):\n"
+            "                        next_subtask['parameters'] = dict(example_parameters)\n"
+            "                    else:\n"
+            "                        next_subtask['parameters'] = {}\n"
+            "                else:\n"
+            "                    params = param_fill_agent.parm_fill_subtask(instruction=self.instruction,\n"
+        )
+        if strict_anchor in source and strict_marker not in source:
+            source = source.replace(strict_anchor, strict_replacement, 1)
+            source = source.replace(
+                "                                                            example=json.loads(\n"
+                "                                                                next_subtask_data.get('example', {})))\n"
+                "\n"
+                "                next_subtask['parameters'] = params\n",
+                "                                                            example=json.loads(\n"
+                "                                                                next_subtask_data.get('example', {})))\n"
+                "\n"
+                "                    next_subtask['parameters'] = params\n"
+                "",
+                1,
+            )
+            threshold_changed = True
+        if threshold_changed:
+            memory_manager_path.write_text(source, encoding="utf-8")
+    server_path = server_root / "server.py"
+    if server_path.is_file():
+        source = server_path.read_text(encoding="utf-8")
+        task_binding = (
+            "                target_task_name = os.getenv(\"MOBILEGPT_TARGET_TASK_NAME\", \"\").strip()\n"
+            "                if target_task_name:\n"
+            "                    task[\"name\"] = target_task_name\n"
+        )
+        task_marker = "                task, is_new_task = task_agent.get_task(instruction)\n"
+        if task_marker in source and "MOBILEGPT_TARGET_TASK_NAME" not in source:
+            source = source.replace(task_marker, task_marker + task_binding, 1)
+            server_path.write_text(source, encoding="utf-8")
     if normalized_embedding and utils_path.is_file():
         source = utils_path.read_text(encoding="utf-8")
         if "def write_omniflow_mobilegpt_event" not in source:
@@ -550,7 +880,10 @@ def _configure_mobilegpt_server(
             )
             param_path.write_text(param_source, encoding="utf-8")
         mobilegpt_path = server_root / "mobilegpt.py"
-        if mobilegpt_path.is_file():
+        finish_guard_disabled = str(
+            os.environ.get("OMNIFLOW_MOBILEGPT_DISABLE_FINISH_GUARD", "")
+        ).strip().lower() in ("1", "true", "yes")
+        if mobilegpt_path.is_file() and not finish_guard_disabled:
             mobilegpt_source = mobilegpt_path.read_text(encoding="utf-8")
             repeated_subtask_guard = "        if self.current_subtask is None:\n"
             guarded_subtask_selection = (
@@ -784,20 +1117,35 @@ def _configure_mobilegpt_json_query(server_root: Path) -> None:
     )
     if original in source and "mobilegpt_glm_json_response_invalid" not in source:
         source = source.replace(original, replacement, 1)
-    parse_rate = (
-        "    else:\n"
-        "        value = float(input_str)\n"
+    # GLM can explain the percentage in prose (for example, ``0% complete``)
+    # even when the official prompt asks for a number.  The pinned upstream
+    # implementation has comments between the ``else`` and ``float`` call,
+    # so a narrow whole-function replacement is more reliable than matching a
+    # particular formatting of that block.  This is applied only to the
+    # disposable Server workspace, never to the official checkout.
+    parse_rate_pattern = (
+        r"def parse_completion_rate\(completion_rate\).*?"
+        r"(?=\n\ndef |\Z)"
     )
-    parse_rate_compat = (
-        "    else:\n"
-        "        try:\n"
-        "            value = float(input_str)\n"
-        "        except (TypeError, ValueError):\n"
-        "            percent = re.search(r\"(?<!\\d)(\\d+(?:\\.\\d+)?)\\s*%\", input_str)\n"
-        "            value = float(percent.group(1)) if percent else 0\n"
+    parse_rate_compat = '''def parse_completion_rate(completion_rate) -> int:
+    input_str = str(completion_rate).strip()
+    percent = re.search(r"(?<!\\d)(\\d+(?:\\.\\d+)?)\\s*%", input_str)
+    if percent:
+        return int(float(percent.group(1)))
+    try:
+        value = float(input_str)
+    except (TypeError, ValueError):
+        number = re.search(r"(?<!\\d)(?:0?\\.\\d+|\\d+(?:\\.\\d+)?)", input_str)
+        value = float(number.group(0)) if number else 0.0
+    return int(value * 100) if value < 1 else int(value)
+'''
+    source = re.sub(
+        parse_rate_pattern,
+        lambda _match: parse_rate_compat.rstrip("\\n"),
+        source,
+        count=1,
+        flags=re.DOTALL,
     )
-    if parse_rate in source:
-        source = source.replace(parse_rate, parse_rate_compat, 1)
     empty_result = "    result = response.choices[0].message.content\n"
     empty_result_compat = (
         "    result = response.choices[0].message.content or \"\"\n"
@@ -863,6 +1211,31 @@ def _run_adb(
     )
 
 
+def _count_mobilegpt_device_actions(stats_path: Path) -> int:
+    """Count real device actions recorded by the staged Server telemetry patch."""
+
+    if not stats_path.is_file():
+        return 0
+    count = 0
+    for line in stats_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(event, dict)
+            and event.get("event") == "mobilegpt_action_sent"
+            and event.get("is_device_action") is True
+        ):
+            count += 1
+    return count
+
+
+MOBILEGPT_STEP_BUDGET_RETURN_CODE = 125
+MOBILEGPT_STEP_TIMEOUT_RETURN_CODE = 126
+MOBILEGPT_STEP_TIMEOUT_SEC = 60.0
+
+
 def _run_mobilegpt_client(
     *,
     official_root: str | Path,
@@ -872,6 +1245,7 @@ def _run_mobilegpt_client(
     instruction: str,
     output_root: str | Path,
     timeout_sec: float,
+    max_steps: int = 0,
 ) -> int:
     """Build, install, and signal the untouched official MobileGPT client."""
 
@@ -1035,7 +1409,10 @@ def _run_mobilegpt_client(
             instruction,
         ],
     )
+    stats_path = Path(os.environ.get("MOBILEGPT_STATS_JSONL", "")).expanduser()
     deadline = time.monotonic() + max(1.0, float(timeout_sec))
+    last_action_count = 0
+    last_action_at = time.monotonic()
     while time.monotonic() < deadline:
         log = _run_adb(
             adb_path,
@@ -1046,6 +1423,43 @@ def _run_mobilegpt_client(
         if "Task finished" in log or "-----------Task finished--------" in log:
             (output / "client_log.txt").write_text(log, encoding="utf-8")
             return 0
+        action_count = _count_mobilegpt_device_actions(stats_path)
+        if action_count != last_action_count:
+            last_action_count = action_count
+            last_action_at = time.monotonic()
+        if max_steps > 0 and action_count >= max_steps:
+            # MobileGPT has no upstream step cap; stop the client the same
+            # way every other formal method is bounded by --max-steps
+            # instead of only ever giving up on the wall-clock timeout.
+            _run_adb(
+                adb_path,
+                serial,
+                ["shell", "am", "force-stop", "com.example.MobileGPT"],
+                check=False,
+            )
+            (output / "client_log.txt").write_text(
+                log + "\n[omniflow] mobilegpt_step_budget_exhausted\n",
+                encoding="utf-8",
+            )
+            return MOBILEGPT_STEP_BUDGET_RETURN_CODE
+        if (
+            max_steps > 0
+            and time.monotonic() - last_action_at >= MOBILEGPT_STEP_TIMEOUT_SEC
+        ):
+            # The official client can wait forever for the next server action
+            # even though the formal runner has a per-step budget. Bound that
+            # wait at the same 60-second step timeout used by AndroidWorld.
+            _run_adb(
+                adb_path,
+                serial,
+                ["shell", "am", "force-stop", "com.example.MobileGPT"],
+                check=False,
+            )
+            (output / "client_log.txt").write_text(
+                log + "\n[omniflow] mobilegpt_step_timeout\n",
+                encoding="utf-8",
+            )
+            return MOBILEGPT_STEP_TIMEOUT_RETURN_CODE
         time.sleep(1.0)
     (output / "client_log.txt").write_text(log, encoding="utf-8")
     return 124
@@ -1067,6 +1481,7 @@ def run_mobilegpt_client(
     console_port: int = 5560,
     grpc_port: int = 8560,
     perform_emulator_setup: bool = True,
+    max_steps: int = 0,
 ) -> int:
     """Run MobileGPT from the same initialized AndroidWorld task state."""
 
@@ -1081,6 +1496,7 @@ def run_mobilegpt_client(
             instruction=instruction,
             output_root=output_root,
             timeout_sec=timeout_sec,
+            max_steps=max_steps,
         )
     started = time.monotonic()
     with _androidworld_task_startup(
@@ -1101,6 +1517,7 @@ def run_mobilegpt_client(
             instruction=instruction,
             output_root=output_root,
             timeout_sec=timeout_sec,
+            max_steps=max_steps,
         )
         reward = float(task.is_successful(env))
         # MobileGPT can leave its official client loop alive after the
@@ -1112,6 +1529,10 @@ def run_mobilegpt_client(
         stats_path = Path(os.environ.get("MOBILEGPT_STATS_JSONL", "")).expanduser()
         actions_executed = 0
         model_calls = 0
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+        stats_events: list[dict[str, Any]] = []
         if stats_path.is_file():
             for line in stats_path.read_text(
                 encoding="utf-8", errors="replace"
@@ -1122,6 +1543,7 @@ def run_mobilegpt_client(
                     continue
                 if not isinstance(event, dict):
                     continue
+                stats_events.append(event)
                 if (
                     event.get("event") == "mobilegpt_action_sent"
                     and event.get("is_device_action") is True
@@ -1129,6 +1551,13 @@ def run_mobilegpt_client(
                     actions_executed += 1
                 if event.get("event") in {"chat_call", "embedding_call"}:
                     model_calls += 1
+                    prompt_tokens += int(event.get("prompt_tokens") or 0)
+                    completion_tokens += int(event.get("completion_tokens") or 0)
+                    total_tokens += int(event.get("total_tokens") or 0)
+        runtime_integrity_error = {
+            MOBILEGPT_STEP_BUDGET_RETURN_CODE: "mobilegpt_step_budget_exhausted",
+            MOBILEGPT_STEP_TIMEOUT_RETURN_CODE: "mobilegpt_step_timeout",
+        }.get(returncode, "")
         result_row = {
             "schema_version": "omniflow.androidworld.result.v1",
             "task_name": task_name,
@@ -1161,13 +1590,14 @@ def run_mobilegpt_client(
             "classification": "success" if validator_success else "method_failure",
             "actions_executed": actions_executed,
             "model_calls": model_calls,
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-            "token_usage_status": "unavailable",
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "token_usage_status": "tracked" if stats_events else "unavailable",
             "fallback_steps": 0,
             "duration_ms": round((time.monotonic() - started) * 1000.0, 3),
             "mobilegpt_stats_jsonl": str(stats_path),
+            "runtime_integrity_error": runtime_integrity_error,
         }
         (output / "task_results.jsonl").write_text(
             json.dumps(result_row, ensure_ascii=False) + "\n",
@@ -1214,11 +1644,47 @@ def run_appagent_executor(
         perform_emulator_setup=perform_emulator_setup,
     ) as (env, task):
         process_returncode = 1
+        prelaunch_package = ""
+        prelaunch_returncode = None
         try:
+            # AppAgent's stock executor starts from the launcher and expects
+            # its VLM to discover the target app icon.  The AndroidWorld
+            # launcher on the Fold profile does not expose the camera icon in
+            # the clickable XML, so the official agent can repeat the same
+            # tap forever without ever entering the target app.  Initialize
+            # the known AndroidWorld app before invoking the untouched
+            # executor; AppAgent still owns all subsequent observe/act/model
+            # decisions and its source checkout is not modified.
+            prelaunch_package = {
+                "camera2": "com.android.camera2",
+            }.get(str(app_name).strip().lower(), "")
+            if prelaunch_package:
+                prelaunch_adb = shutil.which("adb") or str(adb_path)
+                prelaunch = subprocess.run(
+                    [
+                        prelaunch_adb,
+                        "-s",
+                        str(serial),
+                        "shell",
+                        "am",
+                        "start",
+                        "-W",
+                        "-n",
+                        f"{prelaunch_package}/com.android.camera.CaptureActivity",
+                    ],
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=30.0,
+                )
+                prelaunch_returncode = int(prelaunch.returncode)
+            staged_executor = Path(workspace).expanduser().resolve() / "scripts" / "task_executor.py"
+            executor_path = staged_executor if staged_executor.is_file() else Path(executor)
             result = subprocess.run(
                 [
                     str(python_executable),
-                    str(executor),
+                    str(executor_path),
                     "--app",
                     str(app_name),
                     "--root_dir",
@@ -1234,7 +1700,13 @@ def run_appagent_executor(
         except subprocess.TimeoutExpired:
             process_returncode = 124
         reward = float(task.is_successful(env))
-        validator_success = process_returncode == 0 and reward > 0.5
+        # The AndroidWorld validator is the single authoritative judge of task
+        # success shared by every formal method; a clean subprocess exit is a
+        # separate liveness fact recorded in process_returncode below, not a
+        # gate on success (an AppAgent process that crashes after already
+        # reaching the goal state must still count as a success, same as
+        # every other method).
+        validator_success = reward > 0.5
         official_log = output / "official_appagent.log"
         actions_executed = 0
         if official_log.is_file():
@@ -1284,6 +1756,8 @@ def run_appagent_executor(
             "fallback_steps": 0,
             "duration_ms": round((time.monotonic() - started) * 1000.0, 3),
             "official_log": str(official_log),
+            "target_app_prelaunch_package": prelaunch_package,
+            "target_app_prelaunch_returncode": prelaunch_returncode,
         }
         (output / "task_results.jsonl").write_text(
             json.dumps(result_row, ensure_ascii=False) + "\n",
@@ -1357,16 +1831,46 @@ def run_autodroid_replay(
             app_name=explicit_app_name or task_app_name,
             require_events=policy == "replay",
         )
+        official_memory_key = _autodroid_official_memory_key(
+            memory_info["app_name"]
+        )
+        official_memory_root = root / "memory"
+        if policy == "task" and not (
+            (official_memory_root / "node_filtered_elements.json").is_file()
+            and (official_memory_root / "element_description.json").is_file()
+            and (official_memory_root / "embedded_elements_desc.json").is_file()
+        ):
+            raise FileNotFoundError(
+                f"autodroid_official_memory_assets_missing:{official_memory_root}"
+            )
+        if policy == "task":
+            try:
+                node_elements = json.loads(
+                    (official_memory_root / "node_filtered_elements.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+            except (OSError, json.JSONDecodeError) as error:
+                raise ValueError(
+                    f"autodroid_official_memory_assets_invalid:{official_memory_root}"
+                ) from error
+            if official_memory_key not in node_elements:
+                raise ValueError(
+                    f"autodroid_official_memory_app_missing:{official_memory_key}"
+                )
         memory_info.update(
             {
                 "task_app_names": task_app_names,
                 "task_app_name": task_app_name,
+                "official_memory_key": official_memory_key,
                 "task_app_selection": (
                     "explicit_app_name" if explicit_app_name else "task_declared_first"
                 ),
             }
         )
         droidbot_output = output / "droidbot"
+        if policy == "task":
+            droidbot_output /= official_memory_key
         official_launcher = "from droidbot.start import main; main()"
         if policy == "replay":
             official_launcher = (
@@ -1385,6 +1889,17 @@ def run_autodroid_replay(
                 (
                     "import json, os, re, sys, time",
                     "from pathlib import Path",
+                    "try:",
+                    "    import pkg_resources",
+                    "except ModuleNotFoundError:",
+                    "    import importlib.util, types",
+                    "    _pkg_resources = types.ModuleType('pkg_resources')",
+                    "    def _resource_filename(package, resource):",
+                    "        _spec = importlib.util.find_spec(package)",
+                    "        _base = next(iter(_spec.submodule_search_locations), Path(_spec.origin).parent)",
+                    "        return str(Path(_base) / resource)",
+                    "    _pkg_resources.resource_filename = _resource_filename",
+                    "    sys.modules['pkg_resources'] = _pkg_resources",
                     "from openai import OpenAI",
                     "import tools",
                     "_stats = Path(os.environ['AUTODROID_STATS_PATH'])",
@@ -1392,20 +1907,45 @@ def run_autodroid_replay(
                     "def _append(row):",
                     "    with _stats.open('a', encoding='utf-8') as handle:",
                     "        handle.write(json.dumps(row) + '\\n')",
+                    "_AUTODROID_LLM_TIMEOUT_SEC = float(os.environ.get('AUTODROID_LLM_TIMEOUT_SEC', '60'))",
+                    "_AUTODROID_LLM_MAX_ATTEMPTS = max(1, int(os.environ.get('AUTODROID_LLM_MAX_ATTEMPTS', '3')))",
                     "def _query(prompt):",
-                    "    started = time.monotonic()",
-                    "    client_kwargs = {'api_key': os.environ.get('APIKey') or os.environ.get('OPENAI_API_KEY')}",
+                    "    client_kwargs = {'api_key': os.environ.get('APIKey') or os.environ.get('OPENAI_API_KEY'), 'max_retries': 0}",
                     "    if os.environ.get('OPENAI_BASE_URL'):",
                     "        client_kwargs['base_url'] = os.environ['OPENAI_BASE_URL']",
-                    "    try:",
-                    "        completion = OpenAI(**client_kwargs).chat.completions.create(messages=[{'role': 'user', 'content': prompt}], model=os.environ.get('AUTODROID_MODEL', 'gpt-3.5-turbo'), timeout=15)",
-                    "    except Exception as error:",
-                    "        _append({'event': 'chat_call', 'model': os.environ.get('AUTODROID_MODEL', 'gpt-3.5-turbo'), 'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0, 'error': type(error).__name__, 'elapsed_sec': round(time.monotonic() - started, 6)})",
-                    "        raise",
-                    "    usage = getattr(completion, 'usage', None)",
-                    "    _append({'event': 'chat_call', 'model': os.environ.get('AUTODROID_MODEL', 'gpt-3.5-turbo'), 'prompt_tokens': int(getattr(usage, 'prompt_tokens', 0) or 0), 'completion_tokens': int(getattr(usage, 'completion_tokens', 0) or 0), 'total_tokens': int(getattr(usage, 'total_tokens', 0) or 0), 'elapsed_sec': round(time.monotonic() - started, 6)})",
-                    "    return completion.choices[0].message.content",
+                    "    model = os.environ.get('AUTODROID_MODEL', 'gpt-3.5-turbo')",
+                    "    for attempt in range(1, _AUTODROID_LLM_MAX_ATTEMPTS + 1):",
+                    "        started = time.monotonic()",
+                    "        try:",
+                    "            completion = OpenAI(**client_kwargs).chat.completions.create(messages=[{'role': 'user', 'content': prompt}], model=model, temperature=float(os.environ.get('AUTODROID_TEMPERATURE', '0.25')), timeout=_AUTODROID_LLM_TIMEOUT_SEC)",
+                    "        except Exception as error:",
+                    "            _append({'event': 'chat_call', 'model': model, 'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0, 'error': type(error).__name__, 'attempt': attempt, 'max_attempts': _AUTODROID_LLM_MAX_ATTEMPTS, 'elapsed_sec': round(time.monotonic() - started, 6)})",
+                    "            if attempt >= _AUTODROID_LLM_MAX_ATTEMPTS:",
+                    "                raise",
+                    "            time.sleep(min(2.0, 0.5 * attempt))",
+                    "            continue",
+                    "        usage = getattr(completion, 'usage', None)",
+                    "        _append({'event': 'chat_call', 'model': model, 'prompt_tokens': int(getattr(usage, 'prompt_tokens', 0) or 0), 'completion_tokens': int(getattr(usage, 'completion_tokens', 0) or 0), 'total_tokens': int(getattr(usage, 'total_tokens', 0) or 0), 'attempt': attempt, 'max_attempts': _AUTODROID_LLM_MAX_ATTEMPTS, 'elapsed_sec': round(time.monotonic() - started, 6)})",
+                    "        return completion.choices[0].message.content",
                     "tools.query_gpt = _query",
+                    "_instructor_model_path = os.environ.get('AUTODROID_INSTRUCTOR_MODEL_PATH', '').strip()",
+                    "if _instructor_model_path:",
+                    "    import InstructorEmbedding as _instructor_embedding",
+                    "    _official_instructor = _instructor_embedding.INSTRUCTOR",
+                    "    def _offline_instructor(model_name_or_path, *args, **kwargs):",
+                    "        if model_name_or_path == 'hkunlp/instructor-xl':",
+                    "            model_name_or_path = _instructor_model_path",
+                    "        model = _official_instructor(model_name_or_path, *args, **kwargs)",
+                    "        if not hasattr(model, '_text_length'):",
+                    "            model._text_length = lambda sentence: len(sentence[1] if isinstance(sentence, list) else sentence)",
+                    "        return model",
+                    "    _instructor_embedding.INSTRUCTOR = _offline_instructor",
+                    "from droidbot.input_policy import TaskPolicy as _TaskPolicy",
+                    "_official_task_policy_init = _TaskPolicy.__init__",
+                    "def _init_task_policy_with_memory(self, *args, **kwargs):",
+                    "    kwargs['use_memory'] = True",
+                    "    return _official_task_policy_init(self, *args, **kwargs)",
+                    "_TaskPolicy.__init__ = _init_task_policy_with_memory",
                     "from droidbot.input_manager import InputManager as _InputManager",
                     "_official_input_start = _InputManager.start",
                     "def _start_with_app(self):",
@@ -1445,7 +1985,11 @@ def run_autodroid_replay(
                     "    _options.task = _task_goal",
                     "    return _options",
                     "_start.parse_args = _parse_args_with_task",
-                    "_start.main()",
+                    "try:",
+                    "    _start.main()",
+                    "except BaseException:",
+                    "    raise",
+                    "os._exit(0)",
                 )
             )
         command = [
@@ -1477,6 +2021,15 @@ def run_autodroid_replay(
         else:
             command.extend(("-task", str(goal or getattr(task, "goal", "") or task_name)))
         env_vars = dict(os.environ)
+        for proxy_name in (
+            "ALL_PROXY",
+            "all_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+        ):
+            env_vars.pop(proxy_name, None)
         if policy == "task":
             env_vars["APIKey"] = str(
                 env_vars.get("APIKey") or env_vars.get("OPENAI_API_KEY") or ""
@@ -1487,7 +2040,12 @@ def run_autodroid_replay(
             for value in (str(root), env_vars.get("PYTHONPATH", ""))
             if value
         )
-        adb_parent = Path(adb_path).expanduser().resolve().parent
+        official_adb_proxy = write_adb_proxy(
+            output / "official_adb",
+            serial=serial,
+            adb_path=adb_path,
+        )
+        adb_parent = official_adb_proxy.parent
         env_vars["PATH"] = os.pathsep.join(
             value
             for value in (str(adb_parent), env_vars.get("PATH", ""))
@@ -1588,6 +2146,10 @@ def run_autodroid_replay(
                 }
             )
         result["official_policy"] = policy
+        result["memory_injection"] = policy == "task"
+        result["autodroid_temperature"] = float(
+            os.environ.get("AUTODROID_TEMPERATURE", "0.25")
+        ) if policy == "task" else None
         (output / "autodroid_result.json").write_text(
             json.dumps(result, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
@@ -1635,6 +2197,7 @@ def main() -> int:
     parser.add_argument("--goal", default="")
     parser.add_argument("--memory-root", default="")
     parser.add_argument("--max-events", type=int, default=20)
+    parser.add_argument("--max-steps", type=int, default=0)
     args = parser.parse_args()
     if args.baseline == "mobilegpt":
         required = {
@@ -1662,6 +2225,7 @@ def main() -> int:
             console_port=args.console_port,
             grpc_port=args.grpc_port,
             perform_emulator_setup=not args.no_perform_emulator_setup,
+            max_steps=args.max_steps,
         )
     if args.baseline == "autodroid":
         required = {

@@ -541,6 +541,10 @@ _QWEN_VL_MODEL = re.compile(
     r"(?:^|[^a-z0-9])qwen(?:\d+(?:\.\d+)?)?(?:[-_.]?vl|[-_.]?plus)(?:[^a-z0-9]|$)",
     re.IGNORECASE,
 )
+_GLM_VL_MODEL = re.compile(
+    r"(?:^|[^a-z0-9])glm[-_.]?(?:4\.6v|5\.1)(?:[^a-z0-9]|$)",
+    re.IGNORECASE,
+)
 _COORDINATE_PAIRS = {
     "click": (("x", "y"),),
     "long_press": (("x", "y"),),
@@ -585,7 +589,7 @@ def adapt_tool_arguments(
         return adapted, None
     return adapted, {
         "name": (
-            _ADAPTER_NAME
+            _coordinate_array_adapter_name(model)
             if all(change.get("source_shape") for change in changes)
             else "planner_coordinate_adapter.v1"
         ),
@@ -640,9 +644,18 @@ def _adapt_raw_pixel_coordinates(
 def _adapter_model(requested_model: str, resolved_model: str) -> str:
     for candidate in (resolved_model, requested_model):
         normalized = str(candidate or "").strip()
-        if normalized and _QWEN_VL_MODEL.search(normalized):
+        if normalized and (
+            _QWEN_VL_MODEL.search(normalized)
+            or _GLM_VL_MODEL.search(normalized)
+        ):
             return normalized
     return ""
+
+
+def _coordinate_array_adapter_name(model: str) -> str:
+    if _GLM_VL_MODEL.search(str(model or "")):
+        return "glm_vl_coordinate_arrays.v1"
+    return _ADAPTER_NAME
 
 
 def _adapt_coordinate_pair(

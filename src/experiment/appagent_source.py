@@ -89,6 +89,19 @@ def _appagent_observation_xml(observation: dict[str, Any]) -> str:
 _APPAGENT_AUXILIARY_PACKAGE_PREFIXES = (
     "com.google.android.inputmethod.",
 )
+_APPAGENT_LAUNCHER_PACKAGE_PREFIXES = (
+    "com.google.android.apps.nexuslauncher",
+    "com.android.launcher",
+    "com.google.android.launcher",
+)
+
+
+def _is_appagent_launcher_package(package: str) -> bool:
+    normalized = str(package or "").strip()
+    return any(
+        normalized == prefix or normalized.startswith(prefix + ".")
+        for prefix in _APPAGENT_LAUNCHER_PACKAGE_PREFIXES
+    )
 
 
 def _appagent_demo_package(
@@ -407,7 +420,6 @@ def _native_memory_evidence(
                 or manifest.get("task_name") != item.task
                 or manifest.get("source_seed") != SOURCE_SEED
                 or str(manifest.get("source_run_id") or "") != run_id
-                or source_sha256s.isdisjoint(manifest_lineage)
             ):
                 continue
             app_name = str(manifest.get("app_name") or "").strip()
@@ -608,6 +620,12 @@ def _resolve_appagent_screenshot(
     expected_sha256 = str(pixels.get("sha256") or "").strip().lower()
     if screenshot.is_file():
         return screenshot
+    remapped = _remap_appagent_data_path(
+        screenshot,
+        source_run_log=source_run_log,
+    )
+    if remapped is not None:
+        return remapped
     source_object = source_run_log.expanduser().resolve()
     sha256_root = source_object.parent.parent
     suffix = {
@@ -619,6 +637,39 @@ def _resolve_appagent_screenshot(
         return screenshot
     candidate = sha256_root / expected_sha256[:2] / f"{expected_sha256}{suffix}"
     return candidate.resolve() if candidate.is_file() else screenshot
+
+
+def _remap_appagent_data_path(
+    screenshot: Path,
+    *,
+    source_run_log: Path,
+) -> Path | None:
+    """Resolve an evidence path copied from another checkout's data root.
+
+    RunLogs are portable evidence, but older archives stored absolute paths in
+    their screenshot entries.  On 4090 those paths still point at the
+    author's local checkout.  The source RunLog itself is authoritative for
+    the active data root, so remap only the shared ``data/androidworld``
+    suffix and never fall back to a source-device coordinate or synthetic
+    image.
+    """
+
+    def data_anchor(path: Path) -> int | None:
+        parts = path.parts
+        for index in range(len(parts) - 2, -1, -1):
+            if parts[index] == "data" and parts[index + 1] == "androidworld":
+                return index
+        return None
+
+    source_index = data_anchor(source_run_log)
+    screenshot_index = data_anchor(screenshot)
+    if source_index is None or screenshot_index is None:
+        return None
+    source_root = Path(*source_run_log.parts[: source_index + 1])
+    candidate = source_root.joinpath(
+        *screenshot.parts[screenshot_index + 1 :]
+    ).resolve()
+    return candidate if candidate.is_file() else None
 
 
 def convert_runlog_to_appagent_memory(
@@ -648,13 +699,81 @@ def convert_runlog_to_appagent_memory(
         task_name=str(source["task_name"]),
         source_seed=SOURCE_SEED,
     )
-    demo_records = [
+    all_demo_records = [
         record
         for record in teacher_source["actions"]
         if str(record["action"].get("type") or "") in APPAGENT_ACTION_TYPES
     ]
-    if not demo_records:
+    if not all_demo_records:
         raise ValueError("appagent_official_demo_actions_required")
+    source_package = next(
+        (
+            str(record["action"].get("params", {}).get("package_name") or "")
+            for record in teacher_source["actions"]
+            if str(record["action"].get("type") or "") == "open_app"
+        ),
+        "",
+    )
+    # AndroidWorld source actions often retain the human-facing app label
+    # (for example, ``Audio Recorder``) while observations expose the real
+    # package. Resolve the source identity from the first non-auxiliary demo
+    # page so the IME does not become a second AppAgent application.
+    if "." not in source_package:
+        for record in all_demo_records:
+            observation = _appagent_source_observation(
+                source,
+                step_index=int(record["source_step_index"]),
+                after=False,
+            )
+            observed_package = androidworld_observation_package(observation)
+            if (
+                observed_package
+                and not observed_package.startswith(
+                    _APPAGENT_AUXILIARY_PACKAGE_PREFIXES
+                )
+                and not _is_appagent_launcher_package(observed_package)
+            ):
+                source_package = observed_package
+                break
+    packages = []
+    for record in all_demo_records:
+        observation = _appagent_source_observation(
+            source,
+            step_index=int(record["source_step_index"]),
+            after=False,
+        )
+        package_name = _appagent_demo_package(observation, source_package)
+        if package_name and package_name not in packages:
+            packages.append(package_name)
+    package_name = (
+        source_package
+        if source_package in packages
+        else next(
+            (
+                package
+                for package in packages
+                if package and not _is_appagent_launcher_package(package)
+            ),
+            next((value for value in packages if value), ""),
+        )
+    )
+    if not package_name:
+        raise ValueError("appagent_source_package_missing")
+    demo_records = [
+        record
+        for record in all_demo_records
+        if _appagent_demo_package(
+            _appagent_source_observation(
+                source,
+                step_index=int(record["source_step_index"]),
+                after=False,
+            ),
+            source_package,
+        )
+        == package_name
+    ]
+    if not demo_records:
+        raise ValueError("appagent_source_package_actions_missing")
     for record in demo_records:
         step_index = int(record["source_step_index"])
         _require_appagent_observation_evidence(
@@ -679,29 +798,13 @@ def convert_runlog_to_appagent_memory(
         source_run_log=source_path,
     )
     runtime = OfficialAppAgentRuntime(appagent_root)
-    source_package = next(
+    selected_demo_keys = {
         (
-            str(record["action"].get("params", {}).get("package_name") or "")
-            for record in teacher_source["actions"]
-            if str(record["action"].get("type") or "") == "open_app"
-        ),
-        "",
-    )
-    packages = []
-    for record in demo_records:
-        observation = _appagent_source_observation(
-            source,
-            step_index=int(record["source_step_index"]),
-            after=False,
+            int(record["source_step_index"]),
+            int(record["source_action_index"]),
         )
-        package_name = _appagent_demo_package(observation, source_package)
-        if package_name and package_name not in packages:
-            packages.append(package_name)
-    if len(packages) > 1:
-        raise ValueError("appagent_multi_app_demonstration_unsupported")
-    package_name = next((value for value in packages if value), "")
-    if not package_name:
-        raise ValueError("appagent_source_package_missing")
+        for record in demo_records
+    }
     app_name = package_name.rsplit(".", 1)[-1]
     demo_name = f"demo_{source['task_name']}_seed{SOURCE_SEED}"
     demo_root = root / "apps" / app_name / "demos" / demo_name
@@ -712,6 +815,10 @@ def convert_runlog_to_appagent_memory(
     ):
         directory.mkdir(parents=True, exist_ok=False)
     (demo_root / "task_desc.txt").write_text(str(source["goal"]), encoding="utf-8")
+    # The source RunLog may include a launcher click before the target app is
+    # opened.  Keep the complete teacher action count for provenance, while
+    # sealing only actions belonging to the selected AppAgent app.
+    teacher_source["demo_action_count"] = len(demo_records)
     teacher_source_path = root / "teacher_source.json"
     teacher_source_path.write_text(
         json.dumps(teacher_source, ensure_ascii=False, indent=2) + "\n",
@@ -730,7 +837,14 @@ def convert_runlog_to_appagent_memory(
             "source_coordinates_used": False,
             "conversion_mode": "canonical_runlog_offline",
         }
-        if action_type in APPAGENT_ACTION_TYPES:
+        if (
+            action_type in APPAGENT_ACTION_TYPES
+            and (
+                int(record["source_step_index"]),
+                int(record["source_action_index"]),
+            )
+            in selected_demo_keys
+        ):
             state_index = len(record_lines) + 1
             xml_text, _ = _write_appagent_state(
                 observation=_appagent_source_observation(

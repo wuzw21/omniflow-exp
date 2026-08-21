@@ -266,11 +266,25 @@ def test_formal_protocol_uses_glm_chat_and_embedding_models() -> None:
         (REPO / "config" / "paper_androidworld.json").read_text(encoding="utf-8")
     )["protocol"]
 
-    assert protocol["model"] == "GLM-5.1"
+    assert protocol["model"] == "GLM-4.6V"
     assert protocol["appagent_model"] == "GLM-4.6V"
     assert 'export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"' in SCRIPT.read_text(
         encoding="utf-8"
     )
+
+
+def test_autodroid_online_forces_formal_glm_endpoint_and_temperature() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+
+    online_block = script_text.split(
+        'if [[ "$supplemental_autodroid" -eq 1 && "$autodroid_policy" == "task" ]]; then',
+        maxsplit=1,
+    )[1].split("\n  fi", maxsplit=1)[0]
+    assert 'select_model_endpoint "$formal_model_endpoint_profile"' in online_block
+    assert 'validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"' in online_block
+    assert 'validate_model_endpoint_auth' in online_block
+    assert 'export AUTODROID_MODEL="$formal_model"' in online_block
+    assert 'export AUTODROID_TEMPERATURE="${AUTODROID_TEMPERATURE:-0.25}"' in online_block
 
 
 def test_mobilegpt_uses_the_official_server_without_a_runtime_patch() -> None:

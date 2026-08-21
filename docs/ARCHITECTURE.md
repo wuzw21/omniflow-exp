@@ -145,7 +145,9 @@ baseline 记录时经过的五个位置：
 
 ### AndroidWorld observation persistence
 
-新采集和新转换的 RunLog observation 统一只保存两项：`screenshot`（带路径、尺寸、MIME 和 SHA-256 的截图引用）与 `xml`（完整 UI XML）。`forest`、`ui_elements` 和 `auxiliaries` 不再写入新的成功 source；旧 RunLog 的 `pixels` 及四字段 native snapshot 只由兼容读取路径接受。动作、结果、validator、reasoning 和截图哈希仍属于 RunLog 证据合同。
+新采集和新转换的 RunLog observation 统一只保存两项：`screenshot`（直接路径、尺寸和 MIME）与 `xml`（完整 UI XML）。`forest`、`ui_elements` 和 `auxiliaries` 不再写入新的成功 source；旧 RunLog 的 `pixels`、四字段 native snapshot 和截图 SHA-256 只由兼容读取路径接受，新 writer 不再输出它们。动作、结果、validator 和 reasoning 仍属于 RunLog 证据合同。
+
+AndroidWorld 的正式采集、手工采集和 fixed replay capture 共用 `build_androidworld_run_log` 与 `persist_androidworld_run_log`。一个 attempt 只有一份 `run_log.json`；截图按 `screenshots/screenshot_NNNNNN.png` 直接保存。attempt 使用递增编号，不使用时间戳，也不创建 `object_store` 或哈希命名截图。
 
 这里的 schema `$defs.state` 是这份 compact observation 的复用定义，不是要求 RunLog 额外嵌套一个 JSON `state` 字段。AndroidWorld SDK 的 `get_state()` 仍返回原生 `state.pixels` 和 accessibility tree；只有进入 OmniFlow 持久化边界时，才投影为 `screenshot + xml`。
 

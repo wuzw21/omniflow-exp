@@ -123,6 +123,35 @@ def test_record_outcome_accepts_empty_integer_token_totals(tmp_path: Path) -> No
     assert outcome["total_tokens"] == 0
 
 
+def test_record_result_outcome_preserves_published_episode_accounting(
+    tmp_path: Path,
+) -> None:
+    outcome_path = record_result_outcome(
+        outcomes_root=tmp_path / "outcomes",
+        task_name="CameraTakePhoto",
+        method="omniflow",
+        device="fold5564",
+        device_serial="emulator-5564",
+        attempt_id="attempt_001",
+        source_seed=111,
+        evaluation_seed=113,
+        status="method_failed",
+        stage="androidworld_validate",
+        official_validator_used=True,
+        official_validator_success=False,
+        model_calls=3,
+        prompt_tokens=14637,
+        completion_tokens=560,
+        total_tokens=15197,
+    )
+
+    outcome = json.loads(outcome_path.read_text(encoding="utf-8"))
+    assert outcome["model_calls"] == 3
+    assert outcome["prompt_tokens"] == 14637
+    assert outcome["completion_tokens"] == 560
+    assert outcome["total_tokens"] == 15197
+
+
 def test_autodroid_validator_conclusion_is_not_non_validator_failure(
     tmp_path: Path,
 ) -> None:
@@ -197,6 +226,70 @@ def test_autodroid_explicit_metrics_survive_empty_stats_artifact(tmp_path: Path)
 
     assert outcome["actions_executed"] == 20
     assert outcome["episode_duration_sec"] == 38.907
+
+
+def test_summary_reads_registry_when_current_index_is_stale(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    memory_index = data_root / "current.json"
+    memory_index.parent.mkdir(parents=True)
+    memory_index.write_text(json.dumps({"canonical": {"result_cells": {}}}), encoding="utf-8")
+    registered_path = (
+        data_root
+        / "androidworld"
+        / ".archive"
+        / "result_registry"
+        / "CameraTakePhoto"
+        / "omniflow"
+        / "small5554"
+        / "attempt_004.omniflow.small5554"
+        / "registered_result.json"
+    )
+    registered_path.parent.mkdir(parents=True)
+    row = {
+        "task_name": "CameraTakePhoto",
+        "method": "omniflow",
+        "device": "small5554",
+        "source_seed": 111,
+        "evaluation_seed": 113,
+        "status": "completed",
+        "official_validator_used": True,
+        "official_validator_success": True,
+        "model_calls": 2,
+        "total_tokens": 100,
+        "actions_executed": 7,
+    }
+    registered_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.androidworld_registered_result.v1",
+                "task_name": "CameraTakePhoto",
+                "source_seed": 111,
+                "evaluation_seed": 113,
+                "rows": [row],
+                "details": [row],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = summarize_results(
+        memory_index=memory_index,
+        outcomes_root=data_root / "androidworld" / ".archive" / "outcomes",
+        tasks=("CameraTakePhoto",),
+        methods=("omniflow",),
+        devices=("small5554",),
+        source_seed=111,
+        evaluation_seed=113,
+        attempt_id="attempt_016",
+    )
+
+    assert report["counts"] == {
+        "planned": 1,
+        "validator_success": 1,
+        "validator_failure": 0,
+        "non_validator_failure": 0,
+        "pending": 0,
+    }
 
 
 def test_concluded_result_keys_skip_immutable_failure_on_resume(tmp_path: Path) -> None:

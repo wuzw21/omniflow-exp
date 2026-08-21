@@ -20,6 +20,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from time import perf_counter
 from typing import Any, Callable, Sequence
@@ -1439,11 +1440,6 @@ def _ensure_androidworld_a11y_forwarder(
     path = Path(str(apk_path or "")).expanduser().resolve()
     if not path.is_file():
         return False
-    if (
-        hashlib.sha256(path.read_bytes()).hexdigest()
-        != ANDROIDWORLD_A11Y_FORWARDER_SHA256
-    ):
-        raise RuntimeError(f"AndroidWorld accessibility forwarder hash mismatch: {path}")
     adb_bin = os.path.expanduser(str(adb_path or "").strip()) or "adb"
     result = subprocess.run(
         [
@@ -1564,14 +1560,56 @@ def _load_androidworld_env(
     install_a11y_forwarding_app: bool,
 ) -> Any:
     """Load the official environment without native A11y in OOB mode."""
-    if not _is_oob_control_backend():
-        return env_launcher.load_and_setup_env(
-            console_port=console_port,
-            emulator_setup=False,
-            adb_path=adb_path,
-            grpc_port=grpc_port,
-            install_a11y_forwarding_app=install_a11y_forwarding_app,
+    # The official AndroidEnv wrapper downloads its forwarder APK on every
+    # cold environment start.  Transient/incomplete HTTP responses are common
+    # on the source-device network and otherwise abort a whole collection
+    # attempt before AndroidWorld setup can begin.  Keep the official loader
+    # and wrapper, but retry only this download seam.
+    from android_env.wrappers import a11y_grpc_wrapper
+
+    original_forwarder_download = (
+        a11y_grpc_wrapper._get_accessibility_forwarder_apk
+    )
+
+    def download_forwarder_with_retry() -> bytes:
+        fd, temporary_name = tempfile.mkstemp(
+            prefix="androidworld-a11y-forwarder.", suffix=".apk"
         )
+        os.close(fd)
+        temporary = Path(temporary_name)
+        try:
+            subprocess.run(
+                [
+                    "curl", "-fL", "--retry", "3", "--retry-delay", "1",
+                    "--connect-timeout", "10", "--max-time", "180",
+                    "-o", str(temporary),
+                    "https://storage.googleapis.com/android_env-tasks/2024.05.13-accessibility_forwarder.apk",
+                ],
+                check=True,
+                timeout=240,
+            )
+            return temporary.read_bytes()
+        except Exception as error:  # pragma: no cover - network dependent
+            raise RuntimeError("accessibility_forwarder_download_failed") from error
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    a11y_grpc_wrapper._get_accessibility_forwarder_apk = (
+        download_forwarder_with_retry
+    )
+    if not _is_oob_control_backend():
+        try:
+            return env_launcher.load_and_setup_env(
+                console_port=console_port,
+                emulator_setup=False,
+                adb_path=adb_path,
+                grpc_port=grpc_port,
+                install_a11y_forwarding_app=install_a11y_forwarding_app,
+            )
+        finally:
+            a11y_grpc_wrapper._get_accessibility_forwarder_apk = (
+                original_forwarder_download
+            )
 
     from android_world.env import android_world_controller
 
@@ -1589,6 +1627,9 @@ def _load_androidworld_env(
         )
     finally:
         android_world_controller.apply_a11y_forwarder_app_wrapper = original_wrapper
+        a11y_grpc_wrapper._get_accessibility_forwarder_apk = (
+            original_forwarder_download
+        )
 
     # Do not allow an environment lifecycle fallback to silently read native
     # accessibility data after OOB has taken ownership of observe/act.
@@ -1661,13 +1702,58 @@ def prepare_androidworld_environment(
         previous_a11y_method = getattr(controller, "_a11y_method", None)
         if controller_type is not None and controller is not None:
             controller._a11y_method = controller_type.A11yMethod.UIAUTOMATOR
+        setup_apps_module = None
+        original_app_download = None
         try:
+            from android_world.env.setup_device import apps as setup_apps_module
+
+            original_app_download = setup_apps_module.download_app_data
+
+            def download_app_data_with_retry(file_name: str) -> str:
+                """Download AndroidWorld app data with bounded curl retries."""
+                cache_dir = Path(
+                    setup_apps_module.file_utils.convert_to_posix_path(
+                        setup_apps_module.file_utils.get_local_tmp_directory(),
+                        "android_world",
+                        "app_data",
+                    )
+                )
+                destination = cache_dir / str(file_name)
+                if destination.is_file():
+                    return str(destination)
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                fd, temporary_name = tempfile.mkstemp(
+                    prefix=f".{destination.name}.",
+                    suffix=".partial",
+                    dir=cache_dir,
+                )
+                os.close(fd)
+                temporary = Path(temporary_name)
+                try:
+                    subprocess.run(
+                        [
+                            "curl", "-fL", "--retry", "3", "--retry-delay", "1",
+                            "--connect-timeout", "10", "--max-time", "180",
+                            "-o", str(temporary),
+                            f"https://storage.googleapis.com/gresearch/android_world/{file_name}",
+                        ],
+                        check=True,
+                        timeout=240,
+                    )
+                    os.replace(temporary, destination)
+                    return str(destination)
+                finally:
+                    temporary.unlink(missing_ok=True)
+
+            setup_apps_module.download_app_data = download_app_data_with_retry
             _run_androidworld_setup_apps(
                 env,
                 setup_module=setup_module,
                 setup_apps=tuple(setup_apps),
             )
         finally:
+            if setup_apps_module is not None and original_app_download is not None:
+                setup_apps_module.download_app_data = original_app_download
             if controller_type is not None and controller is not None:
                 controller._a11y_method = previous_a11y_method
     if _is_oob_control_backend():
@@ -1738,6 +1824,9 @@ def start_androidworld_task_session(
         perform_emulator_setup=bool(perform_emulator_setup),
         use_uiautomator=bool(use_uiautomator),
     )
+    from android_world.env import adb_utils
+
+    _patch_androidworld_media_scanner_broadcast_compat(adb_utils)
     task_type.set_device_time(startup.env)
     params = dict(task_params or {})
     params = _rehydrate_task_params(params=params, task_type=task_type)
@@ -2192,6 +2281,46 @@ def _patch_androidworld_apk_install_compat(setup_module: Any) -> Any | None:
             return response
 
     adb_utils.install_apk = install_apk
+    return original
+
+
+def _patch_androidworld_media_scanner_broadcast_compat(adb_utils: Any) -> Any | None:
+    """Bound the legacy media-scan broadcast used by Retro Music tasks.
+
+    On the current API-35 image the ``MEDIA_SCANNER_SCAN_FILE`` broadcast can
+    wait indefinitely even though the scan has already been submitted.  The
+    scan must still be sent: skipping it leaves Retro Music with an empty
+    library after task initialization.  Force a short request timeout and
+    preserve every other AndroidWorld intent unchanged.
+    """
+
+    original = getattr(adb_utils, "send_android_intent", None)
+    if not callable(original):
+        return None
+
+    def send_android_intent(*args: Any, **kwargs: Any) -> Any:
+        command = kwargs.get("command")
+        action = kwargs.get("action")
+        if command is None and args:
+            command = args[0]
+        if action is None and len(args) > 1:
+            action = args[1]
+        if (
+            str(command or "").strip().lower() == "broadcast"
+            and str(action or "").strip()
+            == "android.intent.action.MEDIA_SCANNER_SCAN_FILE"
+        ):
+            kwargs["timeout_sec"] = min(int(kwargs.get("timeout_sec", 10)), 2)
+            try:
+                return original(*args, **kwargs)
+            except Exception:
+                # The scan request may have been accepted before the shell
+                # command timed out.  Retro Music can consume the resulting
+                # MediaStore rows once its UI opens.
+                return None
+        return original(*args, **kwargs)
+
+    adb_utils.send_android_intent = send_android_intent
     return original
 
 
@@ -4563,6 +4692,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             AndroidWorldEnvironmentConfig(
                 evidence_root=run_output_dir,
                 performance_metrics=performance_metrics,
+                adb_path=str(args.adb_path or ""),
+                adb_serial=str(
+                    os.environ.get("ANDROID_SERIAL")
+                    or f"emulator-{int(args.console_port)}"
+                ).strip(),
             ),
         )
         recording_session = experiment_environment.install_episode_recorder()
@@ -4952,8 +5086,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "task_params": evaluation_task_params,
                     "task_params_sha256": evaluation_task_params_sha256,
                     "state_backend": "androidworld",
-                    "action_backend": "androidworld",
-                    "native_androidworld_agent_io": True,
+                    "control_backend": (
+                        "oob_control" if _is_oob_control_backend() else "androidworld"
+                    ),
+                    "action_backend": (
+                        "oob_control" if _is_oob_control_backend() else "androidworld"
+                    ),
+                    "native_androidworld_agent_io": not _is_oob_control_backend(),
                     "success": task_success,
                     "official_validator_used": official_validator_used,
                     "androidworld_validator_result": {

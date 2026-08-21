@@ -107,14 +107,15 @@ def test_episode_recorder_preserves_every_observation_with_sequential_images(
     assert [record["observation_index"] for record in records] == [0, 1]
     assert records[0]["path"] == "screenshots/screenshot_000001.png"
     assert records[1]["path"] == "screenshots/screenshot_000002.png"
-    assert records[0]["sha256"] == records[1]["sha256"]
+    assert (tmp_path / records[0]["path"]).read_bytes() == (
+        tmp_path / records[1]["path"]
+    ).read_bytes()
     assert records[0]["display"] == {"width": 4, "height": 3}
     assert set(records[0]) == {
         "observation_index",
         "state_id",
         "display",
         "path",
-        "sha256",
     }
     assert len(list((tmp_path / "screenshots").glob("*.png"))) == 2
     assert not (tmp_path / "observations").exists()

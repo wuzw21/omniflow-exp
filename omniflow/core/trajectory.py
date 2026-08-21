@@ -46,7 +46,17 @@ def canonicalize_run_log(value: dict[str, Any]) -> dict[str, Any]:
     schema = load_omniflow_run_log_schema()
     _validate_schema(value, schema, schema, "run_log")
     canonical = _copy(value)
+    canonical.pop("started_at_ms", None)
+    canonical.pop("finished_at_ms", None)
+    canonical = _strip_run_log_hash_fields(canonical)
+    diagnostics = canonical.get("diagnostics")
+    if isinstance(diagnostics, dict):
+        diagnostics.pop("source_run_log", None)
     canonical["steps"] = [canonicalize_run_log_step(step) for step in value["steps"]]
+    if isinstance(canonical.get("final_observation"), dict):
+        canonical["final_observation"] = _canonicalize_observation_reference(
+            canonical["final_observation"]
+        )
     for step in canonical["steps"]:
         _validate_screenshot_reference(observation_screenshot(step["observation"]))
         if "next_observation" in step:
@@ -59,7 +69,7 @@ def canonicalize_run_log(value: dict[str, Any]) -> dict[str, Any]:
         )
     provenance = canonical["provenance"]
     if provenance["kind"] == "legacy_import":
-        required = {"source_path", "source_sha256", "source_schema_version"}
+        required = {"source_path", "source_schema_version"}
         missing = sorted(required - set(provenance))
         if missing:
             raise ValueError(
@@ -77,8 +87,40 @@ def canonicalize_run_log_step(value: Any) -> dict[str, Any]:
     _validate_schema(value, step_schema, schema, "run_log_step")
     canonical = _copy(value)
     canonical["action"] = canonicalize_androidworld_action(value["action"])
+    canonical["observation"] = _canonicalize_observation_reference(
+        canonical["observation"]
+    )
+    if isinstance(canonical.get("next_observation"), dict):
+        canonical["next_observation"] = _canonicalize_observation_reference(
+            canonical["next_observation"]
+        )
     _validate_schema(canonical, step_schema, schema, "run_log_step")
     return canonical
+
+
+def _canonicalize_observation_reference(value: dict[str, Any]) -> dict[str, Any]:
+    """Drop legacy screenshot checksums from the canonical RunLog wire form."""
+
+    canonical = _copy(value)
+    for field in ("screenshot", "pixels"):
+        screenshot = canonical.get(field)
+        if isinstance(screenshot, dict):
+            screenshot.pop("sha256", None)
+    return canonical
+
+
+def _strip_run_log_hash_fields(value: Any) -> Any:
+    """Accept legacy checksums on input but never emit them in a RunLog."""
+
+    if isinstance(value, dict):
+        return {
+            key: _strip_run_log_hash_fields(item)
+            for key, item in value.items()
+            if key != "sha256" and not key.endswith("_sha256")
+        }
+    if isinstance(value, list):
+        return [_strip_run_log_hash_fields(item) for item in value]
+    return value
 
 
 def canonicalize_androidworld_action(value: Any) -> dict[str, Any]:

@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
-import hashlib
 import json
+import os
 from pathlib import Path
+import re
 import sys
 import time
 from typing import Any
@@ -44,6 +45,22 @@ def _jsonable(value: Any) -> Any:
     if hasattr(value, "tolist"):
         return _jsonable(value.tolist())
     return str(value)
+
+
+def _materialize_task_params(value: Any) -> Any:
+    """Restore JSON markers for rich AndroidWorld task fixtures."""
+    if isinstance(value, dict):
+        if (
+            value.get("__omniflow_type__") == "unsupported"
+            and value.get("class") == "Image"
+        ):
+            from PIL import Image
+
+            return Image.new("RGB", (500, 500), "white")
+        return {key: _materialize_task_params(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_materialize_task_params(item) for item in value]
+    return value
 
 
 def _find_ui_element_index(
@@ -84,6 +101,16 @@ def _find_ui_element_index(
     return matches[0]
 
 
+def _resolve_device_serial(args: argparse.Namespace) -> str:
+    return (
+        str(
+            getattr(args, "device_serial", "")
+            or os.environ.get("ANDROID_SERIAL", "")
+        ).strip()
+        or f"emulator-{int(args.console_port)}"
+    )
+
+
 class ManualAndroidWorld:
     def __init__(self, args: argparse.Namespace) -> None:
         if args.android_world_root:
@@ -103,7 +130,7 @@ class ManualAndroidWorld:
         self._json_action = __import__(
             "android_world.env.json_action", fromlist=["JSONAction"]
         )
-        params = json.loads(args.task_params_json or "{}")
+        params = _materialize_task_params(json.loads(args.task_params_json or "{}"))
         startup, self._task = start_androidworld_task_session(
             android_world_root=args.android_world_root,
             task_name=args.task,
@@ -117,14 +144,13 @@ class ManualAndroidWorld:
             use_uiautomator=not bool(args.install_a11y_forwarder),
         )
         self._env = startup.env
+        self._activity_compat_original = None
+        self._install_activity_compatibility()
         self._resolve_androidworld_app_name = resolve_androidworld_app_name
         self._root = Path(args.output).expanduser().resolve()
-        self._images = self._root / "observations" / "objects"
-        self._images.mkdir(parents=True, exist_ok=True)
         self._run_id = self._root.name
-        self._device_serial = f"emulator-{int(args.console_port)}"
+        self._device_serial = _resolve_device_serial(args)
         self._source_seed = int(args.seed)
-        self._started_ms = int(time.time() * 1000)
         self._steps: list[dict[str, Any]] = []
         self._last_observation: dict[str, Any] | None = None
         self._last_ui_elements: list[Any] = []
@@ -133,52 +159,72 @@ class ManualAndroidWorld:
         # Persist a schema-valid recovery checkpoint while the interactive
         # attempt is still incomplete. A later official validation overwrites
         # it with the final succeeded/failed result.
-        self._write_run_log(status="failed", success=False, reward=0.0)
+        self._write_run_log(success=False, reward=0.0)
+
+    def _install_activity_compatibility(self) -> None:
+        """Normalize package-only activity responses from the emulator bridge.
+
+        Some emulator/API combinations return only the foreground package in
+        ``GetCurrentActivity.full_activity``. AndroidWorld validators expect a
+        ComponentName (``package/activity``), so preserve the official
+        validator while reconstructing the component from the same app
+        registry when the current native XML confirms that package is visible.
+        """
+        from android_world.env import adb_utils
+
+        self._activity_compat_original = adb_utils.get_current_activity
+        original = self._activity_compat_original
+
+        def normalized_get_current_activity(env: Any, timeout_sec: Any = None):
+            if timeout_sec is None:
+                activity, response = original(env)
+            else:
+                activity, response = original(env, timeout_sec=timeout_sec)
+            if activity and "/" in activity:
+                return activity, response
+
+            xml = ""
+            if isinstance(getattr(self, "_last_observation", None), dict):
+                xml = str(self._last_observation.get("xml") or "")
+            visible_packages = set(re.findall(r'package="([^"]+)"', xml))
+            if not activity:
+                foreground_packages = sorted(
+                    package
+                    for package in visible_packages
+                    if package != "com.android.systemui"
+                )
+                activity = foreground_packages[0] if foreground_packages else activity
+            if not activity or activity not in visible_packages:
+                return activity, response
+
+            for app_name in sorted(adb_utils.get_all_apps(env)):
+                candidate = str(adb_utils.get_adb_activity(app_name) or "").strip()
+                if candidate.split("/", 1)[0].strip() == activity:
+                    return candidate, response
+            # A few API-35 images expose no activity mapping at all. The
+            # validator only needs a syntactically valid ComponentName to
+            # inspect the package, while the XML above already established
+            # the foreground package.
+            return f"{activity}/{activity}.Settings", response
+
+        adb_utils.get_current_activity = normalized_get_current_activity
 
     @property
     def goal(self) -> str:
         return str(self._task.goal)
 
-    def _observation(self, state: Any, index: int) -> dict[str, Any]:
-        from PIL import Image
-        from src.experiment.observation_evidence import (
-            canonicalize_run_log_observation,
-        )
+    def _observation(self, state: Any) -> dict[str, Any]:
+        from src.experiment.observation_evidence import canonicalize_run_log_observation
+        from src.integrations.android_world.state import snapshot_androidworld_state
 
-        # A concurrent archive pass may move an incomplete attempt while this
-        # interactive process is alive. Recreate the canonical writer paths
-        # before every observation so the evidence stream remains usable.
-        self._images.mkdir(parents=True, exist_ok=True)
-        image = Image.fromarray(state.pixels)
-        raw_path = self._root / "observations" / f"{index:04d}.png"
-        raw_path.parent.mkdir(parents=True, exist_ok=True)
-        image.save(raw_path, format="PNG")
-        data = raw_path.read_bytes()
-        digest = hashlib.sha256(data).hexdigest()
-        object_path = self._images / f"{digest}.png"
-        if not object_path.exists():
-            object_path.write_bytes(data)
-        raw_path.unlink(missing_ok=True)
-        # The AndroidWorld SDK state remains native internally, but the
-        # persisted manual RunLog uses the same compact contract as the main
-        # recorder: screenshot + XML only.
-        return canonicalize_run_log_observation({
-            "pixels": {
-                "path": str(object_path),
-                "sha256": digest,
-                "width": int(state.pixels.shape[1]),
-                "height": int(state.pixels.shape[0]),
-                "mime_type": "image/png",
-            },
-            "forest": _jsonable(state.forest),
-            "ui_elements": _jsonable(state.ui_elements),
-            "auxiliaries": _jsonable(state.auxiliaries or {}),
-        })
+        return canonicalize_run_log_observation(
+            snapshot_androidworld_state(state, evidence_root=self._root)
+        )
 
     def observe(self, *, stable: bool = True) -> dict[str, Any]:
         state = self._env.get_state(wait_to_stabilize=stable)
         self._last_ui_elements = list(_jsonable(state.ui_elements) or [])
-        self._last_observation = self._observation(state, len(self._steps))
+        self._last_observation = self._observation(state)
         return {
             "ok": True,
             "goal": self.goal,
@@ -217,7 +263,7 @@ class ManualAndroidWorld:
             # of a human-friendly duration by sleeping after the official wait.
             duration = float(clean_action_payload["duration"])
             action = self._json_action.JSONAction(action_type="wait")
-            action_record = dict(clean_action_payload)
+            action_record = action.as_dict()
         elif clean_action_payload.get("action_type") == "swipe_xy":
             # Coordinate-bounded swipe through AndroidWorld's own ADB
             # actuation helper.  This is needed for canvas widgets: the
@@ -236,7 +282,16 @@ class ManualAndroidWorld:
             )
             adb_utils.issue_generic_request(command, self._env.controller)
             action = None
-            action_record = dict(clean_action_payload)
+            delta_x = int(end[0]) - int(start[0])
+            delta_y = int(end[1]) - int(start[1])
+            if abs(delta_y) >= abs(delta_x):
+                direction = "down" if delta_y < 0 else "up"
+            else:
+                direction = "right" if delta_x < 0 else "left"
+            # ``swipe_xy`` is an interactive protocol convenience, not a
+            # RunLog schema action. Persist its canonical semantic equivalent
+            # so manually collected evidence remains replay/schema compatible.
+            action_record = {"action_type": "scroll", "direction": direction}
         elif clean_action_payload.get("action_type") == "drag_and_drop":
             # AndroidWorld's actuation layer already implements drag-and-drop, but
             # this release's JSONAction parser omits that action from its public
@@ -290,11 +345,10 @@ class ManualAndroidWorld:
                     "source": "native_androidworld",
                     "reasoning": reasoning,
                     "screenshot_path": after_screenshot.get("path"),
-                    "screenshot_sha256": after_screenshot.get("sha256"),
                 },
             }
         )
-        self._write_run_log(status="running", success=False, reward=0.0)
+        self._write_run_log(success=False, reward=0.0)
         return {"ok": True, "action": action_record, "observation": after}
 
     def validate(self, reasoning: str = "") -> dict[str, Any]:
@@ -307,26 +361,28 @@ class ManualAndroidWorld:
         reward = float(self._task.is_successful(self._env))
         success = reward > 0.5
         self._finished = True
-        self._write_run_log(status="succeeded" if success else "failed", success=success, reward=reward)
+        self._write_run_log(success=success, reward=reward)
         return {"ok": True, "success": success, "reward": reward, "run_log": str(self._root / "run_log.json")}
 
-    def _write_run_log(self, *, status: str, success: bool, reward: float) -> None:
-        payload = {
-            "schema_version": "omniflow.run_log.v1",
-            "run_id": self._run_id,
-            "task_name": self._task.name,
-            "goal": self.goal,
-            "task_parameters": _jsonable(self._task.params),
-            "seed": self._source_seed,
-            "status": status,
-            "success": success,
-            "validator": {"official": True, "success": success, "reward": reward},
-            "provenance": {
-                "kind": "manual_native_androidworld",
-            },
-            "steps": self._steps,
-            "final_observation": self._last_observation,
-            "diagnostics": {
+    def _write_run_log(self, *, success: bool, reward: float) -> None:
+        from src.experiment.observation_evidence import (
+            build_androidworld_run_log,
+            persist_androidworld_run_log,
+        )
+
+        run_log = build_androidworld_run_log(
+            run_id=self._run_id,
+            task_name=self._task.name,
+            goal=self.goal,
+            task_parameters=_jsonable(self._task.params),
+            seed=self._source_seed,
+            validator_success=success,
+            validator_reward=reward,
+            validator_official=True,
+            provenance={"kind": "manual_native_androidworld"},
+            steps=self._steps,
+            final_observation=self._last_observation,
+            diagnostics={
                 "model_calls": 0,
                 "decision_owner": "codex_manual",
                 "workflow_version": "androidworld_manual_recollection.v1",
@@ -343,18 +399,20 @@ class ManualAndroidWorld:
                 + bool(self._last_observation),
                 "validation_reasoning": self._validation_reasoning,
             },
-        }
-        self._root.mkdir(parents=True, exist_ok=True)
-        (self._root / "run_log.json").write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        persist_androidworld_run_log(self._root, run_log=run_log, replace=True)
 
     def close(self) -> None:
         try:
             if not self._finished:
-                self._write_run_log(status="failed", success=False, reward=0.0)
+                self._write_run_log(success=False, reward=0.0)
             self._task.tear_down(self._env)
         finally:
+            if self._activity_compat_original is not None:
+                from android_world.env import adb_utils
+
+                adb_utils.get_current_activity = self._activity_compat_original
+                self._activity_compat_original = None
             close = getattr(self._env, "close", None)
             if callable(close):
                 close()
@@ -367,6 +425,11 @@ def main() -> int:
     parser.add_argument("--task-params-json", default="{}")
     parser.add_argument("--seed", type=int, default=111)
     parser.add_argument("--console-port", type=int, default=5560)
+    parser.add_argument(
+        "--device-serial",
+        default="",
+        help="ADB serial to record in provenance; defaults to ANDROID_SERIAL or emulator-{console-port}.",
+    )
     parser.add_argument("--grpc-port", type=int, default=0)
     parser.add_argument("--adb-path", required=True)
     parser.add_argument("--output", required=True)

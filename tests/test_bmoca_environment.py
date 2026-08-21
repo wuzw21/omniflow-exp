@@ -125,7 +125,8 @@ def test_bmoca_host_reuses_canonical_episode_recorder(tmp_path: Path) -> None:
         "y": 480.0,
     }
     assert observation_index
-    assert (tmp_path / "observations" / "index.json").is_file()
+    assert not (tmp_path / "observations").exists()
+    assert list((tmp_path / "screenshots").glob("screenshot_*.png"))
     assert host.get_captured_transfer_states()
 
 

@@ -22,6 +22,7 @@ from src.experiment.run_task import (
     build_task_command,
     _formal_result_paths,
     _result_summary_rows,
+    load_canonical_source_index,
 )
 from src.experiment.source_records import CanonicalRunLog
 from src.experiment.batch_outcomes import record_result_outcome
@@ -78,6 +79,36 @@ from src.experiment.protocol import (
     TASK_DEADLINE_SEC,
     TASK_SEED,
 )
+
+
+def test_source_index_skips_unmaterialized_unrelated_task(tmp_path: Path) -> None:
+    source = tmp_path / "ready.run_log.json"
+    source.write_text("{}\n", encoding="utf-8")
+    index = tmp_path / "current.json"
+    index.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.data-index.v2",
+                "source_index": {
+                    "ReadyTask": {
+                        "goal": "ready",
+                        "latest_official_success_source": True,
+                        "retained_source_run_log": str(source),
+                    },
+                    "PendingTask": {
+                        "goal": "pending",
+                        "latest_official_success_source": True,
+                        "retained_source_run_log": "",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_canonical_source_index(index)
+
+    assert [item.task for item in loaded] == ["ReadyTask"]
 
 
 def _args(tmp_path: Path) -> SimpleNamespace:
@@ -149,6 +180,31 @@ def test_concluded_results_reuses_registered_formal_cell_across_attempts(
         args.results_root / "androidworld" / ".archive" / "outcomes" / "formal",
         "attempt_002",
     ) == {("appagent", "small5554")}
+
+
+def test_concluded_results_does_not_reuse_legacy_omniflow_cell(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.task = "CameraTakePhoto"
+    args.e2e_method = "omniflow"
+    args.e2e_device = DEVICES[0]
+    registry_root = args.results_root / "androidworld" / ".archive" / "result_registry"
+    registry_root.mkdir(parents=True)
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.registered_result_plan",
+        lambda **_kwargs: {
+            "completed": [("omniflow", "small5554")],
+            "pending": [],
+        },
+    )
+
+    assert _concluded_results(
+        args,
+        args.results_root / "androidworld" / ".archive" / "outcomes" / "formal",
+        "attempt_002",
+    ) == set()
 
 
 def test_pipeline_attempt_id_grows_past_historical_outcome(tmp_path: Path) -> None:
@@ -339,6 +395,37 @@ def test_e2e_command_exposes_direct_function_without_planner_or_second_runner(
     assert "--model" not in spec.argv
 
 
+def test_omniflow_e2e_command_forwards_oob_backend_to_child(monkeypatch, tmp_path: Path) -> None:
+    item = CanonicalRunLog(
+        task="BrowserDraw",
+        goal="Draw a shape",
+        params={},
+        source_run_log=tmp_path / "source.run_log.json",
+        replay_seed=111,
+        step_count=1,
+        meta={},
+    )
+    monkeypatch.setenv("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "oob")
+
+    spec = build_task_command(
+        item,
+        android_world_root=tmp_path / "android-world",
+        output_root=tmp_path / "data",
+        method_name="omniflow",
+        agent_name="omniflow",
+        device_label="fold5564",
+        serial="emulator-5564",
+        console_port=5564,
+        store_path=tmp_path / "function_store.json",
+        omnitransfer_root=tmp_path / "OmniTransfer",
+    )
+
+    assert spec.env["OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND"] == "oob"
+    assert spec.metadata["control_backend"] == "oob_control"
+    assert spec.metadata["action_backend"] == "oob_control"
+    assert spec.metadata["native_androidworld_agent_io"] is False
+
+
 def test_mobilegpt_server_uses_sealed_source_manifest_for_episode_memory(
     tmp_path: Path,
 ) -> None:
@@ -359,10 +446,14 @@ def test_mobilegpt_server_uses_sealed_source_manifest_for_episode_memory(
         mobilegpt_root=mobilegpt_root,
         mobilegpt_memory_root=memory_root,
         mobilegpt_memory_manifest=source_manifest,
+        target_task_name="CameraTakePhoto",
         repo_root=tmp_path,
     )
 
     assert spec.env["MOBILEGPT_EMBEDDING_MODEL"] == "GLM-Embedding-2"
+    assert spec.env["MOBILEGPT_TARGET_TASK_NAME"] == "CameraTakePhoto"
+    assert spec.env["MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD"] == "0.90"
+    assert spec.env["MOBILEGPT_MEMORY_REUSE_STRICT"] == "1"
 
 
 def test_e2e_command_rejects_direct_function_for_non_omniflow_agent(
@@ -465,7 +556,7 @@ def test_e2e_selection_runs_only_one_method_and_device(
         command_runner=runner,
     )
 
-    assert calls == [("omniflow", "pixel5570:emulator-5570:5570")]
+    assert calls == [("omniflow", "pixel5576:emulator-5576:5576")]
 
 
 def test_e2e_selection_accepts_method_and_device_lists_or_all() -> None:
@@ -518,6 +609,7 @@ def test_autodroid_is_explicit_supplemental_only() -> None:
 
 def test_autodroid_task_policy_uses_official_goal_command(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     official_root = tmp_path / "autodroid"
     memory_root = tmp_path / "memory"
@@ -537,6 +629,8 @@ def test_autodroid_task_policy_uses_official_goal_command(
         step_count=0,
         meta={},
     )
+    monkeypatch.setenv("OMNIFLOW_ANDROID_SDK_ROOT", "/opt/android-sdk")
+    monkeypatch.setenv("ANDROID_ADB_SERVER_PORT", "5038")
 
     spec = build_autodroid_command(
         item,
@@ -562,6 +656,9 @@ def test_autodroid_task_policy_uses_official_goal_command(
     assert spec.argv[spec.argv.index("--policy") + 1] == "task"
     assert spec.argv[spec.argv.index("--goal") + 1] == "Take a photo"
     assert spec.metadata["official_policy"] == "task"
+    assert spec.env["ANDROID_SDK_ROOT"] == "/opt/android-sdk"
+    assert spec.env["ANDROID_HOME"] == "/opt/android-sdk"
+    assert spec.env["ANDROID_ADB_SERVER_PORT"] == "5038"
 
 
 def test_e2e_function_check_creates_and_validates_missing_store(
@@ -1801,6 +1898,103 @@ def test_published_result_row_does_not_cross_match_device_attempts(
     assert row["validator_success"] is True
 
 
+def test_published_result_row_ignores_replay_memory_inputs(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path)
+    args.task = "CameraTakePhoto"
+    archive = (
+        args.results_root
+        / "androidworld"
+        / args.task
+        / "fixed_replay"
+        / "OmniFlowTargetFold_seed111_eval113"
+    )
+    target = archive / "runlog" / "attempt_002"
+    replay_memory = (
+        archive
+        / "memory"
+        / "attempt_005.fixed_replay.fold5564"
+        / "_replay_runlogs"
+    )
+    target.mkdir(parents=True)
+    replay_memory.mkdir(parents=True)
+    (target / "task_results.jsonl").write_text(
+        json.dumps(
+            {
+                "official_validator_used": True,
+                "androidworld_validator_result": {"success": False},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (replay_memory / "task_results.jsonl").write_text(
+        json.dumps(
+            {
+                "official_validator_used": True,
+                "androidworld_validator_result": {"success": True},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    row = _published_official_result_row(
+        args=args,
+        attempt_id="attempt_005",
+        method="fixed_replay",
+        device="fold5564",
+    )
+
+    assert row == {}
+
+
+def test_published_result_row_uses_canonical_device_scope(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path)
+    args.task = "CameraTakePhoto"
+    archive = args.results_root / "androidworld" / args.task / "fixed_replay"
+    small = archive / "OmniFlowTargetSmall_seed111_eval113" / "runlog" / "attempt_003"
+    fold = archive / "OmniFlowTargetFold_seed111_eval113" / "runlog" / "attempt_003"
+    small.mkdir(parents=True)
+    fold.mkdir(parents=True)
+    (small / "result_summary.json").write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "task": args.task,
+                        "validator_success": True,
+                        "actions_executed": 4,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (fold / "task_results.jsonl").write_text(
+        json.dumps(
+            {
+                "official_validator_used": True,
+                "androidworld_validator_result": {"success": False},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    row = _published_official_result_row(
+        args=args,
+        attempt_id="attempt_003",
+        method="fixed_replay",
+        device="fold5564",
+    )
+
+    assert row["validator_success"] is False
+
+
 def test_rerun_concluded_override_keeps_old_results_runnable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2197,7 +2391,6 @@ def test_autodroid_task_params_fall_back_to_retained_source_runlog(
                 "canonical": {},
                 "source_index": {
                     "ExpenseDeleteSingle": {
-                        "params": {},
                         "retained_source_run_log": str(source_path),
                     }
                 }
@@ -2233,6 +2426,34 @@ def test_autodroid_task_params_skip_missing_retained_source_runlog(
     )
 
     assert _autodroid_task_params_from_index(index_path, "MarkorDeleteNote") == {}
+
+
+def test_autodroid_task_params_do_not_fallback_for_explicit_empty_params(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "source.run_log.json"
+    source_path.write_text(
+        json.dumps({"task_parameters": {"should_not": "be_read"}}),
+        encoding="utf-8",
+    )
+    index_path = tmp_path / "current.json"
+    index_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.data-index.v2",
+                "canonical": {},
+                "source_index": {
+                    "CameraTakePhoto": {
+                        "params": {},
+                        "retained_source_run_log": str(source_path),
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _autodroid_task_params_from_index(index_path, "CameraTakePhoto") == {}
 
 
 def test_source_only_pipeline_collects_replayed_source_and_stops(

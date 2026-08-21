@@ -12,6 +12,7 @@ _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 ManualAndroidWorld = _MODULE.ManualAndroidWorld
 _find_ui_element_index = _MODULE._find_ui_element_index
+_resolve_device_serial = _MODULE._resolve_device_serial
 
 
 def test_find_ui_element_index_accepts_native_dicts_and_exact_selector():
@@ -84,10 +85,10 @@ def test_wait_duration_uses_native_json_action_and_sleeps(monkeypatch):
         }
     )
 
-    assert result["action"]["duration"] == 2.5
+    assert result["action"] == {"action_type": "wait"}
     assert [action.action_type for action in harness._env.actions] == ["wait"]
     assert slept == [2.5]
-    assert harness._steps[0]["action"] == {"action_type": "wait", "duration": 2.5}
+    assert harness._steps[0]["action"] == {"action_type": "wait"}
     assert harness._steps[0]["metadata"]["reasoning"]
 
 
@@ -120,14 +121,28 @@ def test_run_log_records_protocol_source_seed_not_task_parameter_seed(tmp_path):
         params={"seed": 987654321, "value": "kept"},
     )
     harness._source_seed = 111
-    harness._started_ms = 1
     harness._steps = []
     harness._last_observation = None
     harness._validation_reasoning = ""
     harness._device_serial = "emulator-5560"
 
-    harness._write_run_log(status="running", success=False, reward=0.0)
+    harness._write_run_log(success=False, reward=0.0)
 
     payload = json.loads((tmp_path / "run_log.json").read_text())
     assert payload["seed"] == 111
     assert payload["task_parameters"] == {"seed": 987654321, "value": "kept"}
+
+
+def test_real_device_serial_is_used_for_manual_runlog_provenance(monkeypatch):
+    monkeypatch.setenv("ANDROID_SERIAL", "45291FDAP0013Z")
+    args = SimpleNamespace(
+        console_port=5554,
+        device_serial="",
+    )
+    assert _resolve_device_serial(args) == "45291FDAP0013Z"
+
+
+def test_explicit_device_serial_overrides_environment(monkeypatch):
+    monkeypatch.setenv("ANDROID_SERIAL", "other-device")
+    args = SimpleNamespace(console_port=5554, device_serial="45291FDAP0013Z")
+    assert _resolve_device_serial(args) == "45291FDAP0013Z"

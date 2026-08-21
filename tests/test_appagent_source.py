@@ -981,6 +981,42 @@ def test_appagent_resolves_materialized_screenshot_by_exact_sha256(
     assert resolved == materialized.resolve()
 
 
+def test_appagent_remaps_screenshot_from_copied_data_root(
+    tmp_path: Path,
+) -> None:
+    data_root = tmp_path / "remote" / "data"
+    source_run_log = (
+        data_root
+        / "androidworld"
+        / "CameraTakePhoto"
+        / "source5554"
+        / "run_log.json"
+    )
+    source_run_log.parent.mkdir(parents=True)
+    source_run_log.write_text("{}", encoding="utf-8")
+    screenshot = (
+        data_root
+        / "androidworld"
+        / "CameraTakePhoto"
+        / "source5554"
+        / "screenshots"
+        / "before.png"
+    )
+    screenshot.parent.mkdir(parents=True)
+    Image.new("RGB", (8, 6), "green").save(screenshot)
+
+    resolved = appagent_source._resolve_appagent_screenshot(
+        {
+            "path": "/Users/wuzewen/Projects/Omni/OmniFlow-exp/data/"
+            "androidworld/CameraTakePhoto/source5554/screenshots/before.png",
+            "mime_type": "image/png",
+        },
+        source_run_log=source_run_log,
+    )
+
+    assert resolved == screenshot.resolve()
+
+
 def test_appagent_projects_androidworld_ui_elements_to_xml() -> None:
     xml_text = appagent_source._appagent_observation_xml(
         {

@@ -13,7 +13,7 @@
 bash scripts/exp/run_androidworld.sh \
   --e2e-task TASK \
   --e2e-method omniflow \
-  --e2e-device small5554:emulator-5554:5554,pixel5570:emulator-5570:5570,fold5564:emulator-5564:5564 \
+  --e2e-device small5554:emulator-5554:5554,pixel5576:emulator-5576:5576,fold5564:emulator-5564:5564 \
   --e2e-source-seed 111 \
   --e2e-evaluation-seed 113 \
   --control-backend oob
@@ -29,7 +29,9 @@ bash scripts/exp/run_androidworld.sh \
 检查失败会安全停止，不会启动 target episode。
 
 正式运行和 source collection 都会追加到
-`data/androidworld/<task>/<method>/<device_model_seed>/runlog/<attempt>/`；不会再
+`data/androidworld/<task>/<method>/<device_model_seed>/runlog/attempt_NNN/`；每次
+执行只写一份 `run_log.json` 和顺序命名的 `screenshots/`，不使用时间戳、截图
+SHA 或对象仓库。不会再
 生成平行的 `androidworld_10cell`、`androidworld_single_task_attempts` 或
 `androidworld_validator` 顶层目录。可用
 `./.venv/bin/python tools/audit_androidworld_archive.py` 刷新 116×10 完成表和
@@ -66,7 +68,7 @@ bash scripts/exp/run_androidworld.sh --setup-device small5554
 
 # 逗号分隔的子集
 --e2e-method omniflow,mobilegpt \
---e2e-device pixel5570:emulator-5570:5570,fold5564:emulator-5564:5564
+--e2e-device pixel5576:emulator-5576:5576,fold5564:emulator-5564:5564
 ```
 
 当前 AndroidWorld target 设备：
@@ -74,7 +76,7 @@ bash scripts/exp/run_androidworld.sh --setup-device small5554
 | label | serial | profile |
 | --- | --- | --- |
 | `small5554` | `emulator-5554` | `small_phone` |
-| `pixel5570` | `emulator-5570` | `pixel_phone` |
+| `pixel5576` | `emulator-5576` | `pixel_phone` |
 | `fold5564` | `emulator-5564` | `pixel_fold` |
 
 ## AutoDroid 补充基线（9207）
@@ -98,11 +100,11 @@ bash scripts/exp/run_androidworld.sh \
 `data/androidworld/.archive/`，使用
 原生 DroidBot policy 和 AndroidWorld 官方 validator，不转换 Function、
 不使用 OmniTransfer。默认 `replay` 保持历史 UTG 结果；设置
-`OMNIFLOW_AUTODROID_POLICY=task` 才执行官方 online GPT policy，并把
+`OMNIFLOW_AUTODROID_POLICY=task` 才执行官方 online TaskPolicy，并把
 `autodroid_stats.jsonl` 的 model calls、prompt/completion/total tokens 接入统一
-outcome 和 summary 统计。online 模式还必须提供 `OMNIFLOW_ENV_FILE`；入口会
-继承其中的 `OPENAI_API_KEY`、`OPENAI_BASE_URL` 和 `OPENAI_MODEL`（可用
-`AUTODROID_MODEL` 覆盖）。online 结果使用独立 attempt id/output root，不覆盖
+outcome 和 summary 统计。online 模式还必须提供 `OMNIFLOW_ENV_FILE`；入口强制
+使用 protocol 的 `GLM-4.6V`、`llmthu` endpoint 和默认 temperature `0.25`，不会
+继承 `.env` 中的 Qwen/DashScope model。online 结果使用独立 attempt id/output root，不覆盖
 历史 replay。完整公平比较合同见
 [`docs/AUTODROID_9207_COMPARISON_PLAN.md`](../../docs/AUTODROID_9207_COMPARISON_PLAN.md)。
 
@@ -124,9 +126,9 @@ supplemental campaign 强制执行 AndroidWorld setup 和每 task snapshot resto
 单独初始化、单独封存 validator/replay evidence；AutoDroid 结果仍只写入
 `androidworld/<task>/autodroid/<device_model_seed>/`。
 
-固定实验值：source seed `111`、evaluation seed `113`、formal chat model
-`GLM-5.1`；AppAgent 因需要原生图像输入使用同一 GLM endpoint 的视觉模型
-`GLM-4.6V`。`--control-backend oob` 用于 OOB observe/act transport。
+固定实验值：source seed `111`、evaluation seed `113`、formal chat/vision model
+`GLM-4.6V`；初始 VLM、VLM fallback 和 AppAgent 都使用同一原生图片输入链路。
+`--control-backend oob` 用于 OOB observe/act transport。
 
 ## 环境变量
 

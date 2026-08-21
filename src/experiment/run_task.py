@@ -710,7 +710,13 @@ def load_canonical_source_index(
         if not retained:
             if raw_meta.get("latest_official_success_source") is not True:
                 continue
-            raise ValueError(f"source_run_log_missing_in_current_index:{task}")
+            # A partially refreshed 116-task index may still contain an
+            # official-success marker for a task whose source artifact has
+            # not been materialized yet.  That task is unavailable, but it
+            # must not prevent a single-task result from selecting another
+            # complete source entry.  _select_from_args reports a clear
+            # missing-task error if the requested task itself is unavailable.
+            continue
         params = (
             raw_meta.get("params") if isinstance(raw_meta.get("params"), dict) else {}
         )
@@ -1421,6 +1427,15 @@ def build_task_command(
         env["OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS"] = str(
             max(0, int(max_fallback_steps))
         )
+    # The public launcher exports this setting, but make it explicit on every
+    # child CommandSpec as well.  This prevents a scheduler worker from
+    # silently falling back to AndroidWorld-native observe/act when the
+    # campaign requested OOB transport.
+    control_backend = str(
+        os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "androidworld")
+    ).strip().lower() or "androidworld"
+    if resolved_agent == "omniflow":
+        env["OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND"] = control_backend
     resolved_omnitransfer_root = (
         resolve_path(omnitransfer_root, root=repo_root)
         if omnitransfer_root
@@ -1545,8 +1560,22 @@ def build_task_command(
                 dict(function_arguments or {}) if resolved_function_id else None
             ),
             "state_backend": "androidworld",
-            "action_backend": "androidworld",
-            "native_androidworld_agent_io": True,
+            "control_backend": (
+                "oob_control"
+                if resolved_agent == "omniflow"
+                and control_backend in {"oob", "omniflow", "oob_control"}
+                else "androidworld"
+            ),
+            "action_backend": (
+                "oob_control"
+                if resolved_agent == "omniflow"
+                and control_backend in {"oob", "omniflow", "oob_control"}
+                else "androidworld"
+            ),
+            "native_androidworld_agent_io": not (
+                resolved_agent == "omniflow"
+                and control_backend in {"oob", "omniflow", "oob_control"}
+            ),
             "include_indexed_context": False,
             "uses_action_transfer": True,
         },
@@ -2186,6 +2215,7 @@ def build_mobilegpt_server_command(
     stats_jsonl: str | Path = DEFAULT_MOBILEGPT_STATS_JSONL,
     target_package: str = "",
     target_app: str = "",
+    target_task_name: str = "",
     runtime_observe_backend: str = "androidworld",
     python_executable: str = sys.executable,
     repo_root: Path = REPO_ROOT,
@@ -2212,6 +2242,8 @@ def build_mobilegpt_server_command(
         env["MOBILEGPT_SKIP_APP_DISCOVERY"] = "1"
     if str(target_app or "").strip():
         env["MOBILEGPT_TARGET_APP"] = str(target_app).strip()
+    if str(target_task_name or "").strip():
+        env["MOBILEGPT_TARGET_TASK_NAME"] = str(target_task_name).strip()
 
     resolved_action = str(action or "").strip().lower()
     if resolved_action == "server":
@@ -2244,6 +2276,8 @@ def build_mobilegpt_server_command(
         staged_server_root = Path(forward["server_root"])
         env["MOBILEGPT_STATS_JSONL"] = str(resolve_path(stats_jsonl, root=repo_root))
         env["MOBILEGPT_EMBEDDING_MODEL"] = embedding_model
+        env["MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD"] = "0.90"
+        env["MOBILEGPT_MEMORY_REUSE_STRICT"] = "1"
         if chat_model:
             env["MOBILEGPT_CHAT_MODEL"] = chat_model
         argv = [
@@ -3525,12 +3559,7 @@ def _function_lineage_item(
     if indexed_store != store_path.resolve():
         raise ValueError(f"t3a_hint_function_store_lineage_store_mismatch:{item.task}")
     source_path = resolve_path(str(record.get("source_run_log_path") or ""))
-    source_sha256 = str(record.get("source_run_log_sha256") or "").strip()
-    if (
-        not source_path.is_file()
-        or not source_sha256
-        or sha256_file(source_path) != source_sha256
-    ):
+    if not source_path.is_file():
         raise ValueError(f"t3a_hint_function_store_lineage_source_invalid:{item.task}")
     source = require_complete_source_run_log(_read_object(source_path))
     return replace(
@@ -4837,6 +4866,8 @@ def build_mobilegpt_command(
         str(int(target.console_port)),
         "--grpc-port",
         str(int(target.console_port) + 3000),
+        "--max-steps",
+        str(int(max_steps)),
     ]
     if not perform_emulator_setup:
         client_argv.append("--no-perform-emulator-setup")
@@ -4998,12 +5029,20 @@ def build_appagent_command(
     if not perform_emulator_setup:
         argv.append("--no-perform-emulator-setup")
     log_path = resolved_output / "official_appagent.log"
+    existing_python_path = str(runtime_env.get("PYTHONPATH") or "").strip()
+    python_path = str(repo_root)
+    if existing_python_path:
+        python_path += os.pathsep + existing_python_path
     return CommandSpec(
         label=f"appagent:official:{target.label}",
         argv=argv,
         env={
             "ANDROID_SERIAL": target.serial,
             "OPENAI_MODEL": model,
+            # The official forwarder runs from its disposable workspace. Put
+            # this checkout first so ``python -m src.integrations...`` cannot
+            # resolve an older globally-installed OmniFlow copy.
+            "PYTHONPATH": python_path,
             "PATH": str(Path(forward["adb_proxy"]).parent)
             + os.pathsep
             + runtime_env.get("PATH", ""),
@@ -5124,13 +5163,26 @@ def build_autodroid_command(
     argv.extend(("--policy", str(autodroid_policy)))
     if not perform_emulator_setup:
         argv.append("--no-perform-emulator-setup")
+    child_environment = {
+        "ANDROID_SERIAL": target.serial,
+        "PATH": runtime_env.get("PATH", ""),
+    }
+    android_sdk_root = str(
+        runtime_env.get("ANDROID_SDK_ROOT")
+        or runtime_env.get("ANDROID_HOME")
+        or runtime_env.get("OMNIFLOW_ANDROID_SDK_ROOT")
+        or ""
+    ).strip()
+    if android_sdk_root:
+        child_environment["ANDROID_SDK_ROOT"] = android_sdk_root
+        child_environment["ANDROID_HOME"] = android_sdk_root
+    adb_server_port = str(runtime_env.get("ANDROID_ADB_SERVER_PORT") or "").strip()
+    if adb_server_port:
+        child_environment["ANDROID_ADB_SERVER_PORT"] = adb_server_port
     return CommandSpec(
         label=f"autodroid:official:{target.label}",
         argv=argv,
-        env={
-            "ANDROID_SERIAL": target.serial,
-            "PATH": runtime_env.get("PATH", ""),
-        },
+        env=child_environment,
         cwd=repo_root,
         output_path=resolved_output,
         timeout_sec=float(timeout_sec) if timeout_sec and timeout_sec > 0 else None,
@@ -5419,6 +5471,7 @@ def _run_result_mobilegpt(
                 adb_path=args.adb_path,
                 target_package=target_package,
                 target_app=target_app,
+                target_task_name=args.task,
                 runtime_observe_backend="androidworld",
             )
             server_spec = _configure_mobilegpt_formal_server(
@@ -5492,7 +5545,15 @@ def _run_result_mobilegpt(
                     perform_emulator_setup=bool(args.perform_emulator_setup),
                     adb_path=args.adb_path,
                     start_timeout_sec=float(args.mobilegpt_wait_start_timeout_sec),
-                    finish_timeout_sec=float(args.mobilegpt_episode_wait_timeout_sec),
+                    finish_timeout_sec=(
+                        float(args.mobilegpt_episode_wait_timeout_sec)
+                        if args.mobilegpt_episode_wait_timeout_sec is not None
+                        else (
+                            float(args.timeout_sec)
+                            if args.timeout_sec and args.timeout_sec > 0
+                            else DEFAULT_MOBILEGPT_EPISODE_WAIT_TIMEOUT_SEC
+                        )
+                    ),
                     app_ready_timeout_sec=float(
                         args.mobilegpt_app_ready_timeout_sec
                     ),
@@ -5969,9 +6030,7 @@ def run_task(args: argparse.Namespace) -> int:
                     docs_root=appagent_docs_root,
                     max_steps=int(args.max_steps or MAX_STEPS),
                     timeout_sec=int(args.timeout_sec or 0),
-                    model=str(
-                        getattr(args, "appagent_model", APPAGENT_MODEL)
-                    ),
+                    model=str(args.appagent_model or APPAGENT_MODEL),
                     task_random_seed=task_seed,
                     fixed_task_seed=not bool(args.no_fixed_task_seed),
                     fixed_task_params=not bool(args.no_fixed_task_params),
@@ -6270,6 +6329,11 @@ def build_parser() -> argparse.ArgumentParser:
     result_parser.add_argument("--planner-provider", default="")
     result_parser.add_argument("--model", default="")
     result_parser.add_argument(
+        "--appagent-model",
+        default=APPAGENT_MODEL,
+        help="Model passed to the official AppAgent task-execution subprocess.",
+    )
+    result_parser.add_argument(
         "--planner-timeout-sec", type=float, default=STEP_TIMEOUT_SEC
     )
     _add_androidworld_setup_args(result_parser)
@@ -6325,10 +6389,14 @@ def build_parser() -> argparse.ArgumentParser:
     result_parser.add_argument(
         "--mobilegpt-episode-wait-timeout-sec",
         type=float,
-        default=DEFAULT_MOBILEGPT_EPISODE_WAIT_TIMEOUT_SEC,
+        default=None,
         help=(
             "Seconds to wait for MobileGPT task_finished before official "
-            "AndroidWorld validation. Use -1 to wait indefinitely."
+            "AndroidWorld validation. Use -1 to wait indefinitely. Defaults "
+            "to the same wall-clock budget derived from --timeout-sec that "
+            "every other formal method receives (falling back to "
+            f"{DEFAULT_MOBILEGPT_EPISODE_WAIT_TIMEOUT_SEC}s when "
+            "--timeout-sec is unset), rather than a fixed constant."
         ),
     )
     result_parser.add_argument(

@@ -14,6 +14,8 @@ from src.experiment.performance_metrics import PerformanceMetrics
 class AndroidWorldEnvironmentConfig:
     evidence_root: str | Path
     performance_metrics: PerformanceMetrics | None = None
+    adb_path: str = ""
+    adb_serial: str = ""
 
 
 class AndroidWorldExperimentEnvironment:
@@ -60,6 +62,8 @@ class EpisodeRecordingSession:
                 execute_action,
                 evidence_root=owner.config.evidence_root,
                 performance_metrics=owner.config.performance_metrics,
+                adb_path=owner.config.adb_path,
+                adb_serial=owner.config.adb_serial,
             )
             self.env = _RecordingEnvironmentProxy(owner.env, self.recorder)
         except Exception as exc:  # noqa: BLE001

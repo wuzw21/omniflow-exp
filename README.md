@@ -35,8 +35,8 @@ bash scripts/exp/run_androidworld.sh \
 4. 校验通过后，在指定设备上执行 E2E。
 
 Function 检查失败时不会启动 target episode。source seed 固定为 `111`，
-evaluation seed 固定为 `113`，正式 chat 模型为 `GLM-5.1`；需要图像输入的
-AppAgent 使用同一 GLM endpoint 上的视觉模型 `GLM-4.6V`。
+evaluation seed 固定为 `113`，正式 chat 和视觉模型统一为 `GLM-4.6V`；初始
+VLM 与 fallback 都直接传当前 screenshot。
 
 ## 数据目录
 
@@ -46,10 +46,11 @@ AndroidWorld 可见实验证据统一写入：
 data/androidworld/<task>/<method>/<device_model>_seed.../
 ```
 
-每个 setting 下按 `runlog/<attempt>/`、`memory/<attempt>/` 和 `result/`
-保存历史版本；设备 CLI alias 只写 provenance，不进入目录名。B-MoCA 始终
-独立位于 `data/bmoca/`，内容寻址原对象和全局调度证据位于
-`data/androidworld/.archive/`。完成情况见
+每个 setting 下按 `runlog/attempt_NNN/`、`memory/attempt_NNN/` 和 `result/`
+保存执行；attempt 只用递增编号，不使用时间戳。每次 RunLog 执行直接保存为
+该 attempt 下的一份 `run_log.json` 和 `screenshots/screenshot_NNNNNN.png`，
+不创建 SHA 对象仓库。设备 CLI alias 只写 provenance，不进入目录名。B-MoCA
+始终独立位于 `data/bmoca/`。完成情况见
 [`data/androidworld/COMPLETION_STATUS.md`](data/androidworld/COMPLETION_STATUS.md)，
 可直接转换 memory 的 source 候选见
 [`data/androidworld/MEMORY_READY_SOURCES.md`](data/androidworld/MEMORY_READY_SOURCES.md)。

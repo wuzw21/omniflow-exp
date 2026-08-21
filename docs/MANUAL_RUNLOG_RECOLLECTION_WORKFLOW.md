@@ -60,9 +60,16 @@ input is JSON Lines. Every `act` or selector `click` must include `reasoning`:
   --task-params-json '<PARAMS_JSON>' \
   --seed 111 \
   --console-port 5554 \
+  --device-serial emulator-5554 \
   --adb-path /absolute/Android/Sdk/platform-tools/adb \
   --output /absolute/OmniFlow-exp/data/androidworld/TASK/small5554/source/manual_<UTC>
 ```
+
+For a USB-connected Android device, keep the same AndroidWorld task/session
+contract but pass its ADB serial explicitly (for example
+`--device-serial 45291FDAP0013Z`) and set `ANDROID_SERIAL` to the same value.
+This records the real device provenance; it does not make the device part of
+the formal emulator matrix.
 
 The interaction loop is:
 

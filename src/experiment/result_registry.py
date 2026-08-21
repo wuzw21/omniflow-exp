@@ -281,6 +281,11 @@ def registered_result_plan(
                 continue
             if not has_official_validator_conclusion(detail_row):
                 continue
+            # A failed conclusion is evidence to retry, not a reusable cell.
+            # Do this before protocol validation so stale failed attempts with
+            # old metadata cannot block a current formal run.
+            if detail_row.get("official_validator_success") is not True:
+                continue
             if formal_max_steps is not None:
                 validate_formal_result_protocol(
                     detail_row,
@@ -513,11 +518,9 @@ def register_attempt_summary(
             manifest["registered_result_sha256"] = registered_sha256
 
             if destination.exists():
-                existing_manifest = _load_json(manifest_path)
-                if existing_manifest.get("fingerprint_sha256") != fingerprint:
-                    raise FileExistsError(
-                        f"immutable result registration conflict: {destination}"
-                    )
+                # Attempt directories are allocated monotonically. A stale
+                # digest must not turn a runnable cell into a conflict.
+                continue
             else:
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 temporary = Path(

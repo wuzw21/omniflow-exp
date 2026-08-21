@@ -494,21 +494,26 @@ validate_model_endpoint_auth() {
     MODEL_ENDPOINT_BASE_URL="$selected_model_base_url" \
       "$python_bin" - <<'PY'
 import os
-import urllib.error
-import urllib.request
+import requests
 
 base_url = os.environ["MODEL_ENDPOINT_BASE_URL"].rstrip("/")
-request = urllib.request.Request(
-    f"{base_url}/models",
-    headers={"Authorization": f"Bearer {os.environ['MODEL_ENDPOINT_API_KEY']}"},
-    method="GET",
-)
 try:
-    with urllib.request.urlopen(request, timeout=10) as response:
-        status = int(response.status)
-except urllib.error.HTTPError as error:
-    status = int(error.code)
-except Exception as error:
+    status = 0
+    last_error = None
+    for _ in range(3):
+        try:
+            response = requests.get(
+                f"{base_url}/models",
+                headers={"Authorization": f"Bearer {os.environ['MODEL_ENDPOINT_API_KEY']}"},
+                timeout=10,
+            )
+            status = int(response.status_code)
+            break
+        except requests.RequestException as error:
+            last_error = error
+    if status == 0:
+        raise last_error
+except requests.RequestException as error:
     print(f"unavailable:{error}")
     raise SystemExit(1)
 print(status)
@@ -864,12 +869,6 @@ fi
 if [[ "$control_backend" == "oob" && "$execution_environment" != "androidworld" ]]; then
   echo "--control-backend oob is only supported for AndroidWorld." >&2
   exit 2
-fi
-if [[ "$control_backend" == "oob" && "$development_run" -eq 0 && "$source_collection" -eq 0 && -z "$e2e_task" ]]; then
-  if [[ "$selected_method_arg" != "fixed_replay" || -z "$selected_device_arg" ]]; then
-    echo "--control-backend oob formal execution requires fixed_replay and an explicit device." >&2
-    exit 2
-  fi
 fi
 export OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND="$control_backend"
 if [[ "$execution_environment" != "bmoca" && ( -n "$selected_method_arg" || -n "$selected_device_arg" ) ]] && {
@@ -1306,7 +1305,14 @@ if [[ -n "$e2e_task" ]]; then
     set -a
     source "$env_file"
     set +a
-    export AUTODROID_MODEL="${AUTODROID_MODEL:-${OPENAI_MODEL:-gpt-3.5-turbo}}"
+    normalize_model_environment
+    unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
+    select_model_endpoint "$formal_model_endpoint_profile"
+    validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
+    validate_model_endpoint_auth
+    configure_model_stack "$formal_model"
+    export AUTODROID_MODEL="$formal_model"
+    export AUTODROID_TEMPERATURE="${AUTODROID_TEMPERATURE:-0.25}"
   fi
   normalized_e2e_model="$(printf '%s' "$formal_model" | tr '[:upper:]' '[:lower:]')"
   if [[ "$supplemental_autodroid" -eq 0 && "$normalized_e2e_model" != "glm-4.6v" && "$normalized_e2e_model" != "glm-5.1" ]]; then
@@ -2008,11 +2014,8 @@ if [[ "$all_tasks" -eq 1 ]]; then
     echo "Canonical source index missing: $source_index" >&2
     exit 1
   fi
-  formal_tasks=()
-  while IFS= read -r batch_task_name; do
-    formal_tasks+=("$batch_task_name")
-  done < <(
-    "$python_bin" - "$source_index" "$batch_task_filter" "$android_world_root" <<'PY'
+  enumerate_formal_tasks() {
+    "$python_bin" - "$1" "$2" "$3" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -2056,7 +2059,11 @@ for task_name in sorted(
     if not task_filter or task_name in set(task_filter.replace(",", " ").split()):
         print(task_name)
 PY
-  )
+  }
+  formal_tasks=()
+  while IFS= read -r batch_task_name; do
+    formal_tasks+=("$batch_task_name")
+  done < <(enumerate_formal_tasks "$source_index" "$batch_task_filter" "$android_world_root")
   if [[ -z "$batch_task_filter" && "${#formal_tasks[@]}" -ne 116 ]]; then
     echo "Formal task enumeration failed: expected 116, got ${#formal_tasks[@]}." >&2
     exit 1
@@ -2125,7 +2132,9 @@ PY
     elif [[ "$dry_run" -eq 1 ]]; then
       child_args+=(--dry-run)
     fi
-    if [[ -n "${OMNIFLOW_E2E_ATTEMPT_ID:-}" ]]; then
+    if [[ -n "$batch_attempt_id" ]]; then
+      child_args+=(--attempt-id "$batch_attempt_id")
+    elif [[ -n "${OMNIFLOW_E2E_ATTEMPT_ID:-}" ]]; then
       child_args+=(--attempt-id "${OMNIFLOW_E2E_ATTEMPT_ID}")
     fi
     echo "[batch] dispatch task=$batch_task"

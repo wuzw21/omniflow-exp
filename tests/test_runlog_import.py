@@ -550,7 +550,6 @@ def test_explicit_converter_records_screenshot_reference(tmp_path: Path) -> None
 
     assert converted["steps"][0]["observation"]["pixels"] == {
         "path": str(screenshot.resolve()),
-        "sha256": __import__("hashlib").sha256(screenshot.read_bytes()).hexdigest(),
         "width": 32,
         "height": 48,
         "mime_type": "image/png",
@@ -646,7 +645,9 @@ def test_source_adapter_keeps_official_xml_and_screenshot_reference(
         screenshot_roots=(),
     )
 
-    assert adapted == run_log
+    expected = json.loads(json.dumps(run_log))
+    expected["steps"][0]["observation"]["pixels"].pop("sha256")
+    assert adapted == expected
 
 
 def test_source_adapter_normalizes_native_xml_and_screenshot_aliases(
@@ -687,7 +688,6 @@ def test_source_adapter_normalizes_native_xml_and_screenshot_aliases(
     assert observation["xml"] == '<hierarchy><node text="Open" /></hierarchy>'
     assert observation["screenshot"] == {
         "path": str(screenshot.resolve()),
-        "sha256": __import__("hashlib").sha256(screenshot.read_bytes()).hexdigest(),
         "width": 32,
         "height": 48,
         "mime_type": "image/png",

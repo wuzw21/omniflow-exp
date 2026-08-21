@@ -5,9 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import copy
 from pathlib import Path
+import subprocess
 import time
 from typing import Any, Callable
+from types import SimpleNamespace
 
 from omniflow.core.trajectory import (
     OMNIFLOW_RUN_LOG_SCHEMA_VERSION,
@@ -44,6 +47,8 @@ class AndroidWorldEpisodeRecorder:
         *,
         evidence_root: str | Path,
         performance_metrics: PerformanceMetrics | None = None,
+        adb_path: str = "",
+        adb_serial: str = "",
     ):
         if not callable(get_state):
             raise TypeError("episode_recorder_get_state_callable_required")
@@ -58,6 +63,8 @@ class AndroidWorldEpisodeRecorder:
         self._steps: list[dict[str, Any]] = []
         self._recording_action = False
         self.performance_metrics = performance_metrics
+        self._adb_path = str(adb_path or "").strip()
+        self._adb_serial = str(adb_serial or "").strip()
 
     @property
     def episode_started(self) -> bool:
@@ -129,7 +136,73 @@ class AndroidWorldEpisodeRecorder:
                 # state instead of persisting an incomplete observation.
                 time.sleep(0.25)
                 candidate = self._get_state(*args, **kwargs)
+                candidate = self._with_adb_observation_xml(candidate)
         raise AssertionError("unreachable_androidworld_observation_retry")
+
+    def _with_adb_observation_xml(self, state: Any) -> Any:
+        xml = self._read_adb_ui_xml()
+        if not xml:
+            return state
+        try:
+            candidate = copy.copy(state)
+            setattr(candidate, "forest", xml)
+            if not getattr(candidate, "ui_elements", None):
+                setattr(candidate, "ui_elements", [])
+            return candidate
+        except Exception:
+            return SimpleNamespace(
+                pixels=getattr(state, "pixels", None),
+                forest=xml,
+                ui_elements=[],
+                auxiliaries=getattr(state, "auxiliaries", None),
+            )
+
+    def _read_adb_ui_xml(self) -> str:
+        if not self._adb_path or not self._adb_serial:
+            return ""
+        remote_path = "/sdcard/omniflow_window.xml"
+        try:
+            dumped = subprocess.run(
+                [
+                    self._adb_path,
+                    "-s",
+                    self._adb_serial,
+                    "shell",
+                    "uiautomator",
+                    "dump",
+                    remote_path,
+                ],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=8,
+            )
+            if dumped.returncode != 0:
+                return ""
+            fetched = subprocess.run(
+                [
+                    self._adb_path,
+                    "-s",
+                    self._adb_serial,
+                    "shell",
+                    "cat",
+                    remote_path,
+                ],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=8,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        text = str(fetched.stdout or "")
+        start = text.find("<hierarchy")
+        end = text.rfind("</hierarchy>")
+        if start < 0 or end < start:
+            return ""
+        return text[start : end + len("</hierarchy>")].strip()
 
     def execute_action(self, action: Any, *args: Any, **kwargs: Any) -> Any:
         if self.performance_metrics is None:

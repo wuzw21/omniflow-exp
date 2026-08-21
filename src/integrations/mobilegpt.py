@@ -1675,6 +1675,15 @@ def convert_runlog_to_mobilegpt_memory(
     audit_rows: list[dict[str, Any]] = []
     with _temporary_environment(environment), _working_directory(server_root):
         from memory.memory_manager import Memory
+
+        official_generalize_action = None
+        if not launch_only:
+            try:
+                from utils.action_utils import generalize_action as official_generalize_action
+            except ImportError as error:
+                raise MobileGPTConversionError(
+                    "mobilegpt_generalize_action_unavailable"
+                ) from error
         if embedding_provider is None:
             from utils.utils import get_openai_embedding
 
@@ -1817,6 +1826,7 @@ def convert_runlog_to_mobilegpt_memory(
                 parsed_xml,
                 task_parameters=trajectory["task_parameters"],
                 selected_subtask=selected_subtask,
+                generalize_action=official_generalize_action,
             )
             del label
             action_example = _native_action_example(

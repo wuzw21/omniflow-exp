@@ -451,6 +451,89 @@ def test_open_app_dispatches_when_installed_package_inventory_is_incomplete(
     assert host.actions == [action]
 
 
+def test_function_global_package_preflight_opens_target_before_recorded_step(
+    monkeypatch,
+) -> None:
+    import omniflow.runtime.core as core
+    import omniflow.runtime.execution as execution
+
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(execution, "_OPEN_APP_READY_POLL_SECONDS", 0.0)
+
+    target_package = "com.example.target"
+    source = Observation(package_name=target_package)
+    current = Observation(package_name="com.android.launcher")
+
+    async def transfer(action, observation, source_state):
+        return TransferResult(action, reason="mapped")
+
+    class Host:
+        def __init__(self) -> None:
+            self.actions: list[Action] = []
+            self.observations = [
+                Observation(package_name=target_package),
+                Observation(package_name=target_package),
+            ]
+
+        def act(self, action):
+            self.actions.append(action)
+            return {"success": True}
+
+        def observe(self, **_kwargs):
+            if self.observations:
+                return self.observations.pop(0)
+            return Observation(package_name=target_package)
+
+    function = Function(
+        function_id="global_package_preflight_function",
+        name="global package preflight function",
+        description="opens the target app before a recorded action",
+        steps=(
+            FunctionStep(
+                0,
+                Action("click", {"x": 500, "y": 500}),
+                "source-1",
+            ),
+        ),
+        schema_version="omniflow.function.v2",
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+        agent_visible=True,
+    )
+
+    host = Host()
+    result = asyncio.run(
+        execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=current,
+            state_loader=lambda state_id: source if state_id == "source-1" else None,
+        )
+    )
+
+    assert result.success is True
+    assert result.actions_executed == 2
+    assert host.actions == [
+        Action("open_app", {"package_name": target_package}),
+        Action("click", {"x": 500, "y": 500}),
+    ]
+    assert result.detail["checker_decisions"][0] == {
+        "function_id": "global_package_preflight_function",
+        "checker_kind": "global_package_preflight",
+        "source_state_id": "source-1",
+        "before_function_step": 0,
+        "target_package": target_package,
+        "observed_package": "com.android.launcher",
+        "status": "executed",
+        "reason": "package_mismatch",
+    }
+
+
 def test_action_waits_for_transition_window_to_enter_display(monkeypatch) -> None:
     import omniflow.runtime.core as core
     import omniflow.runtime.execution as execution

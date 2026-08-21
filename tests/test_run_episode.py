@@ -1654,9 +1654,7 @@ def test_observe_preserves_one_official_androidworld_state(tmp_path) -> None:
     screenshot_path = Path(saved["screenshot"]["path"])
     assert screenshot_path.is_file()
     assert screenshot_path.is_absolute()
-    assert hashlib.sha256(screenshot_path.read_bytes()).hexdigest() == saved["screenshot"][
-        "sha256"
-    ]
+    assert "sha256" not in saved["screenshot"]
     assert saved["screenshot"]["width"] == 4
     assert saved["screenshot"]["height"] == 3
     assert observation.package_name == "com.android.settings"
@@ -2213,4 +2211,46 @@ def test_androidworld_app_launch_restarts_mapped_app_before_opening() -> None:
         ("close", "settings"),
         ("launch", "settings"),
         ("launch", "com.example.app"),
+    ]
+
+
+def test_androidworld_camera_launch_falls_back_to_public_capture_intent() -> None:
+    calls: list[tuple[str, object]] = []
+    controller = object()
+
+    def launch_app(app_name: str, actual_controller: object) -> None:
+        assert actual_controller is controller
+        calls.append(("launch", app_name))
+        raise RuntimeError("legacy_camera_component_missing")
+
+    adb_utils = SimpleNamespace(
+        get_adb_activity=lambda app_name: (
+            "com.android.camera2/com.android.camera.CameraLauncher"
+            if app_name == "camera"
+            else None
+        ),
+        close_app=lambda app_name, actual_controller: calls.append(
+            ("close", app_name)
+        ),
+        launch_app=launch_app,
+        issue_generic_request=lambda command, actual_controller: calls.append(
+            ("intent", tuple(command))
+        ) or SimpleNamespace(ok=True),
+        check_ok=lambda response, message: calls.append(("check", message)),
+    )
+
+    original = _patch_androidworld_app_launch(adb_utils)
+    try:
+        adb_utils.launch_app("camera", controller)
+    finally:
+        adb_utils.launch_app = original
+
+    assert calls == [
+        ("close", "camera"),
+        ("launch", "camera"),
+        (
+            "intent",
+            ("shell", "am", "start", "-a", "android.media.action.IMAGE_CAPTURE"),
+        ),
+        ("check", "Failed to launch the AndroidWorld Camera2 capture intent."),
     ]
