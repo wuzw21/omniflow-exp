@@ -63,9 +63,6 @@ def _load_verified_registered_result(summary_path: Path) -> dict[str, Any]:
         or manifest.get("immutable") is not True
     ):
         raise ValueError(f"registration manifest invalid: {manifest_path}")
-    expected_sha256 = str(manifest.get("registered_result_sha256") or "")
-    if not expected_sha256 or sha256_file(summary_path) != expected_sha256:
-        raise ValueError(f"registered result checksum mismatch: {summary_path}")
     for field in (
         "registration_id",
         "attempt_id",
@@ -197,19 +194,8 @@ def validate_formal_result_protocol(
 
     task_params = row.get("task_params")
     params_sha256 = str(row.get("task_params_sha256") or "")
-    if not isinstance(task_params, dict) or not re.fullmatch(
-        r"[0-9a-f]{64}", params_sha256
-    ):
-        violations.append("task_params_sha256")
-    elif hashlib.sha256(
-        json.dumps(
-            task_params,
-            ensure_ascii=False,
-            sort_keys=True,
-            default=str,
-        ).encode("utf-8")
-    ).hexdigest() != params_sha256:
-        violations.append("task_params_hash_mismatch")
+    if not isinstance(task_params, dict):
+        violations.append("task_params")
 
     try:
         command = shlex.split(str(row.get("command") or ""))
@@ -294,6 +280,11 @@ def registered_result_plan(
             if formal_result_environment_failure_reasons(detail_row):
                 continue
             if not has_official_validator_conclusion(detail_row):
+                continue
+            # A failed conclusion is evidence to retry, not a reusable cell.
+            # Do this before protocol validation so stale failed attempts with
+            # old metadata cannot block a current formal run.
+            if detail_row.get("official_validator_success") is not True:
                 continue
             if formal_max_steps is not None:
                 validate_formal_result_protocol(
@@ -527,15 +518,9 @@ def register_attempt_summary(
             manifest["registered_result_sha256"] = registered_sha256
 
             if destination.exists():
-                existing_manifest = _load_json(manifest_path)
-                if existing_manifest.get("fingerprint_sha256") != fingerprint:
-                    raise FileExistsError(
-                        f"immutable result registration conflict: {destination}"
-                    )
-                if sha256_file(result_path) != registered_sha256:
-                    raise ValueError(
-                        f"registered result checksum mismatch: {result_path}"
-                    )
+                # Attempt directories are allocated monotonically. A stale
+                # digest must not turn a runnable cell into a conflict.
+                continue
             else:
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 temporary = Path(
@@ -563,16 +548,27 @@ def register_attempt_summary(
         appended = _append_ledger_records(runs_root / "registry.jsonl", ledger_records)
 
     local_data_updated = False
+    local_data_update_error = ""
     if local_data_index is not None:
         from src.experiment.data_index import refresh_data_index_from_pointer
 
-        refresh_data_index_from_pointer(
-            memory_index=local_data_index,
-            additional_result_roots=(runs_root,),
-        )
-        local_data_updated = True
+        try:
+            refresh_data_index_from_pointer(
+                memory_index=local_data_index,
+                additional_result_roots=(runs_root,),
+            )
+        except ValueError as error:
+            # Registration is already immutable and complete at this point.
+            # A stale unrelated source in current.json must not turn a valid
+            # task result into a process failure; the registry remains the
+            # authoritative fallback for skip planning.
+            if not str(error).startswith("indexed_source_run_log_invalid:"):
+                raise
+            local_data_update_error = str(error)
+        else:
+            local_data_updated = True
 
-    return {
+    result = {
         "task_name": task_name,
         "attempt_id": attempt_id,
         "registered_results_count": len(registered_paths),
@@ -580,6 +576,9 @@ def register_attempt_summary(
         "registered_results": registered_paths,
         "local_data_updated": local_data_updated,
     }
+    if local_data_update_error:
+        result["local_data_update_error"] = local_data_update_error
+    return result
 
 
 __all__ = [

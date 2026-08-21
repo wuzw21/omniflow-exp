@@ -50,12 +50,14 @@ class _TaskHost:
     def observe(self, **kwargs: Any) -> Observation:
         observation = Observation.from_value(self.host.observe(**kwargs))
         official_state = observation.extra.get("androidworld_state")
-        if not isinstance(official_state, dict) or set(official_state) != {
-            "pixels",
-            "forest",
-            "ui_elements",
-            "auxiliaries",
-        }:
+        valid_fields = (
+            {"screenshot", "xml"},
+            {"pixels", "forest", "ui_elements", "auxiliaries"},
+        )
+        if (
+            not isinstance(official_state, dict)
+            or set(official_state) not in valid_fields
+        ):
             raise ValueError("androidworld_state_snapshot_required")
         official_state = _json_copy(official_state)
         official_state_id = state_id(official_state)

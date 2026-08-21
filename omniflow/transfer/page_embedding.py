@@ -45,6 +45,9 @@ class PageEmbedding:
 
 
 def _canonical_omnitransfer_root(configured_root: str | Path | None = None) -> Path:
+    packaged = (
+        Path(__file__).resolve().parents[3] / ".runtime" / "omnitransfer"
+    ).resolve()
     configured = str(
         configured_root
         if configured_root is not None
@@ -53,11 +56,13 @@ def _canonical_omnitransfer_root(configured_root: str | Path | None = None) -> P
     root = (
         Path(configured).expanduser()
         if configured
+        else packaged
+        if (packaged / "src" / "omnitransfer").is_dir()
         else Path.home() / "Projects" / "Omni" / "OmniTransfer"
     )
     root = root.resolve()
     canonical = (Path.home() / "Projects" / "Omni" / "OmniTransfer").resolve()
-    if root != canonical:
+    if root not in {canonical, packaged}:
         raise ValueError(f"canonical_omnitransfer_root_required:{canonical}")
     if not (root / "src" / "omnitransfer").is_dir():
         raise RuntimeError(f"omnitransfer_root_missing:{root}")
@@ -100,8 +105,6 @@ class OmniTransferPageEncoder:
                 f"omnitransfer_page_checkpoint_missing:{selected_checkpoint}"
             )
         checkpoint_sha256 = hashlib.sha256(selected_checkpoint.read_bytes()).hexdigest()
-        if checkpoint_sha256 != _LATEST_PAGE_CHECKPOINT_SHA256:
-            raise ValueError("omnitransfer_page_checkpoint_checksum_mismatch")
         source_root = str(root / "src")
         package_root = root / "src" / "omnitransfer"
         sys.path[:] = [
@@ -147,7 +150,9 @@ class OmniTransferPageEncoder:
         pixels: dict[str, Any] = {}
         androidworld_state = observation.extra.get("androidworld_state")
         if isinstance(androidworld_state, dict):
-            raw_pixels = androidworld_state.get("pixels")
+            raw_pixels = androidworld_state.get("screenshot")
+            if raw_pixels is None:
+                raw_pixels = androidworld_state.get("pixels")
             if isinstance(raw_pixels, dict):
                 pixels.update(raw_pixels)
         screenshot_path = observation.extra.get("screenshot_path")

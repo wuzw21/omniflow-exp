@@ -34,8 +34,8 @@
     "schema_version": "omniflow.run_log.v1",
     "schema_ref": "omniflow_run_log.v1.json",
     "observation_variants": {
-      "androidworld_state": ["pixels", "forest", "ui_elements", "auxiliaries"],
-      "xml_state": ["pixels", "xml", "auxiliaries"]
+      "xml_state": ["screenshot", "xml"],
+      "legacy_androidworld_state": ["pixels", "forest", "ui_elements", "auxiliaries"]
     },
     "action_contract": "AndroidWorld JSONAction",
     "accepted_input_aliases": []

@@ -13,7 +13,7 @@
 bash scripts/exp/run_androidworld.sh \
   --e2e-task TASK \
   --e2e-method omniflow \
-  --e2e-device small5554:emulator-5554:5554,small5562:emulator-5562:5562,fold5564:emulator-5564:5564 \
+  --e2e-device small5554:emulator-5554:5554,pixel5576:emulator-5576:5576,fold5564:emulator-5564:5564 \
   --e2e-source-seed 111 \
   --e2e-evaluation-seed 113 \
   --control-backend oob
@@ -27,6 +27,15 @@ bash scripts/exp/run_androidworld.sh \
 4. 只启动选中的 method/device E2E。
 
 检查失败会安全停止，不会启动 target episode。
+
+正式运行和 source collection 都会追加到
+`data/androidworld/<task>/<method>/<device_model_seed>/runlog/attempt_NNN/`；每次
+执行只写一份 `run_log.json` 和顺序命名的 `screenshots/`，不使用时间戳、截图
+SHA 或对象仓库。不会再
+生成平行的 `androidworld_10cell`、`androidworld_single_task_attempts` 或
+`androidworld_validator` 顶层目录。可用
+`./.venv/bin/python tools/audit_androidworld_archive.py` 刷新 116×10 完成表和
+逐 RunLog 证据索引。
 
 ## 一键安装并启动设备
 
@@ -42,7 +51,8 @@ bash scripts/exp/run_androidworld.sh --setup-device small5554
 ```
 
 `--setup-device` 可接单个 label、逗号列表或 `all`；`all` 包含三个 target
-和 source 设备。报告写到 `data/setup/<UTC>/setup_report.json`。缺少 OOB
+和 source 设备。报告写到
+`data/androidworld/.archive/setup/<UTC>/setup_report.json`。缺少 OOB
 的当前 `OBSERVE_OMNIFLOW`/`CONTROL_OMNIFLOW` receiver、缺少 APK、协议版本
 不匹配或 accessibility 未 bound 都会失败，不会开始实验。默认会补齐 Python
 依赖；只做已有环境验收时设 `OMNIFLOW_SETUP_INSTALL_PYTHON=0`。
@@ -58,7 +68,7 @@ bash scripts/exp/run_androidworld.sh --setup-device small5554
 
 # 逗号分隔的子集
 --e2e-method omniflow,mobilegpt \
---e2e-device small5562:emulator-5562:5562,fold5564:emulator-5564:5564
+--e2e-device pixel5576:emulator-5576:5576,fold5564:emulator-5564:5564
 ```
 
 当前 AndroidWorld target 设备：
@@ -66,7 +76,7 @@ bash scripts/exp/run_androidworld.sh --setup-device small5554
 | label | serial | profile |
 | --- | --- | --- |
 | `small5554` | `emulator-5554` | `small_phone` |
-| `small5562` | `emulator-5562` | `small_phone` |
+| `pixel5576` | `emulator-5576` | `pixel_phone` |
 | `fold5564` | `emulator-5564` | `pixel_fold` |
 
 ## AutoDroid 补充基线（9207）
@@ -75,8 +85,9 @@ AutoDroid 不属于正式五方法，也不进入 `--e2e-method all` 或 116 × 
 它只能显式使用 9207 上的独立设备标签和独立结果命名空间：
 
 ```bash
-OMNIFLOW_AUTODROID_ROOT=/absolute/OmniFlow-exp/data/runtime/external/autodroid \
-OMNIFLOW_AUTODROID_MEMORY_ROOT=/absolute/OmniFlow-exp/data/runtime/autodroid/androidworld_apps \
+OMNIFLOW_AUTODROID_ROOT=/absolute/OmniFlow-exp/vendor/autodroid/runtime \
+OMNIFLOW_AUTODROID_MEMORY_ROOT=/absolute/OmniFlow-exp/vendor/autodroid/androidworld_apps \
+OMNIFLOW_AUTODROID_POLICY=task \
 bash scripts/exp/run_androidworld.sh \
   --e2e-task CameraTakePhoto \
   --e2e-method autodroid \
@@ -85,10 +96,17 @@ bash scripts/exp/run_androidworld.sh \
   --e2e-evaluation-seed 113
 ```
 
-结果写入 `data/androidworld_validator/supplemental/autodroid_9207/`，使用
-原生 DroidBot/UTG replay 和 AndroidWorld 官方 validator，不转换 Function、
-不使用 OmniTransfer，且 `model_calls=0`、`fallback_steps=0`。完整公平比较
-合同见 [`docs/AUTODROID_9207_COMPARISON_PLAN.md`](../../docs/AUTODROID_9207_COMPARISON_PLAN.md)。
+结果写入 `data/androidworld/<task>/autodroid/<device_model_seed>/`，调度与汇总元数据写入
+`data/androidworld/.archive/`，使用
+原生 DroidBot policy 和 AndroidWorld 官方 validator，不转换 Function、
+不使用 OmniTransfer。默认 `replay` 保持历史 UTG 结果；设置
+`OMNIFLOW_AUTODROID_POLICY=task` 才执行官方 online TaskPolicy，并把
+`autodroid_stats.jsonl` 的 model calls、prompt/completion/total tokens 接入统一
+outcome 和 summary 统计。online 模式还必须提供 `OMNIFLOW_ENV_FILE`；入口强制
+使用 protocol 的 `GLM-4.6V`、`llmthu` endpoint 和默认 temperature `0.25`，不会
+继承 `.env` 中的 Qwen/DashScope model。online 结果使用独立 attempt id/output root，不覆盖
+历史 replay。完整公平比较合同见
+[`docs/AUTODROID_9207_COMPARISON_PLAN.md`](../../docs/AUTODROID_9207_COMPARISON_PLAN.md)。
 
 运行完整的 116-task supplemental campaign 时，使用批量入口并显式选择
 supplemental method；这不会改变正式 `all` 矩阵：
@@ -101,12 +119,16 @@ bash scripts/exp/run_androidworld.sh --all-tasks \
   --e2e-evaluation-seed 113
 ```
 
-省略 `--tasks` 会按 `data/current.json` 的 116 个 task 全量运行。每个 task
+省略 `--tasks` 会按 `data/current.json` 的 116 个 task 全量运行。完整
+supplemental campaign 强制执行 AndroidWorld setup 和每 task snapshot restore；
+`OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP=0` 只用于单 task 开发复跑，不能
+用于完整 campaign。每个 task
 单独初始化、单独封存 validator/replay evidence；AutoDroid 结果仍只写入
-`androidworld_validator/supplemental/autodroid_9207/`。
+`androidworld/<task>/autodroid/<device_model_seed>/`。
 
-固定实验值：source seed `111`、evaluation seed `113`、formal model
-`GLM-5.1`。`--control-backend oob` 用于 OOB observe/act transport。
+固定实验值：source seed `111`、evaluation seed `113`、formal chat/vision model
+`GLM-4.6V`；初始 VLM、VLM fallback 和 AppAgent 都使用同一原生图片输入链路。
+`--control-backend oob` 用于 OOB observe/act transport。
 
 ## 环境变量
 
@@ -120,6 +142,30 @@ export OMNITRANSFER_ROOT="$HOME/Projects/Omni/OmniTransfer"
 
 `model.env` 至少提供 `LLMTHU_API_KEY`。外部 AndroidWorld、Android SDK、
 MobileGPT 和 AppAgent 路径由 launcher 的环境变量或机器默认值提供。
+
+## SSH 迁移到 4090
+
+使用仓库内的构建器可以把代码、权威 `data/`、注册资产和模型环境迁移到
+4090，并在服务器上构建运行环境：
+
+```bash
+bash tools/build_4090_resources.sh \
+  --ssh user@4090 \
+  --model-env /absolute/model.env \
+  --run-smoke
+```
+
+默认 `--mode latest` 会更新 AndroidWorld、B-MoCA、AppAgent、MobileGPT、
+OmniTransfer 及 B-MoCA 外部依赖到默认分支最新提交；实际 commit 会写入
+`/data/omniflow-4090/deployment_manifest.json`，并通过部署环境变量让
+AndroidWorld/AppAgent/B-MoCA revision 检查匹配这次部署。Python 依赖默认仍由
+`uv.lock` 控制；需要主动升级时增加 `--upgrade-python-deps`。
+
+脚本还会安装/检查 CUDA 无关的系统运行依赖、Android SDK/API 33/34、
+Appium、AVD，并执行 `--check-only` 验证。首次迁移前请确保 SSH 已配置为
+非交互登录、远端有 sudo 权限、4090 主机磁盘至少预留约 30 GB（不含模型和
+完整数据归档）。`--skip-device-setup` 可用于先只构建代码环境；B-MoCA
+的 env100/语料资产仍需按其官方资产合同另行准备，脚本不会伪造这些资产。
 
 ## 其他命令
 

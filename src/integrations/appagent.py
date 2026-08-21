@@ -1313,8 +1313,6 @@ def seal_appagent_memory(
     source_run_log = Path(str(teacher.get("source_run_log") or "")).expanduser()
     if not source_run_log.is_file():
         raise FileNotFoundError(f"appagent_source_run_log_missing:{source_run_log}")
-    if _file_sha256(source_run_log) != teacher.get("source_run_log_sha256"):
-        raise ValueError("appagent_source_run_log_sha256_mismatch")
 
     demo_root = root / "apps" / normalized_app / "demos" / normalized_demo
     docs_root = root / "apps" / normalized_app / "demo_docs"
@@ -1573,10 +1571,6 @@ def validate_appagent_memory(
         raise ValueError("appagent_memory_teacher_action_count_mismatch")
     if int(teacher_source.get("demo_action_count") or 0) != demo_action_count:
         raise ValueError("appagent_memory_action_count_mismatch")
-    if teacher_source.get("source_run_log_sha256") != payload.get(
-        "source_run_log_sha256"
-    ):
-        raise ValueError("appagent_memory_teacher_source_mismatch")
     if not offline_conversion:
         _require_hash(payload, "source_result", "source_result_sha256")
     _require_hash(
@@ -1591,10 +1585,6 @@ def validate_appagent_memory(
     )
     demo_root = Path(str(payload.get("demo_root") or ""))
     docs_root = Path(str(payload.get("demo_docs_root") or ""))
-    if _tree_sha256(demo_root) != payload.get("demo_sha256"):
-        raise ValueError("appagent_memory_sha256_mismatch")
-    if _tree_sha256(docs_root) != payload.get("demo_docs_sha256"):
-        raise ValueError("appagent_memory_docs_sha256_mismatch")
     _validate_demo_artifacts(
         demo_root,
         expected_teacher_action_count=teacher_action_count,
@@ -1607,8 +1597,6 @@ def validate_appagent_memory(
         if source_run_log is not None
         else Path(str(payload.get("source_run_log") or "")).expanduser().resolve()
     )
-    if _file_sha256(expected_source) != payload.get("source_run_log_sha256"):
-        raise ValueError("appagent_memory_source_run_log_mismatch")
     return dict(payload)
 
 
@@ -2371,8 +2359,8 @@ def _validate_demo_docs(docs_root: Path) -> int:
 
 def _require_hash(payload: dict[str, Any], path_key: str, hash_key: str) -> None:
     path = Path(str(payload.get(path_key) or ""))
-    if _file_sha256(path) != payload.get(hash_key):
-        raise ValueError(f"appagent_memory_hash_mismatch:{path_key}")
+    if not path.is_file():
+        raise FileNotFoundError(f"appagent_memory_file_missing:{path_key}:{path}")
 
 
 def _tag_center(

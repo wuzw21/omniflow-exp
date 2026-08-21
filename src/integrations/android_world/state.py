@@ -2,16 +2,15 @@ from __future__ import annotations
 
 import base64
 import binascii
-import dataclasses
-import hashlib
 import io
-import math
 from pathlib import Path
 from typing import Any
 
 from PIL import Image
 
-ANDROIDWORLD_STATE_FIELDS = ("pixels", "forest", "ui_elements", "auxiliaries")
+from omniflow.core.androidworld_accessibility import androidworld_forest_xml
+
+ANDROIDWORLD_STATE_FIELDS = ("pixels", "forest", "ui_elements")
 
 
 def snapshot_androidworld_state(
@@ -23,12 +22,73 @@ def snapshot_androidworld_state(
     if missing:
         raise ValueError("androidworld_state_fields_missing:" + ",".join(missing))
     pixels = getattr(state, "pixels")
+    pixels_reference = _screenshot_reference(pixels, evidence_root=evidence_root)
+    xml = _state_xml(state, pixels_reference)
+    if not xml:
+        return {
+            "pixels": pixels_reference,
+            "forest": None,
+            "ui_elements": [],
+            "auxiliaries": None,
+        }
     return {
-        "pixels": _screenshot_reference(pixels, evidence_root=evidence_root),
-        "forest": _json_value(getattr(state, "forest")),
-        "ui_elements": _json_value(list(getattr(state, "ui_elements") or ())),
-        "auxiliaries": _json_value(getattr(state, "auxiliaries")),
+        "screenshot": pixels_reference,
+        "xml": xml,
     }
+
+
+def _state_xml(
+    state: Any,
+    pixels_reference: dict[str, Any] | None,
+) -> str:
+    forest = getattr(state, "forest", None)
+    if isinstance(forest, str) and forest.strip():
+        forest_xml = forest.strip()
+    elif forest is not None:
+        width, height = _display_size(state, pixels_reference)
+        forest_xml = androidworld_forest_xml(
+            forest,
+            screen_size=(width, height),
+        ).strip()
+    else:
+        forest_xml = ""
+    elements = list(getattr(state, "ui_elements", ()) or ())
+    if elements:
+        # The host owns the shared element-to-XML projection.  This import is
+        # deliberately lazy because the host imports this state module.
+        from src.integrations.android_world.host import (
+            _xml_semantic_score,
+            androidworld_elements_xml,
+        )
+
+        elements_xml = androidworld_elements_xml(elements).strip()
+        if forest_xml and _xml_semantic_score(forest_xml) >= _xml_semantic_score(
+            elements_xml
+        ):
+            return forest_xml
+        return elements_xml
+    return forest_xml
+
+
+def _display_size(
+    state: Any,
+    pixels_reference: dict[str, Any] | None,
+) -> tuple[int, int]:
+    if isinstance(pixels_reference, dict):
+        return int(pixels_reference["width"]), int(pixels_reference["height"])
+    auxiliaries = getattr(state, "auxiliaries", None)
+    display = auxiliaries.get("display") if isinstance(auxiliaries, dict) else None
+    if isinstance(display, dict):
+        width = display.get("width")
+        height = display.get("height")
+        if (
+            isinstance(width, (int, float))
+            and width > 0
+            and isinstance(height, (int, float))
+            and height > 0
+        ):
+            return int(width), int(height)
+    return 1000, 1000
 
 
 def _screenshot_reference(
@@ -41,14 +101,12 @@ def _screenshot_reference(
     if evidence_root is None:
         raise ValueError("androidworld_state_evidence_root_required")
     image_bytes, width, height = _png_bytes(pixels)
-    digest = hashlib.sha256(image_bytes).hexdigest()
     root = Path(evidence_root).expanduser().resolve()
-    destination = root / "observations" / "objects" / f"{digest}.png"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    _write_immutable(destination, image_bytes)
+    screenshot_root = root / "screenshots"
+    screenshot_root.mkdir(parents=True, exist_ok=True)
+    destination = _write_next_screenshot(screenshot_root, image_bytes)
     return {
         "path": str(destination),
-        "sha256": digest,
         "width": width,
         "height": height,
         "mime_type": "image/png",
@@ -76,57 +134,18 @@ def _png_bytes(pixels: Any) -> tuple[bytes, int, int]:
     return output.getvalue(), int(width), int(height)
 
 
-def _json_value(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, bool)):
-        return value
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ValueError("androidworld_state_number_not_finite")
-        return value
-    if isinstance(value, Path):
-        return str(value)
-    if dataclasses.is_dataclass(value):
-        return _json_value(dataclasses.asdict(value))
-    if isinstance(value, dict):
-        return {str(key): _json_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_value(item) for item in value]
-    descriptor = getattr(value, "DESCRIPTOR", None)
-    if descriptor is not None:
-        from google.protobuf.json_format import MessageToDict
+def _write_next_screenshot(root: Path, content: bytes) -> Path:
+    """Write one screenshot with a stable sequential name, never a hash name."""
 
-        return MessageToDict(value, preserving_proto_field_name=True)
-    scalar = getattr(value, "item", None)
-    if callable(scalar):
+    index = 1
+    while True:
+        path = root / f"screenshot_{index:06d}.png"
         try:
-            return _json_value(scalar())
-        except ValueError:
-            raise
-        except Exception:
-            pass
-    array = getattr(value, "tolist", None)
-    if callable(array):
-        return _json_value(array())
-    enum_value = getattr(value, "value", None)
-    if enum_value is not None and enum_value is not value:
-        return _json_value(enum_value)
-    attributes = getattr(value, "__dict__", None)
-    if isinstance(attributes, dict):
-        return {
-            str(key): _json_value(item)
-            for key, item in attributes.items()
-            if not str(key).startswith("_")
-        }
-    raise TypeError(f"androidworld_state_value_not_serializable:{type(value).__name__}")
-
-
-def _write_immutable(path: Path, content: bytes) -> None:
-    try:
-        with path.open("xb") as handle:
-            handle.write(content)
-    except FileExistsError:
-        if path.read_bytes() != content:
-            raise ValueError(f"androidworld_state_screenshot_hash_collision:{path}")
+            with path.open("xb") as handle:
+                handle.write(content)
+            return path
+        except FileExistsError:
+            index += 1
 
 
 __all__ = [

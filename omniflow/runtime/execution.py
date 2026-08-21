@@ -36,6 +36,7 @@ from omniflow.transfer.runtime import transfer_action
 
 _OPEN_APP_READY_POLL_SECONDS = 0.5
 _OPEN_APP_READY_MAX_ATTEMPTS = 30
+_GLOBAL_OVERLAY_MAX_ATTEMPTS = 3
 _OBSERVATION_READY_POLL_SECONDS = 0.25
 _OBSERVATION_READY_MAX_ATTEMPTS = 20
 # OmniTransfer already applies the deployment acceptance floor.  Keep only a
@@ -76,6 +77,131 @@ async def execute_function(
     checker_source_states: dict[str, Observation | None] = {}
     resume_metadata_pending = dict(resume_metadata or {})
     for function_step in steps:
+        source_state = await _load_state(
+            host,
+            function_step.source_state_id,
+            state_loader=state_loader,
+        )
+        target_package = str(source_state.package_name or "").strip()
+        observed_package = str(current.package_name or "").strip()
+        if (
+            target_package
+            and observed_package != target_package
+            and function_step.action.tool != "open_app"
+        ):
+            preflight_step = await execute_robust_action(
+                Action("open_app", {"package_name": target_package}),
+                observation=current,
+                host=host,
+                plugins=plugins,
+                function=function,
+                installed_packages=installed_packages,
+            )
+            checker_decisions.append(
+                {
+                    "function_id": function.id,
+                    "checker_kind": "global_package_preflight",
+                    "source_state_id": function_step.source_state_id,
+                    "before_function_step": function_step.step_index,
+                    "target_package": target_package,
+                    "observed_package": observed_package,
+                    "status": "executed" if preflight_step.success else "failed",
+                    "reason": "package_mismatch",
+                }
+            )
+            executed += preflight_step.actions_executed
+            trace.extend(
+                await record_execution(
+                    host,
+                    preflight_step,
+                    trace_start_index=int(trace_start_index) + len(trace),
+                    metadata={
+                        "checker_kind": "global_package_preflight",
+                        "before_function_step": function_step.step_index,
+                    },
+                )
+            )
+            current = preflight_step.after or preflight_step.before or current
+            if not preflight_step.success:
+                return RunResult(
+                    False,
+                    function.id,
+                    executed,
+                    error=preflight_step.error or "global_package_preflight_failed",
+                    final_state=current,
+                    detail={
+                        "trace": trace,
+                        "checker_decisions": checker_decisions,
+                        "failed_step_index": function_step.step_index,
+                        "next_step_index": function_step.step_index,
+                    },
+                )
+        for overlay_attempt in range(_GLOBAL_OVERLAY_MAX_ATTEMPTS):
+            overlay_action = _blocking_overlay_action(current)
+            if overlay_action is None:
+                break
+            overlay_step = await execute_robust_action(
+                overlay_action,
+                observation=current,
+                host=host,
+                plugins=plugins,
+                function=function,
+                installed_packages=installed_packages,
+            )
+            checker_decisions.append(
+                {
+                    "function_id": function.id,
+                    "checker_kind": "global_overlay_preflight",
+                    "source_state_id": function_step.source_state_id,
+                    "before_function_step": function_step.step_index,
+                    "overlay_attempt": overlay_attempt,
+                    "action": overlay_action.to_dict(),
+                    "status": "executed" if overlay_step.success else "failed",
+                    "reason": "blocking_ad_overlay",
+                }
+            )
+            executed += overlay_step.actions_executed
+            trace.extend(
+                await record_execution(
+                    host,
+                    overlay_step,
+                    trace_start_index=int(trace_start_index) + len(trace),
+                    metadata={
+                        "checker_kind": "global_overlay_preflight",
+                        "before_function_step": function_step.step_index,
+                        "overlay_attempt": overlay_attempt,
+                    },
+                )
+            )
+            current = overlay_step.after or overlay_step.before or current
+            if not overlay_step.success:
+                return RunResult(
+                    False,
+                    function.id,
+                    executed,
+                    error=overlay_step.error or "global_overlay_preflight_failed",
+                    final_state=current,
+                    detail={
+                        "trace": trace,
+                        "checker_decisions": checker_decisions,
+                        "failed_step_index": function_step.step_index,
+                        "next_step_index": function_step.step_index,
+                    },
+                )
+        if _blocking_overlay_action(current) is not None:
+            return RunResult(
+                False,
+                function.id,
+                executed,
+                error="global_overlay_preflight_exhausted",
+                final_state=current,
+                detail={
+                    "trace": trace,
+                    "checker_decisions": checker_decisions,
+                    "failed_step_index": function_step.step_index,
+                    "next_step_index": function_step.step_index,
+                },
+            )
         for rule_index, raw_rule in enumerate(function.checker_rules):
             if rule_index in executed_checker_rules:
                 continue
@@ -144,11 +270,6 @@ async def execute_function(
                     },
                 )
         action = function_step.action
-        source_state = await _load_state(
-            host,
-            function_step.source_state_id,
-            state_loader=state_loader,
-        )
         if action.tool not in {"open_app", "wait"} and source_state is None:
             return RunResult(
                 False,
@@ -412,6 +533,7 @@ async def _dispatch_prepared(
         after = await _observe_ready(host)
     if action.tool == "open_app":
         expected_package = str(action.args.get("package_name") or "").strip()
+        expected_package = _resolve_open_app_package(expected_package)
         observed_package = str(after.package_name or "").strip()
         attempts = 1
         while (
@@ -449,6 +571,20 @@ async def _dispatch_prepared(
                 error=error,
             )
     return replace(core_step, after=after, origin="action")
+
+
+def _resolve_open_app_package(identifier: str) -> str:
+    """Normalize an app label or package before checking the post-launch state."""
+
+    value = str(identifier or "").strip()
+    if not value:
+        return ""
+    try:
+        from src.integrations.android_world.apps import resolve_androidworld_package
+
+        return str(resolve_androidworld_package(value) or value).strip()
+    except (ImportError, RuntimeError, ValueError):
+        return value
 
 
 async def _observe_ready(host: Host, *, require_graph: bool = False) -> Observation:
@@ -545,6 +681,87 @@ def _observation_has_modal_graph(xml_text: str) -> bool:
         if any("dialog" in str(value or "").lower() for value in values):
             return True
     return False
+
+
+_OVERLAY_CLOSE_LABELS = (
+    "关闭",
+    "跳过",
+    "close",
+    "skip",
+    "dismiss",
+    "not now",
+    "no thanks",
+    "稍后",
+    "以后再说",
+    "暂不",
+)
+_OVERLAY_AD_MARKERS = (
+    "广告",
+    "推广",
+    "开屏",
+    "sponsored",
+    "advertisement",
+)
+
+
+def _blocking_overlay_action(observation: Observation) -> Action | None:
+    """Return a direct action for a visible transient advertisement overlay."""
+
+    xml_text = str(observation.xml or "").strip()
+    if not xml_text:
+        return None
+    elements = _elements(xml_text)
+    if not elements:
+        return None
+    ad_like = any(
+        _contains_overlay_marker(
+            " ".join(
+                str(element.get(key) or "")
+                for key in ("text", "description", "resource_id", "class")
+            )
+        )
+        for element in elements
+    )
+    modal = _observation_has_modal_graph(xml_text)
+    close_candidates: list[dict[str, Any]] = []
+    for element in elements:
+        label = " ".join(
+            str(element.get(key) or "")
+            for key in ("text", "description", "resource_id")
+        )
+        if _contains_overlay_close_label(label):
+            close_candidates.append(element)
+    if close_candidates and (ad_like or modal):
+        candidate = min(
+            close_candidates,
+            key=lambda element: (
+                (element["bounds"][2] - element["bounds"][0])
+                * (element["bounds"][3] - element["bounds"][1])
+            ),
+        )
+        left, top, right, bottom = candidate["bounds"]
+        return Action(
+            "click",
+            {
+                "x": round((left + right) / 2.0, 2),
+                "y": round((top + bottom) / 2.0, 2),
+            },
+        )
+    if ad_like and modal:
+        return Action("press_key", {"key": "back"})
+    return None
+
+
+def _contains_overlay_marker(value: str) -> bool:
+    normalized = " ".join(str(value or "").casefold().split())
+    return any(marker in normalized for marker in _OVERLAY_AD_MARKERS) or bool(
+        re.search(r"\b(?:ad|ads|advert)\b", normalized)
+    )
+
+
+def _contains_overlay_close_label(value: str) -> bool:
+    normalized = " ".join(str(value or "").casefold().split())
+    return any(label in normalized for label in _OVERLAY_CLOSE_LABELS)
 
 
 def _observation_has_full_screen_node(xml_text: str) -> bool:

@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import copy
 from pathlib import Path
+import subprocess
 import time
 from typing import Any, Callable
-import uuid
+from types import SimpleNamespace
 
 from omniflow.core.trajectory import (
     OMNIFLOW_RUN_LOG_SCHEMA_VERSION,
     canonicalize_androidworld_action,
     canonicalize_run_log,
+    observation_xml,
     state_id,
 )
 from omniflow.transfer.runtime import TRANSFER_STATE_CATALOG_VERSION
@@ -43,6 +47,8 @@ class AndroidWorldEpisodeRecorder:
         *,
         evidence_root: str | Path,
         performance_metrics: PerformanceMetrics | None = None,
+        adb_path: str = "",
+        adb_serial: str = "",
     ):
         if not callable(get_state):
             raise TypeError("episode_recorder_get_state_callable_required")
@@ -52,12 +58,13 @@ class AndroidWorldEpisodeRecorder:
         self._execute_action = execute_action
         self._evidence_root = Path(evidence_root).expanduser().resolve()
         self._active = False
-        self._started_at_ms: int | None = None
         self._latest_observation: dict[str, Any] | None = None
         self._observations: list[dict[str, Any]] = []
         self._steps: list[dict[str, Any]] = []
         self._recording_action = False
         self.performance_metrics = performance_metrics
+        self._adb_path = str(adb_path or "").strip()
+        self._adb_serial = str(adb_serial or "").strip()
 
     @property
     def episode_started(self) -> bool:
@@ -71,13 +78,12 @@ class AndroidWorldEpisodeRecorder:
         if self._active:
             return
         self._active = True
-        self._started_at_ms = int(time.time() * 1000)
 
     def get_state(self, *args: Any, **kwargs: Any) -> Any:
         if self.performance_metrics is None:
             state = self._get_state(*args, **kwargs)
             if self._active:
-                self._capture_state(state)
+                state = self._capture_state_with_retry(state, args, kwargs)
             return state
         started_ns = time.perf_counter_ns()
         success = False
@@ -86,7 +92,7 @@ class AndroidWorldEpisodeRecorder:
                 state = self._get_state(*args, **kwargs)
             if self._active:
                 with self.performance_metrics.timed("native_observe_record"):
-                    self._capture_state(state)
+                    state = self._capture_state_with_retry(state, args, kwargs)
             success = True
             return state
         finally:
@@ -100,6 +106,103 @@ class AndroidWorldEpisodeRecorder:
     def record_host_observation(self, state: Any) -> None:
         if self._active:
             self._capture_state(state)
+
+    def _capture_state_with_retry(
+        self,
+        state: Any,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> Any:
+        """Recover one transient empty accessibility snapshot.
+
+        AndroidWorld can return a screenshot with an empty accessibility tree
+        immediately after an action or app launch.  The run-log contract still
+        requires XML, so request one fresh native state and return that state to
+        the official agent.  Persistent missing XML remains a hard evidence
+        failure; this does not fabricate UI data or replay an old observation.
+        """
+        candidate = state
+        for attempt in range(4):
+            try:
+                self._capture_state(candidate)
+                return candidate
+            except ValueError as error:
+                if str(error) != "androidworld_run_log_observation_xml_required":
+                    raise
+                if attempt >= 3:
+                    raise
+                # The official accessibility forwarder can lag one or two
+                # frames behind an app transition.  Re-read the official
+                # state instead of persisting an incomplete observation.
+                time.sleep(0.25)
+                candidate = self._get_state(*args, **kwargs)
+                candidate = self._with_adb_observation_xml(candidate)
+        raise AssertionError("unreachable_androidworld_observation_retry")
+
+    def _with_adb_observation_xml(self, state: Any) -> Any:
+        xml = self._read_adb_ui_xml()
+        if not xml:
+            return state
+        try:
+            candidate = copy.copy(state)
+            setattr(candidate, "forest", xml)
+            if not getattr(candidate, "ui_elements", None):
+                setattr(candidate, "ui_elements", [])
+            return candidate
+        except Exception:
+            return SimpleNamespace(
+                pixels=getattr(state, "pixels", None),
+                forest=xml,
+                ui_elements=[],
+                auxiliaries=getattr(state, "auxiliaries", None),
+            )
+
+    def _read_adb_ui_xml(self) -> str:
+        if not self._adb_path or not self._adb_serial:
+            return ""
+        remote_path = "/sdcard/omniflow_window.xml"
+        try:
+            dumped = subprocess.run(
+                [
+                    self._adb_path,
+                    "-s",
+                    self._adb_serial,
+                    "shell",
+                    "uiautomator",
+                    "dump",
+                    remote_path,
+                ],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=8,
+            )
+            if dumped.returncode != 0:
+                return ""
+            fetched = subprocess.run(
+                [
+                    self._adb_path,
+                    "-s",
+                    self._adb_serial,
+                    "shell",
+                    "cat",
+                    remote_path,
+                ],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=8,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        text = str(fetched.stdout or "")
+        start = text.find("<hierarchy")
+        end = text.rfind("</hierarchy>")
+        if start < 0 or end < start:
+            return ""
+        return text[start : end + len("</hierarchy>")].strip()
 
     def execute_action(self, action: Any, *args: Any, **kwargs: Any) -> Any:
         if self.performance_metrics is None:
@@ -231,35 +334,26 @@ class AndroidWorldEpisodeRecorder:
     ) -> dict[str, Any] | None:
         if not self._active:
             return None
-        final_observation = self._latest_observation
-        payload: dict[str, Any] = {
-            "schema_version": OMNIFLOW_RUN_LOG_SCHEMA_VERSION,
-            "run_id": f"run_{uuid.uuid4().hex}",
-            "task_name": str(task_name or "").strip(),
-            "goal": str(goal or ""),
-            "task_parameters": _json_copy(task_parameters),
-            "seed": seed,
-            "status": "succeeded" if validator_success else "failed",
-            "success": bool(validator_success),
-            "validator": {
-                "official": bool(validator_official),
-                "success": bool(validator_success),
-                "reward": max(0.0, float(validator_reward)),
-            },
-            "provenance": {"kind": "runtime"},
-            "started_at_ms": int(self._started_at_ms or int(time.time() * 1000)),
-            "finished_at_ms": int(time.time() * 1000),
-            "steps": _json_copy(self._steps),
-        }
-        if isinstance(final_observation, dict):
-            payload["final_observation"] = _json_copy(final_observation)
-        if diagnostics:
-            payload["diagnostics"] = _json_copy(diagnostics)
-        return canonicalize_run_log(payload)
+        return build_androidworld_run_log(
+            run_id=self._evidence_root.name,
+            task_name=task_name,
+            goal=goal,
+            task_parameters=task_parameters,
+            seed=seed,
+            validator_success=validator_success,
+            validator_reward=validator_reward,
+            validator_official=validator_official,
+            provenance={"kind": "runtime"},
+            steps=self._steps,
+            final_observation=self._latest_observation,
+            diagnostics=diagnostics,
+        )
 
     def persist_observations(self) -> list[dict[str, Any]]:
-        observation_dir = self._evidence_root / "observations"
-        records = [
+        # RunLog observations already contain the screenshot path and XML.
+        # Return the compact summary for result reporting without writing a
+        # second observation index beside run_log.json.
+        return [
             _observation_index_record(
                 item,
                 observation_index=index,
@@ -267,17 +361,6 @@ class AndroidWorldEpisodeRecorder:
             )
             for index, item in enumerate(self._observations)
         ]
-        index = {
-            "schema_version": "omniflow.androidworld-observations.v1",
-            "observation_count": len(records),
-            "observations": records,
-        }
-        observation_dir.mkdir(parents=True, exist_ok=True)
-        _write_immutable(
-            observation_dir / "index.json",
-            _stable_json_bytes(index),
-        )
-        return records
 
     def _capture_state(self, state: Any) -> dict[str, Any]:
         observation = snapshot_androidworld_state(
@@ -309,10 +392,100 @@ def androidworld_json_action_dict(value: Any) -> dict[str, Any]:
 
 
 def canonicalize_run_log_observation(value: dict[str, Any]) -> dict[str, Any]:
-    """Copy the OmniFlow-owned AndroidWorld Observation representation."""
+    """Return the compact persisted observation: screenshot reference plus XML.
+
+    The four-field AndroidWorld snapshot remains accepted as a read/import
+    compatibility format, but is never emitted by the recorder.
+    """
+    if set(value) == {"screenshot", "xml"}:
+        if not isinstance(value.get("xml"), str) or not value["xml"].strip():
+            raise ValueError("androidworld_run_log_observation_xml_required")
+        observation = _json_copy(value)
+        if isinstance(observation.get("screenshot"), dict):
+            observation["screenshot"].pop("sha256", None)
+        return observation
     if set(value) != {"pixels", "forest", "ui_elements", "auxiliaries"}:
         raise ValueError("androidworld_run_log_observation_fields_invalid")
-    return _json_copy(value)
+    xml = observation_xml(value)
+    if not xml and value.get("ui_elements"):
+        # Some valid historical native AndroidWorld states have a populated
+        # element list but no forest.  Preserve the same UI information as XML
+        # instead of retaining the much larger compatibility representation.
+        from src.integrations.android_world.host import androidworld_elements_xml
+
+        xml = androidworld_elements_xml(list(value["ui_elements"])).strip()
+    if not xml:
+        raise ValueError("androidworld_run_log_observation_xml_required")
+    screenshot = _json_copy(value.get("pixels"))
+    if isinstance(screenshot, dict):
+        screenshot.pop("sha256", None)
+    return {"screenshot": screenshot, "xml": xml}
+
+
+def build_androidworld_run_log(
+    *,
+    run_id: str,
+    task_name: str,
+    goal: str,
+    task_parameters: dict[str, Any],
+    seed: int | None,
+    validator_success: bool,
+    validator_reward: float,
+    validator_official: bool,
+    provenance: dict[str, Any],
+    steps: list[dict[str, Any]],
+    final_observation: dict[str, Any] | None = None,
+    diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the one RunLog representation used by every collector."""
+
+    payload: dict[str, Any] = {
+        "schema_version": OMNIFLOW_RUN_LOG_SCHEMA_VERSION,
+        "run_id": str(run_id or "").strip(),
+        "task_name": str(task_name or "").strip(),
+        "goal": str(goal or ""),
+        "task_parameters": _json_copy(task_parameters),
+        "seed": seed,
+        "status": "succeeded" if validator_success else "failed",
+        "success": bool(validator_success),
+        "validator": {
+            "official": bool(validator_official),
+            "success": bool(validator_success),
+            "reward": max(0.0, float(validator_reward)),
+        },
+        "provenance": _json_copy(provenance),
+        "steps": _json_copy(steps),
+    }
+    if isinstance(final_observation, dict):
+        payload["final_observation"] = _json_copy(final_observation)
+    if diagnostics:
+        payload["diagnostics"] = _json_copy(diagnostics)
+    return canonicalize_run_log(payload)
+
+
+def persist_androidworld_run_log(
+    output_dir: str | Path,
+    *,
+    run_log: dict[str, Any],
+    replace: bool = False,
+) -> Path:
+    """Write the sole run_log.json artifact for one attempt."""
+
+    root = Path(output_dir).expanduser().resolve()
+    canonical_run = canonicalize_run_log(run_log)
+    run_log_path = root / "run_log.json"
+    content = _stable_json_bytes(canonical_run)
+    if not replace:
+        _write_immutable(run_log_path, content)
+        return run_log_path
+    run_log_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = run_log_path.with_name(".run_log.json.tmp")
+    try:
+        temporary.write_bytes(content)
+        os.replace(temporary, run_log_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return run_log_path
 
 
 def persist_target_run_evidence(
@@ -325,13 +498,9 @@ def persist_target_run_evidence(
     """Persist a canonical target RunLog and optional OmniFlow transfer states."""
     root = Path(output_dir).expanduser().resolve()
     canonical_run = canonicalize_run_log(run_log)
-    run_id = str(canonical_run["run_id"]).strip()
-    run_log_path = root / "target.run_log.json"
-    run_log_bytes = _stable_json_bytes(canonical_run)
-    _write_immutable(run_log_path, run_log_bytes)
+    run_log_path = persist_androidworld_run_log(root, run_log=canonical_run)
     evidence = {
-        "target_run_log_path": str(run_log_path),
-        "target_run_log_sha256": hashlib.sha256(run_log_bytes).hexdigest(),
+        "run_log_path": str(run_log_path),
     }
     if captured_transfer_states is None and transfer_state_audit is None:
         return evidence
@@ -351,7 +520,7 @@ def persist_target_run_evidence(
     transfer_states_bytes = _stable_json_bytes(
         {
             "schema_version": TRANSFER_STATE_CATALOG_VERSION,
-            "run_id": run_id,
+            "run_id": str(canonical_run["run_id"]),
             "states": states,
         }
     )
@@ -410,7 +579,9 @@ def _observation_index_record(
             text = str(auxiliaries.get(key) or "").strip()
             if text:
                 record[key] = text
-    pixels = observation.get("pixels")
+    pixels = observation.get("screenshot")
+    if pixels is None:
+        pixels = observation.get("pixels")
     if isinstance(pixels, dict):
         record.update(
             {
@@ -419,7 +590,6 @@ def _observation_index_record(
                     "height": int(pixels["height"]),
                 },
                 "path": Path(pixels["path"]).relative_to(evidence_root).as_posix(),
-                "sha256": str(pixels["sha256"]),
             }
         )
     return record
@@ -449,13 +619,15 @@ def _write_immutable(path: Path, content: bytes) -> None:
             handle.write(content)
     except FileExistsError:
         if path.read_bytes() != content:
-            raise ValueError(f"observation_evidence_hash_collision:{path}")
+            raise ValueError(f"observation_evidence_content_conflict:{path}")
 
 
 __all__ = [
     "AndroidWorldEpisodeRecorder",
     "androidworld_json_action_dict",
+    "build_androidworld_run_log",
     "canonicalize_run_log_observation",
+    "persist_androidworld_run_log",
     "persist_target_run_evidence",
     "transfer_state_coverage_audit",
 ]

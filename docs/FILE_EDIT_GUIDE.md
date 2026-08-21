@@ -84,7 +84,7 @@ rg --files -g '*.py' | sort
 | `omniflow/core/config.py` | runtime 配置类型和默认值；正式 protocol 不在这里复制 |
 | `omniflow/core/model.py` | Observation、Action、Function、Result 等领域接口 |
 | `omniflow/core/schemas.py` | 外部 action/payload 规范化；无 retired alias |
-| `omniflow/core/trajectory.py` | RunLog/trajectory 的结构、顺序、hash 不变量 |
+| `omniflow/core/trajectory.py` | RunLog/trajectory 的结构与顺序不变量；旧截图 hash 只读兼容，新 RunLog 不写 hash |
 | `omniflow/functions/__init__.py` | Function 导出 |
 | `omniflow/functions/assets.py` | 唯一 compiler、validator、`save_function`、Store writer；禁止第二 writer 或手改 Store |
 | `omniflow/functions/migrate_store.py` | 旧 Function JSON 的一次性迁移器；支持单文件和 `--input-root` 批量扫描，只能调用 current writer，必须保留 source RunLog、source call 和 transfer states；无法证明语义完整时只写 blocked 报告，禁止兼容运行时直接读取旧 Store |
@@ -141,7 +141,7 @@ rg --files -g '*.py' | sort
 | `src/integrations/mobilegpt_format.py` | 只调用 MobileGPT 官方 XML Encoder；不运行、不 patch MobileGPT |
 | `src/integrations/appagent.py` | AppAgent native memory conversion/validation；不拥有执行调度 |
 | `src/integrations/official_forward.py` | 唯一外部 baseline forwarder；只准备临时 workspace、设备和官方入口，不实现 parser/controller/action loop |
-| `data/runtime/autodroid/androidworld_apps` + `official_forward.py` | AutoDroid 官方 DroidBot memory 与 replay forward；不转换为 OmniFlow schema，不复制 action loop |
+| `vendor/autodroid/androidworld_apps` + `official_forward.py` | AutoDroid 官方 DroidBot memory 与 replay forward；不转换为 OmniFlow schema，不复制 action loop |
 | `src/integrations/bmoca.py` | B-MoCA DeviceDriver、episode 和 official reward adapter |
 | `src/integrations/script_replay.py` | 完整 Function 的共享 replay 薄适配器；禁止私有 mapper/executor |
 | `src/integrations/skilldroid_replay.py` | DroidRun v0.5.6 官方 MacroPlayer adapter |

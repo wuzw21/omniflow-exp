@@ -46,16 +46,30 @@ def canonicalize_run_log(value: dict[str, Any]) -> dict[str, Any]:
     schema = load_omniflow_run_log_schema()
     _validate_schema(value, schema, schema, "run_log")
     canonical = _copy(value)
+    canonical.pop("started_at_ms", None)
+    canonical.pop("finished_at_ms", None)
+    canonical = _strip_run_log_hash_fields(canonical)
+    diagnostics = canonical.get("diagnostics")
+    if isinstance(diagnostics, dict):
+        diagnostics.pop("source_run_log", None)
     canonical["steps"] = [canonicalize_run_log_step(step) for step in value["steps"]]
+    if isinstance(canonical.get("final_observation"), dict):
+        canonical["final_observation"] = _canonicalize_observation_reference(
+            canonical["final_observation"]
+        )
     for step in canonical["steps"]:
-        _validate_screenshot_reference(step["observation"].get("pixels"))
+        _validate_screenshot_reference(observation_screenshot(step["observation"]))
         if "next_observation" in step:
-            _validate_screenshot_reference(step["next_observation"].get("pixels"))
+            _validate_screenshot_reference(
+                observation_screenshot(step["next_observation"])
+            )
     if "final_observation" in canonical:
-        _validate_screenshot_reference(canonical["final_observation"].get("pixels"))
+        _validate_screenshot_reference(
+            observation_screenshot(canonical["final_observation"])
+        )
     provenance = canonical["provenance"]
     if provenance["kind"] == "legacy_import":
-        required = {"source_path", "source_sha256", "source_schema_version"}
+        required = {"source_path", "source_schema_version"}
         missing = sorted(required - set(provenance))
         if missing:
             raise ValueError(
@@ -73,8 +87,40 @@ def canonicalize_run_log_step(value: Any) -> dict[str, Any]:
     _validate_schema(value, step_schema, schema, "run_log_step")
     canonical = _copy(value)
     canonical["action"] = canonicalize_androidworld_action(value["action"])
+    canonical["observation"] = _canonicalize_observation_reference(
+        canonical["observation"]
+    )
+    if isinstance(canonical.get("next_observation"), dict):
+        canonical["next_observation"] = _canonicalize_observation_reference(
+            canonical["next_observation"]
+        )
     _validate_schema(canonical, step_schema, schema, "run_log_step")
     return canonical
+
+
+def _canonicalize_observation_reference(value: dict[str, Any]) -> dict[str, Any]:
+    """Drop legacy screenshot checksums from the canonical RunLog wire form."""
+
+    canonical = _copy(value)
+    for field in ("screenshot", "pixels"):
+        screenshot = canonical.get(field)
+        if isinstance(screenshot, dict):
+            screenshot.pop("sha256", None)
+    return canonical
+
+
+def _strip_run_log_hash_fields(value: Any) -> Any:
+    """Accept legacy checksums on input but never emit them in a RunLog."""
+
+    if isinstance(value, dict):
+        return {
+            key: _strip_run_log_hash_fields(item)
+            for key, item in value.items()
+            if key != "sha256" and not key.endswith("_sha256")
+        }
+    if isinstance(value, list):
+        return [_strip_run_log_hash_fields(item) for item in value]
+    return value
 
 
 def canonicalize_androidworld_action(value: Any) -> dict[str, Any]:
@@ -131,7 +177,10 @@ def state_id(observation: dict[str, Any]) -> str:
         if explicit:
             return explicit
     identity = _copy(observation)
-    identity["pixels"] = None
+    if "screenshot" in identity:
+        identity["screenshot"] = None
+    if "pixels" in identity:
+        identity["pixels"] = None
     encoded = json.dumps(
         identity,
         ensure_ascii=False,
@@ -142,7 +191,7 @@ def state_id(observation: dict[str, Any]) -> str:
 
 
 def observation_display(observation: dict[str, Any]) -> tuple[int, int] | None:
-    pixels = observation.get("pixels")
+    pixels = observation_screenshot(observation)
     if isinstance(pixels, dict):
         return int(pixels["width"]), int(pixels["height"])
     auxiliaries = observation.get("auxiliaries")
@@ -163,6 +212,9 @@ def observation_display(observation: dict[str, Any]) -> tuple[int, int] | None:
 
 
 def observation_xml(observation: dict[str, Any]) -> str:
+    xml = observation.get("xml")
+    if isinstance(xml, str) and xml.strip():
+        return xml.strip()
     value = observation.get("forest")
     if isinstance(value, str):
         return value
@@ -170,6 +222,12 @@ def observation_xml(observation: dict[str, Any]) -> str:
     if value is None or display is None:
         return ""
     return androidworld_forest_xml(value, screen_size=display)
+
+
+def observation_screenshot(observation: dict[str, Any]) -> Any:
+    """Return the canonical screenshot reference, accepting legacy pixels."""
+    screenshot = observation.get("screenshot")
+    return screenshot if screenshot is not None else observation.get("pixels")
 
 
 def _validate_screenshot_reference(value: Any) -> None:

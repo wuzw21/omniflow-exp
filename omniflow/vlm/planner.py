@@ -11,7 +11,11 @@ from typing import Any
 
 from omniflow.core.config import DEFAULT_PLANNER_SYSTEM_PROMPT
 from omniflow.core.model import Function, Observation, ToolCall
-from omniflow.core.schemas import canonicalize_action, vlm_action_tools
+from omniflow.core.schemas import (
+    canonicalize_action,
+    load_canonical_action_schema,
+    vlm_action_tools,
+)
 from omniflow.functions.assets import validate_arguments
 from omniflow.vlm.context import analyze_page_context
 from omniflow.vlm.model_config import resolve_openai_compatible_config
@@ -137,6 +141,7 @@ def parse_model_turn_response(
             tool_name=tool,
             arguments=arguments,
         )
+    model_argument_coercions = _coerce_model_numeric_arguments(tool, arguments)
     rejected_arguments = dict(arguments)
     resolved_model = str(value.get("resolved_model") or requested_model).strip()
     adapter_metadata = None
@@ -166,6 +171,8 @@ def parse_model_turn_response(
     metadata: dict[str, Any] = {}
     if adapter_metadata is not None:
         metadata["model_adapter"] = adapter_metadata
+    if model_argument_coercions:
+        metadata["model_argument_coercions"] = model_argument_coercions
     thinking = str(value.get("reasoning") or "").strip()
     if thinking:
         metadata["thinking"] = thinking
@@ -178,6 +185,57 @@ def parse_model_turn_response(
             "turn_index": int(turn_index),
         }
     return ToolCall(tool, arguments), metadata
+
+
+def _coerce_model_numeric_arguments(
+    tool: str,
+    arguments: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Normalize numeric strings emitted by GLM tool-call JSON.
+
+    The model-facing tool schema declares coordinate arguments as numbers, but
+    compatible endpoints can occasionally serialize them as JSON strings.  A
+    finite numeric string is unambiguous at this boundary; non-numeric strings
+    are left untouched and still fail canonical validation explicitly.
+    """
+
+    tool_spec = next(
+        (
+            item
+            for item in load_canonical_action_schema().get("tools") or ()
+            if isinstance(item, dict)
+            and str(item.get("name") or "").strip().lower()
+            == str(tool).strip().lower()
+        ),
+        {},
+    )
+    specs = {
+        str(item.get("name") or ""): item
+        for item in tool_spec.get("args") or ()
+        if isinstance(item, dict)
+    }
+    coercions: list[dict[str, Any]] = []
+    for name, spec in specs.items():
+        if spec.get("type") not in {"number", "integer"}:
+            continue
+        value = arguments.get(name)
+        if not isinstance(value, str):
+            continue
+        stripped = value.strip()
+        try:
+            number = float(stripped)
+        except ValueError:
+            continue
+        if not math.isfinite(number):
+            continue
+        converted: int | float = (
+            int(number) if spec.get("type") == "integer" and number.is_integer() else number
+        )
+        arguments[name] = converted
+        coercions.append(
+            {"field": name, "from": value, "to": converted}
+        )
+    return coercions
 
 
 def function_tools(
@@ -483,6 +541,10 @@ _QWEN_VL_MODEL = re.compile(
     r"(?:^|[^a-z0-9])qwen(?:\d+(?:\.\d+)?)?(?:[-_.]?vl|[-_.]?plus)(?:[^a-z0-9]|$)",
     re.IGNORECASE,
 )
+_GLM_VL_MODEL = re.compile(
+    r"(?:^|[^a-z0-9])glm[-_.]?(?:4\.6v|5\.1)(?:[^a-z0-9]|$)",
+    re.IGNORECASE,
+)
 _COORDINATE_PAIRS = {
     "click": (("x", "y"),),
     "long_press": (("x", "y"),),
@@ -527,7 +589,7 @@ def adapt_tool_arguments(
         return adapted, None
     return adapted, {
         "name": (
-            _ADAPTER_NAME
+            _coordinate_array_adapter_name(model)
             if all(change.get("source_shape") for change in changes)
             else "planner_coordinate_adapter.v1"
         ),
@@ -582,9 +644,18 @@ def _adapt_raw_pixel_coordinates(
 def _adapter_model(requested_model: str, resolved_model: str) -> str:
     for candidate in (resolved_model, requested_model):
         normalized = str(candidate or "").strip()
-        if normalized and _QWEN_VL_MODEL.search(normalized):
+        if normalized and (
+            _QWEN_VL_MODEL.search(normalized)
+            or _GLM_VL_MODEL.search(normalized)
+        ):
             return normalized
     return ""
+
+
+def _coordinate_array_adapter_name(model: str) -> str:
+    if _GLM_VL_MODEL.search(str(model or "")):
+        return "glm_vl_coordinate_arrays.v1"
+    return _ADAPTER_NAME
 
 
 def _adapt_coordinate_pair(

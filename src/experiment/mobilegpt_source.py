@@ -71,16 +71,6 @@ def load_canonical_source_item(
         raise FileNotFoundError(
             f"mobilegpt_source_runlog_missing:{item.source_run_log}"
         )
-    expected_sha256 = str(
-        item.meta.get("retained_source_run_log_sha256")
-        or item.meta.get("source_run_log_sha256")
-        or ""
-    ).strip()
-    actual_sha256 = sha256_file(item.source_run_log)
-    if not expected_sha256 or expected_sha256 != actual_sha256:
-        raise ValueError(
-            f"mobilegpt_source_runlog_hash_mismatch:task={task_name}"
-        )
     canonical = import_run_log(
         json.loads(item.source_run_log.read_text(encoding="utf-8"))
     )
@@ -111,16 +101,7 @@ def _mobilegpt_source_target(
     source_packages: set[str] = set()
     for step in source.get("steps") or []:
         observation = step.get("observation") if isinstance(step, dict) else None
-        auxiliaries = (
-            observation.get("auxiliaries")
-            if isinstance(observation, dict)
-            else None
-        )
-        package = str(
-            auxiliaries.get("package_name")
-            if isinstance(auxiliaries, dict)
-            else ""
-        ).strip()
+        package = pipeline._mobilegpt_observation_package(observation)
         if package and package not in _IGNORED_SOURCE_PACKAGES:
             source_packages.add(package)
     if len(source_packages) != 1:

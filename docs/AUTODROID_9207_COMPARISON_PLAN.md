@@ -17,15 +17,23 @@ fixed at 116 × 10 = 1160 cells.
 | Evaluation seed | `113` |
 | Task parameters | Fixed values from the canonical source index |
 | Action budget | `20` replay events, matching the formal `max_steps` |
-| Model calls | `0` by contract; no planner, VLM, embedding, or fallback |
+| Model calls | `replay`: `0`; `task`: official AutoDroid GPT calls, recorded per task |
 | Validator | AndroidWorld official validator after replay |
 | Initial state | Fresh task initialization/reset before every task |
-| Replay implementation | Original AutoDroid/DroidBot UTG replay and original memory |
+| Replay implementation | `replay`: original AutoDroid/DroidBot UTG replay; `task`: original DroidBot TaskPolicy |
 | Transfer/Function | Not used; no OmniFlow Function or OmniTransfer conversion |
 
 AutoDroid memory is read-only. The local manifest and its SHA-256 are recorded
 in the run evidence; the memory is never copied into `current.json` or a
 Function Store.
+
+For the online supplemental run, set `OMNIFLOW_AUTODROID_POLICY=task`. The
+unified launcher passes the canonical task goal to official DroidBot as
+`-policy task -task <goal>`. The adapter records OpenAI-compatible completion
+usage in each task's `autodroid_stats.jsonl`; `outcome.json` and the supplemental
+summary aggregate those counters. Use a fresh `OMNIFLOW_E2E_ATTEMPT_ID` and, if
+needed, `OMNIFLOW_AUTODROID_OUTPUT_ROOT` so online artifacts never overwrite
+the historical replay campaign.
 
 ## Fairness boundary
 
@@ -57,7 +65,7 @@ missing validator evidence into a method failure.
 Supplemental artifacts are isolated under:
 
 ```text
-data/androidworld_validator/supplemental/autodroid_9207/
+data/androidworld/<task>/autodroid/<device_model_seed>/
 ```
 
 This namespace contains attempts, result outcomes, replay logs, and a
@@ -70,8 +78,8 @@ Run one smoke task through the only public launcher:
 OMNIFLOW_EXP_ASSET_ROOT=/absolute/OmniFlow-exp/data \
 OMNIFLOW_EXP_RESULTS_ROOT=/absolute/OmniFlow-exp/data \
 OMNIFLOW_EXP_MEMORY_ROOT=/absolute/OmniFlow-exp/data \
-OMNIFLOW_AUTODROID_ROOT=/absolute/OmniFlow-exp/data/runtime/external/autodroid \
-OMNIFLOW_AUTODROID_MEMORY_ROOT=/absolute/OmniFlow-exp/data/runtime/autodroid/androidworld_apps \
+OMNIFLOW_AUTODROID_ROOT=/absolute/OmniFlow-exp/vendor/autodroid/runtime \
+OMNIFLOW_AUTODROID_MEMORY_ROOT=/absolute/OmniFlow-exp/vendor/autodroid/androidworld_apps \
 OMNITRANSFER_ROOT=/home/wuzewen/Projects/Omni/OmniTransfer \
 bash scripts/exp/run_androidworld.sh \
   --e2e-task CameraTakePhoto \

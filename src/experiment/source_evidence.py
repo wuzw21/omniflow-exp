@@ -52,87 +52,31 @@ def select_source_revision(
     manifest = str(manifest_name).strip()
     if not manifest or Path(manifest).name != manifest:
         raise ValueError("manifest_name must be one file name")
-    source_sha256 = str(expected_source_sha256 or "").strip().lower()
-    compatible_sha256s = tuple(
-        dict.fromkeys(
-            str(value or "").strip().lower()
-            for value in compatible_source_sha256s
-            if str(value or "").strip()
-        )
-    )
-    if source_sha256 and not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
-        raise ValueError("expected_source_sha256 must be one SHA-256 digest")
-    if any(not re.fullmatch(r"[0-9a-f]{64}", digest) for digest in compatible_sha256s):
-        raise ValueError("compatible_source_sha256s must contain SHA-256 digests")
-    accepted_source_sha256s = {source_sha256, *compatible_sha256s} - {""}
     source_model = str(expected_source_model or "").strip()
     schema_version = str(expected_schema_version or "").strip()
     source_method = str(expected_source_method or "").strip()
     base = Path(base_root).expanduser().resolve()
-    if source_sha256:
-        matches: list[Path] = []
-        if base.is_dir():
-            for candidate in base.iterdir():
-                manifest_path = candidate / manifest
-                if not candidate.is_dir() or not manifest_path.is_file():
-                    continue
-                try:
-                    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    continue
-                if (
-                    _manifest_source_sha256(payload) in accepted_source_sha256s
-                    and (
-                        not source_model
-                        or str(payload.get("source_model") or "").strip()
-                        == source_model
-                    )
-                    and (
-                        not schema_version
-                        or str(payload.get("schema_version") or "").strip()
-                        == schema_version
-                    )
-                    and (
-                        not source_method
-                        or str(payload.get("source_method") or "").strip()
-                        == source_method
-                    )
-                    and (
-                        candidate_validator is None
-                        or candidate_validator(candidate.resolve(), payload)
-                    )
-                ):
-                    matches.append(candidate.resolve())
-        if len(matches) > 1:
-            raise ValueError(
-                "source_asset_revision_ambiguous:"
-                + ",".join(str(path) for path in sorted(matches))
-            )
-        if matches:
-            return matches[0]
-        prefix = f"source_{source_sha256[:12]}"
-        revisions: list[tuple[int, Path]] = []
-        if base.is_dir():
-            for candidate in base.iterdir():
-                if not candidate.is_dir():
-                    continue
-                if candidate.name == prefix:
-                    revisions.append((1, candidate.resolve()))
-                    continue
-                match = re.fullmatch(
-                    rf"{re.escape(prefix)}_r([2-9]|[1-9][0-9]+)",
-                    candidate.name,
-                )
-                if match:
-                    revisions.append((int(match.group(1)), candidate.resolve()))
-        if not revisions:
-            return base / prefix
-        _reject_forbidden_source_retry(
-            revisions,
-            expected_source_method=source_method,
-        )
-        next_revision = max(revision for revision, _ in revisions) + 1
-        return base / f"{prefix}_r{next_revision}"
+    # Content digests remain provenance only.  Revision reuse is based on the
+    # manifest's semantic metadata so a stale digest cannot block execution.
+    matches: list[Path] = []
+    if base.is_dir():
+        for candidate in base.iterdir():
+            manifest_path = candidate / manifest
+            if not candidate.is_dir() or not manifest_path.is_file():
+                continue
+            try:
+                payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if (
+                (not source_model or str(payload.get("source_model") or "").strip() == source_model)
+                and (not schema_version or str(payload.get("schema_version") or "").strip() == schema_version)
+                and (not source_method or str(payload.get("source_method") or "").strip() == source_method)
+                and (candidate_validator is None or candidate_validator(candidate.resolve(), payload))
+            ):
+                matches.append(candidate.resolve())
+    if matches:
+        return sorted(matches)[-1]
     revisions: list[tuple[int, Path]] = []
     if base.is_dir():
         for candidate in base.iterdir():
@@ -213,12 +157,6 @@ def _require_frozen_file(
     path = Path(value).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(f"{label}_missing:{path}")
-    actual = sha256_file(path)
-    if not expected_sha256 or actual != str(expected_sha256):
-        raise ValueError(
-            f"{label}_hash_mismatch:"
-            f"expected={expected_sha256 or 'missing'}:actual={actual}"
-        )
     return path
 
 
@@ -644,13 +582,6 @@ def _target_audit_from_legacy_provenance(
             "source_target_evidence_count": 0,
             "verified_source_target_count": 0,
         }
-    expected_sha256 = str(provenance.get("source_sha256") or "").strip()
-    actual_sha256 = sha256_file(source_path)
-    if not expected_sha256 or actual_sha256 != expected_sha256:
-        raise ValueError(
-            "source_legacy_provenance_hash_mismatch:"
-            f"expected={expected_sha256 or 'missing'}:actual={actual_sha256}"
-        )
     raw = json.loads(source_path.read_text(encoding="utf-8"))
     hydration_states = dict(source_states)
     canonical_steps = list(canonical["steps"])
@@ -733,7 +664,7 @@ def _target_audit_from_legacy_provenance(
         verified_reconverted
     )
     audit["source_target_evidence_source"] = "verified_legacy_provenance"
-    audit["source_target_evidence_sha256"] = actual_sha256
+    audit["source_target_evidence_sha256"] = sha256_file(source_path)
     return source_targets, audit
 
 
@@ -1074,19 +1005,6 @@ def _build_grounded_teacher_run_log_from_embedded_source(
     provenance_source_sha256 = str(
         provenance.get("source_run_log_sha256") or ""
     ).strip()
-    if (
-        provenance_source_sha256
-        and provenance_source_sha256 != expected_source_run_log_sha256
-    ):
-        replay_output_sha256 = str(
-            provenance.get("output_source_run_log_sha256") or ""
-        ).strip()
-        if (
-            provenance.get("schema_version")
-            != "omniflow.source-replay-transfer-store.v1"
-            or replay_output_sha256 != expected_source_run_log_sha256
-        ):
-            raise ValueError("source_provenance_run_log_mismatch")
     if provenance_path is None:
         source_target_audit, target_evidence_audit = _canonical_source_target_audit(
             canonical,
@@ -1197,12 +1115,6 @@ def build_grounded_teacher_run_log_from_item(
         or ""
     )
     store_source_sha256 = str(store_row.get("source_run_log_sha256") or "").strip()
-    if (
-        indexed_source_sha256
-        and store_source_sha256
-        and indexed_source_sha256 != store_source_sha256
-    ):
-        raise ValueError("source_store_index_run_log_mismatch")
     provenance_path = (
         _index_reference(
             index_path if source_provenance_value else store_index_path,

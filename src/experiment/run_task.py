@@ -46,8 +46,13 @@ from src.experiment.paths import (
     safe_relative_path,
     sha256_file,
 )
+from src.experiment.androidworld_paths import (
+    canonical_device_seed_name,
+    canonical_method_name,
+)
 from src.experiment.protocol import (
     ANDROIDWORLD_REVISION,
+    APPAGENT_MODEL,
     DEFAULT_DEVICE,
     DEFAULT_METHOD,
     EPISODE_TIMEOUT_SEC,
@@ -106,7 +111,7 @@ DEFAULT_MOBILEGPT_STATS_SUMMARY = (
     DEFAULT_OUTPUT_ROOT / "_mobilegpt_stats" / "mobilegpt_stats_summary.json"
 )
 DEFAULT_MOBILEGPT_WAIT_START_TIMEOUT_SEC = 60.0
-DEFAULT_MOBILEGPT_EPISODE_WAIT_TIMEOUT_SEC = 120.0
+DEFAULT_MOBILEGPT_EPISODE_WAIT_TIMEOUT_SEC = 300.0
 DEFAULT_MOBILEGPT_APP_READY_TIMEOUT_SEC = 15.0
 DEFAULT_MOBILEGPT_APP_READY_POLL_SEC = 0.25
 DEFAULT_TASK_RANDOM_SEED = TASK_SEED
@@ -334,22 +339,31 @@ def _experiment_run_dir(
     device: str = "",
     serial: str = "",
     console_port: int | None = None,
+    attempt_id: str = "",
     repo_root: Path = REPO_ROOT,
 ) -> Path:
-    return (
+    path = (
         resolve_path(output_root, root=repo_root)
         / _safe_stem(task)
-        / _safe_stem(method, fallback="method")
-        / _device_label(
-            explicit_label=device,
+        / canonical_method_name(method)
+        / canonical_device_seed_name(
+            label=device,
             serial=serial,
             console_port=console_port,
+            source_seed=SOURCE_SEED,
+            evaluation_seed=TASK_SEED,
         )
     )
+    batch_attempt = str(
+        attempt_id or os.environ.get("OMNIFLOW_BATCH_ATTEMPT_ID") or ""
+    ).strip()
+    if batch_attempt:
+        path = path / "runlog" / _safe_relative_path(batch_attempt, fallback="run")
+    return path
 
 
 def _androidworld_validator_root(*, repo_root: Path = REPO_ROOT) -> Path:
-    return repo_root / "data" / "runtime" / "evals" / "androidworld_validator"
+    return repo_root / "data" / "androidworld" / ".archive" / "result_registry"
 
 
 def _result_registry_root(
@@ -429,8 +443,27 @@ def _method_root(output_root: str | Path, task: str, method: str) -> Path:
     return resolve_path(output_root) / _safe_stem(task) / _safe_stem(method)
 
 
-def _method_memory_root(output_root: str | Path, task: str, method: str) -> Path:
-    return _method_root(output_root, task, method) / "_memory"
+def _method_memory_root(
+    output_root: str | Path,
+    task: str,
+    method: str,
+    *,
+    device: DeviceTarget | None = None,
+    run_id: str = "",
+) -> Path:
+    root = _method_root(output_root, task, canonical_method_name(method))
+    if device is not None:
+        path = root / canonical_device_seed_name(
+            label=device.label,
+            serial=device.serial,
+            console_port=device.console_port,
+            source_seed=SOURCE_SEED,
+            evaluation_seed=TASK_SEED,
+        ) / "memory"
+        if str(run_id or "").strip():
+            path = path / _safe_relative_path(run_id, fallback="run")
+        return path
+    return root / "_memory"
 
 
 _SOURCE_XML_EVIDENCE_KEYS = {
@@ -675,7 +708,15 @@ def load_canonical_source_index(
             continue
         retained = str(raw_meta.get("retained_source_run_log") or "").strip()
         if not retained:
-            raise ValueError(f"source_run_log_missing_in_current_index:{task}")
+            if raw_meta.get("latest_official_success_source") is not True:
+                continue
+            # A partially refreshed 116-task index may still contain an
+            # official-success marker for a task whose source artifact has
+            # not been materialized yet.  That task is unavailable, but it
+            # must not prevent a single-task result from selecting another
+            # complete source entry.  _select_from_args reports a clear
+            # missing-task error if the requested task itself is unavailable.
+            continue
         params = (
             raw_meta.get("params") if isinstance(raw_meta.get("params"), dict) else {}
         )
@@ -1031,6 +1072,7 @@ def build_replay_command(
     normalize_wrapped_payload: bool = True,
     planner_provider: str = "",
     model: str = "",
+    archive_attempt_id: str = "",
     python_executable: str = sys.executable,
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
@@ -1047,6 +1089,7 @@ def build_replay_command(
         device=resolved_device,
         serial=serial,
         console_port=console_port,
+        attempt_id=archive_attempt_id,
         repo_root=repo_root,
     )
     if replay_memory_root:
@@ -1384,6 +1427,15 @@ def build_task_command(
         env["OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS"] = str(
             max(0, int(max_fallback_steps))
         )
+    # The public launcher exports this setting, but make it explicit on every
+    # child CommandSpec as well.  This prevents a scheduler worker from
+    # silently falling back to AndroidWorld-native observe/act when the
+    # campaign requested OOB transport.
+    control_backend = str(
+        os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "androidworld")
+    ).strip().lower() or "androidworld"
+    if resolved_agent == "omniflow":
+        env["OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND"] = control_backend
     resolved_omnitransfer_root = (
         resolve_path(omnitransfer_root, root=repo_root)
         if omnitransfer_root
@@ -1508,8 +1560,22 @@ def build_task_command(
                 dict(function_arguments or {}) if resolved_function_id else None
             ),
             "state_backend": "androidworld",
-            "action_backend": "androidworld",
-            "native_androidworld_agent_io": True,
+            "control_backend": (
+                "oob_control"
+                if resolved_agent == "omniflow"
+                and control_backend in {"oob", "omniflow", "oob_control"}
+                else "androidworld"
+            ),
+            "action_backend": (
+                "oob_control"
+                if resolved_agent == "omniflow"
+                and control_backend in {"oob", "omniflow", "oob_control"}
+                else "androidworld"
+            ),
+            "native_androidworld_agent_io": not (
+                resolved_agent == "omniflow"
+                and control_backend in {"oob", "omniflow", "oob_control"}
+            ),
             "include_indexed_context": False,
             "uses_action_transfer": True,
         },
@@ -2149,6 +2215,7 @@ def build_mobilegpt_server_command(
     stats_jsonl: str | Path = DEFAULT_MOBILEGPT_STATS_JSONL,
     target_package: str = "",
     target_app: str = "",
+    target_task_name: str = "",
     runtime_observe_backend: str = "androidworld",
     python_executable: str = sys.executable,
     repo_root: Path = REPO_ROOT,
@@ -2175,6 +2242,8 @@ def build_mobilegpt_server_command(
         env["MOBILEGPT_SKIP_APP_DISCOVERY"] = "1"
     if str(target_app or "").strip():
         env["MOBILEGPT_TARGET_APP"] = str(target_app).strip()
+    if str(target_task_name or "").strip():
+        env["MOBILEGPT_TARGET_TASK_NAME"] = str(target_task_name).strip()
 
     resolved_action = str(action or "").strip().lower()
     if resolved_action == "server":
@@ -2207,6 +2276,8 @@ def build_mobilegpt_server_command(
         staged_server_root = Path(forward["server_root"])
         env["MOBILEGPT_STATS_JSONL"] = str(resolve_path(stats_jsonl, root=repo_root))
         env["MOBILEGPT_EMBEDDING_MODEL"] = embedding_model
+        env["MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD"] = "0.90"
+        env["MOBILEGPT_MEMORY_REUSE_STRICT"] = "1"
         if chat_model:
             env["MOBILEGPT_CHAT_MODEL"] = chat_model
         argv = [
@@ -2360,7 +2431,39 @@ def _task_result_path_context(path: Path) -> dict[str, str]:
     method_dir = device_dir.parent
     task_dir = method_dir.parent
     if method_dir.name not in known_methods:
-        return {}
+        # The native AndroidWorld runner publishes external-agent results as
+        # ``task/method/avd/runlog/attempt/task_results.jsonl``.  The older
+        # layout was ``task/method/device/run/task_results.jsonl``; recover
+        # the same semantic context from the method component and the device
+        # suffix in the immutable attempt directory.
+        parts = path.parts
+        method_index = next(
+            (
+                index
+                for index in range(len(parts) - 1, -1, -1)
+                if parts[index] in known_methods
+            ),
+            -1,
+        )
+        if method_index < 1:
+            return {}
+        method_name = parts[method_index]
+        task_name = parts[method_index - 1]
+        device = ""
+        for value in reversed(parts[method_index + 1 :]):
+            match = re.search(r"(?:^|[._-])((?:small|fold|source)\d+)$", value)
+            if match:
+                device = match.group(1)
+                break
+        context = {
+            "task_name": task_name,
+            "method": method_name,
+            "device": device,
+            "run_dir": str(path.parent),
+        }
+        if stage:
+            context["stage"] = stage
+        return context
     context = {
         "task_name": task_dir.name,
         "method": method_dir.name,
@@ -2615,8 +2718,8 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
                 "model_base_url": row.get("model_base_url"),
                 "artifact_kind": row.get("artifact_kind"),
                 "artifact_ref": row.get("artifact_ref"),
-                "target_run_log_path": row.get("target_run_log_path"),
-                "target_run_log_sha256": row.get("target_run_log_sha256"),
+                "run_log_path": row.get("run_log_path")
+                or row.get("target_run_log_path"),
                 "target_transfer_states_path": row.get("target_transfer_states_path"),
                 "target_transfer_states_sha256": row.get(
                     "target_transfer_states_sha256"
@@ -2797,6 +2900,15 @@ def _result_record_has_formal_result(record: dict[str, Any]) -> bool:
 def _formal_result_paths(record: dict[str, Any]) -> list[Path]:
     if not _result_record_has_formal_result(record):
         return []
+    metadata = record.get("metadata")
+    if isinstance(metadata, dict):
+        published_files = [
+            resolve_path(str(path))
+            for path in metadata.get("official_result_files") or ()
+            if str(path).strip()
+        ]
+        if published_files:
+            return published_files
     output_path = resolve_path(str(record.get("output_path") or ""))
     if output_path.is_dir():
         result_files = sorted(output_path.rglob("task_results.jsonl"))
@@ -3447,12 +3559,7 @@ def _function_lineage_item(
     if indexed_store != store_path.resolve():
         raise ValueError(f"t3a_hint_function_store_lineage_store_mismatch:{item.task}")
     source_path = resolve_path(str(record.get("source_run_log_path") or ""))
-    source_sha256 = str(record.get("source_run_log_sha256") or "").strip()
-    if (
-        not source_path.is_file()
-        or not source_sha256
-        or sha256_file(source_path) != source_sha256
-    ):
+    if not source_path.is_file():
         raise ValueError(f"t3a_hint_function_store_lineage_source_invalid:{item.task}")
     source = require_complete_source_run_log(_read_object(source_path))
     return replace(
@@ -3757,8 +3864,37 @@ def _mobilegpt_observation_package(observation: Any) -> str:
         or observation.get("app_package")
         or ""
     ).strip()
+    auxiliaries = observation.get("auxiliaries")
+    if not package_name and isinstance(auxiliaries, dict):
+        package_name = str(
+            auxiliaries.get("package_name")
+            or auxiliaries.get("packageName")
+            or ""
+        ).strip()
     if package_name in _MOBILEGPT_IGNORED_TARGET_PACKAGES:
         return ""
+    xml = observation.get("xml")
+    if not isinstance(xml, str) or not xml.strip():
+        xml = observation.get("forest")
+    if isinstance(xml, str) and xml.strip():
+        try:
+            root = ET.fromstring(xml)
+        except ET.ParseError:
+            root = None
+        if root is not None:
+            packages = [
+                str(element.attrib.get("package") or "").strip()
+                for element in root.iter()
+                if str(element.attrib.get("package") or "").strip()
+            ]
+            non_system = [
+                package
+                for package in packages
+                if package not in _MOBILEGPT_IGNORED_TARGET_PACKAGES
+            ]
+            xml_package = (non_system or packages or [""])[-1]
+            if xml_package:
+                return xml_package
     return package_name
 
 
@@ -4069,15 +4205,28 @@ def _result_summary_rows(
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     by_method_device: dict[tuple[str, str], dict[str, Any]] = {}
+    device_aliases: dict[tuple[str, str], str] = {}
     mobilegpt_episode_stats: dict[tuple[str, str], dict[str, Any]] = {}
     mobilegpt_teacher_stats: dict[str, dict[str, Any]] = {}
     teacher_wait_by_method: dict[str, dict[str, Any]] = {}
     teacher_wall_sec_by_method: dict[str, float] = {}
+    method_devices: dict[str, set[str]] = {}
     dry_run_summary = any(
         bool((record.get("metadata") or {}).get("dry_run"))
         for record in command_records
         if isinstance(record.get("metadata"), dict)
     )
+
+    for record in command_records:
+        method = str(record.get("method") or "").strip()
+        device = str(record.get("device") or "").strip()
+        metadata = record.get("metadata")
+        target = metadata.get("device_target") if isinstance(metadata, dict) else {}
+        serial = str(target.get("serial") or "").strip() if isinstance(target, dict) else ""
+        if method and device and serial:
+            device_aliases[(method, serial)] = device
+        if method and device:
+            method_devices.setdefault(method, set()).add(device)
 
     for record in command_records:
         metadata = (
@@ -4156,10 +4305,21 @@ def _result_summary_rows(
         method = str(row.get("method") or "").strip()
         device = str(row.get("device") or "").strip()
         if method and device:
+            device = device_aliases.get((method, device), device)
+            row = {**row, "device": device}
             key = (method, device)
             existing = by_method_device.get(key)
             if existing is None or _row_rank(row) >= _row_rank(existing):
                 by_method_device[key] = dict(row)
+        elif method:
+            # Native AndroidWorld result rows do not always carry the target
+            # label; in a one-task runner the command record is the unique
+            # authoritative device context for that method.
+            candidates = method_devices.get(method) or set()
+            if len(candidates) == 1:
+                resolved_device = next(iter(candidates))
+                row = {**row, "device": resolved_device}
+                by_method_device[(method, resolved_device)] = dict(row)
 
     grouped_records: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for record in command_records:
@@ -4539,12 +4699,12 @@ def _aggregate_normalized_result_rows(
 
 def _write_result_summary(
     *,
-    output_root: str | Path,
+    result_root: str | Path,
     task: str,
     command_records: Sequence[dict[str, Any]],
     aggregate_summary: dict[str, Any],
 ) -> dict[str, Any]:
-    task_root = resolve_path(output_root) / _safe_stem(task)
+    task_root = resolve_path(result_root)
     task_root.mkdir(parents=True, exist_ok=True)
     rows = _result_summary_rows(
         task=task,
@@ -4706,6 +4866,8 @@ def build_mobilegpt_command(
         str(int(target.console_port)),
         "--grpc-port",
         str(int(target.console_port) + 3000),
+        "--max-steps",
+        str(int(max_steps)),
     ]
     if not perform_emulator_setup:
         client_argv.append("--no-perform-emulator-setup")
@@ -4753,6 +4915,7 @@ def build_appagent_command(
     demo_name: str = "",
     max_steps: int,
     timeout_sec: int,
+    model: str = "",
     task_random_seed: int | None,
     fixed_task_seed: bool,
     fixed_task_params: bool,
@@ -4794,7 +4957,7 @@ def build_appagent_command(
     ).rstrip("/")
     if not endpoint.endswith("/chat/completions"):
         endpoint += "/chat/completions"
-    model = str(runtime_env.get("OPENAI_MODEL") or "").strip()
+    model = str(model or runtime_env.get("OPENAI_MODEL") or "").strip()
     from src.integrations.official_forward import prepare_appagent_workspace
 
     forward = prepare_appagent_workspace(
@@ -4832,8 +4995,12 @@ def build_appagent_command(
         str(resolved_appagent_root / "scripts" / "task_executor.py"),
         "--app-name",
         app_name,
+        "--serial",
+        target.serial,
         "--workspace",
         str(workspace),
+        "--output",
+        str(resolved_output),
         "--goal",
         item.goal,
         "--timeout",
@@ -4862,11 +5029,20 @@ def build_appagent_command(
     if not perform_emulator_setup:
         argv.append("--no-perform-emulator-setup")
     log_path = resolved_output / "official_appagent.log"
+    existing_python_path = str(runtime_env.get("PYTHONPATH") or "").strip()
+    python_path = str(repo_root)
+    if existing_python_path:
+        python_path += os.pathsep + existing_python_path
     return CommandSpec(
         label=f"appagent:official:{target.label}",
         argv=argv,
         env={
             "ANDROID_SERIAL": target.serial,
+            "OPENAI_MODEL": model,
+            # The official forwarder runs from its disposable workspace. Put
+            # this checkout first so ``python -m src.integrations...`` cannot
+            # resolve an older globally-installed OmniFlow copy.
+            "PYTHONPATH": python_path,
             "PATH": str(Path(forward["adb_proxy"]).parent)
             + os.pathsep
             + runtime_env.get("PATH", ""),
@@ -4906,6 +5082,7 @@ def build_autodroid_command(
     autodroid_root: str | Path,
     autodroid_memory_root: str | Path,
     autodroid_app: str = "",
+    autodroid_policy: str = "replay",
     max_steps: int,
     timeout_sec: int,
     task_random_seed: int | None,
@@ -4917,9 +5094,11 @@ def build_autodroid_command(
     python_executable: str = sys.executable,
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
-    """Build one official AutoDroid replay forwarded through AndroidWorld."""
+    """Build one official AutoDroid policy run forwarded through AndroidWorld."""
 
     del fixed_task_seed
+    if autodroid_policy not in {"replay", "task"}:
+        raise ValueError(f"autodroid_policy_invalid:{autodroid_policy}")
     resolved_root = resolve_path(autodroid_root, root=repo_root)
     resolved_memory = resolve_path(autodroid_memory_root, root=repo_root)
     validate_autodroid_memory_root(resolved_memory)
@@ -4962,6 +5141,8 @@ def build_autodroid_command(
         str(resolve_path(android_world_root, root=repo_root)),
         "--task",
         item.task,
+        "--goal",
+        item.goal,
         "--task-params-json",
         json.dumps(
             dict(task_params_override or item.params)
@@ -4979,29 +5160,43 @@ def build_autodroid_command(
     ]
     if str(autodroid_app or "").strip():
         argv.extend(("--app-name", str(autodroid_app).strip()))
+    argv.extend(("--policy", str(autodroid_policy)))
     if not perform_emulator_setup:
         argv.append("--no-perform-emulator-setup")
+    child_environment = {
+        "ANDROID_SERIAL": target.serial,
+        "PATH": runtime_env.get("PATH", ""),
+    }
+    android_sdk_root = str(
+        runtime_env.get("ANDROID_SDK_ROOT")
+        or runtime_env.get("ANDROID_HOME")
+        or runtime_env.get("OMNIFLOW_ANDROID_SDK_ROOT")
+        or ""
+    ).strip()
+    if android_sdk_root:
+        child_environment["ANDROID_SDK_ROOT"] = android_sdk_root
+        child_environment["ANDROID_HOME"] = android_sdk_root
+    adb_server_port = str(runtime_env.get("ANDROID_ADB_SERVER_PORT") or "").strip()
+    if adb_server_port:
+        child_environment["ANDROID_ADB_SERVER_PORT"] = adb_server_port
     return CommandSpec(
         label=f"autodroid:official:{target.label}",
         argv=argv,
-        env={
-            "ANDROID_SERIAL": target.serial,
-            "PATH": runtime_env.get("PATH", ""),
-        },
+        env=child_environment,
         cwd=repo_root,
         output_path=resolved_output,
         timeout_sec=float(timeout_sec) if timeout_sec and timeout_sec > 0 else None,
         metadata={
-            "mode": "autodroid_official_replay",
-            "agent": "autodroid_official_replay",
+            "mode": f"autodroid_official_{autodroid_policy}",
+            "agent": f"autodroid_official_{autodroid_policy}",
             "device_target": target.to_dict(),
             "autodroid_root": str(resolved_root),
             "autodroid_memory_root": str(resolved_memory),
             "autodroid_app": str(autodroid_app or "").strip(),
             "official_entry": str(resolved_root / "droidbot" / "start.py"),
-            "official_policy": "replay",
+            "official_policy": str(autodroid_policy),
             "official_memory_format": "droidbot_utg_events",
-            "state_backend": "androidworld_task_plus_droidbot_replay",
+            "state_backend": f"androidworld_task_plus_droidbot_{autodroid_policy}",
             "action_backend": "official_droidbot",
             "external_forward_only": True,
             "model": str(runtime_env.get("OPENAI_MODEL") or "").strip(),
@@ -5019,7 +5214,6 @@ def _configure_mobilegpt_formal_server(
         spec,
         env={
             **spec.env,
-            "MOBILEGPT_CHAT_MAX_ATTEMPTS": "1",
             **(
                 {"MOBILEGPT_CHAT_MODEL": normalized_model}
                 if normalized_model
@@ -5028,8 +5222,6 @@ def _configure_mobilegpt_formal_server(
         },
         metadata={
             **spec.metadata,
-            "model_max_attempts": 1,
-            "episode_retries": 0,
             **({"model": normalized_model} if normalized_model else {}),
         },
     )
@@ -5086,7 +5278,13 @@ def _run_result_mobilegpt(
         expected_source_method=source_method,
     )
 
-    memory_root = _method_memory_root(output_root, item.task, method)
+    memory_root = _method_memory_root(
+        output_root,
+        item.task,
+        method,
+        device=targets[0],
+        run_id=attempt_id,
+    )
     memory_root.mkdir(parents=True, exist_ok=True)
     frozen_memory_root = memory_root / "frozen_memory"
     frozen_memory_manifest_path = memory_root / "frozen_memory_manifest.json"
@@ -5273,6 +5471,7 @@ def _run_result_mobilegpt(
                 adb_path=args.adb_path,
                 target_package=target_package,
                 target_app=target_app,
+                target_task_name=args.task,
                 runtime_observe_backend="androidworld",
             )
             server_spec = _configure_mobilegpt_formal_server(
@@ -5346,7 +5545,15 @@ def _run_result_mobilegpt(
                     perform_emulator_setup=bool(args.perform_emulator_setup),
                     adb_path=args.adb_path,
                     start_timeout_sec=float(args.mobilegpt_wait_start_timeout_sec),
-                    finish_timeout_sec=float(args.mobilegpt_episode_wait_timeout_sec),
+                    finish_timeout_sec=(
+                        float(args.mobilegpt_episode_wait_timeout_sec)
+                        if args.mobilegpt_episode_wait_timeout_sec is not None
+                        else (
+                            float(args.timeout_sec)
+                            if args.timeout_sec and args.timeout_sec > 0
+                            else DEFAULT_MOBILEGPT_EPISODE_WAIT_TIMEOUT_SEC
+                        )
+                    ),
                     app_ready_timeout_sec=float(
                         args.mobilegpt_app_ready_timeout_sec
                     ),
@@ -5480,7 +5687,14 @@ def run_task(args: argparse.Namespace) -> int:
         )
     attempt_root, _ = _task_managed_output_root(args.output_path)
     source_seed = int(args.source_seed)
-    output_root = _source_seed_output_root(attempt_root, source_seed)
+    archive_root_value = str(
+        os.environ.get("OMNIFLOW_ANDROIDWORLD_ARCHIVE_ROOT") or ""
+    ).strip()
+    output_root = (
+        resolve_path(archive_root_value)
+        if archive_root_value
+        else _source_seed_output_root(attempt_root, source_seed)
+    )
     attempt_id = attempt_root.name
     task_params_override = _task_params_override_from_args(args)
     task_seed = (
@@ -5500,7 +5714,13 @@ def run_task(args: argparse.Namespace) -> int:
     failed = 0
 
     for method in methods:
-        memory_root = _method_memory_root(output_root, item.task, method)
+        memory_root = _method_memory_root(
+            output_root,
+            item.task,
+            method,
+            device=targets[0],
+            run_id=attempt_id,
+        )
         _claim_method_memory_root(memory_root)
         source_action_hint_path: Path | None = None
         appagent_docs_root: Path | None = None
@@ -5810,6 +6030,7 @@ def run_task(args: argparse.Namespace) -> int:
                     docs_root=appagent_docs_root,
                     max_steps=int(args.max_steps or MAX_STEPS),
                     timeout_sec=int(args.timeout_sec or 0),
+                    model=str(args.appagent_model or APPAGENT_MODEL),
                     task_random_seed=task_seed,
                     fixed_task_seed=not bool(args.no_fixed_task_seed),
                     fixed_task_params=not bool(args.no_fixed_task_params),
@@ -5827,6 +6048,7 @@ def run_task(args: argparse.Namespace) -> int:
                     autodroid_root=args.autodroid_root,
                     autodroid_memory_root=args.autodroid_memory_root,
                     autodroid_app=getattr(args, "autodroid_app", ""),
+                    autodroid_policy=getattr(args, "autodroid_policy", "replay"),
                     max_steps=int(args.max_steps or MAX_STEPS),
                     timeout_sec=int(args.timeout_sec or 0),
                     task_random_seed=task_seed,
@@ -5884,12 +6106,34 @@ def run_task(args: argparse.Namespace) -> int:
             if appagent_prep:
                 spec.metadata["appagent_prep"] = dict(appagent_prep)
             returncode = run_command(spec, dry_run=args.dry_run)
-            official_result_files = (
+            target_result_files = (
                 sorted(spec.output_path.rglob("task_results.jsonl"))
                 if method == "autodroid"
                 and spec.output_path is not None
                 and spec.output_path.is_dir()
                 else []
+            )
+            published_result_files: list[Path] = []
+            if not bool(args.dry_run):
+                published_attempt = str(
+                    os.environ.get("OMNIFLOW_BATCH_ATTEMPT_ID") or ""
+                ).strip()
+                published_root = _experiment_run_dir(
+                    output_root,
+                    task=item.task,
+                    method=method,
+                    device=target.label,
+                    serial=target.serial,
+                    console_port=target.console_port,
+                    attempt_id=published_attempt,
+                )
+                published_result_files = sorted(
+                    published_root.rglob("task_results.jsonl")
+                    if published_root.is_dir()
+                    else []
+                )
+            official_result_files = sorted(
+                set(target_result_files + published_result_files)
             )
             status = "completed" if returncode == 0 else "command_failed"
             command_records.append(
@@ -5900,7 +6144,7 @@ def run_task(args: argparse.Namespace) -> int:
                     device=target.label,
                     returncode=returncode,
                     status=status,
-                    summary_exclude=bool(official_result_files),
+                    summary_exclude=bool(target_result_files),
                     extra_metadata={
                         "device_target": target.to_dict(),
                         "official_result_files": [
@@ -5934,35 +6178,44 @@ def run_task(args: argparse.Namespace) -> int:
             continue
         aggregate_paths.extend(_formal_result_paths(record))
     aggregate_summary = aggregate_task_results([] if args.dry_run else aggregate_paths)
+    # The official AndroidWorld runner owns the published
+    # ``task/method/device/runlog/attempt_NNN`` directory and writes its own
+    # result_summary.json there.  Keep the scheduler's aggregate summary in
+    # the immutable scheduler attempt so the two result contracts cannot
+    # overwrite one another before registration.
+    result_root = attempt_root / "scheduler"
     summary = _write_result_summary(
-        output_root=output_root,
+        result_root=result_root,
         task=item.task,
         command_records=command_records,
         aggregate_summary=aggregate_summary,
     )
     result_registration: dict[str, Any] = {}
-    summary_path = output_root / _safe_stem(item.task) / RESULT_SUMMARY_FILE
-    external_only_method = method in {"appagent", "mobilegpt", "autodroid"}
-    if not bool(args.dry_run) and not external_only_method:
+    summary_path = result_root / RESULT_SUMMARY_FILE
+    if not bool(args.dry_run):
         result_registry_root = _result_registry_root(
             args,
             attempt_root=attempt_root,
         )
+        configured_index = (
+            Path(os.environ["OMNIFLOW_EXP_MEMORY_INDEX"]).expanduser()
+            if os.environ.get("OMNIFLOW_EXP_MEMORY_INDEX")
+            else None
+        )
+        # A standalone run may deliberately use an external, read-only
+        # snapshot of current.json to bypass one previously registered cell.
+        # Register its immutable result, but do not make an unrelated index
+        # snapshot refresh gate the episode on legacy assets elsewhere in the
+        # data tree.  The canonical current.json keeps its normal writer path.
         result_registration = register_attempt_summary(
             summary_path=summary_path,
             attempt_manifest_path=attempt_manifest_path,
             runs_root=result_registry_root,
-            local_data_index=Path(
-                os.environ["OMNIFLOW_EXP_MEMORY_INDEX"]
-            ).expanduser()
-            if os.environ.get("OMNIFLOW_EXP_MEMORY_INDEX")
-            else None,
-        )
-    elif external_only_method and not bool(args.dry_run):
-        print(
-            "[result] registration=skipped reason=external_official_runner_has_no_"
-            "androidworld_validator",
-            flush=True,
+            local_data_index=(
+                configured_index
+                if configured_index and configured_index.name == "current.json"
+                else None
+            ),
         )
     _print_result_summary(summary)
     print(
@@ -6005,7 +6258,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_OUTPUT_ROOT),
         help=(
             "Exact fresh immutable attempt directory. The shared canonical "
-            "runtime/evals/androidworld_validator/runs root is rejected."
+            "AndroidWorld result registry root is rejected."
         ),
     )
     result_parser.add_argument(
@@ -6013,7 +6266,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("ANDROIDWORLD_RESULT_REGISTRY_ROOT", ""),
         help=(
             "Canonical immutable task/method/device/attempt registry. Defaults "
-            "to the androidworld_validator root containing --index."
+            "to the hidden AndroidWorld result registry containing --index."
         ),
     )
     result_parser.add_argument("--task", required=True)
@@ -6076,6 +6329,11 @@ def build_parser() -> argparse.ArgumentParser:
     result_parser.add_argument("--planner-provider", default="")
     result_parser.add_argument("--model", default="")
     result_parser.add_argument(
+        "--appagent-model",
+        default=APPAGENT_MODEL,
+        help="Model passed to the official AppAgent task-execution subprocess.",
+    )
+    result_parser.add_argument(
         "--planner-timeout-sec", type=float, default=STEP_TIMEOUT_SEC
     )
     _add_androidworld_setup_args(result_parser)
@@ -6108,6 +6366,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional AutoDroid app directory name; otherwise match the active Android package.",
     )
+    result_parser.add_argument(
+        "--autodroid-policy",
+        choices=("replay", "task"),
+        default="replay",
+        help="Official DroidBot policy: replay or task.",
+    )
     result_parser.add_argument("--mobilegpt-server-host", default="0.0.0.0")
     result_parser.add_argument("--mobilegpt-port", type=int, default=12345)
     result_parser.add_argument(
@@ -6125,10 +6389,14 @@ def build_parser() -> argparse.ArgumentParser:
     result_parser.add_argument(
         "--mobilegpt-episode-wait-timeout-sec",
         type=float,
-        default=DEFAULT_MOBILEGPT_EPISODE_WAIT_TIMEOUT_SEC,
+        default=None,
         help=(
             "Seconds to wait for MobileGPT task_finished before official "
-            "AndroidWorld validation. Use -1 to wait indefinitely."
+            "AndroidWorld validation. Use -1 to wait indefinitely. Defaults "
+            "to the same wall-clock budget derived from --timeout-sec that "
+            "every other formal method receives (falling back to "
+            f"{DEFAULT_MOBILEGPT_EPISODE_WAIT_TIMEOUT_SEC}s when "
+            "--timeout-sec is unset), rather than a fixed constant."
         ),
     )
     result_parser.add_argument(

@@ -999,6 +999,20 @@ def test_qwen36_adapter_normalizes_swipe_coordinate_arrays() -> None:
     assert metadata["model"] == "Qwen3.6-Plus"
 
 
+def test_glm46v_adapter_normalizes_coordinate_arrays() -> None:
+    adapted, metadata = adapt_tool_arguments(
+        tool="click",
+        arguments={"x": [876, 869], "y": [876, 869]},
+        requested_model="GLM-4.6V",
+        resolved_model="GLM-4.6V",
+        display={"width": 720, "height": 1280},
+    )
+
+    assert adapted == {"x": 876, "y": 869}
+    assert metadata is not None
+    assert metadata["name"] == "glm_vl_coordinate_arrays.v1"
+
+
 def test_planner_exposes_normalized_coordinates_independent_of_display() -> None:
     request = build_model_turn_request(
         goal="Tap add",
@@ -1039,6 +1053,32 @@ def test_planner_parses_normalized_coordinates_without_conversion() -> None:
 
     assert tool_call == ToolCall("click", {"x": 876, "y": 869})
     assert metadata == {}
+
+
+def test_glm_planner_coerces_numeric_coordinate_strings() -> None:
+    tool_call, metadata = parse_model_turn_response(
+        {
+            "requested_model": "GLM-4.6V",
+            "resolved_model": "GLM-4.6V",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "click",
+                        "arguments": json.dumps({"x": "876", "y": "869"}),
+                    }
+                }
+            ],
+        },
+        requested_model="GLM-4.6V",
+        turn_index=1,
+        display={"width": 720, "height": 1280},
+    )
+
+    assert tool_call == ToolCall("click", {"x": 876.0, "y": 869.0})
+    assert metadata["model_argument_coercions"] == [
+        {"field": "x", "from": "876", "to": 876.0},
+        {"field": "y", "from": "869", "to": 869.0},
+    ]
 
 
 def test_model_turn_uses_only_generic_planning_context() -> None:

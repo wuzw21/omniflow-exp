@@ -171,9 +171,6 @@ def _write_index(
                     "latest_official_success_source": official_success,
                     "source_kind": source_kind,
                     "retained_source_run_log": run_log.name,
-                    "source_run_log_sha256": hashlib.sha256(
-                        run_log.read_bytes()
-                    ).hexdigest(),
                 }
             }
         ),
@@ -210,7 +207,7 @@ def test_source_index_accepts_recorded_seed_outside_protocol(tmp_path: Path) -> 
     assert result["run_log_count"] == 1
 
 
-def test_source_index_rejects_runlog_changed_after_freeze(
+def test_source_index_reads_the_runlog_directly_without_a_frozen_hash(
     tmp_path: Path,
 ) -> None:
     index = _write_index(tmp_path / "tampered")
@@ -219,12 +216,13 @@ def test_source_index_rejects_runlog_changed_after_freeze(
     payload["goal"] = "Changed after indexing."
     run_log.write_text(json.dumps(payload), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="source_index_invalid_tasks"):
-        _validate_source_index(
-            index,
-            source_root=tmp_path,
-            expected_tasks=1,
-        )
+    result = _validate_source_index(
+        index,
+        source_root=tmp_path,
+        expected_tasks=1,
+    )
+
+    assert result["run_log_count"] == 1
 
 
 @pytest.mark.parametrize(
@@ -299,7 +297,6 @@ def test_source_index_rejects_registered_historical_runlog(
     payload = json.loads(index.read_text(encoding="utf-8"))
     row = payload["Task"]
     row.pop("source_kind")
-    row.pop("source_run_log_sha256")
     row["retained_source_run_log_sha256"] = hashlib.sha256(
         run_log.read_bytes()
     ).hexdigest()
@@ -335,3 +332,57 @@ def test_source_index_validates_only_selected_task_for_result_run(
 
     assert result["task_count"] == 2
     assert result["run_log_count"] == 1
+
+
+def test_source_only_preflight_accepts_pending_recollection_without_runlog(
+    tmp_path: Path,
+) -> None:
+    index = _write_index(tmp_path / "pending")
+    payload = json.loads(index.read_text(encoding="utf-8"))
+    payload["Task"] = {
+        "task": "Task",
+        "goal": "Complete Task.",
+        "params": {},
+        "source_seed": 111,
+        "source_kind": "pending_source_recollection",
+        "latest_official_success_source": False,
+        "retained_source_run_log": "",
+        "retained_source_run_log_sha256": "",
+    }
+    index.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = _validate_source_index(
+        index,
+        source_root=tmp_path,
+        expected_tasks=1,
+        task_names=("Task",),
+        allow_historical_source=True,
+    )
+
+    assert result["run_log_count"] == 0
+
+
+def test_formal_preflight_rejects_pending_recollection_without_runlog(
+    tmp_path: Path,
+) -> None:
+    index = _write_index(tmp_path / "pending-formal")
+    payload = json.loads(index.read_text(encoding="utf-8"))
+    payload["Task"] = {
+        "task": "Task",
+        "goal": "Complete Task.",
+        "params": {},
+        "source_seed": 111,
+        "source_kind": "pending_source_recollection",
+        "latest_official_success_source": False,
+        "retained_source_run_log": "",
+        "retained_source_run_log_sha256": "",
+    }
+    index.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="source_index_invalid_tasks"):
+        _validate_source_index(
+            index,
+            source_root=tmp_path,
+            expected_tasks=1,
+            task_names=("Task",),
+        )

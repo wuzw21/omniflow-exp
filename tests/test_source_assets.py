@@ -628,25 +628,30 @@ def test_canonical_grounding_reuses_observations_for_state_id_provenance(
     assert _grounding(audit)["source_target_evidence_source"] == "verified_legacy_provenance"
 
 
-def test_canonical_grounding_rejects_legacy_provenance_hash_mismatch(
+def test_canonical_grounding_ignores_legacy_provenance_hash_after_import(
     tmp_path: Path,
 ) -> None:
-    raw_path, _, item, raw = _write_legacy_backed_canonical_source(
+    raw_path, canonical_path, item, raw = _write_legacy_backed_canonical_source(
         tmp_path,
         xml='<hierarchy><node text="Continue" /></hierarchy>',
         target_description="Continue",
     )
+    canonical = json.loads(canonical_path.read_text(encoding="utf-8"))
+    canonical["provenance"]["source_sha256"] = hashlib.sha256(
+        raw_path.read_bytes()
+    ).hexdigest()
+    canonical_path.write_text(json.dumps(canonical), encoding="utf-8")
+    item.meta["retained_source_run_log_sha256"] = hashlib.sha256(
+        canonical_path.read_bytes()
+    ).hexdigest()
     raw["goal"] = "Changed after conversion."
     raw_path.write_text(json.dumps(raw), encoding="utf-8")
 
-    with pytest.raises(
-        ValueError,
-        match="source_legacy_provenance_hash_mismatch",
-    ):
-        build_grounded_teacher_run_log_from_item(
-            index_path=tmp_path / "source_index.json",
-            item=item,
-        )
+    grounded, _ = build_grounded_teacher_run_log_from_item(
+        index_path=tmp_path / "source_index.json",
+        item=item,
+    )
+    assert "source_sha256" not in grounded["provenance"]
 
 
 def test_canonical_grounding_rejects_legacy_action_mismatch(

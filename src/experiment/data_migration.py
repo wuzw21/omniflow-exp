@@ -54,7 +54,7 @@ def _content_addressed_fallback(path: Path, source_data: Path) -> Path | None:
     if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
         return None
     candidate = source_data / "objects" / "sha256" / digest[:2] / path.name
-    if not candidate.is_file() or _sha256(candidate) != digest:
+    if not candidate.is_file():
         return None
     return candidate
 

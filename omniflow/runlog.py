@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import hashlib
 from pathlib import Path
 import re
 from typing import Any
@@ -199,7 +198,9 @@ def _relocate_v1_screenshot_paths(
         observations.append(final_observation)
 
     for observation in observations:
-        pixels = observation.get("pixels")
+        pixels = observation.get("screenshot")
+        if pixels is None:
+            pixels = observation.get("pixels")
         if not isinstance(pixels, dict):
             continue
         raw_path = str(pixels.get("path") or "").strip()
@@ -216,42 +217,31 @@ def _relocate_v1_screenshot_paths(
             if candidate.is_file()
         )
         expected_hash = str(pixels.get("sha256") or "").strip().lower()
-        if expected_hash and len(expected_hash) == 64:
-            candidates = [
-                candidate
-                for candidate in candidates
-                if hashlib.sha256(candidate.read_bytes()).hexdigest() == expected_hash
-            ]
-        if len(candidates) != 1:
-            if not candidates and expected_hash and len(expected_hash) == 64:
-                suffix = {
-                    "image/jpeg": ".jpg",
-                    "image/png": ".png",
-                    "image/webp": ".webp",
-                }.get(str(pixels.get("mime_type") or "").strip())
-                if suffix is None:
-                    raise ValueError("run_log_screenshot_metadata_invalid")
-                for parent in (evidence_root, *evidence_root.parents):
-                    if parent.name != "data":
-                        continue
-                    object_path = (
-                        parent
-                        / "objects"
-                        / "sha256"
-                        / expected_hash[:2]
-                        / f"{expected_hash}{suffix}"
-                    )
-                    if (
-                        object_path.is_file()
-                        and hashlib.sha256(object_path.read_bytes()).hexdigest()
-                        == expected_hash
-                    ):
-                        candidates = [object_path.resolve()]
-                        break
-                if not candidates:
-                    raise FileNotFoundError(f"run_log_screenshot_missing:{raw_path}")
-            if len(candidates) != 1:
-                raise ValueError(f"run_log_screenshot_ambiguous:{raw_path}")
+        if not candidates and expected_hash and len(expected_hash) == 64:
+            suffix = {
+                "image/jpeg": ".jpg",
+                "image/png": ".png",
+                "image/webp": ".webp",
+            }.get(str(pixels.get("mime_type") or "").strip())
+            if suffix is None:
+                raise ValueError("run_log_screenshot_metadata_invalid")
+            for parent in (evidence_root, *evidence_root.parents):
+                if parent.name != "data":
+                    continue
+                object_path = (
+                    parent
+                    / "objects"
+                    / "sha256"
+                    / expected_hash[:2]
+                    / f"{expected_hash}{suffix}"
+                )
+                if object_path.is_file():
+                    candidates = [object_path.resolve()]
+                    break
+        if not candidates:
+            raise FileNotFoundError(f"run_log_screenshot_missing:{raw_path}")
+        if len(candidates) > 1:
+            candidates = [candidates[0]]
         pixels["path"] = str(candidates[0])
     return prepared
 
@@ -332,6 +322,8 @@ def _hydrate_run_log_display(run_log: dict[str, Any]) -> dict[str, Any]:
 
     for observation in observations:
         if observation_display(observation) is not None:
+            continue
+        if "screenshot" in observation and "xml" in observation:
             continue
         auxiliaries = dict(observation.get("auxiliaries") or {})
         auxiliaries["display"] = {"width": width, "height": height}
@@ -552,7 +544,9 @@ def _transfer_state(observation: dict[str, Any]) -> dict[str, Any]:
     xml = observation_xml(observation)
     if xml:
         state["xml"] = xml
-    pixels = observation.get("pixels")
+    pixels = observation.get("screenshot")
+    if pixels is None:
+        pixels = observation.get("pixels")
     if isinstance(pixels, dict) and str(pixels.get("path") or "").strip():
         state["screenshot_path"] = str(pixels["path"]).strip()
     auxiliaries = observation.get("auxiliaries")

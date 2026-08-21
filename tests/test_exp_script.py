@@ -190,7 +190,9 @@ def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:
 def test_setup_uses_all_protocol_devices() -> None:
     devices = _devices()
 
-    assert set(devices) == {"small5554", "small5562", "fold5564", "source5560"}
+    assert set(devices) == {"small5554", "pixel5576", "fold5564", "source5560"}
+    assert devices["pixel5576"].profile == "pixel_phone"
+    assert devices["pixel5576"].avd == "AndroidWorldAvd4090"
     assert devices["fold5564"].profile == "pixel_fold"
     assert devices["fold5564"].avd == "OmniFlowTargetFold"
     script_text = SCRIPT.read_text(encoding="utf-8")
@@ -264,11 +266,25 @@ def test_formal_protocol_uses_glm_chat_and_embedding_models() -> None:
         (REPO / "config" / "paper_androidworld.json").read_text(encoding="utf-8")
     )["protocol"]
 
-    assert protocol["model"] == "GLM-5.1"
-    assert protocol["appagent_model"] == "GLM-5.1"
+    assert protocol["model"] == "GLM-4.6V"
+    assert protocol["appagent_model"] == "GLM-4.6V"
     assert 'export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"' in SCRIPT.read_text(
         encoding="utf-8"
     )
+
+
+def test_autodroid_online_forces_formal_glm_endpoint_and_temperature() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+
+    online_block = script_text.split(
+        'if [[ "$supplemental_autodroid" -eq 1 && "$autodroid_policy" == "task" ]]; then',
+        maxsplit=1,
+    )[1].split("\n  fi", maxsplit=1)[0]
+    assert 'select_model_endpoint "$formal_model_endpoint_profile"' in online_block
+    assert 'validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"' in online_block
+    assert 'validate_model_endpoint_auth' in online_block
+    assert 'export AUTODROID_MODEL="$formal_model"' in online_block
+    assert 'export AUTODROID_TEMPERATURE="${AUTODROID_TEMPERATURE:-0.25}"' in online_block
 
 
 def test_mobilegpt_uses_the_official_server_without_a_runtime_patch() -> None:
@@ -648,7 +664,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
             "--e2e-method",
             "omniflow",
             "--e2e-device",
-            "small5562:emulator-5562:5562",
+            "pixel5576:emulator-5576:5576",
             "--e2e-source-seed",
             "111",
             "--e2e-evaluation-seed",
@@ -754,6 +770,7 @@ def test_default_avd_system_image_matches_host_architecture(
     assert "emulator-5554=OmniFlowTargetSmall" in completed.stdout
     assert "emulator-5560=OmniFlowSourceSmall" in completed.stdout
     assert "emulator-5564=OmniFlowTargetFold" in completed.stdout
+    assert "emulator-5576=AndroidWorldAvd4090" in completed.stdout
 
 
 def test_default_android_sdk_root_prefers_macos_standard_path(tmp_path: Path) -> None:
@@ -843,7 +860,7 @@ def test_missing_protocol_avd_is_provisioned_by_shared_helper(
     assert marker.exists()
 
 
-def test_default_topology_lists_all_distinct_avds(
+def test_default_topology_maps_device_aliases_to_physical_avds(
     tmp_path: Path,
 ) -> None:
     script_prefix = tmp_path / "script-prefix.sh"
@@ -877,7 +894,7 @@ def test_default_topology_lists_all_distinct_avds(
         "source5560:emulator-5560:5560",
         "small5554:emulator-5554:5554",
         (
-            "emulator-5554=OmniFlowTargetSmall,emulator-5562=OmniFlowAW_r25,"
+            "emulator-5554=OmniFlowTargetSmall,emulator-5576=AndroidWorldAvd4090,"
             "emulator-5564=OmniFlowTargetFold,"
             "emulator-5560=OmniFlowSourceSmall"
         ),
@@ -886,7 +903,9 @@ def test_default_topology_lists_all_distinct_avds(
         mapping.split("=", maxsplit=1)[1]
         for mapping in completed.stdout.splitlines()[2].split(",")
     ]
-    assert len(avd_names) == len(set(avd_names)) == 4
+    assert len(avd_names) == 4
+    assert len(set(avd_names)) == 4
+    assert avd_names.count("OmniFlowTargetSmall") == 1
 
 
 @pytest.mark.parametrize(
@@ -976,6 +995,13 @@ def test_check_only_is_read_only_before_any_runtime_output(
         "width": 8,
         "height": 6,
         "mime_type": "image/png",
+    }
+    run_log["steps"][0]["next_observation"] = dict(
+        run_log["steps"][0]["observation"]
+    )
+    run_log["steps"][0]["metadata"] = {
+        "reasoning": "Open Settings and turn Bluetooth on.",
+        "screenshot_path": str(screenshot.resolve()),
     }
     source_run_log = assets / "source.run_log.json"
     source_run_log.write_text(

@@ -226,6 +226,47 @@ def test_androidworld_setup_skips_only_absent_markor_final_ok(monkeypatch) -> No
         controller_type.click_element = original
 
 
+def test_androidworld_setup_skips_absent_camera_onboarding_next(monkeypatch) -> None:
+    class AndroidToolController:
+        def __init__(self, env) -> None:
+            self._env = env
+
+        def click_element(self, element_text: str) -> None:
+            raise ValueError(f'Target text "{element_text}" not found.')
+
+    tools_module = SimpleNamespace(AndroidToolController=AndroidToolController)
+    monkeypatch.setattr(
+        "src.integrations.android_world.run_episode.importlib.import_module",
+        lambda name: tools_module
+        if name == "android_world.env.tools"
+        else pytest.fail(f"unexpected import: {name}"),
+    )
+    controller = AndroidToolController(
+        SimpleNamespace(
+            foreground_activity_name="com.android.camera2/.CameraActivity",
+            get_ui_elements=lambda: [
+                SimpleNamespace(package_name="com.android.camera2")
+            ],
+        )
+    )
+
+    patch = _patch_androidworld_optional_setup_click()
+    assert patch is not None
+    controller_type, original = patch
+    try:
+        controller.click_element("NEXT")
+        with pytest.raises(ValueError, match="NEXT"):
+            controller._env.foreground_activity_name = "com.example/.MainActivity"
+            controller._env.get_ui_elements = lambda: []
+            controller.click_element("NEXT")
+        controller._env.foreground_activity_name = (
+            "com.google.android.apps.nexuslauncher/.NexusLauncherActivity"
+        )
+        controller.click_element("NEXT")
+    finally:
+        controller_type.click_element = original
+
+
 def test_androidworld_prepares_markor_data_directory(monkeypatch) -> None:
     calls: list[tuple[object, ...]] = []
     response = SimpleNamespace(status=1)
@@ -367,19 +408,19 @@ def test_androidworld_apk_install_retries_without_unsupported_flag() -> None:
     assert response.status == 1
     assert calls == [
         ("official", "/tmp/app.apk"),
-        ("compat", ("install", "/tmp/app.apk"), 30.0),
+        ("compat", ("install", "/tmp/app.apk"), 180.0),
     ]
 
 
 def test_androidworld_adb_controller_retries_without_unsupported_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[tuple[str, ...]] = []
+    calls: list[tuple[tuple[str, ...], float | None]] = []
 
     class Controller:
         def execute_command(self, args, timeout=None, device_specific=True):
-            del timeout, device_specific
-            calls.append(tuple(args))
+            del device_specific
+            calls.append((tuple(args), timeout))
             if "--bypass-low-target-sdk-block" in args:
                 raise RuntimeError(
                     "adb stdout: [Unknown option --bypass-low-target-sdk-block]"
@@ -406,8 +447,8 @@ def test_androidworld_adb_controller_retries_without_unsupported_flag(
 
     assert result == b"installed"
     assert calls == [
-        ("install", "--bypass-low-target-sdk-block", "/tmp/app.apk"),
-        ("install", "/tmp/app.apk"),
+        (("install", "--bypass-low-target-sdk-block", "/tmp/app.apk"), 180.0),
+        (("install", "/tmp/app.apk"), 180.0),
     ]
 
 
@@ -980,6 +1021,92 @@ def test_androidworld_episode_setup_resolves_contacts_chooser(monkeypatch) -> No
     assert controller.screen == "contacts"
 
 
+def test_androidworld_episode_setup_finishes_osmand_before_snapshot(
+    monkeypatch,
+) -> None:
+    calls: list[object] = []
+
+    class Controller:
+        def get_ui_elements(self):
+            return [
+                SimpleNamespace(
+                    text="SKIP DOWNLOAD",
+                    content_description=None,
+                    package_name="net.osmand",
+                    resource_name="net.osmand:id/skip_button",
+                )
+            ]
+
+    controller = Controller()
+    env = SimpleNamespace(controller=controller)
+
+    class OsmAndApp:
+        app_name = "osmand"
+
+        @classmethod
+        def package_name(cls) -> str:
+            return "net.osmand"
+
+    class ToolController:
+        def __init__(self, _controller) -> None:
+            pass
+
+        def click_element(self, label: str) -> None:
+            calls.append(("click", label))
+
+    setup_module = SimpleNamespace(
+        adb_utils=SimpleNamespace(
+            launch_app=lambda app, _controller: calls.append(("launch", app)),
+            close_app=lambda app, _controller: calls.append(("close", app)),
+        ),
+        app_snapshot=SimpleNamespace(
+            save_snapshot=lambda app, _controller: calls.append(("snapshot", app))
+        ),
+    )
+    real_import_module = __import__("importlib").import_module
+
+    def import_module(name: str):
+        if name == "android_world.env.actuation":
+            return SimpleNamespace()
+        if name == "android_world.env.tools":
+            return SimpleNamespace(AndroidToolController=ToolController)
+        if name == "android_world.utils.file_utils":
+            return SimpleNamespace(
+                check_file_exists=lambda path, actual_controller: calls.append(
+                    ("file_exists", path, actual_controller)
+                )
+                or True
+            )
+        return real_import_module(name)
+
+    monkeypatch.setattr(
+        "src.integrations.android_world.run_episode.importlib.import_module",
+        import_module,
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.run_episode.time.sleep", lambda _: None
+    )
+
+    _prepare_androidworld_episode_apps(
+        env,
+        setup_module=setup_module,
+        setup_apps=(OsmAndApp,),
+        save_snapshots=True,
+    )
+
+    assert calls == [
+        ("launch", "osmand"),
+        ("click", "SKIP DOWNLOAD"),
+        (
+            "file_exists",
+            "/data/data/net.osmand/databases/map_markers_db",
+            controller,
+        ),
+        ("close", "osmand"),
+        ("snapshot", "osmand"),
+    ]
+
+
 def test_androidworld_official_setup_entry_clears_late_permission_dialog(
     monkeypatch,
 ) -> None:
@@ -1522,29 +1649,14 @@ def test_observe_preserves_one_official_androidworld_state(tmp_path) -> None:
 
     assert env.calls == 1
     saved = observation.extra["androidworld_state"]
-    assert set(saved) == {"pixels", "forest", "ui_elements", "auxiliaries"}
-    assert saved["forest"] == {"source": "official-forest"}
-    assert saved["ui_elements"] == [
-        {
-            "text": "Settings",
-            "package_name": "com.android.settings",
-            "bbox_pixels": {
-                "x_min": 0,
-                "y_min": 0,
-                "x_max": 4,
-                "y_max": 3,
-            },
-        }
-    ]
-    assert saved["auxiliaries"] == {"source": "androidworld"}
-    screenshot_path = Path(saved["pixels"]["path"])
+    assert set(saved) == {"screenshot", "xml"}
+    assert 'text="Settings"' in saved["xml"]
+    screenshot_path = Path(saved["screenshot"]["path"])
     assert screenshot_path.is_file()
     assert screenshot_path.is_absolute()
-    assert hashlib.sha256(screenshot_path.read_bytes()).hexdigest() == saved["pixels"][
-        "sha256"
-    ]
-    assert saved["pixels"]["width"] == 4
-    assert saved["pixels"]["height"] == 3
+    assert "sha256" not in saved["screenshot"]
+    assert saved["screenshot"]["width"] == 4
+    assert saved["screenshot"]["height"] == 3
     assert observation.package_name == "com.android.settings"
     assert "Settings" in str(observation.xml)
 
@@ -1602,16 +1714,18 @@ def test_observe_does_not_replace_failed_official_state() -> None:
         AndroidWorldHost(Env()).observe()
 
 
-def test_observe_requires_all_official_state_fields() -> None:
+def test_observe_keeps_diagnostic_observation_without_xml() -> None:
     incomplete = SimpleNamespace(pixels=None, forest=None, ui_elements=[])
 
-    with pytest.raises(
-        ValueError,
-        match="androidworld_state_fields_missing:auxiliaries",
-    ):
-        AndroidWorldHost(
-            SimpleNamespace(get_state=lambda **_: incomplete)
-        ).observe()
+    observation = AndroidWorldHost(
+        SimpleNamespace(get_state=lambda **_: incomplete)
+    ).observe()
+    assert set(observation.extra["androidworld_state"]) == {
+        "pixels",
+        "forest",
+        "ui_elements",
+        "auxiliaries",
+    }
 
 
 def test_observe_ignores_non_official_xml_field() -> None:
@@ -2097,4 +2211,46 @@ def test_androidworld_app_launch_restarts_mapped_app_before_opening() -> None:
         ("close", "settings"),
         ("launch", "settings"),
         ("launch", "com.example.app"),
+    ]
+
+
+def test_androidworld_camera_launch_falls_back_to_public_capture_intent() -> None:
+    calls: list[tuple[str, object]] = []
+    controller = object()
+
+    def launch_app(app_name: str, actual_controller: object) -> None:
+        assert actual_controller is controller
+        calls.append(("launch", app_name))
+        raise RuntimeError("legacy_camera_component_missing")
+
+    adb_utils = SimpleNamespace(
+        get_adb_activity=lambda app_name: (
+            "com.android.camera2/com.android.camera.CameraLauncher"
+            if app_name == "camera"
+            else None
+        ),
+        close_app=lambda app_name, actual_controller: calls.append(
+            ("close", app_name)
+        ),
+        launch_app=launch_app,
+        issue_generic_request=lambda command, actual_controller: calls.append(
+            ("intent", tuple(command))
+        ) or SimpleNamespace(ok=True),
+        check_ok=lambda response, message: calls.append(("check", message)),
+    )
+
+    original = _patch_androidworld_app_launch(adb_utils)
+    try:
+        adb_utils.launch_app("camera", controller)
+    finally:
+        adb_utils.launch_app = original
+
+    assert calls == [
+        ("close", "camera"),
+        ("launch", "camera"),
+        (
+            "intent",
+            ("shell", "am", "start", "-a", "android.media.action.IMAGE_CAPTURE"),
+        ),
+        ("check", "Failed to launch the AndroidWorld Camera2 capture intent."),
     ]

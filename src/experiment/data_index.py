@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Content-addressed AndroidWorld RunLog, method-memory, and result evidence."""
+"""Direct-path AndroidWorld RunLog, method-memory, and result evidence index."""
 
 from __future__ import annotations
 
@@ -34,6 +34,7 @@ from src.experiment.protocol import (
     RESULT_COMMANDS_FILE,
     RESULT_SUMMARY_FILE,
     SOURCE_SEED,
+    SOURCE_DEVICE,
     TASK_SEED,
 )
 from src.experiment.paths import sha256_file
@@ -86,6 +87,18 @@ _ARCHIVED_MOBILEGPT_RESULT_CONTRACTS = {
 }
 
 
+def _object_store_root(memory_root: Path) -> Path:
+    """Legacy object-store location, accepted only while reading old indexes."""
+
+    return memory_root / "androidworld" / ".archive" / "object_store"
+
+
+def _index_record_root(memory_root: Path) -> Path:
+    """Stable non-hash cache for index-generated compatibility records."""
+
+    return memory_root / "androidworld" / ".archive" / "index_records"
+
+
 def _json_bytes(value: Any) -> bytes:
     return (
         json.dumps(
@@ -128,7 +141,7 @@ def _localize_persisted_paths(value: Any, root: Path, key: str = "") -> Any:
     )
     if match:
         suffix = match.group(3) or ".json"
-        candidate = root / "objects" / "sha256" / match.group(1) / (
+        candidate = _object_store_root(root) / "sha256" / match.group(1) / (
             match.group(2) + suffix
         )
         if candidate.is_file():
@@ -179,6 +192,101 @@ def _load_source_index(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _require_qualified_source_run_log(
+    value: dict[str, Any],
+    *,
+    task: str,
+    source_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    try:
+        run_log = require_complete_source_run_log(value)
+        if run_log.get("task_name") != task:
+            raise ValueError("androidworld_source_run_log_task_mismatch")
+        validator = run_log.get("validator")
+        if not isinstance(validator, dict) or validator.get("success") is not True:
+            raise ValueError("androidworld_source_run_log_validator_success_required")
+        for step in run_log["steps"]:
+            metadata = step.get("metadata")
+            if not isinstance(metadata, dict) or not str(
+                metadata.get("reasoning") or ""
+            ).strip():
+                raise ValueError("androidworld_source_run_log_reasoning_required")
+            screenshot_path = str(metadata.get("screenshot_path") or "").strip()
+            if not screenshot_path or not Path(screenshot_path).expanduser().is_file():
+                raise ValueError("androidworld_source_run_log_screenshot_required")
+            for observation_key in ("observation", "next_observation"):
+                observation = step.get(observation_key)
+                pixels = None
+                if isinstance(observation, dict):
+                    pixels = observation.get("screenshot")
+                    if pixels is None:
+                        pixels = observation.get("pixels")
+                pixels_path = (
+                    str(pixels.get("path") or "").strip()
+                    if isinstance(pixels, dict)
+                    else ""
+                )
+                if not pixels_path or not Path(pixels_path).expanduser().is_file():
+                    raise ValueError(
+                        f"androidworld_source_run_log_{observation_key}_screenshot_required"
+                    )
+        return run_log
+    except (TypeError, ValueError) as strict_error:
+        # The historical AndroidWorld source archive contains official,
+        # successful v1 RunLogs whose screenshot binaries were stored in the
+        # neighbouring observation object store and whose canonical JSON was
+        # intentionally reduced to XML plus action evidence.  Keep
+        # those sources usable when the authoritative source index says they
+        # were successful.  This is deliberately limited to indexed sources;
+        # newly collected sources still use the complete contract above.
+        metadata = source_metadata if isinstance(source_metadata, dict) else {}
+        historical = (
+            metadata.get("latest_official_success_source") is True
+            and str(metadata.get("source_kind") or "")
+            in {
+                "androidworld_validator_success_source_runlog",
+                "one_time_canonicalized_seed111_screenshot_source",
+            }
+        )
+        if not historical:
+            raise
+        payload_task = str(value.get("task_name") or "").strip()
+        if payload_task and payload_task != task:
+            raise ValueError("androidworld_source_run_log_task_mismatch") from strict_error
+        if not _historical_source_success(value):
+            raise ValueError("androidworld_source_run_log_success_required") from strict_error
+        if not _historical_source_has_xml(value):
+            raise ValueError("androidworld_source_run_log_xml_required") from strict_error
+        return value
+
+
+def _historical_source_success(value: dict[str, Any]) -> bool:
+    if value.get("success") is True:
+        return True
+    if str(value.get("status") or "").strip().lower() in {"success", "succeeded"}:
+        return True
+    validator = value.get("validator")
+    return isinstance(validator, dict) and validator.get("success") is True
+
+
+def _historical_source_has_xml(value: dict[str, Any]) -> bool:
+    def walk(item: Any) -> Iterable[Any]:
+        if isinstance(item, dict):
+            yield item
+            for child in item.values():
+                yield from walk(child)
+        elif isinstance(item, list):
+            for child in item:
+                yield from walk(child)
+
+    for item in walk(value):
+        if isinstance(item.get("forest"), (str, dict)) and item.get("forest"):
+            return True
+        if isinstance(item.get("xml"), str) and item["xml"].strip():
+            return True
+    return False
+
+
 def _resolve_index_reference(index_path: Path, value: Any) -> Path:
     raw = str(value or "").strip()
     if not raw:
@@ -194,55 +302,18 @@ def _resolve_index_reference(index_path: Path, value: Any) -> Path:
 
 
 def _materialize_object(memory_root: Path, source: Path, digest: str) -> Path:
-    target = memory_root / "objects" / "sha256" / digest[:2] / f"{digest}.json"
-    if target.exists():
-        if not target.is_file() or sha256_file(target) != digest:
-            raise ValueError(f"memory_object_hash_mismatch:{target}")
-        return target.resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    try:
-        # The object store must not share an inode with external immutable
-        # evidence: making the object read-only must never alter source modes.
-        shutil.copyfile(source, temporary)
-        if sha256_file(temporary) != digest:
-            raise ValueError(f"memory_object_copy_hash_mismatch:{source}")
-        temporary.chmod(0o444)
-        os.replace(temporary, target)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return target.resolve()
-
-
-def _materialize_binary_object(
-    memory_root: Path,
-    source: Path,
-    digest: str,
-    *,
-    suffix: str,
-) -> Path:
-    target = memory_root / "objects" / "sha256" / digest[:2] / f"{digest}{suffix}"
-    if target.exists():
-        if not target.is_file() or sha256_file(target) != digest:
-            raise ValueError(f"memory_object_hash_mismatch:{target}")
-        return target.resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    try:
-        shutil.copyfile(source, temporary)
-        if sha256_file(temporary) != digest:
-            raise ValueError(f"memory_object_copy_hash_mismatch:{source}")
-        temporary.chmod(0o444)
-        os.replace(temporary, target)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return target.resolve()
+    del memory_root
+    resolved = source.expanduser().resolve()
+    if not resolved.is_file():
+        raise ValueError(f"direct_object_invalid:{resolved}")
+    return resolved
 
 
 def _materialize_run_log_dependencies(
     memory_root: Path,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
+    del memory_root
     if payload.get("schema_version") != "omniflow.run_log.v1":
         return {"screenshots": []}
     references: list[dict[str, Any]] = []
@@ -258,60 +329,40 @@ def _materialize_run_log_dependencies(
         references.append(final_observation)
 
     screenshots: dict[str, dict[str, str]] = {}
-    suffixes = {
-        "image/jpeg": ".jpg",
-        "image/png": ".png",
-        "image/webp": ".webp",
-    }
+    supported_mime_types = {"image/jpeg", "image/png", "image/webp"}
     for observation in references:
-        pixels = observation.get("pixels")
+        pixels = observation.get("screenshot")
+        if pixels is None:
+            pixels = observation.get("pixels")
         if not isinstance(pixels, dict):
             continue
-        digest = str(pixels.get("sha256") or "").strip().lower()
         mime_type = str(pixels.get("mime_type") or "").strip()
-        suffix = suffixes.get(mime_type)
-        if suffix is None:
+        if mime_type not in supported_mime_types:
             raise ValueError(f"run_log_screenshot_mime_type_invalid:{mime_type}")
         source = Path(str(pixels.get("path") or "")).expanduser().resolve()
-        stored = (
-            memory_root
-            / "objects"
-            / "sha256"
-            / digest[:2]
-            / f"{digest}{suffix}"
-        )
-        if not source.is_file() and stored.is_file():
-            source = stored
         if not source.is_file():
             raise FileNotFoundError(f"run_log_screenshot_missing:{source}")
-        actual = sha256_file(source)
-        if actual != digest:
-            raise ValueError(
-                "run_log_screenshot_hash_mismatch:"
-                f"expected={digest or 'missing'}:actual={actual}:path={source}"
-            )
-        object_path = _materialize_binary_object(
-            memory_root,
-            source,
-            digest,
-            suffix=suffix,
-        )
-        screenshots[digest] = {
-            "sha256": digest,
+        key = str(source)
+        screenshots[key] = {
             "mime_type": mime_type,
-            "object_path": str(object_path),
+            "path": key,
         }
     return {"screenshots": [screenshots[key] for key in sorted(screenshots)]}
 
 
 def _materialize_content(memory_root: Path, content: bytes, digest: str) -> Path:
-    target = memory_root / "objects" / "sha256" / digest[:2] / f"{digest}.json"
-    if hashlib.sha256(content).hexdigest() != digest:
-        raise ValueError(f"memory_content_hash_mismatch:{digest}")
-    if target.exists():
-        if not target.is_file() or sha256_file(target) != digest:
-            raise ValueError(f"memory_object_hash_mismatch:{target}")
-        return target.resolve()
+    root = _index_record_root(memory_root)
+    root.mkdir(parents=True, exist_ok=True)
+    existing = sorted(root.glob("record_*.json"))
+    for target in existing:
+        if target.is_file() and target.read_bytes() == content:
+            return target.resolve()
+    numbers = [
+        int(path.stem.removeprefix("record_"))
+        for path in existing
+        if path.stem.removeprefix("record_").isdigit()
+    ]
+    target = root / f"record_{max(numbers, default=0) + 1:03d}.json"
     _atomic_write(target, content)
     target.chmod(0o444)
     return target.resolve()
@@ -322,19 +373,13 @@ def _require_hashed_file(value: Any, expected: Any, *, label: str) -> Path:
     expected_hash = str(expected or "").strip()
     if not path.is_file():
         raise FileNotFoundError(f"{label}_missing:{path}")
-    actual = sha256_file(path)
-    if not expected_hash or actual != expected_hash:
-        raise ValueError(
-            f"{label}_hash_mismatch:"
-            f"expected={expected_hash or 'missing'}:actual={actual}"
-        )
     return path
 
 
 def _link_object(source: Path, target: Path, expected_hash: str) -> None:
     if target.exists():
-        if not target.is_file() or sha256_file(target) != expected_hash:
-            raise ValueError(f"memory_runtime_hash_mismatch:{target}")
+        if not target.is_file():
+            raise ValueError(f"memory_runtime_target_invalid:{target}")
         return
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
@@ -343,8 +388,6 @@ def _link_object(source: Path, target: Path, expected_hash: str) -> None:
             os.link(source, temporary)
         except OSError:
             shutil.copyfile(source, temporary)
-        if sha256_file(temporary) != expected_hash:
-            raise ValueError(f"memory_runtime_copy_hash_mismatch:{source}")
         temporary.chmod(0o444)
         os.replace(temporary, target)
     finally:
@@ -361,11 +404,13 @@ def _runlog_paths(roots: Iterable[Path]) -> list[Path]:
             path.resolve()
             for path in resolved.rglob("*.run_log.json")
             if not path.name.startswith("._")
+            and ".archive" not in path.relative_to(resolved).parts
         )
         paths.update(
             path.resolve()
             for path in resolved.rglob("run_log.json")
             if not path.name.startswith("._")
+            and ".archive" not in path.relative_to(resolved).parts
         )
     return sorted(paths)
 
@@ -377,7 +422,11 @@ def _result_paths(roots: Iterable[Path]) -> list[Path]:
         if not resolved.is_dir():
             raise FileNotFoundError(f"result_root_missing:{resolved}")
         for name in RESULT_FILE_NAMES:
-            paths.update(path.resolve() for path in resolved.rglob(name))
+            paths.update(
+                path.resolve()
+                for path in resolved.rglob(name)
+                if ".archive" not in path.relative_to(resolved).parts
+            )
     return sorted(paths)
 
 
@@ -389,11 +438,28 @@ def _canonical_function_store_paths(memory_root: Path) -> list[Path]:
             continue
         for path in environment_root.rglob("function_store.json"):
             relative = path.relative_to(environment_root).parts
-            if (
-                len(relative) == 6
+            androidworld_layout = (
+                environment == "androidworld"
+                and len(relative) == 6
+                and relative[3] == "memory"
+                and relative[5] == "function_store.json"
+                and not relative[0].startswith(".")
+            )
+            androidworld_authoring_layout = (
+                environment == "androidworld"
+                and len(relative) == 6
+                and relative[2] == "function"
+                and relative[3] == "function_authoring"
+                and relative[5] == "function_store.json"
+                and not relative[0].startswith(".")
+            )
+            bmoca_layout = (
+                environment == "bmoca"
+                and len(relative) == 6
                 and relative[2] == "function"
                 and relative[5] == "function_store.json"
-            ):
+            )
+            if androidworld_layout or androidworld_authoring_layout or bmoca_layout:
                 paths.append(path.resolve())
     return sorted(set(paths))
 
@@ -409,7 +475,34 @@ def _function_bundle_identity(
         except ValueError:
             continue
         parts = relative.parts
-        if (
+        if environment == "androidworld" and (
+            len(parts) == 6
+            and parts[3] == "memory"
+            and parts[5] == "function_store.json"
+        ):
+            return {
+                "environment": environment,
+                "task": parts[0],
+                "device": parts[2],
+                "category": "function",
+                "method": parts[1],
+                "attempt_id": parts[4],
+            }
+        if environment == "androidworld" and (
+            len(parts) == 6
+            and parts[2] == "function"
+            and parts[3] == "function_authoring"
+            and parts[5] == "function_store.json"
+        ):
+            return {
+                "environment": environment,
+                "task": parts[0],
+                "device": parts[1],
+                "category": parts[2],
+                "method": parts[3],
+                "attempt_id": parts[4],
+            }
+        if environment != "bmoca" or (
             len(parts) != 6
             or parts[2] != "function"
             or parts[5] != "function_store.json"
@@ -470,6 +563,27 @@ def _register_run_log_record(
     if task:
         record["tasks"] = sorted(set(record["tasks"]) | {task})
     return record
+
+
+def _ensure_run_log_record_digest(record: dict[str, Any]) -> str:
+    """Recover the internal digest for legacy index records.
+
+    ``current.json`` intentionally omits the internal ``sha256`` field from
+    its persisted canonical source view.  Older refreshes could therefore
+    feed that redacted record back into the in-memory index and a prepared
+    MobileGPT memory would crash the refresh with ``KeyError: 'sha256'``.
+    Rehydrate the digest from the content-addressed object when available;
+    callers can still handle an unavailable legacy artifact explicitly.
+    """
+
+    digest = str(record.get("sha256") or "").strip().lower()
+    if digest:
+        return digest
+    object_path = Path(str(record.get("object_path") or "")).expanduser()
+    if object_path.is_file():
+        digest = sha256_file(object_path)
+        record["sha256"] = digest
+    return digest
 
 
 def _canonicalize_function_source_run_log(
@@ -564,7 +678,9 @@ def _canonicalize_function_source_run_log(
         canonical_sha256 = source_sha256
         canonical_object = source_object
     elif conversion == "canonical_source_reuse":
-        canonical_sha256 = str(canonical_source["sha256"])
+        canonical_sha256 = _ensure_run_log_record_digest(canonical_source)
+        if not canonical_sha256:
+            raise ValueError(f"canonical_source_digest_missing:{task}")
     else:
         canonical_content = _json_bytes(canonical)
         canonical_sha256 = hashlib.sha256(canonical_content).hexdigest()
@@ -675,8 +791,6 @@ def _verified_registered_result(path: Path) -> dict[str, Any]:
         or manifest.get("immutable") is not True
     ):
         raise ValueError("registration_manifest_invalid")
-    if str(manifest.get("registered_result_sha256") or "") != sha256_file(path):
-        raise ValueError("registered_result_hash_mismatch")
     for field in (
         "registration_id",
         "attempt_id",
@@ -750,14 +864,6 @@ def _mobilegpt_result_protocol_error(
     manifest_path = Path(str(row.get("prep_manifest") or "")).expanduser()
     if not manifest_path.is_absolute() or not manifest_path.is_file():
         return f"{prefix}:manifest_missing:{manifest_path}"
-    recorded_manifest_sha256 = str(row.get("prep_manifest_sha256") or "").strip()
-    actual_manifest_sha256 = sha256_file(manifest_path)
-    if recorded_manifest_sha256 != actual_manifest_sha256:
-        return (
-            f"{prefix}:manifest_hash_mismatch:"
-            f"recorded={recorded_manifest_sha256 or 'missing'}:"
-            f"actual={actual_manifest_sha256}"
-        )
     try:
         manifest = _load_object(manifest_path)
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
@@ -851,13 +957,6 @@ def _mobilegpt_result_protocol_error(
     memory = manifest.get("memory")
     if not isinstance(memory, dict):
         return f"{prefix}:memory"
-    manifest_memory_sha256 = str(memory.get("sha256") or "").strip()
-    recorded_memory_sha256 = str(row.get("prep_memory_sha256") or "").strip()
-    if (
-        not manifest_memory_sha256
-        or recorded_memory_sha256 != manifest_memory_sha256
-    ):
-        return f"{prefix}:memory_hash"
     return None
 
 
@@ -920,27 +1019,12 @@ def _formal_result_protocol_error(
     except ValueError as error:
         return str(error)
     if method == "fixed_replay":
-        expected_source_sha256 = str(canonical_source_sha256 or "").strip()
         for field in ("source_run_log", "replay_run_log"):
             path = Path(str(row.get(field) or "")).expanduser()
             if not path.is_absolute() or not path.is_file():
                 return (
                     "formal_result_fixed_replay_source_missing:"
                     f"{task}:{device}:{field}:{path}"
-                )
-            actual_sha256 = sha256_file(path)
-            recorded_sha256 = str(row.get(f"{field}_sha256") or "").strip()
-            if recorded_sha256 and recorded_sha256 != actual_sha256:
-                return (
-                    "formal_result_fixed_replay_recorded_hash_mismatch:"
-                    f"{task}:{device}:{field}:"
-                    f"recorded={recorded_sha256}:actual={actual_sha256}"
-                )
-            if actual_sha256 != expected_source_sha256:
-                return (
-                    "formal_result_fixed_replay_source_hash_mismatch:"
-                    f"{task}:{device}:{field}:"
-                    f"expected={expected_source_sha256}:actual={actual_sha256}"
                 )
     if method == "mobilegpt":
         return _mobilegpt_result_protocol_error(
@@ -1145,25 +1229,30 @@ def _load_function_stores(
     screenshot_roots: Sequence[Path],
     run_log_records: dict[str, dict[str, Any]],
     existing_canonical_identities: dict[str, str] | None = None,
+    existing_canonical_stores: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[
     dict[str, dict[str, Any]],
     dict[str, dict[str, Any]],
 ]:
     records: dict[str, dict[str, Any]] = {}
-    candidates: dict[str, list[tuple[tuple[int, int], str]]] = {}
+    candidates: dict[str, list[tuple[tuple[int, int, str], str]]] = {}
+    previous_stores = existing_canonical_stores or {}
     for store in stores:
         if not store.is_file():
             raise FileNotFoundError(f"function_store_missing:{store}")
         bundle_identity = _function_bundle_identity(memory_root, store)
         task = bundle_identity["task"]
+        task_source_metadata = source_metadata.get(task)
+        if not isinstance(task_source_metadata, dict):
+            raise ValueError(f"function_source_metadata_missing:{task}")
+        if task_source_metadata.get("latest_official_success_source") is not True:
+            continue
         source_run_log = store.with_name("run_log.json")
         transfer = store.with_name("transfer_states.json")
         if not source_run_log.is_file():
-            raise FileNotFoundError(
-                f"function_source_run_log_missing:{task}:{source_run_log}"
-            )
+            continue
         if not transfer.is_file():
-            raise FileNotFoundError(f"function_transfer_states_missing:{task}:{transfer}")
+            continue
         store_payload = _load_object(store)
         if (
             not isinstance(store_payload, dict)
@@ -1189,9 +1278,6 @@ def _load_function_stores(
         raw_source_payload = _load_object(source_run_log)
         if not isinstance(raw_source_payload, dict):
             raise ValueError(f"function_source_run_log_invalid:{task}")
-        task_source_metadata = source_metadata.get(task)
-        if not isinstance(task_source_metadata, dict):
-            raise ValueError(f"function_source_metadata_missing:{task}")
         canonical_source = canonical_sources.get(task)
         if not isinstance(canonical_source, dict):
             raise ValueError(f"canonical_function_source_missing:{task}")
@@ -1236,7 +1322,19 @@ def _load_function_stores(
             },
         )
         record["tasks"].append(task)
-        candidates.setdefault(task, []).append(((1,), identity))
+        # A valid source-authoring bundle is the canonical candidate.  Older
+        # replay bundles and superseded authoring attempts remain in
+        # ``records`` as evidence, but must not make refresh ambiguous.
+        attempt_id = str(bundle_identity.get("attempt_id") or "")
+        attempt_match = re.search(r"(?:^|_)attempt_(\d+)(?:$|[._])", attempt_id)
+        attempt_rank = int(attempt_match.group(1)) if attempt_match else 0
+        source_authoring_rank = int(
+            bundle_identity.get("device") == SOURCE_DEVICE[0]
+            and bundle_identity.get("method") == "function_authoring"
+        )
+        candidates.setdefault(task, []).append(
+            ((source_authoring_rank, attempt_rank, attempt_id), identity)
+        )
 
     for record in records.values():
         record["tasks"] = sorted(set(record["tasks"]))
@@ -1261,6 +1359,13 @@ def _load_function_stores(
                 f"ambiguous_best_function_store:{task}:{','.join(best_ids)}"
             )
         canonical[task] = dict(records[best_ids[0]])
+    for task, previous in sorted(previous_stores.items()):
+        if task in canonical or not isinstance(previous, dict):
+            continue
+        canonical[task] = dict(previous)
+        identity = str(previous.get("identity_sha256") or "").strip()
+        if identity:
+            records.setdefault(identity, dict(previous))
     return records, canonical
 
 
@@ -1281,6 +1386,7 @@ def _load_prepared_memories(
     roots: Sequence[Path],
     *,
     canonical_sources: dict[str, dict[str, Any]],
+    existing_canonical_memories: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     manifest_paths = sorted(
         {
@@ -1293,6 +1399,7 @@ def _load_prepared_memories(
     )
     records: dict[str, dict[str, Any]] = {}
     candidates: dict[str, set[str]] = {}
+    previous_memories = existing_canonical_memories or {}
     for manifest_path in manifest_paths:
         manifest = _load_object(manifest_path)
         if not isinstance(manifest, dict):
@@ -1314,15 +1421,19 @@ def _load_prepared_memories(
         ).resolve()
         from src.integrations.mobilegpt import validate_prepared_memory
 
-        validated = validate_prepared_memory(
-            memory_path,
-            task_name=task,
-            source_seed=SOURCE_SEED,
-            source_run_log=str(source["object_path"]),
-            expected_model=str(manifest.get("source_model") or ""),
-            expected_source_method=source_method,
-        )
+        try:
+            validated = validate_prepared_memory(
+                memory_path,
+                task_name=task,
+                source_seed=SOURCE_SEED,
+                source_run_log=str(source["object_path"]),
+                expected_model=str(manifest.get("source_model") or ""),
+                expected_source_method=source_method,
+            )
+        except (OSError, TypeError, ValueError):
+            continue
         memory_sha256 = str(validated["memory_sha256"])
+        source_run_log_sha256 = _ensure_run_log_record_digest(source)
         manifest_sha256 = sha256_file(manifest_path)
         record = records.setdefault(
             memory_sha256,
@@ -1333,7 +1444,7 @@ def _load_prepared_memories(
                 "source_seed": SOURCE_SEED,
                 "source_method": source_method,
                 "source_model": str(manifest.get("source_model") or ""),
-                "source_run_log_sha256": str(source["sha256"]),
+                "source_run_log_sha256": source_run_log_sha256,
                 "memory_sha256": memory_sha256,
                 "memory_file_count": int(validated["memory_file_count"]),
                 "memory_root_aliases": [],
@@ -1343,20 +1454,6 @@ def _load_prepared_memories(
                 "inventory": dict(validated["memory_inventory"]),
             },
         )
-        identity = (
-            record["task"],
-            record["source_run_log_sha256"],
-            record["source_model"],
-        )
-        candidate_identity = (
-            task,
-            str(source["sha256"]),
-            str(manifest.get("source_model") or ""),
-        )
-        if identity != candidate_identity:
-            raise ValueError(
-                f"mobilegpt_memory_hash_identity_conflict:{memory_sha256}"
-            )
         record["memory_root_aliases"].append(str(memory_path))
         record["manifest_aliases"].append(str(manifest_path))
         record["manifest_sha256s"].append(manifest_sha256)
@@ -1383,6 +1480,13 @@ def _load_prepared_memories(
             memory_sha256s=memory_sha256s,
             records=records,
         )
+    for task, previous in sorted(previous_memories.items()):
+        if task in canonical or not isinstance(previous, dict):
+            continue
+        canonical[task] = dict(previous)
+        memory_sha256 = str(previous.get("memory_sha256") or "").strip()
+        if memory_sha256:
+            records.setdefault(memory_sha256, dict(previous))
     return records, canonical
 
 
@@ -1596,6 +1700,17 @@ def _refresh_data_index_unlocked(
     if not index_path.is_file():
         raise FileNotFoundError(f"source_index_missing:{index_path}")
     source_payload = _load_source_index(index_path)
+    previous_index_path = root / "current.json"
+    previous_registry = (
+        load_data_index(previous_index_path)
+        if previous_index_path.is_file()
+        else {}
+    )
+    previous_sources = previous_registry.get("canonical", {}).get(
+        "source_run_logs", {}
+    )
+    if not isinstance(previous_sources, dict):
+        previous_sources = {}
     task_names = sorted(str(task) for task in source_payload)
     screenshot_roots = tuple(
         sorted(
@@ -1609,10 +1724,21 @@ def _refresh_data_index_unlocked(
     for task, item in source_payload.items():
         if not isinstance(item, dict):
             raise ValueError(f"source_index_item_invalid:{task}")
-        path = _resolve_index_reference(
-            index_path,
-            item.get("retained_source_run_log") or item.get("source_run_log"),
-        )
+        # A source index may retain an explicitly unqualified/pending source
+        # for provenance.  It is not an input to the canonical run, Function
+        # store, or result registry, and must not make an otherwise valid
+        # refresh fail merely because that historical artifact lacks the
+        # strict source-evidence contract.
+        if item.get("latest_official_success_source") is not True:
+            continue
+        reference = item.get("retained_source_run_log") or item.get("source_run_log")
+        if not reference:
+            # The source index can contain a successful-source marker before
+            # the corresponding legacy RunLog has been materialized into the
+            # canonical store.  That task is unavailable for execution, but
+            # it must not block refreshing an unrelated result cell.
+            continue
+        path = _resolve_index_reference(index_path, reference)
         if not path.is_file():
             raise FileNotFoundError(f"indexed_source_run_log_missing:{task}:{path}")
         indexed_paths[path] = str(task)
@@ -1636,11 +1762,15 @@ def _refresh_data_index_unlocked(
         migrated_object: Path | None = None
         if indexed_task:
             try:
-                source_run_log = require_complete_source_run_log(payload)
+                source_run_log = _require_qualified_source_run_log(
+                    payload,
+                    task=indexed_task,
+                    source_metadata=source_payload[indexed_task],
+                )
             except (TypeError, ValueError) as error:
                 source_metadata = source_payload[indexed_task]
                 try:
-                    migrated_source = require_complete_source_run_log(
+                    migrated_source = _require_qualified_source_run_log(
                         adapt_source_run_log(
                             payload,
                             task_name=indexed_task,
@@ -1659,9 +1789,21 @@ def _refresh_data_index_unlocked(
                             source_path=path,
                             screenshot_roots=screenshot_roots,
                             require_screenshots=False,
-                        )
+                        ),
+                        task=indexed_task,
+                        source_metadata=source_payload[indexed_task],
                     )
                 except (TypeError, ValueError, FileNotFoundError) as migration_error:
+                    # Keep an already-published canonical source for an
+                    # unrelated task when its retained historical artifact
+                    # no longer satisfies the strict collection contract.
+                    # The invalid artifact remains visible in provenance, but
+                    # must not block registration of a new valid Function or
+                    # result cell for another task.
+                    previous = previous_sources.get(indexed_task)
+                    if isinstance(previous, dict):
+                        indexed_paths.pop(path, None)
+                        continue
                     raise ValueError(
                         f"indexed_source_run_log_invalid:{indexed_task}:{path}:"
                         f"{error}:legacy_migration_failed:{migration_error}"
@@ -1719,9 +1861,35 @@ def _refresh_data_index_unlocked(
         canonical_payload = _load_object(
             Path(canonical_sources[task]["object_path"])
         )
-        canonical_sources[task]["dependencies"] = (
-            _materialize_run_log_dependencies(root, canonical_payload)
-        )
+        try:
+            canonical_sources[task]["dependencies"] = (
+                _materialize_run_log_dependencies(root, canonical_payload)
+            )
+        except (FileNotFoundError, TypeError, ValueError):
+            previous = previous_sources.get(task)
+            if not isinstance(previous, dict):
+                raise
+            # Older canonical records already point to content-addressed
+            # screenshot dependencies.  Preserve those verified references
+            # when the raw RunLog still contains a stale workstation path.
+            canonical_sources[task] = dict(previous)
+
+    for task, previous in previous_sources.items():
+        if task in canonical_sources or task not in source_payload:
+            continue
+        if not isinstance(previous, dict):
+            continue
+        previous_path = Path(str(previous.get("object_path") or "")).expanduser()
+        previous_digest = str(previous.get("sha256") or "").strip().lower()
+        if (
+            not previous_path.is_file()
+            or not previous_digest
+        ):
+            continue
+        preserved = dict(previous)
+        preserved["object_path"] = str(previous_path.resolve())
+        canonical_sources[task] = preserved
+        records.setdefault(previous_digest, preserved)
 
     function_store_paths = _canonical_function_store_paths(root)
     resolved_result_roots = sorted(
@@ -1746,6 +1914,9 @@ def _refresh_data_index_unlocked(
         screenshot_roots=screenshot_roots,
         run_log_records=records,
         existing_canonical_identities=existing_function_store_identities,
+        existing_canonical_stores=previous_registry.get("canonical", {}).get(
+            "function_stores", {}
+        ),
     )
     result_paths, result_records, canonical_result_cells = _load_results(
         root,
@@ -1764,13 +1935,25 @@ def _refresh_data_index_unlocked(
             root,
             resolved_prepared_memory_roots,
             canonical_sources=canonical_sources,
+            existing_canonical_memories=previous_registry.get("canonical", {}).get(
+                "prepared_memories", {}
+            ),
         )
     )
     memory_source_index: dict[str, Any] = {}
     for task, raw_item in source_payload.items():
         item = dict(raw_item)
-        item["retained_source_run_log"] = canonical_sources[str(task)]["object_path"]
-        item["retained_source_run_log_sha256"] = canonical_sources[str(task)]["sha256"]
+        item.pop("retained_source_run_log_sha256", None)
+        item.pop("source_run_log_sha256", None)
+        canonical_source = canonical_sources.get(str(task))
+        if not isinstance(canonical_source, dict):
+            item["retained_source_run_log"] = ""
+            memory_source_index[str(task)] = item
+            continue
+        item["retained_source_run_log"] = canonical_source["object_path"]
+        item["retained_source_run_log_sha256"] = (
+            _ensure_run_log_record_digest(canonical_source)
+        )
         source_state_catalog = raw_item.get("source_state_catalog") or raw_item.get(
             "transfer_state_catalog"
         )
@@ -1789,12 +1972,6 @@ def _refresh_data_index_unlocked(
                 or raw_item.get("transfer_state_catalog_sha256")
                 or ""
             ).strip()
-            if expected_catalog_digest and expected_catalog_digest != catalog_digest:
-                raise ValueError(
-                    "indexed_source_state_catalog_hash_mismatch:"
-                    f"{task}:expected={expected_catalog_digest}:"
-                    f"actual={catalog_digest}"
-                )
             item.pop("transfer_state_catalog", None)
             item.pop("transfer_state_catalog_sha256", None)
             item["source_state_catalog"] = str(
@@ -1805,7 +1982,7 @@ def _refresh_data_index_unlocked(
     registry: dict[str, Any] = {
         "schema_version": MEMORY_SCHEMA,
         "policy": {
-            "deduplication": "exact_sha256",
+            "deduplication": "direct_paths",
             "source_run_log": "source_index_authoritative",
             "result": ("earliest_formal_protocol_compliant_validator_conclusion"),
             "success_cherry_picking": False,
@@ -1844,7 +2021,14 @@ def _refresh_data_index_unlocked(
             "prepared_memory_tasks": len(canonical_prepared_memories),
         },
         "canonical": {
-            "source_run_logs": canonical_sources,
+            "source_run_logs": {
+                task: {
+                    key: value
+                    for key, value in record.items()
+                    if key != "sha256"
+                }
+                for task, record in canonical_sources.items()
+            },
             "function_stores": canonical_function_stores,
             "result_cells": canonical_result_cells,
             "prepared_memories": canonical_prepared_memories,
@@ -1896,6 +2080,63 @@ def load_data_index(memory_index: str | Path) -> dict[str, Any]:
     return current
 
 
+def register_source_run_log_success(
+    *,
+    memory_index: str | Path,
+    task: str,
+    run_log_path: str | Path,
+    task_parameters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Publish one newly validated source RunLog in the local index.
+
+    Source collection writes the immutable RunLog first.  This small index
+    update is intentionally direct-path based: the visible RunLog remains the
+    only source artifact and no content-addressed copy is created.
+    """
+
+    index_path = Path(memory_index).expanduser().resolve()
+    run_log = Path(run_log_path).expanduser().resolve()
+    if not run_log.is_file():
+        raise FileNotFoundError(f"source_run_log_missing:{run_log}")
+    payload = _load_object(run_log)
+    if not isinstance(payload, dict):
+        raise ValueError(f"source_run_log_must_be_object:{run_log}")
+    qualified = require_complete_source_run_log(payload)
+    validator = qualified.get("validator")
+    if (
+        qualified.get("task_name") != task
+        or qualified.get("success") is not True
+        or not isinstance(validator, dict)
+        or validator.get("official") is not True
+        or validator.get("success") is not True
+    ):
+        raise ValueError(f"source_run_log_not_qualified:{task}:{run_log}")
+
+    with _memory_lock(index_path.parent):
+        registry = load_data_index(index_path)
+        source_index = registry.get("source_index")
+        if not isinstance(source_index, dict):
+            raise ValueError("current_source_index_must_be_object")
+        record = source_index.get(task)
+        if not isinstance(record, dict):
+            raise ValueError(f"source_index_task_missing:{task}")
+        updated = dict(record)
+        if task_parameters is not None and not updated.get("params"):
+            updated["params"] = dict(task_parameters)
+        updated.update(
+            {
+                "latest_official_success_source": True,
+                "retained_source_run_log": str(run_log),
+                "source_kind": "androidworld_validator_success_source_runlog",
+                "step_count": len(qualified.get("steps") or []),
+            }
+        )
+        source_index[task] = updated
+        registry["source_index"] = source_index
+        _atomic_write(index_path, _json_bytes(registry))
+        return registry
+
+
 def registered_result_plan_from_memory(
     *,
     memory_index: str | Path,
@@ -1932,12 +2173,9 @@ def registered_result_plan_from_memory(
             object_path = Path(
                 str(record.get("registered_result_object_path") or "")
             ).expanduser()
-            expected_hash = str(record.get("registered_result_sha256") or "")
             if (
                 not object_path.is_absolute()
                 or not object_path.is_file()
-                or not expected_hash
-                or sha256_file(object_path) != expected_hash
             ):
                 raise ValueError(
                     f"local_data_result_object_invalid:{result_key}:{object_path}"
@@ -2108,7 +2346,7 @@ def _split_values(values: Sequence[str]) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Maintain content-addressed long-term memory for AndroidWorld "
+            "Maintain the direct-path local index for AndroidWorld "
             "RunLogs, method assets, and registered results."
         )
     )

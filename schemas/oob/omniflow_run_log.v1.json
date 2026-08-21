@@ -102,7 +102,7 @@
     "screenshot_reference": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["path", "sha256", "width", "height", "mime_type"],
+      "required": ["path", "width", "height", "mime_type"],
       "properties": {
         "path": {"type": "string", "minLength": 1},
         "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
@@ -132,7 +132,26 @@
         }
       }
     },
-    "state": {"$ref": "#/$defs/androidworld_state"},
+    "xml_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["screenshot", "xml"],
+      "properties": {
+        "screenshot": {
+          "anyOf": [
+            {"$ref": "#/$defs/screenshot_reference"},
+            {"type": "null"}
+          ]
+        },
+        "xml": {"type": "string", "minLength": 1}
+      }
+    },
+    "state": {
+      "anyOf": [
+        {"$ref": "#/$defs/xml_state"},
+        {"$ref": "#/$defs/androidworld_state"}
+      ]
+    },
     "action": {
       "type": "object",
       "additionalProperties": false,

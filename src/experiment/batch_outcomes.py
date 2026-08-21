@@ -187,6 +187,10 @@ def record_result_outcome(
     official_validator_coverage_rate: float = 0.0,
     actions_executed: int = 0,
     episode_duration_sec: float = 0.0,
+    model_calls: int | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+    total_tokens: int | None = None,
 ) -> Path:
     """Write one immutable non-validator result conclusion."""
 
@@ -239,6 +243,18 @@ def record_result_outcome(
         "artifact_root": str(artifact_path) if artifact_path is not None else "",
     }
     payload.update(metrics)
+    # Native AndroidWorld/OmniFlow runs do not emit the external methods'
+    # stats.jsonl files. Preserve artifact metrics, but allow the scheduler's
+    # published result row to provide canonical episode accounting.
+    explicit_metrics = {
+        "model_calls": model_calls,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
+    for key, value in explicit_metrics.items():
+        if value is not None:
+            payload[key] = int(value or 0)
     if actions_executed:
         payload["actions_executed"] = int(actions_executed)
     if episode_duration_sec:
@@ -328,6 +344,56 @@ def _registered_result_rows(memory_index: Path) -> dict[str, dict[str, Any]]:
         if len(candidates) == 1:
             rows[str(key)] = candidates[0]
     return rows
+
+
+def _registered_result_rows_from_registry(
+    registry_root: Path,
+) -> dict[str, dict[str, Any]]:
+    """Read the immutable registry when current.json has not been refreshed.
+
+    The scheduler may legitimately reuse a registered result before the local
+    runtime index is rebuilt.  Reports must still converge on the same public
+    cell conclusion instead of showing that reused cell as pending.
+    """
+
+    rows: dict[str, tuple[int, dict[str, Any]]] = {}
+    if not registry_root.is_dir():
+        return {}
+    for path in sorted(registry_root.rglob("registered_result.json")):
+        registered = _json_object(path)
+        task_name = str(registered.get("task_name") or "").strip()
+        source_seed = registered.get("source_seed")
+        evaluation_seed = registered.get("evaluation_seed")
+        candidates = [
+            row
+            for row in registered.get("details") or registered.get("rows") or []
+            if isinstance(row, dict)
+        ]
+        if not candidates:
+            continue
+        row = next(
+            (
+                candidate
+                for candidate in candidates
+                if str(candidate.get("task_name") or task_name) == task_name
+            ),
+            candidates[0],
+        )
+        method = str(row.get("method") or "").strip()
+        device = str(row.get("device") or "").strip()
+        if not task_name or not method or not device:
+            continue
+        row_source_seed = row.get("source_seed", source_seed)
+        row_evaluation_seed = row.get("evaluation_seed", evaluation_seed)
+        key = "|".join(
+            (task_name, method, device, str(row_source_seed), str(row_evaluation_seed))
+        )
+        match = re.search(r"attempt_(\d+)", str(path))
+        attempt_number = int(match.group(1)) if match else -1
+        existing = rows.get(key)
+        if existing is None or attempt_number >= existing[0]:
+            rows[key] = (attempt_number, row)
+    return {key: row for key, (_, row) in rows.items()}
 
 
 def _outcome_rows(
@@ -529,6 +595,9 @@ def summarize_results(
 
     memory_path = Path(memory_index).expanduser().resolve()
     registered = _registered_result_rows(memory_path)
+    registry_root = memory_path.parent / "androidworld" / ".archive" / "result_registry"
+    for key, row in _registered_result_rows_from_registry(registry_root).items():
+        registered.setdefault(key, row)
     outcomes = _outcome_rows(
         Path(outcomes_root).expanduser().resolve(),
         attempt_id=attempt_id,
@@ -600,6 +669,8 @@ def summarize_results(
                     counts["pending"] += 1
                 rows.append(row)
     model_calls = sum(int(row["model_calls"]) for row in rows)
+    prompt_tokens = sum(int(row["prompt_tokens"]) for row in rows)
+    completion_tokens = sum(int(row["completion_tokens"]) for row in rows)
     total_tokens = sum(int(row["total_tokens"]) for row in rows)
     summary = {
         "schema_version": "omniflow.androidworld.result-summary.v1",
@@ -608,6 +679,8 @@ def summarize_results(
         "evaluation_seed": int(evaluation_seed),
         "counts": counts,
         "model_calls": model_calls,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
         "episode_duration_sec": round(
             sum(_number(row["episode_duration_sec"]) for row in rows), 6

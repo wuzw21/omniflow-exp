@@ -550,7 +550,6 @@ def test_explicit_converter_records_screenshot_reference(tmp_path: Path) -> None
 
     assert converted["steps"][0]["observation"]["pixels"] == {
         "path": str(screenshot.resolve()),
-        "sha256": __import__("hashlib").sha256(screenshot.read_bytes()).hexdigest(),
         "width": 32,
         "height": 48,
         "mime_type": "image/png",
@@ -604,12 +603,10 @@ def test_explicit_converter_aligns_nested_relative_screenshot_metadata(
         screenshot_roots=(tmp_path,),
     )
 
-    assert converted["steps"][0]["observation"]["pixels"]["path"] == str(
+    assert converted["steps"][0]["observation"]["screenshot"]["path"] == str(
         screenshot.resolve()
     )
-    assert converted["steps"][0]["observation"]["auxiliaries"]["state_id"] == (
-        "state-before"
-    )
+    assert set(converted["steps"][0]["observation"]) == {"screenshot", "xml"}
 
 
 def test_source_adapter_keeps_official_xml_and_screenshot_reference(
@@ -648,7 +645,9 @@ def test_source_adapter_keeps_official_xml_and_screenshot_reference(
         screenshot_roots=(),
     )
 
-    assert adapted == run_log
+    expected = json.loads(json.dumps(run_log))
+    expected["steps"][0]["observation"]["pixels"].pop("sha256")
+    assert adapted == expected
 
 
 def test_source_adapter_normalizes_native_xml_and_screenshot_aliases(
@@ -686,10 +685,9 @@ def test_source_adapter_normalizes_native_xml_and_screenshot_aliases(
     )
 
     observation = adapted["steps"][0]["observation"]
-    assert observation["forest"] == '<hierarchy><node text="Open" /></hierarchy>'
-    assert observation["pixels"] == {
+    assert observation["xml"] == '<hierarchy><node text="Open" /></hierarchy>'
+    assert observation["screenshot"] == {
         "path": str(screenshot.resolve()),
-        "sha256": __import__("hashlib").sha256(screenshot.read_bytes()).hexdigest(),
         "width": 32,
         "height": 48,
         "mime_type": "image/png",
@@ -728,6 +726,102 @@ def test_source_adapter_converts_legacy_log_with_current_schema_name(
 
     assert adapted["task_name"] == "LegacyTask"
     assert adapted["steps"][0]["action"] == {"action_type": "wait"}
+
+
+def test_source_adapter_reads_top_level_native_action_arguments(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "top-level-native-actions.run_log.json"
+    payload = {
+        "schema_version": "omniflow.run_log.v1",
+        "run_id": "top-level-native-actions",
+        "goal": "Scroll, tap, and wait.",
+        "success": True,
+        "steps": [
+            {
+                "observation_before_act": {"width": 720, "height": 1280},
+                "action": {
+                    "action_type": "swipe_xy",
+                    "start_xy": [350, 1000],
+                    "end_xy": [350, 400],
+                    "duration_ms": 500,
+                },
+            },
+            {
+                "observation_before_act": {"width": 720, "height": 1280},
+                "action": {"action_type": "click", "x": 240, "y": 640},
+            },
+            {
+                "observation_before_act": {"width": 720, "height": 1280},
+                "action": {"action_type": "wait", "duration": 3},
+            },
+        ],
+    }
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    adapted = adapt_source_run_log(
+        payload,
+        task_name="NativeArgumentTask",
+        task_parameters={},
+        seed=111,
+        source_path=source,
+        require_screenshots=False,
+    )
+
+    assert [step["action"] for step in adapted["steps"]] == [
+        {"action_type": "scroll", "direction": "down"},
+        {"action_type": "click", "x": 240, "y": 640},
+        {"action_type": "wait"},
+        {"action_type": "wait"},
+        {"action_type": "wait"},
+    ]
+    assert adapted["steps"][0]["metadata"]["legacy_action"] == {
+        "action_type": "swipe_xy",
+        "start_xy": [350, 1000],
+        "end_xy": [350, 400],
+        "duration_ms": 500,
+    }
+
+
+def test_source_adapter_repairs_canonical_shaped_legacy_swipe_alias(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "canonical-shaped-swipe-alias.run_log.json"
+    observation = androidworld_state("before", width=720, height=1280)
+    next_observation = androidworld_state("after", width=720, height=1280)
+    next_observation["forest"] = (
+        '<hierarchy><node text="after" bounds="[0,0][720,1280]" /></hierarchy>'
+    )
+    payload = androidworld_run_log(
+        [{"action_type": "wait"}],
+        observations=[observation],
+        task_name="LegacySwipeAliasTask",
+    )
+    payload["steps"][0]["action"] = {
+        "action_type": "swipe_xy",
+        "start_xy": [350, 1000],
+        "end_xy": [350, 400],
+        "duration_ms": 500,
+    }
+    payload["steps"][0]["next_observation"] = next_observation
+    payload["final_observation"] = next_observation
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    adapted = adapt_source_run_log(
+        payload,
+        task_name="LegacySwipeAliasTask",
+        task_parameters={},
+        seed=111,
+        source_path=source,
+        require_screenshots=False,
+    )
+
+    assert adapted["steps"][0]["action"] == {
+        "action_type": "scroll",
+        "direction": "down",
+    }
+    assert 'text="after"' in adapted["steps"][0]["next_observation"]["forest"]
+    assert 'text="after"' in adapted["final_observation"]["forest"]
 
 
 def test_legacy_start_activity_uses_following_observation_package(

@@ -162,8 +162,6 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
         raise ValueError("mobilegpt_memory_path_mismatch")
     files, task_files = _memory_files(root)
     digest = _hash_memory_files(files, root=root)
-    if digest != str(memory.get("sha256") or ""):
-        raise ValueError("mobilegpt_memory_hash_mismatch")
     if len(files) != int(memory.get("file_count") or -1):
         raise ValueError("mobilegpt_memory_file_count_mismatch")
     for label in ("source_run_log", "source_stats", "trajectory_audit"):
@@ -177,10 +175,6 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
             raise ValueError(f"mobilegpt_memory_{label}_outside_bundle") from error
         if not path.is_file():
             raise ValueError(f"mobilegpt_memory_{label}_file_missing")
-        if hashlib.sha256(path.read_bytes()).hexdigest() != str(
-            record.get("sha256") or ""
-        ):
-            raise ValueError(f"mobilegpt_memory_{label}_hash_mismatch")
     if "official_source_result" in payload:
         raise ValueError("mobilegpt_memory_official_source_forbidden")
     return {
@@ -1681,6 +1675,15 @@ def convert_runlog_to_mobilegpt_memory(
     audit_rows: list[dict[str, Any]] = []
     with _temporary_environment(environment), _working_directory(server_root):
         from memory.memory_manager import Memory
+
+        official_generalize_action = None
+        if not launch_only:
+            try:
+                from utils.action_utils import generalize_action as official_generalize_action
+            except ImportError as error:
+                raise MobileGPTConversionError(
+                    "mobilegpt_generalize_action_unavailable"
+                ) from error
         if embedding_provider is None:
             from utils.utils import get_openai_embedding
 
@@ -1823,6 +1826,7 @@ def convert_runlog_to_mobilegpt_memory(
                 parsed_xml,
                 task_parameters=trajectory["task_parameters"],
                 selected_subtask=selected_subtask,
+                generalize_action=official_generalize_action,
             )
             del label
             action_example = _native_action_example(

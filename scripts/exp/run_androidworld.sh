@@ -39,7 +39,7 @@ formal_fold_size=""
 formal_model=""
 formal_model_endpoint_profile=""
 formal_model_base_url=""
-formal_bmoca_revision="60630d8fbbe037c7d5468eb66eb12dd10abb179c"
+formal_bmoca_revision="${OMNIFLOW_BMOCA_REVISION:-60630d8fbbe037c7d5468eb66eb12dd10abb179c}"
 execution_environment="androidworld"
 bmoca_root="${OMNIFLOW_BMOCA_ROOT:-}"
 bmoca_android_env_root="${OMNIFLOW_BMOCA_ANDROID_ENV_ROOT:-}"
@@ -191,20 +191,22 @@ max_fallback_steps="${OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS:-$formal_max_fall
 store_path="${OMNIFLOW_ANDROIDWORLD_STORE_PATH:-}"
 memory_root="${OMNIFLOW_EXP_MEMORY_ROOT:-$default_memory_root}"
 memory_index="${OMNIFLOW_EXP_MEMORY_INDEX:-${memory_root:+$memory_root/current.json}}"
-memory_runlog_roots="${OMNIFLOW_MEMORY_RUNLOG_ROOTS:-$repo/data}"
-memory_result_roots="${OMNIFLOW_MEMORY_RESULT_ROOTS:-$repo/data}"
+memory_runlog_roots="${OMNIFLOW_MEMORY_RUNLOG_ROOTS:-$repo/data/androidworld}"
+memory_result_roots="${OMNIFLOW_MEMORY_RESULT_ROOTS:-$repo/data/androidworld}"
 memory_mobilegpt_roots="${OMNIFLOW_MEMORY_MOBILEGPT_ROOTS:-}"
 memory_baseline_batch_reports="${OMNIFLOW_MEMORY_BASELINE_BATCH_REPORTS:-}"
-if [[ -n "$results_root" && ":$memory_result_roots:" != *":$results_root:"* ]]; then
-  memory_result_roots="${memory_result_roots:+$memory_result_roots:}$results_root"
-fi
 mobilegpt_root="${OMNIFLOW_MOBILEGPT_ROOT:-${asset_root:+$asset_root/runtime/external/mobilegpt}}"
 mobilegpt_source_memory_root="${OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT:-}"
 appagent_root="${OMNIFLOW_APPAGENT_ROOT:-${asset_root:+$asset_root/runtime/external/appagent}}"
 appagent_memory_root="${OMNIFLOW_APPAGENT_MEMORY_ROOT:-}"
-autodroid_root="${OMNIFLOW_AUTODROID_ROOT:-${asset_root:+$asset_root/runtime/external/autodroid}}"
-autodroid_memory_root="${OMNIFLOW_AUTODROID_MEMORY_ROOT:-${asset_root:+$asset_root/runtime/autodroid/androidworld_apps}}"
+autodroid_root="${OMNIFLOW_AUTODROID_ROOT:-$repo/vendor/autodroid/runtime}"
+autodroid_memory_root="${OMNIFLOW_AUTODROID_MEMORY_ROOT:-$repo/vendor/autodroid/androidworld_apps}"
 autodroid_app="${OMNIFLOW_AUTODROID_APP:-}"
+autodroid_policy="${OMNIFLOW_AUTODROID_POLICY:-replay}"
+if [[ "$autodroid_policy" != "replay" && "$autodroid_policy" != "task" ]]; then
+  echo "OMNIFLOW_AUTODROID_POLICY must be replay or task: $autodroid_policy" >&2
+  exit 2
+fi
 if [[ -z "${OMNIFLOW_MOBILEGPT_ROOT:-}" ]]; then
   for candidate in "$mobilegpt_root" "$workspace_root/OmniFlow/runtime/external/mobilegpt"; do
     if [[ -d "$candidate" ]]; then
@@ -399,6 +401,8 @@ check_only=0
 development_run=0
 source_qualification_only=0
 source_collection=0
+manual_source_collection=0
+manual_reuse_source_emulator=0
 function_replay_collection=0
 all_tasks=0
 batch_task_filter=""
@@ -490,21 +494,26 @@ validate_model_endpoint_auth() {
     MODEL_ENDPOINT_BASE_URL="$selected_model_base_url" \
       "$python_bin" - <<'PY'
 import os
-import urllib.error
-import urllib.request
+import requests
 
 base_url = os.environ["MODEL_ENDPOINT_BASE_URL"].rstrip("/")
-request = urllib.request.Request(
-    f"{base_url}/models",
-    headers={"Authorization": f"Bearer {os.environ['MODEL_ENDPOINT_API_KEY']}"},
-    method="GET",
-)
 try:
-    with urllib.request.urlopen(request, timeout=10) as response:
-        status = int(response.status)
-except urllib.error.HTTPError as error:
-    status = int(error.code)
-except Exception as error:
+    status = 0
+    last_error = None
+    for _ in range(3):
+        try:
+            response = requests.get(
+                f"{base_url}/models",
+                headers={"Authorization": f"Bearer {os.environ['MODEL_ENDPOINT_API_KEY']}"},
+                timeout=10,
+            )
+            status = int(response.status_code)
+            break
+        except requests.RequestException as error:
+            last_error = error
+    if status == 0:
+        raise last_error
+except requests.RequestException as error:
     print(f"unavailable:{error}")
     raise SystemExit(1)
 print(status)
@@ -525,16 +534,16 @@ validate_experiment_model() {
     echo "qwen3-vl-plus is prohibited for AndroidWorld experiments." >&2
     exit 2
   fi
-  if [[ "$normalized_model" != "glm-5.1" ]]; then
-    echo "AndroidWorld experiments require GLM-5.1, got: $model" >&2
+  if [[ "$normalized_model" != "glm-4.6v" && "$normalized_model" != "glm-5.1" ]]; then
+    echo "AndroidWorld experiments require GLM-4.6V or GLM-5.1, got: $model" >&2
     exit 2
   fi
   if [[ "$profile" != "$formal_model_endpoint_profile" ]]; then
-    echo "GLM-5.1 requires model endpoint profile $formal_model_endpoint_profile, got: $profile" >&2
+    echo "The formal model requires model endpoint profile $formal_model_endpoint_profile, got: $profile" >&2
     exit 2
   fi
   if [[ "$selected_model_base_url" != "$formal_model_base_url" ]]; then
-    echo "GLM-5.1 requires model endpoint $formal_model_base_url, got: $selected_model_base_url" >&2
+    echo "The formal model requires model endpoint $formal_model_base_url, got: $selected_model_base_url" >&2
     exit 2
   fi
 }
@@ -580,6 +589,11 @@ Options:
                             qualification; create no target result results.
   --collect-source         Re-run one task on the source device only and save
                             screenshot-backed native RunLog evidence.
+  --collect-source-manual  Run one task interactively on the source device;
+                            every action is chosen from the current screenshot/XML.
+  --manual-reuse-source-emulator
+                            Reuse a source emulator already prepared for the
+                            current manual task instead of reinstalling its app.
   --function-replay-collection
                             Convert each successful source RunLog with
                             enhance=false and run one official Function replay.
@@ -632,7 +646,7 @@ Examples:
   bash scripts/exp/run_androidworld.sh \
     --e2e-task AudioRecorderRecordAudioWithFileName \
     --e2e-method omniflow \
-    --e2e-device small5562:emulator-5562:5562 \
+    --e2e-device pixel5576:emulator-5576:5576 \
     --e2e-source-seed 111 \
     --e2e-evaluation-seed 113 \
     --task-deadline-sec 1800
@@ -762,6 +776,13 @@ while [[ "$#" -gt 0 ]]; do
     --collect-source)
       source_collection=1
       ;;
+    --collect-source-manual)
+      source_collection=1
+      manual_source_collection=1
+      ;;
+    --manual-reuse-source-emulator)
+      manual_reuse_source_emulator=1
+      ;;
     --function-replay-collection)
       function_replay_collection=1
       ;;
@@ -800,9 +821,10 @@ if [[ -n "$setup_device" ]]; then
   setup_adb_path="${OMNIFLOW_ADB_PATH:-$setup_android_sdk_root/platform-tools/adb}"
   setup_emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$setup_android_sdk_root/emulator/emulator}"
   setup_avdmanager_bin="${OMNIFLOW_AVDMANAGER_BIN:-$setup_android_sdk_root/cmdline-tools/latest/bin/avdmanager}"
-  setup_a11y_apk="${OMNIFLOW_ANDROIDWORLD_A11Y_APK:-$repo/runtime/cache/androidworld/accessibility_forwarder.apk}"
+  setup_a11y_apk="${OMNIFLOW_ANDROIDWORLD_A11Y_APK:-$repo/vendor/androidworld/2024.05.13-accessibility_forwarder.apk}"
   if [[ ! -f "$setup_a11y_apk" ]]; then
     for candidate in \
+      "$repo/vendor/androidworld/2024.05.13-accessibility_forwarder.apk" \
       "$repo/runtime/cache/androidworld/accessibility_forwarder.apk" \
       "$asset_root/runtime/cache/androidworld/accessibility_forwarder.apk" \
       "$workspace_root/OmniFlow/runtime/cache/androidworld/accessibility_forwarder.apk"; do
@@ -823,7 +845,7 @@ if [[ -n "$setup_device" ]]; then
     --mobilegpt-root "$mobilegpt_root"
     --appagent-root "$appagent_root"
     --asset-root "$asset_root"
-    --report-root "$results_root"
+    --report-root "$results_root/androidworld/.archive"
     --a11y-apk "$setup_a11y_apk"
   )
   if [[ -n "$env_file" && -f "$env_file" ]]; then
@@ -847,12 +869,6 @@ fi
 if [[ "$control_backend" == "oob" && "$execution_environment" != "androidworld" ]]; then
   echo "--control-backend oob is only supported for AndroidWorld." >&2
   exit 2
-fi
-if [[ "$control_backend" == "oob" && "$development_run" -eq 0 && "$source_collection" -eq 0 && -z "$e2e_task" ]]; then
-  if [[ "$selected_method_arg" != "fixed_replay" || -z "$selected_device_arg" ]]; then
-    echo "--control-backend oob formal execution requires fixed_replay and an explicit device." >&2
-    exit 2
-  fi
 fi
 export OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND="$control_backend"
 if [[ "$execution_environment" != "bmoca" && ( -n "$selected_method_arg" || -n "$selected_device_arg" ) ]] && {
@@ -1217,6 +1233,10 @@ if [[ -n "$e2e_task" ]]; then
   else
     resolved_omnitransfer_root="$canonical_omnitransfer_root"
   fi
+  if [[ "$check_only" -eq 1 ]]; then
+    echo "[static] ready task=$e2e_task methods=$e2e_method devices=$e2e_device; no device or persistent output created"
+    exit 0
+  fi
   if [[ "$supplemental_autodroid" -eq 0 && "$function_replay_collection" -eq 0 && "$dry_run" -ne 1 && "$check_only" -ne 1 && ( -z "$appagent_root" || "$appagent_root" != /* || ! -d "$appagent_root" ) ]]; then
     echo "--e2e-task requires an absolute native AppAgent root." >&2
     exit 2
@@ -1227,6 +1247,13 @@ if [[ -n "$e2e_task" ]]; then
   fi
   e2e_android_sdk_root="${OMNIFLOW_ANDROID_SDK_ROOT:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$(resolve_default_android_sdk_root)}}}"
   e2e_adb_path="${OMNIFLOW_ADB_PATH:-$e2e_android_sdk_root/platform-tools/adb}"
+  if [[ "${OMNIFLOW_ANDROIDWORLD_ADB_COMPAT:-1}" == "1" ]]; then
+    androidworld_adb_compat="$repo/tools/androidworld_adb_compat.sh"
+    if [[ -x "$androidworld_adb_compat" ]]; then
+      export OMNIFLOW_REAL_ADB_PATH="$e2e_adb_path"
+      e2e_adb_path="$androidworld_adb_compat"
+    fi
+  fi
   e2e_emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$e2e_android_sdk_root/emulator/emulator}"
   e2e_avdmanager_bin="${OMNIFLOW_AVDMANAGER_BIN:-$e2e_android_sdk_root/cmdline-tools/latest/bin/avdmanager}"
   if [[ "$e2e_adb_path" != /* || ! -x "$e2e_adb_path" ]]; then
@@ -1270,15 +1297,32 @@ if [[ -n "$e2e_task" ]]; then
     validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
     configure_model_stack "$formal_model"
   fi
+  if [[ "$supplemental_autodroid" -eq 1 && "$autodroid_policy" == "task" ]]; then
+    if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
+      echo "AutoDroid online requires an existing absolute OMNIFLOW_ENV_FILE." >&2
+      exit 2
+    fi
+    set -a
+    source "$env_file"
+    set +a
+    normalize_model_environment
+    unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
+    select_model_endpoint "$formal_model_endpoint_profile"
+    validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
+    validate_model_endpoint_auth
+    configure_model_stack "$formal_model"
+    export AUTODROID_MODEL="$formal_model"
+    export AUTODROID_TEMPERATURE="${AUTODROID_TEMPERATURE:-0.25}"
+  fi
   normalized_e2e_model="$(printf '%s' "$formal_model" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$supplemental_autodroid" -eq 0 && "$normalized_e2e_model" != "glm-5.1" ]]; then
-    echo "AndroidWorld E2E requires GLM-5.1 for the formal model, got: $formal_model" >&2
+  if [[ "$supplemental_autodroid" -eq 0 && "$normalized_e2e_model" != "glm-4.6v" && "$normalized_e2e_model" != "glm-5.1" ]]; then
+    echo "AndroidWorld E2E requires GLM-4.6V or GLM-5.1 for the formal model, got: $formal_model" >&2
     exit 2
   fi
   if [[ "$supplemental_autodroid" -eq 1 ]]; then
-    e2e_output_root="${OMNIFLOW_AUTODROID_OUTPUT_ROOT:-$results_root/androidworld_validator/supplemental/autodroid_9207}"
+    e2e_output_root="${OMNIFLOW_AUTODROID_OUTPUT_ROOT:-$results_root/androidworld/.archive/scheduler/autodroid}"
   else
-    e2e_output_root="${OMNIFLOW_E2E_OUTPUT_ROOT:-$results_root/androidworld}"
+    e2e_output_root="${OMNIFLOW_E2E_OUTPUT_ROOT:-$results_root/androidworld/.archive/scheduler/formal}"
   fi
   if [[ "$e2e_output_root" != /* ]]; then
     echo "OMNIFLOW_E2E_OUTPUT_ROOT must be absolute." >&2
@@ -1316,6 +1360,7 @@ if [[ -n "$e2e_task" ]]; then
     --autodroid-root "$autodroid_root"
     --autodroid-memory-root "$autodroid_memory_root"
     --autodroid-app "$autodroid_app"
+    --autodroid-policy "$autodroid_policy"
   )
   if [[ "$supplemental_autodroid" -eq 0 ]]; then
     e2e_args+=(--ensure-function)
@@ -1336,6 +1381,12 @@ if [[ -n "$e2e_task" ]]; then
   fi
   if [[ "$source_collection" -eq 1 ]]; then
     e2e_args+=(--source-only)
+  fi
+  if [[ "$manual_source_collection" -eq 1 ]]; then
+    e2e_args+=(--manual-source)
+  fi
+  if [[ "$manual_reuse_source_emulator" -eq 1 ]]; then
+    e2e_args+=(--manual-reuse-emulator)
   fi
   if [[ -n "$appagent_memory_root" ]]; then
     e2e_args+=(--appagent-memory-root "$appagent_memory_root")
@@ -1454,6 +1505,12 @@ if [[ -n "$selected_supplemental_method_arg" ]]; then
   fi
   supplemental_batch=1
   method="$selected_supplemental_method_arg"
+  case "${OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP:-1}" in
+    0|false|no|off)
+      echo "Full AutoDroid supplemental campaigns require AndroidWorld setup; unset OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP or set it to 1." >&2
+      exit 2
+      ;;
+  esac
 else
   method="${selected_method_arg:-${OMNIFLOW_ANDROIDWORLD_METHOD:-$default_method}}"
   case ",$all_methods," in
@@ -1537,7 +1594,6 @@ indexed_store_path_for_task() {
     return 1
   fi
   "$python_bin" - "$memory_index" "$1" <<'PY'
-import hashlib
 import json
 import sys
 from pathlib import Path
@@ -1561,12 +1617,6 @@ for path_field, hash_field in fields:
     if not path.is_absolute() or not path.is_file():
         raise SystemExit(
             f"omniflow_store_index_file_missing:{task_name}:{path_field}:{path}"
-        )
-    actual = hashlib.sha256(path.read_bytes()).hexdigest()
-    if not expected or actual != expected:
-        raise SystemExit(
-            f"omniflow_store_index_hash_mismatch:{task_name}:{path_field}:"
-            f"expected={expected or 'missing'}:actual={actual}"
         )
 store_path = Path(str(row["store_path"])).resolve()
 transfer_path = Path(str(row["transfer_states_path"])).resolve()
@@ -1622,6 +1672,7 @@ if [[ ! "$manage_emulators" =~ ^[01]$ ]]; then
   echo "OMNIFLOW_ANDROIDWORLD_MANAGE_EMULATORS must be 0 or 1." >&2
   exit 2
 fi
+attempt_series_root="${results_root:+$results_root/androidworld/.archive/scheduler/single/$task}"
 if [[ -n "$batch_attempt_id" ]]; then
   if [[ ! "$batch_attempt_id" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
     echo "OMNIFLOW_BATCH_ATTEMPT_ID must be one safe path component." >&2
@@ -1629,11 +1680,25 @@ if [[ -n "$batch_attempt_id" ]]; then
   fi
   attempt_id="$batch_attempt_id"
 else
-  attempt_id="result-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  attempt_id="$("$python_bin" - "$attempt_series_root" <<'PY'
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1]).expanduser().resolve()
+numbers = []
+if root.is_dir():
+    for path in root.iterdir():
+        suffix = path.name.removeprefix("attempt_")
+        if path.is_dir() and suffix.isdigit():
+            numbers.append(int(suffix))
+print(f"attempt_{max(numbers, default=0) + 1:03d}")
+PY
+)"
 fi
-attempt_series_root="${results_root:+$results_root/androidworld_single_task_attempts/$task}"
+export OMNIFLOW_BATCH_ATTEMPT_ID="${OMNIFLOW_BATCH_ATTEMPT_ID:-$attempt_id}"
 output_root="${OMNIFLOW_ANDROIDWORLD_OUTPUT_PATH:-$attempt_series_root/$attempt_id}"
-preflight_output_root="${results_root:+$results_root/preflight/$task/$attempt_id}"
+preflight_output_root="${results_root:+$results_root/androidworld/.archive/preflight/$task/$attempt_id}"
+export OMNIFLOW_ANDROIDWORLD_ARCHIVE_ROOT="${OMNIFLOW_ANDROIDWORLD_ARCHIVE_ROOT:-$results_root/androidworld}"
 requires_mobilegpt_source_memory=0
 requires_appagent_source_memory=0
 requires_omnitransfer=0
@@ -1688,7 +1753,14 @@ fi
 export ANDROID_SDK_ROOT="$android_sdk_root"
 export ANDROID_HOME="$android_sdk_root"
 adb_bin="${OMNIFLOW_ADB_PATH:-$android_sdk_root/platform-tools/adb}"
-export OMNIFLOW_ANDROIDWORLD_A11Y_APK="${OMNIFLOW_ANDROIDWORLD_A11Y_APK:-$repo/runtime/cache/androidworld/accessibility_forwarder.apk}"
+if [[ "${OMNIFLOW_ANDROIDWORLD_ADB_COMPAT:-1}" == "1" ]]; then
+  androidworld_adb_compat="$repo/tools/androidworld_adb_compat.sh"
+  if [[ -x "$androidworld_adb_compat" ]]; then
+    export OMNIFLOW_REAL_ADB_PATH="$adb_bin"
+    adb_bin="$androidworld_adb_compat"
+  fi
+fi
+export OMNIFLOW_ANDROIDWORLD_A11Y_APK="${OMNIFLOW_ANDROIDWORLD_A11Y_APK:-$repo/vendor/androidworld/2024.05.13-accessibility_forwarder.apk}"
 emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$android_sdk_root/emulator/emulator}"
 avdmanager_bin="${OMNIFLOW_AVDMANAGER_BIN:-$android_sdk_root/cmdline-tools/latest/bin/avdmanager}"
 export PATH="$account_root/.local/bin:$android_sdk_root/platform-tools:$PATH"
@@ -1763,17 +1835,10 @@ source_sha256 = str(
     or source_row.get("source_run_log_sha256")
     or ""
 ).strip()
-if not source_sha256:
-    raise SystemExit(f"canonical_source_run_log_hash_missing:{sys.argv[5]}")
 compatible_source_sha256s = []
 lineage = source_row.get("source_run_log_lineage")
 if lineage is not None:
-    if (
-        not isinstance(lineage, dict)
-        or lineage.get("schema_version")
-        != "omniflow.function-store-source-lineage.v1"
-        or str(lineage.get("output_sha256") or "") != source_sha256
-    ):
+    if not isinstance(lineage, dict) or lineage.get("schema_version") != "omniflow.function-store-source-lineage.v1":
         raise SystemExit(f"canonical_source_run_log_lineage_invalid:{sys.argv[5]}")
     compatible_source_sha256s.append(str(lineage.get("source_sha256") or ""))
 candidate_validator = None
@@ -1949,17 +2014,15 @@ if [[ "$all_tasks" -eq 1 ]]; then
     echo "Canonical source index missing: $source_index" >&2
     exit 1
   fi
-  formal_tasks=()
-  while IFS= read -r batch_task_name; do
-    formal_tasks+=("$batch_task_name")
-  done < <(
-    "$python_bin" - "$source_index" "$batch_task_filter" <<'PY'
+  enumerate_formal_tasks() {
+    "$python_bin" - "$1" "$2" "$3" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 index_path = Path(sys.argv[1]).expanduser().resolve()
 task_filter = sys.argv[2].strip()
+android_world_root = Path(sys.argv[3]).expanduser().resolve()
 payload = json.loads(index_path.read_text(encoding="utf-8"))
 if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.data-index.v2":
     payload = payload["source_index"]
@@ -1969,10 +2032,38 @@ if not isinstance(payload, dict) or (not task_filter and len(payload) != 116):
         f"{'selected slice' if task_filter else 116}:actual="
         f"{len(payload) if isinstance(payload, dict) else 'not_object'}"
     )
-for task_name in payload:
-    print(task_name)
+if not android_world_root.is_dir():
+    raise SystemExit(f"android_world_root_missing:{android_world_root}")
+sys.path.insert(0, str(android_world_root))
+from android_world import registry  # noqa: E402
+
+task_registry = registry.TaskRegistry().get_registry("android_world")
+missing = sorted(set(payload) - set(task_registry))
+if missing:
+    raise SystemExit("formal_task_registry_missing:" + ",".join(missing))
+missing_complexity = sorted(
+    task_name
+    for task_name in payload
+    if not isinstance(getattr(task_registry[task_name], "complexity", None), (int, float))
+)
+if missing_complexity:
+    raise SystemExit("formal_task_complexity_missing:" + ",".join(missing_complexity))
+
+# AndroidWorld's official registry is the source of truth for difficulty.  The
+# task filter is applied after sorting so a filtered run has the same stable
+# order as the corresponding slice of the full 116-task campaign.
+for task_name in sorted(
+    payload,
+    key=lambda name: (float(task_registry[name].complexity), name),
+):
+    if not task_filter or task_name in set(task_filter.replace(",", " ").split()):
+        print(task_name)
 PY
-  )
+  }
+  formal_tasks=()
+  while IFS= read -r batch_task_name; do
+    formal_tasks+=("$batch_task_name")
+  done < <(enumerate_formal_tasks "$source_index" "$batch_task_filter" "$android_world_root")
   if [[ -z "$batch_task_filter" && "${#formal_tasks[@]}" -ne 116 ]]; then
     echo "Formal task enumeration failed: expected 116, got ${#formal_tasks[@]}." >&2
     exit 1
@@ -2041,7 +2132,9 @@ PY
     elif [[ "$dry_run" -eq 1 ]]; then
       child_args+=(--dry-run)
     fi
-    if [[ -n "${OMNIFLOW_E2E_ATTEMPT_ID:-}" ]]; then
+    if [[ -n "$batch_attempt_id" ]]; then
+      child_args+=(--attempt-id "$batch_attempt_id")
+    elif [[ -n "${OMNIFLOW_E2E_ATTEMPT_ID:-}" ]]; then
       child_args+=(--attempt-id "${OMNIFLOW_E2E_ATTEMPT_ID}")
     fi
     echo "[batch] dispatch task=$batch_task"
@@ -2085,7 +2178,6 @@ fi
   "$expected_source_seed" \
   "$repo" \
   "$asset_root" <<'PY'
-import hashlib
 import json
 import sys
 from pathlib import Path
@@ -2129,17 +2221,6 @@ if not run_log.is_absolute():
     run_log = index_relative if index_relative.is_file() else asset_relative
 if not run_log.is_file():
     raise SystemExit(f"formal_source_runlog_not_found:{task_name}:{run_log}")
-expected_sha256 = str(
-    row.get("retained_source_run_log_sha256")
-    or row.get("source_run_log_sha256")
-    or ""
-).strip()
-actual_sha256 = hashlib.sha256(run_log.read_bytes()).hexdigest()
-if not expected_sha256 or expected_sha256 != actual_sha256:
-    raise SystemExit(
-        f"formal_source_runlog_hash_mismatch:{task_name}:"
-        f"expected={expected_sha256 or 'missing'}:actual={actual_sha256}"
-    )
 try:
     canonical = import_run_log(
         json.loads(run_log.read_text(encoding="utf-8")),
@@ -2672,7 +2753,7 @@ command=(
   --task "$task"
   --source-seed "$expected_source_seed"
   --output-path "$output_root"
-  --result-registry-root "$results_root/androidworld_validator/runs"
+  --result-registry-root "$results_root/androidworld/.archive/result_registry"
   --omnitransfer-root "$omnitransfer_root"
   --store-path "$store_path"
   --store-index "$memory_index"

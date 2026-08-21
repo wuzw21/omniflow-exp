@@ -138,7 +138,9 @@ def reuse_metrics_from_result_row(
     )
     canonical_run = row.get("canonical_run")
     if not isinstance(canonical_run, dict):
-        canonical_run = _json_object(row.get("target_run_log_path"))
+        canonical_run = _json_object(
+            row.get("run_log_path") or row.get("target_run_log_path")
+        )
     mobilegpt_stats = {
         "memory_lookup_count": row.get("episode_memory_lookup_count"),
         "memory_hit_count": row.get("episode_memory_hit_count"),

@@ -173,7 +173,7 @@ def test_oob_host_replaces_androidworld_observe_and_act(monkeypatch, tmp_path) -
     assert host.observe_backend == "oob_control"
     assert host.act_backend == "oob_control"
     assert observation.extra["observe_backend"] == "oob_control"
-    assert observation.extra["androidworld_state"]["forest"] == xml
+    assert observation.extra["androidworld_state"]["xml"] == xml
 
 
 def _completed(*, stdout: str = ""):
