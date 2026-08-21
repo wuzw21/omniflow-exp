@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from src.experiment.checks import run_integration_checks
+from src.experiment.checks import IntegrationCheck, _integration_file_check, run_integration_checks
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -78,3 +78,18 @@ def test_integration_checker_rejects_non_glm_embedding_configuration(
             "remediation": "Set MOBILEGPT_EMBEDDING_MODEL=GLM-Embedding-2.",
         }
     ]
+
+
+def test_integration_checker_treats_official_root_as_directory(tmp_path: Path) -> None:
+    root = tmp_path / "official"
+    root.mkdir()
+    checks: list[IntegrationCheck] = []
+
+    assert _integration_file_check(
+        checks,
+        "mobilegpt",
+        root,
+        label="official_root",
+        remediation="missing",
+    )
+    assert checks[0].status == "pass"

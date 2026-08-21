@@ -656,7 +656,7 @@ def _integration_file_check(
     label: str,
     remediation: str,
 ) -> bool:
-    present = path.is_file()
+    present = path.is_dir() if label == "official_root" else path.is_file()
     _integration_add(
         checks,
         method,
