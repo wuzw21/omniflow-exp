@@ -36,6 +36,9 @@ class PageEmbedding:
 
 
 def _canonical_omnitransfer_root(configured_root: str | Path | None = None) -> Path:
+    packaged = (
+        Path(__file__).resolve().parents[3] / ".runtime" / "omnitransfer"
+    ).resolve()
     configured = str(
         configured_root
         if configured_root is not None
@@ -44,11 +47,13 @@ def _canonical_omnitransfer_root(configured_root: str | Path | None = None) -> P
     root = (
         Path(configured).expanduser()
         if configured
+        else packaged
+        if (packaged / "src" / "omnitransfer").is_dir()
         else Path.home() / "Projects" / "Omni" / "OmniTransfer"
     )
     root = root.resolve()
     canonical = (Path.home() / "Projects" / "Omni" / "OmniTransfer").resolve()
-    if root != canonical:
+    if root not in {canonical, packaged}:
         raise ValueError(f"canonical_omnitransfer_root_required:{canonical}")
     if not (root / "src" / "omnitransfer").is_dir():
         raise RuntimeError(f"omnitransfer_root_missing:{root}")

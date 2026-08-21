@@ -149,9 +149,14 @@ def _canonicalize_transfer_state(value: Any) -> dict[str, Any]:
 
 def load_omnitransfer() -> Any:
     configured_root = str(os.environ.get("OMNITRANSFER_ROOT") or "").strip()
+    packaged_root = (
+        Path(__file__).resolve().parents[3] / ".runtime" / "omnitransfer"
+    ).resolve()
     root = (
         Path(configured_root)
         if configured_root
+        else packaged_root
+        if (packaged_root / "src" / "omnitransfer").is_dir()
         else Path.home() / "Projects" / "Omni" / "OmniTransfer"
     )
     return _load_omnitransfer_from_root(root)
