@@ -402,8 +402,67 @@ class ResumableTransfer:
         return TransferResult(
             None,
             reason="omnitransfer_test_unaligned",
-            detail={"score": 0.1},
+            detail={"score": 0.1, "source": {"text": "Target"}},
         )
+
+
+def test_semantic_vlm_fallback_resumes_remaining_function_steps(tmp_path) -> None:
+    store_path = tmp_path / "store.json"
+    function_id = _store_with_resumable_click_function(store_path)
+    host = ResumableHost()
+    planner = SequencePlanner(
+        [
+            ToolCall(function_id, {}),
+            ToolCall(
+                "click",
+                {
+                    "target_description": "Target button",
+                    "x": 100.0,
+                    "y": 100.0,
+                },
+            ),
+            ToolCall("finished", {"content": ""}),
+        ]
+    )
+    flow = OmniFlow(
+        store_path,
+        host=host,
+        planner=planner,
+        installed_apps={"Settings": "com.android.settings"},
+        config=OmniFlowConfig(
+            runtime=RuntimeSettings(max_steps=10, max_fallback_steps=5),
+            plugins=PluginSet(transfer=ResumableTransfer()),
+        ),
+    )
+
+    result = flow.run("Open settings and choose the target")
+
+    assert result.success is True
+    assert result.fallback_steps == 1
+    assert [action.to_dict() for action in host.actions] == [
+        {
+            "tool": "open_app",
+            "args": {"package_name": "com.android.settings"},
+        },
+        {
+            "tool": "click",
+            "args": {
+                "target_description": "Target button",
+                "x": 500.0,
+                "y": 500.0,
+            },
+        },
+    ]
+    assert result.detail["function_resume"]["events"] == [
+        {
+            "protocol": "semantic_function_fallback_v1",
+            "start_step_index": 2,
+            "resume_step_index": 2,
+            "source_state_id": "",
+            "trigger": "vlm_fallback_action",
+            "status": "succeeded",
+        }
+    ]
 
 
 class CompletionRecoveryTransfer:
@@ -669,12 +728,24 @@ def test_transfer_failure_falls_back_without_replaying_source_coordinates(
                 "error": "omnitransfer_missing_target_page",
             }
         ],
-        "final_observation": {
-            "state_id": "state_0",
-            "package_name": "com.android.launcher",
-            "activity_name": "MainActivity",
-        },
-    }
+            "final_observation": {
+                "state_id": "state_0",
+                "package_name": "com.android.launcher",
+                "activity_name": "MainActivity",
+            },
+            "recovery": {
+                "step_index": 0,
+                "source_state_id": "missing_source_state",
+                "action": {
+                    "tool": "click",
+                    "args": {"x": 500.0, "y": 500.0},
+                },
+                "instruction": (
+                    "Perform this failed Function step on the current screen; "
+                    "do not skip to a later task action."
+                ),
+            },
+        }
 
 
 def test_direct_function_transfer_failure_continues_with_gui_planner(tmp_path) -> None:
@@ -745,7 +816,10 @@ def test_function_failure_retries_failed_step_only_after_explicit_function_call(
             "args": {"package_name": "com.android.settings"},
         },
         {"tool": "click", "args": {"x": 100.0, "y": 100.0}},
-        {"tool": "click", "args": {"x": 700.0, "y": 700.0}},
+        {
+            "tool": "open_app",
+            "args": {"package_name": "com.android.settings"},
+        },
     ]
     assert planner.previous_action_errors[1] == "omnitransfer_test_unaligned"
     assert planner.observations[1].extra["function_execution"]["replay_status"] == (
@@ -756,27 +830,8 @@ def test_function_failure_retries_failed_step_only_after_explicit_function_call(
         for step in result.detail["trace"]
         if step.get("metadata", {}).get("function_alignment")
     ]
-    assert len(retried_steps) == 1
-    assert retried_steps[0]["metadata"]["function_alignment"] == {
-        "protocol": "explicit_function_retry_v1",
-        "start_step_index": 1,
-        "resume_step_index": 1,
-        "source_state_id": "source_target_page",
-    }
-    assert result.detail["function_resume"] == {
-        "schema_version": "omniflow.function-resume-audit.v1",
-        "events": [
-            {
-                "start_step_index": 1,
-                "status": "succeeded",
-                "trigger": "explicit_function_call",
-                "resume_step_index": 1,
-                "source_state_id": "source_target_page",
-            }
-        ],
-        "attempt_count": 1,
-        "success_count": 1,
-    }
+    assert retried_steps == []
+    assert "function_resume" not in result.detail
     assert result.execution_summary["fallback_steps"] == 2
 
 

@@ -52,7 +52,7 @@ def resolve_semantic_action(
             _normalize(element.attrib.get(name, ""))
             for name in ("text", "content-desc")
         }
-        if normalized_target not in labels:
+        if not any(_labels_match(normalized_target, label) for label in labels):
             continue
         actionable = _nearest_actionable(
             element,
@@ -193,6 +193,22 @@ def _parse_bounds(value: str | None) -> tuple[float, float, float, float] | None
 def _normalize(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
     return " ".join(normalized.split())
+
+
+def _labels_match(target: str, label: str) -> bool:
+    if target == label:
+        return True
+    ignored = {"a", "an", "the", "app", "button", "control", "icon"}
+    target_tokens = {
+        token for token in re.findall(r"[a-z0-9_]+", target) if token not in ignored
+    }
+    label_tokens = {
+        token for token in re.findall(r"[a-z0-9_]+", label) if token not in ignored
+    }
+    return bool(target_tokens and label_tokens) and (
+        target_tokens.issubset(label_tokens)
+        or label_tokens.issubset(target_tokens)
+    )
 
 
 def _unresolved(

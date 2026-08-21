@@ -17,6 +17,143 @@ from omniflow.runtime.execution import (
     execute_function,
     execute_robust_action,
 )
+from omniflow.runtime.semantic_grounding import resolve_semantic_action
+
+
+def test_semantic_grounding_matches_accessibility_label_with_generic_suffix() -> None:
+    observation = Observation(
+        xml=(
+            '<hierarchy><node content-desc="Shutter" '
+            'resource-id="com.android.camera2:id/shutter_button" '
+            'bounds="[1100,0][1280,740]" clickable="true" /></hierarchy>'
+        ),
+        extra={"display": {"width": 1280, "height": 800}},
+    )
+
+    result = resolve_semantic_action(
+        Action(
+            "click",
+            {"target_description": "Shutter button", "x": 1, "y": 1},
+        ),
+        observation,
+    )
+
+    assert result.detail["status"] == "resolved"
+    assert result.action.args["x"] == pytest.approx(929.6875)
+    assert result.action.args["y"] == pytest.approx(462.5)
+
+
+def test_function_skips_source_mode_navigation_when_target_is_already_camera(
+    monkeypatch,
+) -> None:
+    import omniflow.runtime.core as core
+
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    target_xml = (
+        '<hierarchy><node package="com.android.camera2" '
+        'resource-id="com.android.camera2:id/shutter_button" '
+        'content-desc="Shutter" bounds="[1100,0][1280,740]" '
+        'clickable="true" /></hierarchy>'
+    )
+    mode_xml = (
+        '<hierarchy><node package="com.android.camera2" '
+        'resource-id="com.android.camera2:id/accessibility_mode_toggle_button" '
+        'text="MODE LIST" content-desc="Toggle mode list" '
+        'bounds="[0,0][189,96]" clickable="true" />'
+        '<node package="com.android.camera2" '
+        'resource-id="com.android.camera2:id/shutter_button" '
+        'content-desc="Shutter" bounds="[0,992][720,1232]" '
+        'clickable="true" /></hierarchy>'
+    )
+    camera_menu_xml = (
+        '<hierarchy><node package="com.android.camera2" '
+        'content-desc="Switch to Camera Mode" bounds="[0,388][311,512]" '
+        'clickable="true" />'
+        '<node package="com.android.camera2" '
+        'resource-id="com.android.camera2:id/shutter_button" '
+        'content-desc="Shutter" bounds="[0,992][720,1232]" '
+        'clickable="true" /></hierarchy>'
+    )
+    launcher = Observation(package_name="com.android.launcher")
+    current = Observation(
+        xml=target_xml,
+        package_name="com.android.camera2",
+        extra={"display": {"width": 1280, "height": 800}},
+    )
+    states = {
+        "launcher": launcher,
+        "mode": Observation(
+            xml=mode_xml,
+            package_name="com.android.camera2",
+            extra={"display": {"width": 720, "height": 1280}},
+        ),
+        "camera_menu": Observation(
+            xml=camera_menu_xml,
+            package_name="com.android.camera2",
+            extra={"display": {"width": 720, "height": 1280}},
+        ),
+        "shutter": Observation(
+            xml=mode_xml,
+            package_name="com.android.camera2",
+            extra={"display": {"width": 720, "height": 1280}},
+        ),
+    }
+
+    class Host:
+        def __init__(self) -> None:
+            self.actions = []
+
+        def observe(self, **_kwargs):
+            return current
+
+        def get_state(self, state_id):
+            return states.get(state_id)
+
+        def act(self, action):
+            self.actions.append(action)
+            return {"success": True}
+
+    async def transfer(action, _observation, _source_state):
+        return TransferResult(
+            Action("click", {"x": 940, "y": 462}),
+            reason="mapped",
+            detail={"score": 0.99, "margin": 0.2},
+        )
+
+    function = Function(
+        function_id="camera_take_photo",
+        name="Take a photo",
+        description="Take one photo.",
+        steps=(
+            FunctionStep(1, Action("click", {"x": 130.555, "y": 37.5}), "mode"),
+            FunctionStep(
+                2,
+                Action("click", {"x": 216.666, "y": 351.5625}),
+                "camera_menu",
+            ),
+            FunctionStep(3, Action("click", {"x": 500, "y": 868.75}), "shutter"),
+        ),
+    )
+    host = Host()
+    result = asyncio.run(
+        execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=current,
+        )
+    )
+
+    assert result.success is True
+    assert [action.tool for action in host.actions] == ["click"]
+    assert [
+        decision["before_function_step"]
+        for decision in result.detail["checker_decisions"]
+    ] == [1, 2]
+    assert all(
+        decision["checker_kind"] == "source_navigation_precondition"
+        for decision in result.detail["checker_decisions"]
+    )
 
 
 def test_function_uses_explicit_state_loader_when_host_state_is_missing(

@@ -291,6 +291,36 @@ def _turn_text(
             if function_id and status:
                 result = "succeeded" if status == "actions_succeeded" else status
                 lines.append(f"Previous Function result: {function_id} {result}")
+            recovery = function_execution.get("recovery")
+            if status == "actions_failed" and isinstance(recovery, dict):
+                step_index = recovery.get("step_index")
+                action = recovery.get("action")
+                source_control = recovery.get("source_control")
+                lines.append(
+                    f"Function recovery required: continue {function_id} "
+                    f"from failed step {step_index}."
+                )
+                if isinstance(action, dict):
+                    lines.append(
+                        "Required next Function action (semantic only): "
+                        f"tool={action.get('tool') or '-'}"
+                    )
+                if isinstance(source_control, dict):
+                    labels = ", ".join(
+                        f"{key}={value}"
+                        for key, value in source_control.items()
+                    )
+                    lines.append(f"Source control semantics: {labels}")
+                lines.append(
+                    "Use the current screenshot and accessibility XML to perform "
+                    "this failed Function step when an equivalent control exists. "
+                    "If the source control is absent because this device has a "
+                    "different layout, choose the visible current-screen "
+                    "equivalent or the task-level action instead; never use "
+                    "source-device coordinates. The runtime will resume the "
+                    "remaining Function steps only when this action is the same "
+                    "semantic step."
+                )
         user_input = str(raw_extra.get("user_input") or "").strip()
         if user_input:
             lines.append(f"User response: {user_input}")

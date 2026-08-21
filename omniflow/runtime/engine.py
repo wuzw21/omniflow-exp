@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import inspect
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from omniflow.core.config import Experiment, OmniFlowConfig
@@ -698,6 +699,81 @@ class OmniFlow:
             previous_action_error = (
                 None if step.success else step.error or "fallback_action_failed"
             )
+            if (
+                step.success
+                and function_session.failed
+                and function_session.bound is not None
+                and function_session.failed_step_index is not None
+                and _fallback_matches_failed_function_step(
+                    planned,
+                    trace,
+                    failed_step_index=function_session.failed_step_index,
+                )
+            ):
+                recovery_start = int(function_session.failed_step_index) + 1
+                recovery_step = next(
+                    (
+                        function_step
+                        for function_step in function_session.bound.steps
+                        if function_step.step_index >= recovery_start
+                    ),
+                    None,
+                )
+                resume_event = {
+                    "protocol": "semantic_function_fallback_v1",
+                    "start_step_index": recovery_start,
+                    "resume_step_index": recovery_start,
+                    "source_state_id": (
+                        recovery_step.source_state_id
+                        if recovery_step is not None
+                        else ""
+                    ),
+                    "trigger": "vlm_fallback_action",
+                    "status": "retrying",
+                }
+                function_session.resume_events.append(resume_event)
+                replay = await execute_function(
+                    function_session.bound,
+                    host=self.host,
+                    plugins=self.plugins,
+                    observation=observation,
+                    start_step_index=recovery_start,
+                    trace_start_index=len(trace),
+                    resume_metadata={
+                        "protocol": "semantic_function_fallback_v1",
+                        "start_step_index": recovery_start,
+                        "resume_step_index": recovery_start,
+                        "source_state_id": resume_event["source_state_id"],
+                    },
+                    installed_packages=self.installed_packages,
+                    checker_target_threshold=(
+                        self.config.runtime.checker_target_threshold
+                    ),
+                    executed_checker_rules=function_session.executed_checker_rules,
+                )
+                actions_executed += replay.actions_executed
+                trace.extend(replay.detail.get("trace") or ())
+                checker_decisions.extend(replay.detail.get("checker_decisions") or ())
+                observation = replay.final_state or observation
+                if replay.success:
+                    resume_event["status"] = "succeeded"
+                    function_session.mark_completed()
+                    previous_action_error = None
+                else:
+                    resume_event["status"] = "failed"
+                    resume_event["error"] = replay.error or "function_replay_failed"
+                    function_session.mark_failed(replay)
+                    previous_action_error = replay.error or "function_replay_failed"
+            elif step.success and function_session.failed:
+                # A target device may not expose the recorded intermediate
+                # control at all (for example, portrait MODE LIST versus the
+                # tablet's landscape Options menu).  A successful VLM action
+                # that deliberately chose a current-screen alternative is a
+                # valid task-level recovery, but it must not force the old
+                # Function's remaining source-specific steps onto the target.
+                function_session.failed = False
+                function_session.failed_step_index = None
+                function_session.bound = None
             if planner_steps >= self.config.runtime.max_steps:
                 return finish(
                     False,
@@ -907,6 +983,7 @@ def _function_execution_evidence(
     succeeded: bool,
 ) -> dict[str, Any]:
     steps: list[dict[str, Any]] = []
+    failed_trace_step: dict[str, Any] | None = None
     for raw_step in trace:
         if not isinstance(raw_step, dict):
             continue
@@ -921,8 +998,17 @@ def _function_execution_evidence(
             continue
         result = raw_step.get("result")
         success = isinstance(result, dict) and result.get("success") is True
+        function_step_index = metadata.get("function_step_index")
+        try:
+            function_step_index = int(
+                function_step_index
+                if function_step_index is not None
+                else raw_step.get("step_index")
+            )
+        except (TypeError, ValueError):
+            function_step_index = len(steps)
         step = {
-            "step_index": int(raw_step.get("step_index") or len(steps)),
+            "step_index": function_step_index,
             "before_state_id": str(raw_step.get("before_state_id") or ""),
             "after_state_id": str(raw_step.get("after_state_id") or ""),
             "tool": action.tool,
@@ -933,10 +1019,12 @@ def _function_execution_evidence(
         ).strip():
             step["error"] = str(result["error"])
         steps.append(step)
+        if not success:
+            failed_trace_step = raw_step
     final_state_id = str(final_observation.extra.get("state_id") or "").strip()
     if not final_state_id and steps:
         final_state_id = str(steps[-1]["after_state_id"] or "").strip()
-    return {
+    evidence = {
         "schema_version": "omniflow.function-execution-evidence.v1",
         "function_id": function.id,
         "function_name": function.name,
@@ -949,6 +1037,124 @@ def _function_execution_evidence(
             "package_name": str(final_observation.package_name or ""),
             "activity_name": str(final_observation.activity_name or ""),
         },
+    }
+    if failed_trace_step is not None:
+        failed_function_step_index = _trace_function_step_index(failed_trace_step)
+        failed_step = next(
+            (
+                function_step
+                for function_step in function.steps
+                if function_step.step_index == failed_function_step_index
+            ),
+            None,
+        )
+        recovery: dict[str, Any] = {
+            "step_index": failed_function_step_index,
+            "action": dict(failed_trace_step.get("action") or {}),
+            "instruction": (
+                "Perform this failed Function step on the current screen; "
+                "do not skip to a later task action."
+            ),
+        }
+        if failed_step is not None:
+            recovery["source_state_id"] = failed_step.source_state_id
+        metadata = failed_trace_step.get("metadata")
+        transfer = metadata.get("transfer") if isinstance(metadata, dict) else None
+        source = transfer.get("source") if isinstance(transfer, dict) else None
+        if isinstance(source, dict):
+            source_control = {
+                key: source[key]
+                for key in ("text", "content_desc", "resource_id", "class")
+                if str(source.get(key) or "").strip()
+            }
+            if source_control:
+                recovery["source_control"] = source_control
+        evidence["recovery"] = recovery
+    return evidence
+
+
+def _trace_function_step_index(trace_step: dict[str, Any]) -> int:
+    metadata = trace_step.get("metadata")
+    if isinstance(metadata, dict) and metadata.get("function_step_index") is not None:
+        try:
+            return int(metadata["function_step_index"])
+        except (TypeError, ValueError):
+            pass
+    try:
+        return int(trace_step.get("step_index"))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _fallback_matches_failed_function_step(
+    action: Action,
+    trace: list[dict[str, Any]],
+    *,
+    failed_step_index: int,
+) -> bool:
+    """Return whether a VLM action really replaces the failed Function step.
+
+    A generic task action (such as pressing the tablet shutter when the source
+    phone's mode menu does not exist) must be allowed to finish the task without
+    replaying the Function's remaining source-only steps.  Only a semantically
+    identified replacement may trigger automatic Function resumption.
+    """
+    failed_trace: dict[str, Any] | None = None
+    for raw_step in reversed(trace):
+        metadata = raw_step.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        if str(metadata.get("function_id") or "").strip() == "":
+            continue
+        try:
+            recorded_step_index = int(metadata.get("function_step_index"))
+        except (TypeError, ValueError):
+            continue
+        if recorded_step_index != int(failed_step_index):
+            continue
+        result = raw_step.get("result")
+        if isinstance(result, dict) and result.get("success") is not True:
+            failed_trace = raw_step
+            break
+    if failed_trace is None:
+        return False
+    failed_action = failed_trace.get("action")
+    try:
+        failed_action = Action.from_value(failed_action)
+    except (TypeError, ValueError):
+        return False
+    if action.tool != failed_action.tool:
+        return False
+    if action.tool in {"open_app", "wait", "press_key"}:
+        return action.args == failed_action.args
+    target = str(action.args.get("target_description") or "").strip()
+    if not target:
+        return False
+    metadata = failed_trace.get("metadata")
+    transfer = metadata.get("transfer") if isinstance(metadata, dict) else None
+    source = transfer.get("source") if isinstance(transfer, dict) else None
+    if not isinstance(source, dict):
+        return False
+    source_labels = [
+        str(source.get(key) or "").strip()
+        for key in ("text", "content_desc", "resource_id", "class")
+    ]
+    target_tokens = _semantic_label_tokens(target)
+    return bool(target_tokens) and any(
+        target_tokens == _semantic_label_tokens(label)
+        or target_tokens.issubset(_semantic_label_tokens(label))
+        or _semantic_label_tokens(label).issubset(target_tokens)
+        for label in source_labels
+        if label
+    )
+
+
+def _semantic_label_tokens(value: str) -> set[str]:
+    ignored = {"a", "an", "the", "app", "button", "control", "icon"}
+    return {
+        token
+        for token in re.findall(r"[a-z0-9_]+", str(value or "").casefold())
+        if token not in ignored
     }
 
 

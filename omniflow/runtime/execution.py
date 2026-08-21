@@ -207,6 +207,25 @@ async def execute_function(
                     "next_step_index": function_step.step_index,
                 },
             )
+        navigation_skip, navigation_detail = await _skip_redundant_navigation_step(
+            function_steps=steps,
+            function_step=function_step,
+            current=current,
+            source_state=source_state,
+            host=host,
+        )
+        if navigation_skip:
+            checker_decisions.append(
+                {
+                    "function_id": function.id,
+                    "checker_kind": "source_navigation_precondition",
+                    "source_state_id": function_step.source_state_id,
+                    "before_function_step": function_step.step_index,
+                    "status": "skipped",
+                    **navigation_detail,
+                }
+            )
+            continue
         for rule_index, raw_rule in enumerate(function.checker_rules):
             if rule_index in executed_checker_rules:
                 continue
@@ -1264,6 +1283,132 @@ async def _load_state(
     # must never become ``None`` because ``None`` means that replay can safely
     # skip transfer (only valid for actions recorded without a source state).
     return Observation(extra={"state_id": source_state_id})
+
+
+async def _skip_redundant_navigation_step(
+    *,
+    function_steps: tuple[Any, ...],
+    function_step: Any,
+    current: Observation,
+    source_state: Observation | None,
+    host: Host,
+) -> tuple[bool, dict[str, Any]]:
+    """Skip source-only mode/navigation clicks when a later target control exists.
+
+    A Function can contain device-specific navigation which is already true on
+    another form factor.  For example, a portrait phone records ``MODE LIST``
+    and ``Camera`` before the shutter, while the landscape tablet opens directly
+    in Camera mode.  This is a semantic precondition check, not a coordinate
+    replay and not a new Function Store rule.
+    """
+    action = getattr(function_step, "action", None)
+    if not isinstance(action, Action) or action.tool != "click":
+        return False, {}
+    current_signature = _source_control_signature(source_state, action)
+    if not current_signature or not _is_navigation_signature(current_signature):
+        return False, {}
+    if _observation_has_control(current, current_signature):
+        return False, {}
+    ordered_steps = sorted(
+        (
+            step
+            for step in function_steps
+            if int(getattr(step, "step_index", -1))
+            > int(getattr(function_step, "step_index", -1))
+        ),
+        key=lambda step: int(getattr(step, "step_index", 0)),
+    )
+    for later_step in ordered_steps:
+        later_action = getattr(later_step, "action", None)
+        if not isinstance(later_action, Action) or later_action.tool != "click":
+            continue
+        later_source = await _load_state(
+            host,
+            str(getattr(later_step, "source_state_id", "") or ""),
+        )
+        later_signature = _source_control_signature(later_source, later_action)
+        if later_signature and _observation_has_control(current, later_signature):
+            return True, {
+                "reason": "target_already_exposes_later_function_control",
+                "later_function_step": int(later_step.step_index),
+                "later_source_control": dict(later_signature),
+            }
+    return False, {}
+
+
+def _source_control_signature(
+    source_state: Observation | None,
+    action: Action,
+) -> dict[str, str] | None:
+    if source_state is None or action.tool != "click":
+        return None
+    try:
+        x, y = _relative_source_point(
+            source_state,
+            float(action.args.get("x")),
+            float(action.args.get("y")),
+        )
+    except (TypeError, ValueError):
+        return None
+    candidates = []
+    for element in _elements(str(source_state.xml or "")):
+        left, top, right, bottom = element["bounds"]
+        if not (left <= x <= right and top <= y <= bottom):
+            continue
+        if not element.get("clickable"):
+            continue
+        area = (right - left) * (bottom - top)
+        candidates.append((area, element))
+    if not candidates:
+        return None
+    _area, element = min(candidates, key=lambda item: item[0])
+    return {
+        key: str(element.get(key) or "").strip()
+        for key in ("resource_id", "text", "description", "class")
+        if str(element.get(key) or "").strip()
+    }
+
+
+def _observation_has_control(
+    observation: Observation,
+    signature: dict[str, str],
+) -> bool:
+    for element in _elements(str(observation.xml or "")):
+        if (
+            signature.get("resource_id")
+            and element.get("resource_id") == signature["resource_id"]
+        ):
+            return True
+        for key in ("text", "description"):
+            expected = _semantic_label_tokens(signature.get(key, ""))
+            actual = _semantic_label_tokens(str(element.get(key) or ""))
+            if expected and actual and (
+                expected == actual
+                or expected.issubset(actual)
+                or actual.issubset(expected)
+            ):
+                return True
+    return False
+
+
+def _is_navigation_signature(signature: dict[str, str]) -> bool:
+    text = " ".join(
+        str(signature.get(key) or "").casefold()
+        for key in ("resource_id", "text", "description", "class")
+    )
+    return any(
+        token in text
+        for token in ("mode", "switch", "selector", "menu", "options")
+    )
+
+
+def _semantic_label_tokens(value: str) -> set[str]:
+    ignored = {"a", "an", "the", "app", "button", "control", "icon"}
+    return {
+        token
+        for token in re.findall(r"[a-z0-9_]+", str(value or "").casefold())
+        if token not in ignored
+    }
 
 
 def _relative_source_point(
