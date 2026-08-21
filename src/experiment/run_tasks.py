@@ -1918,7 +1918,14 @@ def _result_environment(
             # shared task/method/device-model archive.
             "OMNIFLOW_ANDROIDWORLD_ARCHIVE_ROOT": str(
                 args.results_root / "androidworld"
+            ),
             "OMNIFLOW_COLLECT_PERFORMANCE": "1",
+            "ANDROID_SDK_ROOT": str(Path(args.emulator_bin).resolve().parent.parent),
+            "ANDROID_HOME": str(Path(args.emulator_bin).resolve().parent.parent),
+            "OMNIFLOW_REAL_ADB_PATH": str(
+                Path(args.emulator_bin).resolve().parent.parent
+                / "platform-tools"
+                / "adb"
             ),
         }
     )
