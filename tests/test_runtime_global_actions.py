@@ -64,10 +64,11 @@ def test_function_uses_catalog_state_when_host_state_is_missing(monkeypatch) -> 
         agent_visible=True,
     )
 
+    host = Host()
     result = asyncio.run(
         execute_function(
             function,
-            host=Host(),
+            host=host,
             plugins=PluginSet(transfer=transfer),
             observation=current,
             state_loader=lambda state_id: source if state_id == "source-1" else None,
@@ -527,6 +528,89 @@ def test_function_global_package_preflight_opens_target_before_recorded_step(
         "status": "executed",
         "reason": "package_mismatch",
     }
+
+
+def test_function_global_overlay_preflight_closes_ad_without_transfer(
+    monkeypatch,
+) -> None:
+    import omniflow.runtime.core as core
+    import omniflow.runtime.execution as execution
+
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(execution, "_GLOBAL_OVERLAY_MAX_ATTEMPTS", 1)
+
+    ad_xml = (
+        '<hierarchy><node class="android.app.Dialog" text="广告" '
+        'bounds="[0,0][1000,1000]">'
+        '<node class="android.widget.Button" content-desc="关闭" '
+        'clickable="true" bounds="[900,20][980,100]"/></node></hierarchy>'
+    )
+    clear_xml = '<hierarchy><node text="Home" bounds="[0,0][1000,1000]"/></hierarchy>'
+    source = Observation(xml=clear_xml, package_name="com.example.target")
+    current = Observation(xml=ad_xml, package_name="com.example.target")
+    transferred: list[Action] = []
+
+    async def transfer(action, observation, source_state):
+        transferred.append(action)
+        return TransferResult(action, reason="mapped")
+
+    class Host:
+        def __init__(self) -> None:
+            self.actions: list[Action] = []
+
+        def act(self, action):
+            self.actions.append(action)
+            return {"success": True}
+
+        def observe(self, **_kwargs):
+            return clear_xml_observation
+
+    clear_xml_observation = Observation(
+        xml=clear_xml,
+        package_name="com.example.target",
+    )
+    function = Function(
+        function_id="global_overlay_preflight_function",
+        name="global overlay preflight function",
+        description="closes a transient ad before a recorded action",
+        steps=(
+            FunctionStep(
+                0,
+                Action("click", {"x": 500, "y": 500}),
+                "source-1",
+            ),
+        ),
+        schema_version="omniflow.function.v2",
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+        agent_visible=True,
+    )
+
+    host = Host()
+    result = asyncio.run(
+        execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=current,
+            state_loader=lambda state_id: source if state_id == "source-1" else None,
+        )
+    )
+
+    assert result.success is True
+    assert result.actions_executed == 2
+    assert host.actions == [
+        Action("click", {"x": 940.0, "y": 60.0}),
+        Action("click", {"x": 500, "y": 500}),
+    ]
+    assert transferred == [Action("click", {"x": 500, "y": 500})]
+    assert result.detail["checker_decisions"][0]["checker_kind"] == (
+        "global_overlay_preflight"
+    )
 
 
 def test_action_waits_for_transition_window_to_enter_display(monkeypatch) -> None:
