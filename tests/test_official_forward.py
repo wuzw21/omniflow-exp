@@ -470,6 +470,9 @@ def test_mobilegpt_forwarder_keeps_official_server_source_unchanged(
     assert "MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD" in (
         staged / "memory" / "memory_manager.py"
     ).read_text(encoding="utf-8")
+    assert "MOBILEGPT_TARGET_MEMORY_THRESHOLD" in (
+        staged / "memory" / "memory_manager.py"
+    ).read_text(encoding="utf-8")
     utils_source = (staged / "utils" / "utils.py").read_text(encoding="utf-8")
     assert "embedding_retry" in utils_source
     assert "range(1, 4)" in utils_source

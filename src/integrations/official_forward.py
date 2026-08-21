@@ -764,6 +764,8 @@ def _configure_mobilegpt_server(
         threshold_pattern = r"(?m)^(?P<indent>[ \t]*)if highest_similarity > 0\.95:\n"
         threshold_replacement = (
             r'\g<indent>threshold = float(os.getenv("MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD", "0.95"))\n'
+            r'\g<indent>if os.getenv("MOBILEGPT_TARGET_TASK_NAME", "").strip() and os.getenv("MOBILEGPT_TARGET_PACKAGE", "").strip():\n'
+            r'\g<indent>    threshold = min(threshold, float(os.getenv("MOBILEGPT_TARGET_MEMORY_THRESHOLD", "0.70")))\n'
             r'\g<indent>if highest_similarity > threshold:\n'
         )
         threshold_changed = False
