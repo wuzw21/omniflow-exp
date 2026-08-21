@@ -84,6 +84,65 @@ async def execute_function(
     completed_checker_rules: set[int] = set()
     resume_metadata_pending = dict(resume_metadata or {})
     for function_step in steps:
+        source_state = await _load_state(
+            host,
+            function_step.source_state_id,
+            state_loader=state_loader,
+        )
+        target_package = str(source_state.package_name or "").strip()
+        observed_package = str(current.package_name or "").strip()
+        if (
+            target_package
+            and observed_package != target_package
+            and function_step.action.tool != "open_app"
+        ):
+            preflight_step = await execute_robust_action(
+                Action("open_app", {"package_name": target_package}),
+                observation=current,
+                host=host,
+                plugins=plugins,
+                function=function,
+                installed_packages=installed_packages,
+            )
+            checker_decisions.append(
+                {
+                    "function_id": function.id,
+                    "checker_kind": "global_package_preflight",
+                    "source_state_id": function_step.source_state_id,
+                    "before_function_step": function_step.step_index,
+                    "target_package": target_package,
+                    "observed_package": observed_package,
+                    "status": "executed" if preflight_step.success else "failed",
+                    "reason": "package_mismatch",
+                }
+            )
+            executed += preflight_step.actions_executed
+            trace.extend(
+                await record_execution(
+                    host,
+                    preflight_step,
+                    trace_start_index=int(trace_start_index) + len(trace),
+                    metadata={
+                        "checker_kind": "global_package_preflight",
+                        "before_function_step": function_step.step_index,
+                    },
+                )
+            )
+            current = preflight_step.after or preflight_step.before or current
+            if not preflight_step.success:
+                return RunResult(
+                    False,
+                    function.id,
+                    executed,
+                    error=preflight_step.error or "global_package_preflight_failed",
+                    final_state=current,
+                    detail={
+                        "trace": trace,
+                        "checker_decisions": checker_decisions,
+                        "failed_step_index": function_step.step_index,
+                        "next_step_index": function_step.step_index,
+                    },
+                )
         for rule_index, raw_rule in enumerate(function.checker_rules):
             if rule_index in completed_checker_rules:
                 continue
@@ -157,11 +216,6 @@ async def execute_function(
                     },
                 )
         action = function_step.action
-        source_state = await _load_state(
-            host,
-            function_step.source_state_id,
-            state_loader=state_loader,
-        )
         step = await execute_robust_action(
             action,
             observation=current,
