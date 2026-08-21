@@ -221,6 +221,20 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
                         "stale NEXT lookup"
                     )
                     return None
+            if normalized_label == "Skip" and missing_target:
+                elements = controller._env.get_ui_elements() or []
+                chooser_clicks = _app_chooser_clicks(
+                    elements,
+                    app_label="Contacts",
+                )
+                if chooser_clicks:
+                    logger.info(
+                        "AndroidWorld Contacts setup is resolving the system "
+                        "app chooser before onboarding"
+                    )
+                    for label in chooser_clicks:
+                        original(controller, label)
+                    return original(controller, "Skip")
             if missing_target or empty_a11y_tree:
                 # Camera can still be publishing its accessibility tree while
                 # AndroidWorld starts the app. Give the official setup a
@@ -243,20 +257,6 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
                             break
             if not missing_target and not empty_a11y_tree:
                 raise
-            if normalized_label == "Skip":
-                elements = controller._env.get_ui_elements() or []
-                chooser_clicks = _app_chooser_clicks(
-                    elements,
-                    app_label="Contacts",
-                )
-                if chooser_clicks:
-                    logger.info(
-                        "AndroidWorld Contacts setup is resolving the system "
-                        "app chooser before onboarding"
-                    )
-                    for label in chooser_clicks:
-                        original(controller, label)
-                    return original(controller, "Skip")
             if normalized_label == "OK":
                 activity = str(
                     getattr(controller._env, "foreground_activity_name", "") or ""

@@ -154,7 +154,7 @@ def test_script_replay_rejects_multi_function_store(tmp_path: Path) -> None:
     try:
         run_script_replay(store_path=store_path, host=_Host({}))
     except ValueError as error:
-        assert str(error) == "function_store_single_function_required"
+        assert str(error) == "script_replay_single_function_required"
     else:
         raise AssertionError("multi-Function stores must fail closed")
 

@@ -1528,6 +1528,11 @@ def test_appagent_warm_command_mounts_native_docs_memory(
     appagent_root = tmp_path / "AppAgent"
     (appagent_root / "scripts").mkdir(parents=True)
     (appagent_root / "run.py").write_text("print('official')\n", encoding="utf-8")
+    (appagent_root / "scripts" / "task_executor.py").write_text(
+        "import os\n"
+        "doc_path = os.path.join(docs_dir, f\"{elem.uid}.txt\")\n",
+        encoding="utf-8",
+    )
     docs_root = tmp_path / "apps" / "audiorecorder" / "demo_docs"
     docs_root.mkdir(parents=True)
     (docs_root / "button.txt").write_text("{}", encoding="utf-8")

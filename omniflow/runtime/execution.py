@@ -82,12 +82,14 @@ async def execute_function(
             function_step.source_state_id,
             state_loader=state_loader,
         )
-        target_package = str(source_state.package_name or "").strip()
+        target_package = str(
+            getattr(source_state, "package_name", "") or ""
+        ).strip()
         observed_package = str(current.package_name or "").strip()
         if (
             target_package
             and observed_package != target_package
-            and function_step.action.tool != "open_app"
+            and _action_uses_transfer_target(function_step.action)
         ):
             preflight_step = await execute_robust_action(
                 Action("open_app", {"package_name": target_package}),

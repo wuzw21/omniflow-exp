@@ -344,7 +344,7 @@ def _function(
     )
 
 
-def test_t3a_hint_rejects_multiple_functions(
+def test_t3a_hint_selects_complete_function_from_lineage(
     tmp_path: Path,
 ) -> None:
     store_path = tmp_path / "store.json"
@@ -356,11 +356,8 @@ def test_t3a_hint_rejects_multiple_functions(
         ),
     )
 
-    with pytest.raises(
-        ValueError,
-        match="function_store_single_function_required",
-    ):
-        _select_complete_function(store_path)
+    selected = _select_complete_function(store_path)
+    assert selected.id == "complete_run_settings"
 
 
 def test_t3a_hint_uses_official_t3a_with_source_trace(tmp_path: Path) -> None:

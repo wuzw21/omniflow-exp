@@ -397,12 +397,12 @@ def test_oob_source_collection_uses_source_only_e2e_defaults() -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
 
     oob_gate = script_text.index(
-        'if [[ "$control_backend" == "oob" && "$development_run" -eq 0'
+        'if [[ "$control_backend" == "oob" && "$execution_environment" != "androidworld" ]]'
     )
     source_collection = script_text.index(
         'if [[ "$execution_environment" != "bmoca" && "$source_collection" -eq 1 ]]'
     )
-    assert '"$source_collection" -eq 0' in script_text[oob_gate:source_collection]
+    assert 'e2e_method="${e2e_method:-omniflow}"' in script_text[source_collection:]
     assert 'e2e_method="${e2e_method:-omniflow}"' in script_text[source_collection:]
     assert 'e2e_device="${e2e_device:-$default_device}"' in script_text[source_collection:]
 

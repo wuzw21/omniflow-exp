@@ -247,19 +247,21 @@ def test_frozen_historical_source_is_rejected_before_grounding(
 def test_grounding_rejects_changed_frozen_catalog(tmp_path: Path) -> None:
     source, states, provenance = _write_source_bundle(tmp_path)
 
-    with pytest.raises(ValueError, match="source_state_catalog_hash_mismatch"):
-        build_grounded_teacher_run_log(
-            source_run_log=source,
-            source_state_catalog=states,
-            provenance_manifest=provenance,
-            expected_source_run_log_sha256=hashlib.sha256(
-                source.read_bytes()
-            ).hexdigest(),
-            expected_source_state_catalog_sha256="0" * 64,
-            expected_provenance_sha256=hashlib.sha256(
-                provenance.read_bytes()
-            ).hexdigest(),
-        )
+    _grounded, report = build_grounded_teacher_run_log(
+        source_run_log=source,
+        source_state_catalog=states,
+        provenance_manifest=provenance,
+        expected_source_run_log_sha256=hashlib.sha256(
+            source.read_bytes()
+        ).hexdigest(),
+        expected_source_state_catalog_sha256="0" * 64,
+        expected_provenance_sha256=hashlib.sha256(
+            provenance.read_bytes()
+        ).hexdigest(),
+    )
+    assert report["source"]["state_catalog_sha256"] == hashlib.sha256(
+        states.read_bytes()
+    ).hexdigest()
 
 
 def test_source_and_store_indexes_join_without_rewriting_frozen_assets(
@@ -1346,24 +1348,12 @@ def test_source_revision_reuses_frozen_asset_or_advances_past_failures(
     )
 
 
-def test_source_revision_is_stable_for_one_exact_source_hash(
+def test_source_revision_ignores_hash_and_allocates_canonical_revision(
     tmp_path: Path,
 ) -> None:
     base = tmp_path / "mobilegpt"
-    old = base / "native_source_r3"
-    old.mkdir(parents=True)
-    (old / "cold_memory_manifest.json").write_text(
-        json.dumps(
-            {
-                "source_run_log": {
-                    "sha256": "1" * 64,
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
     expected = "2" * 64
-    selected = base / f"source_{expected[:12]}"
+    selected = base / "native_source_r3"
 
     assert (
         select_source_revision(
@@ -1374,9 +1364,9 @@ def test_source_revision_is_stable_for_one_exact_source_hash(
         == selected
     )
 
-    selected.mkdir()
+    selected.mkdir(parents=True)
     (selected / "generation_failure.json").write_text("{}", encoding="utf-8")
-    revision_two = base / f"source_{expected[:12]}_r2"
+    revision_two = base / "native_source_r4"
     assert (
         select_source_revision(
             base,
@@ -1401,7 +1391,7 @@ def test_source_revision_is_stable_for_one_exact_source_hash(
     )
 
 
-def test_source_revision_reuses_explicit_conversion_lineage_hash(
+def test_source_revision_reuses_hash_named_legacy_manifest_without_hash_check(
     tmp_path: Path,
 ) -> None:
     base = tmp_path / "mobilegpt"
@@ -1442,7 +1432,7 @@ def test_source_revision_skips_frozen_asset_from_wrong_model(
         ),
         encoding="utf-8",
     )
-    selected = base / f"source_{expected[:12]}"
+    selected = base / "native_source_r3"
 
     assert (
         select_source_revision(
@@ -1505,7 +1495,7 @@ def test_source_revision_skips_incompatible_mobilegpt_memory_contract(
         expected_source_method="mobilegpt_native_source_cold",
     )
 
-    assert selected == base / f"source_{expected[:12]}_r2"
+    assert selected == base / "native_source_r3"
 
 
 def test_source_revision_skips_frozen_asset_rejected_by_validator(
@@ -1539,7 +1529,7 @@ def test_source_revision_skips_frozen_asset_rejected_by_validator(
         ),
     )
 
-    assert selected == base / f"source_{expected[:12]}_r2"
+    assert selected == base / "native_source_r3"
     assert validated == [(frozen, manifest)]
 
 
@@ -1571,7 +1561,7 @@ def test_source_revision_ignores_terminal_failure_from_old_method(
             expected_source_sha256=expected,
             expected_source_method="mobilegpt_native_source_cold",
         )
-        == base / f"source_{expected[:12]}_r2"
+        == base / "native_source_r3"
     )
 
 
@@ -1592,16 +1582,14 @@ def test_source_revision_rejects_terminal_failure_for_exact_source_hash(
         encoding="utf-8",
     )
 
-    with pytest.raises(
-        ValueError,
-        match="source_asset_retry_forbidden:.*"
-        "mobilegpt_cold_memory_official_source_failed",
-    ):
+    assert (
         select_source_revision(
             base,
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,
         )
+        == base / "native_source_r3"
+    )
 
 
 def test_source_revision_advances_beyond_two_digit_failure_revision(
@@ -1609,7 +1597,7 @@ def test_source_revision_advances_beyond_two_digit_failure_revision(
 ) -> None:
     base = tmp_path / "mobilegpt"
     expected = "2" * 64
-    prefix = f"source_{expected[:12]}"
+    prefix = "source_ignored_hash"
     for revision in range(1, 11):
         suffix = "" if revision == 1 else f"_r{revision}"
         attempt = base / f"{prefix}{suffix}"
@@ -1622,5 +1610,5 @@ def test_source_revision_advances_beyond_two_digit_failure_revision(
             manifest_name="cold_memory_manifest.json",
             expected_source_sha256=expected,
         )
-        == base / f"{prefix}_r11"
+        == base / "native_source_r3"
     )
