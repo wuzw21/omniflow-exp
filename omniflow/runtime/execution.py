@@ -76,6 +76,65 @@ async def execute_function(
     checker_source_states: dict[str, Observation | None] = {}
     resume_metadata_pending = dict(resume_metadata or {})
     for function_step in steps:
+        source_state = await _load_state(
+            host,
+            function_step.source_state_id,
+            state_loader=state_loader,
+        )
+        target_package = str(source_state.package_name or "").strip()
+        observed_package = str(current.package_name or "").strip()
+        if (
+            target_package
+            and observed_package != target_package
+            and function_step.action.tool != "open_app"
+        ):
+            preflight_step = await execute_robust_action(
+                Action("open_app", {"package_name": target_package}),
+                observation=current,
+                host=host,
+                plugins=plugins,
+                function=function,
+                installed_packages=installed_packages,
+            )
+            checker_decisions.append(
+                {
+                    "function_id": function.id,
+                    "checker_kind": "global_package_preflight",
+                    "source_state_id": function_step.source_state_id,
+                    "before_function_step": function_step.step_index,
+                    "target_package": target_package,
+                    "observed_package": observed_package,
+                    "status": "executed" if preflight_step.success else "failed",
+                    "reason": "package_mismatch",
+                }
+            )
+            executed += preflight_step.actions_executed
+            trace.extend(
+                await record_execution(
+                    host,
+                    preflight_step,
+                    trace_start_index=int(trace_start_index) + len(trace),
+                    metadata={
+                        "checker_kind": "global_package_preflight",
+                        "before_function_step": function_step.step_index,
+                    },
+                )
+            )
+            current = preflight_step.after or preflight_step.before or current
+            if not preflight_step.success:
+                return RunResult(
+                    False,
+                    function.id,
+                    executed,
+                    error=preflight_step.error or "global_package_preflight_failed",
+                    final_state=current,
+                    detail={
+                        "trace": trace,
+                        "checker_decisions": checker_decisions,
+                        "failed_step_index": function_step.step_index,
+                        "next_step_index": function_step.step_index,
+                    },
+                )
         for rule_index, raw_rule in enumerate(function.checker_rules):
             if rule_index in executed_checker_rules:
                 continue
@@ -144,11 +203,6 @@ async def execute_function(
                     },
                 )
         action = function_step.action
-        source_state = await _load_state(
-            host,
-            function_step.source_state_id,
-            state_loader=state_loader,
-        )
         if action.tool not in {"open_app", "wait"} and source_state is None:
             return RunResult(
                 False,
@@ -412,6 +466,7 @@ async def _dispatch_prepared(
         after = await _observe_ready(host)
     if action.tool == "open_app":
         expected_package = str(action.args.get("package_name") or "").strip()
+        expected_package = _resolve_open_app_package(expected_package)
         observed_package = str(after.package_name or "").strip()
         attempts = 1
         while (
@@ -449,6 +504,20 @@ async def _dispatch_prepared(
                 error=error,
             )
     return replace(core_step, after=after, origin="action")
+
+
+def _resolve_open_app_package(identifier: str) -> str:
+    """Normalize an app label or package before checking the post-launch state."""
+
+    value = str(identifier or "").strip()
+    if not value:
+        return ""
+    try:
+        from src.integrations.android_world.apps import resolve_androidworld_package
+
+        return str(resolve_androidworld_package(value) or value).strip()
+    except (ImportError, RuntimeError, ValueError):
+        return value
 
 
 async def _observe_ready(host: Host, *, require_graph: bool = False) -> Observation:
