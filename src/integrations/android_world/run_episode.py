@@ -278,6 +278,20 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
                         "tree; treating optional NEXT as non-blocking"
                     )
                     return None
+            if normalized_label == "Skip" and missing_target:
+                activity = str(
+                    getattr(controller._env, "foreground_activity_name", "") or ""
+                ).strip()
+                packages = {
+                    str(getattr(element, "package_name", "") or "").strip()
+                    for element in controller._env.get_ui_elements() or ()
+                }
+                if not activity and not packages:
+                    logger.info(
+                        "AndroidWorld Contacts setup is still publishing an empty "
+                        "tree; treating optional Skip as non-blocking"
+                    )
+                    return None
             if not missing_target and not empty_a11y_tree:
                 raise
             if normalized_label == "OK":
