@@ -4845,6 +4845,7 @@ def build_mobilegpt_command(
     app_ready_timeout_sec: float = DEFAULT_MOBILEGPT_APP_READY_TIMEOUT_SEC,
     app_ready_poll_sec: float = DEFAULT_MOBILEGPT_APP_READY_POLL_SEC,
     timeout_sec: float | None = None,
+    server_log_path: str | Path = "",
     run_dir_suffix: str = "",
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
@@ -4913,6 +4914,8 @@ def build_mobilegpt_command(
         "--server-port",
         str(int(server_port)),
     ]
+    if str(server_log_path or "").strip():
+        client_argv.extend(["--server-log", str(server_log_path)])
     if not perform_emulator_setup:
         client_argv.append("--no-perform-emulator-setup")
     return CommandSpec(
@@ -5605,6 +5608,9 @@ def _run_result_mobilegpt(
                     ),
                     app_ready_poll_sec=float(args.mobilegpt_app_ready_poll_sec),
                     timeout_sec=float(args.timeout_sec or 0),
+                    server_log_path=str(
+                        server_spec.metadata.get("log_path") or ""
+                    ),
                 )
                 episode_spec.metadata.update(
                     {

@@ -59,6 +59,23 @@ def test_mobilegpt_protocol_probe_marks_episode_after_server_task_start(
     assert probe["phase"] == "episode"
 
 
+def test_mobilegpt_protocol_probe_detects_server_handler_crash(
+    tmp_path: Path,
+) -> None:
+    stats = tmp_path / "mobilegpt_stats.jsonl"
+    stats.write_text("", encoding="utf-8")
+
+    probe = _mobilegpt_protocol_probe(
+        stats,
+        "MobileGPT_Service: receive broadcast\n",
+        "Exception in thread Thread-1\nopenai.OpenAIError: Missing credentials\n",
+    )
+
+    assert probe["server_error"] is True
+    assert "missing credentials" in probe["server_error_markers"]
+    assert probe["task_started"] is False
+
+
 def test_autodroid_official_memory_key_uses_paper_app_names() -> None:
     assert _autodroid_official_memory_key("audio") == "voicerecorder"
     assert _autodroid_official_memory_key("files") == "filemanager"

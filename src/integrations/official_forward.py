@@ -1234,11 +1234,16 @@ def _count_mobilegpt_device_actions(stats_path: Path) -> int:
 MOBILEGPT_STEP_BUDGET_RETURN_CODE = 125
 MOBILEGPT_STEP_TIMEOUT_RETURN_CODE = 126
 MOBILEGPT_HANDSHAKE_RETURN_CODE = 127
+MOBILEGPT_SERVER_ERROR_RETURN_CODE = 128
 MOBILEGPT_HANDSHAKE_TIMEOUT_SEC = 20.0
 MOBILEGPT_STEP_TIMEOUT_SEC = 60.0
 
 
-def _mobilegpt_protocol_probe(stats_path: Path, log_text: str) -> dict[str, Any]:
+def _mobilegpt_protocol_probe(
+    stats_path: Path,
+    log_text: str,
+    server_log_text: str = "",
+) -> dict[str, Any]:
     """Summarize the client/server boundary without changing the official code."""
 
     events: list[dict[str, Any]] = []
@@ -1253,6 +1258,7 @@ def _mobilegpt_protocol_probe(stats_path: Path, log_text: str) -> dict[str, Any]
             if isinstance(value, dict):
                 events.append(value)
     lowered = str(log_text or "").lower()
+    server_lowered = str(server_log_text or "").lower()
     client_errors = tuple(
         marker
         for marker in (
@@ -1269,6 +1275,17 @@ def _mobilegpt_protocol_probe(stats_path: Path, log_text: str) -> dict[str, Any]
     action_sent = sum(
         event.get("event") == "mobilegpt_action_sent" for event in events
     )
+    server_error_markers = tuple(
+        marker
+        for marker in (
+            "traceback (most recent call last)",
+            "openaierror",
+            "missing credentials",
+            "connectionrefusederror",
+            "exception in thread",
+        )
+        if marker in server_lowered
+    )
     return {
         "schema_version": "omniflow.mobilegpt_protocol_probe.v1",
         "stats_event_count": len(events),
@@ -1281,6 +1298,8 @@ def _mobilegpt_protocol_probe(stats_path: Path, log_text: str) -> dict[str, Any]
         "client_broadcast_received": "receive broadcast" in lowered,
         "client_error": bool(client_errors),
         "client_error_markers": list(client_errors),
+        "server_error": bool(server_error_markers),
+        "server_error_markers": list(server_error_markers),
         "phase": (
             "episode"
             if task_started > 0
@@ -1303,6 +1322,7 @@ def _run_mobilegpt_client(
     max_steps: int = 0,
     server_port: int = 12345,
     handshake_timeout_sec: float = MOBILEGPT_HANDSHAKE_TIMEOUT_SEC,
+    server_log_path: str | Path = "",
 ) -> int:
     """Build, install, and signal the untouched official MobileGPT client."""
 
@@ -1480,9 +1500,15 @@ def _run_mobilegpt_client(
     last_action_count = 0
     last_action_at = time.monotonic()
     last_log = ""
+    server_log = Path(server_log_path).expanduser() if str(server_log_path).strip() else None
+
+    def read_server_log() -> str:
+        if server_log is None or not server_log.is_file():
+            return ""
+        return server_log.read_text(encoding="utf-8", errors="replace")[-20000:]
 
     def finish_with_probe(returncode: int, log: str, reason: str) -> int:
-        probe = _mobilegpt_protocol_probe(stats_path, log)
+        probe = _mobilegpt_protocol_probe(stats_path, log, read_server_log())
         probe.update(
             {
                 "failure_reason": reason,
@@ -1518,7 +1544,7 @@ def _run_mobilegpt_client(
             check=False,
         ).stdout
         last_log = log
-        probe = _mobilegpt_protocol_probe(stats_path, log)
+        probe = _mobilegpt_protocol_probe(stats_path, log, read_server_log())
         if "Task finished" in log or "-----------Task finished--------" in log:
             probe.update(
                 {
@@ -1546,6 +1572,18 @@ def _run_mobilegpt_client(
                 MOBILEGPT_HANDSHAKE_RETURN_CODE,
                 log,
                 "mobilegpt_handshake_failed",
+            )
+        if probe["server_error"] and not probe["task_started"]:
+            _run_adb(
+                adb_path,
+                serial,
+                ["shell", "am", "force-stop", "com.example.MobileGPT"],
+                check=False,
+            )
+            return finish_with_probe(
+                MOBILEGPT_SERVER_ERROR_RETURN_CODE,
+                log,
+                "mobilegpt_server_handler_failed",
             )
         if not probe["task_started"] and time.monotonic() >= handshake_deadline:
             _run_adb(
@@ -1620,6 +1658,7 @@ def run_mobilegpt_client(
     max_steps: int = 0,
     server_port: int = 12345,
     handshake_timeout_sec: float = MOBILEGPT_HANDSHAKE_TIMEOUT_SEC,
+    server_log_path: str | Path = "",
 ) -> int:
     """Run MobileGPT from the same initialized AndroidWorld task state."""
 
@@ -1637,6 +1676,7 @@ def run_mobilegpt_client(
             max_steps=max_steps,
             server_port=server_port,
             handshake_timeout_sec=handshake_timeout_sec,
+            server_log_path=server_log_path,
         )
     started = time.monotonic()
     with _androidworld_task_startup(
@@ -1660,6 +1700,7 @@ def run_mobilegpt_client(
             max_steps=max_steps,
             server_port=server_port,
             handshake_timeout_sec=handshake_timeout_sec,
+            server_log_path=server_log_path,
         )
         reward = float(task.is_successful(env))
         # MobileGPT can leave its official client loop alive after the
@@ -1700,6 +1741,7 @@ def run_mobilegpt_client(
             MOBILEGPT_STEP_BUDGET_RETURN_CODE: "mobilegpt_step_budget_exhausted",
             MOBILEGPT_STEP_TIMEOUT_RETURN_CODE: "mobilegpt_step_timeout",
             MOBILEGPT_HANDSHAKE_RETURN_CODE: "mobilegpt_handshake_failed",
+            MOBILEGPT_SERVER_ERROR_RETURN_CODE: "mobilegpt_server_handler_failed",
         }.get(returncode, "")
         protocol_probe_path = output / "protocol_probe.json"
         protocol_probe = {}
@@ -2399,6 +2441,7 @@ def main() -> int:
         type=float,
         default=MOBILEGPT_HANDSHAKE_TIMEOUT_SEC,
     )
+    parser.add_argument("--server-log", default="")
     args = parser.parse_args()
     if args.baseline == "mobilegpt":
         required = {
@@ -2429,6 +2472,7 @@ def main() -> int:
             max_steps=args.max_steps,
             server_port=args.server_port,
             handshake_timeout_sec=args.handshake_timeout_sec,
+            server_log_path=args.server_log,
         )
     if args.baseline == "autodroid":
         required = {

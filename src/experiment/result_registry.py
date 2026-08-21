@@ -104,6 +104,7 @@ def mobilegpt_runtime_integrity_error(value: Any) -> str | None:
         "mobilegpt_handshake_failed",
         "mobilegpt_handshake_timeout",
         "mobilegpt_step_timeout",
+        "mobilegpt_server_handler_failed",
     )
     return error if any(marker in error for marker in markers) else None
 
