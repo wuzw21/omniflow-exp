@@ -28,6 +28,7 @@ from src.integrations.android_world.run_episode import (
     _patch_androidworld_adb_controller_install_compat,
     _patch_androidworld_apk_install_compat,
     _patch_androidworld_app_launch,
+    _patch_androidworld_current_activity,
     _patch_androidworld_chcon_compat,
     _patch_androidworld_directory_clear,
     _patch_androidworld_optional_setup_click,
@@ -510,6 +511,40 @@ def test_androidworld_adb_output_sanitizes_a11y_refresh_original_env() -> None:
     assert response.generic.output == (
         b"com.google.androidenv.accessibilityforwarder/Service\n"
     )
+
+
+def test_androidworld_current_activity_recovers_from_dumpsys() -> None:
+    calls: list[tuple[object, object, object]] = []
+
+    def original(_controller, *, timeout_sec=None):
+        return "com.google.android.deskclock", SimpleNamespace()
+
+    def issue_generic_request(command, controller, *, timeout_sec=None):
+        calls.append((tuple(command), controller, timeout_sec))
+        return SimpleNamespace(
+            generic=SimpleNamespace(
+                output=(
+                    b"mResumedActivity: ActivityRecord{u0 "
+                    b"com.google.android.deskclock/com.android.deskclock.DeskClock}\n"
+                )
+            )
+        )
+
+    adb_utils = SimpleNamespace(
+        get_current_activity=original,
+        issue_generic_request=issue_generic_request,
+    )
+    controller = object()
+    patched = _patch_androidworld_current_activity(adb_utils)
+    try:
+        activity, _ = adb_utils.get_current_activity(controller, timeout_sec=3.0)
+    finally:
+        adb_utils.get_current_activity = patched
+
+    assert activity == "com.google.android.deskclock/com.android.deskclock.DeskClock"
+    assert calls == [
+        (("shell", "dumpsys", "activity", "activities"), controller, 3.0)
+    ]
 
 
 def test_androidworld_chcon_compat_only_normalizes_transport_endpoint_failure() -> None:

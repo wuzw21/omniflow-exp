@@ -2388,6 +2388,57 @@ def _patch_androidworld_adb_output_sanitizer(
 
 def _patch_androidworld_app_launch(adb_utils: Any) -> Any:
     """Restart mapped apps before their official AndroidWorld launch."""
+def _patch_androidworld_current_activity(adb_utils: Any) -> Any:
+    """Recover a canonical activity when Android's stack output is malformed.
+
+    Some API-29 emulator images intermittently return a package-only value from
+    ``am stack list`` even though ``dumpsys activity activities`` already
+    contains the resumed ``package/class`` component. AndroidWorld's official
+    validators require the latter shape and otherwise crash before producing a
+    validator result. Keep the official validator and recover only the
+    transport value at this integration boundary.
+    """
+
+    original = getattr(adb_utils, "get_current_activity", None)
+    if not callable(original):
+        raise RuntimeError("androidworld_get_current_activity_unavailable")
+
+    def get_current_activity(
+        controller: Any,
+        timeout_sec: float | None = None,
+    ) -> tuple[Any, Any]:
+        activity, response = original(controller, timeout_sec=timeout_sec)
+        if isinstance(activity, str) and activity.count("/") == 1:
+            return activity, response
+        logger.warning(
+            "AndroidWorld returned malformed current activity %r; "
+            "recovering from dumpsys activity activities.",
+            activity,
+        )
+        fallback = adb_utils.issue_generic_request(
+            ["shell", "dumpsys", "activity", "activities"],
+            controller,
+            timeout_sec=timeout_sec,
+        )
+        output = getattr(getattr(fallback, "generic", None), "output", b"")
+        text = (
+            output.decode("utf-8", errors="replace")
+            if isinstance(output, bytes)
+            else str(output or "")
+        )
+        pattern = re.compile(
+            r"(?:mResumedActivity|topResumedActivity|ResumedActivity|mFocusedApp):"
+            r".*?\s([A-Za-z0-9_.]+/[A-Za-z0-9_.$]+)"
+        )
+        match = pattern.search(text)
+        if match:
+            return match.group(1), response
+        return activity, response
+
+    adb_utils.get_current_activity = get_current_activity
+    return original
+
+
 
     original = getattr(adb_utils, "launch_app", None)
     if not callable(original):
@@ -4596,6 +4647,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     original_launch_app: Any | None = None
     try:
         _add_android_world_path(android_world_root)
+    original_current_activity: Any | None = None
 
         from android_world import checkpointer as checkpointer_lib
         from android_world import registry, suite_utils
@@ -4653,6 +4705,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         original_launch_app = _patch_androidworld_app_launch(adb_utils)
         if task_params:
+        original_current_activity = _patch_androidworld_current_activity(adb_utils)
             if len(selected_task_names) != 1:
                 raise ValueError("--task-params-json requires exactly one selected task")
             selected_task_name = selected_task_names[0]
@@ -5290,6 +5343,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             adb_utils.launch_app = original_launch_app
         for controller_type, original_execute_adb_call in adb_output_patches:
             controller_type.execute_adb_call = original_execute_adb_call
+        if original_current_activity is not None:
+            adb_utils.get_current_activity = original_current_activity
         if env is not None:
             env.close()
 
