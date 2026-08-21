@@ -366,6 +366,13 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
                 str(getattr(element, "package_name", "") or "").strip()
                 for element in elements
             }
+            if not packages:
+                logger.info(
+                    "AndroidWorld setup is still publishing an empty tree; "
+                    "treating optional %s as non-blocking",
+                    element_text,
+                )
+                return None
             if any(package.endswith(".permissioncontroller") for package in packages):
                 raise
             app_packages = {
