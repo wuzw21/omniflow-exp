@@ -1233,7 +1233,62 @@ def _count_mobilegpt_device_actions(stats_path: Path) -> int:
 
 MOBILEGPT_STEP_BUDGET_RETURN_CODE = 125
 MOBILEGPT_STEP_TIMEOUT_RETURN_CODE = 126
+MOBILEGPT_HANDSHAKE_RETURN_CODE = 127
+MOBILEGPT_HANDSHAKE_TIMEOUT_SEC = 20.0
 MOBILEGPT_STEP_TIMEOUT_SEC = 60.0
+
+
+def _mobilegpt_protocol_probe(stats_path: Path, log_text: str) -> dict[str, Any]:
+    """Summarize the client/server boundary without changing the official code."""
+
+    events: list[dict[str, Any]] = []
+    if stats_path.is_file():
+        for line in stats_path.read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines():
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                events.append(value)
+    lowered = str(log_text or "").lower()
+    client_errors = tuple(
+        marker
+        for marker in (
+            "server offline",
+            "socket not connected yet",
+            "connection refused",
+            "failed to connect",
+            "unable to connect",
+        )
+        if marker in lowered
+    )
+    task_started = sum(event.get("event") == "task_started" for event in events)
+    task_finished = sum(event.get("event") == "task_finished" for event in events)
+    action_sent = sum(
+        event.get("event") == "mobilegpt_action_sent" for event in events
+    )
+    return {
+        "schema_version": "omniflow.mobilegpt_protocol_probe.v1",
+        "stats_event_count": len(events),
+        "task_started": task_started > 0,
+        "task_started_count": task_started,
+        "task_finished": task_finished > 0,
+        "task_finished_count": task_finished,
+        "action_sent_count": action_sent,
+        "client_service_ready": "# of apps" in lowered,
+        "client_broadcast_received": "receive broadcast" in lowered,
+        "client_error": bool(client_errors),
+        "client_error_markers": list(client_errors),
+        "phase": (
+            "episode"
+            if task_started > 0
+            else "client_server_handshake"
+            if "receive broadcast" in lowered or client_errors
+            else "client_startup"
+        ),
+    }
 
 
 def _run_mobilegpt_client(
@@ -1246,6 +1301,8 @@ def _run_mobilegpt_client(
     output_root: str | Path,
     timeout_sec: float,
     max_steps: int = 0,
+    server_port: int = 12345,
+    handshake_timeout_sec: float = MOBILEGPT_HANDSHAKE_TIMEOUT_SEC,
 ) -> int:
     """Build, install, and signal the untouched official MobileGPT client."""
 
@@ -1262,6 +1319,12 @@ def _run_mobilegpt_client(
     source = source.replace(
         'HOST_IP = "INPUT_YOUR_SERVER_IP_ADDRESS"',
         f'HOST_IP = "{str(host).replace(chr(34), "")}"',
+    )
+    source = re.sub(
+        r"(HOST_PORT\s*=\s*)\d+",
+        rf"\g<1>{int(server_port)}",
+        source,
+        count=1,
     )
     global_java.write_text(source, encoding="utf-8")
     sdk = str(
@@ -1411,18 +1474,91 @@ def _run_mobilegpt_client(
     )
     stats_path = Path(os.environ.get("MOBILEGPT_STATS_JSONL", "")).expanduser()
     deadline = time.monotonic() + max(1.0, float(timeout_sec))
+    handshake_deadline = time.monotonic() + max(
+        1.0, float(handshake_timeout_sec)
+    )
     last_action_count = 0
     last_action_at = time.monotonic()
+    last_log = ""
+
+    def finish_with_probe(returncode: int, log: str, reason: str) -> int:
+        probe = _mobilegpt_protocol_probe(stats_path, log)
+        probe.update(
+            {
+                "failure_reason": reason,
+                "returncode": int(returncode),
+                "server_host": str(host),
+                "server_port": int(server_port),
+                "handshake_timeout_sec": float(handshake_timeout_sec),
+            }
+        )
+        (output / "protocol_probe.json").write_text(
+            json.dumps(probe, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        (output / "client_log.txt").write_text(
+            log + f"\n[omniflow] {reason}\n",
+            encoding="utf-8",
+        )
+        return returncode
+
     while time.monotonic() < deadline:
         log = _run_adb(
             adb_path,
             serial,
-            ["logcat", "-d", "-s", "MobileGPT_Service:D", "*:S"],
+            [
+                "logcat",
+                "-d",
+                "-s",
+                "MobileGPT_Service:D",
+                "MobileGPT_CLIENT:D",
+                "AndroidRuntime:E",
+                "*:S",
+            ],
             check=False,
         ).stdout
+        last_log = log
+        probe = _mobilegpt_protocol_probe(stats_path, log)
         if "Task finished" in log or "-----------Task finished--------" in log:
+            probe.update(
+                {
+                    "failure_reason": "",
+                    "returncode": 0,
+                    "server_host": str(host),
+                    "server_port": int(server_port),
+                    "handshake_timeout_sec": float(handshake_timeout_sec),
+                }
+            )
+            (output / "protocol_probe.json").write_text(
+                json.dumps(probe, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
             (output / "client_log.txt").write_text(log, encoding="utf-8")
             return 0
+        if probe["client_error"] and not probe["task_started"]:
+            _run_adb(
+                adb_path,
+                serial,
+                ["shell", "am", "force-stop", "com.example.MobileGPT"],
+                check=False,
+            )
+            return finish_with_probe(
+                MOBILEGPT_HANDSHAKE_RETURN_CODE,
+                log,
+                "mobilegpt_handshake_failed",
+            )
+        if not probe["task_started"] and time.monotonic() >= handshake_deadline:
+            _run_adb(
+                adb_path,
+                serial,
+                ["shell", "am", "force-stop", "com.example.MobileGPT"],
+                check=False,
+            )
+            return finish_with_probe(
+                MOBILEGPT_HANDSHAKE_RETURN_CODE,
+                log,
+                "mobilegpt_handshake_timeout",
+            )
         action_count = _count_mobilegpt_device_actions(stats_path)
         if action_count != last_action_count:
             last_action_count = action_count
@@ -1437,11 +1573,11 @@ def _run_mobilegpt_client(
                 ["shell", "am", "force-stop", "com.example.MobileGPT"],
                 check=False,
             )
-            (output / "client_log.txt").write_text(
-                log + "\n[omniflow] mobilegpt_step_budget_exhausted\n",
-                encoding="utf-8",
+            return finish_with_probe(
+                MOBILEGPT_STEP_BUDGET_RETURN_CODE,
+                log,
+                "mobilegpt_step_budget_exhausted",
             )
-            return MOBILEGPT_STEP_BUDGET_RETURN_CODE
         if (
             max_steps > 0
             and time.monotonic() - last_action_at >= MOBILEGPT_STEP_TIMEOUT_SEC
@@ -1455,13 +1591,13 @@ def _run_mobilegpt_client(
                 ["shell", "am", "force-stop", "com.example.MobileGPT"],
                 check=False,
             )
-            (output / "client_log.txt").write_text(
-                log + "\n[omniflow] mobilegpt_step_timeout\n",
-                encoding="utf-8",
+            return finish_with_probe(
+                MOBILEGPT_STEP_TIMEOUT_RETURN_CODE,
+                log,
+                "mobilegpt_step_timeout",
             )
-            return MOBILEGPT_STEP_TIMEOUT_RETURN_CODE
         time.sleep(1.0)
-    (output / "client_log.txt").write_text(log, encoding="utf-8")
+    finish_with_probe(124, last_log, "mobilegpt_episode_timeout")
     return 124
 
 
@@ -1482,6 +1618,8 @@ def run_mobilegpt_client(
     grpc_port: int = 8560,
     perform_emulator_setup: bool = True,
     max_steps: int = 0,
+    server_port: int = 12345,
+    handshake_timeout_sec: float = MOBILEGPT_HANDSHAKE_TIMEOUT_SEC,
 ) -> int:
     """Run MobileGPT from the same initialized AndroidWorld task state."""
 
@@ -1497,6 +1635,8 @@ def run_mobilegpt_client(
             output_root=output_root,
             timeout_sec=timeout_sec,
             max_steps=max_steps,
+            server_port=server_port,
+            handshake_timeout_sec=handshake_timeout_sec,
         )
     started = time.monotonic()
     with _androidworld_task_startup(
@@ -1518,6 +1658,8 @@ def run_mobilegpt_client(
             output_root=output_root,
             timeout_sec=timeout_sec,
             max_steps=max_steps,
+            server_port=server_port,
+            handshake_timeout_sec=handshake_timeout_sec,
         )
         reward = float(task.is_successful(env))
         # MobileGPT can leave its official client loop alive after the
@@ -1557,7 +1699,19 @@ def run_mobilegpt_client(
         runtime_integrity_error = {
             MOBILEGPT_STEP_BUDGET_RETURN_CODE: "mobilegpt_step_budget_exhausted",
             MOBILEGPT_STEP_TIMEOUT_RETURN_CODE: "mobilegpt_step_timeout",
+            MOBILEGPT_HANDSHAKE_RETURN_CODE: "mobilegpt_handshake_failed",
         }.get(returncode, "")
+        protocol_probe_path = output / "protocol_probe.json"
+        protocol_probe = {}
+        if protocol_probe_path.is_file():
+            try:
+                value = json.loads(
+                    protocol_probe_path.read_text(encoding="utf-8")
+                )
+                if isinstance(value, dict):
+                    protocol_probe = value
+            except json.JSONDecodeError:
+                protocol_probe = {"parse_error": True}
         result_row = {
             "schema_version": "omniflow.androidworld.result.v1",
             "task_name": task_name,
@@ -1597,6 +1751,8 @@ def run_mobilegpt_client(
             "fallback_steps": 0,
             "duration_ms": round((time.monotonic() - started) * 1000.0, 3),
             "mobilegpt_stats_jsonl": str(stats_path),
+            "mobilegpt_protocol_probe": str(protocol_probe_path),
+            "mobilegpt_protocol": protocol_probe,
             "runtime_integrity_error": runtime_integrity_error,
         }
         (output / "task_results.jsonl").write_text(
@@ -2237,6 +2393,12 @@ def main() -> int:
     parser.add_argument("--memory-root", default="")
     parser.add_argument("--max-events", type=int, default=20)
     parser.add_argument("--max-steps", type=int, default=0)
+    parser.add_argument("--server-port", type=int, default=12345)
+    parser.add_argument(
+        "--handshake-timeout-sec",
+        type=float,
+        default=MOBILEGPT_HANDSHAKE_TIMEOUT_SEC,
+    )
     args = parser.parse_args()
     if args.baseline == "mobilegpt":
         required = {
@@ -2265,6 +2427,8 @@ def main() -> int:
             grpc_port=args.grpc_port,
             perform_emulator_setup=not args.no_perform_emulator_setup,
             max_steps=args.max_steps,
+            server_port=args.server_port,
+            handshake_timeout_sec=args.handshake_timeout_sec,
         )
     if args.baseline == "autodroid":
         required = {

@@ -2225,6 +2225,9 @@ def build_mobilegpt_server_command(
     if not (server_root / "main.py").is_file():
         raise FileNotFoundError(f"mobilegpt_server_root_missing:{server_root}")
     env: dict[str, str] = {}
+    env["MOBILEGPT_SERVER_HOST"] = str(server_host or "0.0.0.0")
+    env["MOBILEGPT_SERVER_PORT"] = str(int(port))
+    env["PYTHONUNBUFFERED"] = "1"
     if serial.strip():
         env["ANDROID_SERIAL"] = serial.strip()
     del runtime_observe_backend
@@ -4001,6 +4004,13 @@ def _start_background_command(
     print(f"[{spec.label}:background] {_command_line(spec)}", flush=True)
     if dry_run:
         return None, 0
+    if spec.label == "mobilegpt:official-server":
+        port = int(spec.metadata.get("port") or 0)
+        if port > 0 and not _local_tcp_port_available(port):
+            spec.metadata["server_start_failure"] = (
+                f"mobilegpt_server_port_in_use:{port}"
+            )
+            return None, 127
     process = start_process(
         spec.argv,
         cwd=spec.cwd,
@@ -4014,7 +4024,39 @@ def _start_background_command(
     returncode = process.poll()
     if returncode is not None:
         return process, int(returncode)
+    if spec.label == "mobilegpt:official-server":
+        port = int(spec.metadata.get("port") or 0)
+        if port > 0 and not _wait_for_local_tcp_port(port, warmup_sec):
+            spec.metadata["server_start_failure"] = (
+                f"mobilegpt_server_not_listening:{port}"
+            )
+            stop_process(process, timeout_sec=2)
+            return process, 127
+        spec.metadata["server_ready"] = True
     return process, 0
+
+
+def _local_tcp_port_available(port: int) -> bool:
+    """Check the fixed local MobileGPT port before launching a new server."""
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(("0.0.0.0", int(port)))
+    except OSError:
+        return False
+    return True
+
+
+def _wait_for_local_tcp_port(port: int, timeout_sec: float) -> bool:
+    deadline = time.monotonic() + max(0.1, float(timeout_sec or 0.1))
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", int(port)), timeout=0.2):
+                return True
+        except OSError:
+            time.sleep(0.1)
+    return False
 
 
 def _stop_background_command(process: subprocess.Popen[Any] | None) -> None:
@@ -4868,6 +4910,8 @@ def build_mobilegpt_command(
         str(int(target.console_port) + 3000),
         "--max-steps",
         str(int(max_steps)),
+        "--server-port",
+        str(int(server_port)),
     ]
     if not perform_emulator_setup:
         client_argv.append("--no-perform-emulator-setup")

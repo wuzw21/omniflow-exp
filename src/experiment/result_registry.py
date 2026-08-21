@@ -101,6 +101,9 @@ def mobilegpt_runtime_integrity_error(value: Any) -> str | None:
         "mobilegpt_launch_response_invalid:",
         "mobilegpt_native_xml_invalid:",
         "mobilegpt_server_closed_connection",
+        "mobilegpt_handshake_failed",
+        "mobilegpt_handshake_timeout",
+        "mobilegpt_step_timeout",
     )
     return error if any(marker in error for marker in markers) else None
 

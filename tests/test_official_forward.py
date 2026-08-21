@@ -10,6 +10,8 @@ from types import SimpleNamespace
 import pytest
 
 from src.integrations.official_forward import (
+    MOBILEGPT_HANDSHAKE_RETURN_CODE,
+    _mobilegpt_protocol_probe,
     _count_appagent_actions,
     _autodroid_task_app_name,
     _autodroid_official_memory_key,
@@ -20,6 +22,41 @@ from src.integrations.official_forward import (
     validate_autodroid_memory_root,
     write_adb_proxy,
 )
+
+
+def test_mobilegpt_protocol_probe_distinguishes_handshake_failure(
+    tmp_path: Path,
+) -> None:
+    stats = tmp_path / "mobilegpt_stats.jsonl"
+    stats.write_text("", encoding="utf-8")
+
+    probe = _mobilegpt_protocol_probe(
+        stats,
+        "MobileGPT_Service: # of Apps : 21\n"
+        "MobileGPT_CLIENT: server offline\n",
+    )
+
+    assert probe["client_service_ready"] is True
+    assert probe["client_error"] is True
+    assert probe["task_started"] is False
+    assert probe["phase"] == "client_server_handshake"
+    assert MOBILEGPT_HANDSHAKE_RETURN_CODE == 127
+
+
+def test_mobilegpt_protocol_probe_marks_episode_after_server_task_start(
+    tmp_path: Path,
+) -> None:
+    stats = tmp_path / "mobilegpt_stats.jsonl"
+    stats.write_text(
+        '{"event":"task_started"}\n{"event":"mobilegpt_action_sent"}\n',
+        encoding="utf-8",
+    )
+
+    probe = _mobilegpt_protocol_probe(stats, "MobileGPT_Service: receive broadcast")
+
+    assert probe["task_started"] is True
+    assert probe["action_sent_count"] == 1
+    assert probe["phase"] == "episode"
 
 
 def test_autodroid_official_memory_key_uses_paper_app_names() -> None:
