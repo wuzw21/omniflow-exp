@@ -1884,6 +1884,16 @@ def _result_environment(
     result_attempt_id = f"{attempt_id}.{method}.{label}"
     result_attempt_root = (
         attempt_root / "target_attempts" / label / method / result_attempt_id
+    emulator_bin = str(getattr(args, "emulator_bin", "") or "").strip()
+    sdk_root = ""
+    if emulator_bin:
+        sdk_root = str(Path(emulator_bin).resolve().parent.parent)
+    else:
+        sdk_root = str(
+            os.environ.get("ANDROID_SDK_ROOT")
+            or os.environ.get("ANDROID_HOME")
+            or ""
+        ).strip()
     )
     environment = dict(os.environ)
     environment.update(
@@ -1918,15 +1928,16 @@ def _result_environment(
             # shared task/method/device-model archive.
             "OMNIFLOW_ANDROIDWORLD_ARCHIVE_ROOT": str(
                 args.results_root / "androidworld"
+    if sdk_root:
+        environment.update(
+            {
+                "ANDROID_SDK_ROOT": sdk_root,
+                "ANDROID_HOME": sdk_root,
+                "OMNIFLOW_REAL_ADB_PATH": str(Path(sdk_root) / "platform-tools" / "adb"),
+            }
+        )
             ),
             "OMNIFLOW_COLLECT_PERFORMANCE": "1",
-            "ANDROID_SDK_ROOT": str(Path(args.emulator_bin).resolve().parent.parent),
-            "ANDROID_HOME": str(Path(args.emulator_bin).resolve().parent.parent),
-            "OMNIFLOW_REAL_ADB_PATH": str(
-                Path(args.emulator_bin).resolve().parent.parent
-                / "platform-tools"
-                / "adb"
-            ),
         }
     )
     if store_path is not None:
