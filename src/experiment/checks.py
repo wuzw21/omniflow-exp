@@ -885,6 +885,14 @@ def _run_mobilegpt_integration_checks(
         )
     if not root.is_dir():
         return
+    _integration_add(
+        checks,
+        method,
+        "server_port_free",
+        "pass" if _port_is_free(server_port) else "fail",
+        f"127.0.0.1:{server_port}",
+        "Stop the stale MobileGPT server or choose the protocol port before starting an E2E run.",
+    )
     try:
         with tempfile.TemporaryDirectory(prefix="omniflow-mobilegpt-check-") as temporary:
             temporary_root = Path(temporary)
@@ -1120,6 +1128,44 @@ def run_integration_checks(args: argparse.Namespace) -> dict[str, Any]:
             serial=str(args.serial),
             adb_path=adb_path,
         )
+    if getattr(args, "require_device", False):
+        adb = str(os.environ.get("OMNIFLOW_REAL_ADB_PATH") or _resolve_tool("adb", "platform-tools"))
+        adb_ready = bool(adb and Path(adb).is_file() and os.access(adb, os.X_OK))
+        _integration_add(
+            checks,
+            "shared",
+            "adb",
+            "pass" if adb_ready else "fail",
+            adb or "missing",
+            "Set OMNIFLOW_REAL_ADB_PATH to the real platform-tools/adb binary.",
+        )
+        if adb_ready:
+            devices = _run([adb, "devices"], timeout=10).stdout
+            device_ready = any(
+                line.split()[:2] == [str(args.serial), "device"]
+                for line in devices.splitlines()
+            )
+            _integration_add(
+                checks,
+                "shared",
+                "device",
+                "pass" if device_ready else "fail",
+                str(args.serial),
+                "Start the selected emulator and wait for adb state=device.",
+            )
+            if device_ready:
+                boot = _run(
+                    [adb, "-s", str(args.serial), "shell", "getprop", "sys.boot_completed"],
+                    timeout=10,
+                ).stdout.strip()
+                _integration_add(
+                    checks,
+                    "shared",
+                    "boot_completed",
+                    "pass" if boot == "1" else "fail",
+                    boot or "empty",
+                    "Wait for Android sys.boot_completed=1 before launching either official method.",
+                )
     if selected not in {"all", "mobilegpt", "appagent"}:
         _integration_add(
             checks,
