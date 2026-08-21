@@ -464,7 +464,14 @@ class AndroidWorldHost:
         )
 
     def _screen_size(self) -> tuple[float, float]:
-        for attribute in ("device_screen_size", "logical_screen_size"):
+        # AndroidWorld coordinates and accessibility bounds are expressed in
+        # the logical application display.  On Fold profiles the physical
+        # size can be a rotated, different resolution (for example
+        # 1768x2208 while the app window is 2208x1840).  Using the physical
+        # size here corrupts XML completeness checks and pixel/canonical
+        # coordinate conversion, so it is only a fallback when the logical
+        # display is unavailable.
+        for attribute in ("logical_screen_size", "device_screen_size"):
             value = tuple(getattr(self.env, attribute, ()) or ())
             if len(value) == 2 and float(value[0]) > 0 and float(value[1]) > 0:
                 return float(value[0]), float(value[1])

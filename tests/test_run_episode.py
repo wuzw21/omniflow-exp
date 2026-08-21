@@ -1577,6 +1577,33 @@ def test_input_text_coordinates_reach_androidworld_json_action(monkeypatch) -> N
     assert action.clear_text is True
 
 
+def test_fold_uses_logical_display_for_coordinate_conversion(monkeypatch) -> None:
+    class JSONAction:
+        def __init__(self, action_type=None, x=None, y=None):
+            self.action_type = action_type
+            self.x = x
+            self.y = y
+
+    module = SimpleNamespace(JSONAction=JSONAction)
+    monkeypatch.setattr(
+        "src.integrations.android_world.host.importlib.import_module",
+        lambda name: module if name == "android_world.env.json_action" else None,
+    )
+    env = SimpleNamespace(
+        # Fold physical size is rotated/different from the application
+        # display used by the accessibility tree and screenshots.
+        device_screen_size=(1768, 2208),
+        logical_screen_size=(2208, 1840),
+    )
+
+    action = AndroidWorldHost(env)._json_action(
+        Action("click", {"x": 1000.0, "y": 1000.0})
+    )
+
+    assert action.x == 2208.0
+    assert action.y == 1840.0
+
+
 def test_runtime_execution_trace_preserves_prepared_function_action() -> None:
     trace = [
         {
