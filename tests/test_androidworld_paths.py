@@ -9,7 +9,7 @@ from src.experiment.run_task import _experiment_run_dir
 def test_archive_names_use_avd_model_not_cli_alias() -> None:
     assert canonical_device_model(
         label="small5554", serial="emulator-5554", console_port=5554
-    ) == "OmniFlowTargetSmall"
+    ) == "WXGA_Tablet_test_00"
     assert canonical_device_seed_name(
         label="pixel5576", serial="emulator-5576", console_port=5576
     ) == "AndroidWorldAvd4090_seed111_eval113"
@@ -18,6 +18,9 @@ def test_archive_names_use_avd_model_not_cli_alias() -> None:
     ) == "OmniFlowTargetFold_seed111_eval113"
     assert canonical_device_model(
         label="source5560", serial="emulator-5560", console_port=5560
+    ) == "OmniFlowSourceSmall"
+    assert canonical_device_model(
+        label="small5554", serial="emulator-5554", console_port=5554
     ) == "WXGA_Tablet_test_00"
 
 
@@ -38,7 +41,7 @@ def test_live_batch_route_has_runlog_attempt_leaf(monkeypatch) -> None:
         console_port=5554,
     )
     assert str(path).endswith(
-        "/TaskOne/omniflow/OmniFlowTargetSmall_seed111_eval113/"
+        "/TaskOne/omniflow/WXGA_Tablet_test_00_seed111_eval113/"
         "runlog/attempt.omniflow.small5554"
     )
 
@@ -54,5 +57,5 @@ def test_source_collection_route_uses_source_model_and_explicit_attempt() -> Non
         attempt_id="source-attempt",
     )
     assert str(path).endswith(
-        "/TaskOne/source/WXGA_Tablet_test_00_seed111/runlog/source-attempt"
+        "/TaskOne/source/OmniFlowSourceSmall_seed111/runlog/source-attempt"
     )

@@ -767,8 +767,8 @@ def test_default_avd_system_image_matches_host_architecture(
     assert completed.stdout.count(
         f"system-images;android-34;google_apis;{expected_abi}"
     ) == 1
-    assert "emulator-5554=OmniFlowTargetSmall" in completed.stdout
-    assert "emulator-5560=WXGA_Tablet_test_00" in completed.stdout
+    assert "emulator-5554=WXGA_Tablet_test_00" in completed.stdout
+    assert "emulator-5560=OmniFlowSourceSmall" in completed.stdout
     assert "emulator-5564=OmniFlowTargetFold" in completed.stdout
     assert "emulator-5576=AndroidWorldAvd4090" in completed.stdout
 
@@ -819,7 +819,7 @@ def test_missing_protocol_avd_is_provisioned_by_shared_helper(
     emulator.write_text(
         "#!/bin/sh\n"
         "if [ \"$1\" = '-list-avds' ] && [ -f \"$MARKER\" ]; then\n"
-        "  printf '%s\\n' WXGA_Tablet_test_00\n"
+        "  printf '%s\\n' OmniFlowSourceSmall\n"
         "fi\n",
         encoding="utf-8",
     )
@@ -838,7 +838,7 @@ def test_missing_protocol_avd_is_provisioned_by_shared_helper(
             "bash",
             "-c",
             "source \"$SCRIPT_PREFIX\"; "
-            "ensure_avd_installed WXGA_Tablet_test_00 "
+        "ensure_avd_installed OmniFlowSourceSmall "
             "\"$TEST_EMULATOR\" \"$TEST_AVDMANAGER\" \"$TEST_SDK\"",
         ],
         cwd=REPO,
@@ -894,9 +894,9 @@ def test_default_topology_maps_device_aliases_to_physical_avds(
         "source5560:emulator-5560:5560",
         "small5554:emulator-5554:5554",
         (
-            "emulator-5554=OmniFlowTargetSmall,emulator-5576=AndroidWorldAvd4090,"
+            "emulator-5554=WXGA_Tablet_test_00,emulator-5576=AndroidWorldAvd4090,"
             "emulator-5564=OmniFlowTargetFold,"
-            "emulator-5560=WXGA_Tablet_test_00"
+            "emulator-5560=OmniFlowSourceSmall"
         ),
     ]
     avd_names = [
@@ -905,7 +905,7 @@ def test_default_topology_maps_device_aliases_to_physical_avds(
     ]
     assert len(avd_names) == 4
     assert len(set(avd_names)) == 4
-    assert avd_names.count("OmniFlowTargetSmall") == 1
+    assert avd_names.count("WXGA_Tablet_test_00") == 1
 
 
 @pytest.mark.parametrize(

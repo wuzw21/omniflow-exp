@@ -75,13 +75,13 @@ bash scripts/exp/run_androidworld.sh --setup-device small5554
 
 | label | serial | profile |
 | --- | --- | --- |
-| `small5554` | `emulator-5554` | `small_phone` |
+| `small5554` | `emulator-5554` | `tablet` |
 | `pixel5576` | `emulator-5576` | `pixel_phone` |
 | `fold5564` | `emulator-5564` | `pixel_fold` |
 
-The source/original device is `source5560` on the existing
-`WXGA_Tablet_test_00` AVD (`tablet`, 10.1-inch WXGA). The target
-`small5554` remains a separate small-phone device.
+The target `small5554` uses the existing `WXGA_Tablet_test_00` AVD
+(`tablet`, 10.1-inch WXGA). The source/original `source5560` remains an
+internal source-only device on `OmniFlowSourceSmall` and is not a target cell.
 
 ## AutoDroid 补充基线（9207）
 
