@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 from dataclasses import asdict, dataclass
 import hashlib
 import importlib
@@ -15,6 +16,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any
 
@@ -50,6 +52,15 @@ class Check:
     name: str
     status: str
     detail: str
+
+
+@dataclass
+class IntegrationCheck:
+    method: str
+    name: str
+    status: str
+    detail: str
+    remediation: str = ""
 
 
 def _run(command: list[str], timeout: float = 10.0) -> subprocess.CompletedProcess[str]:
@@ -618,6 +629,525 @@ def _validate_source_index(
     }
 
 
+def _integration_add(
+    checks: list[IntegrationCheck],
+    method: str,
+    name: str,
+    status: str,
+    detail: str,
+    remediation: str = "",
+) -> None:
+    checks.append(
+        IntegrationCheck(
+            method=method,
+            name=name,
+            status=status,
+            detail=str(detail),
+            remediation=str(remediation),
+        )
+    )
+
+
+def _integration_file_check(
+    checks: list[IntegrationCheck],
+    method: str,
+    path: Path,
+    *,
+    label: str,
+    remediation: str,
+) -> bool:
+    present = path.is_file()
+    _integration_add(
+        checks,
+        method,
+        label,
+        "pass" if present else "fail",
+        str(path),
+        "" if present else remediation,
+    )
+    return present
+
+
+def _integration_python_check(
+    checks: list[IntegrationCheck],
+    method: str,
+    path: Path,
+) -> None:
+    try:
+        ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError, UnicodeError) as error:
+        _integration_add(
+            checks,
+            method,
+            f"python_syntax:{path.name}",
+            "fail",
+            str(error),
+            "Fix the syntax in the disposable integration input before running E2E.",
+        )
+    else:
+        _integration_add(
+            checks,
+            method,
+            f"python_syntax:{path.name}",
+            "pass",
+            "AST parse succeeded",
+        )
+
+
+def _integration_model_config(
+    args: argparse.Namespace,
+    checks: list[IntegrationCheck],
+) -> dict[str, str]:
+    from omniflow.vlm.model_config import resolve_openai_compatible_config
+    from src.experiment.protocol import (
+        FORMAL_MODEL,
+        FORMAL_MODEL_BASE_URL,
+        FORMAL_MODEL_ENDPOINT_PROFILE,
+    )
+
+    model = str(
+        args.integration_model
+        or os.environ.get("OPENAI_MODEL")
+        or FORMAL_MODEL
+    ).strip()
+    embedding_model = str(
+        args.embedding_model
+        or os.environ.get("MOBILEGPT_EMBEDDING_MODEL")
+        or "GLM-Embedding-2"
+    ).strip()
+    profile = str(
+        args.model_endpoint_profile
+        or os.environ.get("OMNIFLOW_MODEL_ENDPOINT_PROFILE")
+        or FORMAL_MODEL_ENDPOINT_PROFILE
+    ).strip()
+    base_url = str(
+        args.model_base_url
+        or os.environ.get("OPENAI_BASE_URL")
+        or FORMAL_MODEL_BASE_URL
+    ).strip()
+    environment = dict(os.environ)
+    if base_url:
+        environment.setdefault("OPENAI_BASE_URL", base_url)
+    try:
+        api_key, resolved_base_url = resolve_openai_compatible_config(
+            profile=profile,
+            base_url=base_url,
+            environment=environment,
+        )
+    except ValueError as error:
+        api_key, resolved_base_url = None, None
+        _integration_add(
+            checks,
+            "shared",
+            "model_endpoint",
+            "fail",
+            str(error),
+            "Source the model.env used by the launcher and select a complete endpoint profile.",
+        )
+    else:
+        _integration_add(
+            checks,
+            "shared",
+            "model_endpoint",
+            "pass" if api_key and resolved_base_url else "fail",
+            (
+                f"profile={profile} base_url={resolved_base_url or 'missing'} "
+                f"api_key={'configured' if api_key else 'missing'}"
+            ),
+            "Set the endpoint API key and base URL; the key value is never printed.",
+        )
+    allowed_models = {"glm-4.6v", "glm-5.1"}
+    model_ok = model.lower() in allowed_models
+    _integration_add(
+        checks,
+        "shared",
+        "chat_model",
+        "pass" if model_ok else "fail",
+        model or "missing",
+        "Use GLM-4.6V or GLM-5.1 for both formal integrations.",
+    )
+    embedding_ok = embedding_model == "GLM-Embedding-2"
+    _integration_add(
+        checks,
+        "mobilegpt",
+        "embedding_model",
+        "pass" if embedding_ok else "fail",
+        embedding_model or "missing",
+        "Set MOBILEGPT_EMBEDDING_MODEL=GLM-Embedding-2.",
+    )
+    return {
+        "model": model,
+        "embedding_model": embedding_model,
+        "profile": profile,
+        "api_key": str(api_key or ""),
+        "base_url": str(resolved_base_url or base_url),
+    }
+
+
+def _find_mobilegpt_global(root: Path) -> Path | None:
+    candidates = sorted(root.rglob("MobileGPTGlobal.java"))
+    return candidates[0] if candidates else None
+
+
+def _run_mobilegpt_integration_checks(
+    checks: list[IntegrationCheck],
+    *,
+    repo: Path,
+    root: Path,
+    memory_root: Path | None,
+    config: dict[str, str],
+    server_port: int,
+) -> None:
+    method = "mobilegpt"
+    required = {
+        "official_root": root,
+        "server_entry": root / "Server" / "main.py",
+        "server_socket": root / "Server" / "server.py",
+        "server_utils": root / "Server" / "utils" / "utils.py",
+    }
+    for label, path in required.items():
+        _integration_file_check(
+            checks,
+            method,
+            path,
+            label=label,
+            remediation="Point OMNIFLOW_MOBILEGPT_ROOT to the unmodified official MobileGPT checkout.",
+        )
+    global_java = _find_mobilegpt_global(root)
+    _integration_add(
+        checks,
+        method,
+        "android_client_config",
+        "pass" if global_java else "fail",
+        str(global_java or root / "App/**/MobileGPTGlobal.java"),
+        "The official Android client must contain MobileGPTGlobal.java with HOST_IP/HOST_PORT.",
+    )
+    source_files = [path for path in required.values() if path.suffix == ".py" and path.is_file()]
+    for path in source_files:
+        _integration_python_check(checks, method, path)
+    if global_java is not None:
+        text = global_java.read_text(encoding="utf-8", errors="replace")
+        host_ok = bool(re.search(r"HOST_IP", text))
+        port_ok = bool(re.search(r"HOST_PORT", text))
+        _integration_add(
+            checks,
+            method,
+            "android_client_host_port_fields",
+            "pass" if host_ok and port_ok else "fail",
+            f"HOST_IP={'present' if host_ok else 'missing'} HOST_PORT={'present' if port_ok else 'missing'}",
+            "Keep the official client fields; the runner patches them only in its disposable APK staging flow.",
+        )
+    wiring = (repo / "src" / "integrations" / "official_forward.py").read_text(
+        encoding="utf-8", errors="replace"
+    ) if (repo / "src" / "integrations" / "official_forward.py").is_file() else ""
+    run_task = (repo / "src" / "experiment" / "run_task.py").read_text(
+        encoding="utf-8", errors="replace"
+    ) if (repo / "src" / "experiment" / "run_task.py").is_file() else ""
+    wiring_ok = all(
+        marker in wiring for marker in ("prepare_mobilegpt_server", "run_mobilegpt_client")
+    ) and "build_mobilegpt_server_command" in run_task
+    _integration_add(
+        checks,
+        method,
+        "pipeline_wiring",
+        "pass" if wiring_ok else "fail",
+        "official_forward + run_task MobileGPT server/client seam",
+        "Restore the single official_forward/run_task integration seam.",
+    )
+    if memory_root is not None:
+        try:
+            manifest = validate_memory_manifest(memory_root)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            _integration_add(
+                checks,
+                method,
+                "memory_bundle",
+                "fail",
+                str(error),
+                "Regenerate or select a complete MobileGPT memory bundle; do not hand-edit its manifest.",
+            )
+        else:
+            _integration_add(
+                checks,
+                method,
+                "memory_bundle",
+                "pass",
+                json.dumps(manifest, sort_keys=True),
+            )
+    else:
+        _integration_add(
+            checks,
+            method,
+            "memory_bundle",
+            "warning",
+            "not supplied; static integration check only",
+            "Pass --mobilegpt-memory-root for a warm-run readiness check.",
+        )
+    if not root.is_dir():
+        return
+    try:
+        with tempfile.TemporaryDirectory(prefix="omniflow-mobilegpt-check-") as temporary:
+            temporary_root = Path(temporary)
+            staged_memory = temporary_root / "memory"
+            staged_memory.mkdir()
+            staged = temporary_root / "workspace"
+            from src.integrations.official_forward import prepare_mobilegpt_server
+
+            result = prepare_mobilegpt_server(
+                official_root=root,
+                memory_root=memory_root or staged_memory,
+                workspace=staged,
+                embedding_model=config["embedding_model"],
+                chat_model=config["model"],
+            )
+            staged_server = Path(result["server_root"])
+            staged_text = "\n".join(
+                path.read_text(encoding="utf-8", errors="replace")
+                for path in staged_server.rglob("*.py")
+            )
+            for path in staged_server.rglob("*.py"):
+                _integration_python_check(checks, method, path)
+            stage_ok = (
+                config["embedding_model"] in staged_text
+                and "MOBILEGPT_EMBEDDING_MODEL" in staged_text
+                and config["model"] in staged_text
+                and "MOBILEGPT_CHAT_MODEL" in staged_text
+                and "text-embedding-3-small" not in staged_text
+            )
+            _integration_add(
+                checks,
+                method,
+                "disposable_server_config",
+                "pass" if stage_ok else "fail",
+                f"staged_server={staged_server} port={server_port}",
+                "The disposable Server must route chat to the selected GLM and embeddings to GLM-Embedding-2.",
+            )
+    except Exception as error:
+        _integration_add(
+            checks,
+            method,
+            "disposable_server_config",
+            "fail",
+            f"{type(error).__name__}: {error}",
+            "Fix the official MobileGPT root or the disposable staging seam before E2E.",
+        )
+
+
+def _run_appagent_integration_checks(
+    checks: list[IntegrationCheck],
+    *,
+    repo: Path,
+    root: Path,
+    memory_root: Path | None,
+    config: dict[str, str],
+    serial: str,
+    adb_path: str,
+) -> None:
+    method = "appagent"
+    required = {
+        "official_root": root,
+        "official_entry": root / "run.py",
+        "official_executor": root / "scripts" / "task_executor.py",
+        "official_model": root / "scripts" / "model.py",
+        "official_controller": root / "scripts" / "and_controller.py",
+        "official_config": root / "config.yaml",
+    }
+    for label, path in required.items():
+        _integration_file_check(
+            checks,
+            method,
+            path,
+            label=label,
+            remediation="Point OMNIFLOW_APPAGENT_ROOT to the pinned official AppAgent checkout.",
+        )
+    revision = _run(["git", "-C", str(root), "rev-parse", "HEAD"], timeout=10)
+    actual_revision = revision.stdout.strip()
+    _integration_add(
+        checks,
+        method,
+        "official_revision",
+        "pass" if actual_revision == APPAGENT_OFFICIAL_REVISION else "fail",
+        actual_revision or "unavailable",
+        f"Checkout the pinned AppAgent revision {APPAGENT_OFFICIAL_REVISION}.",
+    )
+    for path in required.values():
+        if path.suffix == ".py" and path.is_file():
+            _integration_python_check(checks, method, path)
+    wiring = (repo / "src" / "integrations" / "official_forward.py").read_text(
+        encoding="utf-8", errors="replace"
+    ) if (repo / "src" / "integrations" / "official_forward.py").is_file() else ""
+    run_task = (repo / "src" / "experiment" / "run_task.py").read_text(
+        encoding="utf-8", errors="replace"
+    ) if (repo / "src" / "experiment" / "run_task.py").is_file() else ""
+    wiring_ok = all(
+        marker in wiring
+        for marker in ("prepare_appagent_workspace", "--baseline", "appagent")
+    ) and "build_appagent_command" in run_task
+    _integration_add(
+        checks,
+        method,
+        "pipeline_wiring",
+        "pass" if wiring_ok else "fail",
+        "official_forward + run_task AppAgent executor seam",
+        "Restore the single official_forward/run_task AppAgent integration seam.",
+    )
+    docs_root: Path | None = None
+    if memory_root is not None:
+        manifest_path = memory_root / "appagent_manifest.json"
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            valid = is_memory_manifest_valid(payload)
+            docs_value = str(payload.get("demo_docs_root") or "").strip()
+            docs_root = Path(docs_value).expanduser().resolve() if docs_value else None
+            valid = valid and docs_root is not None and docs_root.is_dir()
+            detail = f"manifest={manifest_path} docs={docs_root or 'missing'}"
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            valid = False
+            detail = str(error)
+        _integration_add(
+            checks,
+            method,
+            "memory_bundle",
+            "pass" if valid else "fail",
+            detail,
+            "Regenerate or select a complete AppAgent memory bundle; do not hand-edit its manifest.",
+        )
+    else:
+        _integration_add(
+            checks,
+            method,
+            "memory_bundle",
+            "warning",
+            "not supplied; static integration check only",
+            "Pass --appagent-memory-root for a warm-run readiness check.",
+        )
+    if not root.is_dir():
+        return
+    try:
+        with tempfile.TemporaryDirectory(prefix="omniflow-appagent-check-") as temporary:
+            temporary_root = Path(temporary)
+            if docs_root is None:
+                docs_root = temporary_root / "apps" / "Contacts" / "demo_docs"
+                docs_root.mkdir(parents=True)
+                (docs_root / "probe.txt").write_text("probe\n", encoding="utf-8")
+            staged = temporary_root / "workspace"
+            from src.integrations.official_forward import prepare_appagent_workspace
+
+            result = prepare_appagent_workspace(
+                official_root=root,
+                docs_root=docs_root,
+                workspace=staged,
+                app_name=docs_root.parent.name,
+                serial=serial,
+                adb_path=adb_path or "adb",
+                config={
+                    "MODEL": "OpenAI",
+                    "OPENAI_API_BASE": config["base_url"].rstrip("/") + "/chat/completions",
+                    "OPENAI_API_KEY": config["api_key"] or "not-required",
+                    "OPENAI_API_MODEL": config["model"],
+                    "MAX_TOKENS": 1024,
+                    "TEMPERATURE": 0.0,
+                    "REQUEST_INTERVAL": 0.0,
+                    "DARK_MODE": False,
+                    "MIN_DIST": 30,
+                },
+            )
+            staged_executor = Path(result["workspace"]) / "scripts" / "task_executor.py"
+            executor_text = staged_executor.read_text(encoding="utf-8", errors="replace")
+            executor_ok = (
+                "_omniflow_resolution_agnostic_doc_path" in executor_text
+                and "os.path.join(docs_dir, f\"{elem.uid}.txt\")" not in executor_text
+            )
+            _integration_add(
+                checks,
+                method,
+                "disposable_executor_config",
+                "pass" if executor_ok else "fail",
+                f"staged_executor={staged_executor} model={config['model']}",
+                "The disposable executor must use the resolution-agnostic document lookup and the selected GLM model.",
+            )
+            _integration_python_check(checks, method, staged_executor)
+            proxy = Path(result["adb_proxy"])
+            _integration_add(
+                checks,
+                method,
+                "adb_proxy",
+                "pass" if proxy.is_file() and os.access(proxy, os.X_OK) else "fail",
+                str(proxy),
+                "The official executor must receive the selected device through the disposable ADB proxy.",
+            )
+    except Exception as error:
+        _integration_add(
+            checks,
+            method,
+            "disposable_executor_config",
+            "fail",
+            f"{type(error).__name__}: {error}",
+            "Fix the official AppAgent root, docs root, or disposable workspace seam before E2E.",
+        )
+
+
+def run_integration_checks(args: argparse.Namespace) -> dict[str, Any]:
+    repo = Path(args.repo).expanduser().resolve()
+    checks: list[IntegrationCheck] = []
+    config = _integration_model_config(args, checks)
+    selected = str(args.integration_method or "all").strip().lower()
+    if selected in {"all", "mobilegpt"}:
+        root_value = args.mobilegpt_root or os.environ.get("OMNIFLOW_MOBILEGPT_ROOT", "")
+        root = Path(root_value).expanduser().resolve() if root_value else repo / "runtime" / "external" / "mobilegpt"
+        memory_value = args.mobilegpt_memory_root or os.environ.get("OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT", "")
+        memory = Path(memory_value).expanduser().resolve() if memory_value else None
+        _run_mobilegpt_integration_checks(
+            checks,
+            repo=repo,
+            root=root,
+            memory_root=memory,
+            config=config,
+            server_port=int(args.server_port),
+        )
+    if selected in {"all", "appagent"}:
+        root_value = args.appagent_root or os.environ.get("OMNIFLOW_APPAGENT_ROOT", "")
+        root = Path(root_value).expanduser().resolve() if root_value else repo / "runtime" / "external" / "appagent"
+        memory_value = args.appagent_memory_root or os.environ.get("OMNIFLOW_APPAGENT_MEMORY_ROOT", "")
+        memory = Path(memory_value).expanduser().resolve() if memory_value else None
+        adb_path = str(os.environ.get("OMNIFLOW_REAL_ADB_PATH") or _resolve_tool("adb", "platform-tools"))
+        _run_appagent_integration_checks(
+            checks,
+            repo=repo,
+            root=root,
+            memory_root=memory,
+            config=config,
+            serial=str(args.serial),
+            adb_path=adb_path,
+        )
+    if selected not in {"all", "mobilegpt", "appagent"}:
+        _integration_add(
+            checks,
+            "shared",
+            "integration_method",
+            "fail",
+            selected,
+            "Use --integration-method mobilegpt, appagent, or all.",
+        )
+    failures = [item for item in checks if item.status == "fail"]
+    warnings = [item for item in checks if item.status == "warning"]
+    return {
+        "schema_version": "omniflow.integration-check.v1",
+        "ready": not failures,
+        "checks": [asdict(item) for item in checks],
+        "summary": {
+            "pass": sum(item.status == "pass" for item in checks),
+            "warning": len(warnings),
+            "fail": len(failures),
+        },
+        "contract": {
+            "model_calls": 0,
+            "official_source_modified": False,
+            "staging_only": True,
+        },
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Gate AndroidWorld runtime health.")
     parser.add_argument("--repo", required=True)
@@ -665,6 +1195,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--require-contacts-ready", action="store_true")
     parser.add_argument("--json-out")
+    parser.add_argument(
+        "--integration-check",
+        action="store_true",
+        help="Check the real MobileGPT/AppAgent integration seams using disposable staging only.",
+    )
+    parser.add_argument(
+        "--integration-method",
+        choices=["all", "mobilegpt", "appagent"],
+        default="all",
+    )
+    parser.add_argument("--mobilegpt-root")
+    parser.add_argument("--mobilegpt-memory-root")
+    parser.add_argument("--integration-model")
+    parser.add_argument("--embedding-model")
+    parser.add_argument("--model-endpoint-profile")
+    parser.add_argument("--model-base-url")
     return parser
 
 
@@ -695,6 +1241,15 @@ def _required_files(profile: str) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.integration_check:
+        report = run_integration_checks(args)
+        rendered = json.dumps(report, ensure_ascii=False, indent=2)
+        print(rendered)
+        if args.json_out:
+            output = Path(args.json_out).expanduser()
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(rendered + "\n", encoding="utf-8")
+        return 0 if report["ready"] else 1
     android_world_root = str(
         args.android_world_root or os.getenv("OMNIFLOW_ANDROID_WORLD_ROOT", "")
     ).strip()
