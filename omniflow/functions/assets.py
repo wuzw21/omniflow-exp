@@ -164,7 +164,10 @@ def function_authoring_tool(
             },
         },
         "checkers": {
-            "description": "Register optional RunLog actions as Function checkers.",
+            "description": (
+                "Register source steps that are optional navigation as Function "
+                "checkers; every unregistered Function step remains required."
+            ),
             "required": ["checker_steps"],
             "properties": {
                 "checker_steps": {
@@ -2190,16 +2193,22 @@ def _draft_checkers_prompt(
         ],
     }
     return (
-        "Edit only checker registrations for the one Function shown below. Every "
+        "Edit only optional-step registrations for the one Function shown below. "
+        "Every source step is required by default; a returned checker_steps entry "
+        "is the only way to make that source step optional. Every unregistered "
+        "Function step remains required. Every "
         "returned function_id must exactly match the shown function_id. step_index is "
         "the original RunLog source index and must be one of "
         f"{list(source_indices)}. Select only from eligible_checker_step_indices "
         f"{eligible_indices}; bound actions, edited actions, unsupported actions, and "
         "actions without a later formal step or whose target names task progress have "
         "already been excluded. Select "
-        "an existing source step only when it is optional, safe to skip, has a later "
+        "an existing source step only when it is optional navigation or an optional "
+        "dismissal, safe to skip when the target is already past it, has a later "
         "formal action in that Function, and is a transferable click, input_text, or "
-        "long_press. Required navigation and terminal actions are not checkers. Do not "
+        "long_press. A mode/menu/selector-opening action may be a checker; an action "
+        "that creates the task result, enters required user data, or is terminal must "
+        "remain formal. Do not "
         "write rules or triggers; return only Function and source-step relationships. "
         "Return an empty checker_steps list when none are safe.\n\nDraft input:\n"
         + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))

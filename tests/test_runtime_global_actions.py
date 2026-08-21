@@ -43,7 +43,7 @@ def test_semantic_grounding_matches_accessibility_label_with_generic_suffix() ->
     assert result.action.args["y"] == pytest.approx(462.5)
 
 
-def test_function_skips_source_mode_navigation_when_target_is_already_camera(
+def test_function_treats_checker_steps_as_optional_navigation(
     monkeypatch,
 ) -> None:
     import omniflow.runtime.core as core
@@ -85,17 +85,20 @@ def test_function_skips_source_mode_navigation_when_target_is_already_camera(
         "mode": Observation(
             xml=mode_xml,
             package_name="com.android.camera2",
-            extra={"display": {"width": 720, "height": 1280}},
+            extra={"display": {"width": 720, "height": 1280}, "state_id": "mode"},
         ),
         "camera_menu": Observation(
             xml=camera_menu_xml,
             package_name="com.android.camera2",
-            extra={"display": {"width": 720, "height": 1280}},
+            extra={
+                "display": {"width": 720, "height": 1280},
+                "state_id": "camera_menu",
+            },
         ),
         "shutter": Observation(
             xml=mode_xml,
             package_name="com.android.camera2",
-            extra={"display": {"width": 720, "height": 1280}},
+            extra={"display": {"width": 720, "height": 1280}, "state_id": "shutter"},
         ),
     }
 
@@ -113,11 +116,17 @@ def test_function_skips_source_mode_navigation_when_target_is_already_camera(
             self.actions.append(action)
             return {"success": True}
 
-    async def transfer(action, _observation, _source_state):
+    async def transfer(action, _observation, source_state):
+        if source_state.extra.get("state_id") in {"mode", "camera_menu"}:
+            return TransferResult(None, reason="omnitransfer_low_confidence")
         return TransferResult(
             Action("click", {"x": 940, "y": 462}),
             reason="mapped",
-            detail={"score": 0.99, "margin": 0.2},
+            detail={
+                "score": 0.99,
+                "margin": 0.2,
+                "candidates": [{"score": 0.99}],
+            },
         )
 
     function = Function(
@@ -125,13 +134,20 @@ def test_function_skips_source_mode_navigation_when_target_is_already_camera(
         name="Take a photo",
         description="Take one photo.",
         steps=(
-            FunctionStep(1, Action("click", {"x": 130.555, "y": 37.5}), "mode"),
-            FunctionStep(
-                2,
-                Action("click", {"x": 216.666, "y": 351.5625}),
-                "camera_menu",
-            ),
-            FunctionStep(3, Action("click", {"x": 500, "y": 868.75}), "shutter"),
+            FunctionStep(0, Action("click", {"x": 500, "y": 868.75}), "shutter"),
+        ),
+        checker_rules=(
+            {
+                "source_state_id": "mode",
+                "action": {"tool": "click", "args": {"x": 130.555, "y": 37.5}},
+            },
+            {
+                "source_state_id": "camera_menu",
+                "action": {
+                    "tool": "click",
+                    "args": {"x": 216.666, "y": 351.5625},
+                },
+            },
         ),
     )
     host = Host()
@@ -147,13 +163,8 @@ def test_function_skips_source_mode_navigation_when_target_is_already_camera(
     assert result.success is True
     assert [action.tool for action in host.actions] == ["click"]
     assert [
-        decision["before_function_step"]
-        for decision in result.detail["checker_decisions"]
-    ] == [1, 2]
-    assert all(
-        decision["checker_kind"] == "source_navigation_precondition"
-        for decision in result.detail["checker_decisions"]
-    )
+        decision["status"] for decision in result.detail["checker_decisions"]
+    ] == ["skipped", "skipped"]
 
 
 def test_function_uses_explicit_state_loader_when_host_state_is_missing(
