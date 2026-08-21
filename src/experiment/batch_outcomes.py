@@ -14,6 +14,10 @@ from typing import Any, Iterable
 
 from src.experiment.mobilegpt_contract import MOBILEGPT_SUPPORTED_SOURCE_METHODS
 from src.experiment.paths import safe_component, sha256_file
+from src.experiment.result_schema import (
+    function_metrics_from_result_row,
+    performance_metrics_from_result_row,
+)
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
 
 SCHEMA_VERSION = "omniflow.androidworld.result_outcome.v2"
@@ -457,7 +461,7 @@ def _registered_report_row(
 ) -> dict[str, Any]:
     success = bool(row.get("official_validator_success"))
     reuse = reuse_metrics_from_result_row(row, method=method)
-    return {
+    report = {
         "task_name": task,
         "method": method,
         "device": device,
@@ -524,6 +528,9 @@ def _registered_report_row(
             or ""
         ),
     }
+    report.update(function_metrics_from_result_row({**row, "method": method, **reuse}))
+    report.update(performance_metrics_from_result_row(row))
+    return report
 
 
 def _failure_report_row(
@@ -546,7 +553,7 @@ def _failure_report_row(
             evaluation_seed=evaluation_seed,
             row=outcome,
         )
-    return {
+    report = {
         "task_name": task,
         "method": method,
         "device": device,
@@ -579,6 +586,9 @@ def _failure_report_row(
         ),
     }
 
+    report.update(function_metrics_from_result_row({**outcome, "method": method}))
+    report.update(performance_metrics_from_result_row(outcome))
+    return report
 
 def summarize_results(
     *,
@@ -667,12 +677,21 @@ def summarize_results(
                         "accounting_evidence_path": "",
                     }
                     counts["pending"] += 1
+                    row.update(function_metrics_from_result_row(row))
+                    row.update(performance_metrics_from_result_row(row))
                 rows.append(row)
     model_calls = sum(int(row["model_calls"]) for row in rows)
     prompt_tokens = sum(int(row["prompt_tokens"]) for row in rows)
     completion_tokens = sum(int(row["completion_tokens"]) for row in rows)
     total_tokens = sum(int(row["total_tokens"]) for row in rows)
     summary = {
+    function_hit_task_count = sum(bool(row.get("function_hit")) for row in rows)
+    function_covered_step_count = sum(
+        int(row.get("function_covered_steps") or 0) for row in rows
+    )
+    function_total_step_count = sum(
+        int(row.get("function_total_steps") or 0) for row in rows
+    )
         "schema_version": "omniflow.androidworld.result-summary.v1",
         "attempt_id": str(attempt_id),
         "source_seed": int(source_seed),
@@ -683,6 +702,30 @@ def summarize_results(
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
         "episode_duration_sec": round(
+        "vlm_calls": sum(int(row.get("vlm_calls") or row["model_calls"]) for row in rows),
+        "vlm_latency_ms": round(
+            sum(_number(row.get("vlm_latency_ms")) for row in rows), 6
+        ),
+        "latency_sec": round(
+            sum(_number(row.get("latency_sec")) for row in rows), 6
+        ),
+        "energy_mwh": round(
+            sum(_number(row.get("energy_mwh")) for row in rows), 6
+        ),
+        "energy_measurement_available_count": sum(
+            bool(row.get("energy_measurement_available")) for row in rows
+        ),
+        "function_hit_task_count": function_hit_task_count,
+        "function_hit_task_rate": round(
+            function_hit_task_count / max(1, len(rows)), 6
+        ),
+        "function_covered_step_count": function_covered_step_count,
+        "function_total_step_count": function_total_step_count,
+        "function_step_coverage_rate": round(
+            function_covered_step_count / function_total_step_count, 6
+        )
+        if function_total_step_count
+        else 0.0,
             sum(_number(row["episode_duration_sec"]) for row in rows), 6
         ),
         "outer_wall_sec": round(

@@ -2056,6 +2056,7 @@ def _androidworld_result_command(
         "--method",
         str(method),
         "--device",
+        "--collect-performance",
         f"{label}:{serial}:{int(console_port)}",
     ]
     if not FIXED_TASK_PARAMS and method != "autodroid":

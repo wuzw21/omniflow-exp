@@ -69,6 +69,42 @@ def test_compact_result_row_is_idempotent_for_evidence_paths() -> None:
     ) == original
 
 
+def test_public_row_exposes_function_vlm_latency_and_energy_metrics() -> None:
+    row = compact_result_row(
+        {
+            "task_name": "Task",
+            "method": "omniflow",
+            "device": "small5554",
+            "model_calls": 3,
+            "reuse_metrics": {
+                "artifact_used": True,
+                "reuse_numerator": 2,
+                "reuse_denominator": 4,
+            },
+            "performance_metrics": {
+                "method_wall_sec": 12.5,
+                "energy": {
+                    "measurement_available": True,
+                    "estimated_mwh": 1.25,
+                },
+            },
+            "llm_usage": {"latency_ms": 345.6},
+        },
+        source_seed=111,
+        evaluation_seed=113,
+    )
+
+    assert row["function_hit"] is True
+    assert row["function_covered_steps"] == 2
+    assert row["function_total_steps"] == 4
+    assert row["function_step_coverage_rate"] == 0.5
+    assert row["vlm_calls"] == 3
+    assert row["vlm_latency_ms"] == 345.6
+    assert row["latency_sec"] == 12.5
+    assert row["energy_mwh"] == 1.25
+    assert row["energy_measurement_available"] is True
+
+
 def test_episode_recorder_preserves_every_observation_with_sequential_images(
     tmp_path,
 ) -> None:
@@ -698,3 +734,41 @@ def test_metrics_report_only_aggregate_model_calls_and_total_tokens(tmp_path: Pa
     assert "- total_tokens: `100`" in markdown
     assert "prompt_tokens" not in markdown
     assert "completion_tokens" not in markdown
+
+
+def test_metrics_aggregate_function_and_performance_rates(tmp_path: Path) -> None:
+    result_path = tmp_path / "Task" / "omniflow" / "small5554" / "task_results.jsonl"
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps(
+            {
+                "task_name": "Task",
+                "method": "omniflow",
+                "actions_executed": 4,
+                "model_calls": 2,
+                "reuse_metrics": {
+                    "artifact_used": True,
+                    "reuse_numerator": 3,
+                    "reuse_denominator": 4,
+                },
+                "performance_metrics": {
+                    "method_wall_sec": 2.0,
+                    "energy": {
+                        "measurement_available": True,
+                        "estimated_mwh": 0.5,
+                    },
+                },
+                "llm_usage": {"latency_ms": 100.0},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = aggregate_task_results([result_path])
+
+    assert summary["function_hit_task_count"] == 1
+    assert summary["function_hit_task_rate"] == 1.0
+    assert summary["function_step_coverage_rate"] == 0.75
+    assert summary["per_task"][0]["vlm_latency_ms"] == 100.0
+    assert summary["performance_metrics"]["energy"]["estimated_mwh_total"] == 0.5

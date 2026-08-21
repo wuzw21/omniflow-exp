@@ -68,7 +68,13 @@ from src.experiment.protocol import (
     TASK_SEED,
 )
 from src.experiment.result_registry import register_attempt_summary
-from src.experiment.result_schema import RESULT_FIELDS, compact_result_row
+from src.experiment.result_schema import (
+    RESULT_FIELDS,
+    compact_result_row,
+    function_metrics_from_result_row,
+    performance_metrics_from_result_row,
+)
+from src.experiment.performance_metrics import aggregate_performance_metrics
 from src.experiment.run_process import run_process, start_process, stop_process
 from src.experiment.source_records import CanonicalRunLog, SourceRunLogProfile
 from src.integrations import mobilegpt_memory
@@ -2656,6 +2662,10 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
     replay_step_completed = 0
     replay_step_total = 0
     relocation_diagnostic_count = 0
+    function_hit_task_count = 0
+    function_covered_step_count = 0
+    function_total_step_count = 0
+    performance_rows: list[dict[str, Any]] = []
     per_task: list[dict[str, Any]] = []
 
     for file_path, row in rows:
@@ -2680,6 +2690,15 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
         replay_step_total += step_total
         relocation_diagnostics = _extract_relocation_diagnostics(row)
         relocation_diagnostic_count += len(relocation_diagnostics)
+        function_metrics = function_metrics_from_result_row(
+            {**row, "method": method}
+        )
+        performance_metrics = performance_metrics_from_result_row(row)
+        if isinstance(row.get("performance_metrics"), dict):
+            performance_rows.append({**row, "method": method})
+        function_hit_task_count += int(function_metrics["function_hit"])
+        function_covered_step_count += int(function_metrics["function_covered_steps"])
+        function_total_step_count += int(function_metrics["function_total_steps"])
         official_validator_used = _official_validator_used(row)
         official_validator_success = (
             _official_validator_success(row) if official_validator_used else None
@@ -2733,6 +2752,8 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
                 "error": row.get("error"),
                 "runtime_integrity_error": row.get("runtime_integrity_error"),
                 "environment_failure": row.get("environment_failure"),
+                **function_metrics,
+                **performance_metrics,
             }
         )
 
@@ -2772,6 +2793,15 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
         "total_tokens": total_tokens,
         "fallback_steps": fallback_steps,
         "relocation_diagnostic_count": relocation_diagnostic_count,
+        "function_hit_task_count": function_hit_task_count,
+        "function_hit_task_rate": _rate(function_hit_task_count, task_count),
+        "function_covered_step_count": function_covered_step_count,
+        "function_total_step_count": function_total_step_count,
+        "function_step_coverage_rate": _rate(
+            function_covered_step_count,
+            function_total_step_count,
+        ),
+        "performance_metrics": aggregate_performance_metrics(performance_rows),
         "per_task": per_task,
     }
 
@@ -2800,12 +2830,16 @@ def write_metrics_summary(summary: dict[str, Any], output_path: str | Path) -> N
         f"- duration_s: `{round(_coerce_float(summary['duration_ms']) / 1000.0, 3)}`",
         f"- model_calls: `{summary.get('model_calls', 0)}`",
         f"- total_tokens: `{summary.get('total_tokens', 0)}`",
+        f"- function_hit_task_rate: `{summary.get('function_hit_task_rate', 0.0)}`",
+        f"- function_step_coverage_rate: `{summary.get('function_step_coverage_rate', 0.0)}`",
+        f"- vlm_latency_ms: `{round(sum(_coerce_float(item.get('vlm_latency_ms')) for item in summary.get('per_task') or []), 3)}`",
+        f"- energy_mwh: `{round(sum(_coerce_float(item.get('energy_mwh')) for item in summary.get('per_task') or []), 6)}`",
     ]
     md_lines.extend(
         [
             "",
-            "| task | validator | replay_completed | actions | model_calls | total_tokens | step_completed | relocation | sec | error |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+            "| task | validator | replay_completed | actions | function_hit | function_coverage | model_calls | vlm_latency_ms | total_tokens | energy_mwh | sec | error |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
         ]
     )
     for item in summary.get("per_task") or []:
@@ -2821,10 +2855,12 @@ def write_metrics_summary(summary: dict[str, Any], output_path: str | Path) -> N
                     if item.get("replay_completed")
                     else "0",
                     str(item.get("actions_executed") or 0),
+                    "1" if item.get("function_hit") else "0",
+                    f"{item.get('function_covered_steps') or 0}/{item.get('function_total_steps') or 0}",
                     str(item.get("model_calls") or 0),
+                    str(round(_coerce_float(item.get("vlm_latency_ms")), 3)),
                     str(item.get("total_tokens") or 0),
-                    f"{item.get('replay_step_completed_count') or 0}/{item.get('replay_step_total') or 0}",
-                    str(item.get("relocation_diagnostic_count") or 0),
+                    "" if item.get("energy_mwh") is None else str(round(_coerce_float(item.get("energy_mwh")), 6)),
                     str(round(_coerce_float(item.get("duration_ms")) / 1000.0, 3)),
                     str(item.get("error") or ""),
                 ]
@@ -4156,6 +4192,8 @@ def _normalize_result_row(row: dict[str, Any]) -> dict[str, Any]:
         normalized["wall_sec"] = round(wall_sec, 3)
 
     normalized["reuse_metrics"] = reuse_metrics_from_result_row(normalized)
+    normalized.update(function_metrics_from_result_row(normalized))
+    normalized.update(performance_metrics_from_result_row(normalized))
     return normalized
 
 
@@ -4677,6 +4715,26 @@ def _aggregate_normalized_result_rows(
     replay_step_total = sum(
         _coerce_int(row.get("replay_step_total")) for row in canonical_rows
     )
+    normalized_metrics = [
+        {
+            **row,
+            **function_metrics_from_result_row(row),
+            **performance_metrics_from_result_row(row),
+        }
+        for row in canonical_rows
+    ]
+    function_hit_task_count = sum(
+        bool(row.get("function_hit")) for row in normalized_metrics
+    )
+    function_covered_step_count = sum(
+        _coerce_int(row.get("function_covered_steps")) for row in normalized_metrics
+    )
+    function_total_step_count = sum(
+        _coerce_int(row.get("function_total_steps")) for row in normalized_metrics
+    )
+    performance_rows = [
+        row for row in normalized_metrics if isinstance(row.get("performance_metrics"), dict)
+    ]
 
     aggregate.update(
         {
@@ -4720,6 +4778,39 @@ def _aggregate_normalized_result_rows(
             "total_tokens": sum(
                 _coerce_int(row.get("total_tokens")) for row in canonical_rows
             ),
+            "vlm_calls": sum(
+                _coerce_int(row.get("vlm_calls") or row.get("model_calls"))
+                for row in normalized_metrics
+            ),
+            "vlm_latency_ms": round(
+                sum(_coerce_float(row.get("vlm_latency_ms")) for row in normalized_metrics),
+                6,
+            ),
+            "latency_sec": round(
+                sum(_coerce_float(row.get("latency_sec")) for row in normalized_metrics),
+                6,
+            ),
+            "energy_mwh": round(
+                sum(
+                    _coerce_float(row.get("energy_mwh"))
+                    for row in normalized_metrics
+                    if row.get("energy_mwh") is not None
+                ),
+                6,
+            ),
+            "energy_measurement_available_count": sum(
+                bool(row.get("energy_measurement_available"))
+                for row in normalized_metrics
+            ),
+            "function_hit_task_count": function_hit_task_count,
+            "function_hit_task_rate": _rate(function_hit_task_count, task_count),
+            "function_covered_step_count": function_covered_step_count,
+            "function_total_step_count": function_total_step_count,
+            "function_step_coverage_rate": _rate(
+                function_covered_step_count,
+                function_total_step_count,
+            ),
+            "performance_metrics": aggregate_performance_metrics(performance_rows),
             "replay_step_completed_count": replay_step_completed,
             "replay_step_total": replay_step_total,
             "replay_step_completed_rate": _rate(

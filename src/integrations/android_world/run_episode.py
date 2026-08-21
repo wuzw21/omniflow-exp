@@ -820,6 +820,7 @@ class _OpenAICompatibleMultimodalWrapper:
         self.responses_with_usage = 0
         self.responses_without_usage = 0
         self.failed_calls = 0
+        self.latency_ms = 0.0
         self.last_error: str | None = None
         self.request_records: list[dict[str, Any]] = []
 
@@ -952,6 +953,7 @@ class _OpenAICompatibleMultimodalWrapper:
                         request_record["duration_ms"] = max(
                             0.0, (perf_counter() - request_started) * 1000.0
                         )
+                        self.latency_ms += request_record["duration_ms"]
                         request_record["response_text"] = response_text
                         request_record["response_metadata"] = last_response
                         self.request_records.append(request_record)
@@ -973,6 +975,7 @@ class _OpenAICompatibleMultimodalWrapper:
         request_record["duration_ms"] = max(
             0.0, (perf_counter() - request_started) * 1000.0
         )
+        self.latency_ms += request_record["duration_ms"]
         request_record["response_text"] = "Error calling LLM"
         request_record["response_metadata"] = last_response
         self.request_records.append(request_record)
@@ -990,6 +993,7 @@ class _OpenAICompatibleMultimodalWrapper:
             "responses_with_usage": int(self.responses_with_usage),
             "responses_without_usage": int(self.responses_without_usage),
             "failed_calls": int(self.failed_calls),
+            "latency_ms": round(float(self.latency_ms), 6),
             "last_error": self.last_error,
         }
         summary["token_usage_status"] = token_usage_status(summary)
@@ -1013,6 +1017,7 @@ def _get_agent_llm_usage(agent: Any) -> dict[str, Any]:
             payload[key] = value
     for key in _LLM_USAGE_COUNTER_KEYS:
         payload[key] = _coerce_int(getattr(tracker, key, 0))
+    payload["latency_ms"] = round(float(getattr(tracker, "latency_ms", 0.0) or 0.0), 6)
     return payload
 
 
@@ -1027,6 +1032,10 @@ def _diff_llm_usage(
             delta[key] = after.get(key)
     for key in _LLM_USAGE_COUNTER_KEYS:
         delta[key] = max(0, _coerce_int(after.get(key)) - _coerce_int(before.get(key)))
+    delta["latency_ms"] = round(
+        max(0.0, float(after.get("latency_ms") or 0.0) - float(before.get("latency_ms") or 0.0)),
+        6,
+    )
     if delta["total_tokens"] <= 0:
         delta["total_tokens"] = delta["prompt_tokens"] + delta["completion_tokens"]
     return delta
@@ -5050,10 +5059,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     episode_recorder_error = recording_session.error
                 if performance_metrics is not None:
                     performance_metrics.finish(
+                performance_payload: dict[str, Any] = {}
                         method_wall_sec=perf_counter() - started_perf,
                     )
-                    write_performance_metrics(
-                        performance_metrics.to_dict(),
+                    performance_payload = performance_metrics.to_dict()
+                    performance_sidecar_path = write_performance_metrics(
+                        performance_payload,
                         run_output_dir / "performance_sidecar.json",
                     )
                 if canonical_run is not None:
@@ -5262,6 +5273,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "total_tokens": total_tokens,
                     "token_usage_status": token_usage_state,
                     "model": model_name,
+                    "vlm_calls": model_calls,
+                    "vlm_latency_ms": round(
+                        float(llm_usage.get("latency_ms") or 0.0), 6
+                    ),
+                    "latency_sec": round(
+                        float(
+                            performance_payload.get("method_wall_sec")
+                            or max(0.0, (perf_counter() - started_perf))
+                        ),
+                        6,
+                    ),
+                    "performance_metrics": to_serializable(performance_payload),
                     "model_base_url": model_base_url,
                     "artifact_kind": artifact_kind,
                     "artifact_ref": artifact_ref,
@@ -5269,6 +5292,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 }
                 appagent_reuse_result: dict[str, Any] = {}
                 if selected_agent == "appagent":
+                if performance_metrics is not None:
+                    task_result_record["performance_sidecar_path"] = str(
+                        performance_sidecar_path
+                    )
                     appagent_reuse_result = {
                         "decision_round_count": _coerce_int(
                             getattr(agent, "round_count", 0)

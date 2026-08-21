@@ -8,8 +8,73 @@ RESULT_FIELDS = (
     "task", "method", "device", "source_seed", "evaluation_seed", "status",
     "validator_success", "model_calls", "prompt_tokens", "completion_tokens",
     "total_tokens", "actions_executed", "episode_duration_sec", "outer_wall_sec",
-    "error", "evidence_paths",
+    "function_hit", "function_covered_steps", "function_total_steps",
+    "function_step_coverage_rate", "vlm_calls", "vlm_latency_ms", "latency_sec",
+    "energy_mwh", "energy_measurement_available", "error", "evidence_paths",
 )
+
+
+def function_metrics_from_result_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Normalize Function reuse into task- and step-level public metrics."""
+
+    reuse = row.get("reuse_metrics")
+    reuse = reuse if isinstance(reuse, dict) else row
+    method = str(row.get("method") or row.get("agent") or "").strip()
+    function_id = str(row.get("function_id") or "").strip()
+    artifact_used = bool(reuse.get("artifact_used"))
+    covered_steps = max(0, int(float(reuse.get("reuse_numerator") or 0)))
+    total_steps = max(0, int(float(reuse.get("reuse_denominator") or 0)))
+    # Only a real Function-backed trace counts. Fixed replay and hint injection
+    # reuse artifacts, but they do not constitute a Function hit.
+    function_backed = method == "omniflow" or bool(function_id)
+    hit = bool(function_backed and artifact_used and covered_steps > 0)
+    return {
+        "function_hit": hit,
+        "function_covered_steps": covered_steps if function_backed else 0,
+        "function_total_steps": total_steps if function_backed else 0,
+        "function_step_coverage_rate": (
+            round(float(covered_steps) / float(total_steps), 6)
+            if function_backed and total_steps > 0
+            else None
+        ),
+    }
+
+
+def performance_metrics_from_result_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Extract stable scalar latency/energy fields from a performance sidecar."""
+
+    performance = row.get("performance_metrics")
+    performance = performance if isinstance(performance, dict) else {}
+    energy = performance.get("energy")
+    energy = energy if isinstance(energy, dict) else {}
+    usage = row.get("llm_usage")
+    usage = usage if isinstance(usage, dict) else {}
+    vlm_latency_ms = row.get("vlm_latency_ms")
+    if vlm_latency_ms in (None, ""):
+        vlm_latency_ms = usage.get("latency_ms") or usage.get("total_latency_ms")
+    try:
+        vlm_latency_ms = round(float(vlm_latency_ms or 0.0), 6)
+    except (TypeError, ValueError):
+        vlm_latency_ms = 0.0
+    latency_sec = performance.get("method_wall_sec")
+    if latency_sec in (None, ""):
+        latency_sec = row.get("episode_duration_sec") or row.get("duration_sec")
+    try:
+        latency_sec = round(float(latency_sec or 0.0), 6)
+    except (TypeError, ValueError):
+        latency_sec = 0.0
+    energy_mwh = energy.get("estimated_mwh")
+    try:
+        energy_mwh = round(float(energy_mwh), 6) if energy_mwh is not None else None
+    except (TypeError, ValueError):
+        energy_mwh = None
+    return {
+        "vlm_calls": int(float(row.get("vlm_calls") or row.get("model_calls") or 0)),
+        "vlm_latency_ms": vlm_latency_ms,
+        "latency_sec": latency_sec,
+        "energy_mwh": energy_mwh,
+        "energy_measurement_available": bool(energy.get("measurement_available")),
+    }
 
 
 def compact_result_row(
@@ -52,7 +117,7 @@ def compact_result_row(
     )
     if episode_duration_sec <= 0:
         episode_duration_sec = number(row.get("duration_ms")) / 1000.0
-    return {
+    result = {
         "task": str(row.get("task") or row.get("task_name") or ""),
         "method": str(row.get("method") or ""),
         "device": str(row.get("device") or ""),
@@ -72,3 +137,6 @@ def compact_result_row(
         "error": str(row.get("error") or row.get("failure_summary") or ""),
         "evidence_paths": evidence_paths,
     }
+    result.update(function_metrics_from_result_row(row))
+    result.update(performance_metrics_from_result_row(row))
+    return {key: result[key] for key in RESULT_FIELDS}
