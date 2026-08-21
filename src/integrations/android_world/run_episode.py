@@ -197,7 +197,7 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
             normalized_label = _normalize_androidworld_setup_label(element_text)
             missing_target = "Target text" in message and "not found" in message
             empty_a11y_tree = (
-                normalized_label == "NEXT"
+                normalized_label in {"NEXT", "Skip", "Don't allow"}
                 and "Invalid element index" in message
             )
             if normalized_label == "NEXT" and missing_target:
@@ -221,7 +221,9 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
                         "stale NEXT lookup"
                     )
                     return None
-            if normalized_label == "Skip" and missing_target:
+            if normalized_label == "Skip" and (
+                missing_target or empty_a11y_tree
+            ):
                 elements = controller._env.get_ui_elements() or []
                 chooser_clicks = _app_chooser_clicks(
                     elements,
@@ -259,7 +261,7 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
                             "Target text" in message and "not found" in message
                         )
                         retry_empty_a11y_tree = (
-                            normalized_label == "NEXT"
+                            normalized_label in {"NEXT", "Skip", "Don't allow"}
                             and "Invalid element index" in message
                         )
                         if not retry_missing_target and not retry_empty_a11y_tree:
