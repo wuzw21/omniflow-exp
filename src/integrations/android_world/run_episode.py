@@ -2742,7 +2742,29 @@ def _prepare_androidworld_episode_apps(
                         "android_world.env.tools"
                     ).AndroidToolController(env.controller)
                     for label in chooser_clicks:
-                        tool_controller.click_element(label)
+                        for retry_index in range(8):
+                            try:
+                                tool_controller.click_element(label)
+                                break
+                            except ValueError as error:
+                                message = str(error)
+                                transient_empty_tree = (
+                                    "Invalid element index" in message
+                                    or (
+                                        "Target text" in message
+                                        and "not found" in message
+                                    )
+                                )
+                                if not transient_empty_tree:
+                                    raise
+                                if retry_index == 7:
+                                    logger.info(
+                                        "AndroidWorld Contacts chooser control "
+                                        "disappeared during setup; continuing: %s",
+                                        label,
+                                    )
+                                    break
+                                time.sleep(0.5)
                     logger.info(
                         "AndroidWorld episode setup resolved the Contacts chooser"
                     )
