@@ -1918,6 +1918,7 @@ def _result_environment(
             # shared task/method/device-model archive.
             "OMNIFLOW_ANDROIDWORLD_ARCHIVE_ROOT": str(
                 args.results_root / "androidworld"
+            "OMNIFLOW_COLLECT_PERFORMANCE": "1",
             ),
         }
     )
@@ -2056,7 +2057,6 @@ def _androidworld_result_command(
         "--method",
         str(method),
         "--device",
-        "--collect-performance",
         f"{label}:{serial}:{int(console_port)}",
     ]
     if not FIXED_TASK_PARAMS and method != "autodroid":
