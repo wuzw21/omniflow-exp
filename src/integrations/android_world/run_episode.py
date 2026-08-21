@@ -234,7 +234,16 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
                     )
                     for label in chooser_clicks:
                         original(controller, label)
-                    return original(controller, "Skip")
+                    for _ in range(6):
+                        try:
+                            return original(controller, "Skip")
+                        except ValueError:
+                            time.sleep(0.5)
+                    logger.info(
+                        "AndroidWorld Contacts chooser completed without an "
+                        "optional Skip control; continuing setup"
+                    )
+                    return None
             if missing_target or empty_a11y_tree:
                 # Camera can still be publishing its accessibility tree while
                 # AndroidWorld starts the app. Give the official setup a
@@ -255,6 +264,20 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
                         )
                         if not retry_missing_target and not retry_empty_a11y_tree:
                             break
+            if normalized_label == "NEXT" and empty_a11y_tree:
+                activity = str(
+                    getattr(controller._env, "foreground_activity_name", "") or ""
+                ).strip()
+                packages = {
+                    str(getattr(element, "package_name", "") or "").strip()
+                    for element in controller._env.get_ui_elements() or ()
+                }
+                if not activity and not packages:
+                    logger.info(
+                        "AndroidWorld Camera setup is still publishing an empty "
+                        "tree; treating optional NEXT as non-blocking"
+                    )
+                    return None
             if not missing_target and not empty_a11y_tree:
                 raise
             if normalized_label == "OK":
