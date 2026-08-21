@@ -3789,15 +3789,21 @@ def _apply_fixed_replay(
             )
 
         started = perf_counter()
-        target_size = tuple(
-            getattr(agent.env, "device_screen_size", (0, 0)) or (0, 0)
-        )
-        if len(target_size) != 2:
-            target_size = (0, 0)
-        if not target_size[0] or not target_size[1]:
-            target_size = tuple(
-                getattr(agent.env, "logical_screen_size", (0, 0)) or (0, 0)
-            )
+        # Replay coordinates and AndroidWorld accessibility bounds share the
+        # logical application display.  The physical display can be rotated
+        # or have a different size on tablets/folds (for example 1280x800
+        # versus the portrait logical 720x1280), so using it first changes the
+        # coordinate space before the first action is dispatched.
+        target_size = (0, 0)
+        for attribute in ("logical_screen_size", "device_screen_size"):
+            candidate = tuple(getattr(agent.env, attribute, ()) or ())
+            if (
+                len(candidate) == 2
+                and float(candidate[0]) > 0
+                and float(candidate[1]) > 0
+            ):
+                target_size = candidate
+                break
         if len(target_size) != 2 or not target_size[0] or not target_size[1]:
             target_size = source_size or (1080, 2400)
         step_results: list[dict[str, Any]] = []

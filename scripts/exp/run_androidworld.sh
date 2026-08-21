@@ -1760,6 +1760,19 @@ if [[ "${OMNIFLOW_ANDROIDWORLD_ADB_COMPAT:-1}" == "1" ]]; then
     adb_bin="$androidworld_adb_compat"
   fi
 fi
+if [[ -z "${OMNIFLOW_ANDROIDWORLD_A11Y_APK:-}" ||
+  ! -f "${OMNIFLOW_ANDROIDWORLD_A11Y_APK}" ]]; then
+  for candidate in \
+    "$repo/vendor/androidworld/2024.05.13-accessibility_forwarder.apk" \
+    "$repo/runtime/cache/androidworld/accessibility_forwarder.apk" \
+    "$asset_root/runtime/cache/androidworld/accessibility_forwarder.apk" \
+    "$workspace_root/OmniFlow/runtime/cache/androidworld/accessibility_forwarder.apk"; do
+    if [[ -f "$candidate" ]]; then
+      export OMNIFLOW_ANDROIDWORLD_A11Y_APK="$candidate"
+      break
+    fi
+  done
+fi
 export OMNIFLOW_ANDROIDWORLD_A11Y_APK="${OMNIFLOW_ANDROIDWORLD_A11Y_APK:-$repo/vendor/androidworld/2024.05.13-accessibility_forwarder.apk}"
 emulator_bin="${OMNIFLOW_EMULATOR_BIN:-$android_sdk_root/emulator/emulator}"
 avdmanager_bin="${OMNIFLOW_AVDMANAGER_BIN:-$android_sdk_root/cmdline-tools/latest/bin/avdmanager}"

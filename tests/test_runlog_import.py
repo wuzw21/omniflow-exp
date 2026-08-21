@@ -1480,6 +1480,63 @@ def test_fixed_replay_scales_recorded_coordinates_to_target_display(
     ]
 
 
+def test_fixed_replay_prefers_logical_display_over_physical_display(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_log_path = tmp_path / "tablet.run_log.json"
+    run_log_path.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [{"action_type": "click", "x": 360, "y": 640}],
+                observations=[
+                    androidworld_state(
+                        "source",
+                        forest="<hierarchy />",
+                        width=720,
+                        height=1280,
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+    acted: list[dict[str, object]] = []
+    host = SimpleNamespace(
+        act=lambda action: acted.append(action) or SimpleNamespace(success=True),
+    )
+    agent = SimpleNamespace(
+        env=SimpleNamespace(
+            device_screen_size=(1280, 800),
+            logical_screen_size=(720, 1280),
+            controller=object(),
+        ),
+        host=host,
+        set_max_steps=lambda _steps: None,
+    )
+    android_world = ModuleType("android_world")
+    android_world_env = ModuleType("android_world.env")
+    android_world_env.actuation = SimpleNamespace()
+    android_world_env.adb_utils = SimpleNamespace()
+    android_world_env.json_action = SimpleNamespace()
+    android_world.env = android_world_env
+    monkeypatch.setitem(sys.modules, "android_world", android_world)
+    monkeypatch.setitem(sys.modules, "android_world.env", android_world_env)
+
+    _apply_fixed_replay(agent, run_log_json_path=str(run_log_path))
+    agent.step("Tap Target")
+
+    assert acted == [
+        {
+            "tool": "click",
+            "args": {
+                "x": pytest.approx(500),
+                "y": pytest.approx(500),
+            },
+        }
+    ]
+
+
 def test_fixed_replay_does_not_read_target_xml_for_coordinates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
