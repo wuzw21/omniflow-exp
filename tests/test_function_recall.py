@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
+import numpy as np
+
 from omniflow import Action, ActionResult, Function, Observation, OmniFlow, ToolCall
 from omniflow.core.model import FunctionStep
 from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION, FunctionStore
@@ -8,6 +12,33 @@ from omniflow.functions.recall import (
     PAGE_SIMILARITY_WEIGHT,
     recall_functions,
 )
+from omniflow.functions.recall import PageEmbedding
+
+
+class _FakePageEncoder:
+    name = "test_page_encoder"
+    encoder_version = "test-v1"
+    checkpoint_path = "test-checkpoint"
+    checkpoint_sha256 = "0" * 64
+    dimension = 2
+
+    def embed(self, observation: Observation) -> PageEmbedding:
+        vector = np.array(
+            [0.0, 1.0] if "SurfaceView" in str(observation.xml) else [1.0, 0.0],
+            dtype=np.float32,
+        )
+        return PageEmbedding(
+            vector=vector,
+            element_count=str(observation.xml or "").count("<node"),
+            encoder_version=self.encoder_version,
+            checkpoint_path=self.checkpoint_path,
+            checkpoint_sha256=self.checkpoint_sha256,
+        )
+
+    def similarity(self, source: Observation, current: Observation) -> float:
+        left = self.embed(source).vector
+        right = self.embed(current).vector
+        return float(np.dot(left, right))
 
 
 def _page(
@@ -102,6 +133,7 @@ def test_function_recall_uses_one_lexical_and_page_score() -> None:
                 variant="camera",
             ),
         },
+        page_encoder=_FakePageEncoder(),
     )
 
     assert [function.id for function in result.functions] == [
@@ -149,6 +181,7 @@ def test_open_app_function_uses_the_same_page_weighted_score() -> None:
             "other_page": _page("Camera", "shutter", variant="camera"),
         },
         limit=1,
+        page_encoder=_FakePageEncoder(),
     )
 
     assert result.functions == (open_app_function,)
@@ -178,6 +211,38 @@ def test_missing_page_evidence_contributes_zero() -> None:
     decision = result.audit["decisions"][0]
     assert decision["page_similarity"] == 0.0
     assert decision["score"] == GOAL_LEXICAL_WEIGHT * decision["goal_lexical_score"]
+
+
+def test_missing_optional_page_checkpoint_keeps_lexical_recall() -> None:
+    function = _function(
+        "tap_continue",
+        "Tap continue",
+        "Advance from the current form.",
+        "source_page",
+    )
+
+    with patch(
+        "omniflow.functions.recall.OmniTransferPageEncoder",
+        side_effect=FileNotFoundError("optional_page_checkpoint_missing"),
+    ):
+        result = recall_functions(
+            "Continue",
+            observation=_page("Form", "form"),
+            functions=(function,),
+            source_states={"source_page": _page("Form", "form")},
+        )
+
+    assert result.functions == (function,)
+    assert result.audit["encoder"] == {
+        "available": False,
+        "name": None,
+        "version": None,
+        "dimension": None,
+        "checkpoint_path": None,
+        "checkpoint_sha256": None,
+        "error": "FileNotFoundError:optional_page_checkpoint_missing",
+    }
+    assert result.audit["current_page"]["available"] is False
 
 
 def test_top_k_includes_zero_score_functions_with_stable_id_tiebreak() -> None:
@@ -262,7 +327,11 @@ def test_runtime_recalls_again_after_page_changes(tmp_path) -> None:
     planner = _ChangingPagePlanner()
     flow = OmniFlow(store.path, host=_PageChangingHost(), planner=planner)
 
-    result = flow.run("Complete the multi-page task")
+    with patch(
+        "omniflow.functions.recall.OmniTransferPageEncoder",
+        return_value=_FakePageEncoder(),
+    ):
+        result = flow.run("Complete the multi-page task")
 
     assert result.success is True
     assert planner.visible == [

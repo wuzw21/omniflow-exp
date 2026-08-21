@@ -29,9 +29,21 @@ def recall_functions(
     limit: int = 8,
     page_encoder: OmniTransferPageEncoder | None = None,
 ) -> RecallResult:
-    """Recall Planner tools using page and lexical evidence without page gating."""
+    """Recall Planner tools using page and lexical evidence without page gating.
 
-    encoder = page_encoder or OmniTransferPageEncoder()
+    Page embedding is ranking evidence, not a hard dependency for opening the
+    planner tool space.  A runtime bundle may intentionally omit the optional
+    page checkpoint; in that case lexical recall remains available and the
+    normal VLM path can still choose an action.
+    """
+
+    encoder_error: str | None = None
+    encoder = page_encoder
+    if encoder is None:
+        try:
+            encoder = OmniTransferPageEncoder()
+        except Exception as error:  # noqa: BLE001
+            encoder_error = f"{type(error).__name__}:{error}"
     current_page = _embed_if_available(encoder, observation)
     values = functions.values() if isinstance(functions, dict) else functions
     candidates: list[tuple[float, Function, dict[str, Any]]] = []
@@ -61,11 +73,17 @@ def recall_functions(
         {
             "schema_version": RECALL_AUDIT_VERSION,
             "encoder": {
-                "name": encoder.name,
-                "version": encoder.encoder_version,
-                "dimension": encoder.dimension,
-                "checkpoint_path": str(encoder.checkpoint_path),
-                "checkpoint_sha256": encoder.checkpoint_sha256,
+                "available": encoder is not None,
+                "name": encoder.name if encoder is not None else None,
+                "version": encoder.encoder_version if encoder is not None else None,
+                "dimension": encoder.dimension if encoder is not None else None,
+                "checkpoint_path": (
+                    str(encoder.checkpoint_path) if encoder is not None else None
+                ),
+                "checkpoint_sha256": (
+                    encoder.checkpoint_sha256 if encoder is not None else None
+                ),
+                "error": encoder_error,
             },
             "current_page": {
                 "available": current_page is not None,
@@ -91,7 +109,7 @@ def _score_function(
     *,
     current_page: PageEmbedding | None,
     source_states: Mapping[str, Observation | None],
-    encoder: OmniTransferPageEncoder,
+    encoder: OmniTransferPageEncoder | None,
 ) -> dict[str, Any]:
     source_state_id = function.steps[0].source_state_id if function.steps else ""
     source_observation = source_states.get(source_state_id)
@@ -122,10 +140,10 @@ def _score_function(
 
 
 def _embed_if_available(
-    encoder: OmniTransferPageEncoder,
+    encoder: OmniTransferPageEncoder | None,
     observation: Observation | None,
 ) -> PageEmbedding | None:
-    if observation is None or not str(observation.xml or "").strip():
+    if encoder is None or observation is None or not str(observation.xml or "").strip():
         return None
     return encoder.embed(observation)
 
