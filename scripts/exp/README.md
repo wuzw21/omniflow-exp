@@ -79,6 +79,10 @@ bash scripts/exp/run_androidworld.sh --setup-device small5554
 | `pixel5576` | `emulator-5576` | `pixel_phone` |
 | `fold5564` | `emulator-5564` | `pixel_fold` |
 
+The source/original device is `source5560` on the existing
+`WXGA_Tablet_test_00` AVD (`tablet`, 10.1-inch WXGA). The target
+`small5554` remains a separate small-phone device.
+
 ## AutoDroid 补充基线（9207）
 
 AutoDroid 不属于正式五方法，也不进入 `--e2e-method all` 或 116 × 10 主表。

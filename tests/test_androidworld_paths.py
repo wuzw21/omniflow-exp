@@ -16,6 +16,9 @@ def test_archive_names_use_avd_model_not_cli_alias() -> None:
     assert canonical_device_seed_name(
         label="fold5564", serial="emulator-5564", console_port=5564
     ) == "OmniFlowTargetFold_seed111_eval113"
+    assert canonical_device_model(
+        label="source5560", serial="emulator-5560", console_port=5560
+    ) == "WXGA_Tablet_test_00"
 
 
 def test_method_aliases_are_canonicalized() -> None:
@@ -51,5 +54,5 @@ def test_source_collection_route_uses_source_model_and_explicit_attempt() -> Non
         attempt_id="source-attempt",
     )
     assert str(path).endswith(
-        "/TaskOne/source/OmniFlowSourceSmall_seed111/runlog/source-attempt"
+        "/TaskOne/source/WXGA_Tablet_test_00_seed111/runlog/source-attempt"
     )

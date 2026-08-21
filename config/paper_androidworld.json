@@ -51,9 +51,9 @@
       "label": "source5560",
       "serial": "emulator-5560",
       "console_port": 5560,
-      "avd": "OmniFlowSourceSmall",
+      "avd": "WXGA_Tablet_test_00",
       "api_level": 33,
-      "profile": "small_phone"
+      "profile": "tablet"
     },
     "source_seed": 111,
     "evaluation_seed": 113,

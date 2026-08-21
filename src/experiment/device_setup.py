@@ -403,7 +403,13 @@ def _ensure_emulator(
         # The 7.6-inch foldable exposes the CLOSED/HALF_OPENED/OPENED state
         # contract used by the protocol; apply the protocol display override
         # below because its physical panel differs across SDK releases.
-        device_profile = "7.6in Foldable" if device.profile == "pixel_fold" else "pixel_2"
+        device_profile = (
+            "7.6in Foldable"
+            if device.profile == "pixel_fold"
+            else "10.1in WXGA (Tablet)"
+            if device.profile == "tablet"
+            else "pixel_2"
+        )
         created = _run(
             [
                 str(avdmanager),

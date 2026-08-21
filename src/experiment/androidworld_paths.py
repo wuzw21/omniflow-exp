@@ -47,7 +47,7 @@ def canonical_device_model(
     serial_key = str(serial or "").strip().lower()
     port = int(console_port or 0)
     if label_key in {"source5554", "source5560", "source5556"}:
-        return "OmniFlowSourceSmall"
+        return "WXGA_Tablet_test_00"
     if label_key in {"small5554", "target5554"}:
         return "OmniFlowTargetSmall"
     if label_key in {"pixel5576", "target5576"}:
@@ -61,7 +61,7 @@ def canonical_device_model(
     if serial_key.endswith("5576") or port == 5576:
         return "AndroidWorldAvd4090"
     if serial_key.endswith(("5556", "5560")) or port in {5556, 5560}:
-        return "OmniFlowSourceSmall"
+        return "WXGA_Tablet_test_00"
     return str(label or serial or f"device{port or 0}").strip() or "device"
 
 
@@ -81,7 +81,7 @@ def canonical_device_seed_name(
         console_port=console_port,
     )
     name = f"{model}_seed{int(source_seed)}"
-    if model != "OmniFlowSourceSmall":
+    if model != "WXGA_Tablet_test_00":
         name += f"_eval{int(evaluation_seed)}"
     return name
 
@@ -101,7 +101,9 @@ def canonical_device_metadata(
         serial=serial,
         console_port=console_port,
     )
-    if model == "OmniFlowTargetFold":
+    if model == "WXGA_Tablet_test_00":
+        profile = "tablet"
+    elif model == "OmniFlowTargetFold":
         profile = "pixel_fold"
     elif model == "AndroidWorldAvd4090":
         profile = "pixel_phone"
@@ -123,7 +125,7 @@ def canonical_device_metadata(
         "console_port": int(console_port or 0),
         "source_seed": int(source_seed),
         "evaluation_seed": (
-            None if model == "OmniFlowSourceSmall" else int(evaluation_seed)
+            None if model == "WXGA_Tablet_test_00" else int(evaluation_seed)
         ),
     }
 
