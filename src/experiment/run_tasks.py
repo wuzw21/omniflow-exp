@@ -1313,38 +1313,6 @@ def prepare_function_asset(
                 ),
                 authoring_trace=authoring_trace,
             )
-            if not repair_deterministic:
-                source_action_count = sum(
-                    1
-                    for step in (run_log.get("steps") or [])
-                    if isinstance(step, dict)
-                    and isinstance(step.get("result"), dict)
-                    and step["result"].get("success") is True
-                    and str(step.get("action", {}).get("action_type") or "")
-                    not in {"answer", "status", "unknown"}
-                )
-                generated_store = _read_object(store_path)
-                generated_functions = generated_store.get("functions")
-                generated_steps = (
-                    next(iter(generated_functions.values())).get("steps")
-                    if isinstance(generated_functions, dict) and generated_functions
-                    else None
-                )
-                if (
-                    source_action_count > 0
-                    and (
-                        not isinstance(generated_steps, list)
-                        or len(generated_steps) < source_action_count
-                    )
-                ):
-                    creation_report = save_function(
-                        source_path,
-                        store_path,
-                        enhance=False,
-                    )
-                    creation_report["enhancement_fallback"] = (
-                        "enhanced_function_did_not_preserve_source_action_sequence"
-                    )
             refresh_data_index_from_pointer(
                 memory_index=args.memory_index,
                 additional_runlog_roots=(args.asset_root,),
@@ -1576,6 +1544,40 @@ def prepare_mobilegpt_memory(
     attempt_root: Path,
     deadline: Deadline,
 ) -> tuple[Path, dict[str, Any]]:
+    configured_root = str(
+        os.environ.get("OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT") or ""
+    ).strip()
+    if configured_root:
+        root = Path(configured_root).expanduser().resolve()
+        manifest_path = root.parent / "mobilegpt_memory_manifest.json"
+        if not root.is_dir() or not manifest_path.is_file():
+            raise FileNotFoundError(
+                f"mobilegpt_source_memory_missing:{root}"
+            )
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(
+                f"mobilegpt_source_memory_manifest_invalid:{manifest_path}"
+            ) from error
+        provenance = manifest.get("provenance")
+        if not (
+            manifest.get("schema_version") == MOBILEGPT_MEMORY_SCHEMA
+            and manifest.get("source_method") == MOBILEGPT_SOURCE_METHOD
+            and isinstance(provenance, dict)
+            and provenance.get("native_mobilegpt_learning") is True
+            and provenance.get("official_authoring_session") is True
+        ):
+            raise ValueError(
+                f"mobilegpt_source_memory_not_official:{manifest_path}"
+            )
+        return root, {
+            "status": "reused",
+            "model_calls": 0,
+            "total_tokens": 0,
+            "memory_root": str(root),
+            "selection_reason": "explicit_official_memory_root",
+        }
     existing = canonical_prepared_memory_from_index(
         memory_index=args.memory_index,
         task_name=args.task,
@@ -4014,40 +4016,44 @@ def _function_enhancement_transport(
         max_retries=0,
         timeout=float(timeout_sec),
     )
+
     def complete_json(prompt: str, tool: dict[str, Any]) -> str:
-        usage["model_calls"] += 1
         tool_name = str(tool["function"]["name"])
-        response = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            # GLM-4.6V may spend a substantial portion of the completion on
-            # reasoning before emitting the forced authoring tool call.  The
-            # smaller budget can end with no parseable tool call on the
-            # parameter-binding stage even though the request is valid.
-            max_completion_tokens=4096,
-            temperature=0,
-            tools=[tool],
-            tool_choice={
-                "type": "function",
-                "function": {"name": tool_name},
-            },
-            parallel_tool_calls=False,
-            reasoning_effort="none",
-        )
-        response_usage = getattr(response, "usage", None)
-        usage["prompt_tokens"] += int(
-            getattr(response_usage, "prompt_tokens", 0) or 0
-        )
-        usage["completion_tokens"] += int(
-            getattr(response_usage, "completion_tokens", 0) or 0
-        )
-        usage["total_tokens"] += int(
-            getattr(response_usage, "total_tokens", 0) or 0
-        )
-        choices = getattr(response, "choices", None) or ()
-        message = getattr(choices[0], "message", None) if choices else None
-        calls = getattr(message, "tool_calls", None) or ()
-        if len(calls) != 1:
+        messages: list[dict[str, str]] = [{"role": "user", "content": prompt}]
+        for attempt in range(3):
+            usage["model_calls"] += 1
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_completion_tokens=4096,
+                temperature=0,
+                tools=[tool],
+                tool_choice={
+                    "type": "function",
+                    "function": {"name": tool_name},
+                },
+                parallel_tool_calls=False,
+                reasoning_effort="none",
+            )
+            response_usage = getattr(response, "usage", None)
+            usage["prompt_tokens"] += int(
+                getattr(response_usage, "prompt_tokens", 0) or 0
+            )
+            usage["completion_tokens"] += int(
+                getattr(response_usage, "completion_tokens", 0) or 0
+            )
+            usage["total_tokens"] += int(
+                getattr(response_usage, "total_tokens", 0) or 0
+            )
+            choices = getattr(response, "choices", None) or ()
+            message = getattr(choices[0], "message", None) if choices else None
+            calls = getattr(message, "tool_calls", None) or ()
+            if len(calls) == 1:
+                function = getattr(calls[0], "function", None)
+                returned_name = str(getattr(function, "name", "") or "")
+                arguments = getattr(function, "arguments", None)
+                if returned_name == tool_name and isinstance(arguments, str):
+                    return arguments
             content = getattr(message, "content", None)
             if isinstance(content, str) and content.strip():
                 decoder = json.JSONDecoder()
@@ -4059,14 +4065,20 @@ def _function_enhancement_transport(
                     except json.JSONDecodeError:
                         continue
                     return content[start : start + end]
+            if attempt < 2:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Return exactly one tool call named "
+                            f"{tool_name} with the required JSON object. "
+                            "Do not return commentary, tools_search, or plain text."
+                        ),
+                    }
+                )
+                continue
             raise ValueError("function_enhancer_tool_call_invalid")
-        function = getattr(calls[0], "function", None)
-        if str(getattr(function, "name", "") or "") != tool_name:
-            raise ValueError("function_enhancer_tool_name_invalid")
-        arguments = getattr(function, "arguments", None)
-        if not isinstance(arguments, str):
-            raise ValueError("function_enhancer_arguments_invalid")
-        return arguments
+        raise AssertionError("function_enhancer_transport_unreachable")
 
     return complete_json
 
