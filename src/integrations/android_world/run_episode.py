@@ -2549,14 +2549,16 @@ def _patch_androidworld_app_launch(adb_utils: Any) -> Any:
 
 
 def _patch_androidworld_chcon_compat(setup_module: Any) -> Any | None:
-    """Treat an unsupported external-filesystem ``chcon`` as non-fatal.
+    """Normalize setup-only ADB incompatibilities on older emulator images.
 
     AndroidWorld's OsmAnd setup copies its map into the app's external-files
     directory and then changes its SELinux context.  Some managed emulator
     images expose that directory through a transport endpoint where ``chcon``
     is unsupported, even though the copied file remains usable by the app.
-    Preserve every other ADB failure and only normalize this exact setup
-    compatibility response to AndroidWorld's normal OK status.
+    Preserve every other ADB failure. In addition to the OsmAnd ``chcon``
+    case, older Android images reject newer optional runtime permissions such
+    as ``POST_NOTIFICATIONS`` with ``Unknown permission``; AndroidWorld can
+    continue because the permission does not exist on that image.
     """
 
     adb_utils = getattr(setup_module, "adb_utils", None)
@@ -2576,6 +2578,25 @@ def _patch_androidworld_chcon_compat(setup_module: Any) -> Any | None:
             and "Operation not supported on transport endpoint" in error_text
         )
 
+    def is_unknown_optional_permission(command: Any, error_text: str) -> bool:
+        if isinstance(command, str):
+            command_parts = tuple(command.split())
+        elif isinstance(command, (list, tuple)):
+            command_parts = tuple(str(part) for part in command)
+        else:
+            command_parts = ()
+        return (
+            command_parts[:3] == ("shell", "pm", "grant")
+            and "Unknown permission:" in error_text
+        )
+
+    def compatibility_kind(command: Any, error_text: str) -> str | None:
+        if is_unsupported_chcon(command, error_text):
+            return "chcon"
+        if is_unknown_optional_permission(command, error_text):
+            return "unknown optional permission"
+        return None
+
     def ok_response() -> Any:
         response_type = getattr(
             getattr(setup_module, "adb_pb2", None), "AdbResponse", None
@@ -2591,11 +2612,13 @@ def _patch_androidworld_chcon_compat(setup_module: Any) -> Any | None:
         try:
             response = original(*call_args, **call_kwargs)
         except Exception as exc:
-            if not is_unsupported_chcon(command, str(exc)):
+            kind = compatibility_kind(command, str(exc))
+            if kind is None:
                 raise
             logging.warning(
-                "AndroidWorld setup skipped unsupported external-filesystem "
-                "chcon; the copied file remains available to the app"
+                "AndroidWorld setup skipped %s incompatibility on this "
+                "emulator image",
+                kind,
             )
             return ok_response()
         generic = getattr(response, "generic", None)
@@ -2604,7 +2627,8 @@ def _patch_androidworld_chcon_compat(setup_module: Any) -> Any | None:
             output_text = output.decode(errors="replace")
         else:
             output_text = str(output or "")
-        if is_unsupported_chcon(command, output_text):
+        kind = compatibility_kind(command, output_text)
+        if kind is not None:
             if hasattr(response, "CopyFrom"):
                 try:
                     normalized = type(response)()
@@ -2623,8 +2647,9 @@ def _patch_androidworld_chcon_compat(setup_module: Any) -> Any | None:
             else:
                 response.status = 1
             logging.warning(
-                "AndroidWorld setup skipped unsupported external-filesystem "
-                "chcon; the copied file remains available to the app"
+                "AndroidWorld setup skipped %s incompatibility on this "
+                "emulator image",
+                kind,
             )
         return response
 

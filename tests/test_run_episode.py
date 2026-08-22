@@ -620,6 +620,44 @@ def test_androidworld_chcon_compat_normalizes_controller_exception() -> None:
     assert response.status == 1
 
 
+def test_androidworld_setup_ignores_unknown_optional_permission() -> None:
+    class Response:
+        def __init__(self, status: int, output: bytes) -> None:
+            self.status = status
+            self.generic = SimpleNamespace(output=output)
+
+        def CopyFrom(self, other) -> None:
+            self.status = other.status
+            self.generic = SimpleNamespace(output=other.generic.output)
+
+    class AdbUtils:
+        def issue_generic_request(self, args, _env, *, timeout_sec=None):
+            return Response(
+                2,
+                b"java.lang.IllegalArgumentException: Unknown permission: "
+                b"android.permission.POST_NOTIFICATIONS",
+            )
+
+    setup_module = SimpleNamespace(adb_utils=AdbUtils())
+    original = _patch_androidworld_chcon_compat(setup_module)
+    assert original is not None
+    try:
+        response = setup_module.adb_utils.issue_generic_request(
+            [
+                "shell",
+                "pm",
+                "grant",
+                "com.dimowner.audiorecorder",
+                "android.permission.POST_NOTIFICATIONS",
+            ],
+            object(),
+        )
+    finally:
+        setup_module.adb_utils.issue_generic_request = original
+
+    assert response.status == 1
+
+
 def test_androidworld_file_transfer_timeout_bounds_unset_and_zero(
     monkeypatch,
 ) -> None:
