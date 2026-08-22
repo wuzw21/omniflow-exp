@@ -129,7 +129,7 @@ def _mobilegpt_source_target(
     ):
         return {
             "target_package": final_package,
-            "target_app": str(inferred.get("target_app") or final_package),
+            "target_app": final_package,
             "target_source": "canonical_source_runlog_final_observation",
         }
     # AndroidWorld's open_app action is allowed to carry a human-facing app
@@ -152,7 +152,7 @@ def _mobilegpt_source_target(
     if final_package and final_package not in _IGNORED_SOURCE_PACKAGES:
         return {
             "target_package": final_package,
-            "target_app": str(inferred.get("target_app") or final_package),
+            "target_app": final_package,
             "target_source": "canonical_source_runlog_final_observation",
         }
     source_packages: set[str] = set()
