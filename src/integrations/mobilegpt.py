@@ -373,9 +373,12 @@ def validate_mobilegpt_memory(
         # Official MobileGPT may store the terminal ``finish`` on a distinct
         # page after the learned action page.  It is valid regardless of the
         # number of pages in the task path.
-        page_is_finish_only = raw_subtasks == ["finish"]
+        page_is_special_only = bool(raw_subtasks) and all(
+            str(subtask or "").strip() in {"finish", "scroll_screen"}
+            for subtask in raw_subtasks
+        )
         if (
-            (not page_is_finish_only and not subtask_names)
+            (not page_is_special_only and not subtask_names)
             or not subtask_names.issubset(available_names)
         ):
             raise ValueError("mobilegpt_memory_subtask_graph_invalid")

@@ -1007,6 +1007,80 @@ def test_memory_validation_rejects_action_without_parameters(tmp_path: Path) -> 
         validate_mobilegpt_memory(memory)
 
 
+def test_memory_validation_accepts_scroll_only_official_page(
+    tmp_path: Path,
+) -> None:
+    memory = tmp_path / "memory"
+    app = memory / "com.example.app"
+    (app / "pages" / "0" / "screen").mkdir(parents=True)
+    (app / "pages" / "1" / "screen").mkdir(parents=True)
+    (memory / "tasks.csv").write_text(
+        "name,description,parameters,app\n"
+        "takePhoto,Take a photo,{},com.example.app\n",
+        encoding="utf-8",
+    )
+    with (app / "tasks.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(("name", "path"))
+        writer.writerow(
+            (
+                "takePhoto",
+                json.dumps(
+                    {"0": ["capture"], "1": ["scroll_screen"]},
+                    separators=(",", ":"),
+                ),
+            )
+        )
+    (app / "pages.csv").write_text(
+        "index,available_subtasks,trigger_uis,extra_uis,screen\n"
+        '0,"[]","{}","[]",screen-0\n'
+        '1,"[]","{}","[]",screen-1\n',
+        encoding="utf-8",
+    )
+    (app / "hierarchy.csv").write_text(
+        "index,screen,embedding\n0,screen-0,[0.0]\n1,screen-1,[0.0]\n",
+        encoding="utf-8",
+    )
+    (app / "pages" / "0" / "subtasks.csv").write_text(
+        "name,description,parameters\ncapture,Capture photo,{}\n",
+        encoding="utf-8",
+    )
+    (app / "pages" / "0" / "available_subtasks.csv").write_text(
+        "name,description,parameters\ncapture,Capture photo,{}\n",
+        encoding="utf-8",
+    )
+    (app / "pages" / "1" / "subtasks.csv").write_text(
+        "name,description,parameters\n",
+        encoding="utf-8",
+    )
+    (app / "pages" / "1" / "available_subtasks.csv").write_text(
+        "name,description,parameters\n",
+        encoding="utf-8",
+    )
+    for page_index, rows in {
+        "0": [("capture", 0, {"name": "click", "parameters": {"index": 5}}, {})],
+        "1": [],
+    }.items():
+        with (app / "pages" / page_index / "actions.csv").open(
+            "w", newline="", encoding="utf-8"
+        ) as handle:
+            writer = csv.writer(handle)
+            writer.writerow(("subtask_name", "step", "action", "example"))
+            for subtask_name, step, action, example in rows:
+                writer.writerow((subtask_name, step, json.dumps(action), example))
+    for page_index in ("0", "1"):
+        for name in ("raw.xml", "html.xml", "hierarchy.xml", "parsed.xml", "pretty.xml"):
+            (app / "pages" / page_index / "screen" / name).write_text(
+                "<hierarchy />\n",
+                encoding="utf-8",
+            )
+
+    report = validate_mobilegpt_memory(memory)
+
+    assert report["native_memory_complete"] is True
+    assert report["subtask_count"] == 1
+
+
 def test_memory_validation_rejects_malformed_screen_xml(tmp_path: Path) -> None:
     source = _write_runlog(
         tmp_path / "source.json",
