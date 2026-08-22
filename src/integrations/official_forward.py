@@ -2444,12 +2444,30 @@ def _run_mobilegpt_client(
     services = [value for value in current.split(":") if value and value != "null"]
     if service not in services:
         services.append(service)
+    # Android may retain the old accessibility manager state across an APK
+    # replacement or a restored emulator snapshot.  Merely writing the new
+    # service list then setting accessibility_enabled=1 is not sufficient on
+    # those images: the old manager remains active and the new service never
+    # receives a bind.  Force the documented off -> list -> on transition so
+    # the official client starts from the same state on every target device.
+    _run_adb(
+        adb_path,
+        serial,
+        ["shell", "settings", "put", "secure", "accessibility_enabled", "0"],
+        check=False,
+    )
     _run_adb(
         adb_path,
         serial,
         ["shell", "settings", "put", "secure", "enabled_accessibility_services", ":".join(services)],
+        check=False,
     )
-    _run_adb(adb_path, serial, ["shell", "settings", "put", "secure", "accessibility_enabled", "1"])
+    _run_adb(
+        adb_path,
+        serial,
+        ["shell", "settings", "put", "secure", "accessibility_enabled", "1"],
+        check=False,
+    )
     _run_adb(adb_path, serial, ["shell", "monkey", "-p", "com.example.MobileGPT", "1"])
     # Launching the activity can cause Android to restore the secure settings
     # from before installation. Re-assert the service after launch and wait
