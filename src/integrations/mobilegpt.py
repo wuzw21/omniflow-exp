@@ -334,7 +334,6 @@ def validate_mobilegpt_memory(
     action_count = 0
     non_finish_action_count = 0
     screen_file_count = 0
-    next_step_by_subtask: dict[str, int] = {}
     task_subtask_names = {
         str(subtask or "").strip()
         for subtasks_for_page in task_path.values()
@@ -393,15 +392,17 @@ def validate_mobilegpt_memory(
             if step < 0:
                 raise ValueError("mobilegpt_memory_action_step_invalid")
             action = _validated_action(row.get("action"))
-            expected_step = next_step_by_subtask.get(subtask_name, 0)
-            if step != expected_step:
-                raise ValueError("mobilegpt_memory_action_steps_not_contiguous")
+            # ``actions.csv`` is the official PageManager event table, not a
+            # single linear trace per subtask.  The official authoring flow
+            # may revisit a subtask name, emit its terminal ``finish`` on a
+            # later page, or persist two instances with the same name.  A
+            # local contiguous-step rule therefore rejects valid official
+            # memories (and cannot be used to repair their ordering).  Keep
+            # the structural checks above, while leaving action sequencing to
+            # MobileGPT's own reader/runtime.
             action_count += 1
             if action["name"] != "finish":
                 non_finish_action_count += 1
-                next_step_by_subtask[subtask_name] = step + 1
-            else:
-                next_step_by_subtask[subtask_name] = 0
         screen_root = page_root / "screen"
         required = {
             "raw.xml",
@@ -465,7 +466,41 @@ def _action_type(action: dict[str, Any]) -> str:
 
 
 def _package_from_observation(observation: dict[str, Any]) -> str:
-    return androidworld_observation_package(observation)
+    """Return the real foreground package, including forest-only observations.
+
+    AndroidWorld's native package fields are not guaranteed to be populated
+    in a source RunLog.  In particular, ``open_app`` commonly records the
+    human-facing label while the package is present only on the XML forest.
+    MobileGPT needs the package for its Accessibility client, so the source
+    boundary must resolve it from that evidence instead of passing the label
+    through as a package name.
+    """
+
+    package = androidworld_observation_package(observation)
+    if package:
+        return package
+    if not isinstance(observation, dict):
+        return ""
+    forest = observation.get("xml") or observation.get("forest")
+    if not isinstance(forest, str) or not forest.strip():
+        return ""
+    try:
+        root = ET.fromstring(forest)
+    except ET.ParseError:
+        return ""
+    ignored = {
+        "android",
+        "com.android.systemui",
+        "com.google.android.apps.nexuslauncher",
+        "com.android.launcher3",
+    }
+    packages = [
+        str(element.attrib.get("package") or "").strip()
+        for element in root.iter()
+        if str(element.attrib.get("package") or "").strip()
+    ]
+    foreground = [value for value in packages if value not in ignored]
+    return (foreground or packages or [""])[-1]
 
 
 def _load_runlog_trajectory(
@@ -584,10 +619,37 @@ def _load_runlog_trajectory(
             }
         }
     )
+    # The package is often only visible in the observation after open_app;
+    # include that evidence before resolving the human-facing app label.
+    package_names = sorted(
+        set(package_names)
+        | {
+            str(evidence.get("observed_package") or "").strip()
+            for evidence in open_app_evidence
+            if str(evidence.get("observed_package") or "").strip()
+        }
+    )
     resolved_target_package = str(target_package or "").strip()
     resolved_target_app = str(target_app or "").strip()
+    observed_open_app_packages = [
+        str(evidence.get("observed_package") or "").strip()
+        for evidence in open_app_evidence
+        if "." in str(evidence.get("observed_package") or "").strip()
+        and str(evidence.get("observed_package") or "").strip()
+        not in {
+            "com.android.systemui",
+            "com.google.android.apps.nexuslauncher",
+            "com.android.launcher3",
+        }
+    ]
+    if not resolved_target_package and observed_open_app_packages:
+        resolved_target_package = observed_open_app_packages[0]
+    package_candidates = [value for value in package_names if "." in value]
     if not resolved_target_package:
-        resolved_target_package = package_names[0] if len(package_names) == 1 else ""
+        if len(package_candidates) == 1:
+            resolved_target_package = package_candidates[0]
+        elif len(package_names) == 1:
+            resolved_target_package = package_names[0]
     open_app_packages = [
         str(step.get("action", {}).get("app_name") or "").strip()
         for step in payload.get("steps") or []
