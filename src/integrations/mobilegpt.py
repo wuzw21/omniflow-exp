@@ -703,7 +703,8 @@ def _load_runlog_trajectory(
     for evidence in open_app_evidence:
         observed_package = str(evidence.get("observed_package") or "").strip()
         if (
-            observed_package
+            not resolved_target_package
+            and observed_package
             and observed_package not in {resolved_target_package, "android", "com.android.systemui"}
             and not observed_package.startswith("com.google.android.apps.nexuslauncher")
             and not observed_package.startswith("com.android.launcher")
