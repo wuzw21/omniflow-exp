@@ -177,7 +177,10 @@ preflight="$repo/src/experiment/checks.py"
 selected_method_arg=""
 selected_device_arg=""
 selected_supplemental_method_arg="${OMNIFLOW_ANDROIDWORLD_SUPPLEMENTAL_METHOD:-}"
-control_backend="${OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND:-androidworld}"
+# AndroidWorld experiments use the repository's OOB observe/act transport by
+# default.  Native AndroidWorld I/O remains an explicit diagnostic override;
+# it must not silently become the formal experiment backend.
+control_backend="${OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND:-oob}"
 require_root_device="${OMNIFLOW_REQUIRE_ROOT_DEVICE:-1}"
 configure_device="${OMNIFLOW_CONFIGURE_DEVICE:-1}"
 task="${OMNIFLOW_ANDROIDWORLD_TASK:-SystemBluetoothTurnOn}"
@@ -192,7 +195,7 @@ store_path="${OMNIFLOW_ANDROIDWORLD_STORE_PATH:-}"
 memory_root="${OMNIFLOW_EXP_MEMORY_ROOT:-$default_memory_root}"
 memory_index="${OMNIFLOW_EXP_MEMORY_INDEX:-${memory_root:+$memory_root/current.json}}"
 memory_runlog_roots="${OMNIFLOW_MEMORY_RUNLOG_ROOTS:-$repo/data/androidworld}"
-memory_result_roots="${OMNIFLOW_MEMORY_RESULT_ROOTS:-$repo/data/androidworld}"
+memory_result_roots="${OMNIFLOW_MEMORY_RESULT_ROOTS:-$repo/data/androidworld:$repo/data/androidworld/.archive/result_registry}"
 memory_mobilegpt_roots="${OMNIFLOW_MEMORY_MOBILEGPT_ROOTS:-}"
 memory_baseline_batch_reports="${OMNIFLOW_MEMORY_BASELINE_BATCH_REPORTS:-}"
 mobilegpt_root="${OMNIFLOW_MOBILEGPT_ROOT:-${asset_root:+$asset_root/runtime/external/mobilegpt}}"
@@ -415,7 +418,7 @@ e2e_evaluation_seed="$formal_task_seed"
 e2e_task_deadline_sec="${OMNIFLOW_E2E_TASK_DEADLINE_SEC:-$formal_task_deadline_sec}"
 source_screenshot_roots="${OMNIFLOW_SOURCE_SCREENSHOT_ROOTS:-}"
 setup_device=""
-function_replay_device="${OMNIFLOW_FUNCTION_REPLAY_DEVICE:-small5554:emulator-5554:5554}"
+function_replay_device="${OMNIFLOW_FUNCTION_REPLAY_DEVICE:-small5562:emulator-5562:5562}"
 function_replay_avd="${OMNIFLOW_FUNCTION_REPLAY_AVD:-OmniFlowTargetSmall}"
 
 normalize_model_environment() {
@@ -646,7 +649,7 @@ Examples:
   bash scripts/exp/run_androidworld.sh \
     --e2e-task AudioRecorderRecordAudioWithFileName \
     --e2e-method omniflow \
-    --e2e-device pixel5576:emulator-5576:5576 \
+    --e2e-device small5562:emulator-5562:5562 \
     --e2e-source-seed 111 \
     --e2e-evaluation-seed 113 \
     --task-deadline-sec 1800
@@ -871,12 +874,29 @@ if [[ "$control_backend" == "oob" && "$execution_environment" != "androidworld" 
   exit 2
 fi
 export OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND="$control_backend"
-if [[ "$execution_environment" != "bmoca" && ( -n "$selected_method_arg" || -n "$selected_device_arg" ) ]] && {
+if [[ "$execution_environment" != "bmoca" && -n "$selected_method_arg" ]]; then
+  case ",$all_methods," in
+    *,${selected_method_arg},*)
+      ;;
+    *)
+      echo "Unsupported paper method: $selected_method_arg" >&2
+      exit 2
+      ;;
+  esac
+fi
+if [[ "$execution_environment" != "bmoca" && -n "$selected_device_arg" ]] && {
   [[ "$development_run" -eq 1 || "$source_collection" -eq 1 ||
     "$all_tasks" -eq 1 || -n "$e2e_task" || -n "$batch_task_filter" ||
     "$refresh_memory" -eq 1 ]];
 }; then
   echo "--method/--device are only valid for one direct AndroidWorld result." >&2
+  exit 2
+fi
+if [[ "$execution_environment" != "bmoca" && -n "$selected_method_arg" &&
+  "$all_tasks" -eq 0 && -z "$e2e_task" && -z "$batch_task_filter" &&
+  "$development_run" -eq 0 && "$source_collection" -eq 0 &&
+  "$refresh_memory" -eq 0 ]]; then
+  echo "--method requires --all-tasks, --tasks, or one direct AndroidWorld result." >&2
   exit 2
 fi
 if [[ "$execution_environment" != "bmoca" && "$source_collection" -eq 1 ]]; then
@@ -1362,7 +1382,7 @@ if [[ -n "$e2e_task" ]]; then
     --autodroid-app "$autodroid_app"
     --autodroid-policy "$autodroid_policy"
   )
-  if [[ "$supplemental_autodroid" -eq 0 ]]; then
+  if [[ "$supplemental_autodroid" -eq 0 && ( "$e2e_method" == "all" || ",${e2e_method}," == *,omniflow,* ) ]]; then
     e2e_args+=(--ensure-function)
   fi
   if [[ "$function_replay_collection" -eq 1 ]]; then
@@ -2134,6 +2154,14 @@ PY
         --e2e-method autodroid
         --e2e-device all
       )
+    elif [[ -n "$selected_method_arg" || -n "${OMNIFLOW_ANDROIDWORLD_METHOD:-}" ]]; then
+      # A selected method is a method-scoped campaign.  Keep the historical
+      # default (all formal methods) when no method was selected, but do not
+      # silently expand `--all-tasks --method mobilegpt` back to every method.
+      child_args+=(
+        --e2e-method "$method"
+        --e2e-device all
+      )
     else
       child_args+=(
         --e2e-method all
@@ -2151,10 +2179,24 @@ PY
       child_args+=(--attempt-id "${OMNIFLOW_E2E_ATTEMPT_ID}")
     fi
     echo "[batch] dispatch task=$batch_task"
-    if ! bash "$0" "${child_args[@]}"; then
-      batch_status=1
-      echo "[batch] task failed task=$batch_task" >&2
-    fi
+    batch_function_round="${OMNIFLOW_FUNCTION_ENHANCEMENT_ROUND:-0}"
+    while true; do
+      set +e
+      OMNIFLOW_FUNCTION_ENHANCEMENT_ROUND="$batch_function_round" \
+        bash "$0" "${child_args[@]}"
+      child_status=$?
+      set -e
+      if [[ "$child_status" -eq 75 && "$batch_function_round" -lt 2 ]]; then
+        batch_function_round=$((batch_function_round + 1))
+        echo "[batch] function retry task=$batch_task round=$batch_function_round" >&2
+        continue
+      fi
+      if [[ "$child_status" -ne 0 ]]; then
+        batch_status=1
+        echo "[batch] task failed task=$batch_task status=$child_status" >&2
+      fi
+      break
+    done
   done
   exit "$batch_status"
 fi
@@ -2284,7 +2326,7 @@ unset MOBILEGPT_MEMORY_ONLY
 if [[ "$need_mobilegpt_preflight" -eq 1 ]]; then
   export MOBILEGPT_EMBEDDING_API_KEY="$mobilegpt_embedding_api_key"
   export MOBILEGPT_EMBEDDING_BASE_URL="$mobilegpt_embedding_base_url"
-  export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
+  export MOBILEGPT_EMBEDDING_MODEL="${MOBILEGPT_EMBEDDING_MODEL:-GLM-Embedding-2}"
 fi
 missing_assets=()
 require_file() {
@@ -2779,6 +2821,7 @@ command=(
   --task-random-seed "$task_seed"
   --model "$paper_model"
   --planner-provider openai
+  --planner-timeout-sec "${OMNIFLOW_ANDROIDWORLD_PLANNER_TIMEOUT_SEC:-180}"
 )
 command+=(--method "$method")
 if [[ "$fixed_task_params" != "1" ]]; then

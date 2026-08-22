@@ -23,6 +23,8 @@ from omniflow.core.trajectory import require_complete_source_run_log
 from omniflow.functions.assets import save_function
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from src.experiment.run_task import (
+    _canonical_function_source_call,
+    bind_function_arguments_to_task_params,
     build_task_command,
     build_replay_command,
     validate_omniflow_transfer_assets,
@@ -42,6 +44,7 @@ from src.experiment.batch_outcomes import (
 from src.experiment.result_registry import registered_result_plan
 from src.experiment.paths import resolve_path, safe_component, sha256_file
 from src.experiment.androidworld_paths import (
+    canonical_device_model,
     canonical_device_seed_name,
     next_attempt_name,
 )
@@ -74,7 +77,11 @@ from src.experiment.protocol import (
     TASK_SEED,
     VALIDATOR_FLUSH_GRACE_SEC,
 )
-from src.experiment.mobilegpt_contract import MOBILEGPT_EMBEDDING_MODEL
+from src.experiment.mobilegpt_contract import (
+    MOBILEGPT_EMBEDDING_MODEL,
+    MOBILEGPT_MEMORY_SCHEMA,
+    MOBILEGPT_SOURCE_METHOD,
+)
 from src.experiment.source_records import CanonicalRunLog
 from src.integrations.mobilegpt import (
     convert_runlog_to_mobilegpt_memory,
@@ -388,10 +395,20 @@ def ensure_source_device(
     )
     if result["returncode"] != 0:
         raise RuntimeError(f"source_runtime_preflight_failed:{result['returncode']}")
+    # The source emulator is also the AndroidWorld/AndroidEnv host for the
+    # source Function qualification that follows this preflight.  The
+    # AndroidWorld loader is intentionally called with ``emulator_setup=False``
+    # and therefore connects to the already-running gRPC emulator; stopping it
+    # here creates a race where qualification starts against a missing source
+    # device.  Keep this lifecycle owned by the task pipeline.  The next task
+    # cold-restarts the exact source serial at the beginning of this function.
+    # ``source_only`` and manual collection already rely on the same behavior.
+    del emulator_process
     return {
         **result,
         "status": "ready",
         "launched": True,
+        "kept_alive_for_pipeline": True,
         "serial": source_serial,
         "avd": args.source_avd,
         "wall_sec": round(time.monotonic() - started, 6),
@@ -542,6 +559,70 @@ def _replayable_historical_source(
         raise ValueError(f"replayable_historical_source_missing:{task}")
     _, path, run_log = max(candidates, key=lambda value: value[0])
     return path, run_log
+
+
+def _appagent_source_path(
+    memory_index: Path,
+    task: str,
+    source_path: Path,
+) -> Path:
+    try:
+        source = _read_object(source_path)
+        steps = source.get("steps") if isinstance(source, dict) else None
+        last_step = steps[-1] if isinstance(steps, list) and steps else None
+        has_after_observation = isinstance(source.get("final_observation"), dict) or (
+            isinstance(last_step, dict)
+            and isinstance(last_step.get("next_observation"), dict)
+        )
+    except (OSError, TypeError, ValueError):
+        has_after_observation = False
+    if has_after_observation:
+        return source_path
+    source_root = memory_index.parent / "androidworld" / safe_component(task) / "source"
+    candidates: list[tuple[tuple[int, int], Path]] = []
+    for candidate_path in source_root.glob("*/runlog/*/run_log.json"):
+        if ".archive" in candidate_path.parts:
+            continue
+        try:
+            candidate = _read_object(candidate_path)
+        except (OSError, TypeError, ValueError):
+            continue
+        steps = candidate.get("steps") if isinstance(candidate, dict) else None
+        last_candidate_step = (
+            steps[-1] if isinstance(steps, list) and steps else None
+        )
+        candidate_has_after = isinstance(
+            candidate.get("final_observation") if isinstance(candidate, dict) else None,
+            dict,
+        ) or (
+            isinstance(last_candidate_step, dict)
+            and isinstance(last_candidate_step.get("next_observation"), dict)
+        )
+        validator = candidate.get("validator") if isinstance(candidate, dict) else None
+        if (
+            not isinstance(candidate, dict)
+            or candidate.get("task_name") != task
+            or candidate.get("success") is not True
+            or not isinstance(steps, list)
+            or not steps
+            or not candidate_has_after
+            or not isinstance(validator, dict)
+            or validator.get("official") is not True
+            or validator.get("success") is not True
+        ):
+            continue
+        candidates.append(
+            (
+                (
+                    int(candidate.get("finished_at_ms") or 0),
+                    candidate_path.stat().st_mtime_ns,
+                ),
+                candidate_path.resolve(),
+            )
+        )
+    if not candidates:
+        return source_path
+    return max(candidates, key=lambda value: value[0])[1]
 
 
 def _audited_historical_source(
@@ -1021,7 +1102,7 @@ def collect_manual_source(
         str(output_path),
     ]
     backend = str(
-        os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "androidworld")
+        os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "oob")
     ).strip().lower()
     if (
         backend not in {"oob", "omniflow", "oob_control"}
@@ -1171,13 +1252,30 @@ def prepare_function_asset(
     existing = _canonical_function_store(args.memory_index, args.task)
     created = False
     creation_report: dict[str, Any] | None = None
+    try:
+        enhancement_round = max(
+            0,
+            min(
+                3,
+                int(os.environ.get("OMNIFLOW_FUNCTION_ENHANCEMENT_ROUND", "0")),
+            ),
+        )
+    except ValueError:
+        enhancement_round = 0
+    force_enhancement = enhancement_round > 0
+    repair_deterministic = (
+        str(os.environ.get("OMNIFLOW_FUNCTION_DETERMINISTIC_REPAIR", "0"))
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"}
+    )
     usage = {
         "model_calls": 0,
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "total_tokens": 0,
     }
-    if existing is None:
+    if existing is None or force_enhancement or repair_deterministic:
         if not getattr(args, "ensure_function", False):
             raise FileNotFoundError(f"canonical_function_store_missing:{args.task}")
         source_device = getattr(args, "source_device", SOURCE_DEVICE)
@@ -1192,7 +1290,7 @@ def prepare_function_asset(
             / safe_component(attempt_root.name)
             / "function_store.json"
         )
-        if store_path.exists():
+        if store_path.exists() and not repair_deterministic:
             raise FileExistsError(
                 f"function_authoring_artifact_already_exists:{store_path}"
             )
@@ -1200,13 +1298,51 @@ def prepare_function_asset(
             creation_report = save_function(
                 source_path,
                 store_path,
-                enhance=True,
-                complete_json=_function_enhancement_transport(
-                    model=args.formal_model,
-                    timeout_sec=float(FUNCTION_ENHANCEMENT_TIMEOUT_SEC),
-                    usage=usage,
+                enhance=not repair_deterministic,
+                **(
+                    {
+                        "complete_json": _function_enhancement_transport(
+                            model=args.formal_model,
+                            timeout_sec=float(FUNCTION_ENHANCEMENT_TIMEOUT_SEC),
+                            usage=usage,
+                        )
+                    }
+                    if not repair_deterministic
+                    else {}
                 ),
             )
+            if not repair_deterministic:
+                source_action_count = sum(
+                    1
+                    for step in (run_log.get("steps") or [])
+                    if isinstance(step, dict)
+                    and isinstance(step.get("result"), dict)
+                    and step["result"].get("success") is True
+                    and str(step.get("action", {}).get("action_type") or "")
+                    not in {"answer", "status", "unknown"}
+                )
+                generated_store = _read_object(store_path)
+                generated_functions = generated_store.get("functions")
+                generated_steps = (
+                    next(iter(generated_functions.values())).get("steps")
+                    if isinstance(generated_functions, dict) and generated_functions
+                    else None
+                )
+                if (
+                    source_action_count > 0
+                    and (
+                        not isinstance(generated_steps, list)
+                        or len(generated_steps) < source_action_count
+                    )
+                ):
+                    creation_report = save_function(
+                        source_path,
+                        store_path,
+                        enhance=False,
+                    )
+                    creation_report["enhancement_fallback"] = (
+                        "enhanced_function_did_not_preserve_source_action_sequence"
+                    )
             refresh_data_index_from_pointer(
                 memory_index=args.memory_index,
                 additional_runlog_roots=(args.asset_root,),
@@ -1254,7 +1390,14 @@ def prepare_function_asset(
         require_action_transfer=True,
     )
     phase = {
-        "status": "created" if created else "reused",
+        "status": (
+            "enhanced_retry"
+            if created and force_enhancement
+            else "created"
+            if created
+            else "reused"
+        ),
+        "enhancement_round": enhancement_round,
         "model_calls": usage["model_calls"],
         "total_tokens": usage["total_tokens"],
         "store": str(store_path),
@@ -1401,6 +1544,10 @@ def _cached_source_function_qualification(
             continue
         if (
             qualification.get("qualified") is True
+            and str(qualification.get("source_run_log_sha256") or "")
+            == source_sha256
+            and str(qualification.get("store_sha256") or "")
+            == store_sha256
             and int(qualification.get("model_calls") or 0) == 0
             and int(qualification.get("fallback_steps") or 0) == 0
         ):
@@ -1422,7 +1569,25 @@ def prepare_mobilegpt_memory(
         memory_index=args.memory_index,
         task_name=args.task,
     )
+    existing_is_official = False
     if existing is not None:
+        manifest_path = (
+            Path(str(existing["memory_root"])).expanduser().resolve().parent
+            / "mobilegpt_memory_manifest.json"
+        )
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            manifest = {}
+        provenance = manifest.get("provenance")
+        existing_is_official = (
+            manifest.get("schema_version") == MOBILEGPT_MEMORY_SCHEMA
+            and manifest.get("source_method") == MOBILEGPT_SOURCE_METHOD
+            and isinstance(provenance, dict)
+            and provenance.get("native_mobilegpt_learning") is True
+            and provenance.get("official_authoring_session") is True
+        )
+    if existing is not None and existing_is_official:
         return Path(str(existing["memory_root"])).resolve(), {
             "status": "reused",
             "model_calls": 0,
@@ -1607,6 +1772,7 @@ def _concluded_results(
         source_seed=source_seed,
         evaluation_seed=evaluation_seed,
         attempt_id=attempt_id,
+        device_models=_e2e_device_models(args),
     )
     # A formal cell is reusable across pipeline attempts only when its
     # immutable registration contains an official validator conclusion.  This
@@ -1628,6 +1794,7 @@ def _concluded_results(
             devices=tuple(device[0] for device in devices),
             source_seed=source_seed,
             evaluation_seed=evaluation_seed,
+            device_models=_e2e_device_models(args),
         )
         concluded.update(registered["completed"])
     # Native cells selected into current.json remain part of the same skip
@@ -1643,8 +1810,15 @@ def _concluded_results(
             source_seed=source_seed,
             evaluation_seed=evaluation_seed,
             formal_max_steps=int(args.max_steps),
+            device_models=_e2e_device_models(args),
         )
         concluded.update(indexed["completed"])
+    # External baselines are reusable evidence; OmniFlow is actively
+    # corrected in the final campaign and must receive a fresh attempt.
+    if "omniflow" in methods and os.environ.get(
+        "OMNIFLOW_ANDROIDWORLD_RERUN_OMNIFLOW", "1"
+    ).strip().lower() in {"1", "true", "yes"}:
+        concluded = {item for item in concluded if item[0] != "omniflow"}
     return concluded
 
 
@@ -1693,6 +1867,17 @@ def _e2e_devices(args: argparse.Namespace) -> tuple[tuple[str, str, int], ...]:
     if len({device[0] for device in devices}) != len(devices):
         raise ValueError("androidworld_e2e_device_duplicate")
     return devices
+
+
+def _e2e_device_models(args: argparse.Namespace) -> dict[str, str]:
+    return {
+        label: canonical_device_model(
+            label=label,
+            serial=serial,
+            console_port=port,
+        )
+        for label, serial, port in _e2e_devices(args)
+    }
 
 
 def _e2e_source_seed(args: argparse.Namespace) -> int:
@@ -1768,7 +1953,7 @@ def _published_official_result_row(
         External runners use the serial in ``task_results.jsonl`` while the
         scheduler summary uses the protocol label.  Compare the stable
         trailing numeric identity so both forms match, but an old
-        ``emulator-5554`` row cannot satisfy a new ``pixel5576`` request.
+        a row from another target serial cannot satisfy the requested device.
         Rows without a device field retain the path-based compatibility
         behavior used by older external runners.
         """
@@ -1884,6 +2069,7 @@ def _result_environment(
     result_attempt_id = f"{attempt_id}.{method}.{label}"
     result_attempt_root = (
         attempt_root / "target_attempts" / label / method / result_attempt_id
+    )
     emulator_bin = str(getattr(args, "emulator_bin", "") or "").strip()
     sdk_root = ""
     if emulator_bin:
@@ -1894,7 +2080,6 @@ def _result_environment(
             or os.environ.get("ANDROID_HOME")
             or ""
         ).strip()
-    )
     environment = dict(os.environ)
     environment.update(
         {
@@ -1928,6 +2113,10 @@ def _result_environment(
             # shared task/method/device-model archive.
             "OMNIFLOW_ANDROIDWORLD_ARCHIVE_ROOT": str(
                 args.results_root / "androidworld"
+            ),
+            "OMNIFLOW_COLLECT_PERFORMANCE": "1",
+        }
+    )
     if sdk_root:
         environment.update(
             {
@@ -1936,10 +2125,6 @@ def _result_environment(
                 "OMNIFLOW_REAL_ADB_PATH": str(Path(sdk_root) / "platform-tools" / "adb"),
             }
         )
-            ),
-            "OMNIFLOW_COLLECT_PERFORMANCE": "1",
-        }
-    )
     if store_path is not None:
         environment["OMNIFLOW_ANDROIDWORLD_STORE_PATH"] = str(store_path)
     if mobilegpt_memory is not None:
@@ -2077,8 +2262,54 @@ def _androidworld_result_command(
         "--device",
         f"{label}:{serial}:{int(console_port)}",
     ]
-    if not FIXED_TASK_PARAMS and method != "autodroid":
+    evaluation_params: dict[str, Any] | None = None
+    if method != "autodroid":
+        try:
+            evaluation_params = _generate_missing_androidworld_task_params(
+                task=str(args.task),
+                source_seed=_e2e_evaluation_seed(args),
+            )
+        except (ImportError, ValueError, TypeError, AttributeError):
+            # Keep the existing seed-driven AndroidWorld behavior for tasks
+            # whose generator cannot be imported in a lightweight scheduler
+            # test or whose official task requires externally supplied params.
+            evaluation_params = None
+    if method == "omniflow" and store_path is not None and store_path.is_file():
+        _function_id, source_arguments = _canonical_function_source_call(store_path)
+        if evaluation_params is None:
+            evaluation_params = _generate_missing_androidworld_task_params(
+                task=str(args.task),
+                source_seed=_e2e_evaluation_seed(args),
+            )
+        bound_arguments = bind_function_arguments_to_task_params(
+            source_arguments,
+            evaluation_params,
+        )
+    if evaluation_params is None and not FIXED_TASK_PARAMS and method != "autodroid":
         command.extend(("--no-fixed-task-params", "--task-params-json", ""))
+    elif evaluation_params is not None:
+        command.extend(
+            (
+                "--task-params-json",
+                json.dumps(
+                    evaluation_params,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+            )
+        )
+    if (
+        evaluation_params is not None
+        and method == "omniflow"
+        and store_path is not None
+        and store_path.is_file()
+    ):
+        command.extend(
+            (
+                "--function-arguments-json",
+                json.dumps(bound_arguments, ensure_ascii=False, separators=(",", ":")),
+            )
+        )
     if method == "appagent":
         command.extend(
             (
@@ -2328,6 +2559,9 @@ def run_target_workers(
                 )
                 if official_row:
                     official_success = bool(official_row["validator_success"])
+                    official_environment_failure = bool(
+                        official_row.get("environment_failure")
+                    )
                     completed.add((method, label))
                     outcome_path = record_result_outcome(
                         outcomes_root=outcomes_root,
@@ -2338,8 +2572,18 @@ def run_target_workers(
                         attempt_id=attempt_id,
                         source_seed=source_seed,
                         evaluation_seed=evaluation_seed,
-                        status="completed" if official_success else "method_failed",
-                        stage="androidworld_validate",
+                        status=(
+                            "environment_failure"
+                            if official_environment_failure
+                            else "completed"
+                            if official_success
+                            else "method_failed"
+                        ),
+                        stage=(
+                            "target_episode"
+                            if official_environment_failure
+                            else "androidworld_validate"
+                        ),
                         task_log=log_path,
                         artifact_root=artifact_root,
                         outer_wall_sec=float(result.get("wall_sec") or 0),
@@ -2383,6 +2627,7 @@ def run_target_workers(
                             "device": label,
                             "status": "official_validator_conclusion",
                             "official_validator_success": official_success,
+                            "environment_failure": official_environment_failure,
                             "outcome": str(outcome_path),
                         }
                     )
@@ -2398,6 +2643,14 @@ def run_target_workers(
                         for row in method_rows
                         if isinstance(row.get("validator_success"), bool)
                     ]
+                    official_success = (
+                        validator_values[-1] if validator_values else None
+                    )
+                    official_row = method_rows[-1] if method_rows else {}
+                    has_official_conclusion = official_success is not None
+                    official_environment_failure = bool(
+                        official_row.get("environment_failure")
+                    )
                     outcome_path = record_result_outcome(
                         outcomes_root=outcomes_root,
                         task_name=args.task,
@@ -2407,20 +2660,65 @@ def run_target_workers(
                         attempt_id=attempt_id,
                         source_seed=source_seed,
                         evaluation_seed=evaluation_seed,
-                        status="method_failed",
-                        stage="androidworld_validate",
+                        status=(
+                            "environment_failure"
+                            if official_environment_failure
+                            else "completed"
+                            if official_success
+                            else "method_failed"
+                        ),
+                        stage=(
+                            "target_episode"
+                            if official_environment_failure
+                            else "androidworld_validate"
+                        ),
                         task_log=log_path,
                         artifact_root=artifact_root,
                         outer_wall_sec=float(result.get("wall_sec") or 0),
-                        official_validator_success=(
-                            validator_values[-1] if validator_values else None
+                        official_validator_used=has_official_conclusion,
+                        official_validator_success=official_success,
+                        official_validator_coverage_rate=float(
+                            official_row.get("official_validator_coverage_rate") or 1.0
+                        ),
+                        actions_executed=int(
+                            official_row.get("actions_executed") or 0
+                        ),
+                        episode_duration_sec=float(
+                            official_row.get("episode_duration_sec")
+                            or official_row.get("duration_sec")
+                            or 0
+                        ),
+                        model_calls=(
+                            int(official_row["model_calls"])
+                            if official_row.get("model_calls") is not None
+                            else None
+                        ),
+                        prompt_tokens=(
+                            int(official_row["prompt_tokens"])
+                            if official_row.get("prompt_tokens") is not None
+                            else None
+                        ),
+                        completion_tokens=(
+                            int(official_row["completion_tokens"])
+                            if official_row.get("completion_tokens") is not None
+                            else None
+                        ),
+                        total_tokens=(
+                            int(official_row["total_tokens"])
+                            if official_row.get("total_tokens") is not None
+                            else None
                         ),
                     )
                     worker_results.append(
                         {
                             "method": method,
                             "device": label,
-                            "status": "method_failed",
+                            "status": (
+                                "official_validator_conclusion"
+                                if has_official_conclusion
+                                else "method_failed"
+                            ),
+                            "official_validator_success": official_success,
                             "outcome": str(outcome_path),
                         }
                     )
@@ -2459,7 +2757,9 @@ def run_target_workers(
             worker_results.append({"method": method, "device": label, **result})
         return worker_results
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=max(1, len(devices))
+    ) as executor:
         futures = [executor.submit(worker, device) for device in devices]
         return [result for future in futures for result in future.result()]
 
@@ -2826,6 +3126,9 @@ def _report(
         "result_summary": result_summary,
         "phases": phases,
     }
+    summary["function_retry_needed"] = bool(
+        result_summary.get("function_retry_needed")
+    )
     _write_json(attempt_root / "pipeline_summary.json", summary)
     return summary
 
@@ -2920,6 +3223,42 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "evaluation_seed": _e2e_evaluation_seed(args),
         },
     )
+    # Reuse the complete formal result set before touching the source or any
+    # emulator.  A task can have a valid registered conclusion even when its
+    # historical source pointer is no longer available; that must not turn a
+    # completed task into a new preflight attempt.
+    selected_methods = _e2e_methods(args)
+    selected_devices = _e2e_devices(args)
+    completed = _concluded_results(args, outcomes_root, attempt_id)
+    pending = [
+        (method, device[0])
+        for method in selected_methods
+        for device in selected_devices
+        if (method, device[0]) not in completed
+    ]
+    if selected_methods and selected_devices and not pending:
+        phases = {
+            "source_device": {
+                "status": "skipped",
+                "model_calls": 0,
+                "total_tokens": 0,
+                "reason": "all_selected_cells_reused",
+            },
+            "function": {
+                "status": "skipped",
+                "model_calls": 0,
+                "total_tokens": 0,
+                "reason": "all_selected_cells_reused",
+            },
+        }
+        return _report(
+            args=args,
+            attempt_id=attempt_id,
+            attempt_root=attempt_root,
+            outcomes_root=outcomes_root,
+            deadline=deadline,
+            phases=phases,
+        )
     if _is_autodroid_supplemental(args):
         phases["source_device"] = {
             "status": "skipped",
@@ -3078,6 +3417,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             phases=phases,
         )
 
+    selected_methods = _e2e_methods(args)
+    omniflow_selected = "omniflow" in selected_methods
     blocked_methods: dict[str, tuple[str, str, str]] = {}
     function_store: dict[str, Any] | None = None
     if _is_autodroid_supplemental(args):
@@ -3086,6 +3427,13 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "model_calls": 0,
             "total_tokens": 0,
             "reason": "supplemental_autodroid_does_not_use_omniflow_function",
+        }
+    elif not omniflow_selected:
+        phases["function"] = {
+            "status": "skipped",
+            "model_calls": 0,
+            "total_tokens": 0,
+            "reason": "method_not_selected",
         }
     else:
         try:
@@ -3108,7 +3456,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 "status": "failed",
                 "model_calls": int(failure_phase.get("model_calls") or 0),
                 "total_tokens": int(failure_phase.get("total_tokens") or 0),
-                "error": str(error),
+                "error": str(failure_phase.get("error") or error),
             }
             blocked_methods["omniflow"] = (
                 "prep_failed",
@@ -3116,7 +3464,11 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 str(failure),
             )
 
-    if function_store is None and getattr(args, "ensure_function", False):
+    if (
+        omniflow_selected
+        and function_store is None
+        and getattr(args, "ensure_function", False)
+    ):
         phases["execution_gate"] = {
             "status": "blocked",
             "model_calls": 0,
@@ -3146,7 +3498,14 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         if function_store is not None
         else None
     )
-    if function_store is None:
+    if not omniflow_selected:
+        phases["source_qualification"] = {
+            "status": "skipped",
+            "model_calls": 0,
+            "total_tokens": 0,
+            "reason": "method_not_selected",
+        }
+    elif function_store is None:
         phases["source_qualification"] = {
             "status": "skipped",
             "model_calls": 0,
@@ -3259,16 +3618,16 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     appagent_memory: Path | None = None
     if "appagent" in _e2e_methods(args):
         try:
+            appagent_source_path = _appagent_source_path(
+                args.memory_index,
+                args.task,
+                source_path,
+            )
             appagent_memory, phases["appagent_memory"] = prepare_appagent_memory(
                 args=args,
                 attempt_root=attempt_root,
                 deadline=deadline,
-                source_run_log=(
-                    Path(str(function_store.get("source_run_log_path"))).resolve()
-                    if isinstance(function_store, dict)
-                    and str(function_store.get("source_run_log_path") or "").strip()
-                    else source_path
-                ),
+                source_run_log=appagent_source_path,
             )
         except Exception as error:
             failure_phase = getattr(error, "phase", {})
@@ -3339,7 +3698,12 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         }
 
     store_path: Path | None = None
-    if function_store is None:
+    if not omniflow_selected:
+        # MobileGPT/AppAgent own their external execution and memory
+        # contracts.  Do not manufacture an OmniFlow failure artifact merely
+        # because no Function Store was requested for this method selection.
+        pass
+    elif function_store is None:
         failure = _write_json(
             attempt_root / "assets" / "function_store_missing.json",
             {"error": "canonical_function_store_unavailable"},
@@ -3399,6 +3763,12 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "reason": "supplemental_autodroid_uses_prepared_9207_device",
         }
     try:
+        # Each target result is registered independently, but refreshing the
+        # complete data tree for every parallel device needlessly serializes
+        # the workers on one multi-gigabyte index lock.  Defer that single
+        # refresh until all target workers have finished; standalone
+        # ``run_task result`` keeps its existing immediate-refresh behavior.
+        os.environ["OMNIFLOW_BATCH_DEFER_INDEX_REFRESH"] = "1"
         workers = run_target_workers(
             args=args,
             deadline=deadline,
@@ -3411,6 +3781,13 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             autodroid_memory=autodroid_memory,
             blocked_methods=blocked_methods,
         )
+        if omniflow_selected:
+            refresh_data_index_from_pointer(
+                memory_index=args.memory_index,
+                additional_runlog_roots=(args.asset_root,),
+                additional_result_roots=(args.results_root,),
+                replace_recorded_roots=False,
+            )
         phases["targets"] = {
             "status": "finished",
             "model_calls": 0,
@@ -3660,6 +4037,17 @@ def _function_enhancement_transport(
         message = getattr(choices[0], "message", None) if choices else None
         calls = getattr(message, "tool_calls", None) or ()
         if len(calls) != 1:
+            content = getattr(message, "content", None)
+            if isinstance(content, str) and content.strip():
+                decoder = json.JSONDecoder()
+                for start, character in enumerate(content):
+                    if character != "{":
+                        continue
+                    try:
+                        _, end = decoder.raw_decode(content[start:])
+                    except json.JSONDecodeError:
+                        continue
+                    return content[start : start + end]
             raise ValueError("function_enhancer_tool_call_invalid")
         function = getattr(calls[0], "function", None)
         if str(getattr(function, "name", "") or "") != tool_name:
@@ -4881,6 +5269,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if getattr(args, "function_replay_collection", False):
         return 0 if result.get("status") == "complete" else 1
     counts = result.get("counts") if isinstance(result, dict) else None
+    if result.get("function_retry_needed") is True:
+        return 75
     return (
         0
         if result.get("status") == "complete"

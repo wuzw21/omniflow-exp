@@ -565,13 +565,14 @@ def _validate_source_index(
             or metadata.get("source_run_log")
             or ""
         ).strip()
-        if (
-            allow_historical_source
-            and metadata.get("latest_official_success_source") is not True
-            and not run_log_value
-        ):
+        if allow_historical_source and not run_log_value:
             if (
-                source_kind not in {"", "pending_source_recollection"}
+                source_kind
+                not in {
+                    "",
+                    "pending_source_recollection",
+                    "one_time_canonicalized_seed111_screenshot_source",
+                }
                 or not str(metadata.get("goal") or "").strip()
                 or not isinstance(metadata.get("params"), dict)
             ):
@@ -766,14 +767,15 @@ def _integration_model_config(
         model or "missing",
         "Use GLM-4.6V or GLM-5.1 for both formal integrations.",
     )
-    embedding_ok = embedding_model == "GLM-Embedding-2"
+    supported_embedding_models = {"GLM-Embedding-2", "text-embedding-v4"}
+    embedding_ok = embedding_model in supported_embedding_models
     _integration_add(
         checks,
         "mobilegpt",
         "embedding_model",
         "pass" if embedding_ok else "fail",
         embedding_model or "missing",
-        "Set MOBILEGPT_EMBEDDING_MODEL=GLM-Embedding-2.",
+        "Set MOBILEGPT_EMBEDDING_MODEL to the embedding model available at the selected endpoint.",
     )
     return {
         "model": model,
@@ -928,7 +930,7 @@ def _run_mobilegpt_integration_checks(
                 "disposable_server_config",
                 "pass" if stage_ok else "fail",
                 f"staged_server={staged_server} port={server_port}",
-                "The disposable Server must route chat to the selected GLM and embeddings to GLM-Embedding-2.",
+                "The disposable Server must route chat to the selected GLM and embeddings to the selected endpoint model.",
             )
     except Exception as error:
         _integration_add(

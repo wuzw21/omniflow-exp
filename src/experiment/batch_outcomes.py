@@ -10,11 +10,12 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from src.experiment.mobilegpt_contract import MOBILEGPT_SUPPORTED_SOURCE_METHODS
 from src.experiment.paths import safe_component, sha256_file
 from src.experiment.result_schema import (
+    execution_metrics_from_result_row,
     function_metrics_from_result_row,
     performance_metrics_from_result_row,
 )
@@ -108,6 +109,29 @@ def _stats_metrics(artifact_root: Path | None) -> dict[str, int | float]:
         ),
         "episode_duration_sec": round(episode_duration_sec, 6),
     }
+
+
+def _published_result_metrics(
+    artifact_root: Path | None,
+    *,
+    method: str,
+    device: str,
+) -> dict[str, Any]:
+    """Read the atomic runner's canonical row for outcome registration."""
+
+    if artifact_root is None or not artifact_root.is_dir():
+        return {}
+    for summary_path in sorted(artifact_root.rglob("result_summary.json")):
+        payload = _json_object(summary_path)
+        for row in payload.get("rows") or ():
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("method") or "") != str(method):
+                continue
+            if str(row.get("device") or "") != str(device):
+                continue
+            return dict(row)
+    return {}
 
 
 def _recover_mobilegpt_source_accounting(
@@ -211,6 +235,24 @@ def record_result_outcome(
         / safe_component(attempt_id, fallback="attempt")
     )
     metrics = _stats_metrics(artifact_path)
+    published_metrics = _published_result_metrics(
+        artifact_path,
+        method=method,
+        device=device,
+    )
+    for key in (
+        "function_hit",
+        "function_covered_steps",
+        "function_total_steps",
+        "function_step_coverage_rate",
+        "vlm_calls",
+        "vlm_latency_ms",
+        "latency_sec",
+        "energy_mwh",
+        "energy_measurement_available",
+    ):
+        if key in published_metrics:
+            metrics[key] = published_metrics[key]
     payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "immutable": True,
@@ -295,6 +337,7 @@ def concluded_result_keys(
     source_seed: int,
     evaluation_seed: int,
     attempt_id: str | None = None,
+    device_models: Mapping[str, str] | None = None,
 ) -> set[tuple[str, str]]:
     """Return results concluded within the selected immutable attempt."""
 
@@ -322,7 +365,24 @@ def concluded_result_keys(
                 and str(payload.get("attempt_id") or "") != str(attempt_id)
             )
         ):
+                continue
+        # A method failure is evidence to inspect, not a completed cell.  It
+        # must remain runnable after the owning method or its assets are
+        # corrected; only a formal completed conclusion participates in skip.
+        if str(payload.get("status") or "") != "completed":
             continue
+        expected_model = (device_models or {}).get(device)
+        if expected_model:
+            evidence = "\n".join(
+                str(payload.get(key) or "")
+                for key in ("artifact_root", "task_log", "device_model", "avd")
+            )
+            if (
+                f"/{expected_model}_seed" not in evidence
+                and f"/{expected_model}/" not in evidence
+                and str(payload.get("device_model") or "") != expected_model
+            ):
+                continue
         concluded.add((method, device))
     return concluded
 
@@ -530,6 +590,7 @@ def _registered_report_row(
     }
     report.update(function_metrics_from_result_row({**row, "method": method, **reuse}))
     report.update(performance_metrics_from_result_row(row))
+    report.update(execution_metrics_from_result_row({**row, "method": method, **report}))
     return report
 
 
@@ -585,10 +646,11 @@ def _failure_report_row(
             outcome.get("accounting_evidence_path") or ""
         ),
     }
-
     report.update(function_metrics_from_result_row({**outcome, "method": method}))
     report.update(performance_metrics_from_result_row(outcome))
+    report.update(execution_metrics_from_result_row({**outcome, "method": method, **report}))
     return report
+
 
 def summarize_results(
     *,
@@ -625,24 +687,57 @@ def summarize_results(
             for device in devices:
                 counts["planned"] += 1
                 key = f"{task}|{method}|{device}|{source_seed}|{evaluation_seed}"
-                if key in outcomes:
-                    row = _failure_report_row(
-                        task=task,
-                        method=method,
-                        device=device,
-                        source_seed=source_seed,
-                        evaluation_seed=evaluation_seed,
-                        outcome=outcomes[key],
+                outcome = outcomes.get(key)
+                registered_row = registered.get(key)
+                registered_attempt = str(
+                    (registered_row or {}).get("attempt_id") or ""
+                )
+                registered_for_current_attempt = bool(
+                    registered_row
+                    and (
+                        registered_attempt == str(attempt_id)
+                        or registered_attempt.startswith(f"{attempt_id}.")
                     )
-                    counts[str(row["conclusion"])] += 1
-                elif key in registered:
+                )
+                # A current attempt's outcome is still the authority for a
+                # preparation/environment failure. Once the atomic result
+                # has an official validator conclusion and was registered,
+                # use the registered detail row so Function and performance
+                # metrics are not lost to the compact outcome record.
+                use_registered = bool(
+                    registered_for_current_attempt
+                    and isinstance(outcome, dict)
+                    and outcome.get("official_validator_used") is True
+                    and isinstance(outcome.get("official_validator_success"), bool)
+                )
+                if use_registered:
                     row = _registered_report_row(
                         task=task,
                         method=method,
                         device=device,
                         source_seed=source_seed,
                         evaluation_seed=evaluation_seed,
-                        row=registered[key],
+                        row=registered_row,
+                    )
+                    counts[str(row["conclusion"])] += 1
+                elif outcome is not None:
+                    row = _failure_report_row(
+                        task=task,
+                        method=method,
+                        device=device,
+                        source_seed=source_seed,
+                        evaluation_seed=evaluation_seed,
+                        outcome=outcome,
+                    )
+                    counts[str(row["conclusion"])] += 1
+                elif registered_row is not None:
+                    row = _registered_report_row(
+                        task=task,
+                        method=method,
+                        device=device,
+                        source_seed=source_seed,
+                        evaluation_seed=evaluation_seed,
+                        row=registered_row,
                     )
                     counts[str(row["conclusion"])] += 1
                 else:
@@ -676,15 +771,15 @@ def summarize_results(
                         "accounting_recovered": False,
                         "accounting_evidence_path": "",
                     }
-                    counts["pending"] += 1
                     row.update(function_metrics_from_result_row(row))
                     row.update(performance_metrics_from_result_row(row))
+                    row.update(execution_metrics_from_result_row(row))
+                    counts["pending"] += 1
                 rows.append(row)
     model_calls = sum(int(row["model_calls"]) for row in rows)
     prompt_tokens = sum(int(row["prompt_tokens"]) for row in rows)
     completion_tokens = sum(int(row["completion_tokens"]) for row in rows)
     total_tokens = sum(int(row["total_tokens"]) for row in rows)
-    summary = {
     function_hit_task_count = sum(bool(row.get("function_hit")) for row in rows)
     function_covered_step_count = sum(
         int(row.get("function_covered_steps") or 0) for row in rows
@@ -692,6 +787,7 @@ def summarize_results(
     function_total_step_count = sum(
         int(row.get("function_total_steps") or 0) for row in rows
     )
+    summary = {
         "schema_version": "omniflow.androidworld.result-summary.v1",
         "attempt_id": str(attempt_id),
         "source_seed": int(source_seed),
@@ -701,7 +797,6 @@ def summarize_results(
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
-        "episode_duration_sec": round(
         "vlm_calls": sum(int(row.get("vlm_calls") or row["model_calls"]) for row in rows),
         "vlm_latency_ms": round(
             sum(_number(row.get("vlm_latency_ms")) for row in rows), 6
@@ -726,6 +821,15 @@ def summarize_results(
         )
         if function_total_step_count
         else 0.0,
+        "function_retry_needed": any(
+            row.get("method") == "omniflow"
+            and row.get("official_validator_success") is False
+            and bool(row.get("artifact_used"))
+            and int(row.get("reuse_denominator") or 0) > 0
+            and int(row.get("reuse_numerator") or 0) == 0
+            for row in rows
+        ),
+        "episode_duration_sec": round(
             sum(_number(row["episode_duration_sec"]) for row in rows), 6
         ),
         "outer_wall_sec": round(
