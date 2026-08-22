@@ -1719,6 +1719,7 @@ def convert_runlog_to_mobilegpt_memory(
         xml_root.mkdir(parents=True, exist_ok=True)
         pages_by_identity: dict[str, dict[str, Any]] = {}
         task_path: dict[str, list[str]] = {}
+        official_task_path_records: list[dict[str, Any]] = []
         for screen_index, transition in enumerate(encoded_transitions):
             raw_xml = str(transition.forest)
             raw_path = xml_root / f"{screen_index}.xml"
@@ -1806,12 +1807,19 @@ def convert_runlog_to_mobilegpt_memory(
                     "trigger_uis": {},
                     "extra_uis": [],
                     "subtasks": {},
-                    "actions": [],
                 }
                 pages_by_identity[identity] = page
             page_index = int(page["index"])
             if launch_only:
                 task_path[str(page_index)] = ["finish"]
+                official_task_path_records.append(
+                    {
+                        "page_index": page_index,
+                        "subtask_name": "finish",
+                        "subtask": {"name": "finish", "parameters": {}},
+                        "actions": [],
+                    }
+                )
                 continue
             subtask, selected_subtask, example = _direct_subtask_from_runlog(
                 transition,
@@ -1829,6 +1837,13 @@ def convert_runlog_to_mobilegpt_memory(
                 generalize_action=official_generalize_action,
             )
             del label
+            raw_converted, _, _ = _mobilegpt_action_from_runlog(
+                transition,
+                parsed_xml,
+                task_parameters=trajectory["task_parameters"],
+                selected_subtask=selected_subtask,
+                generalize_action=None,
+            )
             action_example = _native_action_example(
                 instruction=trajectory["instruction"],
                 selected_subtask=selected_subtask,
@@ -1843,25 +1858,28 @@ def convert_runlog_to_mobilegpt_memory(
                 }
             elif not existing_subtask["example"] and example:
                 existing_subtask["example"] = example
-            page["actions"].extend(
-                [
-                    {
-                        "subtask_name": subtask["name"],
-                        "step": 0,
-                        "action": _json_text(converted),
-                        "example": _json_text(action_example),
-                    },
-                    {
-                        "subtask_name": subtask["name"],
-                        "step": 1,
-                        "action": _json_text(
-                            {"name": "finish", "parameters": {}}
-                        ),
-                        "example": _json_text({}),
-                    },
-                ]
-            )
             task_path.setdefault(str(page_index), []).append(subtask["name"])
+            official_task_path_records.append(
+                {
+                    "page_index": page_index,
+                    "subtask_name": subtask["name"],
+                    "subtask": selected_subtask,
+                    "actions": [
+                        {
+                            "page_index": page_index,
+                            "action": raw_converted,
+                            "screen": f"<hierarchy>{encoded_xml}</hierarchy>",
+                            "example": action_example,
+                        },
+                        {
+                            "page_index": page_index,
+                            "action": {"name": "finish", "parameters": {}},
+                            "screen": f"<hierarchy>{encoded_xml}</hierarchy>",
+                            "example": {},
+                        },
+                    ],
+                }
+            )
             row = {
                 "source_step_index": transition.step_index,
                 "source_action_type": _action_type(transition.action),
@@ -1881,16 +1899,19 @@ def convert_runlog_to_mobilegpt_memory(
         if not launch_only:
             final_page_index = str(audit_rows[-1]["memory_page_index"])
             task_path[final_page_index].append("finish")
+            official_task_path_records.append(
+                {
+                    "page_index": int(final_page_index),
+                    "subtask_name": "finish",
+                    "subtask": {"name": "finish", "parameters": {}},
+                    "actions": [],
+                }
+            )
         app_root = memory / app_name
         _write_csv(
             memory / "tasks.csv",
             ("name", "description", "parameters", "app"),
             [{**task, "parameters": _json_text(task["parameters"])}],
-        )
-        _write_csv(
-            app_root / "tasks.csv",
-            ("name", "path"),
-            [{"name": task_name, "path": _json_text(task_path)}],
         )
         page_rows: list[dict[str, Any]] = []
         hierarchy_rows: list[dict[str, Any]] = []
@@ -1898,7 +1919,6 @@ def convert_runlog_to_mobilegpt_memory(
             page_index = int(page["index"])
             page_root = app_root / "pages" / str(page_index)
             available_subtasks = list(page["available_subtasks"])
-            selected_subtasks = list(page["subtasks"].values())
             page_rows.append(
                 {
                     "index": page_index,
@@ -1915,38 +1935,6 @@ def convert_runlog_to_mobilegpt_memory(
                     "embedding": str(page["embedding"]),
                 }
             )
-            _write_csv(
-                page_root / "available_subtasks.csv",
-                ("name", "description", "parameters"),
-                [
-                    {
-                        "name": subtask["name"],
-                        "description": subtask["description"],
-                        "parameters": _json_text(subtask["parameters"]),
-                    }
-                    for subtask in available_subtasks
-                ],
-            )
-            _write_csv(
-                page_root / "subtasks.csv",
-                ("name", "description", "parameters", "example"),
-                [
-                    {
-                        "name": selected["metadata"]["name"],
-                        "description": selected["metadata"]["description"],
-                        "parameters": _json_text(
-                            selected["metadata"]["parameters"]
-                        ),
-                        "example": _json_text(selected["example"]),
-                    }
-                    for selected in selected_subtasks
-                ],
-            )
-            _write_csv(
-                page_root / "actions.csv",
-                ("subtask_name", "step", "action", "example"),
-                page["actions"],
-            )
         _write_csv(
             app_root / "pages.csv",
             ("index", "available_subtasks", "trigger_uis", "extra_uis", "screen"),
@@ -1958,6 +1946,20 @@ def convert_runlog_to_mobilegpt_memory(
             hierarchy_rows,
         )
 
+        # Let MobileGPT's own learning writer create the task path, subtask
+        # rows, and generalized action rows from the captured trajectory.
+        official_memory = Memory(app_name, trajectory["instruction"], task_name)
+        for page in pages_by_identity.values():
+            page_index = int(page["index"])
+            official_memory.init_page_manager(page_index)
+            for subtask in page["available_subtasks"]:
+                official_memory.page_manager.add_new_action(subtask)
+            for selected in page["subtasks"].values():
+                official_memory.save_subtask(
+                    selected["metadata"],
+                    selected["example"],
+                )
+        official_memory.save_task(official_task_path_records)
         official_memory = Memory(app_name, trajectory["instruction"], task_name)
         if len(official_memory.task_path) != len(task_path):
             raise MobileGPTConversionError("official_memory_task_path_load_failed")
