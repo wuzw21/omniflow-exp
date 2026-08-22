@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from PIL import Image
 import pytest
@@ -29,6 +30,37 @@ from src.integrations.mobilegpt import (
     _OfficialMobileGPTRunLogSocket,
     validate_memory_manifest,
 )
+
+
+def test_mobilegpt_source_target_ignores_permission_controller_surface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        pipeline,
+        "_infer_mobilegpt_target_from_source_run_log",
+        lambda item: {},
+    )
+    source = {
+        "final_observation": {},
+        "steps": [
+            {
+                "observation": {
+                    "package_name": "com.android.camera2",
+                    "forest": {
+                        "package_name": "com.google.android.permissioncontroller",
+                    },
+                }
+            }
+        ],
+    }
+
+    target = mobilegpt_source._mobilegpt_source_target(
+        item=SimpleNamespace(task="CameraTakePhoto"),
+        source=source,
+    )
+
+    assert target["target_package"] == "com.android.camera2"
+    assert target["target_source"] == "canonical_source_runlog_observation"
 
 
 def test_official_authoring_socket_has_a_hard_final_screen_step_limit() -> None:

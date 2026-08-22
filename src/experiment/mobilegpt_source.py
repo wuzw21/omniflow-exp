@@ -35,7 +35,11 @@ from src.integrations.runlog import adapt_source_run_log, import_run_log
 _IGNORED_SOURCE_PACKAGES = {
     "com.android.systemui",
     "com.example.MobileGPT",
+    "com.android.documentsui",
+    "com.android.permissioncontroller",
+    "com.google.android.documentsui",
     "com.google.android.apps.nexuslauncher",
+    "com.google.android.permissioncontroller",
 }
 
 
