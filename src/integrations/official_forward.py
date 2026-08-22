@@ -2097,8 +2097,23 @@ def _configure_mobilegpt_client_launch_lifecycle(client_root: Path) -> None:
     if not service_path.is_file():
         return
     source = service_path.read_text(encoding="utf-8")
+    changed = False
+    # Android 13+ requires an explicit export policy for dynamically
+    # registered receivers when the official APK targets API 33.  Without it
+    # the service can bind and send its app list, but the shell broadcast that
+    # starts the task is silently not delivered on API 34 fold images.
+    receiver_original = "        registerReceiver(stringReceiver, intentFilter);"
+    receiver_replacement = (
+        "        registerReceiver(stringReceiver, intentFilter, "
+        "Context.RECEIVER_EXPORTED);"
+    )
+    if receiver_original in source:
+        source = source.replace(receiver_original, receiver_replacement, 1)
+        changed = True
     marker = "// omniflow_mobilegpt_launch_lifecycle"
     if marker in source:
+        if changed:
+            service_path.write_text(source, encoding="utf-8")
         return
     original = (
         "        if (launchIntent != null) {\n"
@@ -2130,6 +2145,8 @@ def _configure_mobilegpt_client_launch_lifecycle(client_root: Path) -> None:
         "        mainThreadHandler.postDelayed(screenUpdateTimeoutRunnable, 5000);\n"
     )
     if original not in source:
+        if changed:
+            service_path.write_text(source, encoding="utf-8")
         return
     service_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
 
