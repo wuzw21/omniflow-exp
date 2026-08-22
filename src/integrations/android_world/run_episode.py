@@ -28,9 +28,11 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import token_usage_status
+from omniflow.core.trajectory import observation_xml
 from src.experiment.observation_evidence import (
     persist_target_run_evidence,
     transfer_state_coverage_audit,
@@ -1601,7 +1603,7 @@ def _ensure_oob_control_app(*, console_port: int, adb_path: str) -> bool:
 
 def _is_oob_control_backend() -> bool:
     backend = str(
-        os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "androidworld")
+        os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "oob")
     ).strip().lower()
     return backend in {"oob", "omniflow", "oob_control"}
 
@@ -1755,6 +1757,11 @@ def prepare_androidworld_environment(
                 "android_world.env.android_world_controller"
             )
         previous_a11y_method = getattr(controller, "_a11y_method", None)
+        # AndroidWorld's one-time app installer/setup wizard is not an agent
+        # observation/action.  It needs its own UIAutomator helper to settle
+        # first-run screens (for example Markor's NEXT button).  The method
+        # controller is restored to OOB immediately after setup; external
+        # baselines never receive this setup controller.
         if controller_type is not None and controller is not None:
             controller._a11y_method = controller_type.A11yMethod.UIAUTOMATOR
         setup_apps_module = None
@@ -1859,9 +1866,15 @@ def start_androidworld_task_session(
     task_type = task_types.get(str(task_name))
     if task_type is None:
         raise ValueError(f"unknown AndroidWorld task: {task_name}")
+    params = _rehydrate_task_params(
+        params=dict(task_params or {}),
+        task_type=task_type,
+    )
+    params.setdefault("seed", int(task_seed))
+    task = task_type(params)
     app_names = {
         str(name).strip().lower()
-        for name in getattr(task_type, "app_names", ())
+        for name in getattr(task, "app_names", ())
     }
     setup_apps = tuple(
         app
@@ -1883,10 +1896,6 @@ def start_androidworld_task_session(
 
     _patch_androidworld_media_scanner_broadcast_compat(adb_utils)
     task_type.set_device_time(startup.env)
-    params = dict(task_params or {})
-    params = _rehydrate_task_params(params=params, task_type=task_type)
-    params.setdefault("seed", int(task_seed))
-    task = task_type(params)
     task.initialize_task(startup.env)
     return startup, task
 
@@ -2441,8 +2450,6 @@ def _patch_androidworld_adb_output_sanitizer(
     return tuple(patches)
 
 
-def _patch_androidworld_app_launch(adb_utils: Any) -> Any:
-    """Restart mapped apps before their official AndroidWorld launch."""
 def _patch_androidworld_current_activity(adb_utils: Any) -> Any:
     """Recover a canonical activity when Android's stack output is malformed.
 
@@ -2494,6 +2501,8 @@ def _patch_androidworld_current_activity(adb_utils: Any) -> Any:
     return original
 
 
+def _patch_androidworld_app_launch(adb_utils: Any) -> Any:
+    """Restart mapped apps before their official AndroidWorld launch."""
 
     original = getattr(adb_utils, "launch_app", None)
     if not callable(original):
@@ -3706,6 +3715,204 @@ def _raw_replay_action_wait_seconds(
     return max(0.0, float(seconds))
 
 
+def _raw_replay_xml(value: Any) -> str:
+    if isinstance(value, dict):
+        return observation_xml(value)
+    return str(getattr(value, "xml", "") or "").strip()
+
+
+def _raw_replay_xml_node_signature(node: ET.Element) -> tuple[str, str] | None:
+    for key in ("resource-id", "content-desc", "text"):
+        value = str(node.attrib.get(key) or "").strip()
+        if value:
+            return key, value
+    return None
+
+
+def _raw_replay_xml_signatures(xml: str) -> set[tuple[str, str]]:
+    if not xml:
+        return set()
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return set()
+    return {
+        signature
+        for node in root.iter("node")
+        if (signature := _raw_replay_xml_node_signature(node)) is not None
+    }
+
+
+def _raw_replay_semantic_skip(
+    *,
+    source_before_xml: str,
+    source_after_xml: str,
+    target_xml: str,
+) -> bool:
+    """Skip a recorded route/checker action when its post-state is present."""
+
+    before = _raw_replay_xml_signatures(source_before_xml)
+    after = _raw_replay_xml_signatures(source_after_xml)
+    target = _raw_replay_xml_signatures(target_xml)
+    if not after or not after.issubset(target):
+        return False
+    # A route/checker action is already satisfied only when the target also
+    # lacks the salient nodes that disappear in the recorded post-state.  A
+    # Camera mode list still being open must therefore never be mistaken for
+    # the already-selected Camera screen merely because both contain the
+    # common shutter/preview nodes.
+    no_longer_visible = before - after
+    return not (no_longer_visible & target)
+
+
+def _raw_replay_semantic_click_payload(
+    *,
+    source_action: dict[str, Any],
+    source_xml: str,
+    target_xml: str,
+    target_size: tuple[int, int],
+) -> dict[str, Any] | None:
+    """Resolve a recorded click to the matching target accessibility node."""
+
+    if not source_xml or not target_xml:
+        return None
+    params = dict(source_action.get("params") or {})
+    source_x = _raw_replay_number(params, "x", "center_x", "touch_x")
+    source_y = _raw_replay_number(params, "y", "center_y", "touch_y")
+    if source_x is None or source_y is None:
+        return None
+    try:
+        source_root = ET.fromstring(source_xml)
+        target_root = ET.fromstring(target_xml)
+    except ET.ParseError:
+        return None
+
+    def bounds(node: ET.Element) -> tuple[float, float, float, float] | None:
+        match = re.fullmatch(
+            r"\[(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)\]"
+            r"\[(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)\]",
+            str(node.attrib.get("bounds") or ""),
+        )
+        if match is None:
+            return None
+        left, top, right, bottom = map(float, match.groups())
+        return (left, top, right, bottom) if right > left and bottom > top else None
+
+    source_nodes: list[tuple[int, ET.Element, tuple[str, str]]] = []
+    source_width, source_height = target_size
+    first_source_node = next(source_root.iter("node"), None)
+    if first_source_node is not None:
+        source_display = bounds(first_source_node)
+        if source_display is not None:
+            source_width = max(1, int(round(source_display[2] - source_display[0])))
+            source_height = max(1, int(round(source_display[3] - source_display[1])))
+    if source_action.get("coordinate_space") == "canonical_0_1000":
+        source_x = source_x / 1000.0 * source_width
+        source_y = source_y / 1000.0 * source_height
+    for order, node in enumerate(source_root.iter("node")):
+        box = bounds(node)
+        signature = _raw_replay_xml_node_signature(node)
+        if (
+            box is not None
+            and signature is not None
+            and box[0] <= source_x <= box[2]
+            and box[1] <= source_y <= box[3]
+        ):
+            source_nodes.append((order, node, signature))
+    if not source_nodes:
+        return None
+    # Prefer the deepest/most specific semantic node, while retaining the
+    # clickable parent as a fallback for Camera's mode selector.
+    source_nodes.sort(
+        key=lambda item: (
+            int(str(item[1].attrib.get("clickable") or "").lower() == "true"),
+            item[0],
+        ),
+        reverse=True,
+    )
+    target_nodes = list(target_root.iter("node"))
+    for _, source_node, signature in source_nodes:
+        candidates = [
+            node
+            for node in target_nodes
+            if _raw_replay_xml_node_signature(node) == signature and bounds(node)
+        ]
+        if not candidates:
+            continue
+        target_box = bounds(candidates[0])
+        assert target_box is not None
+        width, height = target_size
+        x = min(max((target_box[0] + target_box[2]) / 2.0, 0.0), width - 1)
+        y = min(max((target_box[1] + target_box[3]) / 2.0, 0.0), height - 1)
+        action_type = str(source_action.get("type") or "click").lower()
+        return {
+            "action_type": "long_press" if action_type in {"long_press", "longpress"} else "click",
+            "x": int(round(x)),
+            "y": int(round(y)),
+        }
+    return None
+
+
+def _raw_replay_route_action_already_satisfied(
+    *,
+    source_action: dict[str, Any],
+    source_xml: str,
+    target_xml: str,
+) -> bool:
+    """Treat an unavailable mode/menu route as a checker on a ready camera."""
+
+    if not source_xml or not target_xml:
+        return False
+    params = dict(source_action.get("params") or {})
+    source_x = _raw_replay_number(params, "x", "center_x", "touch_x")
+    source_y = _raw_replay_number(params, "y", "center_y", "touch_y")
+    if source_x is None or source_y is None:
+        return False
+    try:
+        source_root = ET.fromstring(source_xml)
+        target_root = ET.fromstring(target_xml)
+    except ET.ParseError:
+        return False
+
+    def box(node: ET.Element) -> tuple[float, float, float, float] | None:
+        match = re.fullmatch(
+            r"\[(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)\]"
+            r"\[(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)\]",
+            str(node.attrib.get("bounds") or ""),
+        )
+        if match is None:
+            return None
+        return tuple(map(float, match.groups()))  # type: ignore[return-value]
+
+    source_display = box(next(source_root.iter("node"), ET.Element("node")))
+    if source_action.get("coordinate_space") == "canonical_0_1000" and source_display:
+        source_x *= (source_display[2] - source_display[0]) / 1000.0
+        source_y *= (source_display[3] - source_display[1]) / 1000.0
+    labels: list[str] = []
+    for node in source_root.iter("node"):
+        node_box = box(node)
+        if node_box is None or not (
+            node_box[0] <= source_x <= node_box[2]
+            and node_box[1] <= source_y <= node_box[3]
+        ):
+            continue
+        labels.append(
+            " ".join(
+                str(node.attrib.get(key) or "").strip().casefold()
+                for key in ("text", "content-desc", "resource-id")
+            )
+        )
+    route_anchor = any(
+        any(term in label for term in ("mode", "switch to camera", "toggle"))
+        for label in labels
+    )
+    target_text = ET.tostring(target_root, encoding="unicode").casefold()
+    return route_anchor and "shutter_button" in target_text and not any(
+        marker in target_text
+        for marker in ("mode_list", "accessibility_mode_toggle_button", "switch to camera mode")
+    )
+
+
 def _execute_raw_replay_host_swipe(
     agent: Any,
     payload: dict[str, Any],
@@ -3808,6 +4015,7 @@ def _apply_fixed_replay(
     original_set_max_steps = getattr(agent, "set_max_steps", None)
     run_log_data = _read_raw_replay_run_log(run_log_json_path)
     source_actions = _raw_replay_step_actions(run_log_data)
+    source_steps = import_run_log(run_log_data)["steps"]
     source_size = _raw_replay_source_size(run_log_data)
     state: dict[str, Any] = {"ran": False, "payload": None}
     replay_host = getattr(agent, "host", None)
@@ -4011,6 +4219,74 @@ def _apply_fixed_replay(
                 break
             try:
                 assert payload is not None
+                target_observation = None
+                target_xml = ""
+                if callable(replay_observe):
+                    try:
+                        target_observation = replay_observe(
+                            xml=True,
+                            screenshot=False,
+                            app_info=True,
+                        )
+                        target_xml = _raw_replay_xml(target_observation)
+                    except Exception as exc:  # noqa: BLE001 - coordinate fallback
+                        step_record["semantic_resolution_error"] = str(exc)
+                source_step = (
+                    source_steps[index]
+                    if index < len(source_steps)
+                    and isinstance(source_steps[index], dict)
+                    else {}
+                )
+                source_before_xml = _raw_replay_xml(
+                    source_step.get("observation")
+                    if isinstance(source_step, dict)
+                    else None
+                )
+                source_after_xml = _raw_replay_xml(
+                    source_step.get("next_observation")
+                    if isinstance(source_step, dict)
+                    else None
+                )
+                route_checker_satisfied = _raw_replay_route_action_already_satisfied(
+                    source_action=original_source_action,
+                    source_xml=source_before_xml,
+                    target_xml=target_xml,
+                )
+                if (
+                    target_xml
+                    and str(original_source_action.get("type") or "").lower()
+                    in {"click", "tap", "double_tap", "long_press", "longpress"}
+                    and (
+                        route_checker_satisfied
+                        or (
+                            source_after_xml
+                            and _raw_replay_semantic_skip(
+                                source_before_xml=source_before_xml,
+                                source_after_xml=source_after_xml,
+                                target_xml=target_xml,
+                            )
+                        )
+                    )
+                ):
+                    step_record.update(
+                        completed=True,
+                        skipped=True,
+                        skip_reason="target_already_matches_recorded_post_state",
+                        parameter_source="semantic_checker_state",
+                        wait_after_s=0.0,
+                    )
+                    step_results.append(step_record)
+                    continue
+                semantic_payload = _raw_replay_semantic_click_payload(
+                    source_action=original_source_action,
+                    source_xml=source_before_xml,
+                    target_xml=target_xml,
+                    target_size=action_target_size,
+                )
+                if semantic_payload is not None:
+                    payload = semantic_payload
+                    step_record["semantic_target_anchor"] = True
+                    step_record["parameter_source"] = "semantic_target_anchor"
                 semantic_recovery = None
                 if payload.get("action_type") in {"click", "long_press"}:
                     semantic_recovery = _raw_replay_visible_setup_recovery(
@@ -4722,9 +4998,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     env = None
     adb_output_patches: tuple[tuple[type[Any], Any], ...] = ()
     original_launch_app: Any | None = None
+    original_current_activity: Any | None = None
     try:
         _add_android_world_path(android_world_root)
-    original_current_activity: Any | None = None
 
         from android_world import checkpointer as checkpointer_lib
         from android_world import registry, suite_utils
@@ -4780,9 +5056,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "OOB control backend owns the complete observe/act lifecycle; "
                 "native AndroidWorld A11y forwarding is disabled."
             )
+        original_current_activity = _patch_androidworld_current_activity(adb_utils)
         original_launch_app = _patch_androidworld_app_launch(adb_utils)
         if task_params:
-        original_current_activity = _patch_androidworld_current_activity(adb_utils)
             if len(selected_task_names) != 1:
                 raise ValueError("--task-params-json requires exactly one selected task")
             selected_task_name = selected_task_names[0]
@@ -5057,9 +5333,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                         recording_session.persist_observations()
                     )
                     episode_recorder_error = recording_session.error
+                performance_payload: dict[str, Any] = {}
                 if performance_metrics is not None:
                     performance_metrics.finish(
-                performance_payload: dict[str, Any] = {}
                         method_wall_sec=perf_counter() - started_perf,
                     )
                     performance_payload = performance_metrics.to_dict()
@@ -5129,6 +5405,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 total_tokens = 0
                 prompt_tokens = 0
                 completion_tokens = 0
+                vlm_latency_ms = 0.0
                 token_usage_state = "not_applicable"
                 model_name: str | None = None
                 model_base_url: str | None = None
@@ -5161,6 +5438,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                             prompt_tokens = value
                         elif target == "completion_tokens":
                             completion_tokens = value
+                    try:
+                        vlm_latency_ms = max(
+                            0.0,
+                            float(execution_summary.get("latency_ms") or 0.0),
+                        )
+                    except (TypeError, ValueError):
+                        vlm_latency_ms = 0.0
                     token_usage_state = str(
                         execution_summary.get("token_usage_status")
                         or token_usage_status(
@@ -5271,11 +5555,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
                     "total_tokens": total_tokens,
-                    "token_usage_status": token_usage_state,
-                    "model": model_name,
                     "vlm_calls": model_calls,
                     "vlm_latency_ms": round(
-                        float(llm_usage.get("latency_ms") or 0.0), 6
+                        float(
+                            llm_usage.get("latency_ms") or vlm_latency_ms or 0.0
+                        ),
+                        6,
                     ),
                     "latency_sec": round(
                         float(
@@ -5285,17 +5570,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                         6,
                     ),
                     "performance_metrics": to_serializable(performance_payload),
+                    "token_usage_status": token_usage_state,
+                    "model": model_name,
                     "model_base_url": model_base_url,
                     "artifact_kind": artifact_kind,
                     "artifact_ref": artifact_ref,
                     "error": error_text,
                 }
-                appagent_reuse_result: dict[str, Any] = {}
-                if selected_agent == "appagent":
                 if performance_metrics is not None:
                     task_result_record["performance_sidecar_path"] = str(
                         performance_sidecar_path
                     )
+                appagent_reuse_result: dict[str, Any] = {}
+                if selected_agent == "appagent":
                     appagent_reuse_result = {
                         "decision_round_count": _coerce_int(
                             getattr(agent, "round_count", 0)
@@ -5436,10 +5723,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         if original_launch_app is not None:
             adb_utils.launch_app = original_launch_app
-        for controller_type, original_execute_adb_call in adb_output_patches:
-            controller_type.execute_adb_call = original_execute_adb_call
         if original_current_activity is not None:
             adb_utils.get_current_activity = original_current_activity
+        for controller_type, original_execute_adb_call in adb_output_patches:
+            controller_type.execute_adb_call = original_execute_adb_call
         if env is not None:
             env.close()
 
