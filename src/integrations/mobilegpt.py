@@ -1003,6 +1003,30 @@ def _screen_identity(hierarchy_xml: str) -> str:
     return hashlib.sha256(normalized.encode()).hexdigest()
 
 
+def _mobilegpt_ui_match_xml(parsed_xml: str) -> str:
+    """Prepare the exact XML shape expected by MobileGPT UI match helpers."""
+
+    root = ET.fromstring(str(parsed_xml or ""))
+    if root.tag != "hierarchy":
+        wrapper = ET.Element("hierarchy")
+        wrapper.append(root)
+        root = wrapper
+    used = {
+        int(value)
+        for element in root.iter()
+        if (value := element.get("index")) is not None and str(value).isdigit()
+    }
+    next_index = max(used, default=-1) + 1
+    for element in root.iter():
+        if element.get("index") is None:
+            while next_index in used:
+                next_index += 1
+            element.set("index", str(next_index))
+            used.add(next_index)
+            next_index += 1
+    return ET.tostring(root, encoding="unicode")
+
+
 def _target_element(
     action: dict[str, Any],
     parsed_xml: str,
@@ -1805,6 +1829,7 @@ def convert_runlog_to_mobilegpt_memory(
                     "embedding": embedding,
                     "available_subtasks": [],
                     "trigger_uis": {},
+                    "trigger_indexes": set(),
                     "extra_uis": [],
                     "subtasks": {},
                 }
@@ -1829,6 +1854,27 @@ def convert_runlog_to_mobilegpt_memory(
                 trajectory["task_parameters"],
             )
             page["available_subtasks"].append(subtask)
+            action_type = _action_type(transition.action)
+            if action_type in {"click", "double_tap", "input_text", "long_press"}:
+                target = _target_element(
+                    transition.action,
+                    parsed_xml,
+                    step_index=transition.step_index,
+                    source_forest=transition.forest,
+                    next_forest=transition.next_forest,
+                )
+                trigger_index = target.get("index")
+                if trigger_index is not None:
+                    from utils.parsing_utils import get_trigger_ui_attributes
+
+                    trigger_index = int(trigger_index)
+                    page["trigger_indexes"].add(trigger_index)
+                    page["trigger_uis"].update(
+                        get_trigger_ui_attributes(
+                            {subtask["name"]: [trigger_index]},
+                            _mobilegpt_ui_match_xml(parsed_xml),
+                        )
+                    )
             converted, bindings, label = _mobilegpt_action_from_runlog(
                 transition,
                 parsed_xml,
@@ -1915,10 +1961,34 @@ def convert_runlog_to_mobilegpt_memory(
         )
         page_rows: list[dict[str, Any]] = []
         hierarchy_rows: list[dict[str, Any]] = []
+        from utils.parsing_utils import get_extra_ui_attributes
+
         for page in pages_by_identity.values():
             page_index = int(page["index"])
             page_root = app_root / "pages" / str(page_index)
             available_subtasks = list(page["available_subtasks"])
+            page["extra_uis"] = get_extra_ui_attributes(
+                sorted(page["trigger_indexes"]),
+                _mobilegpt_ui_match_xml(page["parsed_xml"]),
+            )
+            page_action_names = {
+                str(row["memory_subtask_name"])
+                for row in audit_rows
+                if int(row["memory_page_index"]) == page_index
+                and row["source_action_type"]
+                in {"click", "double_tap", "input_text", "long_press"}
+            }
+            missing_trigger_uis = sorted(
+                name
+                for name in page_action_names
+                if not page["trigger_uis"].get(name)
+            )
+            if missing_trigger_uis:
+                raise MobileGPTConversionError(
+                    "mobilegpt_trigger_ui_attributes_missing",
+                    page_index=page_index,
+                    subtask_names=missing_trigger_uis,
+                )
             page_rows.append(
                 {
                     "index": page_index,

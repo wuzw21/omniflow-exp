@@ -549,6 +549,89 @@ def test_conversion_grounds_coordinate_free_input_to_focused_field(
     assert first_action["parameters"]["input_text"] == "<input_text__-1>"
 
 
+def test_direct_conversion_writes_official_trigger_and_extra_ui_sets(
+    tmp_path: Path,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "click", "x": 50, "y": 50}],
+        forests=[
+            '<hierarchy><node text="Primary" clickable="true" '
+            'bounds="[0,0][100,100]" /><node text="Secondary" clickable="true" '
+            'bounds="[100,0][200,100]" /></hierarchy>'
+        ],
+    )
+    memory = tmp_path / "memory"
+
+    result = convert_runlog_to_mobilegpt_memory(
+        source_run_log=source,
+        mobilegpt_root=MOBILEGPT_ROOT,
+        memory_root=memory,
+        stats_path=tmp_path / "stats.jsonl",
+        audit_path=tmp_path / "audit.json",
+        model="unused-offline",
+        embedding_provider=lambda _screen: [0.25, 0.75],
+    )
+
+    with (memory / "com.example.app" / "pages.csv").open(
+        encoding="utf-8"
+    ) as handle:
+        page = next(csv.DictReader(handle))
+    trigger_uis = json.loads(page["trigger_uis"])
+    extra_uis = json.loads(page["extra_uis"])
+    assert trigger_uis["source_step_000_click"][0]["self"]["tag"] == "button"
+    assert extra_uis[0]["self"]["tag"] == "button"
+    assert result["official_reader_validation"]["loadable"] is True
+
+
+def test_direct_conversion_is_recalled_by_official_page_matcher(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "click", "x": 50, "y": 50}],
+        forests=[
+            '<hierarchy><node text="Primary" clickable="true" '
+            'bounds="[0,0][100,100]" /><node text="Secondary" clickable="true" '
+            'bounds="[100,0][200,100]" /></hierarchy>'
+        ],
+    )
+    memory = tmp_path / "memory"
+
+    result = convert_runlog_to_mobilegpt_memory(
+        source_run_log=source,
+        mobilegpt_root=MOBILEGPT_ROOT,
+        memory_root=memory,
+        stats_path=tmp_path / "stats.jsonl",
+        audit_path=tmp_path / "audit.json",
+        model="unused-offline",
+        embedding_provider=lambda _screen: [0.25, 0.75],
+    )
+
+    screen_root = memory / "com.example.app" / "pages" / "0" / "screen"
+    monkeypatch.setenv("MOBILEGPT_MEMORY_ROOT", str(memory))
+    from memory import memory_manager as official_memory_manager
+
+    monkeypatch.setattr(
+        official_memory_manager,
+        "get_openai_embedding",
+        lambda _screen, **_kwargs: [0.25, 0.75],
+    )
+    official_memory = official_memory_manager.Memory(
+        "com.example.app",
+        "Complete the task.",
+        result["task"]["name"],
+    )
+    page_index, _ = official_memory.search_node(
+        (screen_root / "parsed.xml").read_text(encoding="utf-8"),
+        (screen_root / "hierarchy.xml").read_text(encoding="utf-8"),
+        (screen_root / "html.xml").read_text(encoding="utf-8"),
+    )
+
+    assert page_index == 0
+
+
 def test_conversion_grounds_input_from_verified_text_change(
     tmp_path: Path,
 ) -> None:
