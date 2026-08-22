@@ -418,7 +418,7 @@ e2e_evaluation_seed="$formal_task_seed"
 e2e_task_deadline_sec="${OMNIFLOW_E2E_TASK_DEADLINE_SEC:-$formal_task_deadline_sec}"
 source_screenshot_roots="${OMNIFLOW_SOURCE_SCREENSHOT_ROOTS:-}"
 setup_device=""
-function_replay_device="${OMNIFLOW_FUNCTION_REPLAY_DEVICE:-small5562:emulator-5562:5562}"
+function_replay_device="${OMNIFLOW_FUNCTION_REPLAY_DEVICE:-standard45562:emulator-45562:45562}"
 function_replay_avd="${OMNIFLOW_FUNCTION_REPLAY_AVD:-OmniFlowTargetSmall}"
 
 normalize_model_environment() {
@@ -468,7 +468,7 @@ PY
 
 configure_model_stack() {
   local chat_model="${1:-$formal_model}"
-  local embedding_model="${2:-GLM-Embedding-2}"
+  local embedding_model="${2:-${MOBILEGPT_EMBEDDING_MODEL:-GLM-Embedding-2}}"
   if [[ -z "$selected_model_api_key" || -z "$selected_model_base_url" ]]; then
     echo "model_endpoint_not_selected" >&2
     exit 2
