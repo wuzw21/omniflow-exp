@@ -596,7 +596,12 @@ def _load_runlog_trajectory(
         and _action_type(step["action"]) == "open_app"
         and str(step["action"].get("app_name") or "").strip()
     ]
-    if open_app_packages:
+    # AndroidWorld may record the human-facing label in open_app while the
+    # canonical source boundary already resolved the real package from the
+    # observed UI tree.  Never overwrite a resolved package with that label.
+    if open_app_packages and (
+        not resolved_target_package or "." in open_app_packages[0]
+    ):
         resolved_target_package = open_app_packages[0]
     for evidence in open_app_evidence:
         observed_package = str(evidence.get("observed_package") or "").strip()
@@ -1831,6 +1836,42 @@ def _run_official_mobilegpt_authoring(
 
             original_query = utils_module.query
             original_embedding = utils_module.get_openai_embedding
+            original_parse_json = utils_module.__dict__.get("__parse_json")
+
+            def _official_json_parser(value: str, *, is_list: bool = False) -> str | None:
+                """Keep the official parser, repairing only broken list-item braces.
+
+                GLM sometimes emits one object in an otherwise valid JSON list
+                without the opening ``{``.  The official query function parses
+                before returning, so the repair must happen at that transport
+                boundary.  No action, parameter, or ordering is inferred here.
+                """
+                if original_parse_json is None:
+                    return None
+                candidate = original_parse_json(value, is_list=is_list)
+                if candidate is None:
+                    return None
+                try:
+                    json.loads(candidate)
+                except json.JSONDecodeError:
+                    repaired = re.sub(
+                        r"(,\s*)(\"name\"\s*:)",
+                        r"\1{\2",
+                        candidate,
+                        count=1,
+                    )
+                    if repaired != candidate:
+                        json.loads(repaired)
+                        _write_event(stats, {
+                            "event": "chat_json_syntax_repair",
+                            "repair": "missing_list_item_open_brace",
+                        })
+                        return repaired
+                    raise
+                return candidate
+
+            if original_parse_json is not None:
+                utils_module.__dict__["__parse_json"] = _official_json_parser
 
             def _official_schema_adapter(value: Any) -> Any:
                 """Adapt only JSON scalar containers expected by upstream code.

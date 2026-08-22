@@ -92,18 +92,59 @@ def _mobilegpt_source_target(
 ) -> dict[str, str]:
     inferred = pipeline._infer_mobilegpt_target_from_source_run_log(item)
     package_name = str(inferred.get("target_package") or "").strip()
-    if package_name:
+    # AndroidWorld's open_app action is allowed to carry a human-facing app
+    # label (for example ``Audio Recorder``), while the observation contains
+    # the package that the official MobileGPT client must launch.  The old
+    # boundary trusted the action label and made the deterministic preflight
+    # reject an otherwise valid source trace.  Resolve labels from the source
+    # observations before handing the target identity to the official code.
+    if package_name and "." in package_name:
         return {
             key: str(value)
             for key, value in inferred.items()
             if value is not None
         }
     source_packages: set[str] = set()
+    open_app_packages: list[str] = []
+
+    def forest_packages(value: Any) -> set[str]:
+        found: set[str] = set()
+        if isinstance(value, dict):
+            package = str(
+                value.get("package_name")
+                or value.get("packageName")
+                or ""
+            ).strip()
+            if package and package not in _IGNORED_SOURCE_PACKAGES:
+                found.add(package)
+            for child in value.values():
+                found.update(forest_packages(child))
+        elif isinstance(value, list):
+            for child in value:
+                found.update(forest_packages(child))
+        return found
+
     for step in source.get("steps") or []:
         observation = step.get("observation") if isinstance(step, dict) else None
         package = pipeline._mobilegpt_observation_package(observation)
         if package and package not in _IGNORED_SOURCE_PACKAGES:
             source_packages.add(package)
+        if isinstance(observation, dict):
+            source_packages.update(forest_packages(observation.get("forest")))
+        if isinstance(step, dict) and isinstance(step.get("action"), dict):
+            if str(step["action"].get("action_type") or "") == "open_app":
+                next_observation = step.get("next_observation")
+                if isinstance(next_observation, dict):
+                    open_app_packages.extend(
+                        sorted(forest_packages(next_observation.get("forest")))
+                    )
+    if open_app_packages:
+        package_name = open_app_packages[0]
+        return {
+            "target_package": package_name,
+            "target_app": str(inferred.get("target_app") or package_name),
+            "target_source": "canonical_source_runlog_open_app_observation",
+        }
     if len(source_packages) != 1:
         label = "unresolved" if not source_packages else "ambiguous"
         raise ValueError(
