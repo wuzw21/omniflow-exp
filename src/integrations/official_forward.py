@@ -2414,7 +2414,14 @@ def _run_mobilegpt_client(
             ["shell", "dumpsys", "accessibility"],
             check=False,
         ).stdout
-        if service in accessibility_state and "Bound services:" in accessibility_state:
+        normalized_service = (
+            "com.example.MobileGPT/"
+            "com.example.MobileGPT.MobileGPTAccessibilityService"
+        )
+        if (
+            (service in accessibility_state or normalized_service in accessibility_state)
+            and "Bound services:" in accessibility_state
+        ):
             break
         time.sleep(1.0)
     time.sleep(2.0)
