@@ -366,10 +366,19 @@ def concluded_result_keys(
             )
         ):
                 continue
-        # A method failure is evidence to inspect, not a completed cell.  It
-        # must remain runnable after the owning method or its assets are
-        # corrected; only a formal completed conclusion participates in skip.
-        if str(payload.get("status") or "") != "completed":
+        status = str(payload.get("status") or "").strip().lower()
+        if status == "completed":
+            pass
+        elif status in {"method_failed", "execution_failed"}:
+            # A non-environment method result is already a valid terminal
+            # observation for a campaign resume. Keep the immutable evidence,
+            # but do not spend another attempt on the same cell unless the
+            # caller explicitly requests a rerun.
+            if payload.get("environment_failure") is True:
+                continue
+            if str(payload.get("runtime_integrity_error") or "").strip():
+                continue
+        else:
             continue
         expected_model = (device_models or {}).get(device)
         if expected_model:

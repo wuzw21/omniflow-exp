@@ -1789,7 +1789,10 @@ def _concluded_results(
         devices=tuple(device[0] for device in devices),
         source_seed=source_seed,
         evaluation_seed=evaluation_seed,
-        attempt_id=attempt_id,
+        # Resume from every prior immutable outcome. ``attempt_id`` identifies
+        # the new scheduler attempt and must not hide cells completed or
+        # method-failed in earlier attempts.
+        attempt_id=None,
         device_models=_e2e_device_models(args),
     )
     # A formal cell is reusable across pipeline attempts only when its
