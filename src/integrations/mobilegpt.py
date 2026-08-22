@@ -698,9 +698,7 @@ def _load_runlog_trajectory(
     # AndroidWorld may record the human-facing label in open_app while the
     # canonical source boundary already resolved the real package from the
     # observed UI tree.  Never overwrite a resolved package with that label.
-    if open_app_packages and (
-        not resolved_target_package or "." in open_app_packages[0]
-    ):
+    if open_app_packages and not resolved_target_package:
         resolved_target_package = open_app_packages[0]
     for evidence in open_app_evidence:
         observed_package = str(evidence.get("observed_package") or "").strip()
