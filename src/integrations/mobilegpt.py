@@ -1937,13 +1937,65 @@ def _run_official_mobilegpt_authoring(
             original_embedding = utils_module.get_openai_embedding
             original_parse_json = utils_module.__dict__.get("__parse_json")
 
+            def _escape_embedded_json_quotes(candidate: str) -> str:
+                """Escape quotes embedded in JSON-looking string values.
+
+                This is deliberately a lexical repair at the official parser
+                boundary.  A quote inside an unfinished bracketed value is
+                content; a quote followed by a JSON delimiter closes the
+                surrounding string.  The resulting document is still parsed
+                by the official ``json.loads`` path below.
+                """
+                output: list[str] = []
+                in_string = False
+                escaped = False
+                embedded_depth = 0
+                for index, char in enumerate(candidate):
+                    if not in_string:
+                        output.append(char)
+                        if char == '"':
+                            in_string = True
+                        continue
+                    if escaped:
+                        output.append(char)
+                        escaped = False
+                        continue
+                    if char == "\\":
+                        output.append(char)
+                        escaped = True
+                        continue
+                    if char == '"':
+                        lookahead = index + 1
+                        while lookahead < len(candidate) and candidate[lookahead].isspace():
+                            lookahead += 1
+                        next_char = candidate[lookahead] if lookahead < len(candidate) else ""
+                        if (
+                            embedded_depth > 0
+                            or (next_char not in ",:]}" and next_char != "")
+                        ):
+                            output.extend(("\\", char))
+                            continue
+                        output.append(char)
+                        in_string = False
+                        embedded_depth = 0
+                        continue
+                    output.append(char)
+                    if char in "[{":
+                        embedded_depth += 1
+                    elif char in "]}" and embedded_depth > 0:
+                        embedded_depth -= 1
+                return "".join(output)
+
             def _official_json_parser(value: str, *, is_list: bool = False) -> str | None:
-                """Keep the official parser, repairing only broken list-item braces.
+                """Keep the official parser, repairing transport-only JSON damage.
 
                 GLM sometimes emits one object in an otherwise valid JSON list
                 without the opening ``{``.  The official query function parses
                 before returning, so the repair must happen at that transport
-                boundary.  No action, parameter, or ordering is inferred here.
+                boundary.  It can also leave quotes inside a stringified option
+                list unescaped (for example ``["Just once", "Always"]``).
+                Repair only those JSON delimiters; no action, parameter, or
+                ordering is inferred here.
                 """
                 if original_parse_json is None:
                     return None
@@ -1964,6 +2016,14 @@ def _run_official_mobilegpt_authoring(
                         _write_event(stats, {
                             "event": "chat_json_syntax_repair",
                             "repair": "missing_list_item_open_brace",
+                        })
+                        return repaired
+                    repaired = _escape_embedded_json_quotes(candidate)
+                    if repaired != candidate:
+                        json.loads(repaired)
+                        _write_event(stats, {
+                            "event": "chat_json_syntax_repair",
+                            "repair": "unescaped_quotes_in_stringified_value",
                         })
                         return repaired
                     raise
