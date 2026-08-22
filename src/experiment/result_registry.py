@@ -13,7 +13,7 @@ import re
 import shlex
 import shutil
 import tempfile
-from typing import Any
+from typing import Any, Mapping
 
 from src.experiment.paths import safe_component, sha256_file
 from src.experiment.protocol import DEVICES, RESULT_COMMANDS_FILE
@@ -22,6 +22,30 @@ from src.experiment.result_schema import compact_result_row
 DEVICE_TARGETS = {label: (serial, port) for label, serial, port in DEVICES}
 _REGISTERED_RESULT_SCHEMA = "omniflow.androidworld_registered_result.v1"
 _REGISTRATION_SCHEMA = "omniflow.androidworld_result_registration.v1"
+LEGACY_EXTERNAL_METHODS = frozenset({"mobilegpt", "appagent"})
+
+
+def registered_result_matches_device_model(
+    row: Mapping[str, Any], expected_model: str
+) -> bool:
+    """Require immutable evidence to identify the current physical AVD."""
+
+    expected = str(expected_model or "").strip()
+    if not expected:
+        return True
+    target = row.get("device_target")
+    if isinstance(target, Mapping):
+        for key in ("device_model", "avd"):
+            if str(target.get(key) or "").strip() == expected:
+                return True
+    for key in ("device_model", "avd"):
+        if str(row.get(key) or "").strip() == expected:
+            return True
+    for key in ("run_dir", "output_path", "artifact_root", "command"):
+        value = str(row.get(key) or "")
+        if f"/{expected}_seed" in value or f"/{expected}/" in value:
+            return True
+    return False
 
 
 def _utc_now() -> str:
@@ -150,6 +174,92 @@ def has_official_validator_conclusion(row: dict[str, Any]) -> bool:
     )
 
 
+def legacy_external_result_protocol_compatible(
+    row: Mapping[str, Any],
+    *,
+    task_name: str,
+    method: str,
+    device: str,
+    evaluation_seed: int,
+) -> bool:
+    """Validate immutable results written by the pre-v2 external adapter.
+
+    Older MobileGPT/AppAgent runs used ``official_forward`` and therefore did
+    not emit the native runner metadata (``fixed_task_seed``,
+    ``state_backend``, and ``max_steps``).  They still contain enough
+    immutable evidence to identify a formal cell: the official validator
+    conclusion, the exact target, and the task seed in the command.  This is a
+    read-only import path; it never rewrites or weakens the native method
+    protocol and rejects environment/runtime failures.
+    """
+
+    if method not in LEGACY_EXTERNAL_METHODS:
+        return False
+    if str(row.get("task_name") or task_name) != task_name:
+        return False
+    if str(row.get("method") or "") != method:
+        return False
+    if str(row.get("device") or "") != device:
+        return False
+    if not has_official_validator_conclusion(dict(row)):
+        return False
+    runtime_error = str(row.get("runtime_integrity_error") or "").strip()
+    if runtime_error:
+        return False
+    environment_failure = row.get("environment_failure")
+    if environment_failure is True or (
+        isinstance(environment_failure, str)
+        and environment_failure.strip().lower()
+        not in {"", "0", "false", "no", "none", "null"}
+    ):
+        return False
+
+    target = row.get("device_target")
+    expected_target = DEVICE_TARGETS.get(device)
+    if not isinstance(target, Mapping) or expected_target is None:
+        return False
+    if (
+        str(target.get("serial") or "") != expected_target[0]
+        or int(target.get("console_port") or -1) != expected_target[1]
+    ):
+        return False
+
+    try:
+        command = shlex.split(str(row.get("command") or ""))
+    except ValueError:
+        return False
+    if "-m" not in command or "src.integrations.official_forward" not in command:
+        return False
+    try:
+        baseline_index = command.index("--baseline")
+        if command[baseline_index + 1] != method:
+            return False
+    except (ValueError, IndexError):
+        return False
+
+    def option_value(name: str) -> str | None:
+        for index, token in enumerate(command):
+            if token == name and index + 1 < len(command):
+                return command[index + 1]
+            if token.startswith(name + "="):
+                return token.partition("=")[2]
+        return None
+
+    task_seed = option_value("--task-seed")
+    if task_seed is None:
+        task_seed = option_value("--task-random-seed")
+    if task_seed != str(evaluation_seed):
+        return False
+    if option_value("--serial") != expected_target[0]:
+        return False
+    try:
+        if int(option_value("--console-port") or "") != expected_target[1]:
+            return False
+    except ValueError:
+        return False
+    return isinstance(row.get("task_params"), dict)
+
+
 def validate_formal_result_protocol(
     row: dict[str, Any],
     *,
@@ -166,6 +276,14 @@ def validate_formal_result_protocol(
         "target5554": "small5554",
         "target5564": "fold5564",
     }.get(str(row.get("device") or ""), str(row.get("device") or ""))
+    if legacy_external_result_protocol_compatible(
+        row,
+        task_name=task_name,
+        method=method,
+        device=normalized_device,
+        evaluation_seed=evaluation_seed,
+    ):
+        return
     if str(row.get("task_name") or task_name) != task_name:
         violations.append("task")
     if str(row.get("method") or "") != method:
@@ -247,6 +365,7 @@ def registered_result_plan(
     source_seed: int,
     evaluation_seed: int,
     formal_max_steps: int | None = None,
+    device_models: Mapping[str, str] | None = None,
 ) -> dict[str, list[tuple[str, str]]]:
     """Read immutable results for older indexes without creating another plan."""
 
@@ -285,10 +404,24 @@ def registered_result_plan(
                 continue
             if not has_official_validator_conclusion(detail_row):
                 continue
-            # A failed conclusion is evidence to retry, not a reusable cell.
-            # Do this before protocol validation so stale failed attempts with
-            # old metadata cannot block a current formal run.
-            if detail_row.get("official_validator_success") is not True:
+            expected_model = (device_models or {}).get(device)
+            if expected_model and not registered_result_matches_device_model(
+                detail_row, expected_model
+            ):
+                continue
+            # Native OmniFlow failures remain retryable.  For the two external
+            # methods, a validator=false conclusion is still a usable final
+            # method outcome when it is a verified legacy official_forward
+            # result and not an environment failure.
+            if detail_row.get("official_validator_success") is not True and not (
+                legacy_external_result_protocol_compatible(
+                    detail_row,
+                    task_name=task_name,
+                    method=method,
+                    device=device,
+                    evaluation_seed=evaluation_seed,
+                )
+            ):
                 continue
             if formal_max_steps is not None:
                 validate_formal_result_protocol(
@@ -588,6 +721,8 @@ def register_attempt_summary(
 __all__ = [
     "formal_result_environment_failure_reasons",
     "has_official_validator_conclusion",
+    "legacy_external_result_protocol_compatible",
+    "LEGACY_EXTERNAL_METHODS",
     "mobilegpt_runtime_integrity_error",
     "register_attempt_summary",
     "registered_result_plan",
