@@ -2032,7 +2032,11 @@ def _run_official_mobilegpt_authoring(
             if original_parse_json is not None:
                 utils_module.__dict__["__parse_json"] = _official_json_parser
 
-            def _official_schema_adapter(value: Any) -> Any:
+            def _official_schema_adapter(
+                value: Any,
+                *,
+                list_items_require_name: bool = False,
+            ) -> Any:
                 """Adapt only JSON scalar containers expected by upstream code.
 
                 The upstream prompts and agents remain authoritative.  Some
@@ -2064,7 +2068,22 @@ def _run_official_mobilegpt_authoring(
                             adapted[key] = _official_schema_adapter(item)
                     return adapted
                 if isinstance(value, list):
-                    return [_official_schema_adapter(item) for item in value]
+                    adapted_items = [_official_schema_adapter(item) for item in value]
+                    if list_items_require_name:
+                        valid_items = [
+                            item
+                            for item in adapted_items
+                            if isinstance(item, dict)
+                            and str(item.get("name") or "").strip()
+                        ]
+                        if len(valid_items) != len(adapted_items):
+                            _write_event(stats, {
+                                "event": "chat_schema_repair",
+                                "repair": "drop_explore_item_without_name",
+                                "dropped_count": len(adapted_items) - len(valid_items),
+                            })
+                        return valid_items
+                    return adapted_items
                 return value
 
             chat_call_count = 0
@@ -2154,7 +2173,10 @@ def _run_official_mobilegpt_authoring(
                             "official_agent_empty_response",
                             model=model_name,
                         )
-                result = _official_schema_adapter(result)
+                result = _official_schema_adapter(
+                    result,
+                    list_items_require_name=is_list,
+                )
                 _write_event(stats, {
                     "event": "chat_call",
                     "model": model_name,
