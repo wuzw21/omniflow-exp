@@ -2338,7 +2338,14 @@ def _run_mobilegpt_client(
         )
         gradle = str(candidates[0]) if candidates else ""
     if not gradle:
-        prebuilt_apk = root / "App/app/build/outputs/apk/debug/app-debug.apk"
+        configured_apk = str(
+            os.environ.get("OMNIFLOW_MOBILEGPT_APK") or ""
+        ).strip()
+        prebuilt_apk = (
+            Path(configured_apk).expanduser()
+            if configured_apk
+            else root / "App/app/build/outputs/apk/debug/app-debug.apk"
+        )
         if str(host).strip() != "10.0.2.2" or not prebuilt_apk.is_file():
             raise RuntimeError(
                 "official_mobilegpt_client_requires_gradle:"
