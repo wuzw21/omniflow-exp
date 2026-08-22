@@ -2364,7 +2364,11 @@ def _run_mobilegpt_client(
         ["shell", "am", "force-stop", "com.example.MobileGPT"],
         check=False,
     )
-    service = "com.example.MobileGPT/com.example.MobileGPT.MobileGPTAccessibilityService"
+    # The official MobileGPT manifest declares the service in the app's
+    # package as a relative class name: ``.MobileGPTAccessibilityService``.
+    # The previous fully-qualified spelling added the package twice, so
+    # Android silently ignored it and the client waited forever for a bind.
+    service = "com.example.MobileGPT/.MobileGPTAccessibilityService"
     current = _run_adb(
         adb_path,
         serial,
@@ -2410,7 +2414,7 @@ def _run_mobilegpt_client(
             ["shell", "dumpsys", "accessibility"],
             check=False,
         ).stdout
-        if "com.example.MobileGPT/com.example.MobileGPT.MobileGPTAccessibilityService" in accessibility_state and "Bound services:" in accessibility_state:
+        if service in accessibility_state and "Bound services:" in accessibility_state:
             break
         time.sleep(1.0)
     time.sleep(2.0)

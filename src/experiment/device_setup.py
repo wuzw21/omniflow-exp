@@ -42,7 +42,7 @@ OOB_REQUIRED_RECEIVERS = {
 }
 MOBILEGPT_PACKAGE = "com.example.MobileGPT"
 MOBILEGPT_ACCESSIBILITY_SERVICE = (
-    "com.example.MobileGPT/com.example.MobileGPT.MobileGPTAccessibilityService"
+    "com.example.MobileGPT/.MobileGPTAccessibilityService"
 )
 FORWARDER_PACKAGE = "com.google.androidenv.accessibilityforwarder"
 FORWARDER_SERVICE = (

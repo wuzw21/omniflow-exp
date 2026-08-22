@@ -43,7 +43,7 @@ REQUIRED_DISTRIBUTION_VERSIONS = {"android-env": "1.2.3"}
 DEFAULT_ACCESSIBILITY_SERVICES = (
     "com.google.androidenv.accessibilityforwarder/com.google.androidenv.accessibilityforwarder.AccessibilityForwarder",
     "cn.com.omnimind.bot.debug/cn.com.omnimind.accessibility.service.AssistsService",
-    "com.example.MobileGPT/com.example.MobileGPT.MobileGPTAccessibilityService",
+    "com.example.MobileGPT/.MobileGPTAccessibilityService",
 )
 
 
