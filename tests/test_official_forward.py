@@ -796,6 +796,7 @@ def test_mobilegpt_forwarder_bridges_finish_to_official_client_frame(
         "    ):\n"
         "        client_socket.send(\"launch\".encode())\n"
         "        return\n"
+        "                target_package = app_agent.get_package_name(target_app)\n"
         "                task, is_new_task = task_agent.get_task(instruction)\n"
     )
     (server / "server.py").write_text(server_source, encoding="utf-8")
@@ -821,6 +822,8 @@ def test_mobilegpt_forwarder_bridges_finish_to_official_client_frame(
     assert "mobilegpt_forced_task_binding" in staged_source
     assert 'task["app"] = forced_target_package' in staged_source
     assert '"app": forced_target_package' in staged_source
+    assert "mobilegpt_target_package_direct" in staged_source
+    assert "if target_task_name and forced_target_package" in staged_source
     assert "task_agent.get_task(instruction)" in staged_source
     assert "is_new_task = False" in staged_source
     assert (server / "server.py").read_text(encoding="utf-8") == server_source

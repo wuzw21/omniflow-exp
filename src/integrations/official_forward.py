@@ -1285,6 +1285,19 @@ def _configure_mobilegpt_server(
                 "                    task, is_new_task = task_agent.get_task(instruction)\n"
             )
             source = source.replace(task_marker, task_binding, 1)
+            package_lookup = "                target_package = app_agent.get_package_name(target_app)\n"
+            direct_package_lookup = (
+                "                # mobilegpt_target_package_direct: the formal runner\n"
+                "                # already resolved the package; do not ask the\n"
+                "                # display-name resolver to reinterpret it.\n"
+                "                target_package = (\n"
+                "                    forced_target_package\n"
+                "                    if target_task_name and forced_target_package\n"
+                "                    else app_agent.get_package_name(target_app)\n"
+                "                )\n"
+            )
+            if package_lookup in source and "mobilegpt_target_package_direct" not in source:
+                source = source.replace(package_lookup, direct_package_lookup, 1)
             server_path.write_text(source, encoding="utf-8")
     if normalized_embedding and utils_path.is_file():
         source = utils_path.read_text(encoding="utf-8")
