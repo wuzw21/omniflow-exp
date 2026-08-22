@@ -15,6 +15,10 @@ from omniflow.functions.assets import function_authoring_tool
 from src.experiment.run_task import (
     DeviceTarget,
     _function_lineage_item,
+    _canonical_function_source_call,
+    _resolve_mobilegpt_target_package,
+    _mobilegpt_server_task_app,
+    bind_function_arguments_to_task_params,
     _read_object,
     _t3a_hint_source_node,
     build_mobilegpt_server_command,
@@ -22,6 +26,7 @@ from src.experiment.run_task import (
     build_task_command,
     _formal_result_paths,
     _result_summary_rows,
+    build_parser as build_run_task_parser,
     load_canonical_source_index,
 )
 from src.experiment.source_records import CanonicalRunLog
@@ -79,6 +84,26 @@ from src.experiment.protocol import (
     TASK_DEADLINE_SEC,
     TASK_SEED,
 )
+
+
+def test_mobilegpt_camera_alias_resolves_to_installed_camera2_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "src.experiment.run_task.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            stdout="package:com.android.camera2\n",
+        ),
+    )
+
+    assert (
+        _resolve_mobilegpt_target_package(
+            "Camera",
+            adb_path="adb",
+            serial="emulator-5564",
+        )
+        == "com.android.camera2"
+    )
 
 
 def test_source_index_skips_unmaterialized_unrelated_task(tmp_path: Path) -> None:
@@ -182,7 +207,7 @@ def test_concluded_results_reuses_registered_formal_cell_across_attempts(
     ) == {("appagent", "small5554")}
 
 
-def test_concluded_results_reuses_existing_omniflow_cell(
+def test_concluded_results_reruns_existing_omniflow_cell(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -204,7 +229,7 @@ def test_concluded_results_reuses_existing_omniflow_cell(
         args,
         args.results_root / "androidworld" / ".archive" / "outcomes" / "formal",
         "attempt_002",
-    ) == {("omniflow", "small5554")}
+    ) == set()
 
 
 def test_pipeline_attempt_id_grows_past_historical_outcome(tmp_path: Path) -> None:
@@ -217,8 +242,8 @@ def test_pipeline_attempt_id_grows_past_historical_outcome(tmp_path: Path) -> No
         outcomes_root=outcomes_root,
         task_name=args.task,
         method="appagent",
-        device="small5554",
-        device_serial="emulator-5554",
+        device="small5562",
+        device_serial="emulator-5562",
         attempt_id="attempt_001",
         source_seed=111,
         evaluation_seed=113,
@@ -358,7 +383,7 @@ def test_t3a_hint_reads_native_ui_element_bounds() -> None:
     assert source_node["resource_id"] == "com.android.camera2:id/shutter_button"
 
 
-def test_e2e_command_exposes_direct_function_without_planner_or_second_runner(
+def test_e2e_command_exposes_direct_function_with_fallback_planner(
     tmp_path: Path,
 ) -> None:
     item = CanonicalRunLog(
@@ -383,6 +408,9 @@ def test_e2e_command_exposes_direct_function_without_planner_or_second_runner(
         omnitransfer_root=tmp_path / "OmniTransfer",
         function_id="complete_task",
         function_arguments={"target": "Alarm"},
+        planner_provider="openai",
+        model="GLM-4.6V",
+        planner_timeout_sec=45,
     )
 
     assert spec.metadata["mode"] == "direct_function_e2e"
@@ -391,8 +419,53 @@ def test_e2e_command_exposes_direct_function_without_planner_or_second_runner(
     assert json.loads(
         spec.argv[spec.argv.index("--function-arguments-json") + 1]
     ) == {"target": "Alarm"}
-    assert "--planner-provider" not in spec.argv
-    assert "--model" not in spec.argv
+    assert spec.argv[spec.argv.index("--planner-provider") + 1] == "openai"
+    assert spec.argv[spec.argv.index("--model") + 1] == "GLM-4.6V"
+    assert spec.argv[spec.argv.index("--planner-timeout-sec") + 1] == "45.0"
+
+
+def test_result_runner_planner_timeout_defaults_to_formal_vision_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OMNIFLOW_ANDROIDWORLD_PLANNER_TIMEOUT_SEC", raising=False)
+    monkeypatch.delenv("OMNIFLOW_PLANNER_TIMEOUT_SEC", raising=False)
+
+    parser = build_run_task_parser()
+    args = parser.parse_args(["result", "--task", "CameraTakeVideo"])
+
+    assert args.planner_timeout_sec == 180.0
+
+
+def test_canonical_function_source_call_selects_store_source_call(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class FakeStore:
+        load_errors = {}
+        source_calls = [{"function_id": "take_photo", "arguments": {}}]
+
+        def __init__(self, _path: Path) -> None:
+            pass
+
+        def get_function(self, function_id: str):
+            return object() if function_id == "take_photo" else None
+
+    monkeypatch.setattr("src.experiment.run_task.FunctionStore", FakeStore)
+
+    assert _canonical_function_source_call(tmp_path / "function_store.json") == (
+        "take_photo",
+        {},
+    )
+
+
+def test_function_arguments_bind_only_declared_dynamic_task_params() -> None:
+    assert bind_function_arguments_to_task_params(
+        {"folder_name": "source-folder", "static": "keep"},
+        {"folder_name": "evaluation-folder", "unrelated": "ignore"},
+    ) == {
+        "folder_name": "evaluation-folder",
+        "static": "keep",
+    }
 
 
 def test_omniflow_e2e_command_forwards_oob_backend_to_child(monkeypatch, tmp_path: Path) -> None:
@@ -452,8 +525,19 @@ def test_mobilegpt_server_uses_sealed_source_manifest_for_episode_memory(
 
     assert spec.env["MOBILEGPT_EMBEDDING_MODEL"] == "GLM-Embedding-2"
     assert spec.env["MOBILEGPT_TARGET_TASK_NAME"] == "CameraTakePhoto"
-    assert spec.env["MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD"] == "0.90"
-    assert spec.env["MOBILEGPT_MEMORY_REUSE_STRICT"] == "1"
+    assert "MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD" not in spec.env
+    assert "MOBILEGPT_TARGET_MEMORY_THRESHOLD" not in spec.env
+    assert "MOBILEGPT_MEMORY_REUSE_STRICT" not in spec.env
+    assert spec.env["MOBILEGPT_THINKING"] == "disabled"
+    assert spec.env["MOBILEGPT_MAX_TOKENS"] == "512"
+    assert spec.env["MOBILEGPT_LIST_MAX_TOKENS"] == "512"
+    assert spec.env["MOBILEGPT_REQUEST_TIMEOUT_SEC"] == "60"
+    assert spec.env["MOBILEGPT_SUPPRESS_SPEAK_ACTIONS"] == "1"
+
+
+def test_mobilegpt_server_keeps_memory_app_separate_from_installed_package() -> None:
+    assert _mobilegpt_server_task_app("markor", "net.gsantner.markor") == "markor"
+    assert _mobilegpt_server_task_app("", "net.gsantner.markor") == "net.gsantner.markor"
 
 
 def test_e2e_command_rejects_direct_function_for_non_omniflow_agent(
@@ -556,7 +640,7 @@ def test_e2e_selection_runs_only_one_method_and_device(
         command_runner=runner,
     )
 
-    assert calls == [("omniflow", "pixel5576:emulator-5576:5576")]
+    assert calls == [("omniflow", "fold5564:emulator-5564:5564")]
 
 
 def test_e2e_selection_accepts_method_and_device_lists_or_all() -> None:
@@ -1387,6 +1471,61 @@ def test_bmoca_enhancement_uses_the_shared_draft_edit_tool(
     }
 
 
+def test_function_enhancement_accepts_json_message_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Completions:
+        def create(self, **_: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                usage=SimpleNamespace(
+                    prompt_tokens=10,
+                    completion_tokens=20,
+                    total_tokens=30,
+                ),
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content=(
+                                "Here is the requested JSON:\n"
+                                '{"complete_function":{'
+                                '"function_id":"open_item",'
+                                '"name":"Open item",'
+                                '"description":"Open the visible item."}'
+                                '}'
+                            ),
+                            tool_calls=[],
+                        )
+                    )
+                ],
+            )
+
+    class OpenAI:
+        def __init__(self, **_: object) -> None:
+            self.chat = SimpleNamespace(completions=Completions())
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=OpenAI))
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.resolve_openai_compatible_config",
+        lambda **_: ("key", "https://example.invalid/v1"),
+    )
+    usage = {
+        "model_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+
+    complete = _function_enhancement_transport(
+        model="GLM-4.6V",
+        timeout_sec=180,
+        usage=usage,
+    )
+
+    assert complete("Edit draft", function_authoring_tool(stage="split"))
+    assert usage["model_calls"] == 1
+    assert usage["total_tokens"] == 30
+
+
 def test_resolve_args_preserves_symlinked_virtualenv_python(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1541,8 +1680,12 @@ def test_source_device_is_cold_restarted_when_already_ready(
         deadline=Deadline(120),
     )
 
-    assert ("-s", "emulator-5560", "emu", "kill") in adb_calls
+    # One kill is the intentional cold restart of the pre-existing source;
+    # ensure_source_device must not kill the newly launched source after
+    # preflight because qualification follows in the same pipeline.
+    assert adb_calls.count(("-s", "emulator-5560", "emu", "kill")) == 1
     assert result["launched"] is True
+    assert result["kept_alive_for_pipeline"] is True
     assert "--require-contacts-ready" not in preflight_commands[0]
     assert "--expected-tasks" not in preflight_commands[0]
     assert preflight_commands[0][preflight_commands[0].index("--android-world-root") + 1] == str(
@@ -1862,7 +2005,7 @@ def test_published_result_row_does_not_cross_match_device_attempts(
     old_device = archive / "old" / "runlog" / "attempt-shared" / "official_client"
     new_device = (
         archive
-        / "AndroidWorldAvd4090_seed111_eval113"
+        / "OmniFlowTargetSmall_seed111_eval113"
         / "runlog"
         / "attempt-shared"
         / "official_client"
@@ -1883,7 +2026,7 @@ def test_published_result_row_does_not_cross_match_device_attempts(
     (new_device / "task_results.jsonl").write_text(
         json.dumps(
             {
-                "device": "emulator-5576",
+                "device": "emulator-5562",
                 "official_validator_used": True,
                 "official_validator_success": True,
             }
@@ -1896,10 +2039,10 @@ def test_published_result_row_does_not_cross_match_device_attempts(
         args=args,
         attempt_id="attempt-shared",
         method="mobilegpt",
-        device="pixel5576",
+        device="small5562",
     )
 
-    assert row["device"] == "emulator-5576"
+    assert row["device"] == "emulator-5562"
     assert row["validator_success"] is True
 
 
@@ -2592,6 +2735,60 @@ def test_pipeline_blocks_only_function_when_canonical_store_is_missing(
     assert phases["appagent_memory"]["status"] == "reused"
 
 
+def test_appagent_pipeline_does_not_use_or_refresh_function_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.e2e_method = "appagent"
+    args.e2e_device = DEVICES[0]
+    source_path = tmp_path / "source.json"
+    source_path.write_text("{}", encoding="utf-8")
+    refresh_called = False
+
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.ensure_source_device",
+        lambda **_: {"status": "ready", "model_calls": 0, "total_tokens": 0},
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks._canonical_source",
+        lambda *_: ({}, source_path, {"task_parameters": {}}),
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.prepare_appagent_memory",
+        lambda **kwargs: (
+            tmp_path / "appagent",
+            {
+                "status": "created",
+                "source_run_log": str(kwargs["source_run_log"]),
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.run_target_workers",
+        lambda **_: [],
+    )
+
+    def refresh(**_: object) -> None:
+        nonlocal refresh_called
+        refresh_called = True
+
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.refresh_data_index_from_pointer",
+        refresh,
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks._report",
+        lambda **kwargs: kwargs["phases"],
+    )
+
+    phases = run_pipeline(args)
+
+    assert phases["function"]["status"] == "skipped"
+    assert phases["appagent_memory"]["source_run_log"] == str(source_path)
+    assert refresh_called is False
+
+
 def test_pipeline_qualifies_one_source_function_before_target_workers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2708,6 +2905,45 @@ def test_cached_source_function_qualification_requires_matching_hashes(
     assert cached is not None
     assert cached["status"] == "reused"
     assert cached["cached_from"] == str(qualification_path.resolve())
+
+
+def test_cached_source_function_qualification_ignores_stale_hashes(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path)
+    source_path = tmp_path / "source.json"
+    source_path.write_text("new source", encoding="utf-8")
+    store_path = tmp_path / "store.json"
+    store_path.write_text("new store", encoding="utf-8")
+    qualification_path = (
+        args.output_root
+        / args.task
+        / "previous"
+        / "source_qualification"
+        / "CameraTakePhoto"
+        / "function_replay"
+        / "source5560"
+        / "qualification.json"
+    )
+    qualification_path.parent.mkdir(parents=True)
+    qualification_path.write_text(
+        json.dumps(
+            {
+                "qualified": True,
+                "source_run_log_sha256": hashlib.sha256(b"old source").hexdigest(),
+                "store_sha256": hashlib.sha256(b"old store").hexdigest(),
+                "model_calls": 0,
+                "fallback_steps": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _cached_source_function_qualification(
+        args=args,
+        source_path=source_path,
+        function_store={"store_path": str(store_path)},
+    ) is None
 
 
 def test_run_task_reads_json_objects_strictly(tmp_path: Path) -> None:

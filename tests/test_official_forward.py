@@ -11,10 +11,17 @@ import pytest
 
 from src.integrations.official_forward import (
     MOBILEGPT_HANDSHAKE_RETURN_CODE,
+    _mobilegpt_instruction_broadcast_args,
     _mobilegpt_protocol_probe,
     _count_appagent_actions,
     _autodroid_task_app_name,
     _autodroid_official_memory_key,
+    _autodroid_display_ids,
+    _count_droidbot_output_events,
+    _configure_mobilegpt_client_launch_lifecycle,
+    _configure_mobilegpt_oob_action_bounds,
+    _configure_mobilegpt_telemetry,
+    _prepare_autodroid_device,
     prepare_appagent_workspace,
     prepare_mobilegpt_server,
     resolve_mobilegpt_client_host,
@@ -22,6 +29,87 @@ from src.integrations.official_forward import (
     validate_autodroid_memory_root,
     write_adb_proxy,
 )
+from src.integrations.mobilegpt_oob_client import (
+    _ensure_mobilegpt_indices,
+    _launch_selected_package,
+    _wire_packages,
+)
+
+
+def test_mobilegpt_oob_uses_scheduler_target_package_without_adb_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MOBILEGPT_TARGET_PACKAGE", "com.android.documentsui")
+
+    def fail_if_called(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("OOB handshake must not enumerate packages")
+
+    monkeypatch.setattr("src.integrations.mobilegpt_oob_client._installed_packages", fail_if_called)
+
+    assert _wire_packages("adb", "serial") == ["com.android.documentsui"]
+
+
+def test_mobilegpt_staged_client_arms_first_screen_before_launch(tmp_path: Path) -> None:
+    client = tmp_path / "client"
+    service = client / "app/src/main/java/com/example/MobileGPT"
+    service.mkdir(parents=True)
+    path = service / "MobileGPTAccessibilityService.java"
+    path.write_text(
+        """
+        if (launchIntent != null) {
+            startActivity(launchIntent);//null pointer check in case package name was not found
+        } else {
+            Log.d(TAG, "intent null");
+        }
+        xmlPending = true;
+        screenNeedUpdate = true;
+        firstScreen = true;
+        """,
+        encoding="utf-8",
+    )
+
+    _configure_mobilegpt_client_launch_lifecycle(client)
+    staged = path.read_text(encoding="utf-8")
+    assert staged.index("xmlPending = true;") < staged.index("startActivity(launchIntent)")
+    assert "postDelayed(screenUpdateTimeoutRunnable, 5000)" in staged
+
+
+def test_mobilegpt_oob_adds_upstream_node_indices_in_native_order() -> None:
+    xml = "<hierarchy><node id='root'><node id='first'/><node id='second'/></node></hierarchy>"
+
+    indexed = _ensure_mobilegpt_indices(xml)
+
+    assert 'id="root" index="0"' in indexed
+    assert 'id="first" index="1"' in indexed
+    assert 'id="second" index="2"' in indexed
+
+
+def test_mobilegpt_oob_resolves_server_app_label_to_target_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = "com.google.android.deskclock"
+    calls: list[str] = []
+    monkeypatch.setenv("MOBILEGPT_TARGET_PACKAGE", target)
+    monkeypatch.setattr(
+        "src.integrations.mobilegpt_oob_client._installed_packages",
+        lambda _adb, _serial: [target],
+    )
+    monkeypatch.setattr(
+        "src.integrations.mobilegpt_oob_client._launch_package",
+        lambda _adb, _serial, package: calls.append(package),
+    )
+    monkeypatch.setattr(
+        "src.integrations.mobilegpt_oob_client._foreground_package",
+        lambda _adb, _serial: target,
+    )
+
+    assert _launch_selected_package(
+        "adb",
+        "emulator-5564",
+        "Clock",
+        timeout_sec=1,
+    ) == target
+    assert calls == [target]
 
 
 def test_mobilegpt_protocol_probe_distinguishes_handshake_failure(
@@ -41,6 +129,14 @@ def test_mobilegpt_protocol_probe_distinguishes_handshake_failure(
     assert probe["task_started"] is False
     assert probe["phase"] == "client_server_handshake"
     assert MOBILEGPT_HANDSHAKE_RETURN_CODE == 127
+
+
+def test_mobilegpt_instruction_broadcast_quotes_androidworld_goal() -> None:
+    args = _mobilegpt_instruction_broadcast_args(
+        "Create a new folder named folder_20260822_131011."
+    )
+
+    assert args[-1] == "'Create a new folder named folder_20260822_131011.'"
 
 
 def test_mobilegpt_protocol_probe_marks_episode_after_server_task_start(
@@ -82,6 +178,60 @@ def test_autodroid_official_memory_key_uses_paper_app_names() -> None:
     assert _autodroid_official_memory_key("camera") == "camera"
 
 
+def test_autodroid_display_ids_detect_fold_secondary_display() -> None:
+    dump = "mDisplayId=0\nmDisplayId=3\nmDisplayId=0\n"
+
+    assert _autodroid_display_ids(dump) == (0, 3)
+
+
+def test_prepare_autodroid_device_normalizes_fold_display(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(_adb_path, _serial, args, **_kwargs):
+        calls.append(list(args))
+        output = "mDisplayId=0\nmDisplayId=3\n" if args[-1] == "display" else ""
+        return SimpleNamespace(returncode=0, stdout=output)
+
+    monkeypatch.setattr("src.integrations.official_forward._run_adb", fake_run)
+
+    result = _prepare_autodroid_device(
+        adb_path="adb",
+        serial="emulator-5564",
+        package="com.android.camera2",
+    )
+
+    assert result["multiple_displays"] is True
+    assert result["display_ids"] == [0, 3]
+    assert calls[:2] == [
+        ["shell", "input", "keyevent", "KEYCODE_HOME"],
+        ["shell", "cmd", "statusbar", "collapse"],
+    ]
+    assert calls[-1][-7:] == [
+        "-W",
+        "-a",
+        "android.intent.action.MAIN",
+        "-c",
+        "android.intent.category.LAUNCHER",
+        "-p",
+        "com.android.camera2",
+    ]
+
+
+def test_count_droidbot_output_events_counts_only_emitted_events(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "droidbot"
+    (output / "events").mkdir(parents=True)
+    (output / "events" / "event_001.json").write_text("{}\n", encoding="utf-8")
+    (output / "camera" / "events").mkdir(parents=True)
+    (output / "camera" / "events" / "event_002.json").write_text(
+        "{}\n", encoding="utf-8"
+    )
+    (output / "events" / "not-an-event.txt").write_text("\n", encoding="utf-8")
+
+    assert _count_droidbot_output_events(output) == 2
+
+
 @contextmanager
 def _fake_androidworld_session(task: object):
     yield object(), task
@@ -116,6 +266,16 @@ def test_appagent_forwarder_only_mounts_official_inputs(tmp_path: Path) -> None:
     staged_scripts = Path(result["workspace"]) / "scripts"
     assert staged_scripts.is_dir()
     assert not staged_scripts.is_symlink()
+    assert (staged_scripts / "oob_appagent_controller.py").is_file()
+    assert "oob_appagent_controller" in (
+        staged_scripts / "and_controller.py"
+    ).read_text(encoding="utf-8")
+    staged_model = staged_scripts / "model.py"
+    if staged_model.is_file():
+        staged_model_source = staged_model.read_text(encoding="utf-8")
+        assert "omniflow_appagent_glm_response_compat" in staged_model_source
+        assert 'payload["thinking"] = {"type": thinking_mode}' in staged_model_source
+        assert 'os.environ.get("APPAGENT_THINKING", "disabled")' in staged_model_source
     assert "_omniflow_resolution_agnostic_doc_path" in (
         staged_scripts / "task_executor.py"
     ).read_text(encoding="utf-8")
@@ -423,6 +583,16 @@ def test_mobilegpt_forwarder_keeps_official_server_source_unchanged(
         'os.environ["vision_model"] = "gpt-4o"\n',
         encoding="utf-8",
     )
+    (server / "mobilegpt.py").write_text(
+        "class MobileGPT:\n"
+        "    def get_next_action(self):\n"
+        "        if page_index != self.current_page_index:\n"
+        "            self.memory.init_page_manager(page_index)\n"
+        "            self.current_page_index = page_index\n"
+        "            if self.subtask_status == Status.LEARN:\n"
+        "                self.__finish_subtask()\n",
+        encoding="utf-8",
+    )
     (server / "utils" / "utils.py").write_text(
         'import os\n'
         'import re\n'
@@ -473,9 +643,19 @@ def test_mobilegpt_forwarder_keeps_official_server_source_unchanged(
     assert "MOBILEGPT_TARGET_MEMORY_THRESHOLD" in (
         staged / "memory" / "memory_manager.py"
     ).read_text(encoding="utf-8")
+    assert "mobilegpt_strict_page_advance" in (
+        staged / "mobilegpt.py"
+    ).read_text(encoding="utf-8")
     utils_source = (staged / "utils" / "utils.py").read_text(encoding="utf-8")
     assert "embedding_retry" in utils_source
     assert "range(1, 4)" in utils_source
+    if "def query(" in (server / "utils" / "utils.py").read_text(
+        encoding="utf-8"
+    ):
+        assert "omniflow_mobilegpt_glm_response_compat" in utils_source
+        assert '"thinking": {"type": thinking_mode}' in utils_source
+        assert "extra_body=request_extra_body" in utils_source
+        assert '"512" if is_list else "2048"' in utils_source
     match = re.search(
         r"def parse_completion_rate\(completion_rate\).*?(?=\n\ndef |\Z)",
         utils_source,
@@ -491,6 +671,100 @@ def test_mobilegpt_forwarder_keeps_official_server_source_unchanged(
         server / "agents" / "param_fill_agent.py"
     ).read_bytes()
     assert "gpt-4o" in (server / "main.py").read_text(encoding="utf-8")
+
+
+def test_mobilegpt_forwarder_restores_native_trigger_ui_page_matching(
+    tmp_path: Path,
+) -> None:
+    official = tmp_path / "MobileGPT"
+    server = official / "Server"
+    (server / "memory").mkdir(parents=True)
+    memory_source = (
+        "import json\n"
+        "from memory.node_manager import NodeManager\n"
+        "class Memory:\n"
+        "    def search_node(self, parsed_xml, hierarchy_xml, encoded_xml):\n"
+        "        # candidate_nodes_indexes = self.__search_similar_hierarchy_nodes(hierarchy_xml)\n"
+        "        #\n"
+        "        # node_manager = NodeManager(self.page_db, self, parsed_xml, encoded_xml)\n"
+        "        # node_index, new_subtasks = node_manager.search(candidate_nodes_indexes)\n"
+        "        most_similar_node_index = self.__search_most_similar_hierarchy_node(hierarchy_xml)\n"
+        "        if most_similar_node_index >= 0:\n"
+        "            return most_similar_node_index, []\n"
+        "        else:\n"
+        "            return -1, []\n"
+    )
+    (server / "memory" / "memory_manager.py").write_text(
+        memory_source, encoding="utf-8"
+    )
+    (server / "main.py").write_text("print('official server')\n", encoding="utf-8")
+    memory = tmp_path / "prepared"
+    (memory / "frozen_memory").mkdir(parents=True)
+
+    result = prepare_mobilegpt_server(
+        official_root=official,
+        memory_root=memory,
+        workspace=tmp_path / "workspace",
+    )
+
+    staged_source = Path(result["server_root"] + "/memory/memory_manager.py").read_text(
+        encoding="utf-8"
+    )
+    assert "MOBILEGPT_NATIVE_TRIGGER_UI_PAGE_MATCH" in staged_source
+    assert "node_manager.search(candidate_nodes_indexes)" in staged_source
+    assert memory_source == (server / "memory" / "memory_manager.py").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_mobilegpt_forwarder_replay_only_never_falls_back_to_planner(
+    tmp_path: Path,
+) -> None:
+    official = tmp_path / "MobileGPT"
+    server = official / "Server"
+    (server / "memory").mkdir(parents=True)
+    (server / "memory" / "memory_manager.py").write_text(
+        "class Memory:\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    (server / "main.py").write_text("print('official server')\n", encoding="utf-8")
+    (server / "mobilegpt.py").write_text(
+        "class MobileGPT:\n"
+        "    def get_next_action(self):\n"
+        "        if page_index == -1:\n"
+        "            page_index = self.explore_agent.explore(parsed_xml, hierarchy_xml, encoded_xml)\n"
+        "        if page_index != self.current_page_index:\n"
+        "            if self.subtask_status == Status.LEARN:\n"
+        "                self.__finish_subtask()\n"
+        "        if self.current_subtask is None:\n"
+        "            if not next_subtask:\n"
+        "                response, new_action = self.select_agent.select(available_subtasks, self.subtask_history,\n"
+        "                                                                self.qa_history, encoded_xml)\n"
+        "        if next_action:\n"
+        "            if \"examples\" in next_action:\n"
+        "                next_action, example = self.derive_agent.derive(self.encoded_xml, examples=next_action['examples'])\n"
+        "        else:\n"
+        "            if self.subtask_status == Status.WAIT or self.subtask_status == Status.LEARN:\n"
+        "                next_action, example = self.derive_agent.derive(self.encoded_xml)\n",
+        encoding="utf-8",
+    )
+    memory = tmp_path / "prepared"
+    (memory / "frozen_memory").mkdir(parents=True)
+
+    result = prepare_mobilegpt_server(
+        official_root=official,
+        memory_root=memory,
+        workspace=tmp_path / "workspace",
+    )
+
+    staged = Path(result["server_root"]) / "mobilegpt.py"
+    source = staged.read_text(encoding="utf-8")
+    assert "MOBILEGPT_RUNLOG_REPLAY_ONLY" in source
+    assert "mobilegpt_runlog_page_not_found" in source
+    assert "mobilegpt_runlog_subtask_not_found" in source
+    assert "mobilegpt_runlog_action_not_found" in source
+    assert "mobilegpt_runlog_example_fallback" in source
 
 
 def test_mobilegpt_forwarder_bridges_finish_to_official_client_frame(
@@ -539,6 +813,50 @@ def test_mobilegpt_forwarder_bridges_finish_to_official_client_frame(
     assert "task_agent.get_task(instruction)" in staged_source
     assert "is_new_task = False" in staged_source
     assert (server / "server.py").read_text(encoding="utf-8") == server_source
+
+
+def test_mobilegpt_forwarder_adds_server_bounds_for_oob_transport(
+    tmp_path: Path,
+) -> None:
+    server = tmp_path / "server.py"
+    server.write_text(
+        "\n"
+        "def _omniflow_send_action(client_socket, action):\n"
+        "    client_socket.send(json.dumps(action).encode())\n"
+        "\n"
+        "def main():\n"
+        "                    _omniflow_send_action(client_socket, action)\n",
+        encoding="utf-8",
+    )
+
+    _configure_mobilegpt_oob_action_bounds(tmp_path)
+    source = server.read_text(encoding="utf-8")
+
+    assert "omniflow_mobilegpt_oob_action_bounds" in source
+    assert "oob_bounds" in source
+    assert "parsed_xml if \"parsed_xml\" in locals() else \"\"" in source
+    compile(source, str(server), "exec")
+
+
+def test_mobilegpt_telemetry_imports_time_for_existing_hook(tmp_path: Path) -> None:
+    utils_dir = tmp_path / "utils"
+    utils_dir.mkdir()
+    utils = utils_dir / "utils.py"
+    utils.write_text(
+        "import os\nimport json\n\n"
+        "def write_omniflow_mobilegpt_event(event):\n"
+        "    return None\n\n"
+        "def get_openai_embedding(text, model=None, **kwargs):\n"
+        "    time.sleep(1)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "server.py").write_text("", encoding="utf-8")
+
+    _configure_mobilegpt_telemetry(tmp_path)
+    source = utils.read_text(encoding="utf-8")
+
+    assert source.startswith("import time\n")
+    compile(source, str(utils), "exec")
 
 
 def test_mobilegpt_forwarder_does_not_patch_task_agent(

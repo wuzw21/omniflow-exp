@@ -3,9 +3,9 @@
 MOBILEGPT_MEMORY_MANIFEST = "mobilegpt_memory_manifest.json"
 
 MOBILEGPT_MEMORY_SCHEMA = "omniflow.mobilegpt.memory.v2"
-MOBILEGPT_SOURCE_METHOD = "mobilegpt_runlog_direct_memory"
-MOBILEGPT_PREP_TYPE = "mobilegpt_runlog_direct_memory"
-MOBILEGPT_LEARNING_MODE = "mobilegpt_runlog_direct_conversion"
+MOBILEGPT_SOURCE_METHOD = "mobilegpt_official_learning_memory"
+MOBILEGPT_PREP_TYPE = "mobilegpt_official_learning_memory"
+MOBILEGPT_LEARNING_MODE = "mobilegpt_official_learning"
 MOBILEGPT_AUDIT_SCHEMA = "omniflow.mobilegpt.audit.v2"
 MOBILEGPT_EMBEDDING_MODEL = "GLM-Embedding-2"
 

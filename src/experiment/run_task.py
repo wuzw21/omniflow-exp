@@ -1418,7 +1418,11 @@ def build_task_command(
     resolved_task_seed = int(
         item.replay_seed if task_random_seed is None else task_random_seed
     )
-    if resolved_agent == "omniflow" and not resolved_function_id:
+    if resolved_agent == "omniflow":
+        # A direct Function call is the fast path, not a planner-free mode.
+        # If transfer or Function execution fails, the same episode must
+        # continue with the normal GUI planner instead of terminating before
+        # fallback can be constructed.
         planner_provider, model = _resolve_planner_provider_and_model(
             planner_provider,
             model,
@@ -1438,7 +1442,7 @@ def build_task_command(
     # silently falling back to AndroidWorld-native observe/act when the
     # campaign requested OOB transport.
     control_backend = str(
-        os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "androidworld")
+        os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "oob")
     ).strip().lower() or "androidworld"
     if resolved_agent == "omniflow":
         env["OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND"] = control_backend
@@ -1498,13 +1502,12 @@ def build_task_command(
                     ),
                 ]
             )
-        elif planner_provider.strip():
+        if planner_provider.strip():
             argv.extend(["--planner-provider", planner_provider.strip()])
-        if not resolved_function_id and model.strip():
+        if model.strip():
             argv.extend(["--model", model.strip()])
         if (
-            not resolved_function_id
-            and planner_timeout_sec is not None
+            planner_timeout_sec is not None
             and float(planner_timeout_sec) > 0
         ):
             argv.extend(["--planner-timeout-sec", str(float(planner_timeout_sec))])
@@ -1586,6 +1589,91 @@ def build_task_command(
             "uses_action_transfer": True,
         },
     )
+
+
+def _canonical_function_source_call(
+    store_path: str | Path,
+) -> tuple[str, dict[str, Any]]:
+    """Resolve the one source call that owns a canonical Function Store.
+
+    The formal scheduler passes the Store path to the atomic result runner. A
+    Store alone is not enough to select direct Function execution: the
+    function id and its arguments are part of the Store's source-call
+    contract. Keeping this resolution here makes every formal OmniFlow result
+    use the same direct-function path as source qualification.
+    """
+
+    store = FunctionStore(resolve_path(store_path))
+    if store.load_errors:
+        raise ValueError(
+            "omniflow_function_store_invalid:"
+            + ",".join(sorted(store.load_errors))
+        )
+    if len(store.source_calls) != 1:
+        raise ValueError("omniflow_function_source_call_invalid")
+    source_call = store.source_calls[0]
+    function_id = str(source_call.get("function_id") or "").strip()
+    arguments = source_call.get("arguments")
+    if not function_id or not isinstance(arguments, dict):
+        raise ValueError("omniflow_function_source_call_invalid")
+    if store.get_function(function_id) is None:
+        raise ValueError(f"omniflow_function_source_call_missing:{function_id}")
+    return function_id, dict(arguments)
+
+
+def bind_function_arguments_to_task_params(
+    source_arguments: dict[str, Any],
+    task_params: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Bind dynamic Function inputs to the current evaluation task.
+
+    A Function Store records the arguments used by the successful source
+    episode. Those arguments are not necessarily valid for a target episode:
+    AndroidWorld tasks such as MarkorCreateFolder generate a fresh folder name
+    from the evaluation seed. Only keys already declared by the source call
+    are rebound, so static Function inputs remain unchanged and unrelated task
+    parameters never leak into the Function invocation.
+    """
+
+    bound = dict(source_arguments or {})
+    target = task_params if isinstance(task_params, dict) else {}
+    for key in tuple(bound):
+        if key in target:
+            bound[key] = target[key]
+    return bound
+
+
+def task_goal_for_params(
+    task: str,
+    fallback_goal: str,
+    *,
+    android_world_root: str | Path,
+    task_params: dict[str, Any] | None,
+) -> str:
+    """Render the AndroidWorld task template for one fixed parameter set."""
+
+    params = task_params if isinstance(task_params, dict) else {}
+    if not params:
+        return str(fallback_goal)
+    root = Path(android_world_root).expanduser().resolve()
+    root_text = str(root)
+    if root_text not in sys.path:
+        sys.path.insert(0, root_text)
+    try:
+        from android_world import registry
+
+        task_type = registry.TaskRegistry().get_registry(family="android_world").get(
+            str(task)
+        )
+        template = str(getattr(task_type, "template", "") or "")
+        if template:
+            return template.format(**params)
+    except Exception:
+        # A baseline that cannot render a template retains its archived goal;
+        # the official episode still owns validation and records the exact
+        # task parameters used.
+        pass
+    return str(fallback_goal)
 
 
 def validate_omniflow_transfer_assets(
@@ -1777,7 +1865,7 @@ def seal_mobilegpt_source_memory(
         or any(not isinstance(row, dict) or row.get("matched") is not True for row in validation_rows)
         or sum(int(row.get("consumed_transitions") or 0) for row in validation_rows)
         != transition_count
-        or audit.get("actions_supplied_to_mobilegpt") is not True
+        or audit.get("actions_supplied_to_mobilegpt") is not False
         or audit.get("source_transitions_supplied") is not True
         or audit.get("source_success_boundary_supplied") is not True
         or audit.get("complete") is not True
@@ -1789,7 +1877,11 @@ def seal_mobilegpt_source_memory(
         or official_reader.get("loadable") is not True
         or int(official_reader.get("task_path_pages") or 0) <= 0
         or int(official_reader.get("page_count") or 0) <= 0
-        or int(official_reader.get("action_row_count") or 0) < transition_count
+        # MobileGPT's official authoring may compress several RunLog
+        # observations into one learned action path.  Requiring one action
+        # row per source transition would reintroduce the retired handwritten
+        # conversion contract.
+        or int(official_reader.get("action_row_count") or 0) <= 0
     ):
         raise ValueError("mobilegpt_virtual_memory_official_reader_invalid")
     from src.integrations.mobilegpt import validate_mobilegpt_memory
@@ -1815,17 +1907,17 @@ def seal_mobilegpt_source_memory(
     ]
     if int(stats_summary.get("embedding_model_calls") or 0) <= 0:
         raise ValueError("mobilegpt_memory_embedding_calls_required")
-    if int(stats_summary.get("chat_model_calls") or 0) != 0:
-        raise ValueError("mobilegpt_direct_memory_chat_calls_forbidden")
+    if int(stats_summary.get("chat_model_calls") or 0) <= 0:
+        raise ValueError("mobilegpt_official_learning_chat_calls_missing")
     required_audit = {
-        "conversion_mode": "runlog_direct",
-        "original_mobilegpt_prompts": False,
-        "explore_agent_used": False,
-        "select_agent_used": False,
-        "derive_agent_fallback_allowed": True,
+        "conversion_mode": "official_mobilegpt_learning",
+        "original_mobilegpt_prompts": True,
+        "explore_agent_used": True,
+        "select_agent_used": True,
+        "derive_agent_fallback_allowed": False,
         "generalize_action_used": True,
-        "source_reader_coverage_validation": True,
-        "direct_subtasks_from_runlog": True,
+        "source_reader_coverage_validation": False,
+        "direct_subtasks_from_runlog": False,
     }
     for audit_field, expected in required_audit.items():
         if audit.get(audit_field) != expected:
@@ -1837,20 +1929,10 @@ def seal_mobilegpt_source_memory(
         raise ValueError(
             "mobilegpt_memory_audit_invalid:derive_agent_fallback_count"
         )
-    source_example_fallback_count = audit.get("source_example_fallback_count")
-    if (
-        type(source_example_fallback_count) is not int
-        or source_example_fallback_count < 0
-        or int(official_reader.get("source_reader_coverage_count") or 0)
-        != transition_count
-        or int(official_reader.get("source_example_fallback_count") or 0)
-        != source_example_fallback_count
-    ):
-        raise ValueError(
-            "mobilegpt_memory_audit_invalid:source_reader_coverage"
-        )
+    if int(official_reader.get("official_action_messages") or 0) <= 0:
+        raise ValueError("mobilegpt_memory_audit_invalid:official_action_messages")
 
-    provenance_root = bundle_root / "provenance_mobilegpt_runlog_direct_v1"
+    provenance_root = bundle_root / "provenance_mobilegpt_official_learning_v1"
     provenance_root.mkdir(exist_ok=False)
 
     def copy_evidence(source: Path, name: str) -> Path:
@@ -1913,18 +1995,19 @@ def seal_mobilegpt_source_memory(
             "wall_sec": float(source_wall_sec or 0.0),
         },
         "provenance": {
-            "native_mobilegpt_learning": False,
+            "native_mobilegpt_learning": True,
             "task_local_memory": True,
             "learning_mode": learning_mode,
             "teacher_forcing": False,
-            "synthetic_subtasks": True,
-            "semantic_subtasks": False,
-            "original_mobilegpt_prompts": False,
-            "actions_supplied_to_mobilegpt": True,
+            "synthetic_subtasks": False,
+            "semantic_subtasks": True,
+            "original_mobilegpt_prompts": True,
+            "actions_supplied_to_mobilegpt": False,
             "source_transitions_supplied": True,
             "source_success_boundary_supplied": True,
-            "runlog_transition_compilation": True,
-            "complete_transition_mapping": True,
+            "runlog_transition_compilation": False,
+            "complete_transition_mapping": False,
+            "official_authoring_session": True,
             "official_reader_validation": True,
             "function_store_used": False,
             "function_conversion_enabled": False,
@@ -2236,7 +2319,11 @@ def build_mobilegpt_server_command(
     env["PYTHONUNBUFFERED"] = "1"
     if serial.strip():
         env["ANDROID_SERIAL"] = serial.strip()
-    del runtime_observe_backend
+    normalized_runtime_backend = str(runtime_observe_backend or "androidworld").strip().lower()
+    if normalized_runtime_backend in {"oob_control", "omniflow"}:
+        normalized_runtime_backend = "oob"
+    if normalized_runtime_backend not in {"androidworld", "oob"}:
+        raise ValueError(f"mobilegpt_runtime_observe_backend_invalid:{runtime_observe_backend}")
     if adb_path.strip():
         env["ADB_PATH"] = adb_path.strip()
     resolved_memory_root = (
@@ -2281,12 +2368,24 @@ def build_mobilegpt_server_command(
             workspace=staged,
             embedding_model=embedding_model,
             chat_model=chat_model,
+            use_oob=normalized_runtime_backend == "oob",
+            official_memory_mode=True,
         )
         staged_server_root = Path(forward["server_root"])
         env["MOBILEGPT_STATS_JSONL"] = str(resolve_path(stats_jsonl, root=repo_root))
+        # GLM-4.6V must emit the action/list JSON directly. Disable its
+        # reasoning channel and keep the completion budget small so a slow
+        # reasoning stream cannot turn one action into a long timeout.
+        env["MOBILEGPT_THINKING"] = "disabled"
+        env["MOBILEGPT_MAX_TOKENS"] = "512"
+        env["MOBILEGPT_LIST_MAX_TOKENS"] = "512"
+        env["MOBILEGPT_REQUEST_TIMEOUT_SEC"] = "60"
         env["MOBILEGPT_EMBEDDING_MODEL"] = embedding_model
-        env["MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD"] = "0.90"
-        env["MOBILEGPT_MEMORY_REUSE_STRICT"] = "1"
+        # The official Android client treats ``speak`` as terminal for the
+        # current socket and does not send a new observation.  The staged
+        # Server therefore suppresses intermediate announcements so the next
+        # real device action can be delivered on the same episode.
+        env["MOBILEGPT_SUPPRESS_SPEAK_ACTIONS"] = "1"
         if chat_model:
             env["MOBILEGPT_CHAT_MODEL"] = chat_model
         argv = [
@@ -2740,6 +2839,8 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
                 "model_base_url": row.get("model_base_url"),
                 "artifact_kind": row.get("artifact_kind"),
                 "artifact_ref": row.get("artifact_ref"),
+                "performance_metrics": row.get("performance_metrics"),
+                "performance_sidecar_path": row.get("performance_sidecar_path"),
                 "run_log_path": row.get("run_log_path")
                 or row.get("target_run_log_path"),
                 "target_transfer_states_path": row.get("target_transfer_states_path"),
@@ -4031,6 +4132,66 @@ def _mobilegpt_target_package_from_open_target_app(open_target_app: str) -> str:
     return value
 
 
+def _resolve_mobilegpt_target_package(
+    candidate: str,
+    *,
+    adb_path: str,
+    serial: str,
+) -> str:
+    """Resolve an AndroidWorld app alias to the installed package name."""
+
+    value = str(candidate or "").strip()
+    if not value or "." in value:
+        return value
+    # AndroidWorld names the camera app ``Camera`` while the official
+    # emulator package is ``com.android.camera2``. Suffix matching cannot
+    # infer this because ``camera2`` does not end in ``camera``; keep this
+    # explicit mapping in the single target-package resolver so every
+    # official MobileGPT device receives a launchable package.
+    known_aliases = {
+        "camera": "com.android.camera2",
+    }
+    value = known_aliases.get(value.casefold(), value)
+    try:
+        completed = subprocess.run(
+            [
+                str(adb_path or "adb"),
+                "-s",
+                str(serial),
+                "shell",
+                "pm",
+                "list",
+                "packages",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=20.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return value
+    packages = [
+        line.split(":", 1)[1].strip()
+        for line in completed.stdout.splitlines()
+        if line.strip().startswith("package:") and ":" in line
+    ]
+    matches = [
+        package
+        for package in packages
+        if package.casefold().endswith("." + value.casefold())
+        or package.casefold() == value.casefold()
+        or package.rsplit(".", 1)[-1].casefold().endswith(value.casefold())
+    ]
+    return matches[0] if len(matches) == 1 else value
+
+
+def _mobilegpt_server_task_app(memory_app: str, target_package: str) -> str:
+    """Return the app key used by the official Memory task database."""
+
+    return str(memory_app or "").strip() or str(target_package or "").strip()
+
+
 def _start_background_command(
     spec: CommandSpec,
     *,
@@ -4617,6 +4778,21 @@ def _result_summary_rows(
                     "mobilegpt_task_finished_count": episode_fields[
                         "episode_task_finished_count"
                     ],
+                    "memory_lookup_count": episode_fields[
+                        "episode_memory_lookup_count"
+                    ],
+                    "memory_hit_count": episode_fields["episode_memory_hit_count"],
+                    "memory_hit_rate": episode_fields["episode_memory_hit_rate"],
+                    "memory_hit": (
+                        episode_fields["episode_memory_hit_count"] > 0
+                    ),
+                    "memory_covered_steps": episode_fields[
+                        "episode_memory_hit_count"
+                    ],
+                    "memory_total_steps": episode_fields[
+                        "episode_memory_lookup_count"
+                    ],
+                    "fallback_steps": episode_fields["episode_fallback_count"],
                     "episode_task_elapsed_status": (
                         "complete"
                         if episode_fields["episode_task_finished_count"] > 0
@@ -4962,6 +5138,13 @@ def build_mobilegpt_command(
         adb_path=adb_path,
     )
     client_output = resolved_output / "official_client"
+    effective_params = dict(task_params_override or item.params or {})
+    instruction = task_goal_for_params(
+        item.task,
+        item.goal,
+        android_world_root=android_world_root,
+        task_params=effective_params,
+    )
     client_argv = [
         sys.executable,
         "-m",
@@ -4977,7 +5160,7 @@ def build_mobilegpt_command(
         "--host",
         client_host,
         "--instruction",
-        item.goal,
+        instruction,
         "--output",
         str(client_output),
         "--timeout",
@@ -4988,8 +5171,8 @@ def build_mobilegpt_command(
         item.task,
         "--task-params-json",
         json.dumps(
-            dict(task_params_override or item.params)
-            if fixed_task_params
+            effective_params
+            if (fixed_task_params or task_params_override is not None)
             else {},
             ensure_ascii=False,
             separators=(",", ":"),
@@ -5015,6 +5198,12 @@ def build_mobilegpt_command(
         env={
             "ANDROID_SERIAL": target.serial,
             "MOBILEGPT_STATS_JSONL": str(resolve_path(stats_jsonl, root=repo_root)),
+            "MOBILEGPT_TARGET_PACKAGE": str(target_package or "").strip(),
+            "MOBILEGPT_APP_READY_TIMEOUT_SEC": str(float(app_ready_timeout_sec)),
+            # MobileGPT owns its official Accessibility client and socket
+            # transport. Do not let the parent OmniFlow campaign's OOB
+            # setting leak into this subprocess.
+            "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND": "androidworld",
         },
         cwd=repo_root,
         output_path=resolved_output,
@@ -5098,6 +5287,14 @@ def build_appagent_command(
     model = str(model or runtime_env.get("OPENAI_MODEL") or "").strip()
     from src.integrations.official_forward import prepare_appagent_workspace
 
+    effective_params = dict(task_params_override or item.params or {})
+    goal = task_goal_for_params(
+        item.task,
+        item.goal,
+        android_world_root=android_world_root,
+        task_params=effective_params,
+    )
+
     forward = prepare_appagent_workspace(
         official_root=resolved_appagent_root,
         docs_root=resolved_docs_root,
@@ -5110,7 +5307,8 @@ def build_appagent_command(
             "OPENAI_API_BASE": endpoint,
             "OPENAI_API_KEY": str(runtime_env.get("OPENAI_API_KEY") or ""),
             "OPENAI_API_MODEL": model,
-            "MAX_TOKENS": 1024,
+            "MAX_TOKENS": 512,
+            "THINKING": "disabled",
             "TEMPERATURE": 0.0,
             "REQUEST_INTERVAL": 0.0,
             "DASHSCOPE_API_KEY": "",
@@ -5140,7 +5338,7 @@ def build_appagent_command(
         "--output",
         str(resolved_output),
         "--goal",
-        item.goal,
+        goal,
         "--timeout",
         str(float(timeout_sec)),
         "--android-world-root",
@@ -5149,8 +5347,8 @@ def build_appagent_command(
         item.task,
         "--task-params-json",
         json.dumps(
-            dict(task_params_override or item.params)
-            if fixed_task_params
+            effective_params
+            if (fixed_task_params or task_params_override is not None)
             else {},
             ensure_ascii=False,
             separators=(",", ":"),
@@ -5599,6 +5797,11 @@ def _run_result_mobilegpt(
                     expected_digest=str(frozen_memory.get("digest") or ""),
                     expected_file_count=int(frozen_memory.get("file_count") or 0),
                 )
+            device_target_package = _resolve_mobilegpt_target_package(
+                target_package,
+                adb_path=str(args.adb_path or ""),
+                serial=target.serial,
+            )
             server_spec = build_mobilegpt_server_command(
                 "server",
                 mobilegpt_root=args.mobilegpt_root,
@@ -5609,8 +5812,17 @@ def _run_result_mobilegpt(
                 port=int(args.mobilegpt_port),
                 serial=target.serial,
                 adb_path=args.adb_path,
-                target_package=target_package,
-                target_app=target_app,
+                target_package=device_target_package,
+                # ``target_package`` is the installed Android package.  The
+                # official Memory reader, however, indexes its task CSV by
+                # the source memory app name (for example ``markor``).  Keep
+                # those two identities separate so the reader opens the
+                # sealed RunLog task path instead of an empty package-named
+                # task database.
+                target_app=_mobilegpt_server_task_app(
+                    target_app,
+                    device_target_package,
+                ),
                 target_task_name=args.task,
                 runtime_observe_backend="androidworld",
             )
@@ -5676,7 +5888,7 @@ def _run_result_mobilegpt(
                     mobilegpt_root=args.mobilegpt_root,
                     server_host=args.mobilegpt_server_host,
                     server_port=int(args.mobilegpt_port),
-                    target_package=target_package,
+                    target_package=device_target_package,
                     max_steps=int(args.max_steps or MAX_STEPS),
                     task_random_seed=task_seed,
                     fixed_task_seed=not bool(args.no_fixed_task_seed),
@@ -5840,6 +6052,12 @@ def run_task(args: argparse.Namespace) -> int:
     )
     attempt_id = attempt_root.name
     task_params_override = _task_params_override_from_args(args)
+    function_arguments_override: dict[str, Any] | None = None
+    if str(getattr(args, "function_arguments_json", "") or "").strip():
+        decoded_function_arguments = json.loads(str(args.function_arguments_json))
+        if not isinstance(decoded_function_arguments, dict):
+            raise ValueError("--function-arguments-json must be a JSON object")
+        function_arguments_override = dict(decoded_function_arguments)
     task_seed = (
         random.randint(1, 2**31 - 1)
         if bool(args.random_task_seed)
@@ -5894,8 +6112,15 @@ def run_task(args: argparse.Namespace) -> int:
                     f"--store-path is required when result includes {method}"
                 )
             store_path = resolve_path(store_text)
+            function_id, function_arguments = _canonical_function_source_call(
+                store_path
+            )
+            if function_arguments_override is not None:
+                function_arguments = dict(function_arguments_override)
         else:
             store_path = memory_root / "unused-store.json"
+            function_id = ""
+            function_arguments = None
 
         if method == "omniflow":
             transfer_asset_audit: dict[str, Any] = {}
@@ -6244,6 +6469,8 @@ def run_task(args: argparse.Namespace) -> int:
                     planner_timeout_sec=args.planner_timeout_sec,
                     store_path=store_path,
                     omnitransfer_root=args.omnitransfer_root,
+                    function_id=function_id,
+                    function_arguments=function_arguments,
                 )
             spec.metadata["memory_root"] = str(memory_root)
             if appagent_prep:
@@ -6357,6 +6584,7 @@ def run_task(args: argparse.Namespace) -> int:
             local_data_index=(
                 configured_index
                 if configured_index and configured_index.name == "current.json"
+                and os.environ.get("OMNIFLOW_BATCH_DEFER_INDEX_REFRESH") != "1"
                 else None
             ),
         )
@@ -6469,6 +6697,14 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Override archived task params with this JSON object.",
     )
+    result_parser.add_argument(
+        "--function-arguments-json",
+        default="",
+        help=(
+            "Override canonical source-call arguments for this evaluation. "
+            "The scheduler uses this only to bind dynamic task parameters."
+        ),
+    )
     result_parser.add_argument("--planner-provider", default="")
     result_parser.add_argument("--model", default="")
     result_parser.add_argument(
@@ -6477,7 +6713,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Model passed to the official AppAgent task-execution subprocess.",
     )
     result_parser.add_argument(
-        "--planner-timeout-sec", type=float, default=STEP_TIMEOUT_SEC
+        "--planner-timeout-sec",
+        type=float,
+        default=float(
+            os.environ.get("OMNIFLOW_ANDROIDWORLD_PLANNER_TIMEOUT_SEC")
+            or os.environ.get("OMNIFLOW_PLANNER_TIMEOUT_SEC")
+            or 180.0
+        ),
     )
     _add_androidworld_setup_args(result_parser)
     result_parser.add_argument(

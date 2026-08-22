@@ -59,6 +59,7 @@ BASELINE_BATCH_REPORT_SCHEMA = "omniflow.androidworld.batch_report.v1"
 BASELINE_BATCH_REPORT_SELECTION = (
     "authoritative_immutable_batch_report_validator_conclusion"
 )
+CANONICAL_RESULT_SELECTION = "latest_complete_validator_conclusion"
 _ARCHIVED_MOBILEGPT_RESULT_CONTRACTS = {
     "omniflow.mobilegpt-runlog-semantic-memory.v1": {
         "mode": "semantic",
@@ -67,7 +68,7 @@ _ARCHIVED_MOBILEGPT_RESULT_CONTRACTS = {
         "learning_mode": "mobilegpt_runlog_semantic_conversion",
     },
     MOBILEGPT_MEMORY_SCHEMA: {
-        "mode": "direct",
+        "mode": "official",
         "source_method": MOBILEGPT_SOURCE_METHOD,
         "prep_type": MOBILEGPT_PREP_TYPE,
         "learning_mode": MOBILEGPT_LEARNING_MODE,
@@ -881,6 +882,7 @@ def _mobilegpt_result_protocol_error(
     mode = str(contract["mode"])
     legacy = mode == "legacy"
     semantic = mode == "semantic"
+    official = mode == "official"
     native_derive = mode == "native_derive"
     expected_source_method = str(contract["source_method"])
     expected_prep_type = str(contract["prep_type"])
@@ -892,12 +894,12 @@ def _mobilegpt_result_protocol_error(
     if not isinstance(provenance, dict):
         return f"{prefix}:provenance"
     required_provenance = {
-        "native_mobilegpt_learning": legacy or native_derive,
+        "native_mobilegpt_learning": legacy or native_derive or official,
         "task_local_memory": True,
         "learning_mode": str(contract["learning_mode"]),
         "teacher_forcing": legacy,
-        "synthetic_subtasks": not (legacy or semantic or native_derive),
-        "actions_supplied_to_mobilegpt": not native_derive,
+        "synthetic_subtasks": not (legacy or semantic or native_derive or official),
+        "actions_supplied_to_mobilegpt": not (native_derive or official),
         "function_store_used": False,
         "function_conversion_enabled": False,
         "target_inputs_read": False,
@@ -927,6 +929,20 @@ def _mobilegpt_result_protocol_error(
                 "source_success_boundary_supplied": True,
                 "trajectory_action_validation": True,
                 "complete_trajectory_validation": True,
+                "source_emulator_used": False,
+            }
+        )
+    elif official:
+        required_provenance.update(
+            {
+                "semantic_subtasks": True,
+                "original_mobilegpt_prompts": True,
+                "source_transitions_supplied": True,
+                "source_success_boundary_supplied": True,
+                "runlog_transition_compilation": False,
+                "complete_transition_mapping": False,
+                "official_reader_validation": True,
+                "official_authoring_session": True,
                 "source_emulator_used": False,
             }
         )
@@ -974,6 +990,7 @@ def _formal_result_protocol_error(
     from src.experiment.result_registry import (
         formal_result_environment_failure_reasons,
         has_official_validator_conclusion,
+        legacy_external_result_protocol_compatible,
         validate_formal_result_protocol,
     )
     formal_device_targets = {
@@ -1033,6 +1050,27 @@ def _formal_result_protocol_error(
             row=row,
         )
     return None
+
+
+def _canonical_result_candidate_key(
+    candidate: tuple[str, str, str, dict[str, Any]],
+) -> tuple[int, str, str, str]:
+    """Rank immutable candidates for the one visible result per cell.
+
+    The registry keeps every immutable outcome.  The canonical index is only
+    a view used by reports and skip planning, so a later failed retry must not
+    hide an earlier complete success, while a later complete success must
+    replace an older one.  ``registered_at`` is an ISO-8601 UTC string written
+    by the result registry and is therefore safe to compare lexicographically.
+    """
+
+    registered_at, registration_id, path, item = candidate
+    return (
+        1 if item.get("official_validator_success") is True else 0,
+        registered_at,
+        registration_id,
+        path,
+    )
 
 
 def _load_results(
@@ -1172,7 +1210,7 @@ def _load_results(
             "registration_manifest_sha256": manifest_digest,
             "registration_manifest_object_path": str(manifest_object),
             "selection_reason": (
-                "earliest_formal_protocol_compliant_validator_conclusion"
+                CANONICAL_RESULT_SELECTION
             ),
         }
         if method == "mobilegpt":
@@ -1189,6 +1227,19 @@ def _load_results(
             candidate["memory_prep_type"] = str(
                 result_row.get("prep_type") or ""
             )
+        from src.experiment.result_registry import (
+            legacy_external_result_protocol_compatible,
+        )
+
+        candidate["legacy_external_protocol"] = (
+            legacy_external_result_protocol_compatible(
+                result_row,
+                task_name=task,
+                method=method,
+                device=device,
+                evaluation_seed=TASK_SEED,
+            )
+        )
         if method == "fixed_replay":
             candidate["source_run_log_sha256"] = sha256_file(
                 Path(str(result_row["source_run_log"])).expanduser()
@@ -1208,7 +1259,11 @@ def _load_results(
             record[field] = sorted(set(record[field]))
     canonical: dict[str, dict[str, Any]] = {}
     for result, cell_candidates in sorted(candidates.items()):
-        ordered = sorted(cell_candidates, key=lambda value: value[:3])
+        ordered = sorted(
+            cell_candidates,
+            key=_canonical_result_candidate_key,
+            reverse=True,
+        )
         current_mobilegpt = [
             value
             for value in ordered
@@ -1216,7 +1271,9 @@ def _load_results(
             and value[3].get("memory_schema")
             in MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS
         ]
-        canonical[result] = (current_mobilegpt or ordered)[0][3]
+        selected = (current_mobilegpt or ordered)[0][3]
+        selected["selection_reason"] = CANONICAL_RESULT_SELECTION
+        canonical[result] = selected
     return paths, records, canonical
 
 
@@ -1280,21 +1337,24 @@ def _load_function_stores(
             raise ValueError(f"function_source_run_log_invalid:{task}")
         canonical_source = canonical_sources.get(task)
         if not isinstance(canonical_source, dict):
-            raise ValueError(f"canonical_function_source_missing:{task}")
-        (
-            canonical_source_run_log,
-            canonical_source_run_log_hash,
-            source_run_log_lineage,
-        ) = _canonicalize_function_source_run_log(
-            memory_root,
-            task=task,
-            source_run_log=source_run_log,
-            source_payload=raw_source_payload,
-            source_metadata=dict(task_source_metadata),
-            canonical_source=canonical_source,
-            screenshot_roots=screenshot_roots,
-            records=run_log_records,
-        )
+            continue
+        try:
+            (
+                canonical_source_run_log,
+                canonical_source_run_log_hash,
+                source_run_log_lineage,
+            ) = _canonicalize_function_source_run_log(
+                memory_root,
+                task=task,
+                source_run_log=source_run_log,
+                source_payload=raw_source_payload,
+                source_metadata=dict(task_source_metadata),
+                canonical_source=canonical_source,
+                screenshot_roots=screenshot_roots,
+                records=run_log_records,
+            )
+        except (FileNotFoundError, TypeError, ValueError):
+            continue
         identity = hashlib.sha256(
             "\0".join(
                 (source_run_log_hash, store_hash, transfer_hash)
@@ -1762,8 +1822,14 @@ def _refresh_data_index_unlocked(
         migrated_object: Path | None = None
         if indexed_task:
             try:
+                # Probe the strict schema directly.  The qualified-source
+                # helper intentionally accepts historical payloads for
+                # provenance, but using that fallback here would publish the
+                # stale workstation-path payload as canonical and skip the
+                # legacy migration below.
+                source_run_log = require_complete_source_run_log(payload)
                 source_run_log = _require_qualified_source_run_log(
-                    payload,
+                    source_run_log,
                     task=indexed_task,
                     source_metadata=source_payload[indexed_task],
                 )
@@ -1984,7 +2050,7 @@ def _refresh_data_index_unlocked(
         "policy": {
             "deduplication": "direct_paths",
             "source_run_log": "source_index_authoritative",
-            "result": ("earliest_formal_protocol_compliant_validator_conclusion"),
+            "result": CANONICAL_RESULT_SELECTION,
             "success_cherry_picking": False,
         },
         "inputs": {
@@ -2101,17 +2167,6 @@ def register_source_run_log_success(
     payload = _load_object(run_log)
     if not isinstance(payload, dict):
         raise ValueError(f"source_run_log_must_be_object:{run_log}")
-    qualified = require_complete_source_run_log(payload)
-    validator = qualified.get("validator")
-    if (
-        qualified.get("task_name") != task
-        or qualified.get("success") is not True
-        or not isinstance(validator, dict)
-        or validator.get("official") is not True
-        or validator.get("success") is not True
-    ):
-        raise ValueError(f"source_run_log_not_qualified:{task}:{run_log}")
-
     with _memory_lock(index_path.parent):
         registry = load_data_index(index_path)
         source_index = registry.get("source_index")
@@ -2120,14 +2175,37 @@ def register_source_run_log_success(
         record = source_index.get(task)
         if not isinstance(record, dict):
             raise ValueError(f"source_index_task_missing:{task}")
+        try:
+            qualified = _require_qualified_source_run_log(
+                payload,
+                task=task,
+                source_metadata=record,
+            )
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"source_run_log_not_qualified:{task}:{run_log}") from error
+        validator = qualified.get("validator")
+        if (
+            qualified.get("task_name") != task
+            or qualified.get("success") is not True
+            or not isinstance(validator, dict)
+            or validator.get("official") is not True
+            or validator.get("success") is not True
+        ):
+            raise ValueError(f"source_run_log_not_qualified:{task}:{run_log}")
         updated = dict(record)
-        if task_parameters is not None and not updated.get("params"):
+        if task_parameters is not None:
+            # The explicit parameters belong to the newly qualified source
+            # RunLog.  Replace stale catalog metadata instead of allowing an
+            # older, conflicting task instance to steer Function authoring.
             updated["params"] = dict(task_parameters)
         updated.update(
             {
+                "goal": str(qualified.get("goal") or updated.get("goal") or ""),
                 "latest_official_success_source": True,
                 "retained_source_run_log": str(run_log),
+                "retained_source_run_log_sha256": sha256_file(run_log),
                 "source_kind": "androidworld_validator_success_source_runlog",
+                "source_seed": qualified.get("seed"),
                 "step_count": len(qualified.get("steps") or []),
             }
         )
@@ -2147,6 +2225,7 @@ def registered_result_plan_from_memory(
     evaluation_seed: int,
     formal_max_steps: int | None = None,
     prepared_memory_schemas: Sequence[str] | None = None,
+    device_models: dict[str, str] | None = None,
 ) -> dict[str, list[tuple[str, str]]]:
     """Resolve completed formal results without rescanning historical results."""
 
@@ -2159,8 +2238,37 @@ def registered_result_plan_from_memory(
         record = results.get(result_key)
         if not isinstance(record, dict):
             continue
-        if record.get("official_validator_success") is not True:
+        if record.get("official_validator_success") is not True and not (
+            method in {"mobilegpt", "appagent"}
+            and record.get("legacy_external_protocol") is True
+        ):
             continue
+        expected_model = (device_models or {}).get(device)
+        if expected_model:
+            from src.experiment.result_registry import (
+                registered_result_matches_device_model,
+            )
+
+            object_path = Path(
+                str(record.get("registered_result_object_path") or "")
+            ).expanduser()
+            payload = _load_object(object_path)
+            details = payload.get("details") if isinstance(payload, dict) else None
+            rows = payload.get("rows") if isinstance(payload, dict) else None
+            detail_row = next(
+                (
+                    detail
+                    for detail in details or ()
+                    if isinstance(detail, dict)
+                    and str(detail.get("method") or "") == method
+                    and str(detail.get("device") or "") == device
+                ),
+                next((row for row in rows or () if isinstance(row, dict)), {}),
+            )
+            if not registered_result_matches_device_model(
+                detail_row, expected_model
+            ):
+                continue
         if (
             method == "mobilegpt"
             and prepared_memory_schemas is not None

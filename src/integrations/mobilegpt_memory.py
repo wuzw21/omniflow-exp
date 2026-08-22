@@ -752,18 +752,19 @@ def _validate_mobilegpt_converted_memory(
     if not isinstance(provenance, dict):
         raise ValueError("mobilegpt_virtual_memory_provenance_missing")
     required_provenance = {
-        "native_mobilegpt_learning": False,
+        "native_mobilegpt_learning": True,
         "task_local_memory": True,
         "learning_mode": schema_learning_mode,
         "teacher_forcing": False,
-        "synthetic_subtasks": True,
-        "semantic_subtasks": False,
-        "original_mobilegpt_prompts": False,
-        "actions_supplied_to_mobilegpt": True,
+        "synthetic_subtasks": False,
+        "semantic_subtasks": True,
+        "original_mobilegpt_prompts": True,
+        "actions_supplied_to_mobilegpt": False,
         "source_transitions_supplied": True,
         "source_success_boundary_supplied": True,
-        "runlog_transition_compilation": True,
-        "complete_transition_mapping": True,
+        "runlog_transition_compilation": False,
+        "complete_transition_mapping": False,
+        "official_authoring_session": True,
         "official_reader_validation": True,
         "function_store_used": False,
         "function_conversion_enabled": False,
@@ -857,7 +858,7 @@ def _validate_mobilegpt_converted_memory(
         or any(not isinstance(row, dict) for row in validation_rows)
         or sum(int(row.get("consumed_transitions") or 0) for row in validation_rows)
         != transition_count
-        or audit.get("actions_supplied_to_mobilegpt") is not True
+        or audit.get("actions_supplied_to_mobilegpt") is not False
         or audit.get("source_transitions_supplied") is not True
         or audit.get("source_success_boundary_supplied") is not True
         or audit.get("complete") is not True
@@ -869,7 +870,9 @@ def _validate_mobilegpt_converted_memory(
         or official_reader.get("loadable") is not True
         or int(official_reader.get("task_path_pages") or 0) <= 0
         or int(official_reader.get("page_count") or 0) <= 0
-        or int(official_reader.get("action_row_count") or 0) < transition_count
+        # Official authoring is allowed to compress source transitions into
+        # its own task path; only a non-empty official action graph is needed.
+        or int(official_reader.get("action_row_count") or 0) <= 0
     ):
         raise ValueError("mobilegpt_virtual_memory_official_reader_invalid")
     success_boundary = audit.get("source_success_boundary")
@@ -892,8 +895,8 @@ def _validate_mobilegpt_converted_memory(
         or int(stats_summary.get("task_finished_count") or 0) != 1
     ):
         raise ValueError("mobilegpt_virtual_memory_task_lifecycle_incomplete")
-    if int(stats_summary.get("chat_model_calls") or 0) != 0:
-        raise ValueError("mobilegpt_memory_chat_calls_forbidden")
+    if int(stats_summary.get("chat_model_calls") or 0) <= 0:
+        raise ValueError("mobilegpt_official_learning_chat_calls_missing")
     return {
         "manifest": manifest,
         "manifest_path": str(manifest_path),
