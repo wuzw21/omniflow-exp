@@ -91,8 +91,22 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
     rows = list(_iter_jsonl_rows(stats_path))
     chat_rows = [row for row in rows if row.get("event") == "chat_call"]
     embedding_rows = [row for row in rows if row.get("event") == "embedding_call"]
-    finished_rows = [row for row in rows if row.get("event") == "task_finished"]
-    started_rows = [row for row in rows if row.get("event") == "task_started"]
+    # The official learning bridge emits one wrapper lifecycle marker and one
+    # MobileGPT task lifecycle marker.  Only the instruction-bearing marker is
+    # the actual task boundary; counting both makes a valid session look like
+    # two tasks and prevents memory sealing.
+    finished_rows = [
+        row
+        for row in rows
+        if row.get("event") == "task_finished"
+        and str(row.get("instruction") or "").strip()
+    ]
+    started_rows = [
+        row
+        for row in rows
+        if row.get("event") == "task_started"
+        and str(row.get("instruction") or "").strip()
+    ]
     teacher_rows = [
         row
         for row in rows
