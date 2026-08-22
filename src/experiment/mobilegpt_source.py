@@ -30,7 +30,7 @@ from src.integrations.mobilegpt import (
     write_conversion_failure_audit,
 )
 from src.integrations import mobilegpt_memory
-from src.integrations.runlog import import_run_log
+from src.integrations.runlog import adapt_source_run_log, import_run_log
 
 _IGNORED_SOURCE_PACKAGES = {
     "com.android.systemui",
@@ -72,9 +72,7 @@ def load_canonical_source_item(
         raise FileNotFoundError(
             f"mobilegpt_source_runlog_missing:{item.source_run_log}"
         )
-    canonical = import_run_log(
-        json.loads(item.source_run_log.read_text(encoding="utf-8"))
-    )
+    canonical = _load_mobilegpt_source_payload(item)
     if (
         canonical.get("status") != "succeeded"
         or canonical.get("success") is not True
@@ -84,6 +82,35 @@ def load_canonical_source_item(
             f"mobilegpt_source_runlog_not_successful:task={task_name}"
         )
     return item
+
+
+def _load_mobilegpt_source_payload(item: CanonicalRunLog) -> dict[str, Any]:
+    """Read canonical source evidence, upgrading only legacy boundary input."""
+
+    source_path = item.source_run_log
+    raw = json.loads(source_path.read_text(encoding="utf-8"))
+    steps = raw.get("steps")
+    legacy_steps = isinstance(steps, list) and any(
+        isinstance(step, dict)
+        and any(
+            key in step
+            for key in ("before_state_id", "after_state_id", "observation_before_act")
+        )
+        for step in steps
+    )
+    if raw.get("schema_version") == "omniflow.run_log.v1" and not legacy_steps:
+        return import_run_log(raw)
+
+    screenshot_root = source_path.parent / "observations" / "objects"
+    return adapt_source_run_log(
+        raw,
+        task_name=item.task,
+        task_parameters=dict(item.params),
+        seed=int(item.replay_seed),
+        source_path=source_path,
+        screenshot_roots=(screenshot_root, source_path.parent),
+        require_screenshots=True,
+    )
 
 
 def _mobilegpt_source_target(
@@ -165,9 +192,7 @@ def _source_preflight(
 ) -> tuple[Path, tuple[str, ...], dict[str, Any], dict[str, str]]:
     source_run_log = item.source_run_log
     source_sha256 = sha256_file(source_run_log)
-    source = import_run_log(
-        json.loads(source_run_log.read_text(encoding="utf-8"))
-    )
+    source = _load_mobilegpt_source_payload(item)
     target_info = _mobilegpt_source_target(item=item, source=source)
     report = preflight_runlog_conversion(
         source_run_log,
@@ -361,7 +386,23 @@ def convert_runlog_to_mobilegpt_bundle(
         str(embedding_model or "").strip() or MOBILEGPT_EMBEDDING_MODEL
     )
     source_path = Path(source_run_log).expanduser().resolve()
-    source = import_run_log(json.loads(source_path.read_text(encoding="utf-8")))
+    raw_source = json.loads(source_path.read_text(encoding="utf-8"))
+    source = adapt_source_run_log(
+        raw_source,
+        task_name=str(raw_source.get("task_name") or ""),
+        task_parameters=dict(raw_source.get("task_parameters") or {}),
+        seed=(
+            int(raw_source["seed"])
+            if type(raw_source.get("seed")) is int
+            else SOURCE_SEED
+        ),
+        source_path=source_path,
+        screenshot_roots=(
+            source_path.parent / "observations" / "objects",
+            source_path.parent,
+        ),
+        require_screenshots=True,
+    )
     if (
         source.get("status") != "succeeded"
         or source.get("success") is not True
@@ -394,6 +435,11 @@ def convert_runlog_to_mobilegpt_bundle(
             f"immutable_mobilegpt_source_attempt_exists:{bundle_root}"
         )
     bundle_root.mkdir(parents=True)
+    canonical_source_path = bundle_root / "source_run_log.json"
+    canonical_source_path.write_text(
+        json.dumps(source, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     preflight_path = bundle_root / "conversion_preflight.json"
     preflight_path.write_text(
         json.dumps(source_audit, ensure_ascii=False, indent=2) + "\n",
@@ -436,7 +482,7 @@ def convert_runlog_to_mobilegpt_bundle(
     )
     sealed = pipeline.seal_mobilegpt_source_memory(
         memory_root=memory_root,
-        source_run_log=source_path,
+        source_run_log=canonical_source_path,
         source_stats=stats_path,
         trajectory_audit=audit_path,
         task_name=str(source["task_name"]),
@@ -452,7 +498,7 @@ def convert_runlog_to_mobilegpt_bundle(
         "method": "mobilegpt",
         "task_name": str(source["task_name"]),
         "source_seed": SOURCE_SEED,
-        "source_run_log": str(source_path),
+        "source_run_log": str(canonical_source_path),
         "model": normalized_model,
         "embedding_model": normalized_embedding_model,
         "memory_root": str(memory_root),

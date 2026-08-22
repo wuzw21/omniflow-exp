@@ -33,7 +33,11 @@ from src.integrations.android_world.host import (
     androidworld_observation_xml,
 )
 from src.integrations.mobilegpt_format import encode_xml
-from src.integrations.runlog import import_run_log, infer_input_text_target
+from src.integrations.runlog import (
+    adapt_source_run_log,
+    import_run_log,
+    infer_input_text_target,
+)
 from omniflow.core.model import Action
 from omniflow.transfer.runtime import load_transfer_state_catalog
 
@@ -526,7 +530,34 @@ def _load_runlog_trajectory(
             target_package=target_package,
             target_app=target_app,
         )
-    payload = import_run_log(raw_payload)
+    raw_steps = raw_payload.get("steps")
+    legacy_steps = isinstance(raw_steps, list) and any(
+        isinstance(step, dict)
+        and any(
+            key in step
+            for key in ("before_state_id", "after_state_id", "observation_before_act")
+        )
+        for step in raw_steps
+    )
+    if raw_payload.get("schema_version") == "omniflow.run_log.v1" and legacy_steps:
+        payload = adapt_source_run_log(
+            raw_payload,
+            task_name=str(raw_payload.get("task_name") or ""),
+            task_parameters=dict(raw_payload.get("task_parameters") or {}),
+            seed=(
+                int(raw_payload["seed"])
+                if type(raw_payload.get("seed")) is int
+                else None
+            ),
+            source_path=path,
+            screenshot_roots=(
+                path.parent / "observations" / "objects",
+                path.parent,
+            ),
+            require_screenshots=True,
+        )
+    else:
+        payload = import_run_log(raw_payload)
     if payload.get("status") != "succeeded" or payload.get("success") is not True:
         raise MobileGPTConversionError("source_runlog_not_successful", path=str(path))
 

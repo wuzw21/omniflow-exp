@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import mimetypes
 from pathlib import Path
@@ -498,6 +499,7 @@ def convert_legacy_run_log(
             "kind": "legacy_import",
             "source_path": str(source),
             "source_schema_version": source_schema,
+            "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
         },
         "steps": converted_steps,
     }
