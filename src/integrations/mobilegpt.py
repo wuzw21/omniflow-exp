@@ -1708,13 +1708,6 @@ def convert_runlog_to_mobilegpt_memory(
                 raise MobileGPTConversionError(
                     "mobilegpt_generalize_action_unavailable"
                 ) from error
-        if embedding_provider is None:
-            from utils.utils import get_openai_embedding
-
-            embed = get_openai_embedding
-        else:
-            embed = embedding_provider
-
         task_name = str(trajectory["task_name"] or "").strip()
         app_name = str(trajectory["target_app"] or trajectory["target_package"]).strip()
         if not task_name:
@@ -1742,6 +1735,7 @@ def convert_runlog_to_mobilegpt_memory(
         xml_root = log_root / "xmls"
         xml_root.mkdir(parents=True, exist_ok=True)
         pages_by_identity: dict[str, dict[str, Any]] = {}
+        source_screen_artifacts: dict[int, dict[str, Path]] = {}
         task_path: dict[str, list[str]] = {}
         official_task_path_records: list[dict[str, Any]] = []
         for screen_index, transition in enumerate(encoded_transitions):
@@ -1772,9 +1766,6 @@ def convert_runlog_to_mobilegpt_memory(
             page = pages_by_identity.get(identity)
             if page is None:
                 page_index = len(pages_by_identity)
-                page_root = memory / app_name / "pages" / str(page_index)
-                screen_root = page_root / "screen"
-                screen_root.mkdir(parents=True)
                 artifacts = {
                     "raw.xml": raw_path,
                     "html.xml": xml_root / f"{screen_index}_encoded.xml",
@@ -1789,49 +1780,24 @@ def convert_runlog_to_mobilegpt_memory(
                             "source_screen_artifact_missing",
                             step_index=transition.step_index,
                             artifact=name,
-                    )
-                    shutil.copy2(source, screen_root / name)
-                embedding_started = time.monotonic()
-                if embedding_provider is None:
-                    embedding = [
-                        float(value)
-                        for value in embed(
-                            hierarchy_xml,
-                            model=normalized_embedding_model,
                         )
-                    ]
-                else:
-                    embedding = [float(value) for value in embed(hierarchy_xml)]
-                if not embedding:
-                    raise MobileGPTConversionError(
-                        "mobilegpt_page_embedding_empty",
-                        step_index=transition.step_index,
-                    )
-                if embedding_provider is None:
-                    _write_event(
-                        stats,
-                        {
-                            "event": "embedding_call",
-                            "model": normalized_embedding_model,
-                            "prompt_tokens": 0,
-                            "completion_tokens": 0,
-                            "total_tokens": 0,
-                            "latency_sec": round(
-                                time.monotonic() - embedding_started, 6
-                            ),
-                        },
-                    )
+                source_screen_artifacts[screen_index] = artifacts
+                pixels = transition.observation.get("pixels")
+                if isinstance(pixels, dict):
+                    screenshot = Path(str(pixels.get("path") or "")).expanduser()
+                    if screenshot.is_file():
+                        source_screen_artifacts[screen_index]["screenshot.jpg"] = screenshot
                 page = {
                     "index": page_index,
                     "parsed_xml": parsed_xml,
                     "hierarchy_xml": hierarchy_xml,
                     "encoded_xml": encoded_xml,
-                    "embedding": embedding,
                     "available_subtasks": [],
                     "trigger_uis": {},
                     "trigger_indexes": set(),
                     "extra_uis": [],
                     "subtasks": {},
+                    "screen_num": screen_index,
                 }
                 pages_by_identity[identity] = page
             page_index = int(page["index"])
@@ -1953,83 +1919,134 @@ def convert_runlog_to_mobilegpt_memory(
                     "actions": [],
                 }
             )
-        app_root = memory / app_name
+        # The root task index is OmniFlow's bundle metadata.  Everything under
+        # the MobileGPT app directory is written by MobileGPT's own Memory and
+        # PageManager APIs below.
         _write_csv(
             memory / "tasks.csv",
             ("name", "description", "parameters", "app"),
             [{**task, "parameters": _json_text(task["parameters"])}],
         )
-        page_rows: list[dict[str, Any]] = []
-        hierarchy_rows: list[dict[str, Any]] = []
+        from memory import memory_manager as official_memory_module
+        from utils import parsing_utils as official_parsing_utils
         from utils.parsing_utils import get_extra_ui_attributes
 
-        for page in pages_by_identity.values():
-            page_index = int(page["index"])
-            page_root = app_root / "pages" / str(page_index)
-            available_subtasks = list(page["available_subtasks"])
-            page["extra_uis"] = get_extra_ui_attributes(
-                sorted(page["trigger_indexes"]),
-                _mobilegpt_ui_match_xml(page["parsed_xml"]),
-            )
-            page_action_names = {
-                str(row["memory_subtask_name"])
-                for row in audit_rows
-                if int(row["memory_page_index"]) == page_index
-                and row["source_action_type"]
-                in {"click", "double_tap", "input_text", "long_press"}
-            }
-            missing_trigger_uis = sorted(
-                name
-                for name in page_action_names
-                if not page["trigger_uis"].get(name)
-            )
-            if missing_trigger_uis:
-                raise MobileGPTConversionError(
-                    "mobilegpt_trigger_ui_attributes_missing",
-                    page_index=page_index,
-                    subtask_names=missing_trigger_uis,
-                )
-            page_rows.append(
-                {
-                    "index": page_index,
-                    "available_subtasks": _json_text(available_subtasks),
-                    "trigger_uis": _json_text(page["trigger_uis"]),
-                    "extra_uis": _json_text(page["extra_uis"]),
-                    "screen": page["parsed_xml"],
-                }
-            )
-            hierarchy_rows.append(
-                {
-                    "index": page_index,
-                    "screen": page["hierarchy_xml"],
-                    "embedding": str(page["embedding"]),
-                }
-            )
-        _write_csv(
-            app_root / "pages.csv",
-            ("index", "available_subtasks", "trigger_uis", "extra_uis", "screen"),
-            page_rows,
-        )
-        _write_csv(
-            app_root / "hierarchy.csv",
-            ("index", "screen", "embedding"),
-            hierarchy_rows,
-        )
+        def official_save_screen_info(
+            _app_name: str,
+            _task_name: str,
+            destination: str,
+            screen_num: int | None = None,
+        ) -> None:
+            """Adapt RunLog artifacts to MobileGPT's screen-copy hook."""
 
-        # Let MobileGPT's own learning writer create the task path, subtask
-        # rows, and generalized action rows from the captured trajectory.
-        official_memory = Memory(app_name, trajectory["instruction"], task_name)
-        for page in pages_by_identity.values():
-            page_index = int(page["index"])
-            official_memory.init_page_manager(page_index)
-            for subtask in page["available_subtasks"]:
-                official_memory.page_manager.add_new_action(subtask)
-            for selected in page["subtasks"].values():
-                official_memory.save_subtask(
-                    selected["metadata"],
-                    selected["example"],
+            if screen_num is None or int(screen_num) not in source_screen_artifacts:
+                raise MobileGPTConversionError(
+                    "mobilegpt_source_screen_artifact_missing",
+                    screen_num=screen_num,
                 )
-        official_memory.save_task(official_task_path_records)
+            destination_root = Path(destination)
+            destination_root.mkdir(parents=True, exist_ok=True)
+            artifacts = source_screen_artifacts[int(screen_num)]
+            for name in ("raw.xml", "html.xml", "hierarchy.xml", "parsed.xml", "pretty.xml"):
+                source = artifacts.get(name)
+                if source is None or not source.is_file():
+                    raise MobileGPTConversionError(
+                        "mobilegpt_source_screen_artifact_missing",
+                        screen_num=screen_num,
+                        artifact=name,
+                    )
+                shutil.copy2(source, destination_root / name)
+            screenshot = artifacts.get("screenshot.jpg")
+            if screenshot is not None and screenshot.is_file():
+                shutil.copy2(screenshot, destination_root / "screenshot.jpg")
+
+        original_save_screen_info = official_parsing_utils.save_screen_info
+        original_official_embedding = official_memory_module.get_openai_embedding
+
+        def official_embedding(screen: str) -> list[float]:
+            embedding_started = time.monotonic()
+            if embedding_provider is not None:
+                result = [float(value) for value in embedding_provider(screen)]
+            else:
+                result = [
+                    float(value)
+                    for value in original_official_embedding(
+                        screen,
+                        model=normalized_embedding_model,
+                    )
+                ]
+                _write_event(
+                    stats,
+                    {
+                        "event": "embedding_call",
+                        "model": normalized_embedding_model,
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "total_tokens": 0,
+                        "latency_sec": round(
+                            time.monotonic() - embedding_started,
+                            6,
+                        ),
+                    },
+                )
+            if not result:
+                raise MobileGPTConversionError("mobilegpt_page_embedding_empty")
+            return result
+
+        official_parsing_utils.save_screen_info = official_save_screen_info
+        official_memory_module.get_openai_embedding = official_embedding
+
+        official_memory = Memory(app_name, trajectory["instruction"], task_name)
+        try:
+            for page in pages_by_identity.values():
+                page_index = int(page["index"])
+                available_subtasks = list(page["available_subtasks"])
+                page["extra_uis"] = get_extra_ui_attributes(
+                    sorted(page["trigger_indexes"]),
+                    _mobilegpt_ui_match_xml(page["parsed_xml"]),
+                )
+                page_action_names = {
+                    str(row["memory_subtask_name"])
+                    for row in audit_rows
+                    if int(row["memory_page_index"]) == page_index
+                    and row["source_action_type"]
+                    in {"click", "double_tap", "input_text", "long_press"}
+                }
+                missing_trigger_uis = sorted(
+                    name
+                    for name in page_action_names
+                    if not page["trigger_uis"].get(name)
+                )
+                if missing_trigger_uis:
+                    raise MobileGPTConversionError(
+                        "mobilegpt_trigger_ui_attributes_missing",
+                        page_index=page_index,
+                        subtask_names=missing_trigger_uis,
+                    )
+                created_page_index = official_memory.add_node(
+                    available_subtasks,
+                    page["trigger_uis"],
+                    page["extra_uis"],
+                    page["parsed_xml"],
+                    int(page["screen_num"]),
+                )
+                if int(created_page_index) != page_index:
+                    raise MobileGPTConversionError(
+                        "mobilegpt_official_page_index_mismatch",
+                        expected=page_index,
+                        actual=created_page_index,
+                    )
+                official_memory.add_hierarchy_xml(page["hierarchy_xml"], page_index)
+                official_memory.init_page_manager(page_index)
+                for selected in page["subtasks"].values():
+                    official_memory.save_subtask(
+                        selected["metadata"],
+                        selected["example"],
+                    )
+            official_memory.save_task(official_task_path_records)
+        finally:
+            official_parsing_utils.save_screen_info = original_save_screen_info
+            official_memory_module.get_openai_embedding = original_official_embedding
         official_memory = Memory(app_name, trajectory["instruction"], task_name)
         if len(official_memory.task_path) != len(task_path):
             raise MobileGPTConversionError("official_memory_task_path_load_failed")
