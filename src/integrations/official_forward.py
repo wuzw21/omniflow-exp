@@ -2341,6 +2341,16 @@ def _run_mobilegpt_client(
     if not apk.is_file():
         raise FileNotFoundError(f"official_mobilegpt_apk_missing:{apk}")
     _run_adb(adb_path, serial, ["install", "-r", str(apk)])
+    # A prior setup or a restored emulator snapshot can leave the official
+    # APK installed but disabled (pm reports enabled=0).  In that state the
+    # accessibility service can never bind, even when its component is
+    # correctly listed in enabled_accessibility_services.
+    _run_adb(
+        adb_path,
+        serial,
+        ["shell", "pm", "enable", "com.example.MobileGPT"],
+        check=False,
+    )
     # The official client requests these permissions on first launch. Grant
     # them through the device shell so a headless run cannot stop at the
     # Android permission controller; failures are tolerated for permissions
