@@ -132,6 +132,19 @@ def _mobilegpt_source_target(
             for key, value in inferred.items()
             if value is not None
         }
+
+    # A successful source can legitimately pass through a file picker before
+    # reaching the app named by the task.  The final native observation is the
+    # strongest source-only target evidence and avoids treating DocumentsUI as
+    # the MobileGPT target.
+    final_observation = source.get("final_observation")
+    final_package = pipeline._mobilegpt_observation_package(final_observation)
+    if final_package and final_package not in _IGNORED_SOURCE_PACKAGES:
+        return {
+            "target_package": final_package,
+            "target_app": str(inferred.get("target_app") or final_package),
+            "target_source": "canonical_source_runlog_final_observation",
+        }
     source_packages: set[str] = set()
     open_app_packages: list[str] = []
 
