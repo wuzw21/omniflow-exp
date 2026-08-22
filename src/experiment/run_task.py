@@ -2374,10 +2374,11 @@ def build_mobilegpt_server_command(
         staged_server_root = Path(forward["server_root"])
         env["MOBILEGPT_STATS_JSONL"] = str(resolve_path(stats_jsonl, root=repo_root))
         # GLM-4.6V must emit the action/list JSON directly. Disable its
-        # reasoning channel and keep the completion budget small so a slow
-        # reasoning stream cannot turn one action into a long timeout.
+        # reasoning channel. Keep list discovery bounded, but leave enough
+        # completion room for the official selector/derive JSON not to be
+        # truncated on screens with many available actions.
         env["MOBILEGPT_THINKING"] = "disabled"
-        env["MOBILEGPT_MAX_TOKENS"] = "512"
+        env["MOBILEGPT_MAX_TOKENS"] = "1024"
         env["MOBILEGPT_LIST_MAX_TOKENS"] = "512"
         env["MOBILEGPT_REQUEST_TIMEOUT_SEC"] = "60"
         env["MOBILEGPT_EMBEDDING_MODEL"] = embedding_model

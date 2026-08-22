@@ -2052,7 +2052,11 @@ MOBILEGPT_STEP_BUDGET_RETURN_CODE = 125
 MOBILEGPT_STEP_TIMEOUT_RETURN_CODE = 126
 MOBILEGPT_HANDSHAKE_RETURN_CODE = 127
 MOBILEGPT_SERVER_ERROR_RETURN_CODE = 128
-MOBILEGPT_HANDSHAKE_TIMEOUT_SEC = 20.0
+# The official server may need one planner/derive round before its first
+# primitive action.  GLM-backed cold starts can exceed 20 seconds even when
+# the client and server are healthy, so the protocol window must cover that
+# normal response latency plus the client's screen-refresh grace period.
+MOBILEGPT_HANDSHAKE_TIMEOUT_SEC = 60.0
 MOBILEGPT_STEP_TIMEOUT_SEC = 60.0
 
 
@@ -2329,38 +2333,42 @@ def _run_mobilegpt_client(
         ),
         encoding="utf-8",
     )
-    gradle = shutil.which(os.environ.get("OMNIFLOW_GRADLE_BIN", "gradle"))
-    if not gradle:
-        candidates = sorted(
-            Path.home().glob(".gradle/wrapper/dists/*/*/gradle-*/bin/gradle"),
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
-        )
-        gradle = str(candidates[0]) if candidates else ""
-    if not gradle:
-        configured_apk = str(
-            os.environ.get("OMNIFLOW_MOBILEGPT_APK") or ""
-        ).strip()
-        prebuilt_apk = (
-            Path(configured_apk).expanduser()
-            if configured_apk
-            else root / "App/app/build/outputs/apk/debug/app-debug.apk"
-        )
-        if str(host).strip() != "10.0.2.2" or not prebuilt_apk.is_file():
-            raise RuntimeError(
-                "official_mobilegpt_client_requires_gradle:"
-                " install Gradle or provide the official App debug APK"
+    configured_apk = str(os.environ.get("OMNIFLOW_MOBILEGPT_APK") or "").strip()
+    if configured_apk:
+        prebuilt_apk = Path(configured_apk).expanduser()
+        if not prebuilt_apk.is_file():
+            raise FileNotFoundError(
+                f"official_mobilegpt_configured_apk_missing:{prebuilt_apk}"
             )
         apk = client_root / "app/build/outputs/apk/debug/app-debug.apk"
         apk.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(prebuilt_apk, apk)
     else:
-        subprocess.run(
-            [gradle, ":app:assembleDebug"],
-            cwd=client_root,
-            check=True,
-            text=True,
-        )
+        gradle = shutil.which(os.environ.get("OMNIFLOW_GRADLE_BIN", "gradle"))
+        if not gradle:
+            candidates = sorted(
+                Path.home().glob(".gradle/wrapper/dists/*/*/gradle-*/bin/gradle"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+            gradle = str(candidates[0]) if candidates else ""
+        if not gradle:
+            prebuilt_apk = root / "App/app/build/outputs/apk/debug/app-debug.apk"
+            if str(host).strip() != "10.0.2.2" or not prebuilt_apk.is_file():
+                raise RuntimeError(
+                    "official_mobilegpt_client_requires_gradle:"
+                    " install Gradle or provide the official App debug APK"
+                )
+            apk = client_root / "app/build/outputs/apk/debug/app-debug.apk"
+            apk.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(prebuilt_apk, apk)
+        else:
+            subprocess.run(
+                [gradle, ":app:assembleDebug"],
+                cwd=client_root,
+                check=True,
+                text=True,
+            )
     apk = client_root / "app/build/outputs/apk/debug/app-debug.apk"
     if not apk.is_file():
         raise FileNotFoundError(f"official_mobilegpt_apk_missing:{apk}")

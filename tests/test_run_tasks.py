@@ -529,7 +529,7 @@ def test_mobilegpt_server_uses_sealed_source_manifest_for_episode_memory(
     assert "MOBILEGPT_TARGET_MEMORY_THRESHOLD" not in spec.env
     assert "MOBILEGPT_MEMORY_REUSE_STRICT" not in spec.env
     assert spec.env["MOBILEGPT_THINKING"] == "disabled"
-    assert spec.env["MOBILEGPT_MAX_TOKENS"] == "512"
+    assert spec.env["MOBILEGPT_MAX_TOKENS"] == "1024"
     assert spec.env["MOBILEGPT_LIST_MAX_TOKENS"] == "512"
     assert spec.env["MOBILEGPT_REQUEST_TIMEOUT_SEC"] == "60"
     assert spec.env["MOBILEGPT_SUPPRESS_SPEAK_ACTIONS"] == "1"
