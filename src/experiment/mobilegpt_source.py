@@ -120,6 +120,18 @@ def _mobilegpt_source_target(
 ) -> dict[str, str]:
     inferred = pipeline._infer_mobilegpt_target_from_source_run_log(item)
     package_name = str(inferred.get("target_package") or "").strip()
+    final_observation = source.get("final_observation")
+    final_package = pipeline._mobilegpt_observation_package(final_observation)
+    if (
+        final_package
+        and final_package not in _IGNORED_SOURCE_PACKAGES
+        and final_package != package_name
+    ):
+        return {
+            "target_package": final_package,
+            "target_app": str(inferred.get("target_app") or final_package),
+            "target_source": "canonical_source_runlog_final_observation",
+        }
     # AndroidWorld's open_app action is allowed to carry a human-facing app
     # label (for example ``Audio Recorder``), while the observation contains
     # the package that the official MobileGPT client must launch.  The old
@@ -137,8 +149,6 @@ def _mobilegpt_source_target(
     # reaching the app named by the task.  The final native observation is the
     # strongest source-only target evidence and avoids treating DocumentsUI as
     # the MobileGPT target.
-    final_observation = source.get("final_observation")
-    final_package = pipeline._mobilegpt_observation_package(final_observation)
     if final_package and final_package not in _IGNORED_SOURCE_PACKAGES:
         return {
             "target_package": final_package,
