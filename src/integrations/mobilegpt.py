@@ -2066,6 +2066,12 @@ def _run_official_mobilegpt_authoring(
                                 adapted[key] = 0
                         else:
                             adapted[key] = _official_schema_adapter(item)
+                    if "action" in adapted and "completion_rate" not in adapted:
+                        adapted["completion_rate"] = 0
+                        _write_event(stats, {
+                            "event": "chat_schema_repair",
+                            "repair": "default_missing_completion_rate",
+                        })
                     return adapted
                 if isinstance(value, list):
                     adapted_items = [_official_schema_adapter(item) for item in value]
