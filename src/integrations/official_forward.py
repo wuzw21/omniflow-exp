@@ -2061,8 +2061,10 @@ def _mobilegpt_instruction_broadcast_args(instruction: str) -> list[str]:
 
     ``adb shell`` joins its argv before handing it to the device shell.  An
     unquoted AndroidWorld goal therefore gets truncated at the first space
-    when used as the value of ``am broadcast --es``.  Keep the official app
-    protocol unchanged and quote only this transport argument.
+    when used as the value of ``am broadcast --es``.  The official service
+    registers a dynamic receiver; Android drops that receiver when an
+    explicit ``am broadcast -p`` package filter is added, so keep the action
+    implicit and quote only this transport argument.
     """
 
     return [
@@ -2071,8 +2073,6 @@ def _mobilegpt_instruction_broadcast_args(instruction: str) -> list[str]:
         "broadcast",
         "-a",
         "com.example.MobileGPT.STRING_ACTION",
-        "-p",
-        "com.example.MobileGPT",
         "--es",
         "com.example.MobileGPT.INSTRUCTION_EXTRA",
         shlex.quote(str(instruction)),
