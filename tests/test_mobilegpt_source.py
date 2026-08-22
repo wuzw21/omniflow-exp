@@ -24,7 +24,23 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS,
 )
 from src.integrations import mobilegpt_memory
-from src.integrations.mobilegpt import validate_memory_manifest
+from src.integrations.mobilegpt import (
+    MobileGPTConversionError,
+    _OfficialMobileGPTRunLogSocket,
+    validate_memory_manifest,
+)
+
+
+def test_official_authoring_socket_has_a_hard_final_screen_step_limit() -> None:
+    socket = _OfficialMobileGPTRunLogSocket(
+        [],
+        (b"screen", b"<hierarchy />"),
+        max_final_cycles=1,
+    )
+
+    assert socket.recv(4096)
+    with pytest.raises(MobileGPTConversionError, match="protocol_step_limit"):
+        socket.recv(4096)
 
 
 def _write_source_index(
@@ -138,7 +154,11 @@ def _write_stats(path: Path) -> None:
         "\n".join(
             json.dumps(row)
             for row in (
-                {"event": "task_started"},
+                {
+                    "event": "task_started",
+                    "task_name": "SystemBluetoothTurnOn",
+                    "instruction": "Turn Bluetooth on.",
+                },
                 {
                     "event": "chat_call",
                     "model": "GLM-5.1",
@@ -153,7 +173,11 @@ def _write_stats(path: Path) -> None:
                     "completion_tokens": 0,
                     "total_tokens": 10,
                 },
-                {"event": "task_finished"},
+                {
+                    "event": "task_finished",
+                    "task_name": "SystemBluetoothTurnOn",
+                    "instruction": "Turn Bluetooth on.",
+                },
             )
         )
         + "\n",

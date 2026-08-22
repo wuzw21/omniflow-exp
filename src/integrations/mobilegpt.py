@@ -42,6 +42,12 @@ CONVERSION_MODE_OFFICIAL = "official_mobilegpt_learning"
 # Kept as a read-only label for old evidence.  New conversion never selects it.
 CONVERSION_MODE_DIRECT = "runlog_direct"
 CONVERSION_AUDIT_SCHEMA = MOBILEGPT_AUDIT_SCHEMA
+# The upstream Server normally terminates by sending ``$$$$$``.  A malformed
+# model response or a dirty upstream checkout can otherwise keep asking for
+# the same screen forever.  Keep the historical successful range (the old
+# source runs used at most 53 chat calls) while making the boundary explicit.
+_DEFAULT_AUTHORING_MAX_CHAT_CALLS = 64
+_DEFAULT_AUTHORING_MAX_FINAL_CYCLES = 8
 
 __all__ = [
     "MobileGPTConversionError",
@@ -1683,16 +1689,28 @@ def _write_event(path: Path, event: dict[str, Any]) -> None:
 class _OfficialMobileGPTRunLogSocket:
     """Client-side transport for the upstream MobileGPT Server protocol."""
 
-    def __init__(self, frames: list[bytes], final_screen: tuple[bytes, bytes]) -> None:
+    def __init__(
+        self,
+        frames: list[bytes],
+        final_screen: tuple[bytes, bytes],
+        *,
+        max_final_cycles: int = _DEFAULT_AUTHORING_MAX_FINAL_CYCLES,
+    ) -> None:
         self._buffer = bytearray(b"".join(frames))
         self._final_screen = final_screen
         self._final_cycles = 0
+        self._max_final_cycles = max(1, int(max_final_cycles))
         self.task_finished = False
         self.sent: list[bytes] = []
 
     def _append_final_screen(self) -> None:
-        if self.task_finished or self._final_cycles >= 8:
+        if self.task_finished:
             return
+        if self._final_cycles >= self._max_final_cycles:
+            raise MobileGPTConversionError(
+                "official_authoring_protocol_step_limit",
+                max_final_cycles=self._max_final_cycles,
+            )
         screenshot, xml = self._final_screen
         self._buffer.extend(b"S" + str(len(screenshot)).encode("ascii") + b"\n")
         self._buffer.extend(screenshot)
@@ -1810,6 +1828,25 @@ def _run_official_mobilegpt_authoring(
     final_screen = (
         screenshot_for(dict(final_observation)),
         _official_xml_input(final_xml).encode("utf-8"),
+    )
+
+    max_chat_calls = max(
+        1,
+        int(
+            os.getenv(
+                "MOBILEGPT_AUTHORING_MAX_CHAT_CALLS",
+                str(_DEFAULT_AUTHORING_MAX_CHAT_CALLS),
+            )
+        ),
+    )
+    max_final_cycles = max(
+        1,
+        int(
+            os.getenv(
+                "MOBILEGPT_AUTHORING_MAX_FINAL_CYCLES",
+                str(_DEFAULT_AUTHORING_MAX_FINAL_CYCLES),
+            )
+        ),
     )
 
     with tempfile.TemporaryDirectory(prefix="mobilegpt-official-authoring-") as temp:
@@ -1970,17 +2007,36 @@ def _run_official_mobilegpt_authoring(
                     return [_official_schema_adapter(item) for item in value]
                 return value
 
-            def query_with_stats(
+            chat_call_count = 0
+
+            def call_once(
                 messages: Any,
-                model: str | None = None,
-                is_list: bool = False,
-                **kwargs: Any,
+                *,
+                model_name: str,
+                is_list: bool,
+                kwargs: dict[str, Any],
             ) -> Any:
-                started = time.monotonic()
+                nonlocal chat_call_count
+                if chat_call_count >= max_chat_calls:
+                    _write_event(
+                        stats,
+                        {
+                            "event": "chat_call_limit_exceeded",
+                            "model": model_name,
+                            "chat_calls": chat_call_count,
+                            "max_chat_calls": max_chat_calls,
+                        },
+                    )
+                    raise MobileGPTConversionError(
+                        "official_authoring_chat_call_limit",
+                        chat_calls=chat_call_count,
+                        max_chat_calls=max_chat_calls,
+                    )
+                chat_call_count += 1
                 try:
-                    result = original_query(
+                    return original_query(
                         messages,
-                        model=model or str(environment["TASK_AGENT_GPT_VERSION"]),
+                        model=model_name,
                         is_list=is_list,
                         **kwargs,
                     )
@@ -1991,11 +2047,33 @@ def _run_official_mobilegpt_authoring(
                     # response handling remain official.
                     if not kwargs or "unexpected keyword argument" not in str(error):
                         raise
-                    result = original_query(
+                    if chat_call_count >= max_chat_calls:
+                        raise MobileGPTConversionError(
+                            "official_authoring_chat_call_limit",
+                            chat_calls=chat_call_count,
+                            max_chat_calls=max_chat_calls,
+                        ) from error
+                    chat_call_count += 1
+                    return original_query(
                         messages,
-                        model=model or str(environment["TASK_AGENT_GPT_VERSION"]),
+                        model=model_name,
                         is_list=is_list,
                     )
+
+            def query_with_stats(
+                messages: Any,
+                model: str | None = None,
+                is_list: bool = False,
+                **kwargs: Any,
+            ) -> Any:
+                started = time.monotonic()
+                model_name = model or str(environment["TASK_AGENT_GPT_VERSION"])
+                result = call_once(
+                    messages,
+                    model_name=model_name,
+                    is_list=is_list,
+                    kwargs=kwargs,
+                )
                 if result is None or (
                     isinstance(result, str) and not result.strip()
                 ):
@@ -2003,22 +2081,23 @@ def _run_official_mobilegpt_authoring(
                         "event": "empty_response_retry",
                         "model": model or str(environment["TASK_AGENT_GPT_VERSION"]),
                     })
-                    result = original_query(
+                    result = call_once(
                         messages,
-                        model=model or str(environment["TASK_AGENT_GPT_VERSION"]),
+                        model_name=model_name,
                         is_list=is_list,
+                        kwargs=kwargs,
                     )
                     if result is None or (
                         isinstance(result, str) and not result.strip()
                     ):
                         raise MobileGPTConversionError(
                             "official_agent_empty_response",
-                            model=model or str(environment["TASK_AGENT_GPT_VERSION"]),
+                            model=model_name,
                         )
                 result = _official_schema_adapter(result)
                 _write_event(stats, {
                     "event": "chat_call",
-                    "model": model or str(environment["TASK_AGENT_GPT_VERSION"]),
+                    "model": model_name,
                     "latency_sec": round(time.monotonic() - started, 6),
                     "prompt_tokens": None,
                     "completion_tokens": None,
@@ -2066,7 +2145,11 @@ def _run_official_mobilegpt_authoring(
                 return task, True
 
             task_agent_module.TaskAgent.get_task = get_task_with_open_app
-            protocol_socket = _OfficialMobileGPTRunLogSocket(frames, final_screen)
+            protocol_socket = _OfficialMobileGPTRunLogSocket(
+                frames,
+                final_screen,
+                max_final_cycles=max_final_cycles,
+            )
             _write_event(stats, {
                 "event": "task_started",
                 "task_name": trajectory["task_name"],
