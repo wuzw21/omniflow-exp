@@ -2364,7 +2364,39 @@ def _run_mobilegpt_client(
     apk = client_root / "app/build/outputs/apk/debug/app-debug.apk"
     if not apk.is_file():
         raise FileNotFoundError(f"official_mobilegpt_apk_missing:{apk}")
-    _run_adb(adb_path, serial, ["install", "-r", str(apk)])
+    install_result = _run_adb(
+        adb_path,
+        serial,
+        ["install", "-r", str(apk)],
+        check=False,
+    )
+    if (
+        install_result.returncode != 0
+        and "INSTALL_FAILED_UPDATE_INCOMPATIBLE" in install_result.stdout
+        and os.environ.get("OMNIFLOW_MOBILEGPT_APK", "").strip()
+    ):
+        # A locally rebuilt disposable client has a different debug signing
+        # key from the pinned APK on 9207.  Only the explicit override is
+        # allowed to replace that user install; the normal official APK path
+        # keeps the existing update-in-place contract.
+        _run_adb(
+            adb_path,
+            serial,
+            ["shell", "pm", "uninstall", "--user", "0", "com.example.MobileGPT"],
+            check=False,
+        )
+        install_result = _run_adb(
+            adb_path,
+            serial,
+            ["install", "-r", str(apk)],
+            check=False,
+        )
+    if install_result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            install_result.returncode,
+            [adb_path, "-s", serial, "install", "-r", str(apk)],
+            output=install_result.stdout,
+        )
     # A prior setup or a restored emulator snapshot can leave the official
     # APK installed but disabled (pm reports enabled=0).  In that state the
     # accessibility service can never bind, even when its component is
