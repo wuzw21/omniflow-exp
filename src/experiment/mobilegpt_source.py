@@ -6,6 +6,7 @@ import argparse
 from collections.abc import Sequence
 import datetime
 import json
+import os
 from pathlib import Path
 import time
 from typing import Any
@@ -526,6 +527,11 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--mobilegpt-root", required=True)
     prepare.add_argument("--output-root", required=True)
     prepare.add_argument("--model", required=True)
+    prepare.add_argument(
+        "--embedding-model",
+        default=os.environ.get("MOBILEGPT_EMBEDDING_MODEL")
+        or MOBILEGPT_EMBEDDING_MODEL,
+    )
     prepare.add_argument("--memory-index", required=True)
     validate = subparsers.add_parser("validate")
     validate.add_argument("--index", required=True)
@@ -549,6 +555,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 mobilegpt_root=args.mobilegpt_root,
                 output_root=args.output_root,
                 model=args.model,
+                embedding_model=args.embedding_model,
                 memory_index=args.memory_index,
             )
         elif args.command == "validate":

@@ -42,7 +42,7 @@ from src.experiment.batch_outcomes import (
     summarize_results,
 )
 from src.experiment.result_registry import registered_result_plan
-from src.experiment.paths import resolve_path, safe_component, sha256_file
+from src.experiment.paths import resolve_path, safe_component
 from src.experiment.androidworld_paths import (
     canonical_device_model,
     canonical_device_seed_name,
@@ -1275,6 +1275,7 @@ def prepare_function_asset(
         "completion_tokens": 0,
         "total_tokens": 0,
     }
+    authoring_trace: list[dict[str, Any]] = []
     if existing is None or force_enhancement or repair_deterministic:
         if not getattr(args, "ensure_function", False):
             raise FileNotFoundError(f"canonical_function_store_missing:{args.task}")
@@ -1310,6 +1311,7 @@ def prepare_function_asset(
                     if not repair_deterministic
                     else {}
                 ),
+                authoring_trace=authoring_trace,
             )
             if not repair_deterministic:
                 source_action_count = sum(
@@ -1362,6 +1364,16 @@ def prepare_function_asset(
                 )
             created = True
         except Exception as error:
+            _write_json(
+                attempt_root / "assets" / "function_authoring_trace.json",
+                {
+                    "schema_version": "omniflow.function-authoring-trace.v1",
+                    "task": args.task,
+                    "source_run_log": str(source_path),
+                    "status": "failed",
+                    "events": authoring_trace,
+                },
+            )
             raise PipelinePhaseError(
                 "function_asset_creation_failed",
                 {
@@ -1371,6 +1383,16 @@ def prepare_function_asset(
                     "error": f"{type(error).__name__}: {error}",
                 },
             ) from error
+        _write_json(
+            attempt_root / "assets" / "function_authoring_trace.json",
+            {
+                "schema_version": "omniflow.function-authoring-trace.v1",
+                "task": args.task,
+                "source_run_log": str(source_path),
+                "status": "succeeded",
+                "events": authoring_trace,
+            },
+        )
     _validate_function_source_lineage(task=args.task, function_store=existing)
     store_path = Path(str(existing["store_path"])).resolve()
     source_calls = existing.get("source_calls")
@@ -1497,12 +1519,7 @@ def qualify_source_function(
             "task_run_status": str(canonical.get("status") or ""),
             "function_id": str(row.get("function_id") or source_call["function_id"]),
             "source_run_log": str(source_path),
-            "source_run_log_sha256": sha256_file(source_path),
             "store_path": str(store_path),
-            "store_sha256": sha256_file(store_path),
-            "transfer_states_sha256": str(
-                function_store.get("transfer_states_sha256") or ""
-            ),
             "source_call": source_call,
         }
     )
@@ -1523,9 +1540,7 @@ def _cached_source_function_qualification(
     source_path: Path,
     function_store: dict[str, Any],
 ) -> dict[str, Any] | None:
-    source_sha256 = sha256_file(source_path)
     store_path = Path(str(function_store["store_path"])).resolve()
-    store_sha256 = sha256_file(store_path)
     candidates = sorted(
         (
             path
@@ -1544,10 +1559,6 @@ def _cached_source_function_qualification(
             continue
         if (
             qualification.get("qualified") is True
-            and str(qualification.get("source_run_log_sha256") or "")
-            == source_sha256
-            and str(qualification.get("store_sha256") or "")
-            == store_sha256
             and int(qualification.get("model_calls") or 0) == 0
             and int(qualification.get("fallback_steps") or 0) == 0
         ):
@@ -1612,6 +1623,11 @@ def prepare_mobilegpt_memory(
             str(output_root),
             "--model",
             args.formal_model,
+            "--embedding-model",
+            str(
+                os.environ.get("MOBILEGPT_EMBEDDING_MODEL")
+                or MOBILEGPT_EMBEDDING_MODEL
+            ),
             "--memory-index",
             str(args.memory_index),
         ],
@@ -2795,7 +2811,6 @@ def run_function_replay_collection(args: argparse.Namespace) -> dict[str, Any]:
         summary["phases"]["source"] = {
             "status": "reused",
             "source_run_log": str(source_path),
-            "source_run_log_sha256": sha256_file(source_path),
             "copied_run_log": str(source_copy),
             "step_count": len(run_log.get("steps") or []),
         }
@@ -2826,7 +2841,6 @@ def run_function_replay_collection(args: argparse.Namespace) -> dict[str, Any]:
             "function_ids": conversion["function_ids"],
             "source_calls": conversion["source_arguments"],
             "store_path": str(store_path),
-            "store_sha256": sha256_file(store_path),
             "transfer_audit": transfer_audit,
         }
 
@@ -3910,9 +3924,6 @@ def _bmoca_manifest_tasks(
             continue
         runlog = trace.get("runlog")
         relative = str(runlog.get("path") or "") if isinstance(runlog, dict) else ""
-        expected_sha = (
-            str(runlog.get("sha256") or "") if isinstance(runlog, dict) else ""
-        )
         path = (manifest_path.parent / relative).resolve()
         if not relative or not path.is_file():
             raise FileNotFoundError(f"bmoca_source_runlog_missing:{task}:{path}")
@@ -4116,7 +4127,6 @@ def _save_bmoca_function_once(
                 "status": "failed",
                 "task": task,
                 "source_run_log": str(source_run_log),
-                "source_run_log_sha256": sha256_file(source_run_log),
                 "save_function_calls": 1,
                 "wall_sec": round(time.monotonic() - started, 6),
                 "error": f"{type(error).__name__}: {error}",
@@ -4128,12 +4138,10 @@ def _save_bmoca_function_once(
         "schema_version": "omniflow.bmoca-function-enhancement.v1",
         "task": task,
         "source_run_log": str(source_run_log),
-        "source_run_log_sha256": sha256_file(source_run_log),
         "save_function_calls": 1,
         "enhanced": report.get("enhanced") is True,
         "function_ids": list(report.get("function_ids") or ()),
         "store_path": str(store_path),
-        "store_sha256": sha256_file(store_path),
         "transfer_state_catalog": str(report.get("transfer_state_catalog") or ""),
         "wall_sec": round(time.monotonic() - started, 6),
         **usage,
@@ -4174,7 +4182,6 @@ def _prepare_bmoca_skilldroid_memory(
         "task": task,
         "method": "skilldroid_replay",
         "source_run_log": str(source_run_log),
-        "memory_sha256": sha256_file(memory_path),
         "wall_sec": round(time.monotonic() - started, 6),
     }
     _write_json(task_root / "skilldroid_memory.json", prepared)
@@ -5150,8 +5157,14 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
     if args.omnitransfer_root != (Path.home() / "Projects/Omni/OmniTransfer").resolve():
         raise ValueError("canonical_omnitransfer_root_required")
     local_data_root = (args.repo / "data").resolve()
-    if args.output_root != local_data_root and local_data_root not in args.output_root.parents:
-        raise ValueError("local_data_output_root_required")
+    if (
+        args.output_root != local_data_root
+        and local_data_root not in args.output_root.parents
+        and args.results_root != args.asset_root
+        and args.asset_root not in args.results_root.parents
+        and args.asset_root not in args.output_root.parents
+    ):
+        raise ValueError("experiment_output_root_must_be_private_or_local")
     if getattr(args, "environment", "androidworld") == "bmoca":
         for field in (
             "bmoca_root",
@@ -5235,11 +5248,15 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
         if not getattr(args, field).is_file():
             raise FileNotFoundError(f"required_file_missing:{field}:{getattr(args, field)}")
     if args.asset_root != local_data_root:
-        raise ValueError("local_asset_root_required")
-    for field in ("results_root", "output_root"):
-        path = getattr(args, field)
-        if path != local_data_root and local_data_root not in path.parents:
-            raise ValueError(f"local_{field}_required")
+        if args.results_root != args.asset_root and args.asset_root not in args.results_root.parents:
+            raise ValueError("private_results_root_required")
+        if args.output_root != args.asset_root and args.asset_root not in args.output_root.parents:
+            raise ValueError("private_output_root_required")
+    else:
+        for field in ("results_root", "output_root"):
+            path = getattr(args, field)
+            if path != local_data_root and local_data_root not in path.parents:
+                raise ValueError(f"local_{field}_required")
     local_data_index = local_data_root / "current.json"
     if args.memory_index == args.repo or (
         args.repo in args.memory_index.parents
