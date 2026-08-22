@@ -36,6 +36,14 @@ from src.integrations.mobilegpt_oob_client import (
 )
 
 
+def test_official_forward_accepts_appagent_step_budget() -> None:
+    source = Path(__file__).parents[1] / "src" / "integrations" / "official_forward.py"
+
+    assert 'parser.add_argument("--max-steps", type=int, default=0)' in source.read_text(
+        encoding="utf-8"
+    )
+
+
 def test_mobilegpt_oob_uses_scheduler_target_package_without_adb_discovery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -274,6 +282,7 @@ def test_appagent_forwarder_only_mounts_official_inputs(tmp_path: Path) -> None:
     if staged_model.is_file():
         staged_model_source = staged_model.read_text(encoding="utf-8")
         assert "omniflow_appagent_glm_response_compat" in staged_model_source
+        assert "omniflow_appagent_action_parse_compat" in staged_model_source
         assert 'payload["thinking"] = {"type": thinking_mode}' in staged_model_source
         assert 'os.environ.get("APPAGENT_THINKING", "disabled")' in staged_model_source
     assert "_omniflow_resolution_agnostic_doc_path" in (
@@ -810,6 +819,8 @@ def test_mobilegpt_forwarder_bridges_finish_to_official_client_frame(
     assert 'client_socket.send("$$$$$".encode())' in staged_source
     assert "MOBILEGPT_TARGET_TASK_NAME" in staged_source
     assert "mobilegpt_forced_task_binding" in staged_source
+    assert 'task["app"] = forced_target_package' in staged_source
+    assert '"app": forced_target_package' in staged_source
     assert "task_agent.get_task(instruction)" in staged_source
     assert "is_new_task = False" in staged_source
     assert (server / "server.py").read_text(encoding="utf-8") == server_source

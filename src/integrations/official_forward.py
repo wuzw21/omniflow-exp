@@ -586,6 +586,60 @@ def _omniflow_appagent_get_model_response(self, prompt, images):
     return False, "appagent_model_empty_response"
 
 OpenAIModel.get_model_response = _omniflow_appagent_get_model_response
+
+# omniflow_appagent_action_parse_compat
+_omniflow_original_parse_explore_rsp = parse_explore_rsp
+_omniflow_original_parse_grid_rsp = parse_grid_rsp
+
+def _omniflow_bare_action(rsp, grid_mode=False):
+    text = str(rsp or "").strip()
+    if "FINISH" in text.upper():
+        return ["FINISH"]
+    match = re.search(
+        r"(?m)^\s*(tap|text|long_press|swipe|grid)\s*\((.*?)\)\s*$",
+        text,
+    )
+    if not match:
+        return ["ERROR"]
+    action, params = match.groups()
+    values = [value.strip() for value in params.split(",")]
+    try:
+        if action == "grid":
+            return ["grid"]
+        if action in {"tap", "long_press"}:
+            if grid_mode:
+                return [f"{action}_grid", int(values[0]), values[1].strip("\"'"), ""]
+            return [action, int(values[0]), ""]
+        if action == "text":
+            return [action, params.strip().strip("\"'"), ""]
+        if action == "swipe" and grid_mode:
+            return [
+                "swipe_grid",
+                int(values[0]),
+                values[1].strip("\"'"),
+                int(values[2]),
+                values[3].strip("\"'"),
+                "",
+            ]
+        if action == "swipe":
+            return [
+                action,
+                int(values[0]),
+                values[1].strip("\"'"),
+                values[2].strip("\"'"),
+                "",
+            ]
+    except (IndexError, ValueError):
+        return ["ERROR"]
+    return ["ERROR"]
+
+def parse_explore_rsp(rsp):
+    parsed = _omniflow_original_parse_explore_rsp(rsp)
+    return parsed if parsed != ["ERROR"] else _omniflow_bare_action(rsp)
+
+def parse_grid_rsp(rsp):
+    parsed = _omniflow_original_parse_grid_rsp(rsp)
+    return parsed if parsed != ["ERROR"] else _omniflow_bare_action(rsp, grid_mode=True)
 '''
             model.write_text(model_source, encoding="utf-8")
 
@@ -1218,10 +1272,14 @@ def _configure_mobilegpt_server(
                 "                        \"name\": target_task_name,\n"
                 "                        \"description\": instruction,\n"
                 "                        \"parameters\": {},\n"
-                "                        \"app\": forced_target_app or forced_target_package,\n"
+                "                        \"app\": forced_target_package,\n"
                 "                    }\n"
                 "                    task[\"name\"] = target_task_name\n"
-                "                    task[\"app\"] = forced_target_app or forced_target_package\n"
+                "                    # The Android client launches this field as a\n"
+                "                    # package name; the display label is only\n"
+                "                    # metadata and cannot be passed to\n"
+                "                    # PackageManager.getLaunchIntentForPackage.\n"
+                "                    task[\"app\"] = forced_target_package\n"
                 "                    is_new_task = False\n"
                 "                else:\n"
                 "                    task, is_new_task = task_agent.get_task(instruction)\n"
