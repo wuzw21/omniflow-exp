@@ -2470,8 +2470,15 @@ def _run_mobilegpt_client(
     )
     _run_adb(adb_path, serial, ["shell", "monkey", "-p", "com.example.MobileGPT", "1"])
     # Launching the activity can cause Android to restore the secure settings
-    # from before installation. Re-assert the service after launch and wait
-    # until the accessibility process is bound before sending the instruction.
+    # from before installation. Repeat the full off -> list -> on transition
+    # after launch and wait until the accessibility process is bound before
+    # sending the instruction.
+    _run_adb(
+        adb_path,
+        serial,
+        ["shell", "settings", "put", "secure", "accessibility_enabled", "0"],
+        check=False,
+    )
     _run_adb(
         adb_path,
         serial,
