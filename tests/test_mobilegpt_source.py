@@ -43,6 +43,28 @@ def test_official_authoring_socket_has_a_hard_final_screen_step_limit() -> None:
         socket.recv(4096)
 
 
+def test_stats_summary_accepts_clean_official_wrapper_lifecycle(tmp_path: Path) -> None:
+    stats = tmp_path / "source_stats.jsonl"
+    stats.write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {"event": "task_started", "task_name": "AudioRecorderRecordAudio"},
+                {"event": "chat_call", "model": "GLM-4.6V"},
+                {"event": "embedding_call", "model": "GLM-Embedding-2"},
+                {"event": "task_finished", "task_name": "AudioRecorderRecordAudio"},
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = mobilegpt_memory.summarize_mobilegpt_stats(stats)
+
+    assert summary["task_started_count"] == 1
+    assert summary["task_finished_count"] == 1
+
+
 def _write_source_index(
     root: Path,
     *,

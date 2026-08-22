@@ -95,17 +95,37 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
     # MobileGPT task lifecycle marker.  Only the instruction-bearing marker is
     # the actual task boundary; counting both makes a valid session look like
     # two tasks and prevents memory sealing.
-    finished_rows = [
+    finished_candidates = [
         row
         for row in rows
         if row.get("event") == "task_finished"
-        and str(row.get("instruction") or "").strip()
     ]
-    started_rows = [
+    started_candidates = [
         row
         for row in rows
         if row.get("event") == "task_started"
-        and str(row.get("instruction") or "").strip()
+    ]
+    # Newer official utility instrumentation emits an instruction-bearing
+    # lifecycle row in addition to the adapter wrapper row.  A clean upstream
+    # checkout emits only the wrapper row.  Prefer the richer row when present;
+    # otherwise the single wrapper row is the valid official task boundary.
+    finished_rows = [
+        row
+        for row in finished_candidates
+        if str(row.get("instruction") or "").strip()
+    ] or [
+        row
+        for row in finished_candidates
+        if str(row.get("task_name") or "").strip()
+    ]
+    started_rows = [
+        row
+        for row in started_candidates
+        if str(row.get("instruction") or "").strip()
+    ] or [
+        row
+        for row in started_candidates
+        if str(row.get("task_name") or "").strip()
     ]
     teacher_rows = [
         row
