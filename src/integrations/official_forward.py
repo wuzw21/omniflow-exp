@@ -2678,9 +2678,11 @@ def run_mobilegpt_client(
         perform_emulator_setup=perform_emulator_setup,
         # AndroidWorld setup is environment preparation only.  MobileGPT's
         # real observe/act path remains its own Accessibility client/socket;
-        # use UIAutomator here so a missing AndroidWorld forwarder tree cannot
-        # abort setup before the official client is launched.
-        use_uiautomator=True,
+        # do not start a second UiAutomation session here.  On API 33/34
+        # images that session can contend with the official Accessibility
+        # service and leave ``uiautomator dump`` blocked before the client is
+        # even launched.
+        use_uiautomator=False,
     ) as (env, task):
         returncode = _run_mobilegpt_client(
             official_root=official_root,
