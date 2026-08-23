@@ -163,6 +163,22 @@ def test_mobilegpt_protocol_probe_marks_episode_after_server_task_start(
     assert probe["phase"] == "episode"
 
 
+def test_mobilegpt_protocol_probe_marks_episode_after_action_without_task_start(
+    tmp_path: Path,
+) -> None:
+    stats = tmp_path / "mobilegpt_stats.jsonl"
+    stats.write_text(
+        '{"event":"mobilegpt_action_sent","action":"click"}\n',
+        encoding="utf-8",
+    )
+
+    probe = _mobilegpt_protocol_probe(stats, "MobileGPT_Service: receive broadcast")
+
+    assert probe["task_started"] is False
+    assert probe["action_sent_count"] == 1
+    assert probe["phase"] == "episode"
+
+
 def test_mobilegpt_protocol_probe_detects_server_handler_crash(
     tmp_path: Path,
 ) -> None:

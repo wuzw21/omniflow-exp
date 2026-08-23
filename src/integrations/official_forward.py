@@ -2218,7 +2218,7 @@ def _mobilegpt_protocol_probe(
         "server_error_markers": list(server_error_markers),
         "phase": (
             "episode"
-            if task_started > 0
+            if task_started > 0 or action_sent > 0
             else "client_server_handshake"
             if "receive broadcast" in lowered or client_errors
             else "client_startup"
@@ -2638,7 +2638,19 @@ def _run_mobilegpt_client(
                 log,
                 "mobilegpt_server_handler_failed",
             )
-        if not probe["task_started"] and time.monotonic() >= handshake_deadline:
+        # Some pinned official MobileGPT Server versions do not emit the
+        # optional ``task_started`` telemetry event. They can nevertheless
+        # be fully alive: the accessibility client has received the goal and
+        # the server has already sent real device actions. Treating that
+        # state as a handshake timeout kills simple tasks in the middle of
+        # their official onboarding flow. An observed action is stronger
+        # evidence of a completed client/server handshake than the optional
+        # event, so only time out while no action has been sent at all.
+        if (
+            not probe["task_started"]
+            and _count_mobilegpt_device_actions(stats_path) == 0
+            and time.monotonic() >= handshake_deadline
+        ):
             _run_adb(
                 adb_path,
                 serial,
