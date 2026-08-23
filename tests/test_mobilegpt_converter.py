@@ -286,6 +286,21 @@ def test_conversion_rejects_unrepresentable_actions(tmp_path: Path) -> None:
     assert report["failure_details"]["action_type"] == "navigate_home"
 
 
+def test_scroll_source_is_passed_to_official_authoring_boundary(tmp_path: Path) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "scroll", "direction": "down"}],
+        forests=[
+            '<hierarchy><node class="androidx.recyclerview.widget.RecyclerView" '
+            'scrollable="true" bounds="[0,0][100,100]" /></hierarchy>'
+        ],
+    )
+
+    report = preflight_runlog_conversion(source)
+    assert report["ready"] is True
+    assert report["action_type_counts"] == {"scroll": 1}
+
+
 def test_conversion_writes_runlog_action_and_official_reader_loads_it(
     tmp_path: Path,
 ) -> None:

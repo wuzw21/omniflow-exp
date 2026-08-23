@@ -72,6 +72,7 @@ _SUPPORTED_ACTION_TYPES = frozenset(
         "input_text",
         "long_press",
         "navigate_back",
+        "scroll",
         "swipe",
     }
 )
