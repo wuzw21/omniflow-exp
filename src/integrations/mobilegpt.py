@@ -1964,6 +1964,15 @@ def _official_prompt_kind(messages: Any) -> str:
     return "unknown"
 
 
+def _drop_null_official_optional_fields(value: dict[str, Any]) -> dict[str, Any]:
+    """Remove JSON null for optional fields that upstream tests by key presence."""
+
+    if value.get("new_action", object()) is None:
+        value = dict(value)
+        value.pop("new_action", None)
+    return value
+
+
 def _append_official_teacher_prompt(
     messages: Any,
     *,
@@ -2380,7 +2389,7 @@ def _run_official_mobilegpt_authoring(
                             "event": "chat_schema_repair",
                             "repair": "default_missing_completion_rate",
                         })
-                    return adapted
+                    return _drop_null_official_optional_fields(adapted)
                 if isinstance(value, list):
                     adapted_items = [_official_schema_adapter(item) for item in value]
                     if list_items_require_name:

@@ -28,6 +28,7 @@ from src.integrations import mobilegpt_memory
 from src.integrations.mobilegpt import (
     MobileGPTConversionError,
     _OfficialMobileGPTRunLogSocket,
+    _drop_null_official_optional_fields,
     _official_prompt_kind,
     validate_memory_manifest,
 )
@@ -450,6 +451,17 @@ def test_official_prompt_kind_distinguishes_derive_from_select() -> None:
     ]
 
     assert _official_prompt_kind(messages) == "derive"
+
+
+def test_official_schema_drops_null_new_action() -> None:
+    response = {
+        "action": {"name": "click", "parameters": {"index": "13"}},
+        "new_action": None,
+    }
+
+    assert _drop_null_official_optional_fields(response) == {
+        "action": {"name": "click", "parameters": {"index": "13"}}
+    }
 
 
 def test_converted_memory_rejects_incomplete_trajectory(tmp_path: Path) -> None:
