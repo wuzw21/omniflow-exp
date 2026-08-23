@@ -1593,12 +1593,18 @@ def prepare_mobilegpt_memory(
         except (OSError, json.JSONDecodeError):
             manifest = {}
         provenance = manifest.get("provenance")
+        target_package = str(manifest.get("target_package") or "").strip()
         existing_is_official = (
             manifest.get("schema_version") == MOBILEGPT_MEMORY_SCHEMA
             and manifest.get("source_method") == MOBILEGPT_SOURCE_METHOD
             and isinstance(provenance, dict)
             and provenance.get("native_mobilegpt_learning") is True
             and provenance.get("official_authoring_session") is True
+            and target_package
+            not in {
+                "com.google.android.inputmethod.latin",
+                "com.android.inputmethod.latin",
+            }
         )
     if existing is not None and existing_is_official:
         return Path(str(existing["memory_root"])).resolve(), {
