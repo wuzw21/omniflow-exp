@@ -1690,6 +1690,30 @@ MOBILEGPT_HANDSHAKE_TIMEOUT_SEC = 60.0
 MOBILEGPT_STEP_TIMEOUT_SEC = 60.0
 
 
+def _mobilegpt_environment_failure(
+    *,
+    failure_reason: str,
+    returncode: int,
+) -> bool:
+    """Keep transport/setup failures retryable and method limits terminal."""
+
+    reason = str(failure_reason or "").strip()
+    if int(returncode) in {
+        MOBILEGPT_HANDSHAKE_RETURN_CODE,
+        MOBILEGPT_SERVER_ERROR_RETURN_CODE,
+    }:
+        return True
+    if reason in {
+        "mobilegpt_handshake_failed",
+        "mobilegpt_handshake_timeout",
+        "mobilegpt_server_handler_failed",
+        "mobilegpt_target_app_package_unresolved",
+        "mobilegpt_target_app_not_ready",
+    }:
+        return True
+    return reason.startswith("mobilegpt_target_app_not_ready:")
+
+
 def _mobilegpt_instruction_broadcast_args(instruction: str) -> list[str]:
     """Build the shell-safe official-client instruction broadcast.
 
@@ -2599,10 +2623,10 @@ def run_mobilegpt_client(
             except json.JSONDecodeError:
                 protocol_probe = {"parse_error": True}
         failure_reason = str(protocol_probe.get("failure_reason") or "").strip()
-        environment_failure = failure_reason in {
-            "mobilegpt_target_app_package_unresolved",
-            "mobilegpt_target_app_not_ready",
-        } or failure_reason.startswith("mobilegpt_target_app_not_ready:")
+        environment_failure = _mobilegpt_environment_failure(
+            failure_reason=failure_reason,
+            returncode=returncode,
+        )
         result_row = {
             "schema_version": "omniflow.androidworld.result.v1",
             "task_name": task_name,

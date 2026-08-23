@@ -79,6 +79,10 @@ source RunLog 只作为任务与 provenance 边界，不向 MobileGPT 提供动�
 RunLog-to-memory converter，也不注入 teacher prompt。只 Build/校验 memory 而不启动
 target 时使用：
 
+MobileGPT 的 client/server handshake 和 Server handler 错误属于可重试的环境/
+适配失败；step timeout、step budget exhausted 和官方 validator=false 才属于方法结论。
+因此完成跳过不会把连接或 Server 崩溃误登记成 method failure。
+
 ```bash
 bash scripts/exp/run_androidworld.sh \
   --e2e-task TASK \

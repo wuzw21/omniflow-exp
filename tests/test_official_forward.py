@@ -325,6 +325,44 @@ def test_mobilegpt_protocol_probe_ignores_auxiliary_connection_reset(
     assert probe["server_error_markers"] == []
 
 
+@pytest.mark.parametrize(
+    ("failure_reason", "returncode"),
+    [
+        ("mobilegpt_handshake_timeout", 127),
+        ("mobilegpt_handshake_failed", 127),
+        ("mobilegpt_server_handler_failed", 128),
+        ("", 127),
+        ("", 128),
+    ],
+)
+def test_mobilegpt_transport_failures_are_retryable_environment_failures(
+    failure_reason: str,
+    returncode: int,
+) -> None:
+    assert official_forward._mobilegpt_environment_failure(
+        failure_reason=failure_reason,
+        returncode=returncode,
+    ) is True
+
+
+@pytest.mark.parametrize(
+    ("failure_reason", "returncode"),
+    [
+        ("mobilegpt_step_timeout", 126),
+        ("mobilegpt_step_budget_exhausted", 125),
+        ("", 0),
+    ],
+)
+def test_mobilegpt_method_failures_remain_terminal_conclusions(
+    failure_reason: str,
+    returncode: int,
+) -> None:
+    assert official_forward._mobilegpt_environment_failure(
+        failure_reason=failure_reason,
+        returncode=returncode,
+    ) is False
+
+
 def test_autodroid_official_memory_key_uses_paper_app_names() -> None:
     assert _autodroid_official_memory_key("audio") == "voicerecorder"
     assert _autodroid_official_memory_key("files") == "filemanager"
