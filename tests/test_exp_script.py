@@ -369,6 +369,18 @@ def test_androidworld_defaults_to_pinned_immutable_release_without_fallback(
     assert f"+ android_world_root={dirty_fallback}" not in completed.stderr
 
 
+def test_runtime_env_is_loaded_before_runtime_paths_are_resolved() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+
+    runtime_env = 'runtime_env_file="${OMNIFLOW_RUNTIME_ENV_FILE:-$repo/.env}"'
+    asset_root = 'asset_root="${OMNIFLOW_EXP_ASSET_ROOT:-$default_asset_root}"'
+    python_bin = 'python_bin="${PYTHON_BIN:-$default_python}"'
+    assert runtime_env in script_text
+    assert script_text.index(runtime_env) < script_text.index(asset_root)
+    assert script_text.index(runtime_env) < script_text.index(python_bin)
+    assert 'source "$runtime_env_file"' in script_text
+
+
 def test_unified_script_repairs_missing_androidworld_sqlite_fts4_support() -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
 

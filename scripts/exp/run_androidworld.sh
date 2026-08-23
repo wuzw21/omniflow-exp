@@ -4,6 +4,12 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 workspace_root="$(cd "$repo/.." && pwd)"
+runtime_env_file="${OMNIFLOW_RUNTIME_ENV_FILE:-$repo/.env}"
+if [[ -f "$runtime_env_file" ]]; then
+  set -a
+  source "$runtime_env_file"
+  set +a
+fi
 default_asset_root="$repo/data"
 default_memory_root="$repo/data"
 asset_root="${OMNIFLOW_EXP_ASSET_ROOT:-$default_asset_root}"
@@ -615,7 +621,8 @@ Required roots:
   OMNITRANSFER_ROOT         Canonical/versioned OmniTransfer checkout.
 
 Optional runtime overrides:
-  PYTHON_BIN, OMNIFLOW_ENV_FILE, OMNIFLOW_MEMORY_MOBILEGPT_ROOTS,
+  PYTHON_BIN, OMNIFLOW_ENV_FILE, OMNIFLOW_RUNTIME_ENV_FILE,
+  OMNIFLOW_MEMORY_MOBILEGPT_ROOTS,
   OMNIFLOW_MEMORY_BASELINE_BATCH_REPORTS,
   OMNIFLOW_ANDROID_SDK_ROOT, OMNIFLOW_JAVA_HOME,
   OMNIFLOW_DEVELOPMENT_OUTPUT_PATH, OMNIFLOW_DEVELOPMENT_MODEL,
