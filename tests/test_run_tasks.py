@@ -46,6 +46,7 @@ from src.experiment.run_tasks import (
     _autodroid_task_params_from_index,
     _supplemental_outcomes_root,
     _max_live_bmoca_results,
+    _mobilegpt_registered_conclusion_is_reusable,
     _next_source_attempt_id,
     _next_pipeline_attempt_id,
     _parse_source_device,
@@ -244,6 +245,90 @@ def test_concluded_results_reruns_existing_omniflow_cell(
         args.results_root / "androidworld" / ".archive" / "outcomes" / "formal",
         "attempt_002",
     ) == set()
+
+
+def test_concluded_results_reruns_mobilegpt_failure_with_legacy_memory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.task = "CameraTakePhoto"
+    args.e2e_method = "mobilegpt"
+    args.e2e_device = DEVICES[0]
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.concluded_result_keys",
+        lambda **_kwargs: {("mobilegpt", "small5554")},
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.registered_result_plan",
+        lambda **_kwargs: {
+            "completed": [("mobilegpt", "small5554")],
+            "pending": [],
+        },
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks._mobilegpt_registered_conclusion_is_reusable",
+        lambda **_kwargs: False,
+    )
+
+    assert _concluded_results(
+        args,
+        args.results_root / "androidworld" / ".archive" / "outcomes" / "formal",
+        "attempt_002",
+    ) == set()
+
+
+def test_mobilegpt_failure_is_reusable_only_with_authoritative_memory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry_root = tmp_path / "result_registry"
+    result_root = (
+        registry_root
+        / "CameraTakePhoto"
+        / "mobilegpt"
+        / "small5554"
+        / "attempt_001.mobilegpt.small5554"
+    )
+    result_root.mkdir(parents=True)
+    target_memory = tmp_path / "target_memory"
+    target_memory.mkdir()
+    source_memory = tmp_path / "source_bundle" / "memory"
+    source_memory.mkdir(parents=True)
+    (target_memory / "memory_manifest.json").write_text(
+        json.dumps({"artifacts": {"source_memory_root": str(source_memory)}}),
+        encoding="utf-8",
+    )
+    (result_root / "registered_result.json").write_text(
+        json.dumps(
+            {
+                "task_name": "CameraTakePhoto",
+                "source_seed": SOURCE_SEED,
+                "evaluation_seed": 113,
+                "details": [
+                    {
+                        "method": "mobilegpt",
+                        "device": "small5554",
+                        "official_validator_success": False,
+                        "memory_root": str(target_memory),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks._validate_prepared_mobilegpt_memory",
+        lambda *_args, **_kwargs: {"runlog_teacher_alignment": True},
+    )
+
+    assert _mobilegpt_registered_conclusion_is_reusable(
+        registry_root=registry_root,
+        task_name="CameraTakePhoto",
+        device="small5554",
+        source_seed=SOURCE_SEED,
+        evaluation_seed=113,
+    )
 
 
 def test_pipeline_attempt_id_grows_past_historical_outcome(tmp_path: Path) -> None:
@@ -964,6 +1049,13 @@ def test_mobilegpt_preparation_is_an_internal_pipeline_phase(
         "src.experiment.run_tasks.run_logged_command",
         run,
     )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks._validate_prepared_mobilegpt_memory",
+        lambda *_args, **_kwargs: {
+            "task_name": args.task,
+            "runlog_teacher_alignment": True,
+        },
+    )
 
     memory_root, phase = prepare_mobilegpt_memory(
         args=args,
@@ -982,6 +1074,42 @@ def test_mobilegpt_preparation_is_an_internal_pipeline_phase(
     assert str(args.memory_index) in captured
     assert memory_root == tmp_path / "registered-mobilegpt"
     assert phase["status"] == "created"
+
+
+def test_mobilegpt_preparation_rejects_legacy_unaligned_memory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    memory_root = tmp_path / "legacy" / "memory"
+    memory_root.mkdir(parents=True)
+    (memory_root.parent / "mobilegpt_memory_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.mobilegpt.memory.v2",
+                "source_method": "mobilegpt_official_learning_memory",
+                "task_name": args.task,
+                "provenance": {
+                    "native_mobilegpt_learning": True,
+                    "official_authoring_session": True,
+                    "official_prompt_extension": False,
+                    "runlog_teacher_alignment": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(
+        "OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT",
+        str(memory_root),
+    )
+
+    with pytest.raises(ValueError, match="mobilegpt_source_memory_not_authoritative"):
+        prepare_mobilegpt_memory(
+            args=args,
+            attempt_root=tmp_path / "attempt",
+            deadline=Deadline(60),
+        )
 
 
 def test_source_device_uses_protocol_avd() -> None:

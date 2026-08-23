@@ -85,6 +85,7 @@ from src.experiment.mobilegpt_contract import (
 from src.experiment.source_records import CanonicalRunLog
 from src.integrations.mobilegpt import (
     convert_runlog_to_mobilegpt_memory,
+    validate_memory_manifest,
 )
 from src.integrations.runlog import project_androidworld_step_actions
 from src.integrations.skilldroid_replay import compile_droidrun_macro
@@ -1607,6 +1608,41 @@ def _cached_source_function_qualification(
     return None
 
 
+def _validate_prepared_mobilegpt_memory(
+    memory_root: str | Path,
+    *,
+    task_name: str,
+) -> dict[str, Any]:
+    root = Path(memory_root).expanduser().resolve()
+    manifest_path = root.parent / "mobilegpt_memory_manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(
+            f"mobilegpt_source_memory_manifest_invalid:{manifest_path}"
+        ) from error
+    provenance = manifest.get("provenance")
+    if not (
+        manifest.get("schema_version") == MOBILEGPT_MEMORY_SCHEMA
+        and manifest.get("source_method") == MOBILEGPT_SOURCE_METHOD
+        and str(manifest.get("task_name") or "") == str(task_name)
+        and isinstance(provenance, dict)
+        and provenance.get("native_mobilegpt_learning") is True
+        and provenance.get("official_authoring_session") is True
+        and provenance.get("official_prompt_extension") is True
+        and provenance.get("runlog_teacher_alignment") is True
+    ):
+        raise ValueError(
+            f"mobilegpt_source_memory_not_authoritative:{manifest_path}"
+        )
+    validation = validate_memory_manifest(root)
+    if str(validation.get("task_name") or "") != str(task_name):
+        raise ValueError(
+            f"mobilegpt_source_memory_task_mismatch:{manifest_path}"
+        )
+    return validation
+
+
 def prepare_mobilegpt_memory(
     *,
     args: argparse.Namespace,
@@ -1623,29 +1659,17 @@ def prepare_mobilegpt_memory(
             raise FileNotFoundError(
                 f"mobilegpt_source_memory_missing:{root}"
             )
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            raise ValueError(
-                f"mobilegpt_source_memory_manifest_invalid:{manifest_path}"
-            ) from error
-        provenance = manifest.get("provenance")
-        if not (
-            manifest.get("schema_version") == MOBILEGPT_MEMORY_SCHEMA
-            and manifest.get("source_method") == MOBILEGPT_SOURCE_METHOD
-            and isinstance(provenance, dict)
-            and provenance.get("native_mobilegpt_learning") is True
-            and provenance.get("official_authoring_session") is True
-        ):
-            raise ValueError(
-                f"mobilegpt_source_memory_not_official:{manifest_path}"
-            )
+        validation = _validate_prepared_mobilegpt_memory(
+            root,
+            task_name=args.task,
+        )
         return root, {
             "status": "reused",
             "model_calls": 0,
             "total_tokens": 0,
             "memory_root": str(root),
             "selection_reason": "explicit_official_memory_root",
+            "memory_validation": validation,
         }
     existing = canonical_prepared_memory_from_index(
         memory_index=args.memory_index,
@@ -1661,26 +1685,31 @@ def prepare_mobilegpt_memory(
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             manifest = {}
-        provenance = manifest.get("provenance")
         target_package = str(manifest.get("target_package") or "").strip()
-        existing_is_official = (
-            manifest.get("schema_version") == MOBILEGPT_MEMORY_SCHEMA
-            and manifest.get("source_method") == MOBILEGPT_SOURCE_METHOD
-            and isinstance(provenance, dict)
-            and provenance.get("native_mobilegpt_learning") is True
-            and provenance.get("official_authoring_session") is True
-            and target_package
-            not in {
-                "com.google.android.inputmethod.latin",
-                "com.android.inputmethod.latin",
-            }
-        )
+        if target_package not in {
+            "com.google.android.inputmethod.latin",
+            "com.android.inputmethod.latin",
+        }:
+            try:
+                _validate_prepared_mobilegpt_memory(
+                    existing["memory_root"],
+                    task_name=args.task,
+                )
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                existing_is_official = False
+            else:
+                existing_is_official = True
     if existing is not None and existing_is_official:
+        validation = _validate_prepared_mobilegpt_memory(
+            existing["memory_root"],
+            task_name=args.task,
+        )
         return Path(str(existing["memory_root"])).resolve(), {
             "status": "reused",
             "model_calls": 0,
             "total_tokens": 0,
             "memory_root": str(existing["memory_root"]),
+            "memory_validation": validation,
         }
     output_root = attempt_root / "assets" / "mobilegpt"
     source_index = args.memory_index
@@ -1742,8 +1771,13 @@ def prepare_mobilegpt_memory(
     )
     if existing is None:
         raise PipelinePhaseError("mobilegpt_memory_not_registered", phase)
-    phase["memory_root"] = str(existing["memory_root"])
-    return Path(str(existing["memory_root"])).resolve(), phase
+    prepared_root = Path(str(existing["memory_root"])).resolve()
+    phase["memory_root"] = str(prepared_root)
+    phase["memory_validation"] = _validate_prepared_mobilegpt_memory(
+        prepared_root,
+        task_name=args.task,
+    )
+    return prepared_root, phase
 
 
 def prepare_appagent_memory(
@@ -1913,6 +1947,19 @@ def _concluded_results(
             device_models=_e2e_device_models(args),
         )
         concluded.update(indexed["completed"])
+    if "mobilegpt" in methods:
+        concluded = {
+            item
+            for item in concluded
+            if item[0] != "mobilegpt"
+            or _mobilegpt_registered_conclusion_is_reusable(
+                registry_root=registry_root,
+                task_name=args.task,
+                device=item[1],
+                source_seed=source_seed,
+                evaluation_seed=evaluation_seed,
+            )
+        }
     # External baselines are reusable evidence; OmniFlow is actively
     # corrected in the final campaign and must receive a fresh attempt.
     if "omniflow" in methods and os.environ.get(
@@ -1920,6 +1967,68 @@ def _concluded_results(
     ).strip().lower() in {"1", "true", "yes"}:
         concluded = {item for item in concluded if item[0] != "omniflow"}
     return concluded
+
+
+def _mobilegpt_registered_conclusion_is_reusable(
+    *,
+    registry_root: Path,
+    task_name: str,
+    device: str,
+    source_seed: int,
+    evaluation_seed: int,
+) -> bool:
+    """Keep passes, or failures backed by strongly validated source memory."""
+
+    result_root = registry_root / task_name / "mobilegpt" / device
+    for path in sorted(result_root.glob("*/registered_result.json"), reverse=True):
+        try:
+            summary = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (
+            str(summary.get("task_name") or "") != task_name
+            or int(summary.get("source_seed") or -1) != int(source_seed)
+            or int(summary.get("evaluation_seed") or -1) != int(evaluation_seed)
+        ):
+            continue
+        details = summary.get("details")
+        if not isinstance(details, list):
+            continue
+        for detail in details:
+            if not isinstance(detail, dict) or (
+                str(detail.get("method") or "") != "mobilegpt"
+                or str(detail.get("device") or "") != device
+            ):
+                continue
+            if detail.get("official_validator_success") is True:
+                return True
+            memory_root_text = str(detail.get("memory_root") or "").strip()
+            if not memory_root_text:
+                continue
+            method_manifest_path = (
+                Path(memory_root_text).expanduser().resolve() / "memory_manifest.json"
+            )
+            try:
+                method_manifest = json.loads(
+                    method_manifest_path.read_text(encoding="utf-8")
+                )
+                source_memory_root = Path(
+                    str(
+                        method_manifest.get("artifacts", {}).get(
+                            "source_memory_root"
+                        )
+                        or ""
+                    )
+                ).expanduser().resolve()
+                validation = _validate_prepared_mobilegpt_memory(
+                    source_memory_root,
+                    task_name=task_name,
+                )
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if validation.get("runlog_teacher_alignment") is True:
+                return True
+    return False
 
 
 def _e2e_methods(args: argparse.Namespace) -> tuple[str, ...]:

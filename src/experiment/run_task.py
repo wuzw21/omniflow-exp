@@ -79,6 +79,7 @@ from src.experiment.performance_metrics import aggregate_performance_metrics
 from src.experiment.run_process import run_process, start_process, stop_process
 from src.experiment.source_records import CanonicalRunLog, SourceRunLogProfile
 from src.integrations import mobilegpt_memory
+from src.integrations.mobilegpt import validate_memory_manifest
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
 from src.integrations.appagent import validate_appagent_memory
 from src.integrations.official_forward import (
@@ -5639,6 +5640,9 @@ def _run_result_mobilegpt(
     source_memory_root = resolve_path(source_memory_value)
     if not source_memory_root.is_dir():
         raise FileNotFoundError(f"mobilegpt_source_memory_missing:{source_memory_root}")
+    strong_memory_validation = validate_memory_manifest(source_memory_root)
+    if str(strong_memory_validation.get("task_name") or "") != item.task:
+        raise ValueError("mobilegpt_source_memory_task_mismatch")
     source_manifest_path = source_memory_root.parent / MOBILEGPT_MEMORY_MANIFEST
     source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
     source_schema = str(source_manifest.get("schema_version") or "")

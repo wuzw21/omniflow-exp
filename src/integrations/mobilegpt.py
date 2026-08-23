@@ -145,6 +145,8 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
         "synthetic_subtasks": False,
         "semantic_subtasks": True,
         "original_mobilegpt_prompts": True,
+        "official_prompt_extension": True,
+        "runlog_teacher_alignment": True,
         "actions_supplied_to_mobilegpt": False,
         "source_transitions_supplied": True,
         "source_success_boundary_supplied": True,
@@ -180,6 +182,9 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
     digest = _hash_memory_files(files, root=root)
     if len(files) != int(memory.get("file_count") or -1):
         raise ValueError("mobilegpt_memory_file_count_mismatch")
+    if str(memory.get("sha256") or "") != digest:
+        raise ValueError("mobilegpt_memory_sha256_mismatch")
+    evidence_paths: dict[str, Path] = {}
     for label in ("source_run_log", "source_stats", "trajectory_audit"):
         record = payload.get(label)
         if not isinstance(record, dict):
@@ -191,6 +196,43 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
             raise ValueError(f"mobilegpt_memory_{label}_outside_bundle") from error
         if not path.is_file():
             raise ValueError(f"mobilegpt_memory_{label}_file_missing")
+        if str(record.get("sha256") or "") != hashlib.sha256(
+            path.read_bytes()
+        ).hexdigest():
+            raise ValueError(f"mobilegpt_memory_{label}_sha256_mismatch")
+        evidence_paths[label] = path
+    audit = json.loads(
+        evidence_paths["trajectory_audit"].read_text(encoding="utf-8")
+    )
+    transition_count = int(audit.get("transition_count") or 0)
+    validation_rows = audit.get("validation_rows")
+    if (
+        not isinstance(audit, dict)
+        or audit.get("schema_version") != MOBILEGPT_AUDIT_SCHEMA
+        or str(audit.get("task_name") or "")
+        != str(payload.get("task_name") or "")
+        or audit.get("complete") is not True
+        or audit.get("teacher_prompt_used") is not True
+        or audit.get("teacher_action_alignment_complete") is not True
+        or transition_count <= 0
+        or int(audit.get("validated_transition_count") or 0)
+        != transition_count
+        or not isinstance(validation_rows, list)
+        or not validation_rows
+        or any(
+            not isinstance(row, dict)
+            or row.get("matched") is not True
+            or not isinstance(row.get("expected_action"), dict)
+            or row.get("expected_action") != row.get("actual_action")
+            for row in validation_rows
+        )
+        or sum(
+            int(row.get("consumed_transitions") or 0)
+            for row in validation_rows
+        )
+        != transition_count
+    ):
+        raise ValueError("mobilegpt_memory_teacher_alignment_invalid")
     if "official_source_result" in payload:
         raise ValueError("mobilegpt_memory_official_source_forbidden")
     return {
@@ -201,6 +243,8 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
         "memory_sha256": digest,
         "memory_file_count": len(files),
         "task_file_count": len(task_files),
+        "runlog_teacher_alignment": True,
+        "validated_transition_count": transition_count,
     }
 
 
