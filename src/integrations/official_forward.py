@@ -2136,7 +2136,6 @@ def _configure_mobilegpt_client_launch_lifecycle(client_root: Path) -> None:
         "        xmlPending = true;\n"
         "        screenNeedUpdate = true;\n"
         "        firstScreen = true;\n"
-        "        firstScreenLaunchRetries = 0;\n"
         "        mainThreadHandler.removeCallbacks(screenUpdateWaitRunnable);\n"
         "        mainThreadHandler.removeCallbacks(screenUpdateTimeoutRunnable);\n"
         "        if (launchIntent != null) {\n"
