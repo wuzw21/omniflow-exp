@@ -325,7 +325,39 @@ def _validated_action(value: Any) -> dict[str, Any]:
             raise ValueError("mobilegpt_memory_action_parameters_invalid") from error
     if not isinstance(parameters, dict):
         raise ValueError("mobilegpt_memory_action_parameters_invalid")
-    return {"name": name, "parameters": dict(parameters)}
+    normalized_parameters = dict(parameters)
+    required_parameters = {
+        "ask": {"info_name", "question"},
+        "back": set(),
+        "click": {"index"},
+        "finish": set(),
+        "input": {"index", "input_text"},
+        "long-click": {"index"},
+        "repeat-click": {"index", "number"},
+        "scroll": {"index", "direction"},
+        "speak": {"message"},
+    }
+    required = required_parameters.get(name)
+    if required is None:
+        raise ValueError(f"mobilegpt_memory_action_name_unsupported:{name}")
+    missing = sorted(required.difference(normalized_parameters))
+    if missing:
+        raise ValueError(
+            "mobilegpt_memory_action_required_parameters_missing:"
+            f"{name}:{','.join(missing)}"
+        )
+    if "index" in required:
+        try:
+            int(normalized_parameters["index"])
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"mobilegpt_memory_action_index_invalid:{name}"
+            ) from error
+    if name == "scroll" and str(
+        normalized_parameters.get("direction") or ""
+    ).strip().lower() not in {"up", "down"}:
+        raise ValueError("mobilegpt_memory_scroll_direction_invalid")
+    return {"name": name, "parameters": normalized_parameters}
 
 
 def validate_mobilegpt_memory(
@@ -1490,6 +1522,61 @@ def _element_semantic_label(element: ET.Element | None) -> str:
     return ""
 
 
+def _scroll_target_index(
+    parsed_xml: str,
+    action: dict[str, Any],
+    *,
+    step_index: int,
+) -> str:
+    """Resolve the index required by MobileGPT's executable scroll schema."""
+
+    try:
+        root = ET.fromstring(parsed_xml)
+    except ET.ParseError as error:
+        raise MobileGPTConversionError(
+            "source_scroll_screen_invalid",
+            step_index=step_index,
+        ) from error
+    candidates = [
+        element
+        for element in root.iter()
+        if element.tag == "scroll"
+        or str(element.get("scrollable") or "").strip().lower() == "true"
+    ]
+    point: tuple[float, float] | None = None
+    for x_name, y_name in (("x", "y"), ("start_x", "start_y"), ("x1", "y1")):
+        try:
+            point = (float(action[x_name]), float(action[y_name]))
+            break
+        except (KeyError, TypeError, ValueError):
+            continue
+    if point is not None:
+        x, y = point
+        containing: list[tuple[float, ET.Element]] = []
+        for element in candidates:
+            bounds = _bounds(element.get("bounds"))
+            if bounds is None:
+                continue
+            left, top, right, bottom = bounds
+            if left <= x <= right and top <= y <= bottom:
+                containing.append(((right - left) * (bottom - top), element))
+        if containing:
+            candidates = [min(containing, key=lambda item: item[0])[1]]
+    if len(candidates) != 1:
+        raise MobileGPTConversionError(
+            "source_scroll_target_unresolved",
+            step_index=step_index,
+            candidate_count=len(candidates),
+        )
+    index = str(candidates[0].get("index") or "").strip()
+    if not index:
+        raise MobileGPTConversionError(
+            "source_scroll_target_index_missing",
+            step_index=step_index,
+        )
+    return index
+
+
 def _direct_subtask_from_runlog(
     transition: _RunLogTransition,
     parsed_xml: str,
@@ -1669,7 +1756,23 @@ def _mobilegpt_action_from_runlog(
                 "source_swipe_direction_unresolved",
                 step_index=transition.step_index,
             )
-        converted = {"name": "scroll", "parameters": {"direction": direction}}
+        if direction not in {"up", "down"}:
+            raise MobileGPTConversionError(
+                "source_scroll_direction_unsupported",
+                step_index=transition.step_index,
+                direction=direction,
+            )
+        converted = {
+            "name": "scroll",
+            "parameters": {
+                "index": _scroll_target_index(
+                    parsed_xml,
+                    action,
+                    step_index=transition.step_index,
+                ),
+                "direction": direction,
+            },
+        }
     elif action_type == "navigate_back":
         converted = {"name": "back", "parameters": {}}
     elif action_type == "answer":

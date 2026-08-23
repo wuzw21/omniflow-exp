@@ -304,6 +304,42 @@ def test_scroll_source_is_passed_to_official_authoring_boundary(tmp_path: Path) 
     assert report["action_type_counts"] == {"scroll": 1}
 
 
+def test_direct_scroll_memory_matches_official_executor_schema(tmp_path: Path) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "scroll", "direction": "down"}],
+        forests=[
+            '<hierarchy><node class="androidx.recyclerview.widget.RecyclerView" '
+            'scrollable="true" bounds="[0,0][100,100]">'
+            '<node class="android.widget.TextView" text="Item 1" '
+            'bounds="[0,0][100,50]" />'
+            '<node class="android.widget.TextView" text="Item 2" '
+            'bounds="[0,50][100,100]" /></node></hierarchy>'
+        ],
+    )
+    memory = tmp_path / "memory"
+
+    convert_runlog_to_mobilegpt_memory(
+        source_run_log=source,
+        mobilegpt_root=MOBILEGPT_ROOT,
+        memory_root=memory,
+        stats_path=tmp_path / "stats.jsonl",
+        audit_path=tmp_path / "audit.json",
+        model="unused-offline",
+        embedding_provider=lambda _screen: [0.25, 0.75],
+    )
+
+    action_path = memory / "com.example.app" / "pages" / "0" / "actions.csv"
+    with action_path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    action = json.loads(rows[0]["action"])
+
+    assert action["name"] == "scroll"
+    assert action["parameters"]["index"] == "0"
+    assert action["parameters"]["direction"] == "down"
+    assert action["parameters"]["attrib"]["self"]["tag"] == "scroll"
+
+
 def test_preflight_exposes_authoritative_mobilegpt_teacher_actions(
     tmp_path: Path,
 ) -> None:
