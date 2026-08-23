@@ -21,6 +21,19 @@ _TRANSFER_STATE_FIELDS = {
     "display",
     "screenshot_path",
 }
+_OMNITRANSFER_CANDIDATE_FIELDS = {
+    "target_xml",
+    "source_xml",
+    "source_point",
+    "source_element_id",
+    "source_offset",
+    "source_screenshot_path",
+    "target_screenshot_path",
+    "source_visual_rgb",
+    "target_visual_rgb",
+    "action_type",
+    "top_k",
+}
 
 
 def capture_transfer_state(observation: Any) -> dict[str, Any]:
@@ -486,7 +499,13 @@ def transfer_action(**kwargs: Any) -> dict[str, Any]:
     module = load_omnitransfer()
     rank_candidates = getattr(module, "rank_action_candidates", None)
     if callable(rank_candidates):
-        ranking = rank_candidates(**kwargs)
+        ranking = rank_candidates(
+            **{
+                key: value
+                for key, value in kwargs.items()
+                if key in _OMNITRANSFER_CANDIDATE_FIELDS
+            }
+        )
         if not isinstance(ranking, dict):
             raise RuntimeError("omnitransfer_result_invalid")
         return _select_transfer_candidate(ranking, kwargs)
