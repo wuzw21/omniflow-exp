@@ -2093,17 +2093,18 @@ def _repair_androidworld_chrome_first_run(
             # leave immediately when no onboarding control is visible.  This
             # keeps setup bounded on images where the first-run dialog has
             # already disappeared between the initial snapshot and click.
-            visible_labels = {
-                str(value or "").strip().casefold()
-                for element in get_ui_elements() or ()
-                for value in (
-                    getattr(element, "text", None),
-                    getattr(element, "content_description", None),
-                )
-                if str(value or "").strip()
-            }
-            if not visible_labels.intersection(onboarding_labels):
-                return
+            if callable(get_ui_elements):
+                visible_labels = {
+                    str(value or "").strip().casefold()
+                    for element in get_ui_elements() or ()
+                    for value in (
+                        getattr(element, "text", None),
+                        getattr(element, "content_description", None),
+                    )
+                    if str(value or "").strip()
+                }
+                if not visible_labels.intersection(onboarding_labels):
+                    return
             for label in (
                 "Accept & continue",
                 "Accept & Continue",
@@ -2293,11 +2294,6 @@ def _run_androidworld_setup_apps(
             app_list=tuple(setup_apps),
         )
         _repair_androidworld_setup_postconditions(
-            setup_env,
-            setup_module=setup_module,
-            setup_apps=setup_apps,
-        )
-        _repair_androidworld_chrome_first_run(
             setup_env,
             setup_module=setup_module,
             setup_apps=setup_apps,
