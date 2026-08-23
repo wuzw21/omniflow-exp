@@ -1985,7 +1985,7 @@ def _concluded_results(
         # outcome are valid.  Do not let that legacy metadata prevent the
         # reusable-conclusion check from seeing the cell; add reusable
         # MobileGPT cells directly from the registry evidence.
-        for device, _ in devices:
+        for device, *_ in devices:
             if _mobilegpt_registered_conclusion_is_reusable(
                 registry_root=registry_root,
                 task_name=args.task,
