@@ -841,6 +841,7 @@ def prepare_mobilegpt_server(
     _configure_mobilegpt_optional_completion_rate(target)
     _configure_mobilegpt_selection_compat(target)
     _configure_mobilegpt_target_package_fallback(target)
+    _configure_mobilegpt_client_error_transport(target)
     staged_memory = target / "memory"
     if write_through_memory:
         if any(memory.iterdir()):
@@ -1487,6 +1488,52 @@ def _configure_mobilegpt_target_package_fallback(server_root: Path) -> None:
     )
     if original in source:
         server_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
+
+
+def _configure_mobilegpt_client_error_transport(server_root: Path) -> None:
+    """Complete the upstream APK's ``E`` frame in the pinned Server."""
+
+    server_path = server_root / "server.py"
+    if not server_path.is_file():
+        return
+    source = server_path.read_text(encoding="utf-8")
+    if "mobilegpt_client_error_transport" in source:
+        return
+    anchor = "            elif message_type == 'A':\n"
+    branch = (
+        "            elif message_type == 'E':\n"
+        "                # mobilegpt_client_error_transport: the official APK\n"
+        "                # sends E + one line when an action cannot be applied.\n"
+        "                # The pinned Server omitted this declared client frame,\n"
+        "                # causing bytes inside the error to become a new task.\n"
+        "                action_error = b''\n"
+        "                while not action_error.endswith(b'\\n'):\n"
+        "                    action_error += client_socket.recv(1)\n"
+        "                action_error = action_error.decode().strip()\n"
+        "                log(f'Action error is received: {action_error}', 'red')\n"
+        "                derive_agent = getattr(mobileGPT, 'derive_agent', None)\n"
+        "                action_history = getattr(derive_agent, 'action_history', None)\n"
+        "                if isinstance(action_history, list) and action_history:\n"
+        "                    action_history[-1] = (\n"
+        "                        'The previous device action failed: ' + action_error\n"
+        "                    )\n"
+        "                action = mobileGPT.get_next_action()\n"
+        "                if action is not None:\n"
+        "                    message = json.dumps(action)\n"
+        "                    client_socket.send(message.encode())\n"
+        "                    client_socket.send('\\r\\n'.encode())\n"
+        "                    write_omniflow_mobilegpt_event({\n"
+        "                        'event': 'mobilegpt_action_sent',\n"
+        "                        'action': action.get('name')\n"
+        "                        if isinstance(action, dict) else None,\n"
+        "                        'is_device_action': isinstance(action, dict)\n"
+        "                        and action.get('name') not in (None, 'speak'),\n"
+        "                        'retry_after_client_error': True,\n"
+        "                    })\n"
+        "\n"
+    )
+    if anchor in source:
+        server_path.write_text(source.replace(anchor, branch + anchor, 1), encoding="utf-8")
 
 
 def _run_adb(

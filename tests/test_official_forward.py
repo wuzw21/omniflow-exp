@@ -920,6 +920,7 @@ def test_mobilegpt_forwarder_bridges_finish_to_official_client_frame(
         "        return\n"
         "                target_package = app_agent.get_package_name(target_app)\n"
         "                task, is_new_task = task_agent.get_task(instruction)\n"
+        "            elif message_type == 'A':\n"
     )
     (server / "server.py").write_text(server_source, encoding="utf-8")
     (server / "utils" / "utils.py").write_text(
@@ -945,6 +946,9 @@ def test_mobilegpt_forwarder_bridges_finish_to_official_client_frame(
     assert "mobilegpt_target_package_fallback" in staged_source
     assert "target_package = app_agent.get_package_name(target_app)" in staged_source
     assert "'MOBILEGPT_TARGET_PACKAGE', ''" in staged_source
+    assert "mobilegpt_client_error_transport" in staged_source
+    assert "elif message_type == 'E':" in staged_source
+    assert "action_error += client_socket.recv(1)" in staged_source
     assert "task_agent.get_task(instruction)" in staged_source
     assert (server / "server.py").read_text(encoding="utf-8") == server_source
 
