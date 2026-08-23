@@ -1793,7 +1793,11 @@ def _concluded_results(
         # the new scheduler attempt and must not hide cells completed or
         # method-failed in earlier attempts.
         attempt_id=None,
-        device_models=_e2e_device_models(args),
+        # The canonical device label is already validated against the current
+        # protocol device list. Legacy outcomes may not carry model metadata;
+        # do not re-run those cells merely because their evidence predates the
+        # device_model/avd fields.
+        device_models=None,
     )
     # A formal cell is reusable across pipeline attempts only when its
     # immutable registration contains an official validator conclusion.  This
