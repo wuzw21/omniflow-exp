@@ -5198,19 +5198,35 @@ def build_mobilegpt_command(
         client_argv.extend(["--server-log", str(server_log_path)])
     if not perform_emulator_setup:
         client_argv.append("--no-perform-emulator-setup")
+    # The task runner deliberately constructs a narrow child environment, but
+    # the official MobileGPT client is built inside that child.  Preserve the
+    # runtime toolchain selected by the public launcher so the client uses the
+    # configured JDK/Gradle/SDK rather than the host's stale defaults.
+    client_environment = {
+        "ANDROID_SERIAL": target.serial,
+        "MOBILEGPT_STATS_JSONL": str(resolve_path(stats_jsonl, root=repo_root)),
+        "MOBILEGPT_TARGET_PACKAGE": str(target_package or "").strip(),
+        "MOBILEGPT_APP_READY_TIMEOUT_SEC": str(float(app_ready_timeout_sec)),
+        # MobileGPT owns its official Accessibility client and socket
+        # transport. Do not let the parent OmniFlow campaign's OOB setting
+        # leak into this subprocess.
+        "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND": "androidworld",
+    }
+    for key in (
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "GRADLE_USER_HOME",
+        "JAVA_HOME",
+        "OMNIFLOW_GRADLE_BIN",
+        "PATH",
+    ):
+        value = str(client_runtime_env.get(key) or "").strip()
+        if value:
+            client_environment[key] = value
     return CommandSpec(
         label=f"mobilegpt:official:{target.label}",
         argv=client_argv,
-        env={
-            "ANDROID_SERIAL": target.serial,
-            "MOBILEGPT_STATS_JSONL": str(resolve_path(stats_jsonl, root=repo_root)),
-            "MOBILEGPT_TARGET_PACKAGE": str(target_package or "").strip(),
-            "MOBILEGPT_APP_READY_TIMEOUT_SEC": str(float(app_ready_timeout_sec)),
-            # MobileGPT owns its official Accessibility client and socket
-            # transport. Do not let the parent OmniFlow campaign's OOB
-            # setting leak into this subprocess.
-            "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND": "androidworld",
-        },
+        env=client_environment,
         cwd=repo_root,
         output_path=resolved_output,
         timeout_sec=(
