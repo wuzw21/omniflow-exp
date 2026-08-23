@@ -9,6 +9,7 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.experiment.data_index import (
     _ensure_run_log_record_digest,
+    _canonical_result_candidate_key,
     load_data_index,
     registered_result_plan_from_memory,
     refresh_data_index,
@@ -25,6 +26,7 @@ def test_legacy_canonical_source_digest_is_rehydrated(tmp_path: Path) -> None:
     assert digest == hashlib.sha256(source.read_bytes()).hexdigest()
     assert record["sha256"] == digest
 from src.experiment.result_registry import (
+    legacy_external_result_protocol_compatible,
     register_attempt_summary,
     registered_result_plan,
 )
@@ -36,6 +38,72 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
+    )
+
+
+def test_canonical_result_prefers_latest_complete_success() -> None:
+    failed_retry = (
+        "2026-08-22T10:00:00+00:00",
+        "attempt-failed",
+        "/tmp/failed.json",
+        {"official_validator_success": False},
+    )
+    old_success = (
+        "2026-08-20T10:00:00+00:00",
+        "attempt-old-success",
+        "/tmp/old.json",
+        {"official_validator_success": True},
+    )
+    new_success = (
+        "2026-08-22T11:00:00+00:00",
+        "attempt-new-success",
+        "/tmp/new.json",
+        {"official_validator_success": True},
+    )
+
+    ordered = sorted(
+        (failed_retry, old_success, new_success),
+        key=_canonical_result_candidate_key,
+        reverse=True,
+    )
+
+    assert ordered[0][1] == "attempt-new-success"
+    assert ordered[-1][1] == "attempt-failed"
+
+
+def test_legacy_external_result_protocol_adapter_requires_official_target_evidence() -> None:
+    row = {
+        "task_name": "CameraTakePhoto",
+        "method": "mobilegpt",
+        "device": "small5554",
+        "device_target": {
+            "label": "small5554",
+            "serial": "emulator-5554",
+            "console_port": 5554,
+        },
+        "official_validator_used": True,
+        "official_validator_success": True,
+        "task_params": {},
+        "command": (
+            "python -m src.integrations.official_forward "
+            "--baseline mobilegpt --serial emulator-5554 "
+            "--task-seed 113 --console-port 5554"
+        ),
+    }
+
+    assert legacy_external_result_protocol_compatible(
+        row,
+        task_name="CameraTakePhoto",
+        method="mobilegpt",
+        device="small5554",
+        evaluation_seed=113,
+    )
+    assert not legacy_external_result_protocol_compatible(
+        {**row, "command": row["command"].replace("113", "111")},
+        task_name="CameraTakePhoto",
+        method="mobilegpt",
+        device="small5554",
+        evaluation_seed=113,
     )
 
 
@@ -813,6 +881,52 @@ def test_result_registration_rejects_missing_boolean_validator_conclusion(
         )
 
     assert not runs_root.exists()
+
+
+def test_result_registration_accepts_non_environment_command_failure(
+    tmp_path: Path,
+) -> None:
+    summary = tmp_path / "attempt" / "one_task_summary.json"
+    row = {
+        "task": "ContactsNewContactDraft",
+        "method": "mobilegpt",
+        "device": "fold5564",
+        "status": "command_failed",
+        "official_validator_used": True,
+        "official_validator_success": None,
+        "environment_failure": False,
+        "model_calls": 2,
+        "total_tokens": 120,
+    }
+    _write_json(
+        summary,
+        {
+            "schema_version": "omniflow.androidworld.result-summary.v1",
+            "task_name": "ContactsNewContactDraft",
+            "source_seed": 111,
+            "evaluation_seed": 113,
+            "rows": [row],
+            "details": [row],
+        },
+    )
+    attempt_manifest = summary.with_name("attempt_manifest.json")
+    _write_json(
+        attempt_manifest,
+        {
+            "immutable": True,
+            "attempt_id": "iteration_01-command-failed",
+            "source_seed": 111,
+            "evaluation_seed": 113,
+        },
+    )
+
+    registration = register_attempt_summary(
+        summary_path=summary,
+        attempt_manifest_path=attempt_manifest,
+        runs_root=tmp_path / "runs",
+    )
+
+    assert registration["registered_results_count"] == 1
 
 
 @pytest.mark.parametrize(

@@ -566,10 +566,21 @@ def register_attempt_summary(
                 f"{task_name}:{','.join(reasons)}"
             )
         if not has_official_validator_conclusion(row):
-            raise ValueError(
-                "official_validator_conclusion_missing:"
-                f"{task_name}:{row.get('method')}:{row.get('device')}"
-            )
+            # The official client can terminate with a protocol/method
+            # failure before AndroidWorld emits a validator conclusion. This
+            # is still a terminal experiment observation when no environment
+            # failure was reported; keep it in the immutable registry so a
+            # campaign can continue and resume can skip the same cell.
+            terminal_method_failure = str(row.get("status") or "").strip().lower() in {
+                "command_failed",
+                "method_failed",
+                "execution_failed",
+            }
+            if not terminal_method_failure:
+                raise ValueError(
+                    "official_validator_conclusion_missing:"
+                    f"{task_name}:{row.get('method')}:{row.get('device')}"
+                )
 
     ledger_records: list[dict[str, Any]] = []
     registered_paths: list[str] = []
