@@ -63,3 +63,60 @@ def test_compiler_freezes_only_function_referenced_states(
     assert result["prompt_tokens"] == 0
     assert result["completion_tokens"] == 0
     assert result["total_tokens"] == 0
+
+
+def test_compiler_registers_source_call_for_argumentless_authored_function(
+    tmp_path: Path,
+) -> None:
+    result = compile_runlog_to_store(
+        _run_log(2),
+        tmp_path / "output",
+        function_bundle={
+            "schema_version": "omniflow.function-bundle.v2",
+            "run_id": "source-run",
+            "arguments": {},
+            "functions": [
+                {
+                    "schema_version": "omniflow.function.v2",
+                    "function_id": "open_settings",
+                    "name": "Open Settings",
+                    "description": "Open Settings and wait for the page.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                        "additionalProperties": False,
+                    },
+                    "bindings": [],
+                    "steps": [
+                        {
+                            "step_index": 0,
+                            "source_state_id": "state_0",
+                            "action": {
+                                "tool": "open_app",
+                                "args": {
+                                    "package_name": "com.android.settings"
+                                },
+                            },
+                        },
+                        {
+                            "step_index": 1,
+                            "source_state_id": "state_1",
+                            "action": {
+                                "tool": "wait",
+                                "args": {"duration_ms": 1000},
+                            },
+                        },
+                    ],
+                    "checker_rules": [],
+                    "agent_visible": True,
+                }
+            ],
+        },
+        source_states={
+            "state_0": {"state_id": "state_0"},
+            "state_1": {"state_id": "state_1"},
+        },
+    )
+
+    assert result["source_arguments"] == {"open_settings": {}}

@@ -315,11 +315,14 @@ Set checker_rules=[] in every generated Function.
         raise ValueError("function_bundle_duplicate_function_id")
     if set(arguments_by_function) - set(function_ids):
         raise ValueError("function_bundle_source_arguments_unknown_function")
+    normalized_arguments: dict[str, dict[str, Any]] = {}
     for function in functions:
         arguments = arguments_by_function.get(function.id, {})
         if not isinstance(arguments, dict):
             raise ValueError("function_bundle_source_arguments_invalid")
         bind_function(function, arguments)
+        normalized_arguments[function.id] = dict(arguments)
+    arguments_by_function = normalized_arguments
 
     if source_states is not None and state_loader is not None:
         raise ValueError("function_source_state_provider_ambiguous")
