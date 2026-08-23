@@ -31,10 +31,12 @@ bash scripts/exp/run_androidworld.sh \
 
 1. 检查 `data/current.json` 中是否已有该 task 的 Function；
 2. 没有时，可用 source RunLog 作为 observation authoring 输入；
-3. `save_function` 写入包含内联 transfer states 的 v3 Store；
+3. `compile_runlog_to_store` 写入 v2 `store.json` 和同目录
+   `transfer_states.json`；
 4. 校验通过后，在指定设备上执行 E2E。
 
-Function 结构不依赖 RunLog 动作覆盖或顺序。source seed 固定为 `111`，
+Function 步骤按成功 RunLog 动作顺序保存，并通过 `source_state_id` 关联 source
+observation。source seed 固定为 `111`，
 evaluation seed 固定为 `113`，正式 chat 和视觉模型统一为 `GLM-4.6V`；初始
 VLM 与 fallback 都直接传当前 screenshot。
 

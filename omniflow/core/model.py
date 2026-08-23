@@ -21,26 +21,13 @@ class Observation:
             for key in ("state_id", "screenshot_path"):
                 if value.get(key) is not None:
                     extra[key] = value[key]
-            screenshot = value.get("screenshot")
-            if not isinstance(screenshot, dict):
-                screenshot = value.get("pixels")
-            if isinstance(screenshot, dict):
-                if screenshot.get("path") is not None:
-                    extra["screenshot_path"] = screenshot["path"]
-                if screenshot.get("width") is not None and screenshot.get("height") is not None:
-                    extra["display"] = {
-                        "width": screenshot["width"],
-                        "height": screenshot["height"],
-                    }
             display = value.get("display")
             if isinstance(display, dict):
                 extra["display"] = dict(display)
-            auxiliaries = value.get("auxiliaries")
-            auxiliaries = auxiliaries if isinstance(auxiliaries, dict) else {}
             return cls(
-                xml=value.get("xml") or value.get("forest"),
-                package_name=value.get("package_name") or auxiliaries.get("package_name"),
-                activity_name=value.get("activity_name") or auxiliaries.get("activity_name"),
+                xml=value.get("xml"),
+                package_name=value.get("package_name"),
+                activity_name=value.get("activity_name"),
                 image_base64=value.get("image_base64"),
                 extra=extra,
             )
@@ -146,12 +133,12 @@ class ActionResult:
 class FunctionStep:
     step_index: int
     action: Action
-    transfer_state_ids: tuple[str, ...]
+    source_state_id: str
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "step_index": self.step_index,
-            "transfer_state_ids": list(self.transfer_state_ids),
+            "source_state_id": self.source_state_id,
             "action": self.action.to_dict(),
         }
 
@@ -165,9 +152,7 @@ class Function:
     schema_version: str = ""
     input_schema: dict[str, Any] = field(default_factory=dict)
     bindings: tuple[dict[str, str], ...] = ()
-    transfer_states: dict[str, dict[str, Any]] = field(default_factory=dict)
     checker_rules: tuple[dict[str, Any], ...] = ()
-    model_handoffs: tuple[dict[str, Any], ...] = ()
     agent_visible: bool = True
 
     @classmethod
@@ -179,10 +164,7 @@ class Function:
             steps=tuple(
                 FunctionStep(
                     step_index=int(step.get("step_index") or 0),
-                    transfer_state_ids=tuple(
-                        str(state_id)
-                        for state_id in step.get("transfer_state_ids") or ()
-                    ),
+                    source_state_id=str(step.get("source_state_id") or ""),
                     action=Action.from_value(step.get("action") or {}),
                 )
                 for step in value.get("steps") or ()
@@ -198,44 +180,22 @@ class Function:
                 for binding in value.get("bindings") or ()
                 if isinstance(binding, dict)
             ),
-            transfer_states={
-                str(state_id): dict(observation)
-                for state_id, observation in (value.get("transfer_states") or {}).items()
-                if isinstance(observation, dict)
-            },
             checker_rules=tuple(value.get("checker_rules") or ()),
-            model_handoffs=tuple(
-                {
-                    "step_index": int(handoff.get("step_index") or 0),
-                    "reason": str(handoff.get("reason") or ""),
-                }
-                for handoff in value.get("model_handoffs") or ()
-                if isinstance(handoff, dict)
-            ),
             agent_visible=value.get("agent_visible") is True,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        value = {
+        return {
             "schema_version": self.schema_version,
             "function_id": self.function_id,
             "name": self.name,
             "description": self.description,
             "input_schema": dict(self.input_schema),
             "bindings": [dict(binding) for binding in self.bindings],
-            "transfer_states": {
-                state_id: dict(observation)
-                for state_id, observation in self.transfer_states.items()
-            },
             "steps": [step.to_dict() for step in self.steps],
             "checker_rules": list(self.checker_rules),
             "agent_visible": self.agent_visible,
         }
-        if self.model_handoffs:
-            value["model_handoffs"] = [
-                dict(handoff) for handoff in self.model_handoffs
-            ]
-        return value
 
     @property
     def id(self) -> str:
@@ -244,13 +204,6 @@ class Function:
     @property
     def actions(self) -> tuple[Action, ...]:
         return tuple(step.action for step in self.steps)
-
-    def observations_for_step(self, step: FunctionStep) -> tuple[Observation, ...]:
-        return tuple(
-            Observation.from_value(self.transfer_states[state_id])
-            for state_id in step.transfer_state_ids
-            if state_id in self.transfer_states
-        )
 
 
 @dataclass(frozen=True)
@@ -268,35 +221,28 @@ class RunResult:
     def execution_summary(self) -> dict[str, Any]:
         usage = self.detail.get("llm_usage")
         usage = usage if isinstance(usage, dict) else {}
-        checker_decisions = self.detail.get("checker_decisions")
-        checker_decisions = (
-            [dict(value) for value in checker_decisions if isinstance(value, dict)]
-            if isinstance(checker_decisions, list)
-            else []
-        )
         prompt_tokens = max(0, _coerce_int(usage.get("prompt_tokens")))
         completion_tokens = max(0, _coerce_int(usage.get("completion_tokens")))
         total_tokens = max(0, _coerce_int(usage.get("total_tokens")))
         if total_tokens <= 0:
             total_tokens = prompt_tokens + completion_tokens
-        planner_steps = max(0, _coerce_int(self.detail.get("planner_steps")))
         return {
             "success": self.success,
             "steps": self.actions_executed,
-            "planner_steps": planner_steps,
-            "actions_executed": self.actions_executed,
             "model_calls": self.model_calls,
             "fallback_steps": self.fallback_steps,
+            "completion_review_calls": max(
+                0,
+                _coerce_int(self.detail.get("completion_review_calls")),
+            ),
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
             "tokens": total_tokens,
-            "latency_ms": round(float(usage.get("latency_ms") or 0.0), 6),
             "token_usage_status": str(
                 usage.get("token_usage_status") or "not_applicable"
             ),
             "failure_reason": self.error,
-            "checker_decisions": checker_decisions,
         }
 
 
@@ -320,7 +266,15 @@ class StepResult:
     origin: str = "action"
     executed_steps: tuple["StepResult", ...] = ()
     function_id: str | None = None
+    checker_trigger: str | None = None
     detail: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CheckerContext:
+    source: Observation | None
+    current: Observation
+    action: Action
 
 
 @dataclass(frozen=True)
@@ -330,6 +284,10 @@ class TransferResult:
     detail: dict[str, Any] = field(default_factory=dict)
 
 
+Checker = Callable[
+    [CheckerContext],
+    Action | None | Awaitable[Action | None],
+]
 Transfer = Callable[
     [Action, Observation, Observation | None],
     TransferResult | Awaitable[TransferResult],
@@ -341,6 +299,10 @@ class Host(Protocol):
 
     def act(self, action: Action) -> ActionResult | Awaitable[ActionResult]: ...
 
+    def get_state(
+        self, source_state_id: str
+    ) -> Observation | Awaitable[Observation]: ...
+
 
 class Planner(Protocol):
     def one_step_tool_call(
@@ -350,6 +312,14 @@ class Planner(Protocol):
         functions: tuple[Function, ...],
         installed_apps: dict[str, str],
     ) -> ToolCall | Awaitable[ToolCall]: ...
+
+
+class FunctionRouter(Protocol):
+    def route_function(
+        self,
+        goal: str,
+        functions: tuple[Function, ...],
+    ) -> ToolCall | None | Awaitable[ToolCall | None]: ...
 
 
 def _coerce_int(value: Any) -> int:

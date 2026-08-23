@@ -13,7 +13,8 @@ class _Host:
         self.actions: list[Action] = []
 
     def observe(self, **_: object) -> Observation:
-        return Observation(xml="<page/>", package_name="com.example")
+        xml = '<page text="Continue"/>' if not self.actions else "<page/>"
+        return Observation(xml=xml, package_name="com.example")
 
     def get_state(self, state_id: str) -> Observation | None:
         return self.source_states.get(state_id)
@@ -54,6 +55,7 @@ def _store(
     *functions: dict[str, object],
     source_calls: list[dict[str, object]] | None = None,
 ) -> Path:
+    calls = source_calls or []
     path.write_text(
         json.dumps(
             {
@@ -62,7 +64,18 @@ def _store(
                     str(function["function_id"]): function
                     for function in functions
                 },
-                "source_calls": source_calls or [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    path.with_name("compile_report.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.androidworld.function-gate.v2",
+                "source_arguments": {
+                    str(call["function_id"]): dict(call["arguments"])
+                    for call in calls
+                },
             }
         ),
         encoding="utf-8",
@@ -76,19 +89,20 @@ def test_script_replay_selects_full_function_and_uses_core_transfer(
     complete = _function(function_id="complete_task", steps=2)
     complete["input_schema"] = {
         "type": "object",
-        "properties": {"target": {"type": "string"}},
-        "required": ["target"],
+        "properties": {"x": {"type": "integer"}},
+        "required": ["x"],
         "additionalProperties": False,
     }
     complete["bindings"] = [
         {
-            "source": "$.arguments.target",
-            "target": "$.steps[0].action.args.target_description",
+            "source": "$.arguments.x",
+            "target": "$.steps[0].action.args.x",
         }
     ]
-    complete["steps"][0]["action"]["args"]["target_description"] = ""
     complete["checker_rules"] = [
         {
+            "schema_version": "omniflow.checker_rule.v1",
+            "trigger": "text_contains(\"Continue\")",
             "source_state_id": "checker-source",
             "action": {"tool": "click", "args": {"x": 300, "y": 400}},
         }
@@ -97,7 +111,7 @@ def test_script_replay_selects_full_function_and_uses_core_transfer(
         tmp_path / "store.json",
         complete,
         source_calls=[
-            {"function_id": "complete_task", "arguments": {"target": "Alarm"}}
+            {"function_id": "complete_task", "arguments": {"x": 650}}
         ],
     )
     source_states = {
@@ -136,7 +150,7 @@ def test_script_replay_selects_full_function_and_uses_core_transfer(
         source_states["source-0"],
         source_states["source-1"],
     ]
-    assert transferred_actions[1].args["target_description"] == "Alarm"
+    assert transferred_actions[1].args["x"] == 650
     assert host.actions == [
         Action("click", {"x": 101, "y": 200}),
         Action("click", {"x": 102, "y": 200}),

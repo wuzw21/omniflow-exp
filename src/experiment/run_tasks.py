@@ -20,8 +20,7 @@ import time
 from typing import Any, Callable, Mapping, Sequence
 
 from omniflow.core.trajectory import require_complete_source_run_log
-from omniflow.functions.assets import save_function
-from omniflow.vlm.model_config import resolve_openai_compatible_config
+from src.experiment.function_v2 import compile_function_v2
 from src.experiment.run_task import (
     _canonical_function_source_call,
     bind_function_arguments_to_task_params,
@@ -60,7 +59,6 @@ from src.experiment.protocol import (
     DEVICE_AVDS,
     FIXED_TASK_PARAMS,
     FORMAL_MODEL,
-    FORMAL_MODEL_BASE_URL,
     FUNCTION_ENHANCEMENT_TIMEOUT_SEC,
     MAX_FALLBACK_STEPS,
     MAX_STEPS,
@@ -1359,7 +1357,7 @@ def prepare_function_asset(
             raise FileNotFoundError(f"canonical_function_store_missing:{args.task}")
         source_device = getattr(args, "source_device", SOURCE_DEVICE)
         source_label = safe_component(str(source_device[0]))
-        store_path = (
+        function_root = (
             args.asset_root
             / "androidworld"
             / safe_component(args.task)
@@ -1367,30 +1365,23 @@ def prepare_function_asset(
             / "function"
             / "function_authoring"
             / safe_component(attempt_root.name)
-            / "function_store.json"
         )
-        if store_path.exists() and not repair_deterministic:
+        if function_root.exists() and any(function_root.iterdir()) and not repair_deterministic:
             raise FileExistsError(
-                f"function_authoring_artifact_already_exists:{store_path}"
+                f"function_authoring_artifact_already_exists:{function_root}"
             )
         try:
-            creation_report = save_function(
+            creation_report = compile_function_v2(
                 source_path,
-                store_path,
+                function_root,
                 enhance=not repair_deterministic,
-                **(
-                    {
-                        "complete_json": _function_enhancement_transport(
-                            model=args.formal_model,
-                            timeout_sec=float(FUNCTION_ENHANCEMENT_TIMEOUT_SEC),
-                            usage=usage,
-                        )
-                    }
-                    if not repair_deterministic
-                    else {}
-                ),
+                model=args.formal_model,
+                timeout=float(FUNCTION_ENHANCEMENT_TIMEOUT_SEC),
                 authoring_trace=authoring_trace,
             )
+            for key in usage:
+                usage[key] = int(creation_report.get(key) or 0)
+            store_path = Path(creation_report["store_path"]).resolve()
             refresh_data_index_from_pointer(
                 memory_index=args.memory_index,
                 additional_runlog_roots=(args.asset_root,),
@@ -3119,12 +3110,12 @@ def run_function_replay_collection(args: argparse.Namespace) -> dict[str, Any]:
             / "function_authoring"
             / safe_component(attempt_id)
         )
-        store_path = function_bundle_root / "function_store.json"
-        conversion = save_function(
+        conversion = compile_function_v2(
             source_path,
-            store_path,
+            function_bundle_root,
             enhance=False,
         )
+        store_path = Path(conversion["store_path"]).resolve()
         transfer_audit = validate_omniflow_transfer_assets(
             store_path,
             require_action_transfer=True,
@@ -4382,95 +4373,6 @@ def _clone_bmoca_avd_home(
     return target_home
 
 
-def _function_enhancement_transport(
-    *,
-    model: str,
-    timeout_sec: float,
-    usage: dict[str, int],
-) -> Callable[[str, dict[str, Any]], str]:
-    """Return only the model transport required by canonical save_function."""
-
-    try:
-        from openai import OpenAI
-    except ImportError as error:
-        raise RuntimeError("Install omniflow[llm] for Function enhancement") from error
-    api_key, base_url = resolve_openai_compatible_config(
-        profile="llmthu",
-        base_url=FORMAL_MODEL_BASE_URL,
-    )
-    client = OpenAI(
-        api_key=api_key or "not-required",
-        base_url=base_url,
-        max_retries=0,
-        timeout=float(timeout_sec),
-    )
-
-    def complete_json(prompt: str, tool: dict[str, Any]) -> str:
-        tool_name = str(tool["function"]["name"])
-        messages: list[dict[str, str]] = [{"role": "user", "content": prompt}]
-        for attempt in range(3):
-            usage["model_calls"] += 1
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_completion_tokens=4096,
-                temperature=0,
-                tools=[tool],
-                tool_choice={
-                    "type": "function",
-                    "function": {"name": tool_name},
-                },
-                parallel_tool_calls=False,
-                reasoning_effort="none",
-            )
-            response_usage = getattr(response, "usage", None)
-            usage["prompt_tokens"] += int(
-                getattr(response_usage, "prompt_tokens", 0) or 0
-            )
-            usage["completion_tokens"] += int(
-                getattr(response_usage, "completion_tokens", 0) or 0
-            )
-            usage["total_tokens"] += int(
-                getattr(response_usage, "total_tokens", 0) or 0
-            )
-            choices = getattr(response, "choices", None) or ()
-            message = getattr(choices[0], "message", None) if choices else None
-            calls = getattr(message, "tool_calls", None) or ()
-            if len(calls) == 1:
-                function = getattr(calls[0], "function", None)
-                returned_name = str(getattr(function, "name", "") or "")
-                arguments = getattr(function, "arguments", None)
-                if returned_name == tool_name and isinstance(arguments, str):
-                    return arguments
-            content = getattr(message, "content", None)
-            if isinstance(content, str) and content.strip():
-                decoder = json.JSONDecoder()
-                for start, character in enumerate(content):
-                    if character != "{":
-                        continue
-                    try:
-                        _, end = decoder.raw_decode(content[start:])
-                    except json.JSONDecodeError:
-                        continue
-                    return content[start : start + end]
-            if attempt < 2:
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "Return exactly one tool call named "
-                            f"{tool_name} with the required JSON object. "
-                            "Do not return commentary, tools_search, or plain text."
-                        ),
-                    }
-                )
-                continue
-            raise ValueError("function_enhancer_tool_call_invalid")
-        raise AssertionError("function_enhancer_transport_unreachable")
-
-    return complete_json
-
-
 def _save_bmoca_function_once(
     *,
     args: argparse.Namespace,
@@ -4488,7 +4390,7 @@ def _save_bmoca_function_once(
     repository_root = Path(
         getattr(args, "repo", task_root.parent)
     ).expanduser().resolve()
-    store_path = (
+    function_root = (
         repository_root
         / "data"
         / "bmoca"
@@ -4497,10 +4399,9 @@ def _save_bmoca_function_once(
         / "function"
         / "function_authoring"
         / attempt_id
-        / "function_store.json"
     )
-    if store_path.exists():
-        raise FileExistsError(f"bmoca_function_store_already_exists:{store_path}")
+    if function_root.exists() and any(function_root.iterdir()):
+        raise FileExistsError(f"bmoca_function_store_already_exists:{function_root}")
     usage = {
         "model_calls": 0,
         "prompt_tokens": 0,
@@ -4509,15 +4410,12 @@ def _save_bmoca_function_once(
     }
     started = time.monotonic()
     try:
-        report = save_function(
+        report = compile_function_v2(
             source_run_log,
-            store_path,
+            function_root,
             enhance=True,
-            complete_json=_function_enhancement_transport(
-                model=args.formal_model,
-                timeout_sec=float(FUNCTION_ENHANCEMENT_TIMEOUT_SEC),
-                usage=usage,
-            ),
+            model=args.formal_model,
+            timeout=float(FUNCTION_ENHANCEMENT_TIMEOUT_SEC),
         )
     except Exception as error:
         _write_json(
@@ -4527,18 +4425,21 @@ def _save_bmoca_function_once(
                 "status": "failed",
                 "task": task,
                 "source_run_log": str(source_run_log),
-                "save_function_calls": 1,
+                "compile_function_calls": 1,
                 "wall_sec": round(time.monotonic() - started, 6),
                 "error": f"{type(error).__name__}: {error}",
                 **usage,
             },
         )
         raise
+    for key in usage:
+        usage[key] = int(report.get(key) or 0)
+    store_path = Path(report["store_path"]).resolve()
     enhancement = {
         "schema_version": "omniflow.bmoca-function-enhancement.v1",
         "task": task,
         "source_run_log": str(source_run_log),
-        "save_function_calls": 1,
+        "compile_function_calls": 1,
         "enhanced": report.get("enhanced") is True,
         "function_ids": list(report.get("function_ids") or ()),
         "store_path": str(store_path),
@@ -5146,7 +5047,7 @@ def run_bmoca_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     "status": "failed",
                     "task": task,
                     "source_run_log": str(source_run_log),
-                    "save_function_calls": 1,
+                    "compile_function_calls": 1,
                     "error": f"{type(error).__name__}: {error}",
                 }
             )

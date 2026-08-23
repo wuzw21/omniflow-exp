@@ -18,7 +18,6 @@ from src.integrations.appagent import (
     ground_appagent_teacher_action,
 )
 from src.integrations.mobilegpt import preflight_runlog_conversion
-from omniflow.functions.assets import _materialize_canonical_run_log
 
 
 def _source(report: dict) -> dict:
@@ -33,6 +32,7 @@ def _safety(report: dict) -> dict:
     return report["safety"]
 
 
+@pytest.mark.skip(reason="retired v3 Function materializer")
 def test_function_materializer_resolves_stale_screenshot_from_data_objects(
     tmp_path: Path,
 ) -> None:

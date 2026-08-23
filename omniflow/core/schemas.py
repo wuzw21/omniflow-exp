@@ -7,16 +7,9 @@ import sys
 import sysconfig
 from typing import Any
 
-PLANNER_SUMMARY_DESCRIPTION = (
-    "persistent working memory plus the brief plan for this action. Preserve exact facts "
-    "read from the current screen that later steps need, including every pending record "
-    "and field value. Track what remains. Never replace missing facts with guesses."
-)
-
 CANONICAL_ACTION_SCHEMA_FILENAME = "oob_canonical_actions.v1.json"
 OMNIFLOW_RUN_LOG_SCHEMA_FILENAME = "omniflow_run_log.v1.json"
 CHECKER_RULE_SCHEMA_FILENAME = "omniflow_checker_rule.v1.json"
-FUNCTION_SCHEMA_FILENAME = "omniflow_function.v3.json"
 VLM_ACTION_TOOL_NAMES = (
     "click",
     "input_text",
@@ -47,10 +40,6 @@ def checker_rule_schema_path() -> Path:
     return _schema_path(CHECKER_RULE_SCHEMA_FILENAME)
 
 
-def function_schema_path() -> Path:
-    return _schema_path(FUNCTION_SCHEMA_FILENAME)
-
-
 def _schema_path(filename: str) -> Path:
     source_path = Path(__file__).resolve()
     data_root = Path(sysconfig.get_path("data") or sys.prefix)
@@ -75,10 +64,6 @@ def load_checker_rule_schema() -> dict[str, Any]:
     return _load_schema(checker_rule_schema_path())
 
 
-def load_function_schema() -> dict[str, Any]:
-    return _load_schema(function_schema_path())
-
-
 def _load_schema(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -86,27 +71,20 @@ def _load_schema(path: Path) -> dict[str, Any]:
     return payload
 
 
-def openai_action_tools(
-    *,
-    include_summary: bool = False,
-    include_hidden_names: frozenset[str] = frozenset(),
-) -> list[dict[str, Any]]:
+def openai_action_tools(*, include_summary: bool = False) -> list[dict[str, Any]]:
     tools: list[dict[str, Any]] = []
     for action in load_canonical_action_schema().get("tools") or ():
-        if not isinstance(action, dict):
-            continue
-        action_name = str(action.get("name") or "")
-        if (
-            action.get("model_visible") is False
-            and action_name not in include_hidden_names
-        ):
+        if not isinstance(action, dict) or action.get("model_visible") is False:
             continue
         properties: dict[str, Any] = {}
         required: list[str] = []
         if include_summary:
             properties["summary"] = {
                 "type": "string",
-                "description": PLANNER_SUMMARY_DESCRIPTION,
+                "description": (
+                    "Why this single action is the best next step, in at most "
+                    "20 Chinese characters or one short sentence."
+                ),
             }
             required.append("summary")
         for argument in action.get("args") or ():
@@ -140,7 +118,7 @@ def openai_action_tools(
             {
                 "type": "function",
                 "function": {
-                    "name": action_name,
+                    "name": str(action.get("name") or ""),
                     "description": description.get("en_us", "")
                     if isinstance(description, dict)
                     else str(description),
@@ -278,17 +256,14 @@ __all__ = [
     "CANONICAL_ACTION_SCHEMA_FILENAME",
     "OMNIFLOW_RUN_LOG_SCHEMA_FILENAME",
     "CHECKER_RULE_SCHEMA_FILENAME",
-    "FUNCTION_SCHEMA_FILENAME",
     "VLM_ACTION_TOOL_NAMES",
     "canonical_action_schema_path",
     "omniflow_run_log_schema_path",
     "canonicalize_action",
     "checker_rule_schema_path",
-    "function_schema_path",
     "load_canonical_action_schema",
     "load_omniflow_run_log_schema",
     "load_checker_rule_schema",
-    "load_function_schema",
     "openai_action_tools",
     "vlm_action_tools",
 ]

@@ -335,7 +335,6 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
         from omniflow.vlm.planner import VLMPlanner
 
         planner_api_key, planner_base_url = resolve_openai_compatible_config(
-            profile=resolved_endpoint_profile,
             base_url=(
                 FORMAL_MODEL_BASE_URL
                 if resolved_endpoint_profile == FORMAL_MODEL_ENDPOINT_PROFILE
@@ -343,8 +342,8 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
             ),
         )
         planner = VLMPlanner(
-            provider=resolved_planner_provider or None,
-            model=resolved_planner_model or None,
+            provider=resolved_planner_provider or "openai",
+            model=resolved_planner_model,
             api_key=planner_api_key,
             base_url=planner_base_url,
             timeout=resolved_planner_timeout,

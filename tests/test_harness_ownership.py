@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from omniflow import Function, RunResult
 from omniflow.bridge import _run_result
-from omniflow.vlm.planner import build_model_turn_request
+from omniflow.core.model import Function, RunResult
+from omniflow.vlm.gui import build_model_turn_request
+from omniflow.vlm.guidance import (
+    DEFAULT_STEP_GUIDANCE,
+    ORDERING_STEP_GUIDANCE,
+    resolve_step_guidance,
+)
 
 
 def _function() -> Function:
@@ -26,6 +31,14 @@ def _function() -> Function:
     )
 
 
+def test_default_guidance_is_owned_by_harness() -> None:
+    assert resolve_step_guidance("find a contact") == DEFAULT_STEP_GUIDANCE
+    ordering = resolve_step_guidance("order me a coffee")
+    assert DEFAULT_STEP_GUIDANCE in ordering
+    assert ORDERING_STEP_GUIDANCE in ordering
+    assert resolve_step_guidance("order coffee", "custom") == "custom"
+
+
 def test_bridge_planner_exposes_function_with_native_actions() -> None:
     function = _function()
     request = build_model_turn_request(
@@ -33,6 +46,7 @@ def test_bridge_planner_exposes_function_with_native_actions() -> None:
         model="scene.vlm.operation.primary",
         state={"state_id": "state-1", "display": {"width": 100, "height": 200}},
         functions=(function,),
+        max_steps=20,
         turn_index=1,
     )
 
@@ -42,15 +56,7 @@ def test_bridge_planner_exposes_function_with_native_actions() -> None:
     assert function.id in tool_names
 
 
-def test_core_has_one_planner_implementation() -> None:
-    import omniflow.bridge as bridge
-    from omniflow.vlm.planner import VLMPlanner
-
-    assert not hasattr(bridge, "_BridgePlanner")
-    assert VLMPlanner.__name__ == "VLMPlanner"
-
-
-def test_successful_online_run_does_not_create_a_second_save_path() -> None:
+def test_successful_online_run_requests_registration_after_run() -> None:
     payload = _run_result(
         RunResult(
             True,
@@ -58,7 +64,9 @@ def test_successful_online_run_does_not_create_a_second_save_path() -> None:
             detail={
                 "trace": [],
                 "done_reason": "finished",
-                "function_resolution": {"selected_function_id": None},
+                "function_resolution": {
+                    "selected_function_id": None,
+                },
             },
         ),
         body={"run_id": "run-1", "goal": "order coffee"},
@@ -66,7 +74,15 @@ def test_successful_online_run_does_not_create_a_second_save_path() -> None:
     )
 
     assert payload["recall_hit"] is False
-    assert "post_run_actions" not in payload
+    assert payload["post_run_actions"] == [
+        {
+            "name": "save_function",
+            "arguments": {
+                "run_id": "run-1",
+                "agent_visible": True,
+            },
+        }
+    ]
 
 
 def test_recalled_run_is_not_registered_again() -> None:
@@ -79,7 +95,7 @@ def test_recalled_run_is_not_registered_again() -> None:
                 "trace": [],
                 "done_reason": "finished",
                 "function_resolution": {
-                    "selected_function_id": "order_beverage"
+                    "selected_function_id": "order_beverage",
                 },
             },
         ),

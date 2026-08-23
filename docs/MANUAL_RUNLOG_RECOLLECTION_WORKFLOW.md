@@ -83,7 +83,7 @@ The interaction loop is:
 
 The harness records screenshots and native observations after every action. A
 successful source RunLog is the only artifact eligible for Function authoring.
-Do not call `save_function` for a failed or aborted RunLog.
+Do not call `compile_runlog_to_store` for a failed or aborted RunLog.
 
 ## Promotion and retry
 

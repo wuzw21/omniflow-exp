@@ -54,22 +54,20 @@ async def execute_action(
     action_result = ActionResult.from_value(await _await(host.act(decision.action)))
     if _ACTION_SETTLE_SECONDS > 0.0:
         await asyncio.sleep(_ACTION_SETTLE_SECONDS)
-    after = Observation.from_value(
-        await _await(host.observe(xml=True, screenshot=True, app_info=True))
-    )
     if not action_result.success:
         return StepResult(
             False,
             action=decision.action,
             before=observation,
-            after=after,
             result=action_result,
-            actions_executed=1,
             error=action_result.error or "action_failed",
             origin="core",
             function_id=function_id,
             detail=decision.detail,
         )
+    after = Observation.from_value(
+        await _await(host.observe(xml=True, screenshot=True, app_info=True))
+    )
     return StepResult(
         True,
         action=decision.action,

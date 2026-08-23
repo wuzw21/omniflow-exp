@@ -414,8 +414,8 @@ def androidworld_json_action_dict(value: Any) -> dict[str, Any]:
 def canonicalize_run_log_observation(value: dict[str, Any]) -> dict[str, Any]:
     """Return the compact persisted observation: screenshot reference plus XML.
 
-    The four-field AndroidWorld snapshot remains accepted as a read/import
-    compatibility format, but is never emitted by the recorder.
+    Both the four-field native AndroidWorld snapshot and the legacy explicit
+    ``pixels/xml/auxiliaries`` shape remain accepted as collector inputs.
     """
     if set(value) == {"screenshot", "xml"}:
         if not isinstance(value.get("xml"), str) or not value["xml"].strip():
@@ -424,6 +424,13 @@ def canonicalize_run_log_observation(value: dict[str, Any]) -> dict[str, Any]:
         if isinstance(observation.get("screenshot"), dict):
             observation["screenshot"].pop("sha256", None)
         return observation
+    if set(value) == {"pixels", "xml", "auxiliaries"}:
+        if not isinstance(value.get("xml"), str) or not value["xml"].strip():
+            raise ValueError("androidworld_run_log_observation_xml_required")
+        screenshot = _json_copy(value.get("pixels"))
+        if isinstance(screenshot, dict):
+            screenshot.pop("sha256", None)
+        return {"screenshot": screenshot, "xml": str(value["xml"])}
     if set(value) != {"pixels", "forest", "ui_elements", "auxiliaries"}:
         raise ValueError("androidworld_run_log_observation_fields_invalid")
     xml = observation_xml(value)

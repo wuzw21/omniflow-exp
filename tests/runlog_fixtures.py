@@ -6,7 +6,7 @@ from typing import Any, Sequence
 
 from omniflow.core.model import Function
 from omniflow.core.trajectory import OMNIFLOW_RUN_LOG_SCHEMA_VERSION
-from omniflow.functions.assets import STORE_VERSION
+from omniflow.functions.store import STORE_VERSION
 
 
 def write_function_store(
@@ -21,7 +21,6 @@ def write_function_store(
                 "functions": {
                     function.id: function.to_dict() for function in functions
                 },
-                "source_calls": [],
             }
         ),
         encoding="utf-8",

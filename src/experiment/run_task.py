@@ -28,7 +28,13 @@ from omniflow.core.trajectory import (
     canonicalize_run_log,
     require_complete_source_run_log,
 )
-from omniflow.functions.assets import FunctionStore
+from omniflow.functions.store import FunctionStore
+from omniflow.transfer.runtime import (
+    audit_transfer_action_sources,
+    load_transfer_state_catalog,
+    transfer_state_coverage,
+)
+from src.experiment.function_v2 import load_v2_source_calls
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
     MOBILEGPT_EMBEDDING_MODEL,
@@ -1628,9 +1634,10 @@ def _canonical_function_source_call(
             "omniflow_function_store_invalid:"
             + ",".join(sorted(store.load_errors))
         )
-    if len(store.source_calls) != 1:
+    source_calls = load_v2_source_calls(store_path)
+    if len(source_calls) != 1:
         raise ValueError("omniflow_function_source_call_invalid")
-    source_call = store.source_calls[0]
+    source_call = source_calls[0]
     function_id = str(source_call.get("function_id") or "").strip()
     arguments = source_call.get("arguments")
     if not function_id or not isinstance(arguments, dict):
@@ -1719,45 +1726,42 @@ def validate_omniflow_transfer_assets(
     *,
     require_action_transfer: bool = True,
 ) -> dict[str, Any]:
-    from omniflow.functions.assets import FunctionStore
-
     resolved_store_path = resolve_path(store_path)
     if not resolved_store_path.is_file():
         raise FileNotFoundError(
-            f"validated v3 Function Store not found: {resolved_store_path}"
+            f"validated v2 Function Store not found: {resolved_store_path}"
         )
     store = FunctionStore(resolved_store_path)
     if store.load_errors:
         raise ValueError(
-            "validated v3 Function Store has invalid Functions:"
+            "validated v2 Function Store has invalid Functions:"
             + ",".join(sorted(store.load_errors))
         )
     if not store.functions:
-        raise ValueError("validated v3 Function Store contains no Functions")
-    referenced_state_ids = {
-        state_id
-        for function in store.functions.values()
-        for step in function.steps
-        for state_id in step.transfer_state_ids
-    }
-    embedded_state_ids = {
-        state_id
-        for function in store.functions.values()
-        for state_id in function.transfer_states
-    }
-    missing_state_ids = sorted(referenced_state_ids - embedded_state_ids)
-    if missing_state_ids:
+        raise ValueError("validated v2 Function Store contains no Functions")
+    transfer_state_path = resolved_store_path.with_name("transfer_states.json")
+    transfer_states = load_transfer_state_catalog(transfer_state_path)
+    coverage = transfer_state_coverage(store.functions, transfer_states)
+    if not coverage["complete"]:
         raise ValueError(
-            "function_transfer_states_missing:" + ",".join(missing_state_ids)
+            "function_transfer_states_missing:"
+            + ",".join(coverage["missing_state_ids"])
         )
+    source_target_audit = (
+        audit_transfer_action_sources(store.functions, transfer_states)
+        if require_action_transfer
+        else None
+    )
     return {
         "store_path": str(resolved_store_path),
-        "required_state_ids": sorted(referenced_state_ids),
-        "missing_state_ids": missing_state_ids,
-        "required_state_count": len(referenced_state_ids),
-        "available_state_count": len(embedded_state_ids),
-        "complete": not missing_state_ids,
+        "transfer_states_path": str(transfer_state_path),
+        "required_state_ids": list(coverage["required_state_ids"]),
+        "missing_state_ids": list(coverage["missing_state_ids"]),
+        "required_state_count": int(coverage["required_state_count"]),
+        "available_state_count": int(coverage["available_state_count"]),
+        "complete": bool(coverage["complete"]),
         "require_action_transfer": bool(require_action_transfer),
+        "source_target_audit": source_target_audit,
     }
 
 

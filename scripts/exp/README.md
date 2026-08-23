@@ -216,7 +216,8 @@ bash scripts/exp/run_androidworld.sh --refresh-memory
 ./.venv/bin/pytest -q
 ```
 
-结果和中间证据写入 `data/`；Function 只通过 `save_function` 写入 Store，
+结果和中间证据写入 `data/`；Function 只通过 `compile_runlog_to_store` 写入
+v2 `store.json` 与 sibling `transfer_states.json`，
 运行时只读取 `data/current.json`。内部实现路径不是额外入口。
 
 失败 source RunLog 的本地逐条重采集、系统提示词、截图和推理证据要求见

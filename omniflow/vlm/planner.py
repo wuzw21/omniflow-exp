@@ -1,528 +1,61 @@
 from __future__ import annotations
 
-import base64
-from collections.abc import Callable
-from copy import deepcopy
 import json
-from time import perf_counter
-import math
-from pathlib import Path
 import re
 from typing import Any
 
-from omniflow.core.config import DEFAULT_PLANNER_SYSTEM_PROMPT
+from omniflow.core.config import PromptSet
 from omniflow.core.model import Function, Observation, ToolCall
-from omniflow.core.schemas import (
-    canonicalize_action,
-    load_canonical_action_schema,
-    vlm_action_tools,
+from omniflow.core.schemas import canonicalize_action, vlm_action_tools
+from omniflow.functions.artifact import validate_arguments
+from omniflow.vlm.gui import (
+    constrain_open_app_tool,
+    function_tools,
+    has_successful_function_action,
 )
-from omniflow.functions.assets import validate_arguments
-from omniflow.vlm.context import analyze_page_context
+from omniflow.vlm.model_adapter import adapt_tool_arguments
 from omniflow.vlm.model_config import resolve_openai_compatible_config
+from omniflow.vlm.tool_arguments import load_tool_arguments
+from omniflow.vlm.ui_projection import project_ui
 from omniflow.vlm.usage import LLMUsageTracker
-from omniflow.vlm_coordinates import screen_pixel_args_to_canonical
-
-SYSTEM_PROMPT = (
-    DEFAULT_PLANNER_SYSTEM_PROMPT
-    + " Within vlm_task, use only the GUI action tools and registered Function "
-    "tools included in this request. tools_search and other general Agent tools "
-    "are not available inside the VLM planner; never call them."
+from omniflow.vlm_coordinates import (
+    display_size,
+    screen_context_to_pixels,
+    screen_pixel_args_to_canonical,
+    screen_pixel_tools,
 )
 
-_MAX_MODEL_TURN_ATTEMPTS = 2
+_ORPHANED_Y_COORDINATE = re.compile(
+    r'^(?P<prefix>\{.*"x"\s*:\s*-?(?:\d+(?:\.\d*)?|\.\d+))'
+    r"\s*,\s*(?P<y>-?(?:\d+(?:\.\d*)?|\.\d+))\s*\}$",
+    re.DOTALL,
+)
 
 
-class ModelToolCallError(ValueError):
-    def __init__(
-        self,
-        message: str,
-        *,
-        tool_name: str = "",
-        arguments: Any = None,
-    ):
-        self.code = str(message)
-        self.tool_name = str(tool_name).strip()
-        self.arguments = arguments
-        super().__init__(message)
-
-
-def build_model_turn_request(
-    *,
-    goal: str,
-    model: str,
-    state: dict[str, Any],
-    turn_index: int,
-    installed_apps: dict[str, str] | None = None,
-    functions: list[Function] | tuple[Function, ...] = (),
-) -> dict[str, Any]:
-    text = _turn_text(
-        goal=goal,
-        state=state,
-    )
-    content: list[dict[str, Any]] = []
-    current_image = _state_image_data_uri(state)
-    if current_image:
-        content.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": current_image, "detail": "high"},
-            }
-        )
-    content.append({"type": "text", "text": text})
-    tools = function_tools(functions)
-    tools.extend(vlm_action_tools())
-    tools = constrain_open_app_tool(
-        tools,
-        installed_apps or {},
-    )
-    return {
-        "model": str(model),
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": content},
-        ],
-        "max_completion_tokens": 512,
-        "temperature": 0,
-        "stream": True,
-        "stream_options": {"include_usage": True},
-        "tools": tools,
-        "tool_choice": "required",
-        "parallel_tool_calls": False,
-        "reasoning_effort": "none",
-        "enable_thinking": False,
-    }
-
-def parse_model_turn_response(
-    value: Any,
-    *,
-    requested_model: str,
-    turn_index: int,
-    display: dict[str, Any] | None = None,
-    functions: list[Function] | tuple[Function, ...] = (),
-) -> tuple[ToolCall, dict[str, Any]]:
-    if not isinstance(value, dict):
-        raise ValueError("model_turn_response_invalid")
-    if str(value.get("requested_model") or "").strip() != requested_model:
-        raise ValueError("model_turn_requested_model_mismatch")
-    tool_calls = value.get("tool_calls")
-    if not isinstance(tool_calls, list):
-        raise ModelToolCallError("model_turn_tool_calls_invalid")
-    if len(tool_calls) != 1:
-        raise ModelToolCallError(
-            f"provider_tool_call_contract_violation:expected_one_native_tool_call:got_{len(tool_calls)}"
-        )
-    tool_call = tool_calls[0]
-    if not isinstance(tool_call, dict):
-        raise ModelToolCallError("model_turn_tool_call_invalid")
-    function = tool_call.get("function")
-    if not isinstance(function, dict):
-        raise ModelToolCallError("model_turn_tool_call_function_invalid")
-    tool = str(function.get("name") or "").strip()
-    model_visible_tools = {
-        str(item.get("function", {}).get("name") or "")
-        for item in vlm_action_tools()
-        if isinstance(item, dict) and isinstance(item.get("function"), dict)
-    }
-    functions_by_id = {function.id: function for function in functions}
-    model_visible_tools.update(functions_by_id)
-    if tool not in model_visible_tools:
-        raise ModelToolCallError(
-            f"model_turn_tool_not_visible:{tool}",
-            tool_name=tool,
-            arguments=function.get("arguments"),
-        )
-    raw_arguments = function.get("arguments")
-    if not isinstance(raw_arguments, str):
-        raise ModelToolCallError(
-            "model_turn_tool_arguments_invalid",
-            tool_name=tool,
-            arguments=raw_arguments,
-        )
+def _parse_tool_arguments(tool_name: str, raw_arguments: Any) -> dict[str, Any]:
+    text = str(raw_arguments or "{}")
     try:
-        arguments = json.loads(raw_arguments)
+        arguments = json.loads(text)
     except json.JSONDecodeError as error:
-        raise ModelToolCallError(
-            "model_turn_tool_arguments_must_be_json",
-            tool_name=tool,
-            arguments=raw_arguments,
-        ) from error
-    if not isinstance(arguments, dict):
-        raise ModelToolCallError(
-            "model_turn_tool_arguments_must_be_object",
-            tool_name=tool,
-            arguments=arguments,
+        match = (
+            _ORPHANED_Y_COORDINATE.fullmatch(text.strip())
+            if tool_name in {"click", "long_press"}
+            else None
         )
-    model_argument_coercions = _coerce_model_numeric_arguments(tool, arguments)
-    rejected_arguments = dict(arguments)
-    resolved_model = str(value.get("resolved_model") or requested_model).strip()
-    adapter_metadata = None
-    try:
-        if tool in functions_by_id:
-            validate_arguments(functions_by_id[tool].input_schema, arguments)
-        else:
-            arguments, adapter_metadata = adapt_tool_arguments(
-                tool=tool,
-                arguments=arguments,
-                requested_model=requested_model,
-                resolved_model=resolved_model,
-                display=display,
-            )
-            canonical = canonicalize_action(
-                {"tool": tool, "args": arguments},
-                persisted_only=False,
-                allow_non_action=True,
-            )
-            arguments = dict(canonical["args"])
-    except ValueError as error:
-        raise ModelToolCallError(
-            str(error),
-            tool_name=tool,
-            arguments=rejected_arguments,
-        ) from error
-    metadata: dict[str, Any] = {}
-    if adapter_metadata is not None:
-        metadata["model_adapter"] = adapter_metadata
-    if model_argument_coercions:
-        metadata["model_argument_coercions"] = model_argument_coercions
-    thinking = str(value.get("reasoning") or "").strip()
-    if thinking:
-        metadata["thinking"] = thinking
-    usage = value.get("usage")
-    if isinstance(usage, dict):
-        metadata["token_usage"] = {
-            **usage,
-            "model": requested_model,
-            "resolved_model": resolved_model,
-            "turn_index": int(turn_index),
-        }
-    return ToolCall(tool, arguments), metadata
-
-
-def _coerce_model_numeric_arguments(
-    tool: str,
-    arguments: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Normalize numeric strings emitted by GLM tool-call JSON.
-
-    The model-facing tool schema declares coordinate arguments as numbers, but
-    compatible endpoints can occasionally serialize them as JSON strings.  A
-    finite numeric string is unambiguous at this boundary; non-numeric strings
-    are left untouched and still fail canonical validation explicitly.
-    """
-
-    tool_spec = next(
-        (
-            item
-            for item in load_canonical_action_schema().get("tools") or ()
-            if isinstance(item, dict)
-            and str(item.get("name") or "").strip().lower()
-            == str(tool).strip().lower()
-        ),
-        {},
-    )
-    specs = {
-        str(item.get("name") or ""): item
-        for item in tool_spec.get("args") or ()
-        if isinstance(item, dict)
-    }
-    coercions: list[dict[str, Any]] = []
-    for name, spec in specs.items():
-        if spec.get("type") not in {"number", "integer"}:
-            continue
-        value = arguments.get(name)
-        original_value = value
-        if isinstance(value, str):
-            stripped = value.strip()
+        if match is not None:
+            repaired = f'{match.group("prefix")}, "y": {match.group("y")}}}'
             try:
-                number = float(stripped)
-            except ValueError:
-                # GLM-compatible gateways can splice XML argument markers into
-                # a numeric coordinate.  Only recover the leading number when
-                # those markers are explicit; arbitrary text remains invalid.
-                if any(
-                    marker in stripped
-                    for marker in ("<arg_key>", "</arg_key>", "<arg_value>")
-                ):
-                    match = re.match(r"^\s*(-?(?:\d+(?:\.\d*)?|\.\d+))", stripped)
-                    if match is not None:
-                        number = float(match.group(1))
-                        if math.isfinite(number):
-                            converted: int | float = (
-                                int(number)
-                                if spec.get("type") == "integer" and number.is_integer()
-                                else number
-                            )
-                            arguments[name] = converted
-                            coercions.append(
-                                {
-                                    "field": name,
-                                    "from": original_value,
-                                    "to": converted,
-                                }
-                            )
-                            continue
-                # GLM-V can serialize a coordinate pair as a JSON string
-                # even though the tool schema declares a number.  Decode it
-                # here so the existing model-specific coordinate-pair adapter
-                # can apply the same validation as native JSON arrays.
-                try:
-                    decoded = json.loads(stripped)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(decoded, list):
-                    continue
-                value = decoded
-            else:
-                if not math.isfinite(number):
-                    continue
-                converted: int | float = (
-                    int(number)
-                    if spec.get("type") == "integer" and number.is_integer()
-                    else number
-                )
-                arguments[name] = converted
-                coercions.append(
-                    {"field": name, "from": original_value, "to": converted}
-                )
-                continue
-        if not isinstance(value, list):
-            continue
-        converted_values: list[int | float] = []
-        for item in value:
-            if isinstance(item, bool):
-                break
-            if isinstance(item, (int, float)):
-                number = float(item)
-            elif isinstance(item, str):
-                try:
-                    number = float(item.strip())
-                except ValueError:
-                    break
-            else:
-                break
-            if not math.isfinite(number):
-                break
-            converted_values.append(
-                int(number)
-                if spec.get("type") == "integer" and number.is_integer()
-                else number
-            )
+                arguments = json.loads(repaired)
+            except (json.JSONDecodeError, TypeError):
+                raise error
         else:
-            arguments[name] = converted_values
-            if converted_values:
-                coercions.append(
-                    {
-                        "field": name,
-                        "from": original_value,
-                        "to": converted_values,
-                    }
-                )
-            continue
-    return coercions
-
-
-def _is_retryable_model_tool_error(error_code: str) -> bool:
-    """Allow one corrective model turn for malformed coordinates only."""
-
-    if error_code.startswith("canonical_action_required_args_missing:"):
-        field = error_code.rsplit(":", 1)[-1].strip()
-        return field in {"x", "y", "x1", "y1", "x2", "y2"}
-    for prefix in (
-        "canonical_action_arg_type_invalid:",
-        "canonical_action_arg_range_invalid:",
-    ):
-        if error_code.startswith(prefix):
-            field = error_code[len(prefix) :].strip()
-            return field in {"x", "y", "x1", "y1", "x2", "y2"}
-    return error_code.startswith("model_turn_tool_not_visible:")
-
-
-def function_tools(
-    functions: list[Function] | tuple[Function, ...],
-) -> list[dict[str, Any]]:
-    tools: list[dict[str, Any]] = []
-    for function in functions:
-        parameters = deepcopy(function.input_schema)
-        properties = parameters.setdefault("properties", {})
-        parameters["properties"] = properties
-        parameters["required"] = list(parameters.get("required") or ())
-        tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": function.id,
-                    "description": function.description,
-                    "strict": True,
-                    "parameters": parameters,
-                },
-            }
-        )
-    return tools
-
-
-def _turn_text(
-    *,
-    goal: str,
-    state: dict[str, Any],
-) -> str:
-    display = state.get("display") if isinstance(state.get("display"), dict) else {}
-    raw_extra = state.get("extra")
-    function_execution = (
-        raw_extra.get("function_execution")
-        if isinstance(raw_extra, dict)
-        else None
-    )
-    function_failed = (
-        isinstance(function_execution, dict)
-        and str(function_execution.get("replay_status") or "").strip()
-        == "actions_failed"
-    )
-    lines = []
-    if function_failed:
-        lines.append(
-            "TRANSFER FAILURE TERMINAL: Return exactly one finished tool call "
-            "with empty content now. This Function-only measurement has ended. "
-            "Do not call any GUI action or Function; do not recover, fallback, "
-            "retry, or loop."
-        )
-    lines.extend([
-        f"Task: {goal}",
-        (
-            "Current screen: "
-            f"package={state.get('package_name') or '-'}, "
-            f"activity={state.get('activity_name') or '-'}, "
-            f"display={display.get('width') or '?'}x{display.get('height') or '?'}"
-        ),
-        (
-            "Action argument rule: every click must include both numeric x and y "
-            "in the same tool call; never send a coordinate pair as x alone."
-        ),
-    ])
-    page_context = analyze_page_context(state)
-    if page_context.useful:
-        lines.append(page_context.evidence)
-    if isinstance(raw_extra, dict):
-        graph_source = str(raw_extra.get("ui_graph_source") or "").strip()
-        if graph_source.endswith("_partial"):
-            lines.append(
-                "Accessibility graph is partial; use the current screenshot for "
-                "controls omitted from XML and do not repeat a selected navigation item."
-            )
-        previous_error = str(raw_extra.get("previous_action_error") or "").strip()
-        if previous_error:
-            lines.append(f"Previous action error: {previous_error}")
-        if isinstance(function_execution, dict):
-            function_id = str(function_execution.get("function_id") or "").strip()
-            status = str(function_execution.get("replay_status") or "").strip()
-            if function_id and status:
-                result = "succeeded" if status == "actions_succeeded" else status
-                lines.append(f"Previous Function result: {function_id} {result}")
-            if status == "actions_failed":
-                lines.append(
-                    "STOP POLICY: the Function replay failed; the mandatory and "
-                    "only permitted response is finished with empty content."
-                )
-        user_input = str(raw_extra.get("user_input") or "").strip()
-        if user_input:
-            lines.append(f"User response: {user_input}")
-    return "\n".join(lines)
-
-
-def constrain_open_app_tool(
-    tools: list[dict[str, Any]],
-    installed_apps: dict[str, str],
-) -> list[dict[str, Any]]:
-    candidates = _installed_app_candidates(installed_apps)
-    packages = list(dict.fromkeys(package for _label, package in candidates))
-    constrained: list[dict[str, Any]] = []
-    for tool in tools:
-        function = tool.get("function") if isinstance(tool, dict) else None
-        if not isinstance(function, dict):
-            constrained.append(tool)
-            continue
-        parameters = function.get("parameters")
-        properties = (
-            parameters.get("properties") if isinstance(parameters, dict) else None
-        )
-        package_schema = (
-            properties.get("package_name") if isinstance(properties, dict) else None
-        )
-        if not isinstance(package_schema, dict):
-            if function.get("name") == "open_app":
-                raise ValueError("open_app_package_schema_missing")
-            constrained.append(tool)
-            continue
-        if packages:
-            package_schema["enum"] = packages
-            choices = (
-                "Choose one installed app (app label -> package): "
-                + "; ".join(f"{label} -> {package}" for label, package in candidates)
-            )
-            description = str(package_schema.get("description") or "").strip()
-            package_schema["description"] = " ".join(
-                part for part in (description, choices) if part
-            )
-        else:
-            package_schema.pop("enum", None)
-        constrained.append(tool)
-    return constrained
-
-
-def _installed_app_candidates(
-    installed_apps: dict[str, str],
-) -> list[tuple[str, str]]:
-    candidates = {
-        (str(label).strip(), str(package).strip())
-        for label, package in installed_apps.items()
-        if str(label).strip() and str(package).strip()
-    }
-    return sorted(candidates, key=lambda item: (item[0].casefold(), item[1]))
-
-
-def _state_image_data_uri(state: dict[str, Any]) -> str:
-    image = str(state.get("image_base64") or "").strip()
-    if image:
-        return (
-            image
-            if image.startswith("data:image/")
-            else f"data:image/jpeg;base64,{image}"
-        )
-    return _image_data_uri(str(state.get("screenshot_path") or ""))
-
-
-def _image_data_uri(path: str) -> str:
-    candidate = Path(str(path or "").strip())
-    if not candidate.is_file():
-        return ""
-    try:
-        payload = candidate.read_bytes()
-    except OSError:
-        return ""
-    mime_type = _image_mime_type(payload)
-    if not mime_type:
-        return ""
-    encoded = base64.b64encode(payload).decode("ascii")
-    return f"data:{mime_type};base64,{encoded}" if encoded else ""
-
-
-def _image_mime_type(payload: bytes) -> str:
-    if payload.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if payload.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP":
-        return "image/webp"
-    return ""
-
-
-
-ModelTransport = Callable[[dict[str, Any]], Any]
+            arguments, _repaired = load_tool_arguments(text)
+    if not isinstance(arguments, dict):
+        raise ValueError("planner_tool_arguments_must_be_object")
+    return arguments
 
 
 class VLMPlanner:
-    """Choose one native GUI or recalled Function tool per model turn."""
-
     def __init__(
         self,
         *,
@@ -532,24 +65,18 @@ class VLMPlanner:
         base_url: str | None = None,
         timeout: float = 60.0,
         client: Any | None = None,
-        transport: ModelTransport | None = None,
-        metadata_sink: Callable[[dict[str, Any]], None] | None = None,
+        prompts: PromptSet | None = None,
     ):
         if provider not in {"openai", "openai_compatible"}:
             raise ValueError("VLMPlanner supports OpenAI-compatible providers only")
-        if client is not None and transport is not None:
-            raise ValueError("planner_model_transport_ambiguous")
-        self.model = str(model).strip()
-        self.timeout = float(timeout)
+        self.model = model
+        self.timeout = timeout
         self._client = client
-        self._transport = transport
-        self._metadata_sink = metadata_sink
         self._api_key, self._base_url = resolve_openai_compatible_config(
             api_key=api_key,
             base_url=base_url,
         )
-        self._turn_index = 0
-        self._metadata: dict[str, Any] = {}
+        self.prompts = prompts or PromptSet()
         self._usage = LLMUsageTracker(component="planner", model=self.model)
 
     async def one_step_tool_call(
@@ -559,366 +86,185 @@ class VLMPlanner:
         functions: tuple[Function, ...] = (),
         installed_apps: dict[str, str] | None = None,
     ) -> ToolCall:
-        state = _planner_state(observation)
-        rejected_tool_calls: list[dict[str, Any]] = []
-        validation_error = ""
-        for attempt in range(_MAX_MODEL_TURN_ATTEMPTS):
-            self._turn_index += 1
-            request = build_model_turn_request(
-                goal=str(goal),
-                model=self.model,
-                state=state,
-                installed_apps=installed_apps or {},
-                functions=functions,
-                turn_index=self._turn_index,
+        client = self._client or self._build_client()
+        projection = project_ui(str(observation.xml or ""), goal)
+        display = (
+            observation.extra.get("display")
+            if isinstance(observation.extra.get("display"), dict)
+            else None
+        )
+        width, height = display_size(display)
+        screen_context = screen_context_to_pixels(
+            {
+                key: value
+                for key, value in observation.extra.items()
+                if key not in {"display", "installed_apps"}
+            },
+            display,
+        )
+        completion_review_marker = observation.extra.get("completion_review_pending")
+        completion_review = (
+            bool(completion_review_marker)
+            if isinstance(completion_review_marker, bool)
+            else has_successful_function_action(observation.extra)
+        )
+        turn_payload: dict[str, Any] = {
+            "goal": goal,
+            "relevant_ui_elements": projection.text,
+            "ui_candidate_count": projection.candidate_count,
+            "display": {"width": width, "height": height},
+            "coordinate_space": "current_display_pixels",
+            "screen_context": screen_context,
+        }
+        if isinstance(screen_context, dict) and (
+            screen_context.get("recent_actions")
+            or screen_context.get("execution_history")
+            or screen_context.get("previous_action_error")
+        ):
+            turn_payload["history_policy"] = (
+                "The screen_context history is authoritative for this run. A "
+                "successful action already recorded on the same logical UI state "
+                "must not be issued again; choose finished or a different action. "
+                "A low-confidence OmniTransfer entry is recoverable: continue "
+                "from the current screenshot with a fresh current-screen action."
             )
-            if validation_error:
-                visible_names = [
-                    str(item.get("function", {}).get("name") or "")
-                    for item in request.get("tools") or ()
-                    if isinstance(item, dict)
-                    and isinstance(item.get("function"), dict)
-                ]
-                request["messages"] = [
-                    *request["messages"],
-                    {
-                        "role": "user",
-                        "content": (
-                            "The previous tool call was rejected: "
-                            f"{validation_error}. Return exactly one tool call "
-                            "from the tools provided in this request. Do not call "
-                            "tools_search or any other unavailable Agent tool. "
-                            f"Available tools: {', '.join(visible_names)}."
-                        ),
-                    },
-                ]
+        if completion_review:
+            turn_payload["completion_review"] = (
+                "The previous recalled Function tool call finished all of its "
+                "actions successfully, and those actions are already applied. "
+                "Judge the complete user goal from the current screenshot and UI "
+                "state. Call finished only if the whole goal is satisfied; "
+                "otherwise choose exactly one next tool. Never repeat or toggle "
+                "the last successful action merely to verify it, because that can "
+                "undo the completed operation."
+            )
+        content: list[dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": json.dumps(turn_payload, ensure_ascii=False),
+            }
+        ]
+        if observation.image_base64 and (
+            projection.requires_screenshot or completion_review
+        ):
+            image = str(observation.image_base64)
+            image_url = (
+                image
+                if image.startswith("data:image/")
+                else f"data:image/png;base64,{image}"
+            )
+            content.append({"type": "image_url", "image_url": {"url": image_url}})
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": (
+                    f"{self.prompts.planner_system}\n\n"
+                    "Mandatory coordinate contract: all tool coordinates are raw "
+                    f"pixels in the current original Display (X 0..{int(width)}, "
+                    f"Y 0..{int(height)}), never normalized 0..1000 values. XML "
+                    "bounds use the same frame. Transport image resizing does not "
+                    "change the coordinate frame."
+                ),
+            },
+            {"role": "user", "content": content},
+        ]
+        function_catalog = {function.id: function for function in functions}
+        tools = screen_pixel_tools(vlm_action_tools(), display)
+        tools = constrain_open_app_tool(tools, installed_apps or {})
+        tools.extend(
+            function_tools(tuple(function_catalog.values()), include_summary=False)
+        )
+        visible_tool_names = {
+            str(tool.get("function", {}).get("name") or "")
+            for tool in tools
+            if isinstance(tool, dict) and isinstance(tool.get("function"), dict)
+        }
+        for attempt in range(2):
             self._usage.start_call()
-            request_started = perf_counter()
             try:
-                response = self._call_model(
-                    {
-                        "goal": str(goal),
-                        "model": self.model,
-                        "request": request,
-                    }
+                response = client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice="required",
+                    temperature=0,
+                    timeout=self.timeout,
                 )
-                self._usage.record_response(response)
-                tool_call, metadata = parse_model_turn_response(
-                    _normalize_response(response, requested_model=self.model),
-                    requested_model=self.model,
-                    turn_index=self._turn_index,
-                    functions=functions,
-                    display=state.get("display"),
-                )
-            except ModelToolCallError as error:
-                self._usage.record_failure()
-                rejected_tool_calls.append(
-                    {
-                        "turn_index": self._turn_index,
-                        "tool": error.tool_name or None,
-                        "error": str(error),
-                    }
-                )
-                if error.arguments is not None:
-                    rejected_tool_calls[-1]["arguments"] = error.arguments
-                if (
-                    attempt + 1 >= _MAX_MODEL_TURN_ATTEMPTS
-                    or not _is_retryable_model_tool_error(error.code)
-                ):
-                    self._metadata = {
-                        "rejected_tool_calls": rejected_tool_calls,
-                    }
-                    if self._metadata_sink is not None:
-                        self._metadata_sink(dict(self._metadata))
-                    raise
-                validation_error = str(error)
-                continue
             except Exception:
                 self._usage.record_failure()
                 raise
-            finally:
-                self._usage.record_latency(
-                    (perf_counter() - request_started) * 1000.0
+            self._usage.record_response(response)
+            message = response.choices[0].message
+            tool_calls = getattr(message, "tool_calls", None) or ()
+            if len(tool_calls) != 1:
+                raise ValueError(
+                    "planner_native_tool_call_contract_violation:"
+                    f"expected_one:got_{len(tool_calls)}"
                 )
-            break
-        if rejected_tool_calls:
-            metadata = {
-                **metadata,
-                "rejected_tool_calls": rejected_tool_calls,
-            }
-        self._metadata = metadata
-        if self._metadata_sink is not None:
-            self._metadata_sink(dict(metadata))
-        return tool_call
-
-    def take_metadata(self) -> dict[str, Any]:
-        metadata = dict(self._metadata)
-        self._metadata.clear()
-        return metadata
+            call = tool_calls[0].function
+            try:
+                tool_name = str(call.name or "").strip()
+                if tool_name not in visible_tool_names:
+                    raise ValueError(f"planner_tool_not_visible:{tool_name}")
+                arguments = _parse_tool_arguments(
+                    tool_name,
+                    call.arguments,
+                )
+                if tool_name in function_catalog:
+                    validate_arguments(
+                        function_catalog[tool_name].input_schema,
+                        arguments,
+                    )
+                else:
+                    arguments, _adapter_metadata = adapt_tool_arguments(
+                        tool=tool_name,
+                        arguments=arguments,
+                        requested_model=self.model,
+                        resolved_model=self.model,
+                        display=display,
+                    )
+                    arguments, _coordinate_metadata = screen_pixel_args_to_canonical(
+                        tool=tool_name,
+                        args=arguments,
+                        display=display,
+                    )
+                    canonical = canonicalize_action(
+                        {"tool": tool_name, "args": arguments},
+                        persisted_only=False,
+                        allow_non_action=True,
+                    )
+                    arguments = dict(canonical["args"])
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                if attempt == 0:
+                    messages = [
+                        *messages,
+                        {
+                            "role": "user",
+                            "content": (
+                                "The previous tool call arguments were invalid "
+                                f"({exc}). "
+                                "Return exactly one provided GUI tool call whose "
+                                "arguments are valid JSON and satisfy its schema, "
+                                "including raw current-Display pixel coordinates."
+                            ),
+                        },
+                    ]
+                    continue
+                if isinstance(exc, json.JSONDecodeError):
+                    raise ValueError("planner_tool_arguments_must_be_json") from exc
+                raise
+            return ToolCall(tool_name, arguments)
+        raise AssertionError("unreachable")
 
     def take_usage(self) -> dict[str, Any]:
         return self._usage.take_usage()
-
-    def _call_model(self, envelope: dict[str, Any]) -> Any:
-        if self._transport is not None:
-            return self._transport(envelope)
-        client = self._client or self._build_client()
-        options = dict(envelope["request"])
-        options.pop("enable_thinking", None)
-        options["stream"] = False
-        options.pop("stream_options", None)
-        options["timeout"] = self.timeout
-        return client.chat.completions.create(**options)
 
     def _build_client(self):
         try:
             from openai import OpenAI
         except ImportError as exc:
             raise RuntimeError("Install omniflow[llm] to use VLMPlanner") from exc
-        options: dict[str, Any] = {
-            "api_key": self._api_key or "not-required",
-            "max_retries": 0,
-        }
+        options: dict[str, Any] = {"api_key": self._api_key or "not-required"}
         if self._base_url:
             options["base_url"] = self._base_url
         return OpenAI(**options)
-
-
-def _planner_state(observation: Observation) -> dict[str, Any]:
-    state = observation.to_dict()
-    state["state_id"] = str(observation.extra.get("state_id") or "").strip()
-    for key in ("display", "screenshot_path"):
-        if observation.extra.get(key) is not None:
-            state[key] = observation.extra[key]
-    return state
-
-
-def _normalize_response(value: Any, *, requested_model: str) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return value
-    choices = getattr(value, "choices", None) or ()
-    message = getattr(choices[0], "message", None) if choices else None
-    calls = getattr(message, "tool_calls", None) or ()
-    usage = getattr(value, "usage", None)
-    return {
-        "requested_model": requested_model,
-        "resolved_model": str(getattr(value, "model", None) or requested_model),
-        "reasoning": str(getattr(message, "reasoning", None) or ""),
-        "tool_calls": [
-            {
-                "function": {
-                    "name": str(getattr(call.function, "name", "") or ""),
-                    "arguments": str(getattr(call.function, "arguments", "") or ""),
-                }
-            }
-            for call in calls
-        ],
-        "usage": (
-            {
-                "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
-                "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
-                "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
-            }
-            if usage is not None
-            else None
-        ),
-    }
-
-
-_ADAPTER_NAME = "qwen_vl_coordinate_arrays.v1"
-_QWEN_VL_MODEL = re.compile(
-    r"(?:^|[^a-z0-9])qwen(?:\d+(?:\.\d+)?)?(?:[-_.]?vl|[-_.]?plus)(?:[^a-z0-9]|$)",
-    re.IGNORECASE,
-)
-_GLM_VL_MODEL = re.compile(
-    r"(?:^|[^a-z0-9])glm[-_.]?(?:4\.6v|5\.1)(?:[^a-z0-9]|$)",
-    re.IGNORECASE,
-)
-_COORDINATE_PAIRS = {
-    "click": (("x", "y"),),
-    "long_press": (("x", "y"),),
-    "input_text": (("x", "y"),),
-    "swipe": (("x1", "y1"), ("x2", "y2")),
-}
-_MISSING = object()
-
-
-def adapt_tool_arguments(
-    *,
-    tool: str,
-    arguments: dict[str, Any],
-    requested_model: str,
-    resolved_model: str,
-    display: dict[str, Any] | None = None,
-) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    model = _adapter_model(requested_model, resolved_model)
-    coordinate_pairs = _COORDINATE_PAIRS.get(tool)
-    if coordinate_pairs is None:
-        return dict(arguments), None
-
-    adapted = dict(arguments)
-    changes: list[dict[str, Any]] = []
-    if model:
-        for x_field, y_field in coordinate_pairs:
-            _adapt_coordinate_pair(
-                adapted,
-                x_field,
-                y_field,
-                changes,
-            )
-    raw_pixel_changes = _adapt_raw_pixel_coordinates(
-        tool=tool,
-        arguments=adapted,
-        display=display,
-    )
-    if raw_pixel_changes is not None:
-        adapted, conversion = raw_pixel_changes
-        changes.append(conversion)
-    if not changes:
-        return adapted, None
-    return adapted, {
-        "name": (
-            _coordinate_array_adapter_name(model)
-            if all(change.get("source_shape") for change in changes)
-            else "planner_coordinate_adapter.v1"
-        ),
-        "model": model or str(resolved_model or requested_model).strip(),
-        "tool": tool,
-        "changes": changes,
-    }
-
-
-def _adapt_raw_pixel_coordinates(
-    *,
-    tool: str,
-    arguments: dict[str, Any],
-    display: dict[str, Any] | None,
-) -> tuple[dict[str, Any], dict[str, Any]] | None:
-    pairs = _COORDINATE_PAIRS.get(tool) or ()
-    present_pairs = [
-        (x_field, y_field)
-        for x_field, y_field in pairs
-        if x_field in arguments and y_field in arguments
-    ]
-    if not present_pairs:
-        return None
-    fields = [field for pair in present_pairs for field in pair]
-    values = [arguments[field] for field in fields]
-    if not all(_is_number(value) for value in values):
-        return None
-    if not any(float(value) > 1000 for value in values):
-        return None
-    width = float((display or {}).get("width") or 0)
-    height = float((display or {}).get("height") or 0)
-    dimensions = {
-        field: width if field.startswith("x") else height for field in fields
-    }
-    raw_fields = {
-        field: arguments[field]
-        for field in fields
-        if float(arguments[field]) > 1000
-    }
-    if all(float(arguments[field]) <= dimensions[field] for field in fields):
-        raw_fields = {field: arguments[field] for field in fields}
-    converted_fields, metadata = screen_pixel_args_to_canonical(
-        tool=tool,
-        args=raw_fields,
-        display=display,
-    )
-    converted = dict(arguments)
-    converted.update(converted_fields)
-    return converted, metadata or {}
-
-
-def _adapter_model(requested_model: str, resolved_model: str) -> str:
-    for candidate in (resolved_model, requested_model):
-        normalized = str(candidate or "").strip()
-        if normalized and (
-            _QWEN_VL_MODEL.search(normalized)
-            or _GLM_VL_MODEL.search(normalized)
-        ):
-            return normalized
-    return ""
-
-
-def _coordinate_array_adapter_name(model: str) -> str:
-    if _GLM_VL_MODEL.search(str(model or "")):
-        return "glm_vl_coordinate_arrays.v1"
-    return _ADAPTER_NAME
-
-
-def _adapt_coordinate_pair(
-    arguments: dict[str, Any],
-    x_field: str,
-    y_field: str,
-    changes: list[dict[str, Any]],
-) -> None:
-    x_value = arguments.get(x_field, _MISSING)
-    y_value = arguments.get(y_field, _MISSING)
-    if (
-        isinstance(x_value, list)
-        and len(x_value) == 2
-        and all(_is_number(value) for value in x_value)
-        and _matches_inferred_y(y_value, x_value[1])
-    ):
-        arguments[x_field] = x_value[0]
-        arguments[y_field] = x_value[1]
-        changes.append(
-            {
-                "source_field": x_field,
-                "source_shape": "number_pair",
-                "target_fields": [x_field, y_field],
-            }
-        )
-        return
-
-    for field in (x_field, y_field):
-        value = arguments.get(field, _MISSING)
-        if isinstance(value, list) and len(value) == 1 and _is_number(value[0]):
-            arguments[field] = value[0]
-            changes.append(
-                {
-                    "source_field": field,
-                    "source_shape": "singleton_number_array",
-                    "target_fields": [field],
-                }
-            )
-
-
-def _matches_inferred_y(value: Any, inferred_y: int | float) -> bool:
-    if value is _MISSING:
-        return True
-    if _is_number(value):
-        return value == inferred_y
-    return (
-        isinstance(value, list)
-        and (
-            (
-                len(value) == 1
-                and _is_number(value[0])
-                and value[0] == inferred_y
-            )
-            or (
-                len(value) == 2
-                and all(_is_number(item) for item in value)
-                and value[1] == inferred_y
-            )
-        )
-    )
-
-
-def _is_number(value: Any) -> bool:
-    return (
-        not isinstance(value, bool)
-        and isinstance(value, (int, float))
-        and math.isfinite(float(value))
-    )
-
-
-__all__ = [
-    "ModelTransport",
-    "SYSTEM_PROMPT",
-    "VLMPlanner",
-    "build_model_turn_request",
-    "function_tools",
-]

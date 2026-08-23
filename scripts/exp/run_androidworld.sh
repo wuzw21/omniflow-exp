@@ -433,6 +433,9 @@ normalize_model_environment() {
   if [[ -z "${LLMTHU_API_KEY:-}" && -n "${LLMTHU_KEY:-}" ]]; then
     export LLMTHU_API_KEY="$LLMTHU_KEY"
   fi
+  if [[ -z "${LLMTHU_KEY:-}" && -n "${LLMTHU_API_KEY:-}" ]]; then
+    export LLMTHU_KEY="$LLMTHU_API_KEY"
+  fi
 }
 
 select_model_endpoint() {
@@ -446,10 +449,7 @@ from omniflow.vlm.model_config import resolve_openai_compatible_config
 profile = sys.argv[1]
 base_url = sys.argv[2]
 try:
-    api_key, base_url = resolve_openai_compatible_config(
-        profile=profile,
-        base_url=base_url,
-    )
+    api_key, base_url = resolve_openai_compatible_config(base_url=base_url)
 except ValueError as error:
     raise SystemExit(str(error)) from error
 if not api_key or not base_url:
@@ -1674,7 +1674,7 @@ prepare_function_asset_for_task() {
     prepared_store_path="$resolved_store_path"
     return 0
   fi
-  echo "Canonical Function Store missing for task=$requested_task. Save it through save_function, refresh memory, then rerun." >&2
+  echo "Canonical v2 Function Store missing for task=$requested_task. Compile it through compile_runlog_to_store, refresh memory, then rerun." >&2
   return 1
 }
 if [[ "$all_tasks" -eq 0 && "$requires_function_asset" -eq 1 && -z "$store_path" ]]; then

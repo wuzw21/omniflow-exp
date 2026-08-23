@@ -5718,7 +5718,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                             or ""
                         ).strip() or None
                         _, model_base_url = resolve_openai_compatible_config(
-                            profile=str(args.model_endpoint_profile or "auto"),
                             base_url=_model_base_url_for_profile(
                                 args.model_endpoint_profile
                             ),

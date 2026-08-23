@@ -14,7 +14,7 @@
 - 唯一 task + method + device 调度器是 `src/experiment/run_tasks.py`。
 - `src/experiment/run_task.py` 只执行一个原子 AndroidWorld 结果。
 - `src/integrations/android_world/run_episode.py` 是唯一 native episode/lifecycle owner。
-- `save_function` 是唯一 Function 写 API 和 Store writer；一个 Store 可保存多个独立 v3 Function。
+- `compile_runlog_to_store` 是唯一 Function 写 API；输出 v2 `store.json`、`compile_report.json` 和 sibling `transfer_states.json`。
 - runtime 只读取注册的 Function Store 和 `data/current.json`，不能自动补 Store、建 catalog 或写平行 manifest。
 - `data/current.json` 是唯一运行时本地索引；ledger、汇总和外部 manifest 只能作为证据。
 - AndroidWorld 正式方法只有 `fixed_replay`、`omniflow`、`mobilegpt`、`appagent`、`t3a_hint`。
@@ -26,11 +26,11 @@
 - 页面编码只用 `omniflow/transfer/page_embedding.py` 和协议指定 checkpoint。
 - 映射失败是明确的 transfer failure，回到正常 Planner/VLM fallback；绝不执行 source 坐标。
 - 禁止 resource-id/node-id lookup、坐标 passthrough、第二 page encoder、第二 action mapper。
-- Function checker 是 Function-local registration；只在 source action 成功映射且达到全局阈值时执行一次。
+- Function checker 是 Function-local v1 registration；匹配 trigger 后通过 OmniTransfer 执行 recovery，再重试原动作。
 
 ## 证据、环境和数据
 
-- Function v3 不依赖 RunLog 动作覆盖或顺序；其 `transfer_states` 直接保存 RunLog-shaped observation，步骤通过 `transfer_state_ids` 引用一个或多个 observation。新跑的正式 AndroidWorld source 默认使用 seed 111。
+- Function v2 按成功 RunLog 动作顺序保存；步骤通过 `source_state_id` 引用 sibling `transfer_states.json`。新跑的正式 AndroidWorld source 默认使用 seed 111。
 - B-MoCA env100 必须先通过 official success、method success、`model_calls=0`、`fallback_steps=0`，才可创建/运行其他环境。
 - 所有 Python/Torch 命令使用 `~/Projects/Omni/OmniFlow-exp/.venv/bin/python`；正式执行不使用邻近环境。
 - 长期训练规则：任何模型训练、微调或训练 smoke 都必须在 `9207` 远程环境执行；本地只允许数据清洗、质量检测、代码测试和评测入口验证，不得在本地启动训练。
@@ -56,7 +56,9 @@
         screenshots/
     memory/
       <attempt_id>/
-        function_store.json
+        store.json
+        compile_report.json
+        transfer_states.json
         run_log.json
         screenshots/
   ```
@@ -67,7 +69,7 @@
 - setting 身份由 `task_name + method + 真实 device_model + 规范化 task_parameters + 协议配置` 决定，不由 RunLog seed、目录旧名、run_id、文件 hash 或设备别名决定。判断一个任务是否已有可转换 memory 的 source 时，只要求 `task_name` 相同且成功证据链完整，不要求 task parameters 或 seed 与当前实例一致。
 - 同一 setting 的可见结果只保留一组：先选择 official success 且截图、XML/UI tree、native observation、action/result 链完整的版本；证据完整度相同时保留完成时间最新者。失败、旧副本和冲突版本移入 `data/androidworld/.archive/`，不得覆盖仍需保留的原始数据。
 - 归档迁移保留原相对路径、文件时间和可核验 provenance；`.archive/` 不参与 runtime 选择和完成数统计。零 step、`status=running`、无截图/XML 的占位 RunLog 不得作为可用结果或 memory source。
-- 每个 Function v3 在 `function_store.json` 内自包含 `transfer_states`；不写 sibling catalog，不要求 Function 与 RunLog 轨迹对齐，也不得手改 Function Store。
+- 每个 Function v2 只保存动作和 `source_state_id`；source observation 位于 sibling `transfer_states.json`，不得内联或手改 Store。
 - `data/androidworld/COMPLETION_STATUS.md` 展示 116×10 正式 cell 完成情况；`MEMORY_READY_SOURCES.md` 展示每个任务各 setting 的 source 可用状态；`RUNLOG_INDEX.md` 和 `ARCHIVE_AUDIT.json` 提供逐 RunLog 证据与机器审计。目录迁移、去重或导入结束后必须通过官方 refresh 入口更新 `data/current.json`，再重生成这些文档。
 
 ## 修改方式
@@ -89,6 +91,6 @@ bash scripts/exp/run_androidworld.sh ...
   -> src/integrations/android_world/run_episode.py
 ```
 
-Function authoring 只走 bridge 的 `save_function`；管理工具只有 README 中列出的
+Function authoring 只走 `compile_runlog_to_store`；管理工具只有 README 中列出的
 Function/RunLog 工具。详细文件职责、旁路方案和索引区分见
 `docs/ARCHITECTURE.md` 与 `docs/FILE_EDIT_GUIDE.md`。

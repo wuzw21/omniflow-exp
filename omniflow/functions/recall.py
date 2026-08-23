@@ -4,9 +4,14 @@ from dataclasses import dataclass
 import re
 from typing import Any, Mapping
 
+import numpy as np
+
 from omniflow.core.model import Function, Observation
+from omniflow.transfer.embedding import PageEncoder, TreeEmbedding
+
 RECALL_AUDIT_VERSION = "omniflow.function-recall.v1"
-GOAL_LEXICAL_WEIGHT = 1.0
+PAGE_SIMILARITY_WEIGHT = 0.30
+GOAL_LEXICAL_WEIGHT = 0.70
 
 
 @dataclass(frozen=True)
@@ -22,17 +27,12 @@ def recall_functions(
     functions: dict[str, Function] | list[Function] | tuple[Function, ...],
     source_states: Mapping[str, Observation | None],
     limit: int = 8,
-    page_encoder: object | None = None,
+    page_encoder: PageEncoder | None = None,
 ) -> RecallResult:
-    """Recall Planner tools from task semantics only.
+    """Recall Planner tools using page and lexical evidence without page gating."""
 
-    Page embeddings are intentionally not part of Function selection.  They are
-    too easy to trigger on an unrelated but visually similar page; OmniTransfer
-    remains the sole mechanism for mapping an action after a Function has been
-    selected.
-    """
-
-    del observation, source_states, page_encoder
+    encoder = page_encoder or PageEncoder()
+    current_page = _embed_page(encoder, observation)
     values = functions.values() if isinstance(functions, dict) else functions
     candidates: list[tuple[float, Function, dict[str, Any]]] = []
     decisions: list[dict[str, Any]] = []
@@ -41,6 +41,9 @@ def recall_functions(
         decision = _score_function(
             str(goal),
             function,
+            current_page=current_page,
+            source_states=source_states,
+            encoder=encoder,
         )
         decisions.append(decision)
         candidates.append((float(decision["score"]), function, decision))
@@ -57,8 +60,19 @@ def recall_functions(
         tuple(function for _score, function, _audit in selected),
         {
             "schema_version": RECALL_AUDIT_VERSION,
-            "selection_policy": "goal_lexical_only",
+            "encoder": {
+                "name": encoder.name,
+                "version": encoder.version,
+                "dimension": encoder.dimension,
+                "weights_hash": encoder.weights.hash,
+            },
+            "current_page": {
+                "element_count": (
+                    len(current_page.elements) if current_page is not None else 0
+                ),
+            },
             "ranking_weights": {
+                "page_similarity": PAGE_SIMILARITY_WEIGHT,
                 "goal_lexical": GOAL_LEXICAL_WEIGHT,
             },
             "candidate_function_ids": [
@@ -72,19 +86,58 @@ def recall_functions(
 def _score_function(
     goal: str,
     function: Function,
+    *,
+    current_page: TreeEmbedding | None,
+    source_states: Mapping[str, Observation | None],
+    encoder: PageEncoder,
 ) -> dict[str, Any]:
+    source_state_id = function.steps[0].source_state_id if function.steps else ""
+    source_observation = source_states.get(source_state_id)
+    source_page = _embed_page(encoder, source_observation)
+    page_similarity = (
+        _cosine(current_page.vector, source_page.vector)
+        if current_page is not None and source_page is not None
+        else 0.0
+    )
     goal_score = _jaccard(
         _tokens(goal),
         _tokens(f"{function.name} {function.description}"),
     )
+    score = (
+        PAGE_SIMILARITY_WEIGHT * page_similarity
+        + GOAL_LEXICAL_WEIGHT * goal_score
+    )
 
     return {
         "function_id": function.id,
+        "source_state_id": source_state_id,
+        "page_similarity": page_similarity,
         "goal_lexical_score": goal_score,
-        "score": goal_score,
+        "score": score,
         "selected": False,
         "rejection_reason": None,
     }
+
+
+def _embed_page(
+    encoder: PageEncoder,
+    observation: Observation | None,
+) -> TreeEmbedding | None:
+    if observation is None:
+        return None
+    try:
+        return encoder.embed(observation)
+    except ValueError as error:
+        if str(error) == "omnitransfer_page_xml_required":
+            return None
+        raise
+
+
+def _cosine(left: np.ndarray, right: np.ndarray) -> float:
+    denominator = float(np.linalg.norm(left) * np.linalg.norm(right))
+    if denominator <= 0.0:
+        return 0.0
+    return max(0.0, min(1.0, float(np.dot(left, right) / denominator)))
 
 
 def _tokens(value: str) -> set[str]:
@@ -107,6 +160,7 @@ def _jaccard(left: set[str], right: set[str]) -> float:
 
 __all__ = [
     "GOAL_LEXICAL_WEIGHT",
+    "PAGE_SIMILARITY_WEIGHT",
     "RECALL_AUDIT_VERSION",
     "RecallResult",
     "recall_functions",

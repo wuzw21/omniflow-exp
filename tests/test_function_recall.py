@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from runlog_fixtures import write_function_store
-
 from omniflow import Action, ActionResult, Function, Observation, OmniFlow, ToolCall
-from omniflow.core.model import FunctionStep
-from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION
+from omniflow.core.config import OmniFlowConfig, PluginSet
+from omniflow.core.model import FunctionStep, TransferResult
+from omniflow.functions.artifact import FUNCTION_ARTIFACT_VERSION
 from omniflow.functions.recall import (
     GOAL_LEXICAL_WEIGHT,
+    PAGE_SIMILARITY_WEIGHT,
     recall_functions,
 )
+from omniflow.functions.store import FunctionStore
 
 
 def _page(
@@ -76,7 +77,7 @@ def _function(
     )
 
 
-def test_function_recall_uses_goal_semantics_without_page_similarity() -> None:
+def test_function_recall_uses_one_lexical_and_page_score() -> None:
     current = _page("Account details", "account_form")
     matching = _function(
         "submit_current_form",
@@ -113,15 +114,19 @@ def test_function_recall_uses_goal_semantics_without_page_similarity() -> None:
         item["function_id"]: item for item in result.audit["decisions"]
     }
     assert decisions[matching.id]["goal_lexical_score"] == 0.0
-    assert "page_similarity" not in decisions[matching.id]
-    assert decisions[matching.id]["score"] == 0.0
+    assert decisions[matching.id]["page_similarity"] == 1.0
+    assert decisions[matching.id]["score"] == PAGE_SIMILARITY_WEIGHT
     assert decisions[lexical_but_wrong_page.id]["score"] > decisions[matching.id][
         "score"
     ]
-    assert result.audit["ranking_weights"] == {"goal_lexical": GOAL_LEXICAL_WEIGHT}
+    assert result.audit["ranking_weights"] == {
+        "page_similarity": PAGE_SIMILARITY_WEIGHT,
+        "goal_lexical": GOAL_LEXICAL_WEIGHT,
+    }
+    assert GOAL_LEXICAL_WEIGHT > PAGE_SIMILARITY_WEIGHT
 
 
-def test_open_app_function_uses_the_same_goal_score() -> None:
+def test_open_app_function_uses_the_same_page_weighted_score() -> None:
     current = _page("Bluetooth settings", "bluetooth_switch")
     open_app_function = _function(
         "z_open_settings",
@@ -148,15 +153,15 @@ def test_open_app_function_uses_the_same_goal_score() -> None:
         limit=1,
     )
 
-    assert result.functions == (click_function,)
+    assert result.functions == (open_app_function,)
     decisions = {item["function_id"]: item for item in result.audit["decisions"]}
-    assert "page_similarity" not in decisions[open_app_function.id]
-    assert decisions[open_app_function.id]["score"] == decisions[click_function.id][
+    assert decisions[open_app_function.id]["page_similarity"] == 1.0
+    assert decisions[open_app_function.id]["score"] > decisions[click_function.id][
         "score"
     ]
 
 
-def test_missing_page_evidence_does_not_change_recall() -> None:
+def test_missing_page_evidence_contributes_zero() -> None:
     function = _function(
         "tap_continue",
         "Tap continue",
@@ -173,7 +178,7 @@ def test_missing_page_evidence_does_not_change_recall() -> None:
 
     assert result.functions == (function,)
     decision = result.audit["decisions"][0]
-    assert "page_similarity" not in decision
+    assert decision["page_similarity"] == 0.0
     assert decision["score"] == GOAL_LEXICAL_WEIGHT * decision["goal_lexical_score"]
 
 
@@ -198,6 +203,93 @@ def test_top_k_includes_zero_score_functions_with_stable_id_tiebreak() -> None:
     assert [item.id for item in result.functions] == [function.id, first.id]
 
 
+class _CheckerRecoveryHost:
+    def __init__(self) -> None:
+        self.package_name = "com.android.launcher"
+        self.actions: list[Action] = []
+
+    def observe(self, **_kwargs: object) -> Observation:
+        if self.package_name == "com.android.settings":
+            return _page(
+                "Bluetooth",
+                "bluetooth_switch",
+                package=self.package_name,
+            )
+        return _page(
+            "Home",
+            "launcher",
+            package=self.package_name,
+            variant="camera",
+        )
+
+    def act(self, action: Action) -> ActionResult:
+        self.actions.append(action)
+        if action.tool == "open_app":
+            self.package_name = str(action.args["package_name"])
+        return ActionResult(True)
+
+    def get_state(self, source_state_id: str) -> Observation | None:
+        if source_state_id != "settings_page":
+            return None
+        return _page(
+            "Bluetooth",
+            "bluetooth_switch",
+            package="com.android.settings",
+        )
+
+
+class _SelectThenFinishPlanner:
+    def __init__(self, function_id: str) -> None:
+        self.function_id = function_id
+        self.calls = 0
+
+    def one_step_tool_call(
+        self,
+        _goal: str,
+        _observation: Observation,
+        functions: tuple[Function, ...],
+        _installed_apps: dict[str, str],
+    ) -> ToolCall:
+        self.calls += 1
+        if self.calls == 1:
+            assert self.function_id in {function.id for function in functions}
+            return ToolCall(self.function_id, {})
+        return ToolCall("finished", {"content": ""})
+
+
+def test_recalled_semantic_function_uses_checker_to_recover_from_other_app(
+    tmp_path,
+) -> None:
+    function = _function(
+        "tap_settings_control",
+        "Turn bluetooth on",
+        "Use the Settings control to turn bluetooth on.",
+        "settings_page",
+    )
+    store = FunctionStore(tmp_path / "store.json")
+    store.put_function(function)
+    host = _CheckerRecoveryHost()
+
+    def transfer(
+        action: Action,
+        _observation: Observation,
+        _source_state: Observation | None,
+    ) -> TransferResult:
+        return TransferResult(action, reason="test_target_match")
+
+    flow = OmniFlow(
+        store.path,
+        host=host,
+        planner=_SelectThenFinishPlanner(function.id),
+        installed_apps={"Settings": "com.android.settings"},
+        config=OmniFlowConfig(plugins=PluginSet(transfer=transfer)),
+    )
+
+    result = flow.run("Turn bluetooth on")
+
+    assert result.success is True
+    assert [action.tool for action in host.actions] == ["open_app", "click"]
+    assert host.actions[0].args == {"package_name": "com.android.settings"}
 
 
 class _PageChangingHost:
@@ -239,31 +331,37 @@ class _ChangingPagePlanner:
 
 
 def test_runtime_recalls_again_after_page_changes(tmp_path) -> None:
-    store_path = write_function_store(
-        tmp_path / "store.json",
-        (
-            _function(
-                "complete_page_action",
-                "Complete the page action",
-                "Operate the visible page control.",
-                "source_first",
-            ),
-        ),
+    store = FunctionStore(tmp_path / "store.json")
+    store.put_function(
+        _function(
+            "first_page_action",
+            "Use first page control",
+            "Operate the visible first-page control.",
+            "source_first",
+        )
+    )
+    store.put_function(
+        _function(
+            "second_page_action",
+            "Use second page control",
+            "Operate the visible second-page control.",
+            "source_second",
+        )
     )
     planner = _ChangingPagePlanner()
-    flow = OmniFlow(store_path, host=_PageChangingHost(), planner=planner)
+    flow = OmniFlow(store.path, host=_PageChangingHost(), planner=planner)
 
     result = flow.run("Complete the multi-page task")
 
     assert result.success is True
     assert planner.visible == [
-        ("complete_page_action",),
-        ("complete_page_action",),
+        ("first_page_action", "second_page_action"),
+        ("second_page_action", "first_page_action"),
     ]
     assert [
         event["candidate_function_ids"]
         for event in result.detail["function_resolution"]["recall"]["events"]
     ] == [
-        ["complete_page_action"],
-        ["complete_page_action"],
+        ["first_page_action", "second_page_action"],
+        ["second_page_action", "first_page_action"],
     ]

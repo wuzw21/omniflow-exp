@@ -2,148 +2,24 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from omniflow.core.config import PluginSet
 from omniflow.core.model import (
     Action,
+    CheckerContext,
     Function,
     FunctionStep,
     Observation,
     TransferResult,
 )
-from omniflow.runtime.core import prepare_action
+from omniflow.runtime.checker import default_checker
 from omniflow.runtime.execution import (
     execute_function,
     execute_robust_action,
+    prepare_action,
 )
-def test_function_treats_checker_steps_as_optional_navigation(
-    monkeypatch,
-) -> None:
-    import omniflow.runtime.core as core
-
-    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
-    target_xml = (
-        '<hierarchy><node package="com.android.camera2" '
-        'resource-id="com.android.camera2:id/shutter_button" '
-        'content-desc="Shutter" bounds="[1100,0][1280,740]" '
-        'clickable="true" /></hierarchy>'
-    )
-    mode_xml = (
-        '<hierarchy><node package="com.android.camera2" '
-        'resource-id="com.android.camera2:id/accessibility_mode_toggle_button" '
-        'text="MODE LIST" content-desc="Toggle mode list" '
-        'bounds="[0,0][189,96]" clickable="true" />'
-        '<node package="com.android.camera2" '
-        'resource-id="com.android.camera2:id/shutter_button" '
-        'content-desc="Shutter" bounds="[0,992][720,1232]" '
-        'clickable="true" /></hierarchy>'
-    )
-    camera_menu_xml = (
-        '<hierarchy><node package="com.android.camera2" '
-        'content-desc="Switch to Camera Mode" bounds="[0,388][311,512]" '
-        'clickable="true" />'
-        '<node package="com.android.camera2" '
-        'resource-id="com.android.camera2:id/shutter_button" '
-        'content-desc="Shutter" bounds="[0,992][720,1232]" '
-        'clickable="true" /></hierarchy>'
-    )
-    launcher = Observation(package_name="com.android.launcher")
-    current = Observation(
-        xml=target_xml,
-        package_name="com.android.camera2",
-        extra={"display": {"width": 1280, "height": 800}},
-    )
-    states = {
-        "launcher": launcher,
-        "mode": Observation(
-            xml=mode_xml,
-            package_name="com.android.camera2",
-            extra={"display": {"width": 720, "height": 1280}, "state_id": "mode"},
-        ),
-        "camera_menu": Observation(
-            xml=camera_menu_xml,
-            package_name="com.android.camera2",
-            extra={
-                "display": {"width": 720, "height": 1280},
-                "state_id": "camera_menu",
-            },
-        ),
-        "shutter": Observation(
-            xml=mode_xml,
-            package_name="com.android.camera2",
-            extra={"display": {"width": 720, "height": 1280}, "state_id": "shutter"},
-        ),
-    }
-
-    class Host:
-        def __init__(self) -> None:
-            self.actions = []
-
-        def observe(self, **_kwargs):
-            return current
-
-        def get_state(self, state_id):
-            return states.get(state_id)
-
-        def act(self, action):
-            self.actions.append(action)
-            return {"success": True}
-
-    async def transfer(action, _observation, source_state):
-        if source_state.extra.get("state_id") in {"mode", "camera_menu"}:
-            return TransferResult(None, reason="omnitransfer_low_confidence")
-        return TransferResult(
-            Action("click", {"x": 940, "y": 462}),
-            reason="mapped",
-            detail={
-                "score": 0.99,
-                "margin": 0.2,
-                "candidates": [{"score": 0.99}],
-            },
-        )
-
-    function = Function(
-        function_id="camera_take_photo",
-        name="Take a photo",
-        description="Take one photo.",
-        steps=(
-            FunctionStep(0, Action("click", {"x": 500, "y": 868.75}), "shutter"),
-        ),
-        checker_rules=(
-            {
-                "source_state_id": "mode",
-                "action": {"tool": "click", "args": {"x": 130.555, "y": 37.5}},
-            },
-            {
-                "source_state_id": "camera_menu",
-                "action": {
-                    "tool": "click",
-                    "args": {"x": 216.666, "y": 351.5625},
-                },
-            },
-        ),
-    )
-    host = Host()
-    result = asyncio.run(
-        execute_function(
-            function,
-            host=host,
-            plugins=PluginSet(transfer=transfer),
-            observation=current,
-        )
-    )
-
-    assert result.success is True
-    assert [action.tool for action in host.actions] == ["click"]
-    assert [
-        decision["status"] for decision in result.detail["checker_decisions"]
-    ] == ["skipped", "skipped"]
 
 
-def test_function_uses_explicit_state_loader_when_host_state_is_missing(
-    monkeypatch,
-) -> None:
+def test_function_uses_catalog_state_when_host_state_is_missing(monkeypatch) -> None:
     import omniflow.runtime.core as core
 
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
@@ -172,9 +48,9 @@ def test_function_uses_explicit_state_loader_when_host_state_is_missing(
             return current
 
     function = Function(
-        function_id="state_loader_function",
-        name="state loader function",
-        description="explicit state loader fallback",
+        function_id="catalog_function",
+        name="catalog function",
+        description="catalog state fallback",
         steps=(
             FunctionStep(0, Action("click", {"x": 50, "y": 50}), "source-1"),
         ),
@@ -234,6 +110,75 @@ def test_payment_text_does_not_create_hidden_runtime_policy(monkeypatch) -> None
 
     assert result.success is True
     assert host.actions == [action]
+
+
+def test_checker_drains_consecutive_explicit_obstructions_before_function_action(
+    monkeypatch,
+) -> None:
+    import omniflow.runtime.core as core
+
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    obstruction = Observation(
+        xml=(
+            '<hierarchy><node text="Not now" class="android.widget.Button" '
+            'clickable="true" enabled="true" bounds="[100,100][300,200]"/>'
+            "</hierarchy>"
+        ),
+        package_name="com.example",
+    )
+    target = Observation(
+        xml='<hierarchy><node text="Target" bounds="[0,0][100,100]"/></hierarchy>',
+        package_name="com.example",
+    )
+
+    async def transfer(action, observation, source_state):
+        return TransferResult(action, reason="mapped")
+
+    class Host:
+        def __init__(self) -> None:
+            self.observations = [
+                obstruction,
+                obstruction,
+                obstruction,
+                target,
+                target,
+            ]
+            self.actions: list[Action] = []
+
+        def act(self, action):
+            self.actions.append(action)
+            return {"success": True}
+
+        def observe(self, **kwargs):
+            return self.observations.pop(0)
+
+    host = Host()
+    original_action = Action("click", {"x": 500, "y": 500})
+    result = asyncio.run(
+        execute_robust_action(
+            original_action,
+            observation=obstruction,
+            host=host,
+            plugins=PluginSet(checker=default_checker, transfer=transfer),
+            source_state=target,
+        )
+    )
+
+    assert result.success is True
+    assert all(step.origin == "checker" for step in result.executed_steps[:-1])
+    assert result.executed_steps[-1].origin == "action"
+    assert host.actions[-1] == original_action
+
+
+def test_global_actions_skip_page_recovery_checker() -> None:
+    source = Observation(package_name="com.oplus.battery")
+    current = Observation(package_name="cn.com.omnimind.bot.debug")
+
+    for action in (
+        Action("open_app", {"package_name": "com.android.settings"}),
+        Action("press_key", {"key": "back"}),
+    ):
+        assert default_checker(CheckerContext(source, current, action)) is None
 
 
 def test_global_actions_skip_transfer_validation() -> None:
@@ -308,10 +253,7 @@ def test_open_app_waits_for_cold_launch_target_package(monkeypatch) -> None:
         def __init__(self) -> None:
             self.observations = [
                 Observation(package_name="com.android.launcher"),
-                Observation(
-                    package_name="com.sankuai.meituan",
-                    xml="<hierarchy />",
-                ),
+                Observation(package_name="com.sankuai.meituan"),
             ]
             self.observe_calls = 0
 
@@ -381,126 +323,6 @@ def test_open_app_reports_not_ready_after_retry_budget(monkeypatch) -> None:
     assert host.observe_calls == 3
 
 
-def test_open_app_dispatches_when_installed_package_inventory_is_incomplete(
-    monkeypatch,
-) -> None:
-    import omniflow.runtime.core as core
-    import omniflow.runtime.execution as execution
-
-    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
-    monkeypatch.setattr(execution, "_OPEN_APP_READY_POLL_SECONDS", 0.0)
-
-    action = Action("open_app", {"package_name": "com.android.settings"})
-
-    class Host:
-        def __init__(self) -> None:
-            self.actions: list[Action] = []
-
-        def act(self, dispatched_action):
-            self.actions.append(dispatched_action)
-            return {"success": True}
-
-        def observe(self, **_kwargs):
-            return Observation(package_name="com.android.settings")
-
-    host = Host()
-    result = asyncio.run(
-        execute_robust_action(
-            action,
-            observation=Observation(package_name="cn.com.omnimind.bot.debug"),
-            host=host,
-            plugins=PluginSet(),
-            installed_packages=frozenset({"cn.com.omnimind.bot.debug"}),
-        )
-    )
-
-    assert result.success is True
-    assert host.actions == [action]
-
-
-def test_function_global_package_preflight_opens_target_before_recorded_step(
-    monkeypatch,
-) -> None:
-    import omniflow.runtime.core as core
-    import omniflow.runtime.execution as execution
-
-    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
-    monkeypatch.setattr(execution, "_OPEN_APP_READY_POLL_SECONDS", 0.0)
-
-    target_package = "com.example.target"
-    source = Observation(package_name=target_package)
-    current = Observation(package_name="com.android.launcher")
-
-    async def transfer(action, observation, source_state):
-        return TransferResult(action, reason="mapped")
-
-    class Host:
-        def __init__(self) -> None:
-            self.actions: list[Action] = []
-            self.observations = [
-                Observation(package_name=target_package),
-                Observation(package_name=target_package),
-            ]
-
-        def act(self, action):
-            self.actions.append(action)
-            return {"success": True}
-
-        def observe(self, **_kwargs):
-            if self.observations:
-                return self.observations.pop(0)
-            return Observation(package_name=target_package)
-
-    function = Function(
-        function_id="global_package_preflight_function",
-        name="global package preflight function",
-        description="opens the target app before a recorded action",
-        steps=(
-            FunctionStep(
-                0,
-                Action("click", {"x": 500, "y": 500}),
-                "source-1",
-            ),
-        ),
-        schema_version="omniflow.function.v2",
-        input_schema={
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": False,
-        },
-        agent_visible=True,
-    )
-
-    host = Host()
-    result = asyncio.run(
-        execute_function(
-            function,
-            host=host,
-            plugins=PluginSet(transfer=transfer),
-            observation=current,
-            state_loader=lambda state_id: source if state_id == "source-1" else None,
-        )
-    )
-
-    assert result.success is True
-    assert result.actions_executed == 2
-    assert host.actions == [
-        Action("open_app", {"package_name": target_package}),
-        Action("click", {"x": 500, "y": 500}),
-    ]
-    assert result.detail["checker_decisions"][0] == {
-        "function_id": "global_package_preflight_function",
-        "checker_kind": "global_package_preflight",
-        "source_state_id": "source-1",
-        "before_function_step": 0,
-        "target_package": target_package,
-        "observed_package": "com.android.launcher",
-        "status": "executed",
-        "reason": "package_mismatch",
-    }
-
-
 def test_action_waits_for_transition_window_to_enter_display(monkeypatch) -> None:
     import omniflow.runtime.core as core
     import omniflow.runtime.execution as execution
@@ -555,3 +377,27 @@ def test_action_waits_for_transition_window_to_enter_display(monkeypatch) -> Non
     assert result.after is not None
     assert result.after.xml == settled_xml
     assert host.observe_calls == 2
+
+
+def test_unlaunchable_checker_recovery_falls_back_to_transfer_failure() -> None:
+    async def transfer(action, observation, source_state):
+        return TransferResult(None, reason="transfer_failed")
+
+    class Host:
+        def act(self, action):
+            raise AssertionError(f"unexpected action dispatch: {action}")
+
+    result = asyncio.run(
+        execute_robust_action(
+            Action("click", {"x": 77, "y": 83}),
+            observation=Observation(package_name="cn.com.omnimind.bot.debug"),
+            source_state=Observation(package_name="com.oplus.battery"),
+            host=Host(),
+            plugins=PluginSet(checker=default_checker, transfer=transfer),
+            installed_packages=frozenset({"cn.com.omnimind.bot.debug"}),
+        )
+    )
+
+    assert result.success is False
+    assert result.error == "transfer_failed"
+    assert result.actions_executed == 0

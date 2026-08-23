@@ -8,15 +8,15 @@ import json
 import math
 import re
 from typing import Any, Callable
+import unicodedata
 import xml.etree.ElementTree as ET
 
-from omniflow.core.config import (
-    DEFAULT_CHECKER_TARGET_THRESHOLD,
-    PluginSet,
-)
+from omniflow.core.config import PluginSet
 from omniflow.core.model import (
     Action,
+    ActionDecision,
     ActionResult,
+    CheckerContext,
     Function,
     Host,
     Observation,
@@ -24,7 +24,7 @@ from omniflow.core.model import (
     StepResult,
     TransferResult,
 )
-from omniflow.runtime.checker import validate_checker_rule
+from omniflow.runtime.checker import default_checker_trigger, match_checker_rule
 from omniflow.runtime.core import (
     execute_action as execute_core_action,
 )
@@ -35,17 +35,16 @@ from omniflow.transfer.runtime import transfer_action
 
 _OPEN_APP_READY_POLL_SECONDS = 0.5
 _OPEN_APP_READY_MAX_ATTEMPTS = 30
-_GLOBAL_OVERLAY_MAX_ATTEMPTS = 3
 _OBSERVATION_READY_POLL_SECONDS = 0.25
 _OBSERVATION_READY_MAX_ATTEMPTS = 20
-# OmniTransfer supplies the candidate ranking; OmniFlow still owns the final
-# abstain decision before a device gesture is dispatched.
-# A mapped row without a meaningful pair score is not a usable transfer.  The
-# old value (0.0) accepted root/container candidates when the source control
-# was absent on the target page, which converted a transfer uncertainty into a
-# real tap.  Returning a recoverable failure here lets the normal VLM fallback
-# choose an action from the fresh target observation.
-_ALIGNMENT_MIN_PROBABILITY = 0.5
+_CHECKER_RECOVERY_MAX_ATTEMPTS = 8
+# OmniTransfer already applies the deployment acceptance floor.  Keep only a
+# minimal sanity floor here so OmniFlow does not reject a valid mapped target a
+# second time merely because its confidence is below a conservative benchmark
+# threshold.
+_ALIGNMENT_MIN_PROBABILITY = 0.0
+_ALIGNMENT_SOURCE_SKIP_PENALTY = math.log(3.0)
+StateLoader = Callable[[str], Any]
 
 
 async def execute_function(
@@ -58,12 +57,8 @@ async def execute_function(
     trace_start_index: int = 0,
     resume_metadata: dict[str, Any] | None = None,
     installed_packages: frozenset[str] | None = None,
-    checker_target_threshold: float = DEFAULT_CHECKER_TARGET_THRESHOLD,
-    executed_checker_rules: set[int] | None = None,
-    source_text_substitutions: dict[str, str] | None = None,
+    state_loader: StateLoader | None = None,
 ) -> RunResult:
-    if not 0.0 <= float(checker_target_threshold) <= 1.0:
-        raise ValueError("checker_target_threshold_invalid")
     current = observation or Observation.from_value(
         await _await(host.observe(xml=True, app_info=True))
     )
@@ -72,264 +67,23 @@ async def execute_function(
     )
     executed = 0
     trace: list[dict[str, Any]] = []
-    checker_decisions: list[dict[str, Any]] = []
-    if executed_checker_rules is None:
-        executed_checker_rules = set()
-    checker_source_states: dict[str, Observation | None] = {}
     resume_metadata_pending = dict(resume_metadata or {})
     for function_step in steps:
-        source_states = tuple(
-            _render_source_observation_text(
-                source_state,
-                source_text_substitutions,
-            )
-            for source_state in function.observations_for_step(function_step)
-        )
-        source_state = source_states[0] if source_states else None
-        target_package = next(
-            (
-                package
-                for package in (
-                    _observation_expected_package(state) for state in source_states
-                )
-                if package
-            ),
-            "",
-        )
-        if target_package and _action_uses_transfer_target(function_step.action):
-            global_app_policy = {
-                "if": {"package_name": target_package},
-                "then": _global_app_redirect_action(target_package).to_dict(),
-            }
-            policy_step, policy_decision = await execute_checker_policy(
-                global_app_policy,
-                observation=current,
-                host=host,
-                plugins=plugins,
-                function=function,
-                installed_packages=installed_packages,
-            )
-            checker_decisions.append(
-                {
-                    "function_id": function.id,
-                    "transfer_state_ids": list(function_step.transfer_state_ids),
-                    "before_function_step": function_step.step_index,
-                    **policy_decision,
-                    "checker_kind": "global_app_policy",
-                }
-            )
-            executed += policy_step.actions_executed
-            if policy_step.actions_executed:
-                trace.extend(
-                    await record_execution(
-                        host,
-                        policy_step,
-                        trace_start_index=int(trace_start_index) + len(trace),
-                        metadata={
-                            "checker_kind": "global_app_policy",
-                            "before_function_step": function_step.step_index,
-                        },
-                    )
-                )
-            current = policy_step.after or policy_step.before or current
-            if not policy_step.success:
-                return RunResult(
-                    False,
-                    function.id,
-                    executed,
-                    error=policy_step.error or "global_app_policy_failed",
-                    final_state=current,
-                    detail={
-                        "trace": trace,
-                        "checker_decisions": checker_decisions,
-                        "failed_step_index": function_step.step_index,
-                        "next_step_index": function_step.step_index,
-                    },
-                )
-        for overlay_attempt in range(_GLOBAL_OVERLAY_MAX_ATTEMPTS):
-            overlay_action = _blocking_overlay_action(current)
-            if overlay_action is None:
-                break
-            overlay_step = await execute_robust_action(
-                overlay_action,
-                observation=current,
-                host=host,
-                plugins=plugins,
-                function=function,
-                installed_packages=installed_packages,
-            )
-            checker_decisions.append(
-                {
-                    "function_id": function.id,
-                    "checker_kind": "global_overlay_preflight",
-                    "transfer_state_ids": list(function_step.transfer_state_ids),
-                    "before_function_step": function_step.step_index,
-                    "overlay_attempt": overlay_attempt,
-                    "action": overlay_action.to_dict(),
-                    "status": "executed" if overlay_step.success else "failed",
-                    "reason": "blocking_ad_overlay",
-                }
-            )
-            executed += overlay_step.actions_executed
-            trace.extend(
-                await record_execution(
-                    host,
-                    overlay_step,
-                    trace_start_index=int(trace_start_index) + len(trace),
-                    metadata={
-                        "checker_kind": "global_overlay_preflight",
-                        "before_function_step": function_step.step_index,
-                        "overlay_attempt": overlay_attempt,
-                    },
-                )
-            )
-            current = overlay_step.after or overlay_step.before or current
-            if not overlay_step.success:
-                return RunResult(
-                    False,
-                    function.id,
-                    executed,
-                    error=overlay_step.error or "global_overlay_preflight_failed",
-                    final_state=current,
-                    detail={
-                        "trace": trace,
-                        "checker_decisions": checker_decisions,
-                        "failed_step_index": function_step.step_index,
-                        "next_step_index": function_step.step_index,
-                    },
-                )
-        if _blocking_overlay_action(current) is not None:
-            return RunResult(
-                False,
-                function.id,
-                executed,
-                error="global_overlay_preflight_exhausted",
-                final_state=current,
-                detail={
-                    "trace": trace,
-                    "checker_decisions": checker_decisions,
-                    "failed_step_index": function_step.step_index,
-                    "next_step_index": function_step.step_index,
-                },
-            )
-        for rule_index, raw_rule in enumerate(function.checker_rules):
-            is_policy_rule = (
-                isinstance(raw_rule, dict)
-                and set(raw_rule) == {"transfer_state_ids", "if", "then"}
-            )
-            if rule_index in executed_checker_rules and not is_policy_rule:
-                continue
-            checker_policy = False
-            try:
-                rule = validate_checker_rule(raw_rule)
-                checker_state_ids = rule["transfer_state_ids"]
-                for checker_state_id in checker_state_ids:
-                    if checker_state_id not in checker_source_states:
-                        raw_checker_state = function.transfer_states.get(checker_state_id)
-                        checker_source_states[checker_state_id] = _render_source_observation_text(
-                            Observation.from_value(raw_checker_state)
-                            if raw_checker_state is not None
-                            else None,
-                            source_text_substitutions,
-                        )
-                checker_source = next(
-                    (
-                        checker_source_states[state_id]
-                        for state_id in checker_state_ids
-                        if checker_source_states[state_id] is not None
-                    ),
-                    None,
-                )
-                checker_policy = "if" in rule
-                if checker_policy:
-                    checker_step, decision = await execute_checker_policy(
-                        {"if": rule["if"], "then": rule["then"]},
-                        observation=current,
-                        host=host,
-                        plugins=plugins,
-                        function=function,
-                        installed_packages=installed_packages,
-                    )
-                else:
-                    checker_step, decision = await execute_checker_step(
-                        Action.from_value(rule["action"]),
-                        observation=current,
-                        host=host,
-                        plugins=plugins,
-                        function=function,
-                        source_state=checker_source,
-                        minimum_target_probability=float(checker_target_threshold),
-                        installed_packages=installed_packages,
-                    )
-            except Exception as error:  # noqa: BLE001
-                checker_step = StepResult(
-                    True,
-                    before=current,
-                    after=current,
-                    origin="checker",
-                    function_id=function.id,
-                )
-                decision = {
-                    "status": "skipped",
-                    "reason": f"checker_evaluation_failed:{error}",
-                }
-            checker_decisions.append(
-                {
-                    "function_id": function.id,
-                    "transfer_state_ids": list(
-                        raw_rule.get("transfer_state_ids") or ()
-                    ),
-                    **decision,
-                }
-            )
-            if checker_step.actions_executed and not checker_policy:
-                executed_checker_rules.add(rule_index)
-                executed += checker_step.actions_executed
-                trace.extend(
-                    await record_execution(
-                        host,
-                        checker_step,
-                        trace_start_index=int(trace_start_index) + len(trace),
-                    )
-                )
-                current = checker_step.after or checker_step.before or current
-            if not checker_step.success:
-                return RunResult(
-                    False,
-                    function.id,
-                    executed,
-                    error=checker_step.error,
-                    final_state=current,
-                    detail={
-                        "trace": trace,
-                        "checker_decisions": checker_decisions,
-                        "failed_step_index": function_step.step_index,
-                        "next_step_index": function_step.step_index,
-                    },
-                )
         action = function_step.action
-        if action.tool not in {"open_app", "wait"} and not source_states:
-            return RunResult(
-                False,
-                function.id,
-                executed,
-                error="function_transfer_state_missing",
-                final_state=current,
-                detail={
-                    "trace": trace,
-                    "checker_decisions": checker_decisions,
-                    "failed_step_index": function_step.step_index,
-                    "next_step_index": function_step.step_index,
-                },
-            )
+        source_state = await _load_state(
+            host,
+            function_step.source_state_id,
+            state_loader=state_loader,
+        )
         step = await execute_robust_action(
             action,
             observation=current,
             host=host,
             plugins=plugins,
             function=function,
-            source_states=source_states,
+            source_state=source_state,
             installed_packages=installed_packages,
+            state_loader=state_loader,
         )
         executed += step.actions_executed
         trace.extend(
@@ -339,9 +93,7 @@ async def execute_function(
                 trace_start_index=int(trace_start_index) + len(trace),
                 metadata={"function_step_index": function_step.step_index},
                 first_metadata=(
-                    {
-                        "function_alignment": dict(resume_metadata_pending)
-                    }
+                    {"function_alignment": dict(resume_metadata_pending)}
                     if resume_metadata_pending
                     else None
                 ),
@@ -358,7 +110,6 @@ async def execute_function(
                 final_state=current,
                 detail={
                     "trace": trace,
-                    "checker_decisions": checker_decisions,
                     "failed_step_index": function_step.step_index,
                     "next_step_index": function_step.step_index,
                 },
@@ -370,7 +121,6 @@ async def execute_function(
         final_state=current,
         detail={
             "trace": trace,
-            "checker_decisions": checker_decisions,
             "next_step_index": (
                 max((step.step_index for step in steps), default=start_step_index - 1)
                 + 1
@@ -379,295 +129,152 @@ async def execute_function(
     )
 
 
-async def execute_checker_policy(
-    policy: dict[str, Any],
+async def align_function_resume(
+    function: Function,
     *,
-    observation: Observation,
     host: Host,
     plugins: PluginSet,
-    function: Function,
-    installed_packages: frozenset[str] | None = None,
-) -> tuple[StepResult, dict[str, Any]]:
-    """Evaluate an if/then pre-action policy without executing a checker action."""
+    observations: list[Observation],
+    start_step_index: int,
+    state_loader: StateLoader | None = None,
+) -> dict[str, Any] | None:
+    transfer_fn = plugins.transfer
+    if transfer_fn is None or len(observations) < 2:
+        return None
+    remaining = [
+        step for step in function.steps if step.step_index >= int(start_step_index)
+    ]
+    candidate_steps = remaining[: len(observations)]
+    if not candidate_steps:
+        return None
 
-    condition = dict(policy.get("if") or {})
-    if _checker_policy_condition_matches(condition, observation):
-        return (
-            StepResult(
-                True,
-                before=observation,
-                after=observation,
-                origin="checker_policy",
-                function_id=function.id,
-            ),
-            {
-                "status": "passed",
-                "checker_kind": "policy",
-                "reason": "checker_policy_condition_met",
-                "condition": condition,
-            },
+    probabilities: list[list[float | None]] = []
+    for function_step in candidate_steps:
+        source_state = await _load_state(
+            host,
+            function_step.source_state_id,
+            state_loader=state_loader,
         )
-
-    then_action = Action.from_value(policy["then"])
-    redirect_step = await execute_robust_action(
-        then_action,
-        observation=observation,
-        host=host,
-        plugins=plugins,
-        function=function,
-        installed_packages=installed_packages,
-    )
-    updated = redirect_step.after or redirect_step.before or observation
-    if not redirect_step.success:
-        return (
-            replace(
-                redirect_step,
-                origin="checker_policy",
-                function_id=function.id,
-            ),
-            {
-                "status": "failed",
-                "checker_kind": "policy",
-                "reason": "checker_policy_then_failed",
-                "condition": condition,
-            },
-        )
-    if not _checker_policy_condition_matches(condition, updated):
-        return (
-            replace(
-                redirect_step,
-                success=False,
-                error="checker_policy_condition_unmet",
-                origin="checker_policy",
-                function_id=function.id,
-            ),
-            {
-                "status": "failed",
-                "checker_kind": "policy",
-                "reason": "checker_policy_condition_unmet",
-                "condition": condition,
-            },
-        )
-    return (
-        replace(
-            redirect_step,
-            origin="checker_policy",
-            function_id=function.id,
-        ),
-        {
-            "status": "redirected",
-            "checker_kind": "policy",
-            "reason": "checker_policy_then_satisfied",
-            "condition": condition,
-        },
-    )
-
-
-def _checker_policy_condition_matches(
-    condition: dict[str, Any],
-    observation: Observation,
-) -> bool:
-    expected_package = str(condition.get("package_name") or "").strip()
-    if expected_package and expected_package not in _observation_packages(observation):
-        return False
-    expected_activity = str(condition.get("activity_name") or "").strip()
-    if (
-        expected_activity
-        and str(getattr(observation, "activity_name", "") or "").strip()
-        != expected_activity
-    ):
-        return False
-    return True
-
-
-def _observation_expected_package(observation: Observation | None) -> str:
-    if observation is None:
-        return ""
-    xml_packages = _observation_xml_packages(observation)
-    recorded = str(getattr(observation, "package_name", "") or "").strip()
-    if recorded and (not xml_packages or recorded in xml_packages):
-        return recorded
-    return next(iter(xml_packages), recorded)
-
-
-def _observation_packages(observation: Observation) -> set[str]:
-    packages = set(_observation_xml_packages(observation))
-    recorded = str(getattr(observation, "package_name", "") or "").strip()
-    if recorded:
-        packages.add(recorded)
-    return packages
-
-
-def _observation_xml_packages(observation: Observation | None) -> tuple[str, ...]:
-    xml_text = str(getattr(observation, "xml", "") or "").strip()
-    if not xml_text:
-        return ()
-    try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError:
-        return ()
-    packages: list[str] = []
-    for element in root.iter():
-        package = str(element.attrib.get("package") or "").strip()
-        if package and package not in packages:
-            packages.append(package)
-    return tuple(packages)
-
-
-def _render_source_observation_text(
-    observation: Observation | None,
-    substitutions: dict[str, str] | None,
-) -> Observation | None:
-    """Render bound Function text into its source observation semantics.
-
-    Parameterized input actions change the text visible in later states. The
-    stored source XML necessarily contains the source episode's value; leaving
-    that stale value in OmniTransfer input can make the correct target control
-    look semantically unrelated. Only update user-visible XML text attributes,
-    and only for unambiguous bindings derived from the Function itself.
-    """
-
-    if observation is None or not substitutions:
-        return observation
-    xml_text = str(observation.xml or "")
-    if not xml_text:
-        return observation
-    replacements = {
-        str(source): str(target)
-        for source, target in substitutions.items()
-        if str(source) and str(source) != str(target)
-    }
-    if not replacements:
-        return observation
-    try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError:
-        return observation
-    changed = False
-    for element in root.iter():
-        for attribute in ("text", "content-desc", "hint-text"):
-            value = element.attrib.get(attribute)
-            if value is None:
+        row: list[float | None] = []
+        for observation in observations:
+            if source_state is None:
+                row.append(None)
                 continue
-            rendered = value
-            for source, target in replacements.items():
-                rendered = rendered.replace(source, target)
-            if rendered != value:
-                element.set(attribute, rendered)
-                changed = True
-    if not changed:
-        return observation
-    return replace(observation, xml=ET.tostring(root, encoding="unicode"))
+            try:
+                transfer = await _await(
+                    transfer_fn(function_step.action, observation, source_state)
+                )
+            except Exception:  # noqa: BLE001
+                row.append(None)
+                continue
+            probability = _alignment_probability(transfer.detail)
+            row.append(
+                probability
+                if transfer.action is not None
+                and probability is not None
+                and probability >= _ALIGNMENT_MIN_PROBABILITY
+                else None
+            )
+        probabilities.append(row)
 
-
-def _global_app_redirect_action(package_name: str) -> Action:
-    normalized = str(package_name or "").strip()
-    if "launcher" in normalized.casefold():
-        return Action("press_key", {"key": "home"})
-    return Action("open_app", {"package_name": normalized})
-
-
-async def execute_checker_step(
-    action: Action,
-    *,
-    observation: Observation,
-    host: Host,
-    plugins: PluginSet,
-    function: Function,
-    source_state: Observation | None,
-    minimum_target_probability: float,
-    installed_packages: frozenset[str] | None = None,
-) -> tuple[StepResult, dict[str, Any]]:
-    """Execute a checker only when OmniTransfer maps its source target strongly."""
-
-    if source_state is None:
-        return (
-            StepResult(
-                True,
-                action=action,
-                before=observation,
-                after=observation,
-                origin="checker",
-                function_id=function.id,
-            ),
-            {"status": "skipped", "reason": "checker_source_state_missing"},
+    source_count = len(candidate_steps)
+    target_count = len(observations)
+    negative_infinity = float("-inf")
+    scores = [
+        [negative_infinity for _ in range(target_count + 1)]
+        for _ in range(source_count + 1)
+    ]
+    back: list[list[str | None]] = [
+        [None for _ in range(target_count + 1)] for _ in range(source_count + 1)
+    ]
+    scores[0][0] = 0.0
+    for target_index in range(1, target_count + 1):
+        scores[0][target_index] = scores[0][target_index - 1]
+        back[0][target_index] = "target_gap"
+    for source_index in range(1, source_count + 1):
+        scores[source_index][0] = (
+            scores[source_index - 1][0] - _ALIGNMENT_SOURCE_SKIP_PENALTY
         )
-    decision = await prepare_core_action(
-        action,
-        observation=observation,
-        plugins=plugins,
-        source_state=source_state,
+        back[source_index][0] = "source_gap"
+
+    operation_priority = {"target_gap": 0, "source_gap": 1, "match": 2}
+    for source_index in range(1, source_count + 1):
+        for target_index in range(1, target_count + 1):
+            options = [
+                (scores[source_index][target_index - 1], "target_gap"),
+                (
+                    scores[source_index - 1][target_index]
+                    - _ALIGNMENT_SOURCE_SKIP_PENALTY,
+                    "source_gap",
+                ),
+            ]
+            probability = probabilities[source_index - 1][target_index - 1]
+            if probability is not None:
+                options.append(
+                    (
+                        scores[source_index - 1][target_index - 1]
+                        + _log_odds(probability),
+                        "match",
+                    )
+                )
+            score, operation = max(
+                options,
+                key=lambda item: (item[0], operation_priority[item[1]]),
+            )
+            scores[source_index][target_index] = score
+            back[source_index][target_index] = operation
+
+    candidates = [
+        source_index
+        for source_index in range(1, source_count + 1)
+        if back[source_index][target_count] == "match"
+        and scores[source_index][target_count] > 0.0
+    ]
+    if not candidates:
+        return None
+    best_source_index = max(
+        candidates,
+        key=lambda source_index: (scores[source_index][target_count], source_index),
     )
-    if decision.kind == "block" or decision.action is None:
-        return (
-            StepResult(
-                True,
-                action=action,
-                before=observation,
-                after=observation,
-                origin="checker",
-                function_id=function.id,
-                detail=dict(decision.detail or {}),
-            ),
-            {
-                "status": "skipped",
-                "reason": decision.reason or "transfer_not_applicable",
-                "transfer": dict(decision.detail or {}),
-            },
-        )
-    target_probability = _checker_target_confidence(
-        dict(decision.detail or {})
-    )
-    target_evidence = {
-        "probability": target_probability,
-        "minimum_probability": float(minimum_target_probability),
+    matched_probability = probabilities[best_source_index - 1][target_count - 1]
+    if matched_probability is None:
+        return None
+
+    path: list[dict[str, Any]] = []
+    source_index = best_source_index
+    target_index = target_count
+    while source_index > 0 or target_index > 0:
+        operation = back[source_index][target_index]
+        if operation == "match":
+            probability = probabilities[source_index - 1][target_index - 1]
+            path.append(
+                {
+                    "function_step_index": candidate_steps[source_index - 1].step_index,
+                    "target_observation_index": target_index - 1,
+                    "probability": probability,
+                }
+            )
+            source_index -= 1
+            target_index -= 1
+        elif operation == "source_gap":
+            source_index -= 1
+        elif operation == "target_gap":
+            target_index -= 1
+        else:
+            break
+    path.reverse()
+    resume_step_index = candidate_steps[best_source_index - 1].step_index
+    return {
+        "protocol": "weighted_lcs_v1",
+        "start_step_index": int(start_step_index),
+        "resume_step_index": resume_step_index,
+        "probability": matched_probability,
+        "score": scores[best_source_index][target_count],
+        "minimum_probability": _ALIGNMENT_MIN_PROBABILITY,
+        "source_skip_penalty": _ALIGNMENT_SOURCE_SKIP_PENALTY,
+        "target_observation_count": target_count,
+        "path": path,
     }
-    if (
-        target_probability is None
-        or target_probability < minimum_target_probability
-    ):
-        reason = (
-            "checker_target_probability_missing"
-            if target_probability is None
-            else "checker_target_probability_too_low"
-        )
-        return (
-            StepResult(
-                True,
-                action=action,
-                before=observation,
-                after=observation,
-                origin="checker",
-                function_id=function.id,
-                detail=dict(decision.detail or {}),
-            ),
-            {
-                "status": "skipped",
-                "reason": reason,
-                "transfer": dict(decision.detail or {}),
-                "target": target_evidence,
-            },
-        )
-    step = replace(
-        await _dispatch_prepared(
-            decision.action,
-            observation=observation,
-            host=host,
-            installed_packages=installed_packages,
-        ),
-        origin="checker",
-        function_id=function.id,
-        detail=dict(decision.detail or {}),
-    )
-    return (
-        step,
-        {
-            "status": "executed" if step.success else "failed",
-            "reason": decision.reason or "omnitransfer_mapped",
-            "transfer": dict(decision.detail or {}),
-            "target": target_evidence,
-        },
-    )
 
 
 async def execute_robust_action(
@@ -678,74 +285,143 @@ async def execute_robust_action(
     plugins: PluginSet,
     function: Function | None = None,
     source_state: Observation | None = None,
-    source_states: tuple[Observation, ...] | None = None,
     installed_packages: frozenset[str] | None = None,
+    state_loader: StateLoader | None = None,
+    _checker_recovery_attempts_remaining: int = _CHECKER_RECOVERY_MAX_ATTEMPTS,
 ) -> StepResult:
     function_id = function.id if function is not None else None
-    resolved_source_states = tuple(source_states or ())
-    if not resolved_source_states and source_state is not None:
-        resolved_source_states = (source_state,)
-    refresh_source = resolved_source_states[0] if resolved_source_states else None
-    if (
-        _action_uses_transfer_target(action)
-        and refresh_source is not None
-        and _observation_needs_transfer_refresh(
-            observation,
-            source_state=refresh_source,
+    executed_steps: list[StepResult] = []
+    recovery_action: Action | None = None
+    recovery_trigger: str | None = None
+    try:
+        recovery = match_checker_rule(
+            CheckerContext(source_state, observation, action),
+            function.checker_rules if function is not None else (),
         )
+        if recovery is not None:
+            recovery_trigger = recovery.trigger
+            recovery_source_state = await _load_state(
+                host,
+                recovery.source_state_id,
+                state_loader=state_loader,
+            )
+            recovery_decision = await prepare_action(
+                recovery.action,
+                observation=observation,
+                plugins=plugins,
+                source_state=recovery_source_state,
+            )
+            if recovery_decision.kind == "block" or recovery_decision.action is None:
+                return StepResult(
+                    False,
+                    action=action,
+                    before=observation,
+                    error=f"checker_recovery_failed:{recovery_decision.reason or 'blocked'}",
+                    origin="blocked",
+                    function_id=function_id,
+                    detail=recovery_decision.detail,
+                )
+            recovery_action = recovery_decision.action
+    except Exception as error:  # noqa: BLE001
+        return StepResult(
+            False,
+            action=action,
+            before=observation,
+            error=f"checker_failed:{error}",
+            origin="blocked",
+            function_id=function_id,
+        )
+    checker = plugins.checker
+    if recovery_action is None and checker is not None:
+        try:
+            recovery_value = await _await(
+                checker(CheckerContext(source_state, observation, action))
+            )
+            recovery_action = (
+                Action.from_value(recovery_value)
+                if recovery_value is not None
+                else None
+            )
+            if recovery_action is not None:
+                recovery_trigger = default_checker_trigger(
+                    CheckerContext(source_state, observation, action),
+                    recovery_action,
+                )
+        except Exception as error:  # noqa: BLE001
+            return StepResult(
+                False,
+                action=action,
+                before=observation,
+                error=f"checker_failed:{error}",
+                origin="blocked",
+                function_id=function_id,
+            )
+    if recovery_action is not None and not _recovery_action_available(
+        recovery_action,
+        installed_packages,
     ):
-        observation = await _observe_ready(host, require_graph=True)
-    candidate_sources: tuple[Observation | None, ...] = (
-        resolved_source_states if resolved_source_states else (None,)
-    )
-    decisions = [
-        await prepare_core_action(
+        recovery_action = None
+        recovery_trigger = None
+    if recovery_action is not None:
+        if _checker_recovery_attempts_remaining <= 0:
+            return StepResult(
+                False,
+                action=action,
+                before=observation,
+                error="checker_recovery_limit_exceeded",
+                origin="blocked",
+                function_id=function_id,
+            )
+        recovery_step = replace(
+            await _dispatch_prepared(
+                recovery_action,
+                observation=observation,
+                host=host,
+                installed_packages=installed_packages,
+            ),
+            origin="checker",
+            function_id=function_id,
+            checker_trigger=recovery_trigger,
+        )
+        executed_steps.append(recovery_step)
+        if not recovery_step.success:
+            return replace(
+                recovery_step,
+                executed_steps=tuple(executed_steps),
+            )
+        observation = recovery_step.after or observation
+        retried = await execute_robust_action(
             action,
             observation=observation,
+            host=host,
             plugins=plugins,
-            source_state=candidate_source,
-        )
-        for candidate_source in candidate_sources
-    ]
-    ready = [
-        (index, decision)
-        for index, decision in enumerate(decisions)
-        if decision.kind != "block" and decision.action is not None
-    ]
-    if ready:
-        selected_index, decision = max(
-            ready,
-            key=lambda item: (
-                _selected_target_confidence(dict(item[1].detail or {}))
-                if _selected_target_confidence(dict(item[1].detail or {})) is not None
-                else -1.0
+            function=function,
+            source_state=source_state,
+            installed_packages=installed_packages,
+            state_loader=state_loader,
+            _checker_recovery_attempts_remaining=(
+                _checker_recovery_attempts_remaining - 1
             ),
         )
-        decision = replace(
-            decision,
-            detail={
-                **dict(decision.detail or {}),
-                "transfer_state_candidate_index": selected_index,
-                "transfer_state_candidate_count": len(candidate_sources),
-            },
+        retried_steps = tuple(retried.executed_steps or (retried,))
+        all_steps = (recovery_step, *retried_steps)
+        return replace(
+            retried,
+            actions_executed=sum(item.actions_executed for item in all_steps),
+            executed_steps=all_steps,
         )
-    else:
-        decision = decisions[0]
-        decision = replace(
-            decision,
-            detail={
-                **dict(decision.detail or {}),
-                "transfer_state_candidate_count": len(candidate_sources),
-                "transfer_state_failures": [
-                    {
-                        "index": index,
-                        "reason": candidate.reason or "transfer_failed",
-                        "detail": dict(candidate.detail or {}),
-                    }
-                    for index, candidate in enumerate(decisions)
-                ],
-            },
-        )
+    if (
+        _action_uses_transfer_target(action)
+        and _observation_screenshot_path(source_state)
+        and not _observation_screenshot_path(observation)
+    ):
+        observation = await _observe_ready(host)
+    decision = await prepare_action(
+        action,
+        observation=observation,
+        plugins=plugins,
+        source_state=source_state,
+    )
     if decision.kind == "block" or decision.action is None:
         blocked = StepResult(
             False,
@@ -756,7 +432,14 @@ async def execute_robust_action(
             function_id=function_id,
             detail=decision.detail,
         )
-        return blocked
+        if not executed_steps:
+            return blocked
+        executed_steps.append(blocked)
+        return replace(
+            blocked,
+            actions_executed=sum(item.actions_executed for item in executed_steps),
+            executed_steps=tuple(executed_steps),
+        )
     result = await _dispatch_prepared(
         decision.action,
         observation=observation,
@@ -768,7 +451,39 @@ async def execute_robust_action(
         function_id=function_id,
         detail=decision.detail,
     )
-    return result
+    if not executed_steps:
+        return result
+    executed_steps.append(result)
+    return replace(
+        result,
+        actions_executed=sum(item.actions_executed for item in executed_steps),
+        executed_steps=tuple(executed_steps),
+    )
+
+
+async def prepare_action(
+    action: Action,
+    *,
+    observation: Observation,
+    plugins: PluginSet,
+    source_state: Observation | None = None,
+) -> ActionDecision:
+    return await prepare_core_action(
+        action,
+        observation=observation,
+        plugins=plugins,
+        source_state=source_state,
+    )
+
+
+def _recovery_action_available(
+    action: Action,
+    installed_packages: frozenset[str] | None,
+) -> bool:
+    if action.tool != "open_app":
+        return True
+    package_name = str(action.args.get("package_name") or "").strip()
+    return installed_packages is not None and package_name in installed_packages
 
 
 async def _dispatch_prepared(
@@ -778,6 +493,22 @@ async def _dispatch_prepared(
     host: Host,
     installed_packages: frozenset[str] | None,
 ) -> StepResult:
+    if action.tool == "open_app":
+        package_name = str(action.args.get("package_name") or "").strip()
+        if installed_packages is None:
+            return StepResult(
+                False,
+                action=action,
+                before=observation,
+                error="open_app_installed_packages_unavailable",
+            )
+        if package_name not in installed_packages:
+            return StepResult(
+                False,
+                action=action,
+                before=observation,
+                error=f"open_app_package_not_installed:{package_name}",
+            )
     core_step = await execute_core_action(
         action,
         observation=observation,
@@ -791,7 +522,6 @@ async def _dispatch_prepared(
         after = await _observe_ready(host)
     if action.tool == "open_app":
         expected_package = str(action.args.get("package_name") or "").strip()
-        expected_package = _resolve_open_app_package(expected_package)
         observed_package = str(after.package_name or "").strip()
         attempts = 1
         while (
@@ -831,30 +561,13 @@ async def _dispatch_prepared(
     return replace(core_step, after=after, origin="action")
 
 
-def _resolve_open_app_package(identifier: str) -> str:
-    """Normalize an app label or package before checking the post-launch state."""
-
-    value = str(identifier or "").strip()
-    if not value:
-        return ""
-    try:
-        from src.integrations.android_world.apps import resolve_androidworld_package
-
-        return str(resolve_androidworld_package(value) or value).strip()
-    except (ImportError, RuntimeError, ValueError):
-        return value
-
-
-async def _observe_ready(host: Host, *, require_graph: bool = False) -> Observation:
+async def _observe_ready(host: Host) -> Observation:
     after = Observation()
     for attempt in range(_OBSERVATION_READY_MAX_ATTEMPTS):
         after = Observation.from_value(
             await _await(host.observe(xml=True, screenshot=True, app_info=True))
         )
-        graph_ready = _observation_graph_ready(after)
-        if not _observation_window_outside_display(after) and (
-            not require_graph or graph_ready
-        ):
+        if not _observation_window_outside_display(after):
             return after
         if attempt + 1 < _OBSERVATION_READY_MAX_ATTEMPTS:
             await asyncio.sleep(_OBSERVATION_READY_POLL_SECONDS)
@@ -896,184 +609,6 @@ def _observation_window_outside_display(observation: Observation) -> bool:
     )
 
 
-def _observation_needs_transfer_refresh(
-    observation: Observation,
-    *,
-    source_state: Observation,
-) -> bool:
-    if not _observation_graph_ready(observation):
-        return True
-    source_has_visual = bool(
-        _observation_screenshot_path(source_state)
-        or source_state.extra.get("visual_rgb")
-    )
-    target_has_visual = bool(
-        _observation_screenshot_path(observation)
-        or observation.extra.get("visual_rgb")
-    )
-    return source_has_visual and not target_has_visual
-
-
-def _observation_graph_ready(observation: Observation) -> bool:
-    xml_text = str(observation.xml or "").strip()
-    if not xml_text:
-        return False
-    graph_source = str(observation.extra.get("ui_graph_source") or "")
-    return not graph_source.endswith("_partial") or (
-        _observation_has_modal_graph(xml_text)
-        or _observation_has_full_screen_node(xml_text)
-    )
-
-
-def _observation_has_modal_graph(xml_text: str) -> bool:
-    try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError:
-        return False
-    for element in root.iter():
-        resource_id = str(element.attrib.get("resource-id") or "").lower()
-        values = (
-            element.attrib.get("class"),
-            resource_id,
-            element.attrib.get("content-desc"),
-        )
-        if any("dialog" in str(value or "").lower() for value in values):
-            return True
-        if resource_id in {
-            "android:id/parentpanel",
-            "android:id/alerttitle",
-        }:
-            return True
-    return False
-
-
-_OVERLAY_CLOSE_LABELS = (
-    "关闭",
-    "跳过",
-    "close",
-    "skip",
-    "dismiss",
-    "not now",
-    "no thanks",
-    "稍后",
-    "以后再说",
-    "暂不",
-)
-_OVERLAY_AD_MARKERS = (
-    "广告",
-    "推广",
-    "开屏",
-    "sponsored",
-    "advertisement",
-)
-_LEGACY_APP_DIALOG_MARKERS = (
-    "built for an older version of android",
-    "may not work properly",
-)
-
-
-def _blocking_overlay_action(observation: Observation) -> Action | None:
-    """Return a direct action for a known transient blocking overlay."""
-
-    xml_text = str(observation.xml or "").strip()
-    if not xml_text:
-        return None
-    elements = _elements(xml_text)
-    if not elements:
-        return None
-    ad_like = any(
-        _contains_overlay_marker(
-            " ".join(
-                str(element.get(key) or "")
-                for key in ("text", "description", "resource_id", "class")
-            )
-        )
-        for element in elements
-    )
-    legacy_app_dialog = any(
-        _contains_legacy_app_dialog_marker(
-            " ".join(
-                str(element.get(key) or "")
-                for key in ("text", "description")
-            )
-        )
-        for element in elements
-    )
-    modal = _observation_has_modal_graph(xml_text)
-    close_candidates: list[dict[str, Any]] = []
-    for element in elements:
-        label = " ".join(
-            str(element.get(key) or "")
-            for key in ("text", "description", "resource_id")
-        )
-        if _contains_overlay_close_label(label) or (
-            legacy_app_dialog
-            and any(
-                _is_exact_overlay_label(element.get(key), "ok")
-                for key in ("text", "description")
-            )
-        ):
-            close_candidates.append(element)
-    if close_candidates and (ad_like or modal):
-        candidate = min(
-            close_candidates,
-            key=lambda element: (
-                (element["bounds"][2] - element["bounds"][0])
-                * (element["bounds"][3] - element["bounds"][1])
-            ),
-        )
-        left, top, right, bottom = candidate["bounds"]
-        return Action(
-            "click",
-            {
-                "x": round((left + right) / 2.0, 2),
-                "y": round((top + bottom) / 2.0, 2),
-            },
-        )
-    if ad_like and modal:
-        return Action("press_key", {"key": "back"})
-    return None
-
-
-def _contains_overlay_marker(value: str) -> bool:
-    normalized = " ".join(str(value or "").casefold().split())
-    return any(marker in normalized for marker in _OVERLAY_AD_MARKERS) or bool(
-        re.search(r"\b(?:ad|ads|advert)\b", normalized)
-    )
-
-
-def _contains_legacy_app_dialog_marker(value: str) -> bool:
-    normalized = " ".join(str(value or "").casefold().split())
-    return any(marker in normalized for marker in _LEGACY_APP_DIALOG_MARKERS)
-
-
-def _is_exact_overlay_label(value: str, expected: str) -> bool:
-    normalized = " ".join(str(value or "").casefold().split())
-    return normalized == expected
-
-
-def _contains_overlay_close_label(value: str) -> bool:
-    normalized = " ".join(str(value or "").casefold().split())
-    return any(label in normalized for label in _OVERLAY_CLOSE_LABELS)
-
-
-def _observation_has_full_screen_node(xml_text: str) -> bool:
-    try:
-        root = ET.fromstring(xml_text)
-        width = int(root.attrib.get("width") or 0)
-        height = int(root.attrib.get("height") or 0)
-    except (ET.ParseError, TypeError, ValueError):
-        return False
-    if width <= 0 or height <= 0:
-        return False
-    for element in list(root):
-        for descendant in element.iter():
-            bounds = _bounds(descendant.attrib.get("bounds"))
-            if bounds == (0, 0, width, height):
-                return True
-    return False
-
-
 def step_fact(step: StepResult) -> dict[str, Any]:
     action = step.action or Action("")
     before = _state(step.before or Observation())
@@ -1081,6 +616,8 @@ def step_fact(step: StepResult) -> dict[str, Any]:
     metadata: dict[str, Any] = {"origin": step.origin}
     if step.function_id:
         metadata["function_id"] = step.function_id
+    if step.checker_trigger:
+        metadata["checker_trigger"] = step.checker_trigger
     action_result = step.result or ActionResult(step.success, step.error)
     if action_result.extra:
         metadata["action_result"] = dict(action_result.extra)
@@ -1181,13 +718,7 @@ def default_transfer(
     target_xml = str(observation.xml or "")
     if not target_xml:
         return TransferResult(None, reason="omnitransfer_missing_target_page")
-    if (
-        str(observation.extra.get("ui_graph_source") or "").endswith("_partial")
-        and not (
-            _observation_has_modal_graph(target_xml)
-            or _observation_has_full_screen_node(target_xml)
-        )
-    ):
+    if str(observation.extra.get("ui_graph_source") or "").endswith("_partial"):
         return TransferResult(None, reason="omnitransfer_target_graph_incomplete")
     elements = _elements(target_xml)
     display_size = _display_size(observation, elements)
@@ -1199,6 +730,10 @@ def default_transfer(
     request: dict[str, Any] = {
         "source_xml": source_xml,
         "target_xml": target_xml,
+        "source_package_name": source_state.package_name,
+        "target_package_name": observation.package_name,
+        "source_activity_name": source_state.activity_name,
+        "target_activity_name": observation.activity_name,
         "action_type": action.tool,
         "top_k": 3,
     }
@@ -1210,13 +745,11 @@ def default_transfer(
             float(action.args["y"]),
         )
         request["source_point"] = source_point
-        source_element_id = str(
-            action.args.get("source_element_id") or ""
-        ).strip()
-        if source_element_id:
-            request["source_element_id"] = source_element_id
     except (KeyError, TypeError, ValueError):
         return TransferResult(None, reason="omnitransfer_invalid_source_point")
+    source_title = _source_semantic_title(source_xml, source_point)
+    if source_title:
+        request["source_element"] = {"text": source_title}
     try:
         result = transfer_action(**request)
     except Exception as exc:
@@ -1241,15 +774,7 @@ def default_transfer(
             detail=_transfer_detail(result),
         )
     transfer_detail = _transfer_detail(result)
-    if _is_system_chrome_candidate(transfer_detail, display_size):
-        return _recoverable_transfer_failure(
-            "omnitransfer_system_chrome_candidate",
-            transfer_detail,
-        )
-    # The page-pair score can be high even when rank one is a navigation bar
-    # or root container.  Gate the action on the selected target candidate,
-    # otherwise a wrong candidate becomes a real device gesture.
-    probability = _selected_target_confidence(transfer_detail)
+    probability = _alignment_probability(transfer_detail)
     if probability is not None and probability < _ALIGNMENT_MIN_PROBABILITY:
         return _recoverable_transfer_failure(
             "omnitransfer_low_confidence",
@@ -1266,7 +791,6 @@ def default_transfer(
     params = dict(action.args)
     params.pop("node_id", None)
     params.pop("node_resource_id", None)
-    params.pop("source_element_id", None)
     params["x"] = target_x / width * 1000.0
     params["y"] = target_y / height * 1000.0
     return TransferResult(
@@ -1308,6 +832,10 @@ def _transfer_swipe(
             request: dict[str, Any] = {
                 "target_xml": target_xml,
                 "source_xml": source_xml,
+                "source_package_name": source_state.package_name,
+                "target_package_name": observation.package_name,
+                "source_activity_name": source_state.activity_name,
+                "target_activity_name": observation.activity_name,
                 "action_type": action.tool,
                 "top_k": 3,
             }
@@ -1331,15 +859,6 @@ def _transfer_swipe(
                 reason=f"omnitransfer_{reason}",
                 detail=detail,
             )
-        endpoint_detail = _transfer_detail(result)
-        if _is_system_chrome_candidate(endpoint_detail, display_size):
-            return _recoverable_transfer_failure(
-                "omnitransfer_system_chrome_candidate",
-                {
-                    **endpoint_detail,
-                    "endpoint": index,
-                },
-            )
         try:
             target_x = float(result["new_x"])
             target_y = float(result["new_y"])
@@ -1350,8 +869,8 @@ def _transfer_swipe(
         params[x_key] = target_x / width * 1000.0
         params[y_key] = target_y / height * 1000.0
         mapping_modes.append(str(result.get("mapping_mode") or "omnitransfer_mapped"))
-        endpoint_details.append(endpoint_detail)
-        endpoint_probability = _selected_target_confidence(endpoint_details[-1])
+        endpoint_details.append(_transfer_detail(result))
+        endpoint_probability = _alignment_probability(endpoint_details[-1])
         if (
             endpoint_probability is not None
             and endpoint_probability < _ALIGNMENT_MIN_PROBABILITY
@@ -1374,7 +893,7 @@ def _transfer_swipe(
     probabilities = [
         probability
         for probability in (
-            _pair_confidence(endpoint) for endpoint in endpoint_details
+            _alignment_probability(endpoint) for endpoint in endpoint_details
         )
         if probability is not None
     ]
@@ -1487,7 +1006,7 @@ def _transfer_detail(result: dict[str, Any]) -> dict[str, Any]:
     return detail
 
 
-def _pair_confidence(detail: dict[str, Any]) -> float | None:
+def _alignment_probability(detail: dict[str, Any]) -> float | None:
     raw = detail.get("score")
     if raw is None:
         candidates = detail.get("candidates")
@@ -1504,38 +1023,9 @@ def _pair_confidence(detail: dict[str, Any]) -> float | None:
     return min(1.0, max(0.0, probability))
 
 
-def _checker_target_confidence(detail: dict[str, Any]) -> float | None:
-    """Return the selected target's rank probability, never pair confidence."""
-
-    return _selected_target_confidence(detail)
-
-
-def _selected_target_confidence(detail: dict[str, Any]) -> float | None:
-    """Return the score of the candidate whose coordinates will be used."""
-
-    candidates = detail.get("candidates")
-    if not isinstance(candidates, list) or not candidates:
-        # Older/compact matcher responses may omit candidate rows.  Preserve
-        # their existing pair-score gate; when rows exist, the selected row is
-        # the only score allowed to authorize its coordinates.
-        raw = detail.get("score")
-        try:
-            probability = float(raw)
-        except (TypeError, ValueError):
-            return None
-        if not math.isfinite(probability):
-            return None
-        return min(1.0, max(0.0, probability))
-    candidate = candidates[0]
-    if not isinstance(candidate, dict):
-        return None
-    try:
-        probability = float(candidate["score"])
-    except (KeyError, TypeError, ValueError):
-        return None
-    if not math.isfinite(probability):
-        return None
-    return min(1.0, max(0.0, probability))
+def _log_odds(probability: float) -> float:
+    bounded = min(1.0 - 1e-9, max(1e-9, probability))
+    return math.log(bounded / (1.0 - bounded))
 
 
 def _element_detail(value: Any) -> dict[str, Any]:
@@ -1563,6 +1053,45 @@ def _display_detail(value: Any) -> dict[str, float]:
     if width <= 0 or height <= 0:
         return {}
     return {"width": width, "height": height}
+
+
+async def _load_state(
+    host: Host,
+    source_state_id: str | None,
+    *,
+    state_loader: StateLoader | None = None,
+) -> Observation | None:
+    if not source_state_id:
+        return None
+    host_loader = getattr(host, "get_state", None)
+    if callable(host_loader):
+        try:
+            loaded = Observation.from_value(
+                await _await(host_loader(source_state_id))
+            )
+        except Exception:  # noqa: BLE001
+            loaded = None
+        if loaded is not None and (loaded.package_name or loaded.xml):
+            return loaded
+    if state_loader is not None:
+        loaded = Observation.from_value(await _await(state_loader(source_state_id)))
+        if loaded.package_name or loaded.xml:
+            return loaded
+    # A referenced-but-missing source state must remain a transfer failure.  It
+    # must never become ``None`` because ``None`` means that replay can safely
+    # skip transfer (only valid for actions recorded without a source state).
+    return Observation(extra={"state_id": source_state_id})
+
+
+def _relative_source_point(
+    source_state: Observation,
+    x: float,
+    y: float,
+) -> tuple[float, float]:
+    display = _display_size(source_state, _elements(str(source_state.xml or "")))
+    if display is None:
+        raise ValueError("source_display_size_missing")
+    return x / 1000.0 * display[0], y / 1000.0 * display[1]
 
 
 async def _await(value: Any) -> Any:
@@ -1637,6 +1166,118 @@ def _bounds(value: Any) -> tuple[int, int, int, int] | None:
     return numbers[0], numbers[1], numbers[2], numbers[3]
 
 
+def _source_semantic_title(
+    source_xml: str,
+    source_point: tuple[float, float],
+) -> str:
+    root = _xml_root(source_xml)
+    if root is None:
+        return ""
+    source = _actionable_element_at_point(root, source_point)
+    if source is None:
+        return ""
+    direct_label = _text(
+        source.attrib.get("text") or source.attrib.get("content-desc")
+    )
+    if _is_semantic_label(direct_label):
+        return direct_label
+    title = _element_title(source)
+    if _is_semantic_label(title):
+        return title
+    return next(
+        (
+            label
+            for descendant in source.iter()
+            if (
+                label := _text(
+                    descendant.attrib.get("text")
+                    or descendant.attrib.get("content-desc")
+                )
+            )
+            if _is_semantic_label(label)
+        ),
+        "",
+    )
+
+
+def _is_semantic_label(value: str) -> bool:
+    normalized = _text(value)
+    return bool(normalized) and any(
+        unicodedata.category(character) != "Co"
+        for character in normalized
+        if not character.isspace()
+    )
+
+
+def _xml_root(xml_text: str) -> ET.Element | None:
+    try:
+        return ET.fromstring(xml_text)
+    except ET.ParseError:
+        return None
+
+
+def _actionable_element_at_point(
+    root: ET.Element,
+    point: tuple[float, float],
+) -> ET.Element | None:
+    x, y = point
+    containing: list[tuple[ET.Element, tuple[int, int, int, int], int]] = []
+
+    def visit(element: ET.Element, depth: int) -> None:
+        bounds = _bounds(element.attrib.get("bounds"))
+        if (
+            bounds is not None
+            and bounds[0] <= x <= bounds[2]
+            and bounds[1] <= y <= bounds[3]
+        ):
+            containing.append((element, bounds, depth))
+        for child in list(element):
+            visit(child, depth + 1)
+
+    visit(root, 0)
+    actionable = [
+        item
+        for item in containing
+        if str(item[0].attrib.get("enabled") or "true").lower() != "false"
+        and any(
+            str(item[0].attrib.get(attribute) or "").lower() == "true"
+            for attribute in ("clickable", "editable", "scrollable")
+        )
+    ]
+    candidates = actionable or containing
+    if not candidates:
+        return None
+    return min(
+        candidates,
+        key=lambda item: (
+            (item[1][2] - item[1][0]) * (item[1][3] - item[1][1]),
+            not _element_has_stable_identity(item[0]),
+            -item[2],
+        ),
+    )[0]
+
+
+def _element_has_stable_identity(element: ET.Element) -> bool:
+    return any(
+        str(element.attrib.get(attribute) or "").strip()
+        for attribute in ("resource-id", "text", "content-desc")
+    )
+
+
+def _element_title(element: ET.Element | None) -> str:
+    if element is None:
+        return ""
+    titles = {
+        _text(descendant.attrib.get("text") or descendant.attrib.get("content-desc"))
+        for descendant in element.iter()
+        if str(descendant.attrib.get("resource-id") or "").rsplit("/", 1)[-1] == "title"
+        and _text(
+            descendant.attrib.get("text") or descendant.attrib.get("content-desc")
+        )
+    }
+    return next(iter(titles)) if len(titles) == 1 else ""
+
+
 def _numeric_bounds(value: Any) -> tuple[float, float, float, float] | None:
     if not isinstance(value, (list, tuple)) or len(value) != 4:
         return None
@@ -1661,54 +1302,6 @@ def _is_full_screen_candidate(
         and bounds[2] >= width * 0.95
         and bounds[3] >= height * 0.95
     )
-
-
-def _is_system_chrome_candidate(
-    detail: dict[str, Any],
-    display_size: tuple[float, float],
-) -> bool:
-    """Reject system status/navigation chrome before authorizing coordinates."""
-
-    candidates = detail.get("candidates")
-    if not isinstance(candidates, list) or not candidates:
-        return False
-    candidate = candidates[0]
-    if not isinstance(candidate, dict):
-        return False
-    resource_id = str(candidate.get("resource_id") or "").lower()
-    if any(
-        marker in resource_id
-        for marker in (
-            "navigationbar",
-            "navigation_bar",
-            "statusbar",
-            "status_bar",
-        )
-    ):
-        return True
-    bounds = _numeric_bounds(candidate.get("bounds"))
-    if bounds is None:
-        return False
-    width, height = display_size
-    candidate_class = str(candidate.get("class") or "").lower()
-    if candidate_class not in {"android.view.view", "android.view.viewgroup", "view", "viewgroup"}:
-        return False
-    touches_left = bounds[0] <= width * 0.01
-    touches_right = bounds[2] >= width * 0.99
-    bottom_strip = bounds[1] >= height * 0.85 and bounds[3] >= height * 0.99
-    top_strip = bounds[0] <= width * 0.01 and bounds[1] <= height * 0.01 and bounds[3] <= height * 0.15
-    return touches_left and touches_right and (bottom_strip or top_strip)
-
-
-def _relative_source_point(
-    source_state: Observation,
-    x: float,
-    y: float,
-) -> tuple[float, float]:
-    display = _display_size(source_state, _elements(str(source_state.xml or "")))
-    if display is None:
-        raise ValueError("source_display_size_missing")
-    return x / 1000.0 * display[0], y / 1000.0 * display[1]
 
 
 def _text(value: Any) -> str:

@@ -16,7 +16,7 @@
 | --- | --- | --- |
 | 任务执行 | `scripts/exp/run_androidworld.sh` → `src/experiment/run_tasks.py` → `src/experiment/run_task.py` | 选择任务、方法、设备，并运行一个原子结果 |
 | Native episode | `src/integrations/android_world/run_episode.py` | 创建 AndroidWorld/B-MoCA 环境、调用官方 validator、封存 RunLog |
-| Function 生命周期 | `omniflow/functions/assets.py::save_function` | 规范化并原子写入一个包含多个独立 v3 Function 的 Store |
+| Function 生命周期 | `omniflow/functions/compiler.py::compile_runlog_to_store` | 从成功 RunLog 编译 v2 Function、`store.json` 和外置 transfer-state catalog |
 | 本地证据索引 | `src/experiment/data_index.py` | 物化并读取 `data/current.json`；运行时不扫描替代索引 |
 
 ## 2. 唯一运行路径
@@ -65,8 +65,9 @@ The boundaries inside this path are intentionally different:
 OmniFlow.run()
   -> Planner / Function selection
   -> Function-local checker evaluation
-  -> OmniTransfer candidate mapping
-  -> target execution
+  -> execute_function / execute_robust_action
+  -> OmniTransfer candidate mapping and target execution
+  -> align_function_resume after fallback progress
   -> mapping failure => normal VLM fallback
 ```
 
@@ -103,12 +104,13 @@ OmniTransfer、checker、证据封存和结果归档，且不会因为 CLI 入�
 因此“只保留一套索引”不是删除所有 manifest 或 ledger，而是保证只有
 `current.json` 参与运行时解析；其他文件各自只承担证据或统计语义。
 
-### Function v3
+### Function v2
 
-运行时只读取 `omniflow.function.v3`。一个 Store 可包含多个独立 Function；
-每个 Function 内联 `transfer_states`，其值直接复用 RunLog observation schema，
-步骤以 `transfer_state_ids` 引用一个或多个 observation。Function 动作和顺序
-不与 RunLog 轨迹绑定，也没有 sibling `transfer_states.json` 或运行时兼容层。
+运行时只读取 `omniflow.function.v2`。Function 步骤按成功 source RunLog 的动作
+顺序保存，每步以唯一 `source_state_id` 引用同目录 `transfer_states.json` 中的
+source observation。Checker 使用 `omniflow.checker_rule.v1` 的
+`schema_version/trigger/source_state_id/action` 合同，并且只属于注册它的
+Function。Store 本身不内联 observation，也不接受 v3 `transfer_state_ids`。
 
 ## 5. 当前精简候选与保留决定
 
@@ -130,7 +132,7 @@ baseline 记录时经过的五个位置：
 
 ### AndroidWorld observation persistence
 
-新采集和新转换的 RunLog observation 统一只保存两项：`screenshot`（直接路径、尺寸和 MIME）与 `xml`（完整 UI XML）。`forest`、`ui_elements` 和 `auxiliaries` 不再写入新的成功 source；旧 RunLog 的 `pixels`、四字段 native snapshot 和截图 SHA-256 只由兼容读取路径接受，新 writer 不再输出它们。动作、结果、validator 和 reasoning 仍属于 RunLog 证据合同。
+新采集和新转换的 RunLog observation 统一只保存两项：`screenshot`（直接路径、尺寸和 MIME）与 `xml`（完整 UI XML）。reader/schema 同时接受旧采集器的 `pixels+xml+auxiliaries` 和四字段 native AndroidWorld snapshot；旧截图 SHA-256 可读取但在 canonical 输出中移除。新 writer 不再输出这些旧字段。动作、结果、validator 和 reasoning 仍属于 RunLog 证据合同。
 
 AndroidWorld 的正式采集、手工采集和 fixed replay capture 共用 `build_androidworld_run_log` 与 `persist_androidworld_run_log`。一个 attempt 只有一份 `run_log.json`；截图按 `screenshots/screenshot_NNNNNN.png` 直接保存。attempt 使用递增编号，不使用时间戳，也不创建 `object_store` 或哈希命名截图。
 
@@ -200,6 +202,6 @@ README.md
 bash scripts/exp/run_androidworld.sh ...
 ```
 
-Function 写入只有 `save_function`；运行时 Function 只从已注册 Store 和
+Function 写入只有 `compile_runlog_to_store`；运行时 Function 只从已注册 Store 和
 `data/current.json` 读取；OmniTransfer checkout 只有
 `~/Projects/Omni/OmniTransfer`。

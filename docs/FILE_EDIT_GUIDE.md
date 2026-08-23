@@ -86,13 +86,15 @@ rg --files -g '*.py' | sort
 | `omniflow/core/schemas.py` | 外部 action/payload 规范化；无 retired alias |
 | `omniflow/core/trajectory.py` | RunLog/trajectory 的结构与顺序不变量；旧截图 hash 只读兼容，新 RunLog 不写 hash |
 | `omniflow/functions/__init__.py` | Function 导出 |
-| `omniflow/functions/assets.py` | 唯一 compiler、validator、`save_function`、Store writer；禁止第二 writer 或手改 Store |
+| `omniflow/functions/compiler.py` | 唯一 v2 RunLog compiler；写 `store.json`、`compile_report.json` 和 sibling `transfer_states.json` |
+| `omniflow/functions/artifact.py` | v2 Function schema、binding 和参数校验 |
+| `omniflow/functions/store.py` | v2 Store reader/writer；禁止手改 Store |
 | `omniflow/functions/recall.py` | 只从已加载 Store 选择完整 Function；不创建 catalog |
 | `omniflow/runtime/__init__.py` | runtime 导出 |
 | `omniflow/runtime/core.py` | 单个 canonical action primitive |
-| `omniflow/runtime/checker.py` | active Function 的 checker session；规则只执行一次、映射失败只跳过 |
+| `omniflow/runtime/checker.py` | v1 trigger DSL、Function-local recovery rule 和 deterministic checker |
 | `omniflow/runtime/engine.py` | 一个持久 Planner/Function 生命周期；不增加 method-specific loop |
-| `omniflow/runtime/execution.py` | OmniTransfer、target selection、执行和正常 VLM fallback 的唯一 owner |
+| `omniflow/runtime/execution.py` | `execute_function`、`execute_robust_action`、`align_function_resume` 和 OmniTransfer 执行的唯一 owner |
 | `omniflow/transfer/__init__.py` | transfer 导出 |
 | `omniflow/transfer/page_embedding.py` | 唯一 active page encoder；只能使用 canonical OmniTransfer checkpoint |
 | `omniflow/transfer/runtime.py` | immutable transfer-state catalog 读取和 coverage 检查 |

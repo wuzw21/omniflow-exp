@@ -92,6 +92,10 @@
           "enum": ["runtime", "manual_native_androidworld", "legacy_import"]
         },
         "source_path": {"type": "string", "minLength": 1},
+        "source_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
         "source_schema_version": {"type": "string"}
       }
     },
@@ -101,6 +105,7 @@
       "required": ["path", "width", "height", "mime_type"],
       "properties": {
         "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "width": {"type": "integer", "minimum": 1},
         "height": {"type": "integer", "minimum": 1},
         "mime_type": {"enum": ["image/jpeg", "image/png", "image/webp"]}
@@ -141,9 +146,35 @@
         "xml": {"type": "string", "minLength": 1}
       }
     },
+    "legacy_xml_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pixels", "xml", "auxiliaries"],
+      "properties": {
+        "pixels": {
+          "anyOf": [
+            {"$ref": "#/$defs/screenshot_reference"},
+            {"type": "null"}
+          ]
+        },
+        "xml": {
+          "anyOf": [
+            {"type": "string"},
+            {"type": "null"}
+          ]
+        },
+        "auxiliaries": {
+          "anyOf": [
+            {"$ref": "#/$defs/object"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
     "state": {
       "anyOf": [
         {"$ref": "#/$defs/xml_state"},
+        {"$ref": "#/$defs/legacy_xml_state"},
         {"$ref": "#/$defs/androidworld_state"}
       ]
     },

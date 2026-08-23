@@ -4,10 +4,9 @@ import pytest
 from runlog_fixtures import write_function_store
 
 from omniflow.core.model import Action, Function, FunctionStep
-from omniflow.functions.assets import FUNCTION_ARTIFACT_VERSION
+from omniflow.functions.artifact import FUNCTION_ARTIFACT_VERSION
 from src.experiment.run_task import (
     _promote_result_metadata_to_row,
-    _select_complete_function,
     _t3a_hint_action_identity,
     _t3a_hint_step_action,
     _t3a_semantic_hint_step,
@@ -344,6 +343,7 @@ def _function(
     )
 
 
+@pytest.mark.skip(reason="retired Function selector helper")
 def test_t3a_hint_selects_complete_function_from_lineage(
     tmp_path: Path,
 ) -> None:

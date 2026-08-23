@@ -5,15 +5,12 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import tempfile
 import time
 from typing import Any, TextIO
 
-from omniflow.core.config import (
-    ANDROIDWORLD_PROTOCOL,
-    DEFAULT_MAX_STEPS,
-    OmniFlowConfig,
-    RuntimeSettings,
-)
+from omniflow.catalog import CatalogSnapshot, load_catalog, load_default_catalog
+from omniflow.core.config import OmniFlowConfig, RuntimeSettings
 from omniflow.core.model import (
     Action,
     ActionResult,
@@ -22,15 +19,23 @@ from omniflow.core.model import (
     ToolCall,
 )
 from omniflow.core.trajectory import canonicalize_run_log
-from omniflow.functions.assets import save_function
+from omniflow.functions.artifact import parse_function_artifact
+from omniflow.functions.compiler import compile_runlog_to_store
+from omniflow.runlog import import_run_log_evidence
 from omniflow.runtime.engine import InputRequired, OmniFlow
-from omniflow.vlm.planner import VLMPlanner
+from omniflow.vlm.gui import (
+    ModelToolCallError,
+    build_model_turn_request,
+    parse_model_turn_response,
+)
+from omniflow.vlm.guidance import resolve_step_guidance
 
 PROTOCOL_VERSION = "2025-11-25"
-_DEFAULT_GUI_MAX_STEPS = DEFAULT_MAX_STEPS
+_DEFAULT_GUI_MAX_STEPS = 20
 _MAX_GUI_MAX_STEPS = 64
+_MODEL_TOOL_CALL_ATTEMPTS = 2
 
-_FUNCTION_MANAGEMENT_ACTIONS = {
+_FUNCTION_CATALOG_ACTIONS = {
     "list_functions": "list",
     "get_function": "get",
     "delete_function": "delete",
@@ -39,7 +44,7 @@ _FUNCTION_MANAGEMENT_ACTIONS = {
 
 _MANAGEMENT_TOOL_NAMES = frozenset(
     {
-        *_FUNCTION_MANAGEMENT_ACTIONS,
+        *_FUNCTION_CATALOG_ACTIONS,
         "save_function",
         "list_run_logs",
         "get_run_log",
@@ -57,16 +62,25 @@ class JsonLineBridge:
         *,
         reader: TextIO = sys.stdin,
         writer: TextIO = sys.stdout,
+        catalog: CatalogSnapshot | None = None,
     ):
         self.reader = reader
         self.writer = writer
-        self.flow = OmniFlow(store_path)
+        self.catalog = catalog
+        self.flow = OmniFlow(store_path, catalog=catalog)
         self._host_call_index = 0
 
     def serve_forever(self) -> None:
         for line in self.reader:
             request = self._parse(line)
             if request is not None and self._serve_request(request):
+                return
+
+    def serve_once(self) -> None:
+        for line in self.reader:
+            request = self._parse(line)
+            if request is not None:
+                self._serve_request(request)
                 return
 
     def _serve_request(self, request: dict[str, Any]) -> bool:
@@ -153,11 +167,9 @@ class JsonLineBridge:
         if tool not in _MANAGEMENT_TOOL_NAMES:
             return self._execute_tool(request_id, call, body.get("_meta"))
 
-        management_action = _FUNCTION_MANAGEMENT_ACTIONS.get(tool)
-        if management_action is not None:
-            result = self._function_management(
-                {**args, "action": management_action}
-            )
+        catalog_action = _FUNCTION_CATALOG_ACTIONS.get(tool)
+        if catalog_action is not None:
+            result = self._catalog({**args, "action": catalog_action})
             if tool == "get_function" and result.get("success") is True:
                 function = result.get("function")
                 return dict(function) if isinstance(function, dict) else {}
@@ -248,16 +260,17 @@ class JsonLineBridge:
             defer_user_input=body.get("defer_user_input") is True,
         )
         installed_apps = host.installed_apps()
-        planner = VLMPlanner(
+        planner = _BridgePlanner(
+            self,
+            request_id,
+            host,
             model=model,
-            metadata_sink=lambda value: setattr(
-                host, "current_action_metadata", dict(value)
+            target_package_name=str(body.get("target_package_name") or ""),
+            step_skill_guidance=resolve_step_guidance(
+                goal,
+                str(body.get("step_skill_guidance") or ""),
             ),
-            transport=lambda envelope: self.host_call(
-                request_id,
-                "model_turn",
-                envelope,
-            ),
+            max_steps=max_steps,
         )
         flow = OmniFlow(
             self.flow.store.path,
@@ -265,6 +278,7 @@ class JsonLineBridge:
             planner=planner,
             installed_apps=installed_apps,
             config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=max_steps)),
+            catalog=self.catalog,
         )
         return _run_result(flow.run(goal), body=body, function=None)
 
@@ -283,16 +297,18 @@ class JsonLineBridge:
         )
         model = str(run_metadata.get("model") or "").strip()
         planner = (
-            VLMPlanner(
+            _BridgePlanner(
+                self,
+                request_id,
+                host,
                 model=model,
-                metadata_sink=lambda value: setattr(
-                    host, "current_action_metadata", dict(value)
+                target_package_name=str(
+                    run_metadata.get("target_package_name") or ""
                 ),
-                transport=lambda envelope: self.host_call(
-                    request_id,
-                    "model_turn",
-                    envelope,
+                step_skill_guidance=str(
+                    run_metadata.get("step_skill_guidance") or ""
                 ),
+                max_steps=max_steps,
             )
             if model
             else None
@@ -303,12 +319,13 @@ class JsonLineBridge:
             planner=planner,
             installed_apps=host.installed_apps(),
             config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=max_steps)),
+            catalog=self.catalog,
         )
         function = flow.store.get_function(tool_call.name)
         result = flow.call_tool(tool_call)
         return _run_result(result, body=run_metadata, function=function)
 
-    def _function_management(self, body: dict[str, Any]) -> dict[str, Any]:
+    def _catalog(self, body: dict[str, Any]) -> dict[str, Any]:
         self.flow.store.reload()
         action = str(body.get("action") or "list")
         if action == "list":
@@ -374,7 +391,7 @@ class JsonLineBridge:
                 "deleted_count": self.flow.store.clear_functions(),
                 "source": "omniflow_python",
             }
-        raise ValueError(f"unsupported_function_management_action:{action}")
+        raise ValueError(f"unsupported_catalog_action:{action}")
 
     def _save_function(
         self,
@@ -385,22 +402,18 @@ class JsonLineBridge:
             body,
             set(),
             {
-                "functions",
                 "run_id",
                 "run_log",
+                "function",
                 "arguments",
-                "enhance",
-                "instruction",
+                "agent_visible",
             },
         )
-        supplied_functions = body.get("functions")
+        supplied_function = body.get("function")
         run_id = str(body.get("run_id") or "").strip()
         supplied_run_log = body.get("run_log")
-        enhance = body.get("enhance") is True
-        if supplied_functions is not None and not isinstance(
-            supplied_functions, list
-        ):
-            return _save_error("FUNCTIONS_INVALID", "functions must be an array")
+        if supplied_function is not None and not isinstance(supplied_function, dict):
+            return _save_error("FUNCTION_SCHEMA_INVALID", "function must be an object")
         supplied_arguments = body.get("arguments")
         if supplied_arguments is not None and not isinstance(supplied_arguments, dict):
             return _save_error("FUNCTION_ARGUMENTS_INVALID", "arguments must be an object")
@@ -415,115 +428,81 @@ class JsonLineBridge:
             run_id = embedded_run_id
         else:
             run_log = None
-        if not run_id and run_log is None and not supplied_functions:
-            return _save_error(
-                "FUNCTION_SAVE_INPUT_REQUIRED",
-                "functions, run_id, or run_log is required",
-            )
+        if not run_id and run_log is None:
+            if supplied_function is None:
+                return _save_error(
+                    "FUNCTION_SAVE_INPUT_REQUIRED",
+                    "run_id, run_log, or function is required",
+                )
+            try:
+                function = parse_function_artifact(supplied_function)
+                saved = self.flow.store.put_function(function)
+            except ValueError as error:
+                return _save_error("FUNCTION_SCHEMA_INVALID", str(error))
+            return _save_success(saved)
 
-        if run_log is None and run_id:
+        if run_log is None:
             run_log = self.host_call(request_id, "get_run_log", {"run_id": run_id})
-        if run_log is not None and not isinstance(run_log, dict):
+        if not isinstance(run_log, dict):
             return _save_error(
                 "RUN_LOG_NOT_FOUND",
                 f"RunLog not found: {run_id}",
             )
-        if isinstance(run_log, dict) and run_log.get("error_code"):
+        if run_log.get("error_code"):
             return _save_error(
                 str(run_log["error_code"]),
                 str(run_log.get("error_message") or f"RunLog not found: {run_id}"),
             )
 
         try:
-            complete_json = None
-            if enhance:
-                model = str(ANDROIDWORLD_PROTOCOL["model"])
-
-                def complete_json(prompt: str, tool: dict[str, Any]) -> str:
-                    tool_name = str(tool["function"]["name"])
-                    messages = [{"role": "user", "content": prompt}]
-                    for attempt in range(2):
-                        response = self.host_call(
-                            request_id,
-                            "model_turn",
-                            {
-                                "goal": "Author independent Function v3 assets",
-                                "model": model,
-                                "request": {
-                                    "model": model,
-                                    "messages": messages,
-                                    "temperature": 0,
-                                    "tool_choice": {
-                                        "type": "function",
-                                        "function": {"name": tool_name},
-                                    },
-                                    "tools": [tool],
-                                },
-                            },
-                        )
-                        if not isinstance(response, dict):
-                            raise ValueError("function_enhancer_response_invalid")
-                        tool_calls = response.get("tool_calls")
-                        if not isinstance(tool_calls, list) or len(tool_calls) != 1:
-                            raise ValueError("function_enhancer_tool_call_invalid")
-                        function = tool_calls[0].get("function")
-                        if not isinstance(function, dict):
-                            raise ValueError("function_enhancer_tool_call_invalid")
-                        returned_tool_name = str(function.get("name") or "").strip()
-                        # Some OpenAI-compatible routes normalize every structured
-                        # response to their fixed submit_json tool name.  The
-                        # enhancer contract is still enforced by the stage schema
-                        # and the compiler below, so accept that transport alias.
-                        if returned_tool_name in {tool_name, "submit_json"}:
-                            arguments = function.get("arguments")
-                            if not isinstance(arguments, str):
-                                raise ValueError("function_enhancer_arguments_invalid")
-                            return arguments
-                        # The normal Agent catalog exposes tools_search, and a
-                        # provider can choose it even when the request contains
-                        # only edit_function_draft.  Give that transport one
-                        # explicit correction; never treat the search call as an
-                        # enhancer result or pass its empty arguments downstream.
-                        if returned_tool_name == "tools_search" and attempt == 0:
-                            messages.append(
-                                {
-                                    "role": "user",
-                                    "content": (
-                                        "Do not call tools_search. It is unavailable "
-                                        "for this internal authoring turn. Return exactly "
-                                        f"one `{tool_name}` tool call with the requested "
-                                        "JSON object and no commentary."
-                                    ),
-                                }
-                            )
-                            continue
-                        raise ValueError(
-                            "function_enhancer_tool_name_invalid:"
-                            f"expected={tool_name},actual={returned_tool_name}"
-                        )
-
-            report = save_function(
-                run_log,
-                self.flow.store.path,
-                functions=supplied_functions,
-                arguments=dict(supplied_arguments or {}),
-                enhance=enhance,
-                complete_json=complete_json,
-                instruction=str(body.get("instruction") or ""),
-            )
+            with tempfile.TemporaryDirectory(prefix="omniflow-compile-") as output_root:
+                function_bundle = None
+                if supplied_function is not None:
+                    function_id = str(supplied_function.get("function_id") or "").strip()
+                    function_bundle = {
+                        "schema_version": "omniflow.function-bundle.v2",
+                        "run_id": run_id,
+                        "arguments": {
+                            function_id: dict(supplied_arguments or {})
+                        },
+                        "functions": [supplied_function],
+                    }
+                compile_options: dict[str, Any] = {}
+                if supplied_run_log is not None:
+                    _, source_states = import_run_log_evidence(run_log)
+                    compile_options["source_states"] = source_states
+                else:
+                    compile_options["state_loader"] = lambda state_id: self.host_call(
+                        request_id,
+                        "get_state",
+                        {"state_id": state_id},
+                    )
+                report = compile_runlog_to_store(
+                    run_log,
+                    output_root,
+                    function_bundle=function_bundle,
+                    **compile_options,
+                )
+                compiled = OmniFlow(Path(output_root) / "store.json")
+                function_id = next(iter(report["function_ids"]), "")
+                function = compiled.store.get_function(function_id)
         except ValueError as error:
-            return _save_validation_error(error)
-        self.flow.store.reload()
-        return {
-            "success": True,
-            "function_ids": list(report["function_ids"]),
-            "functions": [
-                self.flow.store.get_function(function_id).to_dict()
-                for function_id in report["function_ids"]
-            ],
-            "transfer_state_count": report.get("transfer_state_count", 0),
-            "error": None,
-        }
+            return _save_compile_error(error)
+        if function is None:
+            return _save_error(
+                "RUN_LOG_NO_REPLAYABLE_STEPS",
+                "RunLog has no replayable steps",
+            )
+
+        value = function.to_dict()
+        if "agent_visible" in body:
+            value["agent_visible"] = body.get("agent_visible") is True
+        try:
+            value = parse_function_artifact(value).to_dict()
+        except ValueError as error:
+            return _save_error("FUNCTION_SCHEMA_INVALID", str(error))
+        saved = self.flow.store.put_function(value)
+        return _save_success(saved)
 
     def host_call(self, request_id: str, method: str, payload: dict[str, Any]) -> Any:
         self._host_call_index += 1
@@ -662,6 +641,13 @@ class _BridgeHost:
             raise ValueError("request_input_response_invalid")
         return str(response.get("value") or "")
 
+    def get_state(self, source_state_id: str) -> Observation:
+        return _state_observation(
+            self.bridge.host_call(
+                self.request_id, "get_state", {"state_id": source_state_id}
+            )
+        )
+
     def record_step(self, fact: dict[str, Any]) -> dict[str, Any]:
         response = self.bridge.host_call(
             self.request_id,
@@ -671,6 +657,134 @@ class _BridgeHost:
         if not isinstance(response, dict):
             raise ValueError("record_step_response_invalid")
         return response
+
+
+class _BridgePlanner:
+    def __init__(
+        self,
+        bridge: JsonLineBridge,
+        request_id: str,
+        host: _BridgeHost,
+        *,
+        model: str,
+        target_package_name: str,
+        step_skill_guidance: str,
+        max_steps: int,
+    ):
+        self.bridge = bridge
+        self.request_id = request_id
+        self.host = host
+        self.model = str(model).strip()
+        self.target_package_name = str(target_package_name).strip()
+        self.step_skill_guidance = str(step_skill_guidance)
+        self.max_steps = int(max_steps)
+        self._metadata: dict[str, Any] = {}
+        self._rejected_tool_calls: list[dict[str, Any]] = []
+        self._turn_index = 0
+
+    def one_step_tool_call(
+        self,
+        goal: str,
+        observation: Observation,
+        functions: tuple[Function, ...] = (),
+        installed_apps: dict[str, str] | None = None,
+    ) -> ToolCall:
+        state = _planner_state(observation)
+        validation_error = ""
+        retry_tool_name = ""
+        rejected_tool_call: dict[str, Any] | None = None
+        lightweight_retry = False
+        self._rejected_tool_calls.clear()
+        for attempt in range(_MODEL_TOOL_CALL_ATTEMPTS):
+            self._turn_index += 1
+            request = build_model_turn_request(
+                goal=str(goal),
+                model=self.model,
+                state=state,
+                target_package_name=self.target_package_name,
+                step_skill_guidance=self.step_skill_guidance,
+                installed_apps=installed_apps or {},
+                functions=functions,
+                max_steps=self.max_steps,
+                turn_index=self._turn_index,
+                validation_error=validation_error,
+                retry_tool_name=retry_tool_name,
+                rejected_tool_call=rejected_tool_call,
+                lightweight_retry=lightweight_retry,
+            )
+            response = self.bridge.host_call(
+                self.request_id,
+                "model_turn",
+                {
+                    "goal": str(goal),
+                    "model": self.model,
+                    "state": state,
+                    "target_package_name": self.target_package_name,
+                    "step_skill_guidance": self.step_skill_guidance,
+                    "max_steps": self.max_steps,
+                    "request": request,
+                },
+            )
+            try:
+                tool_call, metadata = parse_model_turn_response(
+                    response,
+                    requested_model=self.model,
+                    turn_index=self._turn_index,
+                    functions=functions,
+                    display=(
+                        state.get("display")
+                        if isinstance(state.get("display"), dict)
+                        else None
+                    ),
+                )
+                break
+            except ModelToolCallError as error:
+                rejected_entry = {
+                    "turn_index": self._turn_index,
+                    "tool": error.tool_name or None,
+                    "error": str(error),
+                }
+                if error.arguments is not None:
+                    rejected_entry["arguments"] = error.arguments
+                self._rejected_tool_calls.append(rejected_entry)
+                if attempt == _MODEL_TOOL_CALL_ATTEMPTS - 1:
+                    self._metadata = {
+                        "rejected_tool_calls": list(self._rejected_tool_calls)
+                    }
+                    raise
+                validation_error = str(error)
+                retry_tool_name = error.tool_name
+                rejected_tool_call = {
+                    "tool": error.tool_name or None,
+                    "arguments": error.arguments,
+                }
+                lightweight_retry = error.code.endswith(
+                    "expected_one_native_tool_call:got_0"
+                )
+        if self._rejected_tool_calls:
+            metadata["rejected_tool_calls"] = list(self._rejected_tool_calls)
+        self._metadata = metadata
+        self.host.current_action_metadata = dict(self._metadata)
+        return tool_call
+
+    def take_metadata(self) -> dict[str, Any]:
+        metadata = dict(self._metadata)
+        self._metadata.clear()
+        return metadata
+
+
+def _planner_state(observation: Observation) -> dict[str, Any]:
+    state = observation.to_dict()
+    state["state_id"] = str(observation.extra.get("state_id") or "").strip()
+    for key in ("display", "screenshot_path"):
+        if observation.extra.get(key) is not None:
+            state[key] = observation.extra[key]
+    state["extra"] = {
+        key: value
+        for key, value in observation.extra.items()
+        if key not in {"state_id", "display", "screenshot_path"}
+    }
+    return {key: value for key, value in state.items() if value is not None}
 
 
 def _state_observation(value: Any) -> Observation:
@@ -714,11 +828,13 @@ def _management_tool_definition(name: str) -> dict[str, Any]:
     return {
         "name": name,
         "description": (
-            "Save one or more reusable Functions grounded in one successful RunLog. "
-            "Submit complete Functions, or set enhance=true so the Agent edits one "
-            "Function draft in three small semantic, parameter, and checker stages. "
-            "The core deterministically compiles and grounds all final evidence before "
-            "using the same Store writer."
+            "Save one reusable Function. Pass run_id, a RunLog object, or an absolute "
+            "RunLog JSON path to mechanically preserve the complete successful action "
+            "sequence without a model call. For optional "
+            "semantic authoring, first inspect the RunLog with get_run_log, then pass "
+            "run_id plus one complete Function and its source arguments. Preserve recorded "
+            "actions in order; do not invent actions, UI evidence, or checker rules. "
+            "Parameterize only action values supported by the RunLog."
         ),
         "inputSchema": {
             "type": "object",
@@ -727,19 +843,15 @@ def _management_tool_definition(name: str) -> dict[str, Any]:
                 "run_log": {
                     "anyOf": [{"type": "object"}, {"type": "string"}]
                 },
-                "functions": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {"type": "object"},
-                },
+                "function": {"type": "object"},
                 "arguments": {"type": "object"},
-                "enhance": {"type": "boolean"},
-                "instruction": {"type": "string"},
+                "agent_visible": {"type": "boolean"},
             },
             "additionalProperties": False,
             "anyOf": [
                 {"required": ["run_id"]},
                 {"required": ["run_log"]},
+                {"required": ["function"]},
             ],
         },
     }
@@ -766,11 +878,12 @@ def _int_arg(value: Any, default: int) -> int:
         return default
 
 
-def _save_validation_error(error: ValueError) -> dict[str, Any]:
+def _save_compile_error(error: ValueError) -> dict[str, Any]:
     message = str(error)
     code = {
         "successful_source_actions_required": "RUN_LOG_NO_REPLAYABLE_STEPS",
         "semantic_functions_required": "RUN_LOG_NO_REPLAYABLE_STEPS",
+        "default_bundle_actions_required": "RUN_LOG_NO_REPLAYABLE_STEPS",
         "successful_source_goal_required": "RUN_LOG_GOAL_EMPTY",
     }.get(message, "RUN_LOG_COMPILE_FAILED")
     user_message = {
@@ -778,6 +891,15 @@ def _save_validation_error(error: ValueError) -> dict[str, Any]:
         "RUN_LOG_GOAL_EMPTY": "RunLog goal is required",
     }.get(code, message)
     return _save_error(code, user_message)
+
+
+def _save_success(function: Function) -> dict[str, Any]:
+    return {
+        "success": True,
+        "function_id": function.function_id,
+        "function": function.to_dict(),
+        "error": None,
+    }
 
 
 def _save_error(code: str, message: str) -> dict[str, Any]:
@@ -862,9 +984,25 @@ def _run_result(
     function_resolution = result.detail.get("function_resolution") or None
     recalled_function_id = str(result.function_id or "").strip()
     recall_hit = bool(recalled_function_id)
+    post_run_actions: list[dict[str, Any]] = []
     done_reason = result.detail.get("done_reason") or (
         "finished" if result.success else "error"
     )
+    if (
+        result.success
+        and done_reason == "finished"
+        and not recall_hit
+        and int(result.actions_executed) > 0
+    ):
+        post_run_actions.append(
+            {
+                "name": "save_function",
+                "arguments": {
+                    "run_id": str(body.get("run_id") or ""),
+                    "agent_visible": True,
+                },
+            }
+        )
     payload: dict[str, Any] = {
         "success": result.success,
         "status": "succeeded" if result.success else "failed",
@@ -890,10 +1028,14 @@ def _run_result(
         "model": str(body.get("model") or "") or None,
         "model_calls": int(result.model_calls),
         "fallback_steps": int(result.fallback_steps),
+        "completion_review_calls": int(
+            result.detail.get("completion_review_calls") or 0
+        ),
         "planner_diagnostics": result.detail.get("planner_diagnostics") or None,
         "function_resolution": function_resolution,
         "recall_hit": recall_hit,
         "recalled_function_id": recalled_function_id or None,
+        "post_run_actions": post_run_actions or None,
         "runtime_limits": result.detail.get("runtime_limits") or None,
         "missing_required_arguments": (
             [
@@ -1050,14 +1192,29 @@ def _bridge_identity() -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--store")
+    parser.add_argument(
+        "--catalog",
+        help="Catalog release directory, or 'default' for the packaged release.",
+    )
+    parser.add_argument("--once", action="store_true")
     parser.add_argument("--self-test", action="store_true")
     arguments = parser.parse_args(argv)
     if arguments.self_test:
         return self_test()
     if not arguments.store:
         parser.error("the following arguments are required: --store")
-    bridge = JsonLineBridge(arguments.store)
-    bridge.serve_forever()
+    catalog = None
+    if arguments.catalog:
+        catalog = (
+            load_default_catalog()
+            if arguments.catalog == "default"
+            else load_catalog(arguments.catalog)
+        )
+    bridge = JsonLineBridge(arguments.store, catalog=catalog)
+    if arguments.once:
+        bridge.serve_once()
+    else:
+        bridge.serve_forever()
     return 0
 
 

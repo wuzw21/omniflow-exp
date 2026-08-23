@@ -1,1 +1,1 @@
-"""OmniTransfer candidate orchestration and canonical page embedding."""
+"""OmniTransfer orchestration, alignment, evidence memory, and review tooling."""

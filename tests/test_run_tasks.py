@@ -11,10 +11,8 @@ from types import SimpleNamespace
 import pytest
 from runlog_fixtures import androidworld_run_log
 
-from omniflow.functions.assets import function_authoring_tool
 from src.experiment.run_task import (
     DeviceTarget,
-    _function_lineage_item,
     _canonical_function_source_call,
     _resolve_mobilegpt_target_package,
     _mobilegpt_server_task_app,
@@ -39,7 +37,6 @@ from src.experiment.run_tasks import (
     _cached_source_function_qualification,
     _concluded_results,
     _fixed_replay_source_step_width,
-    _function_enhancement_transport,
     _function_replay_success,
     _e2e_devices,
     _e2e_methods,
@@ -461,6 +458,7 @@ def test_plain_command_failure_remains_method_failure(tmp_path: Path) -> None:
     ) is False
 
 
+@pytest.mark.skip(reason="retired lineage helper")
 def test_t3a_hint_uses_function_store_source_lineage(tmp_path: Path) -> None:
     source = tmp_path / "lineage.run_log.json"
     source.write_text(
@@ -1535,7 +1533,7 @@ def test_bmoca_pipeline_runs_remaining_results_only_after_source_gate(
     assert summary["status_counts"] == {"success": 30}
 
 
-def test_bmoca_offline_enhancement_calls_only_canonical_save_once(
+def test_bmoca_offline_enhancement_calls_v2_compiler_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1543,23 +1541,21 @@ def test_bmoca_offline_enhancement_calls_only_canonical_save_once(
     source.write_text("{}", encoding="utf-8")
     calls: list[dict[str, object]] = []
 
-    def writer(run_log: Path, store_path: Path, **kwargs: object) -> dict[str, object]:
-        calls.append({"run_log": run_log, "store_path": store_path, **kwargs})
-        store_path.parent.mkdir(parents=True)
+    def writer(run_log: Path, output_root: Path, **kwargs: object) -> dict[str, object]:
+        calls.append({"run_log": run_log, "output_root": output_root, **kwargs})
+        output_root.mkdir(parents=True)
+        store_path = output_root / "store.json"
         store_path.write_text("{}", encoding="utf-8")
         transfer = store_path.with_name("transfer_states.json")
         transfer.write_text("{}", encoding="utf-8")
         return {
             "enhanced": True,
             "function_ids": ["complete"],
+            "store_path": str(store_path),
             "transfer_state_catalog": str(transfer),
         }
 
-    monkeypatch.setattr("src.experiment.run_tasks.save_function", writer)
-    monkeypatch.setattr(
-        "src.experiment.run_tasks._function_enhancement_transport",
-        lambda **_: (lambda _prompt, _tool: "{}"),
-    )
+    monkeypatch.setattr("src.experiment.run_tasks.compile_function_v2", writer)
     args = SimpleNamespace(formal_model="GLM-5.1")
 
     _, report = _save_bmoca_function_once(
@@ -1571,8 +1567,8 @@ def test_bmoca_offline_enhancement_calls_only_canonical_save_once(
 
     assert len(calls) == 1
     assert calls[0]["enhance"] is True
-    assert callable(calls[0]["complete_json"])
-    assert report["save_function_calls"] == 1
+    assert calls[0]["model"] == "GLM-5.1"
+    assert report["compile_function_calls"] == 1
 
 
 def test_bmoca_enhancement_failure_preserves_stage_and_usage(
@@ -1582,26 +1578,10 @@ def test_bmoca_enhancement_failure_preserves_stage_and_usage(
     source = tmp_path / "source.run_log.json"
     source.write_text("{}", encoding="utf-8")
 
-    def transport(**kwargs: object):
-        usage = kwargs["usage"]
+    def fail(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise TimeoutError("endpoint did not answer")
 
-        def fail(_prompt: str, _tool: dict[str, object]) -> str:
-            usage["model_calls"] += 1
-            raise TimeoutError("endpoint did not answer")
-
-        return fail
-
-    monkeypatch.setattr(
-        "src.experiment.run_tasks._function_enhancement_transport",
-        transport,
-    )
-    monkeypatch.setattr(
-        "src.experiment.run_tasks.save_function",
-        lambda *_args, **kwargs: kwargs["complete_json"](
-            "split prompt",
-            function_authoring_tool(stage="split"),
-        ),
-    )
+    monkeypatch.setattr("src.experiment.run_tasks.compile_function_v2", fail)
     args = SimpleNamespace(formal_model="GLM-5.1")
     task_root = tmp_path / "task"
 
@@ -1617,11 +1597,12 @@ def test_bmoca_enhancement_failure_preserves_stage_and_usage(
         (task_root / "enhancement_failure.json").read_text(encoding="utf-8")
     )
     assert failure["status"] == "failed"
-    assert failure["save_function_calls"] == 1
-    assert failure["model_calls"] == 1
+    assert failure["compile_function_calls"] == 1
+    assert failure["model_calls"] == 0
     assert failure["error"] == "TimeoutError: endpoint did not answer"
 
 
+@pytest.mark.skip(reason="v3 draft-edit transport was removed with v2 restoration")
 def test_bmoca_enhancement_uses_the_shared_draft_edit_tool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1706,6 +1687,7 @@ def test_bmoca_enhancement_uses_the_shared_draft_edit_tool(
     }
 
 
+@pytest.mark.skip(reason="v3 draft-edit transport was removed with v2 restoration")
 def test_function_enhancement_accepts_json_message_content(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

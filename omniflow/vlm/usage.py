@@ -42,9 +42,6 @@ class LLMUsageTracker:
     def record_failure(self) -> None:
         self._pending["failed_calls"] += 1
 
-    def record_latency(self, duration_ms: float) -> None:
-        self._pending["latency_ms"] += max(0.0, float(duration_ms or 0.0))
-
     def take_usage(self) -> dict[str, Any]:
         counters = dict(self._pending)
         self._pending = _empty_counters()
@@ -68,9 +65,6 @@ def merge_usage(
     component_usage = {
         key: max(0, _coerce_int(usage.get(key))) for key in _COUNTER_KEYS
     }
-    component_usage["latency_ms"] = max(
-        0.0, float(usage.get("latency_ms") or 0.0)
-    )
     component_usage["model"] = str(usage.get("model") or "").strip() or None
     component_usage["token_usage_status"] = token_usage_status(component_usage)
     by_component = aggregate.setdefault("by_component", {})
@@ -78,9 +72,6 @@ def merge_usage(
     if isinstance(previous, dict):
         for key in _COUNTER_KEYS:
             component_usage[key] += max(0, _coerce_int(previous.get(key)))
-        component_usage["latency_ms"] += max(
-            0.0, float(previous.get("latency_ms") or 0.0)
-        )
         component_usage["model"] = component_usage["model"] or previous.get("model")
         component_usage["token_usage_status"] = token_usage_status(component_usage)
     by_component[component_name] = component_usage
@@ -90,14 +81,6 @@ def merge_usage(
             for value in by_component.values()
             if isinstance(value, dict)
         )
-    aggregate["latency_ms"] = round(
-        sum(
-            max(0.0, float(value.get("latency_ms") or 0.0))
-            for value in by_component.values()
-            if isinstance(value, dict)
-        ),
-        6,
-    )
     aggregate["token_usage_status"] = token_usage_status(aggregate)
 
 
@@ -116,8 +99,8 @@ def token_usage_status(usage: dict[str, Any]) -> str:
     return "tracked"
 
 
-def _empty_counters() -> dict[str, int | float]:
-    return {**{key: 0 for key in _COUNTER_KEYS}, "latency_ms": 0.0}
+def _empty_counters() -> dict[str, int]:
+    return {key: 0 for key in _COUNTER_KEYS}
 
 
 def _usage_int(usage: Any, key: str) -> int:

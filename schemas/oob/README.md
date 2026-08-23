@@ -1,31 +1,75 @@
-# OmniFlow shared schemas
+# OmniFlow Shared Schemas
 
-These are the wire contracts shared by OpenOmniBot and OmniFlow:
+These files are the wire contracts shared by OpenOmniBot and OmniFlow. Copies
+in both repositories must remain byte-for-byte identical.
 
-- `oob_canonical_actions.v1.json`: executable `{tool, args}` actions.
-- `omniflow_run_log.v1.json`: canonical AndroidWorld/OOB RunLog.
-- `omniflow_function.v3.json`: reusable Functions with embedded RunLog-shaped
-  observations as transfer states.
-- `omniflow_checker_rule.v1.json`: the unchanged canonical learned-recovery
-  contract from the main OmniFlow repository.
-- `omniflow_android_bridge.v2.json`: JSON-line bridge API.
+- `oob_canonical_actions.v1.json`: executable actions as `{tool, args}`.
+- `omniflow_run_log.v1.json`: AndroidWorld `JSONAction` values plus any of the
+  current compact `screenshot/xml`, legacy compact `pixels/xml/auxiliaries`,
+  or native AndroidWorld State observations. Legacy screenshot SHA-256 is
+  accepted on input and removed from the canonical current representation.
+- `omniflow_function.v2.json`: reusable Functions with `function_id`,
+  `input_schema`, `bindings`, and `steps`; each step references
+  `source_state_id`.
+- `omniflow_checker_rule.v1.json`: optional offline-learned replay rules with
+  exactly `schema_version/trigger/source_state_id/action`.
+- `omniflow_android_bridge.v2.json`: the Android/Python Bridge API.
 
-Each Function owns a `transfer_states` object. Every formal step references one
-or more observations with `transfer_state_ids`; the same observation may be
-reused by several steps. Function actions and order are independent of any
-RunLog trajectory. Source coordinates are accepted only as OmniTransfer source
-evidence and never execute directly on a target device.
+Current collectors persist `screenshot/xml`; older AndroidWorld/OOB collectors
+may persist native State or `pixels/xml/auxiliaries`. Functions never embed XML or screenshots;
+their `source_state_id` resolves the evidence captured by the RunLog. The Bridge
+must block coordinate actions when state lookup or OmniTransfer mapping fails;
+source coordinates must never pass through.
 
-A checker remains Function-local and keeps the canonical v1 fields
-`schema_version`, `trigger`, `source_state_id`, and `action`. Its
-`source_state_id` resolves inside the owning Function's embedded
-`transfer_states`; no sibling state catalog is used.
+Production writers, compilers, stores, and replay code accept only the
+`omniflow.run_log.v1` RunLog. Historical AndroidWorld data is
+converted once by the explicit offline converter, never inside the runtime.
 
-The offline Agent may author one or more semantic Functions. A RunLog may supply
-observations during authoring, but the compiler does not require action coverage,
-trajectory order, or semantic equality. `save_function` writes only the v3 Store.
+Canonical Actions use `0..1000` relative coordinates, but the VLM wire boundary
+uses raw pixels in the current original device display frame so it matches XML
+bounds. `omniflow.vlm_coordinates` is the only VLM conversion owner: it converts
+canonical recent-action context to pixels before the call and converts validated
+raw-pixel tool arguments back to canonical coordinates after the call. Manual
+touch capture performs its raw-pixel-to-canonical conversion when the Action is
+created. Screenshot transport resizing never changes the declared VLM coordinate
+frame.
 
-Canonical actions use relative `0..1000` coordinates. The VLM boundary uses
-pixels in the current display frame, with conversion owned only by
-`omniflow.vlm_coordinates`. Unsupported actions and invalid persisted values
-fail validation rather than entering a compatibility path.
+Checker rules are generated only during offline RunLog enhancement from an
+explicit successful recovery step. The recovery step is omitted from the main
+Function path; its `before_state_id` and canonical Action become the rule's
+`source_state_id` and `action`. The Agent derives only the restricted Python
+`trigger` justified by that evidence. A built-in deterministic recovery may
+record `metadata.checker_trigger`; the fast compiler copies that verified
+trigger and writes the Checker during the same conversion. Runtime executes at most one matching
+recovery Action through OmniTransfer, observes again, then retries the original
+Action. Missing evidence produces no Checker.
+
+Android writers persist the canonical five truth fields plus optional
+`metadata` directly. Kotlin storage validates the shared contract before every
+append or upsert; OmniFlow consumes the same persisted schema offline.
+
+RunLog step truth stays in the five required fields. Optional extensions use
+only `metadata`; `step_id`, `status`, `thinking`, and `summary` are metadata,
+never step-level aliases. Step success is always read from `result.success`.
+
+Canonical action constraints include:
+
+- `oob_canonical_actions.v1.json` is the only action-field rule source.
+- Every RunLog and Function action passes through the same schema-driven
+  canonical action converter before persistence.
+- The converter keeps only arguments whose schema entry does not set
+  `persisted: false`; runtime grounding hints such as `target_description`,
+  node ids, resource ids, screenshots, and target evidence are never saved.
+- There is no separate forbidden-field list or compiler cleanup list.
+- Unsupported tools, invalid persisted values, and missing required persisted
+  arguments fail conversion; all other non-persisted input is omitted.
+
+The only saved arguments are:
+
+- `click`: `x`, `y`.
+- `long_press`: `x`, `y`, optional `duration_ms`.
+- `input_text`: `text`.
+- `swipe`: `direction`, `x1`, `y1`, `x2`, `y2`, optional `duration_ms`.
+- `open_app`: `package_name`.
+- `press_key`: `key`.
+- `wait`: `duration_ms`.

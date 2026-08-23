@@ -18,6 +18,7 @@ from typing import Any, Iterable, Sequence
 from omniflow.core.trajectory import require_complete_source_run_log
 from omniflow.runlog import import_run_log_evidence
 from omniflow.transfer.runtime import load_transfer_state_catalog
+from src.experiment.function_v2 import load_v2_source_calls
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
@@ -437,13 +438,13 @@ def _canonical_function_store_paths(memory_root: Path) -> list[Path]:
         environment_root = memory_root / environment
         if not environment_root.is_dir():
             continue
-        for path in environment_root.rglob("function_store.json"):
+        for path in environment_root.rglob("store.json"):
             relative = path.relative_to(environment_root).parts
             androidworld_layout = (
                 environment == "androidworld"
                 and len(relative) == 6
                 and relative[3] == "memory"
-                and relative[5] == "function_store.json"
+                and relative[5] == "store.json"
                 and not relative[0].startswith(".")
             )
             androidworld_authoring_layout = (
@@ -451,14 +452,14 @@ def _canonical_function_store_paths(memory_root: Path) -> list[Path]:
                 and len(relative) == 6
                 and relative[2] == "function"
                 and relative[3] == "function_authoring"
-                and relative[5] == "function_store.json"
+                and relative[5] == "store.json"
                 and not relative[0].startswith(".")
             )
             bmoca_layout = (
                 environment == "bmoca"
                 and len(relative) == 6
                 and relative[2] == "function"
-                and relative[5] == "function_store.json"
+                and relative[5] == "store.json"
             )
             if androidworld_layout or androidworld_authoring_layout or bmoca_layout:
                 paths.append(path.resolve())
@@ -479,7 +480,7 @@ def _function_bundle_identity(
         if environment == "androidworld" and (
             len(parts) == 6
             and parts[3] == "memory"
-            and parts[5] == "function_store.json"
+            and parts[5] == "store.json"
         ):
             return {
                 "environment": environment,
@@ -493,7 +494,7 @@ def _function_bundle_identity(
             len(parts) == 6
             and parts[2] == "function"
             and parts[3] == "function_authoring"
-            and parts[5] == "function_store.json"
+            and parts[5] == "store.json"
         ):
             return {
                 "environment": environment,
@@ -506,7 +507,7 @@ def _function_bundle_identity(
         if environment != "bmoca" or (
             len(parts) != 6
             or parts[2] != "function"
-            or parts[5] != "function_store.json"
+            or parts[5] != "store.json"
         ):
             raise ValueError(f"function_store_path_not_canonical:{store_path}")
         return {
@@ -1318,11 +1319,11 @@ def _load_function_stores(
             raise ValueError(f"function_store_invalid:{task}:{store}")
         if not store_payload["functions"] or any(
             not isinstance(function, dict)
-            or function.get("schema_version") != "omniflow.function.v3"
+            or function.get("schema_version") != "omniflow.function.v2"
             for function in store_payload["functions"].values()
         ):
-            raise ValueError(f"function_store_v3_required:{task}:{store}")
-        source_calls = store_payload.get("source_calls")
+            raise ValueError(f"function_store_v2_required:{task}:{store}")
+        source_calls = load_v2_source_calls(store)
         if (
             not isinstance(source_calls, list)
             or any(

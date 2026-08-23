@@ -19,7 +19,7 @@
   },
   "function": {
     "identifier_field": "function_id",
-    "schema_version": "omniflow.function.v3",
+    "schema_version": "omniflow.function.v2",
     "accepted_input_aliases": [],
     "forbidden_output_fields": ["id", "parameters", "actions", "execution"]
   },
@@ -34,8 +34,8 @@
     "schema_version": "omniflow.run_log.v1",
     "schema_ref": "omniflow_run_log.v1.json",
     "observation_variants": {
-      "xml_state": ["screenshot", "xml"],
-      "legacy_androidworld_state": ["pixels", "forest", "ui_elements", "auxiliaries"]
+      "androidworld_state": ["pixels", "forest", "ui_elements", "auxiliaries"],
+      "xml_state": ["pixels", "xml", "auxiliaries"]
     },
     "action_contract": "AndroidWorld JSONAction",
     "accepted_input_aliases": []
@@ -57,7 +57,9 @@
           "required": ["goal", "model"],
           "optional": [
             "defer_user_input",
-            "max_steps"
+            "max_steps",
+            "step_skill_guidance",
+            "target_package_name"
           ],
           "max_steps": {
             "type": "integer",
@@ -65,14 +67,6 @@
             "minimum": 1,
             "maximum": 64
           }
-        },
-        "save_function_arguments": {
-          "required": [],
-          "any_of_required": ["functions", "run_id", "run_log"],
-          "any_of_function_input": ["functions", "enhance=true"],
-          "optional": ["arguments", "enhance", "instruction"],
-          "functions_semantics": "One or more independent v3 Functions. Each Function embeds RunLog-shaped transfer_states and every step references one or more transfer_state_ids.",
-          "enhance_semantics": "The Agent may use a RunLog as authoring input. save_function writes the resulting independent v3 Functions without requiring RunLog action coverage or order alignment."
         },
         "tools": [
           "run_gui",
@@ -98,7 +92,8 @@
       ],
       "response": {
         "semantics": "The selected Function tool returns its canonical payload without Kotlin reshaping.",
-        "function_identifier": "function_id"
+        "function_identifier": "function_id",
+        "post_run_actions": "Harness-owned requests executed by Android only after RunLog sealing and host allowlist validation."
       }
     },
     "tools/list": {
@@ -126,7 +121,7 @@
     "installed_apps_response": {"required": ["apps"]},
     "model_turn_payload": {
       "required": ["goal", "model", "request"],
-      "optional": ["state", "max_steps"]
+      "optional": ["state", "max_steps", "target_package_name", "step_skill_guidance"]
     },
     "model_turn_response": {
       "required": ["requested_model", "tool_calls"],

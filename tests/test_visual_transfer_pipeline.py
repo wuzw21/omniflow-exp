@@ -8,7 +8,7 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from omniflow.core.config import PluginSet
 from omniflow.core.model import Action, ActionResult, Observation, TransferResult
-from omniflow.functions.assets import save_function
+from omniflow.functions.compiler import compile_runlog_to_store
 from omniflow.runtime import execution
 from omniflow.transfer.runtime import capture_transfer_state
 
@@ -71,63 +71,20 @@ def test_function_compiler_preserves_source_screenshot_reference(
         observations=[androidworld_state("state_0"), androidworld_state("state_1")],
         goal="Open the example and wait.",
     )
-    for step in run_log["steps"]:
-        step["observation"]["pixels"] = {
-            "path": str(screenshot),
-            "sha256": "0" * 64,
-            "width": 100,
-            "height": 200,
-            "mime_type": "image/jpeg",
-        }
 
-    bundle = {
-            "schema_version": "omniflow.function-bundle.v2",
-            "run_id": "source-run",
-            "arguments": {"open_example_and_wait": {}},
-            "functions": [
-                {
-                    "schema_version": "omniflow.function.v2",
-                    "function_id": "open_example_and_wait",
-                    "name": "Open the recorded example app and wait once",
-                    "description": (
-                        "Open the fixed recorded example package and wait once. "
-                        "This Function does not perform or verify another task."
-                    ),
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {},
-                        "required": [],
-                        "additionalProperties": False,
-                    },
-                    "bindings": [],
-                    "steps": [
-                        {
-                            "step_index": 0,
-                            "source_state_id": "state_0",
-                            "action": {
-                                "tool": "open_app",
-                                "args": {"package_name": "com.example"},
-                            },
-                        },
-                        {
-                            "step_index": 1,
-                            "source_state_id": "state_1",
-                            "action": {
-                                "tool": "wait",
-                                "args": {"duration_ms": 1000},
-                            },
-                        },
-                    ],
-                    "checker_rules": [],
-                    "agent_visible": True,
-                }
-            ],
-        }
-    result = save_function(
+    result = compile_runlog_to_store(
         run_log,
-        tmp_path / "output" / "store.json",
-        functions=bundle["functions"],
-        arguments=bundle["arguments"],
+        tmp_path / "output",
+        source_states={
+            "state_0": {
+                "state_id": "state_0",
+                "screenshot_path": str(screenshot),
+            },
+            "state_1": {
+                "state_id": "state_1",
+                "screenshot_path": str(screenshot),
+            },
+        },
     )
 
     states = json.loads(
