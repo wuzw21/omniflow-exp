@@ -95,11 +95,15 @@ def test_register_source_success_replaces_stale_task_parameters(
         task_parameters={"hours": 1, "minutes": 15, "seconds": 30},
     )
 
-    assert load_data_index(current_path)["source_index"]["Task"]["params"] == {
+    registered = load_data_index(current_path)
+    assert registered["source_index"]["Task"]["params"] == {
         "hours": 1,
         "minutes": 15,
         "seconds": 30,
     }
+    assert registered["canonical"]["source_run_logs"]["Task"][
+        "object_path"
+    ] == str(run_log_path.resolve())
 
 
 def test_refresh_from_pointer_publishes_to_custom_pointer(

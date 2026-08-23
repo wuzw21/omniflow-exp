@@ -233,18 +233,13 @@ def _register_mobilegpt_memory(
     bundle_root: str | Path,
     task_name: str,
 ) -> dict[str, Any]:
-    from src.experiment.data_index import refresh_data_index_from_pointer
+    from src.experiment.data_index import register_prepared_memory_success
 
-    report = refresh_data_index_from_pointer(
+    return register_prepared_memory_success(
         memory_index=memory_index,
-        additional_prepared_memory_roots=(bundle_root,),
+        bundle_root=bundle_root,
+        task_name=task_name,
     )
-    registered = report.get("canonical", {}).get("prepared_memories", {}).get(
-        str(task_name)
-    )
-    if not isinstance(registered, dict):
-        raise ValueError(f"mobilegpt_memory_registration_missing:{task_name}")
-    return registered
 
 
 def prepare_mobilegpt_source_memory(

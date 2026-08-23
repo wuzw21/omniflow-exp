@@ -2187,8 +2187,113 @@ def register_source_run_log_success(
         )
         source_index[task] = updated
         registry["source_index"] = source_index
+        canonical = registry.get("canonical")
+        if not isinstance(canonical, dict):
+            raise ValueError("local_data_index_canonical_missing")
+        canonical_sources = canonical.get("source_run_logs")
+        if not isinstance(canonical_sources, dict):
+            canonical_sources = {}
+        digest = sha256_file(run_log)
+        source_record = _register_run_log_record(
+            {},
+            memory_root=index_path.parent,
+            path=run_log,
+            digest=digest,
+            payload=qualified,
+            task=task,
+            alias=str(run_log),
+            materialize_dependencies=True,
+        )
+        canonical_sources[task] = {
+            key: value for key, value in source_record.items() if key != "sha256"
+        }
+        canonical["source_run_logs"] = canonical_sources
+        registry["canonical"] = canonical
         _atomic_write(index_path, _json_bytes(registry))
         return registry
+
+
+def register_prepared_memory_success(
+    *,
+    memory_index: str | Path,
+    bundle_root: str | Path,
+    task_name: str,
+) -> dict[str, Any]:
+    """Atomically register one validated MobileGPT bundle.
+
+    This task-local update deliberately does not rescan Function Stores,
+    results, or other providers.  Those assets have independent owners and
+    cannot make a successfully sealed MobileGPT memory fail registration.
+    """
+
+    index_path = Path(memory_index).expanduser().resolve()
+    bundle = Path(bundle_root).expanduser().resolve()
+    manifest_path = bundle / MOBILEGPT_MEMORY_MANIFEST
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"mobilegpt_memory_manifest_missing:{manifest_path}")
+    with _memory_lock(index_path.parent):
+        registry = load_data_index(index_path)
+        source_index = registry.get("source_index")
+        if not isinstance(source_index, dict):
+            raise ValueError("current_source_index_must_be_object")
+        source = source_index.get(str(task_name))
+        if not isinstance(source, dict):
+            raise ValueError(f"source_index_task_missing:{task_name}")
+        source_run_log = Path(
+            str(source.get("retained_source_run_log") or "")
+        ).expanduser().resolve()
+        if not source_run_log.is_file():
+            raise FileNotFoundError(
+                f"source_index_run_log_missing:{task_name}:{source_run_log}"
+            )
+        source_digest = sha256_file(source_run_log)
+        expected_digest = str(
+            source.get("retained_source_run_log_sha256") or ""
+        ).strip()
+        if expected_digest and expected_digest != source_digest:
+            raise ValueError(f"source_index_run_log_digest_mismatch:{task_name}")
+        _, selected = _load_prepared_memories(
+            index_path.parent,
+            (bundle,),
+            canonical_sources={
+                str(task_name): {
+                    "object_path": str(source_run_log),
+                    "sha256": source_digest,
+                }
+            },
+        )
+        registered = selected.get(str(task_name))
+        if not isinstance(registered, dict):
+            raise ValueError(f"mobilegpt_memory_registration_missing:{task_name}")
+
+        canonical = registry.get("canonical")
+        if not isinstance(canonical, dict):
+            raise ValueError("local_data_index_canonical_missing")
+        prepared = canonical.get("prepared_memories")
+        if not isinstance(prepared, dict):
+            prepared = {}
+        prepared[str(task_name)] = registered
+        canonical["prepared_memories"] = prepared
+        registry["canonical"] = canonical
+
+        inputs = registry.get("inputs")
+        if not isinstance(inputs, dict):
+            raise ValueError("local_data_index_inputs_missing")
+        roots = {
+            str(Path(value).expanduser().resolve())
+            for value in inputs.get("prepared_memory_roots") or ()
+        }
+        roots.add(str(bundle))
+        inputs["prepared_memory_roots"] = sorted(roots)
+        registry["inputs"] = inputs
+
+        counts = registry.get("counts")
+        if isinstance(counts, dict):
+            counts["prepared_memory_tasks"] = len(prepared)
+            counts["unique_prepared_memories"] = len(prepared)
+            registry["counts"] = counts
+        _atomic_write(index_path, _json_bytes(registry))
+        return dict(registered)
 
 
 def registered_result_plan_from_memory(
@@ -2515,6 +2620,8 @@ def main(argv: list[str] | None = None) -> int:
 __all__ = [
     "load_data_index",
     "canonical_prepared_memory_from_index",
+    "register_prepared_memory_success",
+    "register_source_run_log_success",
     "refresh_data_index",
     "refresh_data_index_from_pointer",
     "registered_result_plan_from_memory",
