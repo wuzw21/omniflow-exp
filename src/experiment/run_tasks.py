@@ -1980,6 +1980,20 @@ def _concluded_results(
         )
         concluded.update(indexed["completed"])
     if "mobilegpt" in methods:
+        # Older native registrations may have an empty ``device_model`` even
+        # though their canonical device label, seeds, memory manifest, and
+        # outcome are valid.  Do not let that legacy metadata prevent the
+        # reusable-conclusion check from seeing the cell; add reusable
+        # MobileGPT cells directly from the registry evidence.
+        for device, _ in devices:
+            if _mobilegpt_registered_conclusion_is_reusable(
+                registry_root=registry_root,
+                task_name=args.task,
+                device=device,
+                source_seed=source_seed,
+                evaluation_seed=evaluation_seed,
+            ):
+                concluded.add(("mobilegpt", device))
         concluded = {
             item
             for item in concluded

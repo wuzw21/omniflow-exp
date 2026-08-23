@@ -320,6 +320,32 @@ def test_concluded_results_reruns_mobilegpt_failure_with_legacy_memory(
     ) == set()
 
 
+def test_concluded_results_adds_reusable_mobilegpt_cell_before_device_metadata_filter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.task = "CameraTakeVideo"
+    args.e2e_method = "mobilegpt"
+    args.e2e_device = DEVICES[0]
+    registry_root = args.results_root / "androidworld" / ".archive" / "result_registry"
+    registry_root.mkdir(parents=True)
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.registered_result_plan",
+        lambda **_kwargs: {"completed": set(), "pending": []},
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks._mobilegpt_registered_conclusion_is_reusable",
+        lambda **kwargs: kwargs["device"] == "small5562",
+    )
+
+    assert _concluded_results(
+        args,
+        args.results_root / "androidworld" / ".archive" / "outcomes" / "formal",
+        "attempt_002",
+    ) == {("mobilegpt", "small5562")}
+
+
 def test_mobilegpt_failure_is_reusable_only_with_authoritative_memory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
