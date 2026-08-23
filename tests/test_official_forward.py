@@ -62,6 +62,44 @@ User state[
     ) is True
 
 
+def test_mobilegpt_accessibility_binding_does_not_toggle_an_already_bound_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_adb(
+        _adb_path: str,
+        _serial: str,
+        args: list[str],
+        *,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        del check
+        calls.append(args)
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=(
+                "Bound services:{Service[label=MobileGPT Accessibility]}\n"
+                "Enabled services:{{com.example.MobileGPT/"
+                "com.example.MobileGPT.MobileGPTAccessibilityService}}\n"
+                "Binding services:{}\n"
+            ),
+        )
+
+    monkeypatch.setattr(official_forward, "_run_adb", fake_adb)
+
+    assert official_forward._ensure_mobilegpt_accessibility_service_bound(
+        "adb",
+        "emulator-5562",
+        "com.example.MobileGPT/.MobileGPTAccessibilityService",
+        ["com.example.MobileGPT/.MobileGPTAccessibilityService"],
+        initial_attempts=1,
+        retry_attempts=1,
+    ) is True
+    assert calls == [["shell", "dumpsys", "accessibility"]]
+
+
 def test_official_forward_accepts_appagent_step_budget() -> None:
     source = Path(__file__).parents[1] / "src" / "integrations" / "official_forward.py"
 

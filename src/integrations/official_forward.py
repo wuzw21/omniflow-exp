@@ -74,6 +74,7 @@ def _mobilegpt_accessibility_service_bound(
         service,
         f"{package}/{full_class_name}",
         full_class_name,
+        "MobileGPT Accessibility",
     }
     bound_services = bound_match.group(1)
     return any(identifier in bound_services for identifier in identifiers)
@@ -1579,6 +1580,81 @@ def _mobilegpt_instruction_broadcast_args(instruction: str) -> list[str]:
     ]
 
 
+def _wait_for_mobilegpt_accessibility_service(
+    adb_path: str,
+    serial: str,
+    service: str,
+    *,
+    attempts: int,
+) -> bool:
+    attempt_count = max(1, int(attempts))
+    for attempt in range(attempt_count):
+        accessibility_state = _run_adb(
+            adb_path,
+            serial,
+            ["shell", "dumpsys", "accessibility"],
+            check=False,
+        ).stdout
+        if _mobilegpt_accessibility_service_bound(accessibility_state, service):
+            return True
+        if attempt + 1 < attempt_count:
+            time.sleep(1.0)
+    return False
+
+
+def _ensure_mobilegpt_accessibility_service_bound(
+    adb_path: str,
+    serial: str,
+    service: str,
+    services: Sequence[str],
+    *,
+    initial_attempts: int = 5,
+    retry_attempts: int = 10,
+) -> bool:
+    if _wait_for_mobilegpt_accessibility_service(
+        adb_path,
+        serial,
+        service,
+        attempts=initial_attempts,
+    ):
+        return True
+    # Retry the accessibility manager transition only after observing an
+    # unbound service. Unconditionally disabling an already bound official
+    # service calls its non-idempotent onDestroy(), which can crash while it
+    # unregisters an already-removed broadcast receiver.
+    _run_adb(
+        adb_path,
+        serial,
+        ["shell", "settings", "put", "secure", "accessibility_enabled", "0"],
+        check=False,
+    )
+    _run_adb(
+        adb_path,
+        serial,
+        [
+            "shell",
+            "settings",
+            "put",
+            "secure",
+            "enabled_accessibility_services",
+            ":".join(services),
+        ],
+        check=False,
+    )
+    _run_adb(
+        adb_path,
+        serial,
+        ["shell", "settings", "put", "secure", "accessibility_enabled", "1"],
+        check=False,
+    )
+    return _wait_for_mobilegpt_accessibility_service(
+        adb_path,
+        serial,
+        service,
+        attempts=retry_attempts,
+    )
+
+
 def _configure_mobilegpt_client_launch_lifecycle(client_root: Path) -> None:
     """Make the staged official client reliable at the first app frame.
 
@@ -1997,47 +2073,12 @@ def _run_mobilegpt_client(
         check=False,
     )
     _run_adb(adb_path, serial, ["shell", "monkey", "-p", "com.example.MobileGPT", "1"])
-    # Launching the activity can cause Android to restore the secure settings
-    # from before installation. Repeat the full off -> list -> on transition
-    # after launch and wait until the accessibility process is bound before
-    # sending the instruction.
-    _run_adb(
+    service_bound = _ensure_mobilegpt_accessibility_service_bound(
         adb_path,
         serial,
-        ["shell", "settings", "put", "secure", "accessibility_enabled", "0"],
-        check=False,
+        service,
+        services,
     )
-    _run_adb(
-        adb_path,
-        serial,
-        [
-            "shell",
-            "settings",
-            "put",
-            "secure",
-            "enabled_accessibility_services",
-            ":".join(services),
-        ],
-        check=False,
-    )
-    _run_adb(
-        adb_path,
-        serial,
-        ["shell", "settings", "put", "secure", "accessibility_enabled", "1"],
-        check=False,
-    )
-    service_bound = False
-    for _ in range(10):
-        accessibility_state = _run_adb(
-            adb_path,
-            serial,
-            ["shell", "dumpsys", "accessibility"],
-            check=False,
-        ).stdout
-        if _mobilegpt_accessibility_service_bound(accessibility_state, service):
-            service_bound = True
-            break
-        time.sleep(1.0)
     if not service_bound:
         # Do not broadcast a task to an unbound client.  Without this
         # precondition the official server accepts one socket connection,
