@@ -373,6 +373,61 @@ def test_mobilegpt_failure_is_reusable_only_with_authoritative_memory(
     )
 
 
+def test_native_cold_mobilegpt_method_failure_is_reusable_without_validator(
+    tmp_path: Path,
+) -> None:
+    registry_root = tmp_path / "result_registry"
+    result_root = (
+        registry_root
+        / "CameraTakePhoto"
+        / "mobilegpt"
+        / "fold5564"
+        / "attempt_026.mobilegpt.fold5564"
+    )
+    result_root.mkdir(parents=True)
+    memory_root = tmp_path / "native_cold_memory"
+    memory_root.mkdir()
+    (memory_root / "memory_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.androidworld_method_memory.v2",
+                "memory_mode": "mobilegpt_single_episode_native_cold_memory",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (result_root / "registered_result.json").write_text(
+        json.dumps(
+            {
+                "task_name": "CameraTakePhoto",
+                "source_seed": SOURCE_SEED,
+                "evaluation_seed": 113,
+                "details": [
+                    {
+                        "method": "mobilegpt",
+                        "device": "fold5564",
+                        "status": "command_failed",
+                        "returncode": 1,
+                        "official_validator_success": None,
+                        "environment_failure": False,
+                        "actions_executed": 7,
+                        "memory_root": str(memory_root),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _mobilegpt_registered_conclusion_is_reusable(
+        registry_root=registry_root,
+        task_name="CameraTakePhoto",
+        device="fold5564",
+        source_seed=SOURCE_SEED,
+        evaluation_seed=113,
+    )
+
+
 def test_pipeline_attempt_id_grows_past_historical_outcome(tmp_path: Path) -> None:
     args = _args(tmp_path)
     args.attempt_id = "attempt_001"

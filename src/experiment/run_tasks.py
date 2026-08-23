@@ -2034,6 +2034,13 @@ def _mobilegpt_registered_conclusion_is_reusable(
                 continue
             if detail.get("official_validator_success") is True:
                 return True
+            # A native cold-memory episode is a terminal MobileGPT method
+            # observation even when the official executor cannot emit a
+            # validator conclusion (for example a step timeout or server
+            # handler failure).  These are method outcomes, not setup
+            # failures, and must not be started again on the next task-major
+            # resume.  Legacy converted memories stay on the stricter path
+            # below so historical prep failures remain retryable.
             memory_root_text = str(detail.get("memory_root") or "").strip()
             if not memory_root_text:
                 continue
@@ -2044,6 +2051,15 @@ def _mobilegpt_registered_conclusion_is_reusable(
                 method_manifest = json.loads(
                     method_manifest_path.read_text(encoding="utf-8")
                 )
+                if (
+                    str(method_manifest.get("memory_mode") or "")
+                    == "mobilegpt_single_episode_native_cold_memory"
+                    and str(detail.get("status") or "").strip().lower()
+                    in {"command_failed", "method_failed", "execution_failed"}
+                    and detail.get("environment_failure") is not True
+                    and int(detail.get("returncode") or 1) != 0
+                ):
+                    return True
                 source_memory_root = Path(
                     str(
                         method_manifest.get("artifacts", {}).get(
