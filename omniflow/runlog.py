@@ -20,12 +20,14 @@ def import_run_log_evidence(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     run_log = _hydrate_run_log_display(canonicalize_run_log(value))
     states: dict[str, dict[str, Any]] = {}
+    # Prefer screenshots captured immediately before an action over transition
+    # aliases of the same structural state.  Stable observations can assign the
+    # same state id to both records while persisting each image at a new path.
     for step in run_log["steps"]:
-        observations = [step["observation"]]
+        _store_transfer_state(states, step["observation"])
+    for step in run_log["steps"]:
         if isinstance(step.get("next_observation"), dict):
-            observations.append(step["next_observation"])
-        for observation in observations:
-            _store_transfer_state(states, observation)
+            _store_transfer_state(states, step["next_observation"])
     final_observation = run_log.get("final_observation")
     if isinstance(final_observation, dict):
         _store_transfer_state(states, final_observation)
@@ -62,9 +64,19 @@ def _store_transfer_state(
 ) -> None:
     source_state = _transfer_state(observation)
     existing = states.get(source_state["state_id"])
-    if existing is not None and existing != source_state:
+    if existing is None:
+        states[source_state["state_id"]] = source_state
+        return
+    comparable_existing = {
+        key: value for key, value in existing.items() if key != "screenshot_path"
+    }
+    comparable_source = {
+        key: value for key, value in source_state.items() if key != "screenshot_path"
+    }
+    if comparable_existing != comparable_source:
         raise ValueError(f"source_state_conflict:{source_state['state_id']}")
-    states[source_state["state_id"]] = source_state
+    if "screenshot_path" not in existing and source_state.get("screenshot_path"):
+        existing["screenshot_path"] = source_state["screenshot_path"]
 
 
 def _hydrate_run_log_display(run_log: dict[str, Any]) -> dict[str, Any]:
