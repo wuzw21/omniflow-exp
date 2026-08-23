@@ -2576,6 +2576,15 @@ def run_mobilegpt_client(
             handshake_timeout_sec=handshake_timeout_sec,
             server_log_path=server_log_path,
         )
+        # MobileGPT toggles Accessibility off and on while binding its own
+        # official service. Android can leave the AndroidWorld forwarder
+        # enabled but unbound, so restore the canonical validator transport
+        # before reading the official reward.
+        from src.integrations.android_world.run_episode import (
+            ensure_androidworld_accessibility_ready,
+        )
+
+        ensure_androidworld_accessibility_ready(env)
         reward = float(task.is_successful(env))
         # MobileGPT can leave its official client loop alive after the
         # AndroidWorld task is already successful. Preserve that timeout in

@@ -3065,6 +3065,15 @@ def _wait_for_androidworld_a11y(env: Any, *, attempts: int = 6) -> None:
     raise RuntimeError("AndroidWorld accessibility forest not ready") from last_error
 
 
+def ensure_androidworld_accessibility_ready(
+    env: Any,
+    *,
+    attempts: int = 6,
+) -> None:
+    """Restore and verify AndroidWorld's Accessibility forwarder."""
+    _wait_for_androidworld_a11y(env, attempts=attempts)
+
+
 def _is_pickleable(value: object) -> bool:
     try:
         pickle.dumps(value)
