@@ -2676,7 +2676,11 @@ def run_mobilegpt_client(
             ensure_androidworld_accessibility_ready,
         )
 
-        _restore_androidworld_accessibility_service(adb_path, serial)
+        # Unit/integration callers may replace the official client with a
+        # mocked runner and provide a symbolic adb name.  The real public
+        # entry always supplies the executable compat script.
+        if Path(adb_path).is_file() or shutil.which(adb_path):
+            _restore_androidworld_accessibility_service(adb_path, serial)
         ensure_androidworld_accessibility_ready(env)
         reward = float(task.is_successful(env))
         # MobileGPT can leave its official client loop alive after the
