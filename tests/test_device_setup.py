@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from src.experiment.device_setup import _python_install_timeout_sec
+from src.experiment.device_setup import (
+    _python_install_timeout_sec,
+    _python_requirement_installs,
+)
 
 
 def test_python_install_timeout_covers_official_mobilegpt_dependencies(
@@ -30,3 +33,34 @@ def test_python_install_timeout_rejects_invalid_values(
 
     with pytest.raises(ValueError, match="invalid setup Python timeout"):
         _python_install_timeout_sec()
+
+
+def test_python_requirement_installs_skip_absent_optional_appagent_file(
+    tmp_path,
+) -> None:
+    repo = tmp_path / "repo"
+    android_world = tmp_path / "android_world"
+    mobilegpt = tmp_path / "mobilegpt"
+    appagent = tmp_path / "appagent"
+    for root in (repo, android_world, mobilegpt / "Server", appagent):
+        root.mkdir(parents=True)
+    (android_world / "requirements.txt").write_text("requests\n", encoding="utf-8")
+    (mobilegpt / "Server" / "requirements.txt").write_text(
+        "openai\n", encoding="utf-8"
+    )
+
+    installs = _python_requirement_installs(
+        repo=repo,
+        android_world_root=android_world,
+        mobilegpt_root=mobilegpt,
+        appagent_root=appagent,
+    )
+
+    requirement_paths = {
+        arguments[-1]
+        for kind, arguments in installs
+        if kind == "requirements"
+    }
+    assert str(android_world / "requirements.txt") in requirement_paths
+    assert str(mobilegpt / "Server" / "requirements.txt") in requirement_paths
+    assert str(appagent / "requirements.txt") not in requirement_paths

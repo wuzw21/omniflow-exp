@@ -64,6 +64,36 @@ def _python_install_timeout_sec() -> float:
     return timeout
 
 
+def _python_requirement_installs(
+    *,
+    repo: Path,
+    android_world_root: Path,
+    mobilegpt_root: Path,
+    appagent_root: Path,
+) -> list[tuple[str, list[str]]]:
+    androidworld_requirements = android_world_root / "requirements.txt"
+    if not androidworld_requirements.is_file():
+        androidworld_requirements = android_world_root / "android_world" / "requirements.txt"
+    installs = [
+        # The runtime may already carry large pinned wheels (Torch, CUDA,
+        # etc.).  Register this checkout without asking pip to resolve or
+        # replace those wheels; the component requirement files below are
+        # the explicit dependency contract for setup.
+        ("editable", ["--no-deps", "-e", str(repo)]),
+        ("requirements", ["-r", str(androidworld_requirements)]),
+        ("editable", ["--no-deps", "-e", str(android_world_root)]),
+        (
+            "requirements",
+            ["-r", str(mobilegpt_root / "Server" / "requirements.txt")],
+        ),
+    ]
+    appagent_requirements = appagent_root / "requirements.txt"
+    if appagent_requirements.is_file():
+        installs.append(("requirements", ["-r", str(appagent_requirements)]))
+    installs.append(("package", ["dashscope"]))
+    return installs
+
+
 @dataclass(frozen=True)
 class Device:
     label: str
@@ -217,21 +247,20 @@ def _check_host(
 
     initial_import_probe = import_probe()
     if install_python and initial_import_probe.returncode != 0:
-        androidworld_requirements = android_world_root / "requirements.txt"
-        if not androidworld_requirements.is_file():
-            androidworld_requirements = android_world_root / "android_world" / "requirements.txt"
-        installs = [
-            # The runtime may already carry large pinned wheels (Torch, CUDA,
-            # etc.).  Register this checkout without asking pip to resolve or
-            # replace those wheels; the component requirement files below are
-            # the explicit dependency contract for setup.
-            ("editable", ["--no-deps", "-e", str(repo)]),
-            ("requirements", ["-r", str(androidworld_requirements)]),
-            ("editable", ["--no-deps", "-e", str(android_world_root)]),
-            ("requirements", ["-r", str(mobilegpt_root / "Server" / "requirements.txt")]),
-            ("requirements", ["-r", str(appagent_root / "requirements.txt")]),
-            ("package", ["dashscope"]),
-        ]
+        installs = _python_requirement_installs(
+            repo=repo,
+            android_world_root=android_world_root,
+            mobilegpt_root=mobilegpt_root,
+            appagent_root=appagent_root,
+        )
+        appagent_requirements = appagent_root / "requirements.txt"
+        if not appagent_requirements.is_file():
+            record(
+                "python_requirement",
+                False,
+                f"optional AppAgent requirements missing: {appagent_requirements}",
+                required=False,
+            )
         for kind, arguments in installs:
             requirement = Path(arguments[-1]) if kind == "requirements" else None
             if requirement is not None and not requirement.exists():
