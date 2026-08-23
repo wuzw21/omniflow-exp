@@ -286,6 +286,7 @@ def prepare_mobilegpt_source_memory(
         target["target_package"],
         adb_path=str(adb_path),
         serial=str(serial),
+        android_world_root=android_world_root,
     )
     if "." not in resolved_target_package:
         raise ValueError(

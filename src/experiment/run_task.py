@@ -81,6 +81,7 @@ from src.experiment.source_records import CanonicalRunLog, SourceRunLogProfile
 from src.integrations import mobilegpt_memory
 from src.integrations.mobilegpt import validate_memory_manifest
 from src.integrations.android_world.methods import reuse_metrics_from_result_row
+from src.integrations.android_world.apps import resolve_androidworld_package
 from src.integrations.appagent import validate_appagent_memory
 from src.integrations.official_forward import (
     resolve_mobilegpt_client_host,
@@ -4124,12 +4125,32 @@ def _resolve_mobilegpt_target_package(
     *,
     adb_path: str,
     serial: str,
+    android_world_root: str | Path = "",
 ) -> str:
     """Resolve an AndroidWorld app alias to the installed package name."""
 
     value = str(candidate or "").strip()
     if not value or "." in value:
         return value
+    subprocess_env = _subprocess_env({})
+    official_root = str(
+        android_world_root
+        or subprocess_env.get("OMNIFLOW_ANDROID_WORLD_ROOT")
+        or ""
+    ).strip()
+    inserted_root = False
+    if official_root and official_root not in sys.path:
+        sys.path.insert(0, official_root)
+        inserted_root = True
+    try:
+        official_package = resolve_androidworld_package(value)
+    except (ImportError, ModuleNotFoundError, RuntimeError, ValueError):
+        official_package = ""
+    finally:
+        if inserted_root:
+            sys.path.remove(official_root)
+    if official_package:
+        return official_package
     # AndroidWorld names the camera app ``Camera`` while the official
     # emulator package is ``com.android.camera2``. Suffix matching cannot
     # infer this because ``camera2`` does not end in ``camera``; keep this
@@ -4139,7 +4160,6 @@ def _resolve_mobilegpt_target_package(
         "camera": "com.android.camera2",
     }
     value = known_aliases.get(value.casefold(), value)
-    subprocess_env = _subprocess_env({})
     if not str(subprocess_env.get("OMNIFLOW_REAL_ADB_PATH") or "").strip():
         sdk_root = next(
             (
@@ -5828,6 +5848,7 @@ def _run_result_mobilegpt(
                 target_package,
                 adb_path=str(args.adb_path or ""),
                 serial=target.serial,
+                android_world_root=args.android_world_root,
             )
             server_spec = build_mobilegpt_server_command(
                 "server",

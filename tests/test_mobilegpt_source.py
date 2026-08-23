@@ -341,6 +341,7 @@ def test_mobilegpt_package_resolution_gives_adb_wrapper_real_sdk_binary(
         "_subprocess_env",
         lambda *_args, **_kwargs: {"ANDROID_SDK_ROOT": str(sdk_root)},
     )
+    monkeypatch.setattr(pipeline, "resolve_androidworld_package", lambda _value: "")
     captured: dict[str, object] = {}
 
     def run(*args: object, **kwargs: object) -> SimpleNamespace:
@@ -361,6 +362,28 @@ def test_mobilegpt_package_resolution_gives_adb_wrapper_real_sdk_binary(
     assert env["OMNIFLOW_REAL_ADB_PATH"] == str(real_adb)
 
 
+def test_mobilegpt_package_resolution_uses_official_androidworld_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        pipeline,
+        "resolve_androidworld_package",
+        lambda value: "com.android.settings" if value == "settings" else "",
+    )
+    monkeypatch.setattr(
+        pipeline.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("official mapping must win"),
+    )
+
+    assert pipeline._resolve_mobilegpt_target_package(
+        "settings",
+        adb_path="/repo/tools/androidworld_adb_compat.sh",
+        serial="emulator-5560",
+        android_world_root="/official/android_world",
+    ) == "com.android.settings"
+
+
 def test_prepare_runs_original_mobilegpt_on_source_device(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -379,7 +402,7 @@ def test_prepare_runs_original_mobilegpt_on_source_device(
     monkeypatch.setattr(
         pipeline,
         "_resolve_mobilegpt_target_package",
-        lambda candidate, *, adb_path, serial: package_resolution.append(
+        lambda candidate, *, adb_path, serial, android_world_root: package_resolution.append(
             (candidate, serial)
         )
         or "com.android.settings",
