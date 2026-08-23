@@ -415,20 +415,20 @@ class JsonLineBridge:
             run_id = embedded_run_id
         else:
             run_log = None
-        if not run_id and run_log is None:
+        if not run_id and run_log is None and not supplied_functions:
             return _save_error(
                 "FUNCTION_SAVE_INPUT_REQUIRED",
-                "run_id or run_log is required",
+                "functions, run_id, or run_log is required",
             )
 
-        if run_log is None:
+        if run_log is None and run_id:
             run_log = self.host_call(request_id, "get_run_log", {"run_id": run_id})
-        if not isinstance(run_log, dict):
+        if run_log is not None and not isinstance(run_log, dict):
             return _save_error(
                 "RUN_LOG_NOT_FOUND",
                 f"RunLog not found: {run_id}",
             )
-        if run_log.get("error_code"):
+        if isinstance(run_log, dict) and run_log.get("error_code"):
             return _save_error(
                 str(run_log["error_code"]),
                 str(run_log.get("error_message") or f"RunLog not found: {run_id}"),
@@ -441,42 +441,66 @@ class JsonLineBridge:
 
                 def complete_json(prompt: str, tool: dict[str, Any]) -> str:
                     tool_name = str(tool["function"]["name"])
-                    response = self.host_call(
-                        request_id,
-                        "model_turn",
-                        {
-                            "goal": "Enhance RunLog-grounded Functions",
-                            "model": model,
-                            "request": {
+                    messages = [{"role": "user", "content": prompt}]
+                    for attempt in range(2):
+                        response = self.host_call(
+                            request_id,
+                            "model_turn",
+                            {
+                                "goal": "Author independent Function v3 assets",
                                 "model": model,
-                                "messages": [{"role": "user", "content": prompt}],
-                                "temperature": 0,
-                                "tool_choice": {
-                                    "type": "function",
-                                    "function": {"name": tool_name},
+                                "request": {
+                                    "model": model,
+                                    "messages": messages,
+                                    "temperature": 0,
+                                    "tool_choice": {
+                                        "type": "function",
+                                        "function": {"name": tool_name},
+                                    },
+                                    "tools": [tool],
                                 },
-                                "tools": [tool],
                             },
-                        },
-                    )
-                    if not isinstance(response, dict):
-                        raise ValueError("function_enhancer_response_invalid")
-                    tool_calls = response.get("tool_calls")
-                    if not isinstance(tool_calls, list) or len(tool_calls) != 1:
-                        raise ValueError("function_enhancer_tool_call_invalid")
-                    function = tool_calls[0].get("function")
-                    if (
-                        not isinstance(function, dict)
-                        or function.get("name") != tool_name
-                    ):
-                        raise ValueError("function_enhancer_tool_name_invalid")
-                    arguments = (
-                        function.get("arguments")
-                        if isinstance(function, dict) else None
-                    )
-                    if not isinstance(arguments, str):
-                        raise ValueError("function_enhancer_arguments_invalid")
-                    return arguments
+                        )
+                        if not isinstance(response, dict):
+                            raise ValueError("function_enhancer_response_invalid")
+                        tool_calls = response.get("tool_calls")
+                        if not isinstance(tool_calls, list) or len(tool_calls) != 1:
+                            raise ValueError("function_enhancer_tool_call_invalid")
+                        function = tool_calls[0].get("function")
+                        if not isinstance(function, dict):
+                            raise ValueError("function_enhancer_tool_call_invalid")
+                        returned_tool_name = str(function.get("name") or "").strip()
+                        # Some OpenAI-compatible routes normalize every structured
+                        # response to their fixed submit_json tool name.  The
+                        # enhancer contract is still enforced by the stage schema
+                        # and the compiler below, so accept that transport alias.
+                        if returned_tool_name in {tool_name, "submit_json"}:
+                            arguments = function.get("arguments")
+                            if not isinstance(arguments, str):
+                                raise ValueError("function_enhancer_arguments_invalid")
+                            return arguments
+                        # The normal Agent catalog exposes tools_search, and a
+                        # provider can choose it even when the request contains
+                        # only edit_function_draft.  Give that transport one
+                        # explicit correction; never treat the search call as an
+                        # enhancer result or pass its empty arguments downstream.
+                        if returned_tool_name == "tools_search" and attempt == 0:
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        "Do not call tools_search. It is unavailable "
+                                        "for this internal authoring turn. Return exactly "
+                                        f"one `{tool_name}` tool call with the requested "
+                                        "JSON object and no commentary."
+                                    ),
+                                }
+                            )
+                            continue
+                        raise ValueError(
+                            "function_enhancer_tool_name_invalid:"
+                            f"expected={tool_name},actual={returned_tool_name}"
+                        )
 
             report = save_function(
                 run_log,
@@ -497,6 +521,7 @@ class JsonLineBridge:
                 self.flow.store.get_function(function_id).to_dict()
                 for function_id in report["function_ids"]
             ],
+            "transfer_state_count": report.get("transfer_state_count", 0),
             "error": None,
         }
 
@@ -636,13 +661,6 @@ class _BridgeHost:
         if not isinstance(response, dict):
             raise ValueError("request_input_response_invalid")
         return str(response.get("value") or "")
-
-    def get_state(self, source_state_id: str) -> Observation:
-        return _state_observation(
-            self.bridge.host_call(
-                self.request_id, "get_state", {"state_id": source_state_id}
-            )
-        )
 
     def record_step(self, fact: dict[str, Any]) -> dict[str, Any]:
         response = self.bridge.host_call(

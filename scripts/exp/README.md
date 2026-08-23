@@ -13,7 +13,7 @@
 bash scripts/exp/run_androidworld.sh \
   --e2e-task TASK \
   --e2e-method omniflow \
-  --e2e-device small5554:emulator-5554:5554,pixel5576:emulator-5576:5576,fold5564:emulator-5564:5564 \
+  --e2e-device small5562:emulator-5562:5562,fold5564:emulator-5564:5564,small5554:emulator-5554:5554 \
   --e2e-source-seed 111 \
   --e2e-evaluation-seed 113 \
   --control-backend oob
@@ -68,7 +68,7 @@ bash scripts/exp/run_androidworld.sh --setup-device small5554
 
 # 逗号分隔的子集
 --e2e-method omniflow,mobilegpt \
---e2e-device pixel5576:emulator-5576:5576,fold5564:emulator-5564:5564
+--e2e-device small5562:emulator-5562:5562,fold5564:emulator-5564:5564
 ```
 
 MobileGPT 的可复用 memory 由 seed 111 的成功 source RunLog 离线生成。转换器
@@ -96,13 +96,17 @@ bash scripts/exp/run_androidworld.sh \
 
 | label | serial | profile |
 | --- | --- | --- |
-| `small5554` | `emulator-5554` | `tablet` |
-| `pixel5576` | `emulator-5576` | `pixel_phone` |
-| `fold5564` | `emulator-5564` | `pixel_fold` |
+| `standard45562` | `emulator-45562` | `small_phone` |
+| `fold45564` | `emulator-45564` | `pixel_fold` |
+| `tablet45554` | `emulator-45554` | `tablet` |
 
-The target `small5554` uses the existing `WXGA_Tablet_test_00` AVD
-(`tablet`, 10.1-inch WXGA). The source/original `source5560` remains an
-internal source-only device on `OmniFlowSourceSmall` and is not a target cell.
+The formal target topology is always Standard AVD (`standard45562`), Fold
+(`fold45564`), and Tablet (`tablet45554`). The Standard AVD is
+`OmniFlowTargetSmall`; the Tablet uses the existing `WXGA_Tablet_test_00`
+AVD (`tablet`, 10.1-inch WXGA). The source/original `source5560` remains an
+internal source-only device on `OmniFlowSourceSmall` and is never a target cell.
+The retired `pixel5576` / `AndroidWorldAvd4090` pair is historical read-only
+compatibility only and is not part of the formal protocol.
 
 ## AutoDroid 补充基线（9207）
 
@@ -135,6 +139,10 @@ outcome 和 summary 统计。online 模式还必须提供 `OMNIFLOW_ENV_FILE`；
 继承 `.env` 中的 Qwen/DashScope model。online 结果使用独立 attempt id/output root，不覆盖
 历史 replay。完整公平比较合同见
 [`docs/AUTODROID_9207_COMPARISON_PLAN.md`](../../docs/AUTODROID_9207_COMPARISON_PLAN.md)。
+
+启动 AutoDroid 前，统一入口会收起系统面板；检测到 Fold 的多显示布局时，先将目标 app
+放到逻辑 display `0`，再交回原生 DroidBot/TaskPolicy。该前置适配不修改 UTG、坐标或
+官方策略，并在 attempt 中保存 `device_preflight.json`。
 
 运行完整的 116-task supplemental campaign 时，使用批量入口并显式选择
 supplemental method；这不会改变正式 `all` 矩阵：
@@ -170,6 +178,10 @@ export OMNITRANSFER_ROOT="$HOME/Projects/Omni/OmniTransfer"
 
 `model.env` 至少提供 `LLMTHU_API_KEY`。外部 AndroidWorld、Android SDK、
 MobileGPT 和 AppAgent 路径由 launcher 的环境变量或机器默认值提供。
+刷新索引时，launcher 默认同时扫描 `data/androidworld` 和其唯一的
+`.archive/result_registry`；因此 scheduler 已注册的正式结果不会因后续
+`--refresh-memory` 被遗漏。需要额外结果根时才设置
+`OMNIFLOW_MEMORY_RESULT_ROOTS` 覆盖默认值。
 
 ## SSH 迁移到 4090
 

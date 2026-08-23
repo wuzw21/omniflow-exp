@@ -136,6 +136,39 @@ def test_omniflow_does_not_gate_candidates_by_page_identity(monkeypatch) -> None
     assert (result["new_x"], result["new_y"]) == (15.0, 25.0)
 
 
+def test_omniflow_accepts_matching_resource_id_anchor(monkeypatch) -> None:
+    module = SimpleNamespace(
+        rank_action_candidates=lambda **_kwargs: _ranking(
+            candidates=[
+                {
+                    "candidate_id": "stopwatch",
+                    "resource_id": "com.google.android.deskclock:id/tab_menu_stopwatch",
+                    "content_desc": "Stopwatch",
+                    "class": "android.widget.FrameLayout",
+                    "score": 0.99,
+                    "bbox": [432.0, 1072.0, 576.0, 1232.0],
+                    "new_x": 504.0,
+                    "new_y": 1152.0,
+                }
+            ]
+        )
+    )
+    monkeypatch.setattr(transfer_runtime, "load_omnitransfer", lambda: module)
+
+    result = transfer_runtime.transfer_action(
+        source_xml=(
+            '<hierarchy><node resource-id="com.google.android.deskclock:id/tab_menu_stopwatch" '
+            'content-desc="Stopwatch" class="android.widget.FrameLayout" '
+            'bounds="[432,1072][576,1232]" /></hierarchy>'
+        ),
+        target_xml="<hierarchy />",
+        source_point=(504.0, 1152.0),
+    )
+
+    assert result["mapped"] is True
+    assert result["target_candidate_id"] == "stopwatch"
+
+
 def test_omniflow_owns_empty_candidate_fallback(monkeypatch) -> None:
     module = SimpleNamespace(
         rank_action_candidates=lambda **_kwargs: _ranking(

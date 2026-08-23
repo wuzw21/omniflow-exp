@@ -48,16 +48,31 @@ def canonical_device_model(
     port = int(console_port or 0)
     if label_key in {"source5554", "source5560", "source5556"}:
         return "OmniFlowSourceSmall"
-    if label_key in {"small5554", "target5554"}:
+    if label_key in {"small5554", "tablet45554"}:
         return "WXGA_Tablet_test_00"
+    if label_key in {
+        "small5562",
+        "target5554",
+        "target5562",
+        "standard45562",
+    }:
+        return "OmniFlowTargetSmall"
     if label_key in {"pixel5576", "target5576"}:
         return "AndroidWorldAvd4090"
-    if label_key in {"fold5564", "target5564"}:
+    if label_key in {"fold5564", "target5564", "fold45564"}:
         return "OmniFlowTargetFold"
+    if serial_key.endswith("45564") or port == 45564:
+        return "OmniFlowTargetFold"
+    if serial_key.endswith("45554") or port == 45554:
+        return "WXGA_Tablet_test_00"
+    if serial_key.endswith("45562") or port == 45562:
+        return "OmniFlowTargetSmall"
     if serial_key.endswith("5564") or port == 5564:
         return "OmniFlowTargetFold"
     if serial_key.endswith("5554") or port == 5554:
         return "WXGA_Tablet_test_00"
+    if serial_key.endswith("5562") or port == 5562:
+        return "OmniFlowTargetSmall"
     if serial_key.endswith("5576") or port == 5576:
         return "AndroidWorldAvd4090"
     if serial_key.endswith(("5556", "5560")) or port in {5556, 5560}:
@@ -107,6 +122,8 @@ def canonical_device_metadata(
         profile = "pixel_fold"
     elif model == "AndroidWorldAvd4090":
         profile = "pixel_phone"
+    elif model == "OmniFlowTargetSmall":
+        profile = "small_phone"
     else:
         profile = "small_phone"
     return {

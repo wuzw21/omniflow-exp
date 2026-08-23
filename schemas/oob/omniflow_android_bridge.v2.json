@@ -19,7 +19,7 @@
   },
   "function": {
     "identifier_field": "function_id",
-    "schema_version": "omniflow.function.v2",
+    "schema_version": "omniflow.function.v3",
     "accepted_input_aliases": [],
     "forbidden_output_fields": ["id", "parameters", "actions", "execution"]
   },
@@ -68,11 +68,11 @@
         },
         "save_function_arguments": {
           "required": [],
-          "any_of_required": ["run_id", "run_log"],
+          "any_of_required": ["functions", "run_id", "run_log"],
           "any_of_function_input": ["functions", "enhance=true"],
           "optional": ["arguments", "enhance", "instruction"],
-          "functions_semantics": "Exactly one complete Function grounded in the successful RunLog.",
-          "enhance_semantics": "The Agent edits one staged in-memory draft: name the complete Function, edit source-grounded direct actions and parameter declarations, then register Function-local checker registrations. save_function deterministically compiles, validates, and atomically persists that one Function."
+          "functions_semantics": "One or more independent v3 Functions. Each Function embeds RunLog-shaped transfer_states and every step references one or more transfer_state_ids.",
+          "enhance_semantics": "The Agent may use a RunLog as authoring input. save_function writes the resulting independent v3 Functions without requiring RunLog action coverage or order alignment."
         },
         "tools": [
           "run_gui",

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
+from types import ModuleType
 from types import SimpleNamespace
 
 from PIL import Image
@@ -17,6 +19,7 @@ from src.experiment.observation_evidence import (
     androidworld_json_action_dict,
     persist_target_run_evidence,
 )
+import src.experiment.observation_evidence as observation_evidence
 from src.experiment.result_schema import RESULT_FIELDS, compact_result_row
 
 
@@ -46,7 +49,62 @@ def test_public_result_row_is_compact_and_keeps_details_out_of_the_row() -> None
     assert row["episode_duration_sec"] == 2.5
     assert row["evidence_paths"] == ["/evidence/task"]
     assert "reuse_rate" not in row
-    assert "prep_model_calls" not in row
+    assert row["prep_model_calls"] == 3
+    assert row["model_calls_total"] == 5
+    assert row["total_tokens_including_prep"] == 13
+    assert row["memory_status"] == "unavailable"
+    assert row["fallback_steps"] is None
+    assert row["fallback_measurement_status"] == "unavailable"
+
+
+def test_public_result_row_distinguishes_measured_zero_from_unreported_external_metrics() -> None:
+    row = compact_result_row(
+        {
+            "task_name": "CameraTakePhoto",
+            "method": "mobilegpt",
+            "device": "small5562",
+            "official_validator_used": True,
+            "official_validator_success": True,
+            "model_calls": 13,
+            "prompt_tokens": 9000,
+            "completion_tokens": 2958,
+            "total_tokens": 11958,
+            "actions_executed": 1,
+        },
+        source_seed=111,
+        evaluation_seed=113,
+    )
+
+    assert row["model_calls"] == 13
+    assert row["fallback_steps"] is None
+    assert row["fallback_measurement_status"] == "not_exposed"
+    assert row["memory_status"] == "unavailable"
+    assert row["memory_hit"] is None
+
+    omniflow = compact_result_row(
+        {
+            "task_name": "CameraTakePhoto",
+            "method": "omniflow",
+            "device": "small5562",
+            "official_validator_used": True,
+            "official_validator_success": True,
+            "model_calls": 0,
+            "fallback_steps": 0,
+            "max_fallback_steps": 5,
+            "reuse_metrics": {
+                "artifact_used": True,
+                "reuse_numerator": 4,
+                "reuse_denominator": 4,
+            },
+        },
+        source_seed=111,
+        evaluation_seed=113,
+    )
+    assert omniflow["fallback_steps"] == 0
+    assert omniflow["fallback_measurement_status"] == "measured"
+    assert omniflow["memory_status"] == "used"
+    assert omniflow["memory_hit"] is True
+    assert omniflow["memory_hit_rate"] == 1.0
 
 
 def test_compact_result_row_is_idempotent_for_evidence_paths() -> None:
@@ -57,6 +115,29 @@ def test_compact_result_row_is_idempotent_for_evidence_paths() -> None:
             "device": "small5554",
             "validator_success": True,
             "evidence_paths": ["/evidence/result", "/evidence/details"],
+        },
+        source_seed=111,
+        evaluation_seed=113,
+    )
+
+    assert compact_result_row(
+        original,
+        source_seed=111,
+        evaluation_seed=113,
+    ) == original
+
+
+def test_compact_result_row_preserves_normalized_function_metrics() -> None:
+    original = compact_result_row(
+        {
+            "task": "TaskOne",
+            "method": "omniflow",
+            "device": "small5554",
+            "validator_success": True,
+            "function_hit": True,
+            "function_covered_steps": 2,
+            "function_total_steps": 2,
+            "function_step_coverage_rate": 1.0,
         },
         source_seed=111,
         evaluation_seed=113,
@@ -208,6 +289,150 @@ def test_episode_recorder_refreshes_one_empty_accessibility_snapshot(tmp_path) -
 
     assert recorder.get_state() is ready
     assert len(recorder.persist_observations()) == 1
+
+
+def test_episode_recorder_retries_oob_host_observation(tmp_path) -> None:
+    empty = SimpleNamespace(
+        pixels=Image.new("RGB", (4, 3), color="black"),
+        forest="",
+        ui_elements=[],
+        auxiliaries={},
+    )
+    ready = SimpleNamespace(
+        pixels=Image.new("RGB", (4, 3), color="white"),
+        forest="<hierarchy />",
+        ui_elements=[],
+        auxiliaries={},
+    )
+    states = iter([ready])
+    recorder = AndroidWorldEpisodeRecorder(
+        lambda: next(states),
+        lambda action: action,
+        evidence_root=tmp_path,
+    )
+    recorder.start_episode()
+
+    recorder.record_host_observation(empty)
+
+    assert len(recorder.persist_observations()) == 1
+
+
+def test_episode_recorder_exposes_latest_oob_state_to_official_validator(
+    tmp_path,
+) -> None:
+    native_state = SimpleNamespace(
+        pixels=Image.new("RGB", (4, 3), color="black"),
+        forest="<hierarchy><node text=\"old\" /></hierarchy>",
+        ui_elements=["old"],
+        auxiliaries={"package_name": "com.example"},
+    )
+    oob_state = SimpleNamespace(
+        pixels=Image.new("RGB", (4, 3), color="white"),
+        forest="<hierarchy><node text=\"new\" /></hierarchy>",
+        ui_elements=["new"],
+        auxiliaries={"package_name": "com.example"},
+    )
+    recorder = AndroidWorldEpisodeRecorder(
+        lambda: native_state,
+        lambda action: action,
+        evidence_root=tmp_path,
+    )
+    recorder.start_episode()
+
+    recorder.record_host_observation(oob_state)
+
+    assert recorder.get_state() is oob_state
+
+
+def test_episode_recorder_retries_action_before_observation(tmp_path) -> None:
+    empty = SimpleNamespace(
+        pixels=Image.new("RGB", (4, 3), color="black"),
+        forest="",
+        ui_elements=[],
+        auxiliaries={},
+    )
+    ready = SimpleNamespace(
+        pixels=Image.new("RGB", (4, 3), color="white"),
+        forest="<hierarchy />",
+        ui_elements=[],
+        auxiliaries={},
+    )
+    states = iter([empty, ready, ready])
+    recorder = AndroidWorldEpisodeRecorder(
+        lambda: next(states),
+        lambda action: {"success": True},
+        evidence_root=tmp_path,
+    )
+    recorder.start_episode()
+
+    recorder.execute_action(SimpleNamespace(action_type="click", x=1, y=2))
+
+    assert len(recorder.persist_observations()) == 2
+
+
+def test_adb_ui_xml_is_used_when_uiautomator_dump_reports_nonzero(
+    tmp_path, monkeypatch
+) -> None:
+    xml = "<hierarchy><node package=\"com.google.android.deskclock\" /></hierarchy>"
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if "cat" in command:
+            return SimpleNamespace(returncode=0, stdout=xml, stderr="")
+        return SimpleNamespace(
+            returncode=1,
+            stdout="ERROR: could not get idle state.",
+            stderr="",
+        )
+
+    monkeypatch.setattr(observation_evidence.subprocess, "run", fake_run)
+    recorder = AndroidWorldEpisodeRecorder(
+        lambda: None,
+        lambda action: action,
+        evidence_root=tmp_path,
+        adb_path="adb",
+        adb_serial="emulator-5560",
+    )
+
+    assert recorder._read_adb_ui_xml() == xml
+    assert len(calls) == 2
+
+
+def test_adb_ui_xml_fallback_rehydrates_androidworld_ui_elements(
+    tmp_path, monkeypatch
+) -> None:
+    representation_utils = ModuleType("android_world.env.representation_utils")
+    expected = [SimpleNamespace(text="Stopwatch", content_description="Stopwatch")]
+    representation_utils.xml_dump_to_ui_elements = lambda _xml: expected
+    android_world = ModuleType("android_world")
+    android_world_env = ModuleType("android_world.env")
+    android_world_env.representation_utils = representation_utils
+    android_world.env = android_world_env
+    monkeypatch.setitem(sys.modules, "android_world", android_world)
+    monkeypatch.setitem(sys.modules, "android_world.env", android_world_env)
+    monkeypatch.setitem(
+        sys.modules,
+        "android_world.env.representation_utils",
+        representation_utils,
+    )
+
+    state = SimpleNamespace(
+        pixels=None,
+        forest="",
+        ui_elements=[SimpleNamespace(text="Launcher", content_description="")],
+        auxiliaries={},
+    )
+    recorder = AndroidWorldEpisodeRecorder(
+        lambda: state,
+        lambda action: action,
+        evidence_root=tmp_path,
+    )
+
+    # Supply the XML through the method's ADB seam without touching the device.
+    monkeypatch.setattr(recorder, "_read_adb_ui_xml", lambda: "<hierarchy />")
+    recovered = recorder._with_adb_observation_xml(state)
+    assert recovered.ui_elements == expected
 
 
 def test_episode_recorder_records_action_and_official_validator_result(tmp_path) -> None:

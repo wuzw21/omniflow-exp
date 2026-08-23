@@ -19,11 +19,6 @@ from omniflow.core.config import DEFAULT_MAX_STEPS, Experiment
 from omniflow.core.model import ToolCall
 from omniflow.core.trajectory import state_id
 from omniflow.transfer.runtime import (
-    TRANSFER_STATE_CATALOG_FILENAME,
-    load_transfer_state_catalog,
-    transfer_state_coverage,
-)
-from omniflow.transfer.runtime import (
     capture_transfer_state as _transfer_state,
 )
 from src.experiment.performance_metrics import PerformanceMetrics
@@ -37,11 +32,9 @@ class _TaskHost:
         self,
         host: AndroidWorldHost,
         state: dict[str, Any],
-        transfer_states: dict[str, dict[str, Any]],
     ):
         self.host = host
         self.state = state
-        self.transfer_states = transfer_states
 
     @property
     def env(self) -> Any:
@@ -75,11 +68,6 @@ class _TaskHost:
 
     def act(self, action: Any):
         return self.host.act(action)
-
-    def get_state(self, state_id: str) -> Observation | None:
-        value = self.transfer_states.get(str(state_id or "").strip())
-        return Observation.from_value(value) if value is not None else None
-
 
 def build_agent(
     *,
@@ -120,7 +108,7 @@ def build_agent(
         evidence_root=evidence_root,
         performance_metrics=performance_metrics,
         control_backend=os.environ.get(
-            "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "androidworld"
+            "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "oob"
         ),
     )
     if not store_path:
@@ -136,7 +124,6 @@ def build_agent(
             reset=lambda go_home=False: raw_host.reset(go_home=go_home),
         )
     resolved_store_path = Path(store_path).expanduser().resolve()
-    transfer_state_path = resolved_store_path.parent / TRANSFER_STATE_CATALOG_FILENAME
     state: dict[str, Any] = {
         "task_name": "",
         "goal": "",
@@ -147,8 +134,7 @@ def build_agent(
         "max_steps": max(1, int(max_steps)),
         "captured_transfer_states": {},
     }
-    transfer_states = load_transfer_state_catalog(transfer_state_path)
-    host = _TaskHost(raw_host, state, transfer_states)
+    host = _TaskHost(raw_host, state)
     fallback_limit_text = str(
         os.environ.get("OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS") or ""
     ).strip()
@@ -168,12 +154,6 @@ def build_agent(
             ),
         ),
     )
-    coverage = transfer_state_coverage(flow.store.functions, transfer_states)
-    if coverage["required_state_count"] and not transfer_state_path.is_file():
-        raise RuntimeError(f"transfer_state_catalog_missing:{transfer_state_path}")
-    if not coverage["complete"]:
-        missing = ",".join(coverage["missing_state_ids"])
-        raise RuntimeError(f"transfer_state_catalog_incomplete:{missing}")
     flow.mode = MODE_OMNIFLOW
     flow.name = MODE_OMNIFLOW
     flow.env = env

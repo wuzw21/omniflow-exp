@@ -15,9 +15,11 @@ _ANDROIDWORLD_CONFIG = json.loads(
 ANDROIDWORLD_PROTOCOL = dict(_ANDROIDWORLD_CONFIG["protocol"])
 
 GUI_AGENT_RULES = (
+    "A previous Function result of actions_failed or any OmniTransfer failure is a function-only measurement terminal: call finished with empty content immediately; never recover with GUI actions, another Function, fallback, retry, or loop.",
     "Accessibility XML is primary evidence for visible controls, state, and bounds; vision only supplements missing XML details.",
+    "When the accessibility graph is marked partial or the screenshot shows a two-pane layout, treat the screenshot as authoritative for omitted panes; a selected left navigation item is context, not a substitute for the next control in the right pane.",
     "Choose exactly one provided tool call for the immediate next action on the latest observed screen; if the final target is absent, use a visible navigation control and never guess future layout.",
-    "Use normalized 0..1000 coordinates, click centers of XML bounds, and use visual coordinates only when XML is unreliable. For click and input_text, always name the intended visible control in target_description so the Harness can verify and ground it against Accessibility XML.",
+    "Use normalized 0..1000 coordinates, click centers of XML bounds, and use visual coordinates only when XML is unreliable.",
     "Functions are verified multi-step action paths in the same action space as native GUI tools. When a Function matches the task, prefer it because it can complete several actions quickly; if it fails, inspect the result and continue with another Function or native GUI action.",
     "Before every action, inspect the action history or RunLog for a repeated action or alternating action sequence; if it made no progress on the latest screen, do not repeat the loop—choose a different visible control or path, or stop if none remains.",
     "Correct previous action errors from the latest screen; after OmniTransfer failure, choose a fresh action and never reuse source-device coordinates.",

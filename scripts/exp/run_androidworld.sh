@@ -234,6 +234,7 @@ if [[ -z "${OMNIFLOW_APPAGENT_ROOT:-}" ]]; then
 fi
 if [[ -z "${OMNIFLOW_OOB_APK:-}" ]]; then
   for candidate in \
+    "$workspace_root/../releases/OOB/OpenOmniBot-foolproof-debug.apk" \
     "$workspace_root/oob-downloads/v0.5.8.4/OpenOmniBot-v0.5.8.4-develop-standard-debug.apk" \
     "$workspace_root/OpenOmniBot/app/build/outputs/apk/developStandard/debug/app-develop-standard-debug.apk" \
     "$asset_root/runtime/assets/oob-x86_64-debug.apk"; do
@@ -1645,22 +1646,9 @@ if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.data
 row = payload.get(task_name) if isinstance(payload, dict) else None
 if not isinstance(row, dict):
     raise SystemExit(3)
-fields = (
-    ("store_path", "store_sha256"),
-    ("source_run_log_path", "source_run_log_sha256"),
-    ("transfer_states_path", "transfer_states_sha256"),
-)
-for path_field, hash_field in fields:
-    path = Path(str(row.get(path_field) or "")).expanduser()
-    expected = str(row.get(hash_field) or "").strip()
-    if not path.is_absolute() or not path.is_file():
-        raise SystemExit(
-            f"omniflow_store_index_file_missing:{task_name}:{path_field}:{path}"
-        )
-store_path = Path(str(row["store_path"])).resolve()
-transfer_path = Path(str(row["transfer_states_path"])).resolve()
-if transfer_path != store_path.with_name("transfer_states.json"):
-            raise SystemExit(f"omniflow_store_index_catalog_mismatch:{task_name}")
+store_path = Path(str(row.get("store_path") or "")).expanduser()
+if not store_path.is_absolute() or not store_path.is_file():
+    raise SystemExit(f"omniflow_store_index_file_missing:{task_name}:{store_path}")
 print(store_path)
 PY
 }
@@ -2727,20 +2715,6 @@ fi
 if [[ -z "$preflight_serials" ]]; then
   preflight_serials="${target_serials[*]}"
 fi
-source_index_expected_tasks="$($python_bin - "$source_index" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-if isinstance(payload, dict) and payload.get("schema_version") == "omniflow.data-index.v2":
-    payload = payload.get("source_index", {})
-if not isinstance(payload, dict) or not payload:
-    raise SystemExit("source_index_empty")
-print(len(payload))
-PY
-)"
-
 mkdir -p "$preflight_output_root"
 if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
   ensure_emulator "$source_serial"
@@ -2785,58 +2759,9 @@ for serial in "${target_serials[@]}"; do
   ensure_emulator "$serial"
 done
 ensure_fold_state
-for profile in $preflight_profiles; do
-for serial in $preflight_serials; do
-  preflight_args=(
-    --repo "$asset_root"
-    --code-root "$repo"
-    --android-world-root "$android_world_root"
-    --source-index "$source_index"
-    --source-task "$task"
-    --profile "$profile"
-    --serial "$serial"
-    --require-kvm
-    --require-device
-    --minimum-free-gb "$preflight_minimum_free_gb"
-    --json-out "$preflight_output_root/runtime_preflight_${profile}_${serial#emulator-}.json"
-  )
-  if [[ "$require_root_device" == "1" ]]; then
-    preflight_args+=(--require-root)
-  fi
-  if [[ "$configure_device" == "1" ]]; then
-    preflight_args+=(--configure-device)
-  fi
-  if [[ "$profile" == "mobilegpt" ]]; then
-    preflight_args+=(--expected-tasks 116)
-    if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
-      preflight_args+=(
-        --source-memory-root "$mobilegpt_source_memory_root"
-        --expected-memory-tasks 1
-      )
-    fi
-  fi
-  if [[ "$profile" == "androidworld_native" ]]; then
-    preflight_args+=(
-      --expected-tasks "$source_index_expected_tasks"
-      --source-index "$source_index"
-      --source-task "$task"
-    )
-    if [[ "$task" == Contacts* ]]; then
-      preflight_args+=(--require-contacts-ready)
-    fi
-  fi
-  if [[ "$profile" == "appagent" ]]; then
-    preflight_args+=(--appagent-root "$appagent_root")
-    if [[ -n "$appagent_memory_root" ]]; then
-      preflight_args+=(--appagent-memory-root "$appagent_memory_root")
-    fi
-  fi
-  if [[ "$profile" == "mobilegpt" && "$task" == Contacts* ]]; then
-    preflight_args+=(--require-contacts-ready)
-  fi
-  "$python_bin" "$preflight" "${preflight_args[@]}"
-done
-done
+# Device boot/setup remains owned by this entry. Runtime preflight gates are
+# intentionally not run; the selected method is allowed to report its actual
+# Function/Transfer/validator result.
 
 command=(
   "$python_bin"

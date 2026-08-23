@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from omniflow.bridge import JsonLineBridge
+from omniflow.bridge import JsonLineBridge, _BridgeHost
 from omniflow.functions.assets import FunctionStore, function_authoring_tool, save_function
 
 
@@ -132,7 +133,9 @@ def test_enhancer_edits_one_draft_in_three_small_stages(tmp_path) -> None:
     ]
     assert len(prompts) == 3
     assert "Prefer one reusable text-entry operation." in prompts[0]
-    assert "mandatory complete-RunLog Function" in prompts[0]
+    assert "complete semantic Function" in prompts[0]
+    assert "must state the goal's final requested state change" in prompts[0]
+    assert "not an open-brightness-settings Function" in prompts[0]
     assert any(
         "current source-state value clicked only to open a picker" in prompt
         for prompt in prompts
@@ -144,7 +147,115 @@ def test_enhancer_edits_one_draft_in_three_small_stages(tmp_path) -> None:
     assert any(
         '"eligible_parameter_step_indices":[1]' in prompt for prompt in prompts
     )
+    assert any(
+        "never add set_target for an input_text step" in prompt
+        and "fixed Settings route is not caller-varying" in prompt
+        for prompt in prompts
+    )
     assert all('"schema_version":"omniflow.function.v2"' not in p for p in prompts)
+
+
+def test_enhancer_can_omit_irrelevant_source_actions(tmp_path) -> None:
+    def complete(prompt: str, tool: dict) -> str:
+        required = tool["function"]["parameters"]["required"]
+        if required == ["complete_function"]:
+            return json.dumps(
+                {
+                    "complete_function": {
+                        "function_id": "enter_note_only",
+                        "name": "Enter note only",
+                        "description": "Enter the requested note without unrelated UI actions.",
+                    }
+                }
+            )
+        if required == ["action_edits", "bindings"]:
+            return json.dumps(
+                {
+                    "action_edits": [
+                        {
+                            "function_id": "enter_note_only",
+                            "step_index": 0,
+                            "operation": "omit",
+                        },
+                        {
+                            "function_id": "enter_note_only",
+                            "step_index": 2,
+                            "operation": "omit",
+                        },
+                    ],
+                    "bindings": [
+                        {
+                            "function_id": "enter_note_only",
+                            "step_index": 1,
+                            "name": "note",
+                            "description": "Note text to enter",
+                        }
+                    ],
+                }
+            )
+        return json.dumps({"checker_steps": []})
+
+    result = save_function(
+        _authoring_run_log(),
+        tmp_path / "store.json",
+        enhance=True,
+        complete_json=complete,
+    )
+
+    store = FunctionStore(result["store_path"])
+    function = store.functions["enter_note_only"]
+    assert len(function.steps) == 1
+    assert function.steps[0].action.tool == "input_text"
+    assert store.source_calls == [
+        {"function_id": "enter_note_only", "arguments": {"note": "meeting notes"}}
+    ]
+
+
+def test_enhancer_does_not_parameterize_fixed_settings_search_route(tmp_path) -> None:
+    run_log = androidworld_run_log(
+        [{"action_type": "input_text", "text": "brightness"}],
+        observations=[
+            androidworld_state(
+                "settings-search",
+                forest=(
+                    '<hierarchy><node text="Search settings" '
+                    'class="android.widget.EditText" editable="true" '
+                    'bounds="[0,0][1000,200]" /></hierarchy>'
+                ),
+            )
+        ],
+        goal="Turn brightness to the max value.",
+    )
+    parameter_draft: dict = {}
+
+    def complete(prompt: str, tool: dict) -> str:
+        required = tool["function"]["parameters"]["required"]
+        if required == ["complete_function"]:
+            return json.dumps(
+                {
+                    "complete_function": {
+                        "function_id": "set_brightness_to_max",
+                        "name": "Set brightness to max",
+                        "description": "Use the fixed Settings route for brightness.",
+                    }
+                }
+            )
+        if required == ["action_edits", "bindings"]:
+            parameter_draft.update(_draft_input(prompt))
+            return json.dumps({"action_edits": [], "bindings": []})
+        return json.dumps({"checker_steps": []})
+
+    store_path = tmp_path / "store.json"
+    save_function(run_log, store_path, enhance=True, complete_json=complete)
+
+    assert parameter_draft["eligible_parameter_step_indices"] == []
+    function = FunctionStore(store_path).get_function("set_brightness_to_max")
+    assert function is not None
+    assert function.input_schema["properties"] == {}
+    assert function.steps[0].action.to_dict() == {
+        "tool": "input_text",
+        "args": {"text": "brightness"},
+    }
 
 
 def test_enhancer_accepts_runlog_grounded_direct_actions(tmp_path) -> None:
@@ -421,6 +532,33 @@ def test_enhancer_does_not_reedit_an_existing_open_app_action(tmp_path) -> None:
     }
 
 
+def test_function_compiler_resolves_native_androidworld_app_labels(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "src.integrations.android_world.apps.resolve_androidworld_package",
+        lambda name: (
+            "com.google.android.deskclock" if name == "Clock" else name
+        ),
+    )
+    run_log = androidworld_run_log(
+        [{"action_type": "open_app", "app_name": "Clock"}],
+        observations=[androidworld_state("launcher")],
+        goal="Open Clock.",
+    )
+
+    store_path = tmp_path / "store.json"
+    save_function(run_log, store_path)
+    function = FunctionStore(store_path).get_function(
+        "replay_task"
+    )
+    assert function is not None
+    assert function.steps[0].action.to_dict() == {
+        "tool": "open_app",
+        "args": {"package_name": "com.google.android.deskclock"},
+    }
+
+
 def test_enhancer_binds_source_proven_semantic_target(tmp_path) -> None:
     run_log = androidworld_run_log(
         [{"action_type": "click", "x": 500, "y": 500}],
@@ -673,8 +811,91 @@ def test_tools_expose_one_function_save_interface(tmp_path) -> None:
 def test_save_function_compiles_without_supplied_functions(tmp_path) -> None:
     bridge = JsonLineBridge(tmp_path / "functions.json")
     result = bridge._save_function("request-1", {"run_log": _authoring_run_log()})
-    assert result["success"] is True
+    assert result["success"] is True, result
     assert result["function_ids"] == ["replay_task"]
+    assert result["transfer_state_count"] == 3
+    assert result["transfer_state_catalog"].endswith("transfer_states.json")
+
+
+def test_save_function_accepts_compact_xml_screenshot_runlog(tmp_path) -> None:
+    run_log = _authoring_run_log()
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    for index, step in enumerate(run_log["steps"]):
+        native_observation = step["observation"]
+        screenshot_path = source_root / f"screen-{index}.png"
+        screenshot_path.write_bytes(b"compact-screenshot")
+        step["observation"] = {
+            "screenshot": {
+                "path": str(screenshot_path.resolve()),
+                "width": 1000,
+                "height": 1000,
+                "mime_type": "image/png",
+            },
+            "xml": native_observation["forest"],
+        }
+
+    source_run_log = source_root / "run_log.json"
+    source_run_log.write_text(json.dumps(run_log), encoding="utf-8")
+    bundle_root = tmp_path / "memory"
+    bridge = JsonLineBridge(bundle_root / "functions.json")
+    result = bridge._save_function(
+        "request-1", {"run_log": str(source_run_log)}
+    )
+
+    assert result["success"] is True, result
+    assert result["function_ids"] == ["replay_task"]
+    assert result["transfer_state_count"] == 2
+    bundled_run_log = json.loads((bundle_root / "run_log.json").read_text())
+    bundled_screenshots = [
+        Path(step["observation"]["screenshot"]["path"])
+        for step in bundled_run_log["steps"]
+    ]
+    assert all(path.parent == bundle_root / "screenshots" for path in bundled_screenshots)
+    assert all(path.is_file() for path in bundled_screenshots)
+
+
+def test_function_replay_reads_frozen_bundle_state_before_android_host(tmp_path) -> None:
+    class Bridge(JsonLineBridge):
+        def host_call(self, request_id, method, payload):
+            raise AssertionError(f"legacy host lookup should not run: {method}")
+
+    store_path = tmp_path / "functions.json"
+    (tmp_path / "transfer_states.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.transfer-state-catalog.v1",
+                "run_id": "run-1",
+                "states": {
+                    "state-1": {
+                        "state_id": "state-1",
+                        "xml": "<hierarchy />",
+                        "package_name": "com.example.app",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    observation = _BridgeHost(Bridge(store_path), "request-1").get_state("state-1")
+
+    assert observation.extra["state_id"] == "state-1"
+    assert observation.package_name == "com.example.app"
+
+
+def test_old_function_store_still_uses_android_host_state_compatibility(tmp_path) -> None:
+    class Bridge(JsonLineBridge):
+        def host_call(self, request_id, method, payload):
+            assert method == "get_state"
+            assert payload == {"state_id": "state-old"}
+            return {"state_id": "state-old", "xml": "<hierarchy />"}
+
+    observation = _BridgeHost(
+        Bridge(tmp_path / "functions.json"), "request-1"
+    ).get_state("state-old")
+
+    assert observation.extra["state_id"] == "state-old"
 
 
 def test_save_function_rejects_multiple_functions(tmp_path) -> None:
@@ -731,6 +952,71 @@ def test_bridge_enhancement_edits_one_draft_in_three_stages(tmp_path) -> None:
         ["action_edits", "bindings"],
         ["checker_steps"],
     ]
+
+
+def test_bridge_enhancement_accepts_submit_json_transport_alias(tmp_path) -> None:
+    class Bridge(JsonLineBridge):
+        def host_call(self, request_id, method, payload):
+            assert method == "model_turn"
+            request = payload["request"]
+            tool = request["tools"][0]
+            return {
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "submit_json",
+                            "arguments": _draft_enhancer(
+                                request["messages"][0]["content"], tool
+                            ),
+                        }
+                    }
+                ]
+            }
+
+    result = Bridge(tmp_path / "functions.json")._save_function(
+        "request-1", {"run_log": _authoring_run_log(), "enhance": True}
+    )
+    assert result["success"] is True
+
+
+def test_bridge_enhancement_retries_tools_search_transport_misroute(tmp_path) -> None:
+    calls = 0
+
+    class Bridge(JsonLineBridge):
+        def host_call(self, request_id, method, payload):
+            nonlocal calls
+            calls += 1
+            assert method == "model_turn"
+            request = payload["request"]
+            tool = request["tools"][0]
+            if calls == 1:
+                return {
+                    "tool_calls": [
+                        {"function": {"name": "tools_search", "arguments": ""}}
+                    ]
+                }
+            if calls == 2:
+                assert request["messages"][-1]["content"].startswith(
+                    "Do not call tools_search."
+                )
+            return {
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "edit_function_draft",
+                            "arguments": _draft_enhancer(
+                                request["messages"][0]["content"], tool
+                            ),
+                        }
+                    }
+                ]
+            }
+
+    result = Bridge(tmp_path / "functions.json")._save_function(
+        "request-1", {"run_log": _authoring_run_log(), "enhance": True}
+    )
+    assert result["success"] is True
+    assert calls == 4
 
 
 def test_function_authoring_tool_is_three_small_draft_edits() -> None:

@@ -1190,6 +1190,8 @@ def build_appagent_teacher_source(
                     },
                 }
             )
+    actions = _propagate_same_step_input_targets(actions)
+    actions, skipped_route_actions = _drop_unaddressable_route_dismissals(actions)
     if not actions:
         raise ValueError("appagent_official_teacher_actions_required")
     if len(source_app_packages) > 1:
@@ -1218,6 +1220,7 @@ def build_appagent_teacher_source(
         "requires_native_source_episode": False,
         "target_inputs_read": False,
         "coordinate_replay": False,
+        "skipped_route_actions": skipped_route_actions,
     }
 
 
@@ -1266,7 +1269,11 @@ def load_appagent_teacher_source(path: str | Path) -> dict[str, Any]:
             raise ValueError("appagent_teacher_source_open_app_package_required")
         if action_type in APPAGENT_ACTION_TYPES:
             demo_action_count += 1
-    if int(payload.get("demo_action_count") or 0) != demo_action_count:
+    declared_demo_action_count = int(payload.get("demo_action_count") or 0)
+    if (
+        declared_demo_action_count <= 0
+        or declared_demo_action_count > demo_action_count
+    ):
         raise ValueError("appagent_teacher_source_demo_action_count_mismatch")
     return payload
 
@@ -1675,12 +1682,18 @@ def ground_appagent_teacher_action(
         ]
         match_reason = "current_focused_editable"
     if not matching_nodes and action_type == "input_text":
-        matching_nodes = [
+        editable_nodes = [
             node
             for node in root.iter()
             if str(node.attrib.get("editable") or "").lower() == "true"
             or str(node.attrib.get("class") or "") == "android.widget.EditText"
         ]
+        edit_text_nodes = [
+            node
+            for node in editable_nodes
+            if str(node.attrib.get("class") or "") == "android.widget.EditText"
+        ]
+        matching_nodes = edit_text_nodes or editable_nodes
         match_reason = "unique_current_editable"
     if not matching_nodes and action_type == "swipe":
         matching_nodes = [
@@ -2092,6 +2105,114 @@ def _source_semantic_params(
     )
     if source_appagent_tag is not None:
         enriched["source_appagent_tag"] = source_appagent_tag
+    return enriched
+
+
+def _drop_unaddressable_route_dismissals(
+    actions: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, int | str]]]:
+    """Remove a menu-open/outside-tap pair that AppAgent cannot represent.
+
+    AndroidWorld occasionally records dismissing a navigation menu as a tap on
+    blank space.  That action has no stable AppAgent element identity, so
+    encoding its source coordinate would violate the adapter contract.  When
+    it immediately follows a semantic ``Go to``/menu action, the pair is a
+    routing-only detour: the target task can start from the underlying page.
+    Keep the omission explicit in teacher provenance instead of fabricating a
+    clickable node or replaying a source coordinate.
+    """
+
+    kept: list[dict[str, Any]] = []
+    skipped: list[dict[str, int | str]] = []
+    cursor = 0
+    while cursor < len(actions):
+        current = actions[cursor]
+        current_action = dict(current.get("action") or {})
+        current_params = dict(current_action.get("params") or {})
+        target = str(current_params.get("target_description") or "").strip().casefold()
+        source_context = current_params.get("source_context")
+        source_element = (
+            source_context.get("element")
+            if isinstance(source_context, dict)
+            else None
+        )
+        resource_id = str(
+            (source_element or {}).get("resource_id")
+            or (source_element or {}).get("resource-id")
+            or ""
+        ).strip().casefold()
+        is_route_marker = (
+            current_action.get("type") == "click"
+            and (
+                target in {"go to", "menu", "navigation menu"}
+                or resource_id.endswith(":id/action_go_to")
+                or resource_id.endswith("/action_go_to")
+            )
+        )
+        if is_route_marker and cursor + 1 < len(actions):
+            following = actions[cursor + 1]
+            following_action = dict(following.get("action") or {})
+            following_params = dict(following_action.get("params") or {})
+            is_blank_dismissal = (
+                following_action.get("type") == "click"
+                and not any(
+                    str(following_params.get(key) or "").strip()
+                    for key in (
+                        "target_description",
+                        "target_evidence",
+                        "source_context",
+                        "source_appagent_tag",
+                    )
+                )
+            )
+            if is_blank_dismissal:
+                for record in (current, following):
+                    skipped.append(
+                        {
+                            "source_step_index": int(record.get("source_step_index") or 0),
+                            "source_action_index": int(record.get("source_action_index") or 0),
+                            "reason": "routing_only_menu_dismissal",
+                        }
+                    )
+                cursor += 2
+                continue
+        kept.append(current)
+        cursor += 1
+    return kept, skipped
+
+
+def _propagate_same_step_input_targets(
+    actions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Carry a preceding semantic field target onto a text-input action."""
+
+    enriched: list[dict[str, Any]] = []
+    for record in actions:
+        current = {
+            **record,
+            "action": {
+                **dict(record.get("action") or {}),
+                "params": dict(dict(record.get("action") or {}).get("params") or {}),
+            },
+        }
+        action = current["action"]
+        params = action["params"]
+        if (
+            action.get("type") == "input_text"
+            and not params.get("source_context")
+            and enriched
+        ):
+            previous = enriched[-1]
+            previous_action = dict(previous.get("action") or {})
+            previous_params = dict(previous_action.get("params") or {})
+            if (
+                int(previous.get("source_step_index") or -1)
+                == int(current.get("source_step_index") or -2)
+                and previous_action.get("type") == "click"
+                and isinstance(previous_params.get("source_context"), dict)
+            ):
+                params["source_context"] = previous_params["source_context"]
+        enriched.append(current)
     return enriched
 
 

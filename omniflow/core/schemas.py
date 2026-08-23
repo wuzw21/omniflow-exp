@@ -15,8 +15,8 @@ PLANNER_SUMMARY_DESCRIPTION = (
 
 CANONICAL_ACTION_SCHEMA_FILENAME = "oob_canonical_actions.v1.json"
 OMNIFLOW_RUN_LOG_SCHEMA_FILENAME = "omniflow_run_log.v1.json"
-CHECKER_RULE_SCHEMA_FILENAME = "omniflow_checker_rule.v2.json"
-FUNCTION_SCHEMA_FILENAME = "omniflow_function.v2.json"
+CHECKER_RULE_SCHEMA_FILENAME = "omniflow_checker_rule.v1.json"
+FUNCTION_SCHEMA_FILENAME = "omniflow_function.v3.json"
 VLM_ACTION_TOOL_NAMES = (
     "click",
     "input_text",
@@ -26,8 +26,8 @@ VLM_ACTION_TOOL_NAMES = (
     "finished",
 )
 _VLM_ACTION_ARGUMENT_NAMES = {
-    "click": ("target_description", "x", "y"),
-    "input_text": ("target_description", "text", "x", "y"),
+    "click": ("x", "y"),
+    "input_text": ("text", "x", "y"),
     "swipe": ("direction", "x1", "y1", "x2", "y2"),
     "open_app": ("package_name",),
     "press_key": ("key",),

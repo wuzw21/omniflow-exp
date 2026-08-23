@@ -20,6 +20,7 @@ fixed at 116 × 10 = 1160 cells.
 | Model calls | `replay`: `0`; `task`: official AutoDroid GPT calls, recorded per task |
 | Validator | AndroidWorld official validator after replay |
 | Initial state | Fresh task initialization/reset before every task |
+| Fold startup adapter | Collapse system UI; when multiple displays are detected, launch the target package on logical display `0` before handing control to the official policy |
 | Replay implementation | `replay`: original AutoDroid/DroidBot UTG replay; `task`: original DroidBot TaskPolicy |
 | Transfer/Function | Not used; no OmniFlow Function or OmniTransfer conversion |
 

@@ -21,13 +21,26 @@ class Observation:
             for key in ("state_id", "screenshot_path"):
                 if value.get(key) is not None:
                     extra[key] = value[key]
+            screenshot = value.get("screenshot")
+            if not isinstance(screenshot, dict):
+                screenshot = value.get("pixels")
+            if isinstance(screenshot, dict):
+                if screenshot.get("path") is not None:
+                    extra["screenshot_path"] = screenshot["path"]
+                if screenshot.get("width") is not None and screenshot.get("height") is not None:
+                    extra["display"] = {
+                        "width": screenshot["width"],
+                        "height": screenshot["height"],
+                    }
             display = value.get("display")
             if isinstance(display, dict):
                 extra["display"] = dict(display)
+            auxiliaries = value.get("auxiliaries")
+            auxiliaries = auxiliaries if isinstance(auxiliaries, dict) else {}
             return cls(
-                xml=value.get("xml"),
-                package_name=value.get("package_name"),
-                activity_name=value.get("activity_name"),
+                xml=value.get("xml") or value.get("forest"),
+                package_name=value.get("package_name") or auxiliaries.get("package_name"),
+                activity_name=value.get("activity_name") or auxiliaries.get("activity_name"),
                 image_base64=value.get("image_base64"),
                 extra=extra,
             )
@@ -133,12 +146,12 @@ class ActionResult:
 class FunctionStep:
     step_index: int
     action: Action
-    source_state_id: str
+    transfer_state_ids: tuple[str, ...]
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "step_index": self.step_index,
-            "source_state_id": self.source_state_id,
+            "transfer_state_ids": list(self.transfer_state_ids),
             "action": self.action.to_dict(),
         }
 
@@ -152,7 +165,9 @@ class Function:
     schema_version: str = ""
     input_schema: dict[str, Any] = field(default_factory=dict)
     bindings: tuple[dict[str, str], ...] = ()
+    transfer_states: dict[str, dict[str, Any]] = field(default_factory=dict)
     checker_rules: tuple[dict[str, Any], ...] = ()
+    model_handoffs: tuple[dict[str, Any], ...] = ()
     agent_visible: bool = True
 
     @classmethod
@@ -164,7 +179,10 @@ class Function:
             steps=tuple(
                 FunctionStep(
                     step_index=int(step.get("step_index") or 0),
-                    source_state_id=str(step.get("source_state_id") or ""),
+                    transfer_state_ids=tuple(
+                        str(state_id)
+                        for state_id in step.get("transfer_state_ids") or ()
+                    ),
                     action=Action.from_value(step.get("action") or {}),
                 )
                 for step in value.get("steps") or ()
@@ -180,22 +198,44 @@ class Function:
                 for binding in value.get("bindings") or ()
                 if isinstance(binding, dict)
             ),
+            transfer_states={
+                str(state_id): dict(observation)
+                for state_id, observation in (value.get("transfer_states") or {}).items()
+                if isinstance(observation, dict)
+            },
             checker_rules=tuple(value.get("checker_rules") or ()),
+            model_handoffs=tuple(
+                {
+                    "step_index": int(handoff.get("step_index") or 0),
+                    "reason": str(handoff.get("reason") or ""),
+                }
+                for handoff in value.get("model_handoffs") or ()
+                if isinstance(handoff, dict)
+            ),
             agent_visible=value.get("agent_visible") is True,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        value = {
             "schema_version": self.schema_version,
             "function_id": self.function_id,
             "name": self.name,
             "description": self.description,
             "input_schema": dict(self.input_schema),
             "bindings": [dict(binding) for binding in self.bindings],
+            "transfer_states": {
+                state_id: dict(observation)
+                for state_id, observation in self.transfer_states.items()
+            },
             "steps": [step.to_dict() for step in self.steps],
             "checker_rules": list(self.checker_rules),
             "agent_visible": self.agent_visible,
         }
+        if self.model_handoffs:
+            value["model_handoffs"] = [
+                dict(handoff) for handoff in self.model_handoffs
+            ]
+        return value
 
     @property
     def id(self) -> str:
@@ -204,6 +244,13 @@ class Function:
     @property
     def actions(self) -> tuple[Action, ...]:
         return tuple(step.action for step in self.steps)
+
+    def observations_for_step(self, step: FunctionStep) -> tuple[Observation, ...]:
+        return tuple(
+            Observation.from_value(self.transfer_states[state_id])
+            for state_id in step.transfer_state_ids
+            if state_id in self.transfer_states
+        )
 
 
 @dataclass(frozen=True)
@@ -244,6 +291,7 @@ class RunResult:
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
             "tokens": total_tokens,
+            "latency_ms": round(float(usage.get("latency_ms") or 0.0), 6),
             "token_usage_status": str(
                 usage.get("token_usage_status") or "not_applicable"
             ),
@@ -292,10 +340,6 @@ class Host(Protocol):
     def observe(self, **kwargs: Any) -> Observation | Awaitable[Observation]: ...
 
     def act(self, action: Action) -> ActionResult | Awaitable[ActionResult]: ...
-
-    def get_state(
-        self, source_state_id: str
-    ) -> Observation | Awaitable[Observation]: ...
 
 
 class Planner(Protocol):

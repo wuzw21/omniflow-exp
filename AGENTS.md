@@ -14,7 +14,7 @@
 - 唯一 task + method + device 调度器是 `src/experiment/run_tasks.py`。
 - `src/experiment/run_task.py` 只执行一个原子 AndroidWorld 结果。
 - `src/integrations/android_world/run_episode.py` 是唯一 native episode/lifecycle owner。
-- `save_function` 是唯一 Function 写 API、compiler 和 Store writer；成功 RunLog 只生成一个完整 Function。
+- `save_function` 是唯一 Function 写 API 和 Store writer；一个 Store 可保存多个独立 v3 Function。
 - runtime 只读取注册的 Function Store 和 `data/current.json`，不能自动补 Store、建 catalog 或写平行 manifest。
 - `data/current.json` 是唯一运行时本地索引；ledger、汇总和外部 manifest 只能作为证据。
 - AndroidWorld 正式方法只有 `fixed_replay`、`omniflow`、`mobilegpt`、`appagent`、`t3a_hint`。
@@ -30,11 +30,13 @@
 
 ## 证据、环境和数据
 
-- source Function 必须来自完整、成功、带截图和 native observation 的 RunLog。新跑的正式 AndroidWorld source 默认使用 seed 111；历史 RunLog 的 seed 只作 provenance，不影响其作为 memory source 的可用性。
+- Function v3 不依赖 RunLog 动作覆盖或顺序；其 `transfer_states` 直接保存 RunLog-shaped observation，步骤通过 `transfer_state_ids` 引用一个或多个 observation。新跑的正式 AndroidWorld source 默认使用 seed 111。
 - B-MoCA env100 必须先通过 official success、method success、`model_calls=0`、`fallback_steps=0`，才可创建/运行其他环境。
 - 所有 Python/Torch 命令使用 `~/Projects/Omni/OmniFlow-exp/.venv/bin/python`；正式执行不使用邻近环境。
+- 长期训练规则：任何模型训练、微调或训练 smoke 都必须在 `9207` 远程环境执行；本地只允许数据清洗、质量检测、代码测试和评测入口验证，不得在本地启动训练。
 - 所有实验资产、RunLog、截图、Store、transfer states、memory 和结果都在 `data/`；不要提交它们、credentials、APK、权重或 emulator image。
 - 项目长期记忆：`OmniFlow-AndroidWorld-Experiments` 的唯一关键主表事实是 `OmniFlow_AndroidWorld_116Tasks_10cell.xlsx` 固定为 116 个任务 × 10 个实验格 = 1160 个实验格；主矩阵不得因补充 baseline 或新实验而扩展。该目录 `~/Desktop/OmniFlow-AndroidWorld-Experiments` 是权威归档源；恢复或同步 10-cell 资产时，必须检查主表、对应的 `.inspect.ndjson` 和 `RESULT_GROUPS.md`。
+- AndroidWorld target 长期规则：正式 target 始终且仅为 Standard AVD + Fold + Tablet，分别使用 `standard45562`/`OmniFlowTargetSmall`、`fold45564`/`OmniFlowTargetFold` 和 `tablet45554`/`WXGA_Tablet_test_00`；其中 `small_phone` 是普通小尺寸手机形态的 protocol profile，表示 Standard AVD 的设备形态，不是额外设备型号或 Pixel 5 别名。`source5560` 永远是 source-only，不得作为 target。`pixel5576`/`AndroidWorldAvd4090` 已从正式 target 协议退役，只能作为只读历史兼容输入。该拓扑调整不自动扩展历史 116×10 主表或归档矩阵。
 - 10-cell 历史结果、测试结果和表格不能因目录迁移而丢失；合并到仓库时必须保留原始文件、来源路径、文件时间和 SHA-256 等 provenance，并去重而不是覆盖冲突版本。
 - 桌面端 10-cell 归档是历史证据源，不是运行时选择器；归档副本放在 `data/`，运行时仍只读取注册的资产和 `data/current.json`。
 - 旧适配层和历史输入可按只读迁移路径保留；不要为了兼容重新加 alias、旧 writer、旧 index 或旧 runner。
@@ -55,7 +57,6 @@
     memory/
       <attempt_id>/
         function_store.json
-        transfer_states.json
         run_log.json
         screenshots/
   ```
@@ -66,7 +67,7 @@
 - setting 身份由 `task_name + method + 真实 device_model + 规范化 task_parameters + 协议配置` 决定，不由 RunLog seed、目录旧名、run_id、文件 hash 或设备别名决定。判断一个任务是否已有可转换 memory 的 source 时，只要求 `task_name` 相同且成功证据链完整，不要求 task parameters 或 seed 与当前实例一致。
 - 同一 setting 的可见结果只保留一组：先选择 official success 且截图、XML/UI tree、native observation、action/result 链完整的版本；证据完整度相同时保留完成时间最新者。失败、旧副本和冲突版本移入 `data/androidworld/.archive/`，不得覆盖仍需保留的原始数据。
 - 归档迁移保留原相对路径、文件时间和可核验 provenance；`.archive/` 不参与 runtime 选择和完成数统计。零 step、`status=running`、无截图/XML 的占位 RunLog 不得作为可用结果或 memory source。
-- 每个 Function memory bundle 必须自包含 `function_store.json`、`transfer_states.json`、对应 `run_log.json` 和该 RunLog 引用的截图；不得依赖已归档 source 目录中的绝对截图路径，也不得手改 Function Store。
+- 每个 Function v3 在 `function_store.json` 内自包含 `transfer_states`；不写 sibling catalog，不要求 Function 与 RunLog 轨迹对齐，也不得手改 Function Store。
 - `data/androidworld/COMPLETION_STATUS.md` 展示 116×10 正式 cell 完成情况；`MEMORY_READY_SOURCES.md` 展示每个任务各 setting 的 source 可用状态；`RUNLOG_INDEX.md` 和 `ARCHIVE_AUDIT.json` 提供逐 RunLog 证据与机器审计。目录迁移、去重或导入结束后必须通过官方 refresh 入口更新 `data/current.json`，再重生成这些文档。
 
 ## 修改方式

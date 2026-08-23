@@ -407,9 +407,46 @@ class AndroidWorldHost:
                     screen_size=(display_width, display_height),
                 )
             elements_xml = _elements_xml(elements) if xml and elements else ""
-            if forest_xml and (
+            graph_package = (
+                package
+                or _package_from_xml(forest_xml)
+                or _package_from_xml(elements_xml)
+            )
+            forest_complete = bool(forest_xml) and (
+                xml_covers_screen(
+                    forest_xml,
+                    package_name=graph_package,
+                    screen_size=(display_width, display_height),
+                )
+                or (
+                    not isinstance(forest, str)
+                    and forest_has_complete_active_application_window(
+                        forest,
+                        package_name=graph_package,
+                    )
+                )
+            )
+            elements_complete = bool(elements_xml) and xml_covers_screen(
+                elements_xml,
+                package_name=graph_package,
+                screen_size=(display_width, display_height),
+            )
+            if self.control_client is not None and forest_xml:
+                # OOB already returns the complete, ordered accessibility
+                # forest.  Re-serializing its parsed ui_elements flattens the
+                # hierarchy and destroys the parent/sibling relations used by
+                # OmniTransfer, even when the visible labels and bounds stay
+                # identical.
+                xml_text = forest_xml
+                graph_source = "oob_control_forest"
+            elif forest_xml and (
                 not elements_xml
-                or _xml_semantic_score(forest_xml) >= _xml_semantic_score(elements_xml)
+                or (forest_complete and not elements_complete)
+                or (
+                    forest_complete == elements_complete
+                    and _xml_semantic_score(forest_xml)
+                    >= _xml_semantic_score(elements_xml)
+                )
             ):
                 xml_text = forest_xml
                 graph_source = "androidworld_state_forest"
@@ -596,7 +633,7 @@ class AndroidWorldHost:
                             ).strip()
                             return self._observe_open_app_ready(identifier)
                         return oob_state_from_payload(
-                            self.control_client.observe(),
+                            self.control_client.observe(wait_to_stabilize=True),
                             fallback_screen_size=tuple(
                                 int(value) for value in self._screen_size()
                             ),

@@ -21,7 +21,7 @@ export OMNITRANSFER_ROOT="$HOME/Projects/Omni/OmniTransfer"
 bash scripts/exp/run_androidworld.sh \
   --e2e-task TASK \
   --e2e-method omniflow \
-  --e2e-device small5554:emulator-5554:5554,small5562:emulator-5562:5562,fold5564:emulator-5564:5564 \
+  --e2e-device standard45562:emulator-45562:45562,fold45564:emulator-45564:45564,tablet45554:emulator-45554:45554 \
   --e2e-source-seed 111 \
   --e2e-evaluation-seed 113 \
   --control-backend oob
@@ -30,11 +30,11 @@ bash scripts/exp/run_androidworld.sh \
 流程只有四步：
 
 1. 检查 `data/current.json` 中是否已有该 task 的 Function；
-2. 没有时，用成功的 source RunLog 调用 `save_function(enhance=True)`；
-3. 校验 Function Store 和 OmniTransfer evidence；
+2. 没有时，可用 source RunLog 作为 observation authoring 输入；
+3. `save_function` 写入包含内联 transfer states 的 v3 Store；
 4. 校验通过后，在指定设备上执行 E2E。
 
-Function 检查失败时不会启动 target episode。source seed 固定为 `111`，
+Function 结构不依赖 RunLog 动作覆盖或顺序。source seed 固定为 `111`，
 evaluation seed 固定为 `113`，正式 chat 和视觉模型统一为 `GLM-4.6V`；初始
 VLM 与 fallback 都直接传当前 screenshot。
 
@@ -54,6 +54,62 @@ data/androidworld/<task>/<method>/<device_model>_seed.../
 [`data/androidworld/COMPLETION_STATUS.md`](data/androidworld/COMPLETION_STATUS.md)，
 可直接转换 memory 的 source 候选见
 [`data/androidworld/MEMORY_READY_SOURCES.md`](data/androidworld/MEMORY_READY_SOURCES.md)。
+
+## 本地数据与测试资料索引
+
+本项目和 OmniTransfer 共同组成跨设备学习器实验。两者的资料不要混用：
+
+| 用途 | 位置 | 说明 |
+| --- | --- | --- |
+| AndroidWorld 正式证据 | `data/androidworld/` | 当前运行时使用的 task、RunLog、Function memory 和结果 |
+| B-MoCA 正式证据 | `data/bmoca/` | B-MoCA 的环境、任务和评测结果 |
+| 运行时索引 | `data/current.json` | 唯一的本地 Function/RunLog 运行时索引 |
+| AndroidWorld 历史备份 | `data/.androidworld_legacy_backup/` | 只读历史资料，不参与当前运行时选择 |
+| OmniTransfer 正式数据集 | `../OmniTransfer/runtime/datasets/` | canonical dataset；训练、清洗和复现实验的正式数据源 |
+| OmniTransfer 评测资料 | `../OmniTransfer/runtime/evals/` | 映射测试集、评测输入、错误分析和评测证据 |
+| OmniTransfer release | `../OmniTransfer/runtime/releases/` | 可运行的 release 包；release 内部数据必须保持自包含 |
+| OmniTransfer 实验输出 | `../OmniTransfer/output/` | checkpoint、预测、review 和各次实验输出，不是 canonical dataset |
+| OmniTransfer 临时资料 | `../OmniTransfer/tmp/` | 本轮清洗和统一评测的工作文件，完成同步后可清理 |
+
+当前跨设备学习器清洗和统一测试资料位于：
+
+```text
+../OmniTransfer/tmp/unified_clean_audit_20260823/
+```
+
+其中：
+
+```text
+train/cleaned.jsonl          清洗后的训练数据
+dev/cleaned.jsonl            清洗后的开发数据
+test/cleaned.jsonl           清洗后的测试数据
+test_new_method.json         新方法统一评测报告
+test_control_no_local.json   对照方法评测报告
+*.predictions.jsonl          对应的逐样本预测
+```
+
+本地只允许进行数据清洗、质量检测、代码测试和评测入口验证。任何模型训练、
+微调或训练 smoke 都必须在远程 `9207` 环境执行；不要在本地启动训练。
+
+测试代码位置：
+
+```text
+OmniFlow-exp/tests/
+../OmniTransfer/tests/
+```
+
+离线测试入口：
+
+```bash
+./.venv/bin/pytest -q
+```
+
+重复文件清理记录（2026-08-23）：完全相同的 13 个评测压缩文件、一个重复查询
+文件和一个重复 quarantine 文件已移到系统废纸篓，保留副本分别位于
+`../OmniTransfer/runtime/evals/vision_widget_mapping/_repo/testset/`、
+`../OmniTransfer/runtime/evals/vision_widget_mapping/splits/` 和
+`../OmniTransfer/output/cleaned_ase_train_v2/`。release 内部的 hard link、
+历史归档和用户代码没有清理。
 
 ## 选择方案或全矩阵
 

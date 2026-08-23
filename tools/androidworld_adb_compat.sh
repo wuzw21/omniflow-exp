@@ -7,6 +7,12 @@ set -euo pipefail
 # remove this unsupported install flag.
 real_adb="${OMNIFLOW_REAL_ADB_PATH:-${ANDROID_SDK_ROOT:-}/platform-tools/adb}"
 if [[ ! -x "$real_adb" ]]; then
+  # The unified runner normally exports the SDK-selected adb explicitly.
+  # Keep the wrapper usable for child processes that only inherit PATH; this
+  # is still the real adb binary and does not require sudo or a second backend.
+  real_adb="$(command -v adb || true)"
+fi
+if [[ ! -x "$real_adb" ]]; then
   echo "androidworld_adb_real_binary_missing:$real_adb" >&2
   exit 127
 fi

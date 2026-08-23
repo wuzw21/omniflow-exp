@@ -32,6 +32,11 @@ _ACTION_FIELDS = {
     "index",
     "x",
     "y",
+    "x1",
+    "y1",
+    "x2",
+    "y2",
+    "duration_ms",
     "text",
     "direction",
     "app_name",
@@ -44,19 +49,13 @@ _ACTION_FIELDS = {
 def canonicalize_run_log(value: dict[str, Any]) -> dict[str, Any]:
     """Validate and copy the only RunLog accepted by OmniFlow runtime code."""
     schema = load_omniflow_run_log_schema()
-    _validate_schema(value, schema, schema, "run_log")
-    canonical = _copy(value)
-    canonical.pop("started_at_ms", None)
-    canonical.pop("finished_at_ms", None)
-    canonical = _strip_run_log_hash_fields(canonical)
-    diagnostics = canonical.get("diagnostics")
-    if isinstance(diagnostics, dict):
-        diagnostics.pop("source_run_log", None)
-    canonical["steps"] = [canonicalize_run_log_step(step) for step in value["steps"]]
-    if isinstance(canonical.get("final_observation"), dict):
-        canonical["final_observation"] = _canonicalize_observation_reference(
-            canonical["final_observation"]
-        )
+    prepared = _copy(value)
+    _drop_screenshot_hashes(prepared)
+    _validate_schema(prepared, schema, schema, "run_log")
+    canonical = _copy(prepared)
+    canonical["steps"] = [
+        canonicalize_run_log_step(step) for step in prepared["steps"]
+    ]
     for step in canonical["steps"]:
         _validate_screenshot_reference(observation_screenshot(step["observation"]))
         if "next_observation" in step:
@@ -69,7 +68,7 @@ def canonicalize_run_log(value: dict[str, Any]) -> dict[str, Any]:
         )
     provenance = canonical["provenance"]
     if provenance["kind"] == "legacy_import":
-        required = {"source_path", "source_schema_version"}
+        required = {"source_path", "source_sha256", "source_schema_version"}
         missing = sorted(required - set(provenance))
         if missing:
             raise ValueError(
@@ -84,43 +83,13 @@ def canonicalize_run_log(value: dict[str, Any]) -> dict[str, Any]:
 def canonicalize_run_log_step(value: Any) -> dict[str, Any]:
     schema = load_omniflow_run_log_schema()
     step_schema = {"$ref": "#/$defs/step"}
-    _validate_schema(value, step_schema, schema, "run_log_step")
-    canonical = _copy(value)
-    canonical["action"] = canonicalize_androidworld_action(value["action"])
-    canonical["observation"] = _canonicalize_observation_reference(
-        canonical["observation"]
-    )
-    if isinstance(canonical.get("next_observation"), dict):
-        canonical["next_observation"] = _canonicalize_observation_reference(
-            canonical["next_observation"]
-        )
+    prepared = _copy(value)
+    _drop_screenshot_hashes(prepared)
+    _validate_schema(prepared, step_schema, schema, "run_log_step")
+    canonical = _copy(prepared)
+    canonical["action"] = canonicalize_androidworld_action(prepared["action"])
     _validate_schema(canonical, step_schema, schema, "run_log_step")
     return canonical
-
-
-def _canonicalize_observation_reference(value: dict[str, Any]) -> dict[str, Any]:
-    """Drop legacy screenshot checksums from the canonical RunLog wire form."""
-
-    canonical = _copy(value)
-    for field in ("screenshot", "pixels"):
-        screenshot = canonical.get(field)
-        if isinstance(screenshot, dict):
-            screenshot.pop("sha256", None)
-    return canonical
-
-
-def _strip_run_log_hash_fields(value: Any) -> Any:
-    """Accept legacy checksums on input but never emit them in a RunLog."""
-
-    if isinstance(value, dict):
-        return {
-            key: _strip_run_log_hash_fields(item)
-            for key, item in value.items()
-            if key != "sha256" and not key.endswith("_sha256")
-        }
-    if isinstance(value, list):
-        return [_strip_run_log_hash_fields(item) for item in value]
-    return value
 
 
 def canonicalize_androidworld_action(value: Any) -> dict[str, Any]:
@@ -138,11 +107,22 @@ def canonicalize_androidworld_action(value: Any) -> dict[str, Any]:
         _integer(action["index"], "androidworld_action_index_invalid")
         if "x" in action or "y" in action:
             raise ValueError("androidworld_action_index_or_coordinates_required")
-    for key in ("x", "y"):
+    for key in ("x", "y", "x1", "y1", "x2", "y2"):
         if key in action:
             _number(
                 action[key], f"androidworld_action_{key}_invalid"
             )
+    swipe_coordinates = {"x1", "y1", "x2", "y2"}
+    provided_swipe_coordinates = swipe_coordinates & set(action)
+    if provided_swipe_coordinates:
+        if action_type != "swipe":
+            raise ValueError("androidworld_action_swipe_coordinates_require_swipe")
+        if provided_swipe_coordinates != swipe_coordinates:
+            raise ValueError("androidworld_action_swipe_coordinates_incomplete")
+    if "duration_ms" in action:
+        _integer(action["duration_ms"], "androidworld_action_duration_ms_invalid")
+        if action["duration_ms"] < 0:
+            raise ValueError("androidworld_action_duration_ms_invalid")
     if action.get("direction") is not None and action["direction"] not in {
         "left",
         "right",
@@ -225,7 +205,7 @@ def observation_xml(observation: dict[str, Any]) -> str:
 
 
 def observation_screenshot(observation: dict[str, Any]) -> Any:
-    """Return the canonical screenshot reference, accepting legacy pixels."""
+    """Return the compact screenshot reference, accepting legacy pixels."""
     screenshot = observation.get("screenshot")
     return screenshot if screenshot is not None else observation.get("pixels")
 
@@ -361,12 +341,27 @@ def _copy(value: Any) -> Any:
     return json.loads(json.dumps(value, ensure_ascii=False))
 
 
+def _drop_screenshot_hashes(value: Any) -> None:
+    if isinstance(value, dict):
+        for field in ("screenshot", "pixels"):
+            screenshot = value.get(field)
+            if isinstance(screenshot, dict):
+                screenshot.pop("sha256", None)
+        for item in value.values():
+            _drop_screenshot_hashes(item)
+    elif isinstance(value, list):
+        for item in value:
+            _drop_screenshot_hashes(item)
+
+
 __all__ = [
     "OMNIFLOW_RUN_LOG_SCHEMA_VERSION",
     "canonicalize_androidworld_action",
     "canonicalize_run_log",
     "canonicalize_run_log_step",
     "observation_display",
+    "observation_screenshot",
+    "observation_xml",
     "require_complete_source_run_log",
     "state_id",
 ]

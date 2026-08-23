@@ -43,6 +43,7 @@ from src.experiment.run_tasks import (
     _function_replay_success,
     _e2e_devices,
     _e2e_methods,
+    _ensure_oob_release_installed,
     _autodroid_task_params_from_index,
     _supplemental_outcomes_root,
     _max_live_bmoca_results,
@@ -177,6 +178,47 @@ def _args(tmp_path: Path) -> SimpleNamespace:
         source_only=False,
         dry_run=False,
     )
+
+
+def test_ensure_oob_release_installed_uses_one_canonical_apk(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    apk = args.repo.parents[1] / "releases" / "OOB" / "OpenOmniBot-foolproof-debug.apk"
+    apk.parent.mkdir(parents=True)
+    apk.write_bytes(b"apk")
+    calls: list[list[str]] = []
+    monkeypatch.delenv("OMNIFLOW_OOB_APK", raising=False)
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.run_logged_command",
+        lambda command, **_kwargs: calls.append(command) or {"returncode": 0},
+    )
+    monkeypatch.setattr("src.experiment.run_tasks.time.sleep", lambda _seconds: None)
+
+    result = _ensure_oob_release_installed(
+        args=args,
+        serial="emulator-5560",
+        log_path=tmp_path / "oob.log",
+        deadline=Deadline(120),
+    )
+
+    assert result["status"] == "installed"
+    assert result["apk_path"] == str(apk.resolve())
+    assert calls[0] == [
+        str(args.adb_path),
+        "-s",
+        "emulator-5560",
+        "install",
+        "-r",
+        "-t",
+        str(apk.resolve()),
+    ]
+    assert calls[1][-2:] == [
+        "enabled_accessibility_services",
+        "cn.com.omnimind.bot.debug/cn.com.omnimind.accessibility.service.AssistsService",
+    ]
+    assert calls[2][-2:] == ["accessibility_enabled", "1"]
 
 
 def test_next_source_attempt_id_uses_unified_monotonic_name(tmp_path: Path) -> None:
@@ -595,6 +637,28 @@ def test_function_arguments_bind_only_declared_dynamic_task_params() -> None:
         "folder_name": "evaluation-folder",
         "static": "keep",
     }
+
+
+def test_function_arguments_bind_semantic_alias_from_source_runlog_provenance() -> None:
+    assert bind_function_arguments_to_task_params(
+        {"clipboard_text": "1234 Elm St, Springfield, IL", "static": "keep"},
+        {"clipboard_content": "Acme Corp, Suite 200", "seed": 113},
+        {
+            "clipboard_content": "1234 Elm St, Springfield, IL",
+            "seed": 111,
+        },
+    ) == {
+        "clipboard_text": "Acme Corp, Suite 200",
+        "static": "keep",
+    }
+
+
+def test_function_arguments_do_not_guess_ambiguous_value_provenance() -> None:
+    assert bind_function_arguments_to_task_params(
+        {"query": "same"},
+        {"first": "target-a", "second": "target-b"},
+        {"first": "same", "second": "same"},
+    ) == {"query": "same"}
 
 
 def test_omniflow_e2e_command_forwards_oob_backend_to_child(monkeypatch, tmp_path: Path) -> None:
@@ -3073,7 +3137,7 @@ def test_pipeline_qualifies_one_source_function_before_target_workers(
     assert phases["source_qualification"]["qualified"] is True
 
 
-def test_cached_source_function_qualification_requires_matching_hashes(
+def test_cached_source_function_qualification_requires_matching_function_identity(
     tmp_path: Path,
 ) -> None:
     args = _args(tmp_path)
@@ -3096,8 +3160,13 @@ def test_cached_source_function_qualification_requires_matching_hashes(
         json.dumps(
             {
                 "qualified": True,
-                "source_run_log_sha256": hashlib.sha256(b"source").hexdigest(),
-                "store_sha256": hashlib.sha256(b"store").hexdigest(),
+                "source_run_log": str(source_path),
+                "store_path": str(store_path),
+                "function_id": "create_note",
+                "source_call": {
+                    "function_id": "create_note",
+                    "arguments": {},
+                },
                 "model_calls": 0,
                 "fallback_steps": 0,
             }
@@ -3109,6 +3178,7 @@ def test_cached_source_function_qualification_requires_matching_hashes(
         args=args,
         source_path=source_path,
         function_store={"store_path": str(store_path)},
+        source_call={"function_id": "create_note", "arguments": {}},
     )
 
     assert cached is not None
@@ -3116,7 +3186,7 @@ def test_cached_source_function_qualification_requires_matching_hashes(
     assert cached["cached_from"] == str(qualification_path.resolve())
 
 
-def test_cached_source_function_qualification_ignores_stale_hashes(
+def test_cached_source_function_qualification_ignores_other_function_store(
     tmp_path: Path,
 ) -> None:
     args = _args(tmp_path)
@@ -3139,8 +3209,13 @@ def test_cached_source_function_qualification_ignores_stale_hashes(
         json.dumps(
             {
                 "qualified": True,
-                "source_run_log_sha256": hashlib.sha256(b"old source").hexdigest(),
-                "store_sha256": hashlib.sha256(b"old store").hexdigest(),
+                "source_run_log": str(source_path),
+                "store_path": str(tmp_path / "old-store.json"),
+                "function_id": "open_brightness_settings",
+                "source_call": {
+                    "function_id": "open_brightness_settings",
+                    "arguments": {},
+                },
                 "model_calls": 0,
                 "fallback_steps": 0,
             }
@@ -3152,6 +3227,10 @@ def test_cached_source_function_qualification_ignores_stale_hashes(
         args=args,
         source_path=source_path,
         function_store={"store_path": str(store_path)},
+        source_call={
+            "function_id": "set_brightness_to_minimum",
+            "arguments": {},
+        },
     ) is None
 
 

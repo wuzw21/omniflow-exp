@@ -191,11 +191,13 @@ def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:
 def test_setup_uses_all_protocol_devices() -> None:
     devices = _devices()
 
-    assert set(devices) == {"small5554", "pixel5576", "fold5564", "source5560"}
-    assert devices["pixel5576"].profile == "pixel_phone"
-    assert devices["pixel5576"].avd == "AndroidWorldAvd4090"
+    assert set(devices) == {"small5562", "fold5564", "small5554", "source5560"}
+    assert devices["small5562"].profile == "small_phone"
+    assert devices["small5562"].avd == "OmniFlowTargetSmall"
     assert devices["fold5564"].profile == "pixel_fold"
     assert devices["fold5564"].avd == "OmniFlowTargetFold"
+    assert devices["small5554"].profile == "tablet"
+    assert devices["small5554"].avd == "WXGA_Tablet_test_00"
     script_text = SCRIPT.read_text(encoding="utf-8")
     assert 'workspace_root="$(cd "$repo/.." && pwd)"' in script_text
     assert 'default_asset_root="$repo/data"' in script_text
@@ -272,6 +274,12 @@ def test_formal_protocol_uses_glm_chat_and_embedding_models() -> None:
     assert 'export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"' in SCRIPT.read_text(
         encoding="utf-8"
     )
+
+
+def test_formal_result_runner_allows_slow_vision_requests() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+
+    assert '--planner-timeout-sec "${OMNIFLOW_ANDROIDWORLD_PLANNER_TIMEOUT_SEC:-180}"' in script_text
 
 
 def test_autodroid_online_forces_formal_glm_endpoint_and_temperature() -> None:
@@ -677,7 +685,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
             "--e2e-method",
             "omniflow",
             "--e2e-device",
-            "pixel5576:emulator-5576:5576",
+            "small5562:emulator-5562:5562",
             "--e2e-source-seed",
             "111",
             "--e2e-evaluation-seed",
@@ -783,7 +791,7 @@ def test_default_avd_system_image_matches_host_architecture(
     assert "emulator-5554=WXGA_Tablet_test_00" in completed.stdout
     assert "emulator-5560=OmniFlowSourceSmall" in completed.stdout
     assert "emulator-5564=OmniFlowTargetFold" in completed.stdout
-    assert "emulator-5576=AndroidWorldAvd4090" in completed.stdout
+    assert "emulator-5562=OmniFlowTargetSmall" in completed.stdout
 
 
 def test_default_android_sdk_root_prefers_macos_standard_path(tmp_path: Path) -> None:
@@ -905,10 +913,10 @@ def test_default_topology_maps_device_aliases_to_physical_avds(
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.splitlines() == [
         "source5560:emulator-5560:5560",
-        "small5554:emulator-5554:5554",
+        "small5562:emulator-5562:5562",
         (
-            "emulator-5554=WXGA_Tablet_test_00,emulator-5576=AndroidWorldAvd4090,"
-            "emulator-5564=OmniFlowTargetFold,"
+            "emulator-5562=OmniFlowTargetSmall,emulator-5564=OmniFlowTargetFold,"
+            "emulator-5554=WXGA_Tablet_test_00,"
             "emulator-5560=OmniFlowSourceSmall"
         ),
     ]

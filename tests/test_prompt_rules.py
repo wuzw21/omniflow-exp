@@ -25,3 +25,11 @@ def test_gui_agent_rules_preserve_previous_general_safety_details() -> None:
     assert "checked=false means off" in prompt
     assert "Prefer direct search or text input" in prompt
     assert "never claim RunLog or Function registration" in prompt
+
+
+def test_gui_agent_rules_keep_partial_two_pane_order_from_repeating_navigation() -> None:
+    prompt = DEFAULT_PLANNER_SYSTEM_PROMPT
+
+    assert "partial" in prompt
+    assert "selected left navigation item is context" in prompt
+    assert "right pane" in prompt

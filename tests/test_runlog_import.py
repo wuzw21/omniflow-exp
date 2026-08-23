@@ -111,6 +111,37 @@ def test_input_text_point_outside_editable_node_does_not_add_click() -> None:
     ]
 
 
+def test_widget_bounded_swipe_preserves_normalized_endpoints() -> None:
+    payload = androidworld_run_log(
+        [
+            {
+                "action_type": "swipe",
+                "direction": "left",
+                "x1": 40,
+                "y1": 112,
+                "x2": 719,
+                "y2": 112,
+                "duration_ms": 500,
+            }
+        ],
+        observations=[androidworld_state("brightness", width=720, height=1280)],
+    )
+
+    assert project_androidworld_step_actions(payload["steps"][0]) == [
+        {
+            "tool": "swipe",
+            "args": {
+                "direction": "left",
+                "x1": 40 / 720 * 1000,
+                "y1": 112 / 1280 * 1000,
+                "x2": 719 / 720 * 1000,
+                "y2": 112 / 1280 * 1000,
+                "duration_ms": 500,
+            },
+        }
+    ]
+
+
 def test_runlog_import_rejects_conflicting_fullscreen_display_evidence() -> None:
     payload = androidworld_run_log(
         [

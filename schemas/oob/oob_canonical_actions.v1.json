@@ -22,6 +22,7 @@
         {"name": "target_description", "type": "string", "description": {"zh_cn": "可选。要点击的目标描述，用于语义 grounding。", "en_us": "Optional. Description of the target to tap, used for semantic grounding."}},
         {"name": "node_id", "type": "string", "persisted": false, "description": {"zh_cn": "可选。live XML 中已确认的无障碍节点 id。", "en_us": "Optional. Confirmed accessibility node id from live XML."}},
         {"name": "node_resource_id", "type": "string", "persisted": false, "description": {"zh_cn": "可选。录制或 XML grounding 得到的 Android resource-id，用于重放定位诊断和迁移。", "en_us": "Optional. Android resource-id captured from recording or XML grounding, used for replay targeting diagnostics and transfer."}},
+        {"name": "source_element_id", "type": "string", "description": {"zh_cn": "可选。Function authoring 明确选择 source observation XML 中包含该点击点的锚点；仅用于 OmniTransfer source grounding，不用于 target 节点查找或设备执行。", "en_us": "Optional. Function-authored anchor containing the tap point in the source observation XML; used only for OmniTransfer source grounding, never for target lookup or device execution."}},
         {"name": "x", "type": "number", "required": true, "description": {"zh_cn": "点击位置的 required 0..1000 相对 X 坐标；执行前会解码为屏幕绝对像素。", "en_us": "Required 0..1000 relative X coordinate of the tap target; decoded to absolute screen pixels before execution."}, "minimum": 0, "maximum": 1000},
         {"name": "y", "type": "number", "required": true, "description": {"zh_cn": "点击位置的 required 0..1000 相对 Y 坐标；执行前会解码为屏幕绝对像素。", "en_us": "Required 0..1000 relative Y coordinate of the tap target; decoded to absolute screen pixels before execution."}, "minimum": 0, "maximum": 1000}
       ]
@@ -111,10 +112,10 @@
       "kind": "action",
       "ui_label": {"zh_cn": "按系统键", "en_us": "Press key"},
       "description": {"zh_cn": "按一个系统键或键盘键。", "en_us": "Press one system or keyboard key."},
-      "prompt_guide": {"zh_cn": "- press_key(key): 按系统键或键盘键；key 可以是 back、home、enter、delete 或数字 0..9。", "en_us": "- press_key(key): Press a system or keyboard key; key may be back, home, enter, delete, or a digit from 0 through 9."},
+      "prompt_guide": {"zh_cn": "- press_key(key): 按系统键、键盘键或文本编辑键；key 可以是 back、home、enter、delete、select_all、copy 或数字 0..9。", "en_us": "- press_key(key): Press a system, keyboard, or text-editing key; key may be back, home, enter, delete, select_all, copy, or a digit from 0 through 9."},
       "route_action": true,
       "args": [
-        {"name": "key", "type": "string", "required": true, "description": {"zh_cn": "系统键或键盘键名称。", "en_us": "System or keyboard key name."}, "enum_values": ["back", "home", "enter", "delete", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]}
+        {"name": "key", "type": "string", "required": true, "description": {"zh_cn": "系统键、键盘键或文本编辑键名称。", "en_us": "System, keyboard, or text-editing key name."}, "enum_values": ["back", "home", "enter", "delete", "select_all", "copy", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]}
       ]
     },
     {

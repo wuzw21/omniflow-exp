@@ -111,6 +111,39 @@ def _resolve_device_serial(args: argparse.Namespace) -> str:
     )
 
 
+def _bounded_swipe_action_record(
+    start: Any,
+    end: Any,
+    *,
+    duration_ms: int,
+) -> dict[str, Any]:
+    """Preserve a widget-bounded swipe as executable RunLog evidence."""
+    if not (
+        isinstance(start, (list, tuple))
+        and len(start) == 2
+        and isinstance(end, (list, tuple))
+        and len(end) == 2
+    ):
+        raise ValueError("swipe_xy requires start_xy and end_xy")
+    x1, y1 = (int(value) for value in start)
+    x2, y2 = (int(value) for value in end)
+    delta_x = x2 - x1
+    delta_y = y2 - y1
+    if abs(delta_y) >= abs(delta_x):
+        direction = "down" if delta_y < 0 else "up"
+    else:
+        direction = "right" if delta_x < 0 else "left"
+    return {
+        "action_type": "swipe",
+        "direction": direction,
+        "x1": x1,
+        "y1": y1,
+        "x2": x2,
+        "y2": y2,
+        "duration_ms": int(duration_ms),
+    }
+
+
 class ManualAndroidWorld:
     def __init__(self, args: argparse.Namespace) -> None:
         if args.android_world_root:
@@ -123,6 +156,9 @@ class ManualAndroidWorld:
                 else android_world_root
             )
             sys.path.insert(0, str(import_root))
+        self._activity_compat_original = None
+        self._last_observation: dict[str, Any] | None = None
+        self._install_activity_compatibility()
         from src.integrations.android_world.apps import resolve_androidworld_app_name
         from src.integrations.android_world.run_episode import (
             start_androidworld_task_session,
@@ -144,15 +180,12 @@ class ManualAndroidWorld:
             use_uiautomator=not bool(args.install_a11y_forwarder),
         )
         self._env = startup.env
-        self._activity_compat_original = None
-        self._install_activity_compatibility()
         self._resolve_androidworld_app_name = resolve_androidworld_app_name
         self._root = Path(args.output).expanduser().resolve()
         self._run_id = self._root.name
         self._device_serial = _resolve_device_serial(args)
         self._source_seed = int(args.seed)
         self._steps: list[dict[str, Any]] = []
-        self._last_observation: dict[str, Any] | None = None
         self._last_ui_elements: list[Any] = []
         self._finished = False
         self._validation_reasoning = ""
@@ -194,7 +227,19 @@ class ManualAndroidWorld:
                     if package != "com.android.systemui"
                 )
                 activity = foreground_packages[0] if foreground_packages else activity
+            if not activity:
+                response = adb_utils.issue_generic_request(
+                    "shell dumpsys activity activities".split(), env
+                )
+                output = response.generic.output.decode(errors="replace")
+                match = re.search(
+                    r"(?:topResumedActivity|mResumedActivity)=ActivityRecord\{[^ ]+\s+u\d+\s+([^ }\n]+)",
+                    output,
+                )
+                activity = match.group(1) if match else activity
             if not activity or activity not in visible_packages:
+                if activity and "/" in activity:
+                    return activity, response
                 return activity, response
 
             for app_name in sorted(adb_utils.get_all_apps(env)):
@@ -273,25 +318,17 @@ class ManualAndroidWorld:
 
             start = clean_action_payload.get("start_xy")
             end = clean_action_payload.get("end_xy")
-            if not (isinstance(start, (list, tuple)) and len(start) == 2
-                    and isinstance(end, (list, tuple)) and len(end) == 2):
-                raise ValueError("swipe_xy requires start_xy and end_xy")
             duration_ms = int(clean_action_payload.get("duration_ms", 500))
+            action_record = _bounded_swipe_action_record(
+                start,
+                end,
+                duration_ms=duration_ms,
+            )
             command = adb_utils.generate_swipe_command(
                 int(start[0]), int(start[1]), int(end[0]), int(end[1]), duration_ms
             )
             adb_utils.issue_generic_request(command, self._env.controller)
             action = None
-            delta_x = int(end[0]) - int(start[0])
-            delta_y = int(end[1]) - int(start[1])
-            if abs(delta_y) >= abs(delta_x):
-                direction = "down" if delta_y < 0 else "up"
-            else:
-                direction = "right" if delta_x < 0 else "left"
-            # ``swipe_xy`` is an interactive protocol convenience, not a
-            # RunLog schema action. Persist its canonical semantic equivalent
-            # so manually collected evidence remains replay/schema compatible.
-            action_record = {"action_type": "scroll", "direction": direction}
         elif clean_action_payload.get("action_type") == "drag_and_drop":
             # AndroidWorld's actuation layer already implements drag-and-drop, but
             # this release's JSONAction parser omits that action from its public

@@ -216,28 +216,6 @@ def _relocate_v1_screenshot_paths(
             for candidate in evidence_root.rglob(basename)
             if candidate.is_file()
         )
-        expected_hash = str(pixels.get("sha256") or "").strip().lower()
-        if not candidates and expected_hash and len(expected_hash) == 64:
-            suffix = {
-                "image/jpeg": ".jpg",
-                "image/png": ".png",
-                "image/webp": ".webp",
-            }.get(str(pixels.get("mime_type") or "").strip())
-            if suffix is None:
-                raise ValueError("run_log_screenshot_metadata_invalid")
-            for parent in (evidence_root, *evidence_root.parents):
-                if parent.name != "data":
-                    continue
-                object_path = (
-                    parent
-                    / "objects"
-                    / "sha256"
-                    / expected_hash[:2]
-                    / f"{expected_hash}{suffix}"
-                )
-                if object_path.is_file():
-                    candidates = [object_path.resolve()]
-                    break
         if not candidates:
             raise FileNotFoundError(f"run_log_screenshot_missing:{raw_path}")
         if len(candidates) > 1:
@@ -399,20 +377,32 @@ def _androidworld_action_to_omniflow(
     elif action_type == "input_text":
         projected = {"tool": "input_text", "args": {"text": action.get("text", "")}}
     elif action_type in {"scroll", "swipe"}:
+        exact_swipe = _androidworld_exact_swipe(action, observation)
         projected = {
             "tool": "swipe",
             "args": {
                 "direction": str(action.get("direction") or ""),
-                **_androidworld_standard_swipe(
-                    action_type,
-                    str(action.get("direction") or ""),
+                **(
+                    exact_swipe
+                    if exact_swipe is not None
+                    else _androidworld_standard_swipe(
+                        action_type,
+                        str(action.get("direction") or ""),
+                    )
                 ),
             },
         }
     elif action_type == "open_app":
+        from src.integrations.android_world.apps import resolve_androidworld_package
+
+        app_name = str(action.get("app_name") or "")
+        try:
+            package_name = resolve_androidworld_package(app_name) or app_name
+        except (ImportError, ModuleNotFoundError):
+            package_name = app_name
         projected = {
             "tool": "open_app",
-            "args": {"package_name": str(action.get("app_name") or "")},
+            "args": {"package_name": package_name},
         }
     elif action_type == "navigate_back":
         projected = {"tool": "press_key", "args": {"key": "back"}}
@@ -537,6 +527,28 @@ def _androidworld_standard_swipe(
     except KeyError as error:
         raise ValueError(f"androidworld_action_direction_required:{action_type}") from error
     return {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
+
+
+def _androidworld_exact_swipe(
+    action: dict[str, Any],
+    observation: dict[str, Any],
+) -> dict[str, float | int] | None:
+    coordinate_keys = ("x1", "y1", "x2", "y2")
+    if not all(action.get(key) is not None for key in coordinate_keys):
+        return None
+    display = observation_display(observation)
+    if display is None:
+        raise ValueError("androidworld_action_display_required:swipe")
+    width, height = display
+    result: dict[str, float | int] = {
+        "x1": float(action["x1"]) / width * 1000.0,
+        "y1": float(action["y1"]) / height * 1000.0,
+        "x2": float(action["x2"]) / width * 1000.0,
+        "y2": float(action["y2"]) / height * 1000.0,
+    }
+    if action.get("duration_ms") is not None:
+        result["duration_ms"] = int(action["duration_ms"])
+    return result
 
 
 def _transfer_state(observation: dict[str, Any]) -> dict[str, Any]:

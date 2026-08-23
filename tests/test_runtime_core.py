@@ -5,7 +5,7 @@ import asyncio
 from omniflow import Action, ActionResult, Function, Observation, PluginSet
 from omniflow.core.config import ANDROIDWORLD_PROTOCOL, RuntimeSettings
 from omniflow.core.model import FunctionStep, StepResult, TransferResult
-from omniflow.runtime import core, execution
+from omniflow.runtime import core, engine, execution
 
 
 class RecordingHost:
@@ -35,6 +35,68 @@ def test_checker_thresholds_come_from_the_single_protocol_config() -> None:
     assert settings.checker_target_threshold == checker[
         "target_probability_threshold"
     ]
+
+
+def test_bound_function_text_renders_into_source_observation_xml() -> None:
+    source_function = Function(
+        function_id="copy_text",
+        name="Copy text",
+        description="Copy caller text.",
+        steps=(
+            FunctionStep(
+                0,
+                Action("input_text", {"text": "source text"}),
+                "source-before-input",
+            ),
+            FunctionStep(
+                1,
+                Action("long_press", {"x": 500, "y": 100}),
+                "source-after-input",
+            ),
+        ),
+        bindings=(
+            {
+                "source": "$.arguments.text",
+                "target": "$.steps[0].action.args.text",
+            },
+        ),
+    )
+    bound_function = Function(
+        function_id=source_function.function_id,
+        name=source_function.name,
+        description=source_function.description,
+        steps=(
+            FunctionStep(
+                0,
+                Action("input_text", {"text": "target text"}),
+                "source-before-input",
+            ),
+            source_function.steps[1],
+        ),
+        bindings=source_function.bindings,
+    )
+
+    substitutions = engine._function_source_text_substitutions(
+        source_function,
+        bound_function,
+    )
+    rendered = execution._render_source_observation_text(
+        Observation(
+            package_name="com.example",
+            xml=(
+                '<hierarchy><node text="source text" '
+                'content-desc="source text result" '
+                'resource-id="com.example:id/input" /></hierarchy>'
+            ),
+        ),
+        substitutions,
+    )
+
+    assert substitutions == {"source text": "target text"}
+    assert rendered is not None
+    assert 'text="target text"' in rendered.xml
+    assert 'content-desc="target text result"' in rendered.xml
+    assert 'resource-id="com.example:id/input"' in rendered.xml
 
 
 def test_core_executes_one_transferred_action_and_observes_once(monkeypatch) -> None:
@@ -301,6 +363,249 @@ def test_checker_step_executes_when_omnitransfer_target_is_present(monkeypatch) 
     assert "before_function_step" not in result.detail["checker_decisions"][0]
     assert "checker_rule_index" not in result.detail["checker_decisions"][0]
     assert result.detail["trace"][0]["metadata"]["origin"] == "checker"
+
+
+def test_checker_policy_redirects_before_function_action_without_checking_action(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    target_package = "com.example.settings"
+    current = Observation(package_name="com.android.launcher")
+    source = Observation(package_name=target_package)
+
+    class Host:
+        def __init__(self) -> None:
+            self.actions: list[Action] = []
+            self.after = Observation(package_name=target_package)
+
+        def act(self, action: Action) -> ActionResult:
+            self.actions.append(action)
+            return ActionResult(True)
+
+        def observe(self, **_kwargs: object) -> Observation:
+            return self.after
+
+    function = Function(
+        function_id="policy_function",
+        name="Policy function",
+        description="Run a Function only inside its target app.",
+        steps=(FunctionStep(0, Action("wait", {"duration_ms": 0}), "main"),),
+        checker_rules=(
+            {
+                "source_state_id": "checker-source",
+                "if": {"package_name": target_package},
+                "then": {
+                    "tool": "open_app",
+                    "args": {"package_name": target_package},
+                },
+            },
+        ),
+    )
+
+    host = Host()
+    async def transfer(action, _observation, _source_state):
+        return TransferResult(action)
+
+    result = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=current,
+            state_loader=lambda _state_id: source,
+        )
+    )
+
+    assert result.success is True
+    assert host.actions == [
+        Action("open_app", {"package_name": target_package}),
+        Action("wait", {"duration_ms": 0}),
+    ]
+    assert result.detail["checker_decisions"][0]["status"] == "redirected"
+    assert result.detail["checker_decisions"][0]["checker_kind"] == "policy"
+    assert result.detail["trace"][0]["metadata"]["origin"] == "action"
+
+
+def test_global_app_policy_redirects_before_every_transfer_action(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    target_package = "com.example.settings"
+    current = Observation(package_name="com.android.launcher")
+    source = Observation(package_name=target_package)
+
+    class Host:
+        def __init__(self) -> None:
+            self.actions: list[Action] = []
+            self.after = Observation(package_name=target_package)
+
+        def act(self, action: Action) -> ActionResult:
+            self.actions.append(action)
+            return ActionResult(True)
+
+        def observe(self, **_kwargs: object) -> Observation:
+            return self.after
+
+    function = Function(
+        function_id="global_app_policy_function",
+        name="Global app policy function",
+        description="Run the mapped action inside the source application.",
+        steps=(
+            FunctionStep(
+                0,
+                Action("click", {"x": 100, "y": 200}),
+                "source-step",
+            ),
+        ),
+    )
+    mapped_action = Action("click", {"x": 300, "y": 400})
+
+    async def transfer(_action, _observation, _source_state):
+        return TransferResult(mapped_action)
+
+    host = Host()
+    result = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=current,
+            state_loader=lambda _state_id: source,
+        )
+    )
+
+    assert result.success is True
+    assert host.actions == [
+        Action("open_app", {"package_name": target_package}),
+        mapped_action,
+    ]
+    assert result.detail["checker_decisions"][0]["checker_kind"] == (
+        "global_app_policy"
+    )
+    assert result.detail["checker_decisions"][0]["status"] == "redirected"
+
+
+def test_global_app_policy_uses_home_for_launcher_redirect(monkeypatch) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    launcher = "com.google.android.apps.nexuslauncher"
+    current = Observation(package_name="com.example.app")
+    source = Observation(package_name=launcher)
+
+    class Host:
+        def __init__(self) -> None:
+            self.actions: list[Action] = []
+
+        def act(self, action: Action) -> ActionResult:
+            self.actions.append(action)
+            return ActionResult(True)
+
+        def observe(self, **_kwargs: object) -> Observation:
+            return Observation(package_name=launcher)
+
+    function = Function(
+        function_id="launcher_global_policy",
+        name="Launcher global policy",
+        description="Run a mapped action on the launcher.",
+        steps=(
+            FunctionStep(0, Action("click", {"x": 100, "y": 200}), "source"),
+        ),
+    )
+
+    async def transfer(action, _observation, _source_state):
+        return TransferResult(action)
+
+    host = Host()
+    result = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=current,
+            state_loader=lambda _state_id: source,
+        )
+    )
+
+    assert result.success is True
+    assert host.actions[0] == Action("press_key", {"key": "home"})
+    assert result.detail["checker_decisions"][0]["status"] == "redirected"
+
+
+def test_global_app_policy_uses_corresponding_observation_xml_package(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    launcher = "com.google.android.apps.nexuslauncher"
+    source = Observation(
+        xml=f'<hierarchy><node package="{launcher}" bounds="[0,0][720,1280]" /></hierarchy>'
+    )
+    current = Observation(
+        package_name="android",
+        xml=(
+            '<hierarchy><node package="android" bounds="[0,0][720,1280]" />'
+            f'<node package="{launcher}" bounds="[0,0][720,1280]" /></hierarchy>'
+        ),
+    )
+
+    assert execution._observation_expected_package(source) == launcher
+    assert execution._checker_policy_condition_matches(
+        {"package_name": launcher}, current
+    )
+
+
+def test_checker_policy_passes_without_executing_then_when_condition_matches(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    target_package = "com.example.settings"
+    current = Observation(package_name=target_package)
+    source = Observation(package_name=target_package)
+
+    class Host:
+        def __init__(self) -> None:
+            self.actions: list[Action] = []
+
+        def act(self, action: Action) -> ActionResult:
+            self.actions.append(action)
+            return ActionResult(True)
+
+        def observe(self, **_kwargs: object) -> Observation:
+            return current
+
+    function = Function(
+        function_id="policy_pass_function",
+        name="Policy pass function",
+        description="Do not navigate when already in the target app.",
+        steps=(FunctionStep(0, Action("wait", {"duration_ms": 0}), "main"),),
+        checker_rules=(
+            {
+                "source_state_id": "checker-source",
+                "if": {"package_name": target_package},
+                "then": {
+                    "tool": "open_app",
+                    "args": {"package_name": "com.example.other"},
+                },
+            },
+        ),
+    )
+
+    host = Host()
+    async def transfer(action, _observation, _source_state):
+        return TransferResult(action)
+
+    result = asyncio.run(
+        execution.execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            observation=current,
+            state_loader=lambda _state_id: source,
+        )
+    )
+
+    assert result.success is True
+    assert host.actions == [Action("wait", {"duration_ms": 0})]
+    assert result.detail["checker_decisions"][0]["status"] == "passed"
+    assert result.detail["trace"][0]["metadata"]["origin"] == "action"
 
 
 def test_checker_uses_the_configured_target_probability_threshold(monkeypatch) -> None:
@@ -620,6 +925,36 @@ def test_checker_uses_high_target_mapping_without_a_page_gate(monkeypatch) -> No
     assert "page" not in result.detail["checker_decisions"][0]
 
 
+def test_blocking_overlay_dismisses_android_legacy_app_dialog_only() -> None:
+    dialog = Observation(
+        xml=(
+            '<hierarchy><node class="android.widget.FrameLayout" bounds="[0,0][720,1280]">'
+            '<node resource-id="android:id/parentPanel" class="android.widget.LinearLayout" '
+            'bounds="[50,452][670,827]">'
+            '<node resource-id="android:id/alertTitle" text="Clipper" '
+            'bounds="[98,488][622,542]" />'
+            '<node text="This app was built for an older version of Android and may not work properly." '
+            'bounds="[60,400][660,700]" />'
+            '<node text="OK" resource-id="android:id/button1" clickable="true" '
+            'bounds="[540,700][640,800]" />'
+            "</node></node></hierarchy>"
+        )
+    )
+    ordinary_ok = Observation(
+        xml=(
+            '<hierarchy><node class="android.app.Dialog" bounds="[0,0][720,1280]">'
+            '<node text="Delete this item?" bounds="[60,400][660,700]" />'
+            '<node text="OK" clickable="true" bounds="[540,700][640,800]" />'
+            "</node></hierarchy>"
+        )
+    )
+
+    assert execution._blocking_overlay_action(dialog) == Action(
+        "click", {"x": 590.0, "y": 750.0}
+    )
+    assert execution._blocking_overlay_action(ordinary_ok) is None
+
+
 def test_checker_uses_target_rank_probability_not_pair_confidence(monkeypatch) -> None:
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     current = Observation(xml="<wrong/>", package_name="com.other")
@@ -770,6 +1105,32 @@ def test_checker_rules_reject_actions_without_transferable_targets() -> None:
         assert str(error) == "checker_action_requires_transfer_target:swipe"
     else:
         raise AssertionError("unanchored checker action must be rejected")
+
+
+def test_checker_policy_uses_explicit_if_then_navigation() -> None:
+    from omniflow.runtime.checker import validate_checker_rule
+
+    rule = validate_checker_rule(
+        {
+            "source_state_id": "app-source",
+            "if": {"package_name": "com.android.settings"},
+            "then": {
+                "tool": "open_app",
+                "args": {"package_name": "com.android.settings"},
+            },
+        }
+    )
+
+    assert rule == {
+        "source_state_id": "app-source",
+        "policy": {
+            "if": {"package_name": "com.android.settings"},
+            "then": {
+                "tool": "open_app",
+                "args": {"package_name": "com.android.settings"},
+            },
+        },
+    }
 
 
 def test_checker_rule_contains_only_source_state_and_source_action() -> None:

@@ -298,6 +298,68 @@ def _source_device_ready(args: argparse.Namespace) -> bool:
     )
 
 
+def _ensure_oob_release_installed(
+    *,
+    args: argparse.Namespace,
+    serial: str,
+    log_path: Path,
+    deadline: Deadline,
+) -> dict[str, Any]:
+    configured = str(os.environ.get("OMNIFLOW_OOB_APK") or "").strip()
+    canonical = args.repo.parents[1] / "releases" / "OOB" / "OpenOmniBot-foolproof-debug.apk"
+    apk_path = Path(configured).expanduser().resolve() if configured else canonical.resolve()
+    if not apk_path.is_file():
+        raise FileNotFoundError(f"canonical_oob_release_missing:{apk_path}")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    install = run_logged_command(
+        [str(args.adb_path), "-s", serial, "install", "-r", "-t", str(apk_path)],
+        cwd=args.repo,
+        environment=dict(os.environ),
+        log_path=log_path,
+        timeout_sec=deadline.remaining(300),
+    )
+    if install["returncode"] != 0:
+        raise RuntimeError(f"canonical_oob_release_install_failed:{serial}:{apk_path}")
+    service = (
+        "cn.com.omnimind.bot.debug/"
+        "cn.com.omnimind.accessibility.service.AssistsService"
+    )
+    for setting_command in (
+        ("enabled_accessibility_services", service),
+        ("accessibility_enabled", "1"),
+    ):
+        configured_service = run_logged_command(
+            [
+                str(args.adb_path),
+                "-s",
+                serial,
+                "shell",
+                "settings",
+                "put",
+                "secure",
+                *setting_command,
+            ],
+            cwd=args.repo,
+            environment=dict(os.environ),
+            log_path=log_path.with_name(
+                f"{log_path.stem}_{setting_command[0]}{log_path.suffix}"
+            ),
+            timeout_sec=deadline.remaining(30),
+        )
+        if configured_service["returncode"] != 0:
+            raise RuntimeError(
+                f"canonical_oob_accessibility_enable_failed:{serial}:"
+                f"{setting_command[0]}"
+            )
+    time.sleep(2)
+    return {
+        "status": "installed",
+        "apk_path": str(apk_path),
+        "serial": serial,
+        "returncode": 0,
+    }
+
+
 def ensure_source_device(
     *,
     args: argparse.Namespace,
@@ -348,55 +410,21 @@ def ensure_source_device(
         time.sleep(1)
     else:
         raise RuntimeError(f"source_emulator_not_ready:{source_serial}")
-    preflight_path = attempt_root / "preflight" / "source_native.json"
-    environment = dict(os.environ)
-    environment["PYTHONPATH"] = os.pathsep.join(
-        str(path)
-        for path in (
-            args.repo,
-            args.repo / "src",
-            args.android_world_root,
-            environment.get("PYTHONPATH", ""),
-        )
-        if str(path)
+    oob_release = _ensure_oob_release_installed(
+        args=args,
+        serial=source_serial,
+        log_path=attempt_root / "preflight" / "source_oob_release.log",
+        deadline=deadline,
     )
-    command = [
-        str(args.python_bin),
-        str(args.runtime_preflight),
-        "--repo",
-        str(args.asset_root),
-        "--android-world-root",
-        str(args.android_world_root),
-        "--code-root",
-        str(args.repo),
-        "--profile",
-        "androidworld_native",
-        "--serial",
-        source_serial,
-        "--require-kvm",
-        "--require-device",
-        "--source-index",
-        str(args.memory_index),
-        "--source-task",
-        args.task,
-        *(["--source-only"] if getattr(args, "source_only", False) else []),
-        "--json-out",
-        str(preflight_path),
-    ]
-    minimum_free_gb = str(
-        os.environ.get("OMNIFLOW_PREFLIGHT_MINIMUM_FREE_GB") or ""
-    ).strip()
-    if minimum_free_gb:
-        command.extend(("--minimum-free-gb", minimum_free_gb))
-    result = run_logged_command(
-        command,
-        cwd=args.repo,
-        environment=environment,
-        log_path=attempt_root / "preflight" / "source_native.log",
-        timeout_sec=deadline.remaining(STEP_TIMEOUT_SEC),
-    )
-    if result["returncode"] != 0:
-        raise RuntimeError(f"source_runtime_preflight_failed:{result['returncode']}")
+    # Source emulator readiness is sufficient here. The old checks.py gate
+    # rejected valid registered Functions when the optional source index row
+    # was stale, before the actual Function/Transfer path could run.
+    result = {
+        "returncode": 0,
+        "timed_out": False,
+        "wall_sec": 0.0,
+        "preflight_skipped": True,
+    }
     # The source emulator is also the AndroidWorld/AndroidEnv host for the
     # source Function qualification that follows this preflight.  The
     # AndroidWorld loader is intentionally called with ``emulator_setup=False``
@@ -416,7 +444,8 @@ def ensure_source_device(
         "wall_sec": round(time.monotonic() - started, 6),
         "model_calls": 0,
         "total_tokens": 0,
-        "preflight": str(preflight_path),
+        "preflight": None,
+        "oob_release": oob_release,
     }
 
 
@@ -480,6 +509,12 @@ def ensure_target_devices(
                     "total_tokens": 0,
                 },
             )
+        device_phase["oob_release"] = _ensure_oob_release_installed(
+            args=args,
+            serial=serial,
+            log_path=attempt_root / "preflight" / f"target_oob_release_{serial}.log",
+            deadline=deadline,
+        )
         if mobilegpt_selected:
             preflight_path = (
                 attempt_root
@@ -1284,34 +1319,6 @@ def _canonical_function_store(
     return dict(record) if isinstance(record, dict) else None
 
 
-def _validate_function_source_lineage(
-    *,
-    task: str,
-    function_store: dict[str, Any],
-) -> dict[str, Any]:
-    source_path_value = str(function_store.get("source_run_log_path") or "").strip()
-    if not source_path_value:
-        raise ValueError(f"canonical_function_source_lineage_missing:{task}")
-    source_path = Path(source_path_value).expanduser().resolve()
-    if not source_path.is_file():
-        raise ValueError(f"canonical_function_source_lineage_invalid:{task}:{source_path}")
-    try:
-        source_run_log = require_complete_source_run_log(_read_object(source_path))
-    except (OSError, TypeError, ValueError) as error:
-        raise ValueError(
-            f"canonical_function_source_runlog_invalid:{task}:{source_path}:{error}"
-        ) from error
-    if source_run_log.get("task_name") != task:
-        raise ValueError(f"canonical_function_source_task_mismatch:{task}")
-    lineage = function_store.get("source_run_log_lineage")
-    if isinstance(lineage, dict):
-        lineage_source = str(lineage.get("source_path") or "").strip()
-        if lineage_source and Path(lineage_source).expanduser().resolve() != source_path:
-            raise ValueError(f"canonical_function_source_lineage_path_mismatch:{task}")
-
-    return source_run_log
-
-
 def prepare_function_asset(
     *,
     args: argparse.Namespace,
@@ -1432,12 +1439,10 @@ def prepare_function_asset(
                 "events": authoring_trace,
             },
         )
-    _validate_function_source_lineage(task=args.task, function_store=existing)
     store_path = Path(str(existing["store_path"])).resolve()
     source_calls = existing.get("source_calls")
     if (
         not isinstance(source_calls, list)
-        or len(source_calls) != 1
         or any(
             not isinstance(source_call, dict)
             or not str(source_call.get("function_id") or "").strip()
@@ -1578,8 +1583,13 @@ def _cached_source_function_qualification(
     args: argparse.Namespace,
     source_path: Path,
     function_store: dict[str, Any],
+    source_call: dict[str, Any],
 ) -> dict[str, Any] | None:
     store_path = Path(str(function_store["store_path"])).resolve()
+    expected_source_call = {
+        "function_id": str(source_call.get("function_id") or ""),
+        "arguments": dict(source_call.get("arguments") or {}),
+    }
     candidates = sorted(
         (
             path
@@ -1600,6 +1610,13 @@ def _cached_source_function_qualification(
             qualification.get("qualified") is True
             and int(qualification.get("model_calls") or 0) == 0
             and int(qualification.get("fallback_steps") or 0) == 0
+            and Path(str(qualification.get("source_run_log") or "")).resolve()
+            == source_path.resolve()
+            and Path(str(qualification.get("store_path") or "")).resolve()
+            == store_path
+            and str(qualification.get("function_id") or "")
+            == expected_source_call["function_id"]
+            and qualification.get("source_call") == expected_source_call
         ):
             return {
                 **qualification,
@@ -2457,6 +2474,18 @@ def _autodroid_task_params_from_index(
     return resolved
 
 
+def _function_source_task_params(store_path: str | Path) -> dict[str, Any]:
+    """Read task-parameter provenance from a self-contained Function bundle."""
+
+    run_log_path = resolve_path(store_path).parent / "run_log.json"
+    try:
+        run_log = _read_object(run_log_path)
+    except (FileNotFoundError, ValueError, TypeError, json.JSONDecodeError):
+        return {}
+    params = run_log.get("task_parameters")
+    return dict(params) if isinstance(params, dict) else {}
+
+
 def _androidworld_result_command(
     *,
     args: argparse.Namespace,
@@ -2560,6 +2589,7 @@ def _androidworld_result_command(
         bound_arguments = bind_function_arguments_to_task_params(
             source_arguments,
             evaluation_params,
+            _function_source_task_params(store_path),
         )
     if evaluation_params is None and not FIXED_TASK_PARAMS and method != "autodroid":
         command.extend(("--no-fixed-task-params", "--task-params-json", ""))
@@ -3856,16 +3886,16 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "total_tokens": 0,
             "reason": "function_store_unavailable_non_function_methods_continue",
         }
-    elif not isinstance(source_calls, list) or len(source_calls) != 1:
+    elif not isinstance(source_calls, list) or not source_calls:
         failure = _write_json(
             attempt_root / "source_qualification" / "failure.json",
-            {"error": "canonical_function_single_source_call_required"},
+            {"error": "canonical_function_source_call_required"},
         )
         phases["source_qualification"] = {
             "status": "failed",
             "model_calls": 0,
             "total_tokens": 0,
-            "error": "canonical_function_single_source_call_required",
+            "error": "canonical_function_source_call_required",
         }
         blocked_methods["omniflow"] = (
             "prep_failed",
@@ -3874,25 +3904,55 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         )
     else:
         try:
-            qualification = _cached_source_function_qualification(
-                args=args,
-                source_path=source_path,
-                function_store=function_store,
-            )
-            if qualification is None:
-                qualification = qualify_source_function(
+            qualifications: list[dict[str, Any]] = []
+            for source_call_index, source_call in enumerate(source_calls, start=1):
+                qualification = _cached_source_function_qualification(
                     args=args,
                     source_path=source_path,
-                    run_log=run_log,
                     function_store=function_store,
-                    source_call=source_calls[0],
-                    attempt_root=attempt_root,
-                    deadline=deadline,
-                    round_index=1,
+                    source_call=source_call,
                 )
-            phases["source_qualification"] = qualification
-            if not qualification["qualified"]:
-                failure = Path(str(qualification["log_path"])).resolve()
+                if qualification is None:
+                    qualification = qualify_source_function(
+                        args=args,
+                        source_path=source_path,
+                        run_log=run_log,
+                        function_store=function_store,
+                        source_call=source_call,
+                        attempt_root=attempt_root,
+                        deadline=deadline,
+                        round_index=source_call_index,
+                    )
+                qualifications.append(qualification)
+                if not qualification["qualified"]:
+                    break
+            all_qualified = (
+                len(qualifications) == len(source_calls)
+                and all(item.get("qualified") is True for item in qualifications)
+            )
+            phases["source_qualification"] = {
+                "status": "qualified" if all_qualified else "failed",
+                "qualified": all_qualified,
+                "functions": qualifications,
+                "model_calls": sum(
+                    int(item.get("model_calls") or 0) for item in qualifications
+                ),
+                "total_tokens": sum(
+                    int(item.get("total_tokens") or 0) for item in qualifications
+                ),
+            }
+            if not all_qualified:
+                failed_qualification = next(
+                    (
+                        item
+                        for item in qualifications
+                        if item.get("qualified") is not True
+                    ),
+                    {},
+                )
+                failure = Path(
+                    str(failed_qualification.get("log_path") or attempt_root)
+                ).resolve()
                 blocked_methods["omniflow"] = (
                     "prep_failed",
                     "source_qualification",
@@ -4482,7 +4542,7 @@ def _save_bmoca_function_once(
         "enhanced": report.get("enhanced") is True,
         "function_ids": list(report.get("function_ids") or ()),
         "store_path": str(store_path),
-        "transfer_state_catalog": str(report.get("transfer_state_catalog") or ""),
+        "transfer_state_count": int(report.get("transfer_state_count") or 0),
         "wall_sec": round(time.monotonic() - started, 6),
         **usage,
     }

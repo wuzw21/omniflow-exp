@@ -76,6 +76,13 @@ OOB_CONTROL_ACCESSIBILITY_SERVICE = (
     "cn.com.omnimind.bot.debug/"
     "cn.com.omnimind.accessibility.service.AssistsService"
 )
+
+
+def _oob_control_accessibility_services(values: list[str]) -> list[str]:
+    """Keep one deterministic accessibility stack for formal OOB execution."""
+
+    del values
+    return [OOB_CONTROL_ACCESSIBILITY_SERVICE]
 ANDROID_PERMISSION_DENY_RESOURCE_IDS = (
     "com.android.permissioncontroller:id/permission_deny_button",
     "com.android.permissioncontroller:id/permission_deny_and_dont_ask_again_button",
@@ -1649,13 +1656,13 @@ def _ensure_oob_control_app(*, console_port: int, adb_path: str) -> bool:
         timeout=10,
         check=False,
     )
-    services = [
+    current_services = [
         value
         for value in str(enabled.stdout or "").strip().split(":")
         if value and value != "null"
     ]
-    if OOB_CONTROL_ACCESSIBILITY_SERVICE not in services:
-        services.append(OOB_CONTROL_ACCESSIBILITY_SERVICE)
+    services = _oob_control_accessibility_services(current_services)
+    if services != current_services:
         update = subprocess.run(
             [
                 adb_bin,
@@ -2652,6 +2659,118 @@ def _patch_androidworld_app_launch(adb_utils: Any) -> Any:
             return launch_camera_capture_intent(controller)
 
     adb_utils.launch_app = launch_app
+    return original
+
+
+def _patch_androidworld_clipboard_read_compat(adb_utils: Any) -> Any:
+    """Dismiss Android's legacy-app dialog before retrying official Clipper.
+
+    AndroidWorld's clipboard validator already launches its bundled Clipper
+    app and reads the clipboard through ``clipper.get``. On older emulator
+    images, Android can place a compatibility dialog over that app; the
+    broadcast then returns no data even though the Function set the clipboard
+    correctly. Keep the official reader and parser intact. Recover only from
+    that exact foreground error, and locate the system ``OK`` button in the
+    live UI XML before retrying the original helper once.
+    """
+
+    original = getattr(adb_utils, "get_clipboard_contents", None)
+    if not callable(original):
+        raise RuntimeError("androidworld_get_clipboard_contents_unavailable")
+
+    def response_text(response: Any) -> str:
+        output = getattr(getattr(response, "generic", None), "output", b"")
+        if isinstance(output, bytes):
+            return output.decode("utf-8", errors="replace")
+        return str(output or "")
+
+    def dismiss_legacy_dialog(controller: Any) -> bool:
+        dump_path = "/data/local/tmp/omniflow_clipboard_validator.xml"
+        adb_utils.issue_generic_request(
+            ["shell", "uiautomator", "dump", dump_path], controller
+        )
+        try:
+            response = adb_utils.issue_generic_request(
+                ["shell", "cat", dump_path], controller
+            )
+            raw = response_text(response)
+        finally:
+            adb_utils.issue_generic_request(
+                ["shell", "rm", "-f", dump_path], controller
+            )
+        start = raw.find("<?xml")
+        end = raw.rfind("</hierarchy>")
+        if start < 0 or end < start:
+            return False
+        try:
+            root = ET.fromstring(raw[start : end + len("</hierarchy>")])
+        except ET.ParseError:
+            return False
+        nodes = tuple(root.iter())
+        normalized_text = " ".join(
+            str(node.attrib.get("text") or "").strip().casefold()
+            for node in nodes
+        )
+        if not (
+            "built for an older version of android" in normalized_text
+            or "may not work properly" in normalized_text
+        ):
+            return False
+        for node in nodes:
+            resource_id = str(node.attrib.get("resource-id") or "").strip()
+            text = str(node.attrib.get("text") or "").strip().casefold()
+            if resource_id != "android:id/button1" or text != "ok":
+                continue
+            match = re.fullmatch(
+                r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]",
+                str(node.attrib.get("bounds") or "").strip(),
+            )
+            if match is None:
+                return False
+            left, top, right, bottom = (int(value) for value in match.groups())
+            if right <= left or bottom <= top:
+                return False
+            adb_utils.issue_generic_request(
+                [
+                    "shell",
+                    "input",
+                    "tap",
+                    str((left + right) // 2),
+                    str((top + bottom) // 2),
+                ],
+                controller,
+            )
+            time.sleep(0.3)
+            return True
+        return False
+
+    def get_clipboard_contents(controller: Any) -> str:
+        try:
+            return original(controller)
+        except RuntimeError as exc:
+            if (
+                "Clipper app must be in the foreground to access clipboard."
+                not in str(exc)
+            ):
+                raise
+            try:
+                dismissed = dismiss_legacy_dialog(controller)
+            except Exception:
+                logger.warning(
+                    "Failed to inspect Android's legacy-app overlay while "
+                    "preserving the original clipboard validation error.",
+                    exc_info=True,
+                )
+                raise exc
+            if not dismissed:
+                raise
+            logger.warning(
+                "Dismissed Android's legacy-app overlay from live UI XML; "
+                "retrying the official AndroidWorld clipboard reader once."
+            )
+            return original(controller)
+
+    adb_utils.get_clipboard_contents = get_clipboard_contents
     return original
 
 
@@ -4858,7 +4977,6 @@ def build_parser() -> argparse.ArgumentParser:
 def _run_bmoca_e2e(args: argparse.Namespace) -> int:
     """Use the normal OmniFlow runtime against the B-MoCA Host adapter."""
 
-    from omniflow.transfer.runtime import load_transfer_state_catalog
     from src.experiment.observation_evidence import persist_target_run_evidence
     from src.integrations.bmoca import (
         BMocaEnvironmentConfig,
@@ -4874,14 +4992,9 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
         raise ValueError("bmoca_e2e_requires_exactly_one_task")
     store_path = Path(args.store_path).expanduser().resolve()
     reuse_memory_path = Path(args.reuse_memory_path).expanduser().resolve()
-    transfer_state_path = store_path.with_name("transfer_states.json")
     if method == "ours_replay":
         if not store_path.is_file():
             raise FileNotFoundError(f"bmoca_function_store_missing:{store_path}")
-        if not transfer_state_path.is_file():
-            raise FileNotFoundError(
-                f"bmoca_transfer_state_catalog_missing:{transfer_state_path}"
-            )
     elif not reuse_memory_path.exists():
         raise FileNotFoundError(
             f"bmoca_reuse_memory_missing:{reuse_memory_path}"
@@ -4926,11 +5039,7 @@ def _run_bmoca_e2e(args: argparse.Namespace) -> int:
         task_id=selected_tasks[0],
         environment_ids=environment_ids,
     )
-    source_states = (
-        load_transfer_state_catalog(transfer_state_path)
-        if method == "ours_replay"
-        else {}
-    )
+    source_states: dict[str, dict[str, Any]] = {}
     output_dir = Path(args.output_path).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / "summary.json"
@@ -5140,6 +5249,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     adb_output_patches: tuple[tuple[type[Any], Any], ...] = ()
     original_launch_app: Any | None = None
     original_current_activity: Any | None = None
+    original_get_clipboard_contents: Any | None = None
     try:
         _add_android_world_path(android_world_root)
 
@@ -5199,6 +5309,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         original_current_activity = _patch_androidworld_current_activity(adb_utils)
         original_launch_app = _patch_androidworld_app_launch(adb_utils)
+        original_get_clipboard_contents = _patch_androidworld_clipboard_read_compat(
+            adb_utils
+        )
         if task_params:
             if len(selected_task_names) != 1:
                 raise ValueError("--task-params-json requires exactly one selected task")
@@ -5862,6 +5975,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         return 0
     finally:
+        if original_get_clipboard_contents is not None:
+            adb_utils.get_clipboard_contents = original_get_clipboard_contents
         if original_launch_app is not None:
             adb_utils.launch_app = original_launch_app
         if original_current_activity is not None:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import copy
@@ -58,6 +57,12 @@ class AndroidWorldEpisodeRecorder:
         self._execute_action = execute_action
         self._evidence_root = Path(evidence_root).expanduser().resolve()
         self._active = False
+        # OOB owns observe/act, while AndroidWorld's official validator still
+        # asks the environment for get_state(). Keep the last OOB state here
+        # so the validator evaluates the same post-action state that was
+        # actually observed and recorded, rather than the native controller's
+        # stale accessibility snapshot.
+        self._latest_host_state: Any | None = None
         self._latest_observation: dict[str, Any] | None = None
         self._observations: list[dict[str, Any]] = []
         self._steps: list[dict[str, Any]] = []
@@ -77,9 +82,12 @@ class AndroidWorldEpisodeRecorder:
     def start_episode(self) -> None:
         if self._active:
             return
+        self._latest_host_state = None
         self._active = True
 
     def get_state(self, *args: Any, **kwargs: Any) -> Any:
+        if self._active and self._latest_host_state is not None:
+            return self._latest_host_state
         if self.performance_metrics is None:
             state = self._get_state(*args, **kwargs)
             if self._active:
@@ -105,7 +113,13 @@ class AndroidWorldEpisodeRecorder:
 
     def record_host_observation(self, state: Any) -> None:
         if self._active:
-            self._capture_state(state)
+            # OOB observe is recorded outside the normal ``get_state`` path.
+            # It can therefore return the same transient empty accessibility
+            # snapshot that ``get_state`` already knows how to recover.  Use
+            # the same bounded retry/ADB XML fallback here so an OOB action is
+            # not reported as failed merely because its post-action evidence
+            # arrived one frame late.
+            self._latest_host_state = self._capture_state_with_retry(state, (), {})
 
     def _capture_state_with_retry(
         self,
@@ -146,8 +160,13 @@ class AndroidWorldEpisodeRecorder:
         try:
             candidate = copy.copy(state)
             setattr(candidate, "forest", xml)
-            if not getattr(candidate, "ui_elements", None):
-                setattr(candidate, "ui_elements", [])
+            try:
+                from android_world.env import representation_utils
+
+                ui_elements = representation_utils.xml_dump_to_ui_elements(xml)
+            except Exception:
+                ui_elements = []
+            setattr(candidate, "ui_elements", ui_elements)
             return candidate
         except Exception:
             return SimpleNamespace(
@@ -176,10 +195,8 @@ class AndroidWorldEpisodeRecorder:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                timeout=8,
+                timeout=20,
             )
-            if dumped.returncode != 0:
-                return ""
             fetched = subprocess.run(
                 [
                     self._adb_path,
@@ -193,7 +210,7 @@ class AndroidWorldEpisodeRecorder:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                timeout=8,
+                timeout=10,
             )
         except (OSError, subprocess.SubprocessError):
             return ""
@@ -262,10 +279,13 @@ class AndroidWorldEpisodeRecorder:
         before = self._latest_observation
         if before is None:
             if metrics is None:
-                before = self._capture_state(self._get_state())
+                self._capture_state_with_retry(self._get_state(), (), {})
             else:
                 with metrics.timed("native_act_before_observe"):
-                    before = self._capture_state(self._get_state())
+                    self._capture_state_with_retry(self._get_state(), (), {})
+            before = self._latest_observation
+            if before is None:
+                raise RuntimeError("androidworld_observation_not_recorded")
         step: dict[str, Any] = {
             "step_index": len(self._steps),
             "observation": _json_copy(before),
@@ -499,9 +519,7 @@ def persist_target_run_evidence(
     root = Path(output_dir).expanduser().resolve()
     canonical_run = canonicalize_run_log(run_log)
     run_log_path = persist_androidworld_run_log(root, run_log=canonical_run)
-    evidence = {
-        "run_log_path": str(run_log_path),
-    }
+    evidence = {"target_run_log_path": str(run_log_path)}
     if captured_transfer_states is None and transfer_state_audit is None:
         return evidence
     if not isinstance(captured_transfer_states, dict):
@@ -528,9 +546,6 @@ def persist_target_run_evidence(
     evidence.update(
         {
             "target_transfer_states_path": str(transfer_states_path),
-            "target_transfer_states_sha256": hashlib.sha256(
-                transfer_states_bytes
-            ).hexdigest(),
             "target_transfer_state_audit": expected_audit,
         }
     )

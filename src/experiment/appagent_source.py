@@ -18,6 +18,7 @@ from typing import Any
 
 from PIL import Image
 
+from omniflow.core.androidworld_accessibility import androidworld_forest_xml
 from omniflow.core.trajectory import require_complete_source_run_log
 from src.experiment.mobilegpt_source import (
     load_canonical_source_item,
@@ -50,6 +51,25 @@ from src.integrations.appagent import (
 
 def _appagent_observation_xml(observation: dict[str, Any]) -> str:
     forest_xml = androidworld_observation_xml(observation)
+    # Canonical RunLogs keep native AndroidWorld accessibility forests as the
+    # structured ``{windows: ...}`` payload.  The generic observation helper
+    # intentionally only accepts an already-rendered XML string, so convert
+    # the native forest at this boundary before AppAgent's XML parser sees it.
+    # Without this, valid source traces become an empty XML document and the
+    # prep path reports ``no_interactive_elements`` even though the forest has
+    # clickable nodes.
+    forest = observation.get("forest")
+    if not forest_xml and forest:
+        pixels = observation.get("pixels")
+        if not isinstance(pixels, dict):
+            pixels = observation.get("screenshot")
+        pixels = pixels if isinstance(pixels, dict) else {}
+        width = pixels.get("width") or pixels.get("display_width") or 1000
+        height = pixels.get("height") or pixels.get("display_height") or 1000
+        forest_xml = androidworld_forest_xml(
+            forest,
+            screen_size=(int(width), int(height)),
+        ).strip()
     elements = observation.get("ui_elements")
     if not forest_xml or not isinstance(elements, list) or not elements:
         return forest_xml
@@ -139,7 +159,7 @@ def _write_runtime_config(
     endpoint: str,
     model: str,
     timeout_sec: float,
-    max_tokens: int = 1024,
+    max_tokens: int = 512,
 ) -> None:
     try:
         import yaml
@@ -151,10 +171,10 @@ def _write_runtime_config(
         "OPENAI_API_BASE": endpoint,
         "OPENAI_API_KEY": api_key,
         "OPENAI_API_MODEL": model,
-        # GLM-4.6V may spend part of a short completion budget on visual
-        # reasoning before emitting the AppAgent action description.  The
-        # official generator reads this value from its temporary config.
+        # Keep the temporary authoring call bounded; the staged model adapter
+        # also disables provider-side reasoning explicitly.
         "MAX_TOKENS": int(max_tokens),
+        "THINKING": "disabled",
         "TEMPERATURE": 0.0,
         "REQUEST_INTERVAL": 0.0,
         "DASHSCOPE_API_KEY": "",
@@ -224,7 +244,7 @@ def run_official_document_generation(
             endpoint=endpoint,
             model=normalized_model,
             timeout_sec=float(timeout_sec),
-            max_tokens=1024,
+            max_tokens=512,
         )
         previous_cwd = Path.cwd()
         previous_argv = list(sys.argv)
@@ -719,6 +739,7 @@ def convert_runlog_to_appagent_memory(
     # package. Resolve the source identity from the first non-auxiliary demo
     # page so the IME does not become a second AppAgent application.
     if "." not in source_package:
+        observed_packages: list[str] = []
         for record in all_demo_records:
             observation = _appagent_source_observation(
                 source,
@@ -733,8 +754,12 @@ def convert_runlog_to_appagent_memory(
                 )
                 and not _is_appagent_launcher_package(observed_package)
             ):
-                source_package = observed_package
-                break
+                observed_packages.append(observed_package)
+        if observed_packages:
+            source_package = max(
+                set(observed_packages),
+                key=lambda package: (observed_packages.count(package), package),
+            )
     packages = []
     for record in all_demo_records:
         observation = _appagent_source_observation(

@@ -23,6 +23,7 @@ from src.integrations.android_world.run_episode import (
     _androidworld_setup_timeout_sec,
     _bounded_androidworld_adb_file_transfer_timeout,
     _ensure_androidworld_a11y_forwarder,
+    _oob_control_accessibility_services,
     _ExperimentAgentAdapter,
     _patch_androidworld_adb_output_sanitizer,
     _patch_androidworld_adb_controller_install_compat,
@@ -30,6 +31,7 @@ from src.integrations.android_world.run_episode import (
     _patch_androidworld_app_launch,
     _patch_androidworld_current_activity,
     _patch_androidworld_chcon_compat,
+    _patch_androidworld_clipboard_read_compat,
     _patch_androidworld_expense_setup_timeout,
     _patch_androidworld_directory_clear,
     _patch_androidworld_optional_setup_click,
@@ -42,6 +44,20 @@ from src.integrations.android_world.run_episode import (
     _model_base_url_for_profile,
     _wait_for_androidworld_a11y,
 )
+
+
+def test_oob_control_uses_only_formal_accessibility_services() -> None:
+    assert _oob_control_accessibility_services(
+        [
+            "com.google.androidenv.accessibilityforwarder/Service",
+            "com.example.unrelated/LegacyService",
+            "cn.com.omnimind.bot.debug/"
+            "cn.com.omnimind.accessibility.service.AssistsService",
+        ]
+    ) == [
+        "cn.com.omnimind.bot.debug/"
+        "cn.com.omnimind.accessibility.service.AssistsService",
+    ]
 
 
 def test_formal_model_profile_uses_protocol_base_url_without_env_base_url(
@@ -2254,6 +2270,75 @@ def test_observe_prefers_semantically_richer_official_ui_elements() -> None:
     assert target.attrib["editable"] == "true"
 
 
+def test_observe_prefers_complete_ui_elements_over_partial_richer_forest() -> None:
+    def forest_node(unique_id, bounds, *, child_ids=(), text=""):
+        return SimpleNamespace(
+            unique_id=unique_id,
+            bounds_in_screen=SimpleNamespace(
+                left=bounds[0],
+                top=bounds[1],
+                right=bounds[2],
+                bottom=bounds[3],
+            ),
+            child_ids=list(child_ids),
+            text=text,
+            content_description="",
+            view_id_resource_name="",
+            package_name="com.android.settings",
+            class_name="android.widget.TextView",
+            is_clickable=False,
+            is_editable=False,
+            is_scrollable=False,
+            is_visible_to_user=True,
+        )
+
+    forest = SimpleNamespace(
+        windows=[
+            SimpleNamespace(
+                id=1,
+                title="Settings",
+                tree=SimpleNamespace(
+                    nodes=[
+                        forest_node(1, (0, 0, 465, 800), child_ids=(2, 3, 4)),
+                        forest_node(2, (32, 80, 400, 140), text="Network & internet"),
+                        forest_node(3, (32, 160, 400, 220), text="Connected devices"),
+                        forest_node(4, (32, 240, 400, 300), text="Apps"),
+                    ]
+                ),
+            )
+        ]
+    )
+    complete_elements = [
+        SimpleNamespace(
+            text="",
+            package_name="com.android.settings",
+            class_name="android.widget.FrameLayout",
+            bbox_pixels=SimpleNamespace(x_min=0, y_min=0, x_max=1280, y_max=800),
+        ),
+        SimpleNamespace(
+            text="Network & internet",
+            package_name="com.android.settings",
+            class_name="android.widget.TextView",
+            bbox_pixels=SimpleNamespace(x_min=700, y_min=80, x_max=1100, y_max=140),
+        ),
+    ]
+    env = SimpleNamespace(
+        get_state=lambda **_: _official_state(
+            forest=forest,
+            ui_elements=complete_elements,
+        ),
+        device_screen_size=(1280, 800),
+        logical_screen_size=(1280, 800),
+        foreground_activity_name="com.android.settings/.Settings",
+    )
+
+    observation = AndroidWorldHost(env).observe()
+
+    assert observation.extra["ui_graph_source"] == "androidworld_state_ui_elements"
+    assert observation.extra["ui_graph_complete"] is True
+    assert "Network &amp; internet" in str(observation.xml)
+
+
 def test_observe_keeps_semantically_richer_official_forest() -> None:
     rich_node = SimpleNamespace(
         unique_id=1,
@@ -2443,3 +2528,102 @@ def test_androidworld_camera_launch_falls_back_to_public_capture_intent() -> Non
         ),
         ("check", "Failed to launch the AndroidWorld Camera2 capture intent."),
     ]
+
+
+def test_androidworld_clipboard_read_dismisses_legacy_dialog_from_live_xml(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, object]] = []
+    controller = object()
+    attempts = 0
+    dialog_xml = b"""<?xml version='1.0' encoding='UTF-8'?>
+<hierarchy>
+  <node text="This app was built for an older version of Android and may not work properly." package="android" bounds="[40,300][680,700]" />
+  <node text="OK" resource-id="android:id/button1" package="android" clickable="true" bounds="[520,730][680,810]" />
+</hierarchy>
+UI hierchary dumped to: /dev/tty
+"""
+
+    def get_clipboard_contents(actual_controller: object) -> str:
+        nonlocal attempts
+        assert actual_controller is controller
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError(
+                "Clipper app must be in the foreground to access clipboard. "
+                "Additionally, app privileges must be granted manually."
+            )
+        return "1234 Elm St, Springfield, IL"
+
+    def issue_generic_request(
+        command: list[str], actual_controller: object
+    ) -> SimpleNamespace:
+        assert actual_controller is controller
+        calls.append(("adb", tuple(command)))
+        output = dialog_xml if "cat" in command else b""
+        return SimpleNamespace(generic=SimpleNamespace(output=output))
+
+    monkeypatch.setattr(
+        "src.integrations.android_world.run_episode.time.sleep", lambda _: None
+    )
+    adb_utils = SimpleNamespace(
+        get_clipboard_contents=get_clipboard_contents,
+        issue_generic_request=issue_generic_request,
+    )
+
+    original = _patch_androidworld_clipboard_read_compat(adb_utils)
+    try:
+        result = adb_utils.get_clipboard_contents(controller)
+    finally:
+        adb_utils.get_clipboard_contents = original
+
+    assert result == "1234 Elm St, Springfield, IL"
+    assert attempts == 2
+    assert calls == [
+        (
+            "adb",
+            (
+                "shell",
+                "uiautomator",
+                "dump",
+                "/data/local/tmp/omniflow_clipboard_validator.xml",
+            ),
+        ),
+        (
+            "adb",
+            (
+                "shell",
+                "cat",
+                "/data/local/tmp/omniflow_clipboard_validator.xml",
+            ),
+        ),
+        (
+            "adb",
+            (
+                "shell",
+                "rm",
+                "-f",
+                "/data/local/tmp/omniflow_clipboard_validator.xml",
+            ),
+        ),
+        ("adb", ("shell", "input", "tap", "600", "770")),
+    ]
+
+
+def test_androidworld_clipboard_read_preserves_unrelated_failure() -> None:
+    controller = object()
+    adb_utils = SimpleNamespace(
+        get_clipboard_contents=lambda actual_controller: (_ for _ in ()).throw(
+            RuntimeError("Failed to get clipboard content.")
+        ),
+        issue_generic_request=lambda *_args, **_kwargs: pytest.fail(
+            "unrelated failures must not inspect or modify the UI"
+        ),
+    )
+
+    original = _patch_androidworld_clipboard_read_compat(adb_utils)
+    try:
+        with pytest.raises(RuntimeError, match="Failed to get clipboard content"):
+            adb_utils.get_clipboard_contents(controller)
+    finally:
+        adb_utils.get_clipboard_contents = original

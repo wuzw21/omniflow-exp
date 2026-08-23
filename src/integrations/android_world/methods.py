@@ -141,6 +141,15 @@ def reuse_metrics_from_result_row(
         canonical_run = _json_object(
             row.get("run_log_path") or row.get("target_run_log_path")
         )
+    if not isinstance(canonical_run, dict) or not canonical_run:
+        evidence_paths = row.get("evidence_paths")
+        if isinstance(evidence_paths, (list, tuple)):
+            for evidence_path in evidence_paths:
+                candidate = Path(str(evidence_path)).expanduser()
+                if candidate.name == "run_log.json":
+                    canonical_run = _json_object(candidate)
+                    if canonical_run:
+                        break
     mobilegpt_stats = {
         "memory_lookup_count": row.get("episode_memory_lookup_count"),
         "memory_hit_count": row.get("episode_memory_hit_count"),
@@ -322,9 +331,7 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
         resolved_planner_model
         or resolved_planner_provider
         or _read_env_bool("OMNIFLOW_ENABLE_ONLINE_PLANNER", False)
-    ) and context.selector != "fixed_replay" and not str(
-        context.direct_function_id or ""
-    ).strip():
+    ) and context.selector != "fixed_replay":
         from omniflow.vlm.planner import VLMPlanner
 
         planner_api_key, planner_base_url = resolve_openai_compatible_config(

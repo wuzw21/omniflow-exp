@@ -11,8 +11,8 @@ def test_archive_names_use_avd_model_not_cli_alias() -> None:
         label="small5554", serial="emulator-5554", console_port=5554
     ) == "WXGA_Tablet_test_00"
     assert canonical_device_seed_name(
-        label="pixel5576", serial="emulator-5576", console_port=5576
-    ) == "AndroidWorldAvd4090_seed111_eval113"
+        label="small5562", serial="emulator-5562", console_port=5562
+    ) == "OmniFlowTargetSmall_seed111_eval113"
     assert canonical_device_seed_name(
         label="fold5564", serial="emulator-5564", console_port=5564
     ) == "OmniFlowTargetFold_seed111_eval113"
@@ -22,6 +22,12 @@ def test_archive_names_use_avd_model_not_cli_alias() -> None:
     assert canonical_device_model(
         label="small5554", serial="emulator-5554", console_port=5554
     ) == "WXGA_Tablet_test_00"
+
+
+def test_retired_pixel_alias_is_read_only_compatibility() -> None:
+    assert canonical_device_model(
+        label="pixel5576", serial="emulator-5576", console_port=5576
+    ) == "AndroidWorldAvd4090"
 
 
 def test_method_aliases_are_canonicalized() -> None:

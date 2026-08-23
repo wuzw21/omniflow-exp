@@ -156,7 +156,6 @@ def test_direct_function_is_a_method_adapter_not_a_runner_override() -> None:
         adb_serial="emulator-5554",
         direct_function_id="complete_task",
         direct_function_arguments={"target": "Alarm"},
-        planner_model="must-not-build",
         build_omniflow_agent=build_agent,
     )
 
@@ -164,6 +163,34 @@ def test_direct_function_is_a_method_adapter_not_a_runner_override() -> None:
 
     assert captured["direct_function_id"] == "complete_task"
     assert captured["direct_function_arguments"] == {"target": "Alarm"}
+
+
+def test_direct_function_keeps_online_planner_for_transfer_fallback(monkeypatch) -> None:
+    planner_options: dict[str, object] = {}
+
+    class CapturingPlanner:
+        def __init__(self, **options: object) -> None:
+            planner_options.update(options)
+
+    monkeypatch.setattr("omniflow.vlm.planner.VLMPlanner", CapturingPlanner)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
+    monkeypatch.setenv("OMNIFLOW_MODEL_ENDPOINT_PROFILE", "openai")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.invalid/v1")
+    context = MethodAdapterContext(
+        selector="omniflow",
+        env=SimpleNamespace(),
+        store_path="store.json",
+        adb_serial="emulator-5554",
+        direct_function_id="complete_task",
+        planner_provider="openai",
+        planner_model="GLM-4.6V",
+        model_endpoint_profile="openai",
+        build_omniflow_agent=lambda **options: SimpleNamespace(**options),
+    )
+
+    default_method_adapter_registry().build(context)
+
+    assert planner_options["model"] == "GLM-4.6V"
 
 
 def test_omniflow_adapter_uses_canonical_planner_configuration(
@@ -176,7 +203,9 @@ def test_omniflow_adapter_uses_canonical_planner_configuration(
             planner_options.update(options)
 
     monkeypatch.setattr("omniflow.vlm.planner.VLMPlanner", CapturingPlanner)
-    monkeypatch.setenv("OPENAI_API_KEY", "not-required")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
+    monkeypatch.setenv("OMNIFLOW_MODEL_ENDPOINT_PROFILE", "openai")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.invalid/v1")
 
     context = MethodAdapterContext(
         selector="omniflow",
@@ -184,6 +213,7 @@ def test_omniflow_adapter_uses_canonical_planner_configuration(
         store_path="store.json",
         adb_serial="emulator-5554",
         planner_model="test-model",
+        model_endpoint_profile="openai",
         build_omniflow_agent=lambda **options: SimpleNamespace(**options),
     )
 

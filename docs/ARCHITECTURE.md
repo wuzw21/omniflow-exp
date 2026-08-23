@@ -16,7 +16,7 @@
 | --- | --- | --- |
 | 任务执行 | `scripts/exp/run_androidworld.sh` → `src/experiment/run_tasks.py` → `src/experiment/run_task.py` | 选择任务、方法、设备，并运行一个原子结果 |
 | Native episode | `src/integrations/android_world/run_episode.py` | 创建 AndroidWorld/B-MoCA 环境、调用官方 validator、封存 RunLog |
-| Function 生命周期 | `omniflow/functions/assets.py::save_function` | 从一份成功 RunLog 编译、验证并原子写入一个 Function Store |
+| Function 生命周期 | `omniflow/functions/assets.py::save_function` | 规范化并原子写入一个包含多个独立 v3 Function 的 Store |
 | 本地证据索引 | `src/experiment/data_index.py` | 物化并读取 `data/current.json`；运行时不扫描替代索引 |
 
 ## 2. 唯一运行路径
@@ -103,27 +103,12 @@ OmniTransfer、checker、证据封存和结果归档，且不会因为 CLI 入�
 因此“只保留一套索引”不是删除所有 manifest 或 ledger，而是保证只有
 `current.json` 参与运行时解析；其他文件各自只承担证据或统计语义。
 
-### 旧 Function JSON 的迁移
+### Function v3
 
-运行时只读取新版 `omniflow.store.v2`。迁移器
-`omniflow.functions.migrate_store` 是离线一次性工具，不是新的 runtime
-入口：它把旧 `function-bundle.v2` 重新对齐到成功 RunLog，把旧多 Function
-Store 拆成一个 Function 一个 Store，并保留每个 Function 实际引用的
-transfer states。迁移失败时不应放宽校验；没有 source state、无法唯一对齐
-或缺少 transfer states 都必须停止。
-
-`function-asset-catalog.v1` 只是历史索引，不是 Store。它不能通过改名字或
-改 schema_version 伪装成 Store；迁移完成后仍由 `data_index.py` 重新生成唯一
-运行时索引 `data/current.json`。
-
-迁移器支持两种粒度：单文件迁移用于逐个修复；`--input-root` 批量扫描用于
-一次整理历史 JSON。批量流程固定为“识别 schema -> 读取 catalog 引用 ->
-验证 Store、source RunLog、source call、transfer states -> 写入 canonical
-Function 资产 -> 输出 converted/blocked 报告”。它不覆盖输入，也不写
-`current.json`。旧 catalog 重复对象只按内容扫描一次；一个旧 Store 中的
-多个 Function 会被放进不同的 canonical attempt，避免重新制造
-`current.json` 无法识别的多 Function 目录。没有足够证据的 Function 必须
-出现在 blocked 报告中，不能用空参数或坐标猜测补齐。
+运行时只读取 `omniflow.function.v3`。一个 Store 可包含多个独立 Function；
+每个 Function 内联 `transfer_states`，其值直接复用 RunLog observation schema，
+步骤以 `transfer_state_ids` 引用一个或多个 observation。Function 动作和顺序
+不与 RunLog 轨迹绑定，也没有 sibling `transfer_states.json` 或运行时兼容层。
 
 ## 5. 当前精简候选与保留决定
 
@@ -156,6 +141,25 @@ AndroidWorld 的正式采集、手工采集和 fixed replay capture 共用 `buil
 `convert_runlog_to_appagent_memory`，MobileGPT 直接调用
 `convert_runlog_to_mobilegpt_bundle`。新增 provider 时应新增自己的 adapter，
 而不是把分派字符串重新塞回 source 层。
+
+### AndroidWorld public result row
+
+`src/experiment/result_schema.py::RESULT_FIELDS` 是唯一公开 cell 表的字段
+合同；`run_task.py` 用它写 `result_summary.md`、`result_summary.json`，注册器
+用同一行写 immutable result ledger，批量汇总层只补充报告字段，不另建一张
+口径不同的表。每个 cell 至少记录：
+
+- episode 与 prep 的模型调用数、chat/embedding 调用数、prompt/completion/total
+  tokens、两阶段合计调用数/Token、动作数、VLM calls、延迟和能耗；
+- Function 命中、覆盖步数/总步数/覆盖率，以及 memory 的
+  `used/prepared/not_applicable/unavailable` 状态、来源和命中率；
+- fallback 步数、配置上限、是否耗尽预算和 measurement status；
+- validator 结论、method outcome、failure stage/reason、environment failure、
+  attempt/device/provenance。
+
+统计没有上报时写 `null` 并在对应的 `*_measurement_status` 或状态字段中说明，
+不能把官方 baseline 未提供的 fallback 或 memory 命中伪装成 0。只有代码明确
+记录到的零调用、零 fallback 或零能耗才写数字 0。
 
 | 候选 | 判断 | 后续动作 |
 | --- | --- | --- |

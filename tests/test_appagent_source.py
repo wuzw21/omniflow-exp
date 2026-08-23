@@ -1052,6 +1052,110 @@ def test_appagent_projects_androidworld_ui_elements_to_xml() -> None:
     assert 'focused="true"' in xml_text
 
 
+def test_appagent_projects_native_androidworld_forest_to_xml() -> None:
+    xml_text = appagent_source._appagent_observation_xml(
+        {
+            "pixels": {"width": 720, "height": 1280},
+            "forest": {
+                "windows": [
+                    {
+                        "id": 1,
+                        "tree": {
+                            "nodes": [
+                                {
+                                    "unique_id": 1,
+                                    "bounds_in_screen": {
+                                        "left": 10,
+                                        "top": 20,
+                                        "right": 110,
+                                        "bottom": 80,
+                                    },
+                                    "is_visible_to_user": True,
+                                    "is_clickable": True,
+                                    "class_name": "android.widget.Button",
+                                    "content_description": "Create",
+                                    "package_name": "com.example",
+                                }
+                            ]
+                        },
+                    }
+                ]
+            },
+            "ui_elements": [],
+        }
+    )
+
+    assert "<hierarchy" in xml_text
+    assert 'content-desc="Create"' in xml_text
+    assert 'clickable="true"' in xml_text
+    assert len(appagent_source.appagent_elements_from_xml(xml_text, min_dist=0)) == 1
+
+
+def test_appagent_drops_unaddressable_menu_dismissal_pair() -> None:
+    actions, skipped = appagent_adapter._drop_unaddressable_route_dismissals(
+        [
+            {
+                "source_step_index": 1,
+                "source_action_index": 0,
+                "action": {
+                    "type": "click",
+                    "params": {
+                        "target_description": "Go to",
+                        "source_context": {
+                            "element": {"resource_id": "net.gsantner.markor:id/action_go_to"}
+                        },
+                    },
+                },
+            },
+            {
+                "source_step_index": 2,
+                "source_action_index": 0,
+                "action": {"type": "click", "params": {}},
+            },
+            {
+                "source_step_index": 3,
+                "source_action_index": 0,
+                "action": {
+                    "type": "click",
+                    "params": {"target_description": "Create"},
+                },
+            },
+        ]
+    )
+
+    assert [item["source_step_index"] for item in actions] == [3]
+    assert [item["source_step_index"] for item in skipped] == [1, 2]
+
+
+def test_appagent_propagates_same_step_input_target() -> None:
+    actions = appagent_adapter._propagate_same_step_input_targets(
+        [
+            {
+                "source_step_index": 4,
+                "action": {
+                    "type": "click",
+                    "params": {
+                        "source_context": {
+                            "element": {"resource_id": "example:id/name"}
+                        }
+                    },
+                },
+            },
+            {
+                "source_step_index": 4,
+                "action": {
+                    "type": "input_text",
+                    "params": {"text": "folder"},
+                },
+            },
+        ]
+    )
+
+    assert actions[1]["action"]["params"]["source_context"] == {
+        "element": {"resource_id": "example:id/name"}
+    }
+
+
 def test_appagent_marks_semantic_androidworld_target_interactive() -> None:
     xml_text = (
         '<hierarchy><node text="Network &amp; internet" '

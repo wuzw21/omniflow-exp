@@ -13,6 +13,7 @@ _SPEC.loader.exec_module(_MODULE)
 ManualAndroidWorld = _MODULE.ManualAndroidWorld
 _find_ui_element_index = _MODULE._find_ui_element_index
 _resolve_device_serial = _MODULE._resolve_device_serial
+_bounded_swipe_action_record = _MODULE._bounded_swipe_action_record
 
 
 def test_find_ui_element_index_accepts_native_dicts_and_exact_selector():
@@ -146,3 +147,19 @@ def test_explicit_device_serial_overrides_environment(monkeypatch):
     monkeypatch.setenv("ANDROID_SERIAL", "other-device")
     args = SimpleNamespace(console_port=5554, device_serial="45291FDAP0013Z")
     assert _resolve_device_serial(args) == "45291FDAP0013Z"
+
+
+def test_bounded_widget_swipe_preserves_exact_runlog_coordinates():
+    assert _bounded_swipe_action_record(
+        [40, 112],
+        [719, 112],
+        duration_ms=500,
+    ) == {
+        "action_type": "swipe",
+        "direction": "left",
+        "x1": 40,
+        "y1": 112,
+        "x2": 719,
+        "y2": 112,
+        "duration_ms": 500,
+    }

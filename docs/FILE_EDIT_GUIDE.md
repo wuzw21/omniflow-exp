@@ -25,7 +25,7 @@
 | `omniflow/core/model.py`, `schemas.py`, `trajectory.py` | B | 核心领域对象、wire/schema、RunLog 不变量；实现可修，合同变更单独 commit |
 | `omniflow/core/config.py`, `omniflow/vlm/model_config.py`, `omniflow/vlm/planner.py`, `omniflow/vlm/usage.py` | B | runtime/model-facing 合同与 accounting；不能恢复 retired credential、tool 或隐式 retry |
 | `omniflow/functions/assets.py`, `omniflow/functions/recall.py` | B | 唯一 Function compiler、validator、writer、recall；允许深模块重构，禁止第二 Store writer/catalog |
-| `omniflow/runtime/*.py` | A/B | canonical execution、checker、fallback、semantic grounding；可以精简实现，不能绕过 OmniTransfer 或把 source 坐标当 target 执行 |
+| `omniflow/runtime/*.py` | A/B | canonical execution、checker、fallback；必须复用 OmniTransfer，不能把 source 坐标当 target 执行 |
 | `omniflow/transfer/*.py` | B/C | 唯一 page encoder 和 transfer-state reader；只能使用 canonical checkpoint，禁止新增 encoder/lookup 旁路 |
 | `omniflow/bridge.py`, `omniflow/runlog.py`, `omniflow/vlm/context.py`, `omniflow/vlm_coordinates.py` | B | 对外 bridge、canonical RunLog 和 Planner evidence；适配必须回到现有合同 |
 | `omniflow/**/__init__.py`, `src/**/__init__.py` | A | 只维护稳定导出和包边界，不放调度、业务实现或隐式兼容层 |
@@ -87,14 +87,12 @@ rg --files -g '*.py' | sort
 | `omniflow/core/trajectory.py` | RunLog/trajectory 的结构与顺序不变量；旧截图 hash 只读兼容，新 RunLog 不写 hash |
 | `omniflow/functions/__init__.py` | Function 导出 |
 | `omniflow/functions/assets.py` | 唯一 compiler、validator、`save_function`、Store writer；禁止第二 writer 或手改 Store |
-| `omniflow/functions/migrate_store.py` | 旧 Function JSON 的一次性迁移器；支持单文件和 `--input-root` 批量扫描，只能调用 current writer，必须保留 source RunLog、source call 和 transfer states；无法证明语义完整时只写 blocked 报告，禁止兼容运行时直接读取旧 Store |
 | `omniflow/functions/recall.py` | 只从已加载 Store 选择完整 Function；不创建 catalog |
 | `omniflow/runtime/__init__.py` | runtime 导出 |
 | `omniflow/runtime/core.py` | 单个 canonical action primitive |
 | `omniflow/runtime/checker.py` | active Function 的 checker session；规则只执行一次、映射失败只跳过 |
 | `omniflow/runtime/engine.py` | 一个持久 Planner/Function 生命周期；不增加 method-specific loop |
 | `omniflow/runtime/execution.py` | OmniTransfer、target selection、执行和正常 VLM fallback 的唯一 owner |
-| `omniflow/runtime/semantic_grounding.py` | 当前 observation 的可见目标 grounding；不替代 OmniTransfer |
 | `omniflow/transfer/__init__.py` | transfer 导出 |
 | `omniflow/transfer/page_embedding.py` | 唯一 active page encoder；只能使用 canonical OmniTransfer checkpoint |
 | `omniflow/transfer/runtime.py` | immutable transfer-state catalog 读取和 coverage 检查 |

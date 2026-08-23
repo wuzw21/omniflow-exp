@@ -719,13 +719,15 @@ def load_canonical_source_index(
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"Canonical data index must be a JSON object: {path}")
+    canonical_data = data.get("canonical") if isinstance(data.get("canonical"), dict) else {}
+    source_data = data
     if data.get("schema_version") == "omniflow.data-index.v2":
-        data = data.get("source_index")
-        if not isinstance(data, dict):
+        source_data = data.get("source_index")
+        if not isinstance(source_data, dict):
             raise ValueError(f"Current data index has no source index: {path}")
 
     source_items: list[CanonicalRunLog] = []
-    for task, raw_meta in data.items():
+    for task, raw_meta in source_data.items():
         if not isinstance(raw_meta, dict):
             continue
         retained = str(raw_meta.get("retained_source_run_log") or "").strip()
@@ -767,6 +769,7 @@ def load_canonical_source_index(
                 meta=dict(raw_meta),
             )
         )
+
     return source_items
 
 
@@ -1640,6 +1643,7 @@ def _canonical_function_source_call(
 def bind_function_arguments_to_task_params(
     source_arguments: dict[str, Any],
     task_params: dict[str, Any] | None,
+    source_task_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Bind dynamic Function inputs to the current evaluation task.
 
@@ -1648,14 +1652,32 @@ def bind_function_arguments_to_task_params(
     AndroidWorld tasks such as MarkorCreateFolder generate a fresh folder name
     from the evaluation seed. Only keys already declared by the source call
     are rebound, so static Function inputs remain unchanged and unrelated task
-    parameters never leak into the Function invocation.
+    parameters never leak into the Function invocation. Authoring may give a
+    Function input a clearer semantic name than AndroidWorld's generator key
+    (for example ``clipboard_text`` versus ``clipboard_content``). For those
+    cases, use the self-contained source RunLog as provenance: when exactly
+    one source task parameter has the same source value and also exists in the
+    target task parameters, bind from that corresponding target field.
     """
 
     bound = dict(source_arguments or {})
     target = task_params if isinstance(task_params, dict) else {}
+    source_params = (
+        source_task_params if isinstance(source_task_params, dict) else {}
+    )
     for key in tuple(bound):
         if key in target:
             bound[key] = target[key]
+            continue
+        provenance_keys = [
+            source_key
+            for source_key, source_value in source_params.items()
+            if source_key in target
+            and source_key != "seed"
+            and source_value == bound[key]
+        ]
+        if len(provenance_keys) == 1:
+            bound[key] = target[provenance_keys[0]]
     return bound
 
 
@@ -1698,67 +1720,44 @@ def validate_omniflow_transfer_assets(
     require_action_transfer: bool = True,
 ) -> dict[str, Any]:
     from omniflow.functions.assets import FunctionStore
-    from omniflow.transfer.runtime import (
-        TRANSFER_STATE_CATALOG_FILENAME,
-        audit_transfer_action_sources,
-        load_transfer_state_catalog,
-        transfer_state_coverage,
-    )
 
     resolved_store_path = resolve_path(store_path)
     if not resolved_store_path.is_file():
         raise FileNotFoundError(
-            f"validated v2 Function Store not found: {resolved_store_path}"
+            f"validated v3 Function Store not found: {resolved_store_path}"
         )
     store = FunctionStore(resolved_store_path)
     if store.load_errors:
         raise ValueError(
-            "validated v2 Function Store has invalid Functions:"
+            "validated v3 Function Store has invalid Functions:"
             + ",".join(sorted(store.load_errors))
         )
     if not store.functions:
-        raise ValueError("validated v2 Function Store contains no Functions")
-    catalog_path = resolved_store_path.parent / TRANSFER_STATE_CATALOG_FILENAME
-    states = load_transfer_state_catalog(catalog_path)
-    coverage = transfer_state_coverage(store.functions, states)
-    if require_action_transfer and coverage["required_state_count"]:
-        if not catalog_path.is_file():
-            raise FileNotFoundError(f"transfer_state_catalog_missing:{catalog_path}")
-        if not coverage["complete"]:
-            missing = ",".join(coverage["missing_state_ids"])
-            raise ValueError(f"transfer_state_catalog_incomplete:{missing}")
-        try:
-            source_target_audit = audit_transfer_action_sources(
-                store.functions,
-                states,
-            )
-        except ValueError as error:
-            reason = str(error)
-            if not reason.startswith(
-                (
-                    "transfer_action_source_target_unresolved:",
-                    "transfer_action_source_state_not_raw:",
-                )
-            ):
-                raise
-            source_target_audit = {
-                "source_target_audit_complete": False,
-                "source_target_count": 0,
-                "source_targets": [],
-                "fallback_required": True,
-                "failure": reason,
-            }
-    else:
-        source_target_audit = {
-            "source_target_audit_complete": not require_action_transfer,
-            "source_target_count": 0,
-            "source_targets": [],
-        }
+        raise ValueError("validated v3 Function Store contains no Functions")
+    referenced_state_ids = {
+        state_id
+        for function in store.functions.values()
+        for step in function.steps
+        for state_id in step.transfer_state_ids
+    }
+    embedded_state_ids = {
+        state_id
+        for function in store.functions.values()
+        for state_id in function.transfer_states
+    }
+    missing_state_ids = sorted(referenced_state_ids - embedded_state_ids)
+    if missing_state_ids:
+        raise ValueError(
+            "function_transfer_states_missing:" + ",".join(missing_state_ids)
+        )
     return {
         "store_path": str(resolved_store_path),
-        "transfer_state_catalog": str(catalog_path) if catalog_path.is_file() else "",
-        **coverage,
-        **source_target_audit,
+        "required_state_ids": sorted(referenced_state_ids),
+        "missing_state_ids": missing_state_ids,
+        "required_state_count": len(referenced_state_ids),
+        "available_state_count": len(embedded_state_ids),
+        "complete": not missing_state_ids,
+        "require_action_transfer": bool(require_action_transfer),
     }
 
 
@@ -3652,86 +3651,10 @@ def _t3a_semantic_hint_step(
     return semantic
 
 
-def _select_complete_function(store_path: str | Path):
-    store = FunctionStore(resolve_path(store_path))
-    if store.load_errors:
-        raise ValueError(
-            "t3a_hint_function_store_invalid:" + ",".join(sorted(store.load_errors))
-        )
-    functions = [
-        function
-        for function in store.list_functions(limit=500)
-        if re.match(r"^action_\d{3}_", function.id) is None
-    ]
-    if not functions:
-        raise ValueError("t3a_hint_semantic_functions_required")
-    if len(functions) == 1:
-        return functions[0]
-
-    def action_tools(function: Any) -> tuple[str, ...]:
-        return tuple(action.tool for action in function.actions)
-
-    def contains(complete: tuple[str, ...], subsequence: tuple[str, ...]) -> bool:
-        if not subsequence or len(subsequence) > len(complete):
-            return False
-        return any(
-            complete[start : start + len(subsequence)] == subsequence
-            for start in range(len(complete) - len(subsequence) + 1)
-        )
-
-    candidates = [
-        candidate
-        for candidate in functions
-        if all(
-            other is candidate or contains(action_tools(candidate), action_tools(other))
-            for other in functions
-        )
-    ]
-    maximum = max((len(action_tools(item)) for item in candidates), default=0)
-    candidates = [
-        candidate for candidate in candidates if len(action_tools(candidate)) == maximum
-    ]
-    if len(candidates) != 1:
-        raise ValueError("t3a_hint_complete_function_ambiguous")
-    return candidates[0]
-
-
-def _function_lineage_item(
-    item: CanonicalRunLog,
-    *,
-    store_path: Path,
-    index_path: Path,
-) -> CanonicalRunLog:
-    index = _read_json(resolve_path(index_path))
-    record = (
-        index.get("canonical", {})
-        .get("function_stores", {})
-        .get(item.task)
-    )
-    if not isinstance(record, dict):
-        raise ValueError(f"t3a_hint_function_store_lineage_missing:{item.task}")
-    indexed_store = resolve_path(str(record.get("store_path") or ""))
-    if indexed_store != store_path.resolve():
-        raise ValueError(f"t3a_hint_function_store_lineage_store_mismatch:{item.task}")
-    source_path = resolve_path(str(record.get("source_run_log_path") or ""))
-    if not source_path.is_file():
-        raise ValueError(f"t3a_hint_function_store_lineage_source_invalid:{item.task}")
-    source = require_complete_source_run_log(_read_object(source_path))
-    return replace(
-        item,
-        goal=str(source["goal"]),
-        params=dict(source["task_parameters"]),
-        source_run_log=source_path,
-        replay_seed=int(source["seed"]),
-        step_count=len(source["steps"]),
-    )
-
-
 def _source_action_hint_path_for_item(
     item: CanonicalRunLog,
     *,
     output_root: str | Path,
-    store_path: str | Path | None = None,
     repo_root: Path = REPO_ROOT,
 ) -> Path:
     payload, _, profile, _ = canonicalize_source_run_log(
@@ -3743,76 +3666,6 @@ def _source_action_hint_path_for_item(
     semantic_input_steps = source_steps
     semantic_preceding_steps = [None, *source_steps[:-1]]
     store_alignment_mode = "not_applicable"
-    if store_path is not None:
-        resolved_store_path = resolve_path(store_path, root=repo_root)
-        task_function = _select_complete_function(resolved_store_path)
-        raw_store = _read_json(resolved_store_path)
-        raw_functions = raw_store.get("functions")
-        raw_function = (
-            raw_functions.get(task_function.id)
-            if isinstance(raw_functions, dict)
-            else None
-        )
-        raw_function_steps = (
-            raw_function.get("steps") if isinstance(raw_function, dict) else None
-        )
-        if not isinstance(raw_function_steps, list):
-            raise ValueError(
-                f"t3a_hint_complete_function_raw_steps_missing:{task_function.id}"
-            )
-        semantic_input_steps = []
-        semantic_preceding_steps = []
-        alignment_modes: list[str] = []
-        source_cursor = 0
-        for function_step in raw_function_steps:
-            function_action, _ = _t3a_hint_step_action(function_step)
-            function_action_identity = _t3a_hint_action_identity(function_step)
-            function_state_id = str(
-                function_step.get("source_state_id")
-                if isinstance(function_step, dict)
-                else ""
-            ).strip()
-            aligned_index = None
-            alignment_mode = "state_identity"
-            for source_index in range(source_cursor, len(source_steps)):
-                source_step = source_steps[source_index]
-                source_state_id = str(
-                    source_step.get("before_state_id")
-                    if isinstance(source_step, dict)
-                    else ""
-                ).strip()
-                if (
-                    _t3a_hint_action_identity(source_step) == function_action_identity
-                    and source_state_id == function_state_id
-                ):
-                    aligned_index = source_index
-                    break
-            if aligned_index is None:
-                alignment_mode = "ordered_action"
-                for source_index in range(source_cursor, len(source_steps)):
-                    if (
-                        _t3a_hint_action_identity(source_steps[source_index])
-                        == function_action_identity
-                    ):
-                        aligned_index = source_index
-                        break
-            if aligned_index is None:
-                raise ValueError(
-                    "t3a_hint_function_runlog_action_mismatch:"
-                    f"{function_state_id}:{function_action}"
-                )
-            semantic_input_steps.append(source_steps[aligned_index])
-            semantic_preceding_steps.append(
-                source_steps[aligned_index - 1] if aligned_index > 0 else None
-            )
-            alignment_modes.append(alignment_mode)
-            source_cursor = aligned_index + 1
-        semantic_source = "omniflow_function_store"
-        store_alignment_mode = (
-            "state_identity"
-            if all(mode == "state_identity" for mode in alignment_modes)
-            else "ordered_action"
-        )
     semantic_steps = []
     for step, preceding_step in zip(
         semantic_input_steps,
@@ -6226,11 +6079,6 @@ def run_task(args: argparse.Namespace) -> int:
                     "recorded_source_seed": item.replay_seed,
                     "function_authoring": "external_agent_skill",
                     "transfer_asset_audit": transfer_asset_audit,
-                    "transfer_state_catalog_sha256": (
-                        sha256_file(transfer_asset_audit["transfer_state_catalog"])
-                        if transfer_asset_audit.get("transfer_state_catalog")
-                        else None
-                    ),
                 },
             )
         if method == "appagent":
@@ -6394,24 +6242,10 @@ def run_task(args: argparse.Namespace) -> int:
             )
         elif method == "t3a_hint":
             official_agent_name = "t3a_gpt4"
-            source_hint_store_path = (
-                resolve_path(str(args.store_path))
-                if str(args.store_path or "").strip()
-                else None
-            )
-            hint_item = (
-                _function_lineage_item(
-                    item,
-                    store_path=source_hint_store_path,
-                    index_path=args.index,
-                )
-                if source_hint_store_path is not None
-                else item
-            )
+            hint_item = item
             source_action_hint_path = _source_action_hint_path_for_item(
                 hint_item,
                 output_root=memory_root,
-                store_path=source_hint_store_path,
             )
             _write_method_memory_manifest(
                 memory_root=memory_root,

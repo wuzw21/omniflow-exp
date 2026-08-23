@@ -4,6 +4,7 @@ import base64
 from collections.abc import Callable
 from copy import deepcopy
 import json
+from time import perf_counter
 import math
 from pathlib import Path
 import re
@@ -22,7 +23,14 @@ from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import LLMUsageTracker
 from omniflow.vlm_coordinates import screen_pixel_args_to_canonical
 
-SYSTEM_PROMPT = DEFAULT_PLANNER_SYSTEM_PROMPT
+SYSTEM_PROMPT = (
+    DEFAULT_PLANNER_SYSTEM_PROMPT
+    + " Within vlm_task, use only the GUI action tools and registered Function "
+    "tools included in this request. tools_search and other general Agent tools "
+    "are not available inside the VLM planner; never call them."
+)
+
+_MAX_MODEL_TURN_ATTEMPTS = 2
 
 
 class ModelToolCallError(ValueError):
@@ -119,7 +127,11 @@ def parse_model_turn_response(
     functions_by_id = {function.id: function for function in functions}
     model_visible_tools.update(functions_by_id)
     if tool not in model_visible_tools:
-        raise ModelToolCallError(f"model_turn_tool_not_visible:{tool}")
+        raise ModelToolCallError(
+            f"model_turn_tool_not_visible:{tool}",
+            tool_name=tool,
+            arguments=function.get("arguments"),
+        )
     raw_arguments = function.get("arguments")
     if not isinstance(raw_arguments, str):
         raise ModelToolCallError(
@@ -219,23 +231,111 @@ def _coerce_model_numeric_arguments(
         if spec.get("type") not in {"number", "integer"}:
             continue
         value = arguments.get(name)
-        if not isinstance(value, str):
+        original_value = value
+        if isinstance(value, str):
+            stripped = value.strip()
+            try:
+                number = float(stripped)
+            except ValueError:
+                # GLM-compatible gateways can splice XML argument markers into
+                # a numeric coordinate.  Only recover the leading number when
+                # those markers are explicit; arbitrary text remains invalid.
+                if any(
+                    marker in stripped
+                    for marker in ("<arg_key>", "</arg_key>", "<arg_value>")
+                ):
+                    match = re.match(r"^\s*(-?(?:\d+(?:\.\d*)?|\.\d+))", stripped)
+                    if match is not None:
+                        number = float(match.group(1))
+                        if math.isfinite(number):
+                            converted: int | float = (
+                                int(number)
+                                if spec.get("type") == "integer" and number.is_integer()
+                                else number
+                            )
+                            arguments[name] = converted
+                            coercions.append(
+                                {
+                                    "field": name,
+                                    "from": original_value,
+                                    "to": converted,
+                                }
+                            )
+                            continue
+                # GLM-V can serialize a coordinate pair as a JSON string
+                # even though the tool schema declares a number.  Decode it
+                # here so the existing model-specific coordinate-pair adapter
+                # can apply the same validation as native JSON arrays.
+                try:
+                    decoded = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(decoded, list):
+                    continue
+                value = decoded
+            else:
+                if not math.isfinite(number):
+                    continue
+                converted: int | float = (
+                    int(number)
+                    if spec.get("type") == "integer" and number.is_integer()
+                    else number
+                )
+                arguments[name] = converted
+                coercions.append(
+                    {"field": name, "from": original_value, "to": converted}
+                )
+                continue
+        if not isinstance(value, list):
             continue
-        stripped = value.strip()
-        try:
-            number = float(stripped)
-        except ValueError:
+        converted_values: list[int | float] = []
+        for item in value:
+            if isinstance(item, bool):
+                break
+            if isinstance(item, (int, float)):
+                number = float(item)
+            elif isinstance(item, str):
+                try:
+                    number = float(item.strip())
+                except ValueError:
+                    break
+            else:
+                break
+            if not math.isfinite(number):
+                break
+            converted_values.append(
+                int(number)
+                if spec.get("type") == "integer" and number.is_integer()
+                else number
+            )
+        else:
+            arguments[name] = converted_values
+            if converted_values:
+                coercions.append(
+                    {
+                        "field": name,
+                        "from": original_value,
+                        "to": converted_values,
+                    }
+                )
             continue
-        if not math.isfinite(number):
-            continue
-        converted: int | float = (
-            int(number) if spec.get("type") == "integer" and number.is_integer() else number
-        )
-        arguments[name] = converted
-        coercions.append(
-            {"field": name, "from": value, "to": converted}
-        )
     return coercions
+
+
+def _is_retryable_model_tool_error(error_code: str) -> bool:
+    """Allow one corrective model turn for malformed coordinates only."""
+
+    if error_code.startswith("canonical_action_required_args_missing:"):
+        field = error_code.rsplit(":", 1)[-1].strip()
+        return field in {"x", "y", "x1", "y1", "x2", "y2"}
+    for prefix in (
+        "canonical_action_arg_type_invalid:",
+        "canonical_action_arg_range_invalid:",
+    ):
+        if error_code.startswith(prefix):
+            field = error_code[len(prefix) :].strip()
+            return field in {"x", "y", "x1", "y1", "x2", "y2"}
+    return error_code.startswith("model_turn_tool_not_visible:")
 
 
 def function_tools(
@@ -267,7 +367,26 @@ def _turn_text(
     state: dict[str, Any],
 ) -> str:
     display = state.get("display") if isinstance(state.get("display"), dict) else {}
-    lines = [
+    raw_extra = state.get("extra")
+    function_execution = (
+        raw_extra.get("function_execution")
+        if isinstance(raw_extra, dict)
+        else None
+    )
+    function_failed = (
+        isinstance(function_execution, dict)
+        and str(function_execution.get("replay_status") or "").strip()
+        == "actions_failed"
+    )
+    lines = []
+    if function_failed:
+        lines.append(
+            "TRANSFER FAILURE TERMINAL: Return exactly one finished tool call "
+            "with empty content now. This Function-only measurement has ended. "
+            "Do not call any GUI action or Function; do not recover, fallback, "
+            "retry, or loop."
+        )
+    lines.extend([
         f"Task: {goal}",
         (
             "Current screen: "
@@ -275,51 +394,34 @@ def _turn_text(
             f"activity={state.get('activity_name') or '-'}, "
             f"display={display.get('width') or '?'}x{display.get('height') or '?'}"
         ),
-    ]
+        (
+            "Action argument rule: every click must include both numeric x and y "
+            "in the same tool call; never send a coordinate pair as x alone."
+        ),
+    ])
     page_context = analyze_page_context(state)
     if page_context.useful:
         lines.append(page_context.evidence)
-    raw_extra = state.get("extra")
     if isinstance(raw_extra, dict):
+        graph_source = str(raw_extra.get("ui_graph_source") or "").strip()
+        if graph_source.endswith("_partial"):
+            lines.append(
+                "Accessibility graph is partial; use the current screenshot for "
+                "controls omitted from XML and do not repeat a selected navigation item."
+            )
         previous_error = str(raw_extra.get("previous_action_error") or "").strip()
         if previous_error:
             lines.append(f"Previous action error: {previous_error}")
-        function_execution = raw_extra.get("function_execution")
         if isinstance(function_execution, dict):
             function_id = str(function_execution.get("function_id") or "").strip()
             status = str(function_execution.get("replay_status") or "").strip()
             if function_id and status:
                 result = "succeeded" if status == "actions_succeeded" else status
                 lines.append(f"Previous Function result: {function_id} {result}")
-            recovery = function_execution.get("recovery")
-            if status == "actions_failed" and isinstance(recovery, dict):
-                step_index = recovery.get("step_index")
-                action = recovery.get("action")
-                source_control = recovery.get("source_control")
+            if status == "actions_failed":
                 lines.append(
-                    f"Function recovery required: continue {function_id} "
-                    f"from failed step {step_index}."
-                )
-                if isinstance(action, dict):
-                    lines.append(
-                        "Required next Function action (semantic only): "
-                        f"tool={action.get('tool') or '-'}"
-                    )
-                if isinstance(source_control, dict):
-                    labels = ", ".join(
-                        f"{key}={value}"
-                        for key, value in source_control.items()
-                    )
-                    lines.append(f"Source control semantics: {labels}")
-                lines.append(
-                    "Use the current screenshot and accessibility XML to perform "
-                    "this failed Function step when an equivalent control exists. "
-                    "If the source control is absent because this device has a "
-                    "different layout, choose the visible current-screen "
-                    "equivalent or the task-level action instead; never use "
-                    "source-device coordinates. The runtime will resume the "
-                    "remaining Function steps only when this action is the same "
-                    "semantic step."
+                    "STOP POLICY: the Function replay failed; the mandatory and "
+                    "only permitted response is finished with empty content."
                 )
         user_input = str(raw_extra.get("user_input") or "").strip()
         if user_input:
@@ -458,35 +560,92 @@ class VLMPlanner:
         installed_apps: dict[str, str] | None = None,
     ) -> ToolCall:
         state = _planner_state(observation)
-        self._turn_index += 1
-        request = build_model_turn_request(
-            goal=str(goal),
-            model=self.model,
-            state=state,
-            installed_apps=installed_apps or {},
-            functions=functions,
-            turn_index=self._turn_index,
-        )
-        self._usage.start_call()
-        try:
-            response = self._call_model(
-                {
-                    "goal": str(goal),
-                    "model": self.model,
-                    "request": request,
-                }
-            )
-            self._usage.record_response(response)
-            tool_call, metadata = parse_model_turn_response(
-                _normalize_response(response, requested_model=self.model),
-                requested_model=self.model,
-                turn_index=self._turn_index,
+        rejected_tool_calls: list[dict[str, Any]] = []
+        validation_error = ""
+        for attempt in range(_MAX_MODEL_TURN_ATTEMPTS):
+            self._turn_index += 1
+            request = build_model_turn_request(
+                goal=str(goal),
+                model=self.model,
+                state=state,
+                installed_apps=installed_apps or {},
                 functions=functions,
-                display=state.get("display"),
+                turn_index=self._turn_index,
             )
-        except Exception:
-            self._usage.record_failure()
-            raise
+            if validation_error:
+                visible_names = [
+                    str(item.get("function", {}).get("name") or "")
+                    for item in request.get("tools") or ()
+                    if isinstance(item, dict)
+                    and isinstance(item.get("function"), dict)
+                ]
+                request["messages"] = [
+                    *request["messages"],
+                    {
+                        "role": "user",
+                        "content": (
+                            "The previous tool call was rejected: "
+                            f"{validation_error}. Return exactly one tool call "
+                            "from the tools provided in this request. Do not call "
+                            "tools_search or any other unavailable Agent tool. "
+                            f"Available tools: {', '.join(visible_names)}."
+                        ),
+                    },
+                ]
+            self._usage.start_call()
+            request_started = perf_counter()
+            try:
+                response = self._call_model(
+                    {
+                        "goal": str(goal),
+                        "model": self.model,
+                        "request": request,
+                    }
+                )
+                self._usage.record_response(response)
+                tool_call, metadata = parse_model_turn_response(
+                    _normalize_response(response, requested_model=self.model),
+                    requested_model=self.model,
+                    turn_index=self._turn_index,
+                    functions=functions,
+                    display=state.get("display"),
+                )
+            except ModelToolCallError as error:
+                self._usage.record_failure()
+                rejected_tool_calls.append(
+                    {
+                        "turn_index": self._turn_index,
+                        "tool": error.tool_name or None,
+                        "error": str(error),
+                    }
+                )
+                if error.arguments is not None:
+                    rejected_tool_calls[-1]["arguments"] = error.arguments
+                if (
+                    attempt + 1 >= _MAX_MODEL_TURN_ATTEMPTS
+                    or not _is_retryable_model_tool_error(error.code)
+                ):
+                    self._metadata = {
+                        "rejected_tool_calls": rejected_tool_calls,
+                    }
+                    if self._metadata_sink is not None:
+                        self._metadata_sink(dict(self._metadata))
+                    raise
+                validation_error = str(error)
+                continue
+            except Exception:
+                self._usage.record_failure()
+                raise
+            finally:
+                self._usage.record_latency(
+                    (perf_counter() - request_started) * 1000.0
+                )
+            break
+        if rejected_tool_calls:
+            metadata = {
+                **metadata,
+                "rejected_tool_calls": rejected_tool_calls,
+            }
         self._metadata = metadata
         if self._metadata_sink is not None:
             self._metadata_sink(dict(metadata))

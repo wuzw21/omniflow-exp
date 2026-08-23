@@ -52,7 +52,12 @@ class OobControlClient:
     def act(self, action: dict[str, Any]) -> dict[str, Any]:
         result = self._request(
             "act",
-            {"action": action, "await_stabilization": False},
+            # The resident OOB executor otherwise returns immediately after
+            # dispatch.  That leaves the next Function step and the official
+            # validator observing the pre-action UI state.  Stabilization is
+            # part of the OOB act contract; wait actions remain cheap because
+            # the Android side handles them as already completed.
+            {"action": action, "await_stabilization": True},
         )
         if not isinstance(result, dict):
             raise RuntimeError("oob_control_act_result_invalid")

@@ -51,7 +51,7 @@ def test_oob_control_uses_one_request_and_canonical_action() -> None:
     request = json.loads(base64.b64decode(encoded).decode("utf-8"))
     assert request == {
         "action": {"tool": "click", "args": {"x": 500, "y": 250}},
-        "await_stabilization": False,
+        "await_stabilization": True,
     }
 
 
@@ -82,6 +82,42 @@ def test_oob_observe_uses_the_resident_observe_receiver() -> None:
     assert OBSERVE_ACTION in broadcast
     assert "DebugOmniFlowObserveReceiver" in broadcast[broadcast.index("-n") + 1]
     assert broadcast[broadcast.index("waitToStabilize") + 1] == "true"
+
+
+def test_oob_observe_preserves_full_graph_from_resident_receiver() -> None:
+    full_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>'
+        '<hierarchy rotation="0">'
+        '<node package="com.android.settings" bounds="[0,0][1280,800]">'
+        '<node text="Internet" package="com.android.settings" '
+        'clickable="true" bounds="[489,200][1264,300]" />'
+        '</node></hierarchy>'
+    )
+
+    def run(command, **_kwargs):
+        if "broadcast" in command:
+            return _completed()
+        if command[-2:] == ["cat", OBSERVE_RESULT_PATH]:
+            return _completed(
+                stdout=json.dumps(
+                    {
+                        "schema_version": "oob.observe.v1",
+                        "success": True,
+                        "state": {
+                            "package_name": "com.android.settings",
+                            "display": {"width": 1280, "height": 800},
+                            "xml": full_xml,
+                        },
+                    }
+                )
+            )
+        return _completed()
+
+    client = OobControlClient(SimpleNamespace(), adb_serial="emulator-45554", run=run)
+    result = client.observe(wait_to_stabilize=True)
+
+    assert result["xml"] == full_xml
+    assert result["state"]["xml"] == full_xml
 
 
 def test_oob_xml_produces_androidworld_state_shape(monkeypatch) -> None:
@@ -173,7 +209,68 @@ def test_oob_host_replaces_androidworld_observe_and_act(monkeypatch, tmp_path) -
     assert host.observe_backend == "oob_control"
     assert host.act_backend == "oob_control"
     assert observation.extra["observe_backend"] == "oob_control"
-    assert observation.extra["androidworld_state"]["xml"] == xml
+    assert observation.extra["androidworld_state"]["forest"] == xml
+
+
+def test_oob_host_keeps_nested_forest_instead_of_flattened_ui_elements(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    nested_xml = (
+        '<hierarchy><node package="com.android.settings" bounds="[0,0][1280,800]">'
+        '<node class="android.widget.LinearLayout" clickable="true" '
+        'bounds="[24,186][441,274]">'
+        '<node class="android.widget.TextView" text="Connected devices" '
+        'bounds="[96,206][265,234]" />'
+        "</node></node></hierarchy>"
+    )
+    flattened_xml = (
+        '<hierarchy><node package="com.android.settings" bounds="[0,0][1280,800]" />'
+        '<node class="android.widget.LinearLayout" clickable="true" '
+        'bounds="[24,186][441,274]" />'
+        '<node class="android.widget.TextView" text="Connected devices" '
+        'bounds="[96,206][265,234]" /></hierarchy>'
+    )
+    state = SimpleNamespace(
+        pixels=Image.new("RGB", (1280, 800), color="white"),
+        forest=nested_xml,
+        ui_elements=[SimpleNamespace(text="Connected devices")],
+        auxiliaries={
+            "package_name": "com.android.settings",
+            "activity_name": "com.android.settings/.Settings",
+        },
+    )
+
+    class FakeClient:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def observe(self, *, wait_to_stabilize=False):
+            assert wait_to_stabilize is True
+            return {
+                "package_name": "com.android.settings",
+                "activity_name": "com.android.settings/.Settings",
+                "display": {"width": 1280, "height": 800},
+                "xml": nested_xml,
+                "image_base64": "",
+            }
+
+    monkeypatch.setattr(host_module, "OobControlClient", FakeClient)
+    monkeypatch.setattr(host_module, "oob_state_from_payload", lambda *_args, **_kwargs: state)
+    monkeypatch.setattr(host_module, "_elements_xml", lambda _elements: flattened_xml)
+
+    class Env:
+        device_screen_size = (1280, 800)
+        logical_screen_size = (1280, 800)
+
+    observation = host_module.AndroidWorldHost(
+        Env(),
+        evidence_root=tmp_path,
+        control_backend="oob",
+    ).observe(xml=True, screenshot=False)
+
+    assert observation.xml == nested_xml
+    assert observation.extra["ui_graph_source"] == "oob_control_forest"
 
 
 def test_omniflow_open_app_records_ready_target_after_async_launch(

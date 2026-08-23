@@ -312,6 +312,108 @@ def test_transfer_accepts_omnitransfer_mapped_row_without_second_semantic_gate(
     assert result.reason == "mutual_graph_matcher_no_null_v3"
 
 
+def test_transfer_rejects_low_rank_candidate_even_with_high_pair_score(
+    monkeypatch,
+):
+    """A high page-pair score must not authorize a wrong target element."""
+
+    monkeypatch.setattr(
+        execution,
+        "transfer_action",
+        lambda **_kwargs: {
+            "mapped": True,
+            "mapping_mode": "omnitransfer_direct_text_alignment_v9",
+            "new_x": 640.0,
+            "new_y": 770.0,
+            "target_bbox": [0.0, 740.0, 1280.0, 800.0],
+            "score": 0.7419589161872864,
+            "margin": 0.4186387211084366,
+            "top_candidates": [
+                {
+                    "candidate_id": "android.navigation_bar",
+                    "score": 0.4694998264312744,
+                    "bbox": [0.0, 740.0, 1280.0, 800.0],
+                },
+                {
+                    "candidate_id": "camera.root",
+                    "score": 0.05086110532283783,
+                    "bbox": [0.0, 0.0, 1280.0, 740.0],
+                },
+            ],
+        },
+    )
+
+    result = execution.default_transfer(
+        Action(
+            "click",
+            {
+                "x": 131.25 / 720.0 * 1000.0,
+                "y": 37.5 / 1280.0 * 1000.0,
+            },
+        ),
+        Observation(
+            xml='<hierarchy width="1280" height="800"><node bounds="[0,0][1280,800]" /></hierarchy>',
+            package_name="com.android.camera2",
+            extra={"display": {"width": 1280, "height": 800}},
+        ),
+        Observation(
+            xml='<hierarchy width="720" height="1280"><node bounds="[0,0][720,1280]" /></hierarchy>',
+            package_name="com.android.camera2",
+            extra={"display": {"width": 720, "height": 1280}},
+        ),
+    )
+
+    assert result.action is None
+    assert result.reason == "omnitransfer_low_confidence"
+    assert result.detail["fallback"] == "online_vlm"
+
+
+def test_transfer_rejects_system_navigation_bar_candidate_even_when_high_scored(
+    monkeypatch,
+):
+    """System navigation chrome is never a transferable app target."""
+
+    monkeypatch.setattr(
+        execution,
+        "transfer_action",
+        lambda **_kwargs: {
+            "mapped": True,
+            "mapping_mode": "omnitransfer_direct_text_alignment_v9",
+            "new_x": 640.0,
+            "new_y": 770.0,
+            "target_bbox": [0.0, 740.0, 1280.0, 800.0],
+            "score": 0.99,
+            "margin": 0.9,
+            "top_candidates": [
+                {
+                    "resource_id": "android:id/navigationBarBackground",
+                    "class": "android.view.View",
+                    "bbox": [0.0, 740.0, 1280.0, 800.0],
+                    "score": 0.99,
+                },
+            ],
+        },
+    )
+
+    result = execution.default_transfer(
+        Action("click", {"x": 500.0, "y": 100.0}),
+        Observation(
+            xml='<hierarchy width="1280" height="800"><node bounds="[0,0][1280,800]" /></hierarchy>',
+            package_name="com.android.camera2",
+            extra={"display": {"width": 1280, "height": 800}},
+        ),
+        Observation(
+            xml='<hierarchy width="720" height="1280"><node bounds="[0,0][720,1280]" /></hierarchy>',
+            package_name="com.android.camera2",
+            extra={"display": {"width": 720, "height": 1280}},
+        ),
+    )
+
+    assert result.action is None
+    assert result.reason == "omnitransfer_system_chrome_candidate"
+    assert result.detail["fallback"] == "online_vlm"
+
+
 def test_transfer_keeps_semantically_consistent_row_match(monkeypatch) -> None:
     request = {}
 
@@ -348,6 +450,47 @@ def test_transfer_keeps_semantically_consistent_row_match(monkeypatch) -> None:
     assert result.action.args["x"] == 681.6123188405797
     assert abs(result.action.args["y"] - 337.77173913043475) < 1e-9
     assert "source_element" not in request
+
+
+def test_transfer_uses_function_source_element_anchor_without_replaying_it(
+    monkeypatch,
+) -> None:
+    request = {}
+
+    def transfer_action(**kwargs):
+        request.update(kwargs)
+        return {
+            "mapped": True,
+            "mapping_mode": "omnitransfer_direct_text_alignment_v9",
+            "new_x": 500.0,
+            "new_y": 240.0,
+            "target_bbox": [0.0, 128.0, 720.0, 1280.0],
+            "score": 1.0,
+            "margin": 1.0,
+            "candidates": [{"score": 0.999}],
+        }
+
+    monkeypatch.setattr(execution, "transfer_action", transfer_action)
+    anchor = "com.google.android.apps.nexuslauncher:id/search_results_list_view"
+    result = execution.default_transfer(
+        Action(
+            "click",
+            {"x": 745.8333333333334, "y": 187.5, "source_element_id": anchor},
+        ),
+        Observation(
+            xml='<hierarchy width="720" height="1280"><node bounds="[0,0][720,1280]" /></hierarchy>',
+            extra={"display": {"width": 720, "height": 1280}},
+        ),
+        Observation(
+            xml='<hierarchy width="720" height="1280"><node bounds="[0,0][720,1280]" /></hierarchy>',
+            extra={"display": {"width": 720, "height": 1280}},
+        ),
+    )
+
+    assert request["source_element_id"] == anchor
+    assert request["source_point"] == (537.0, 240.0)
+    assert result.action is not None
+    assert "source_element_id" not in result.action.args
 
 
 def test_transfer_treats_private_use_toolbar_glyph_as_structural_not_semantic(

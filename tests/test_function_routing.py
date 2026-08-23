@@ -103,6 +103,11 @@ class ResumableHost(RecordingHost):
         )
 
 
+class MissingSourceStateHost(ResumableHost):
+    def get_state(self, _source_state_id: str) -> None:
+        return None
+
+
 def test_androidworld_host_keeps_the_captured_transfer_state() -> None:
     official_state = androidworld_state(
         "ignored-derived-id",
@@ -779,6 +784,40 @@ def test_direct_function_transfer_failure_continues_with_gui_planner(tmp_path) -
     assert result.detail["function_resolution"]["replay_status"] == "failed"
 
 
+def test_missing_transfer_source_switches_once_to_fresh_vlm_silently(tmp_path) -> None:
+    store_path = tmp_path / "store.json"
+    function_id = _store_with_untransferable_click_function(store_path)
+    host = MissingSourceStateHost()
+    planner = SequencePlanner(
+        [
+            ToolCall("open_app", {"package_name": "com.android.settings"}),
+            ToolCall("finished", {"content": ""}),
+        ]
+    )
+    flow = OmniFlow(
+        store_path,
+        host=host,
+        planner=planner,
+        installed_apps={"Settings": "com.android.settings"},
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=10, max_fallback_steps=0)),
+    )
+
+    result = flow.call_tool(ToolCall(function_id, {}))
+
+    assert result.success is True
+    assert result.error is None
+    assert result.fallback_steps == 1
+    assert [action.tool for action in host.actions] == ["open_app"]
+    assert planner.visible_function_ids == [(), ()]
+    assert planner.previous_action_errors == [None, None]
+    assert result.detail["function_resolution"]["replay_error"] == (
+        "omnitransfer_source_state_missing"
+    )
+    assert result.detail["function_resolution"]["replay_fallback"]["status"] == (
+        "switched_silently"
+    )
+
+
 def test_function_failure_retries_failed_step_only_after_explicit_function_call(
     tmp_path,
 ) -> None:
@@ -1136,6 +1175,34 @@ def test_glm_planner_coerces_numeric_coordinate_strings() -> None:
     ]
 
 
+def test_glm_planner_coerces_stringified_coordinate_arrays() -> None:
+    tool_call, metadata = parse_model_turn_response(
+        {
+            "requested_model": "GLM-4.6V",
+            "resolved_model": "GLM-4.6V",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "click",
+                        "arguments": json.dumps(
+                            {"x": "[876, 869]", "y": ["876", "869"]}
+                        ),
+                    }
+                }
+            ],
+        },
+        requested_model="GLM-4.6V",
+        turn_index=1,
+        display={"width": 720, "height": 1280},
+    )
+
+    assert tool_call == ToolCall("click", {"x": 876, "y": 869})
+    assert metadata["model_argument_coercions"] == [
+        {"field": "x", "from": "[876, 869]", "to": [876, 869]},
+        {"field": "y", "from": ["876", "869"], "to": [876.0, 869.0]},
+    ]
+
+
 def test_model_turn_uses_only_generic_planning_context() -> None:
     request = build_model_turn_request(
         goal="Copy every record into another app",
@@ -1157,6 +1224,34 @@ def test_model_turn_uses_only_generic_planning_context() -> None:
     assert "Current screen: package=com.example.source" in turn_text
     assert "file" not in turn_text.casefold()
     assert "search" not in turn_text.casefold()
+
+
+def test_model_turn_coerces_explicit_xml_coordinate_fragment() -> None:
+    tool_call, metadata = parse_model_turn_response(
+        {
+            "requested_model": "GLM-4.6V",
+            "resolved_model": "GLM-4.6V",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "click",
+                        "arguments": json.dumps(
+                            {
+                                "x": "962</arg_key>\n<arg_key>y</arg_key>",
+                                "y": "392",
+                            }
+                        ),
+                    }
+                }
+            ],
+        },
+        requested_model="GLM-4.6V",
+        turn_index=1,
+        display={"width": 1280, "height": 800},
+    )
+
+    assert tool_call == ToolCall("click", {"x": 962.0, "y": 392.0})
+    assert metadata["model_argument_coercions"][0]["field"] == "x"
 
 
 def test_runtime_maps_normalized_coordinates_to_screen_pixels() -> None:
@@ -1296,6 +1391,30 @@ def test_vlm_planner_uses_only_compact_current_runtime_context() -> None:
     assert "1. [Planner] Clicked the item successfully." not in payload
     assert '"official_validator_status":"pending"' not in payload
     assert '"state_id":"state_after"' not in payload
+
+
+def test_vlm_prompt_stops_after_function_failure() -> None:
+    request = build_model_turn_request(
+        goal="Complete the task",
+        model="test-model",
+        state={
+            "display": {"width": 1280, "height": 800},
+            "extra": {
+                "function_execution": {
+                    "function_id": "turn_off_wifi_enable_bluetooth",
+                    "replay_status": "actions_failed",
+                    "recovery": {"step_index": 1},
+                }
+            },
+        },
+        turn_index=0,
+    )
+    payload = request["messages"][1]["content"][0]["text"]
+    assert payload.startswith("TRANSFER FAILURE TERMINAL:")
+    assert "STOP POLICY" in payload
+    assert "Return exactly one finished tool call with empty content now" in payload
+    assert "Do not call any GUI action or Function" in payload
+    assert "Function recovery required" not in payload
 
 
 def test_vlm_planner_omits_androidworld_internal_state_from_prompt() -> None:
@@ -1841,6 +1960,170 @@ def test_vlm_planner_rejects_invalid_function_once_without_retry() -> None:
         )
 
     assert len(requests) == 1
+
+
+def test_vlm_planner_retries_recoverable_coordinate_type_error() -> None:
+    requests: list[dict[str, object]] = []
+    responses = iter(
+        [
+            {
+                "requested_model": "test-model",
+                "resolved_model": "test-model",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "click",
+                            "arguments": json.dumps(
+                                {"x": ["bad", 100], "y": 100}
+                            ),
+                        }
+                    }
+                ],
+            },
+            {
+                "requested_model": "test-model",
+                "resolved_model": "test-model",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "click",
+                            "arguments": json.dumps({"x": 100, "y": 200}),
+                        }
+                    }
+                ],
+            },
+        ]
+    )
+
+    def transport(envelope: dict[str, object]) -> dict[str, object]:
+        request = envelope["request"]
+        assert isinstance(request, dict)
+        requests.append(request)
+        return next(responses)
+
+    planner = VLMPlanner(model="test-model", transport=transport)
+
+    planned = asyncio.run(
+        planner.one_step_tool_call(
+            "Tap the target",
+            Observation(extra={"display": {"width": 720, "height": 1280}}),
+        )
+    )
+
+    assert planned == ToolCall("click", {"x": 100, "y": 200})
+    assert len(requests) == 2
+    assert "canonical_action_arg_type_invalid:x" in requests[1]["messages"][-1]["content"]
+    assert planner.take_metadata()["rejected_tool_calls"][0]["error"] == (
+        "canonical_action_arg_type_invalid:x"
+    )
+
+
+def test_vlm_planner_retries_missing_coordinate_argument() -> None:
+    requests: list[dict[str, object]] = []
+    responses = iter(
+        [
+            {
+                "requested_model": "test-model",
+                "resolved_model": "test-model",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "click",
+                            "arguments": json.dumps({"x": 100}),
+                        }
+                    }
+                ],
+            },
+            {
+                "requested_model": "test-model",
+                "resolved_model": "test-model",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "click",
+                            "arguments": json.dumps({"x": 100, "y": 200}),
+                        }
+                    }
+                ],
+            },
+        ]
+    )
+
+    def transport(envelope: dict[str, object]) -> dict[str, object]:
+        request = envelope["request"]
+        assert isinstance(request, dict)
+        requests.append(request)
+        return next(responses)
+
+    planner = VLMPlanner(model="test-model", transport=transport)
+
+    planned = asyncio.run(
+        planner.one_step_tool_call(
+            "Tap the target",
+            Observation(extra={"display": {"width": 720, "height": 1280}}),
+        )
+    )
+
+    assert planned == ToolCall("click", {"x": 100, "y": 200})
+    assert len(requests) == 2
+    assert "canonical_action_required_args_missing:click:y" in requests[1]["messages"][-1]["content"]
+
+
+def test_vlm_planner_retries_unknown_agent_tool_with_vlm_tool_space() -> None:
+    requests: list[dict[str, object]] = []
+    responses = iter(
+        [
+            {
+                "requested_model": "test-model",
+                "resolved_model": "test-model",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "tools_search",
+                            "arguments": json.dumps({"query": "手机操作"}),
+                        }
+                    }
+                ],
+            },
+            {
+                "requested_model": "test-model",
+                "resolved_model": "test-model",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "finished",
+                            "arguments": json.dumps({"content": "完成"}),
+                        }
+                    }
+                ],
+            },
+        ]
+    )
+
+    def transport(envelope: dict[str, object]) -> dict[str, object]:
+        request = envelope["request"]
+        assert isinstance(request, dict)
+        requests.append(request)
+        return next(responses)
+
+    planner = VLMPlanner(model="test-model", transport=transport)
+    planned = asyncio.run(
+        planner.one_step_tool_call(
+            "打开设置",
+            Observation(extra={"display": {"width": 720, "height": 1280}}),
+        )
+    )
+
+    assert planned == ToolCall("finished", {"content": "完成"})
+    assert len(requests) == 2
+    second_tool_names = [
+        tool["function"]["name"]
+        for tool in requests[1]["tools"]
+    ]
+    assert "tools_search" not in second_tool_names
+    assert "finished" in second_tool_names
+    assert "Do not call tools_search" in requests[1]["messages"][-1]["content"]
+    assert planner.take_metadata()["rejected_tool_calls"][0]["tool"] == "tools_search"
 
 
 def test_function_completion_review_keeps_current_screenshot_and_result() -> None:
