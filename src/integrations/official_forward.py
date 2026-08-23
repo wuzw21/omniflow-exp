@@ -2523,6 +2523,24 @@ def _run_mobilegpt_client(
             break
         time.sleep(1.0)
     time.sleep(2.0)
+    target_package = str(os.environ.get("MOBILEGPT_TARGET_PACKAGE") or "").strip()
+    if target_package:
+        # AndroidWorld task setup can leave an app disabled/stopped after a
+        # prior reset.  MobileGPT launches the package through its official
+        # Accessibility client, so make that cold-start precondition explicit
+        # before sending the task broadcast.
+        _run_adb(
+            adb_path,
+            serial,
+            ["shell", "pm", "enable", target_package],
+            check=False,
+        )
+        _run_adb(
+            adb_path,
+            serial,
+            ["shell", "am", "force-stop", target_package],
+            check=False,
+        )
     _run_adb(adb_path, serial, ["logcat", "-c"])
     _run_adb(
         adb_path,
