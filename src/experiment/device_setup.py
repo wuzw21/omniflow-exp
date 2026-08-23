@@ -11,6 +11,7 @@ import argparse
 from dataclasses import dataclass
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -50,6 +51,17 @@ FORWARDER_SERVICE = (
     "com.google.androidenv.accessibilityforwarder.AccessibilityForwarder"
 )
 _REPORT_PATH: Path | None = None
+
+
+def _python_install_timeout_sec() -> float:
+    raw = os.environ.get("OMNIFLOW_SETUP_PYTHON_TIMEOUT_SEC", "7200").strip()
+    try:
+        timeout = float(raw)
+    except ValueError as error:
+        raise ValueError(f"invalid setup Python timeout: {raw!r}") from error
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(f"invalid setup Python timeout: {raw!r}")
+    return timeout
 
 
 @dataclass(frozen=True)
@@ -225,7 +237,7 @@ def _check_host(
             if requirement is not None and not requirement.exists():
                 record("python_requirement", False, f"missing {requirement}")
             command = [str(python_bin), "-m", "pip", "install", *arguments]
-            result = _run(command, timeout=1800)
+            result = _run(command, timeout=_python_install_timeout_sec())
             record("python_install", result.returncode == 0, result.stdout[-2000:])
 
     final_import_probe = import_probe()
