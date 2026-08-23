@@ -1415,6 +1415,9 @@ if [[ -n "$e2e_task" ]]; then
   if [[ "$source_qualification_only" -eq 1 ]]; then
     e2e_args+=(--source-qualification-only)
   fi
+  if [[ "$prepare_mobilegpt_memory_only" -eq 1 ]]; then
+    e2e_args+=(--mobilegpt-memory-only)
+  fi
   if [[ "$source_collection" -eq 1 ]]; then
     e2e_args+=(--source-only)
   fi

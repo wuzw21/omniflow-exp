@@ -3225,6 +3225,46 @@ def test_source_qualification_only_stops_before_baselines_and_targets(
     assert phases["source_qualification"]["qualified"] is True
 
 
+def test_mobilegpt_memory_only_stops_before_every_emulator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.task = "SystemBluetoothTurnOff"
+    args.e2e_method = "mobilegpt"
+    args.e2e_device = "all"
+    args.mobilegpt_memory_only = True
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.ensure_source_device",
+        lambda **_: (_ for _ in ()).throw(AssertionError("source emulator started")),
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.ensure_target_devices",
+        lambda **_: (_ for _ in ()).throw(AssertionError("target emulator started")),
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.prepare_mobilegpt_memory",
+        lambda **_: (
+            memory,
+            {
+                "status": "prepared",
+                "memory_root": str(memory),
+                "memory_validation": {"runlog_teacher_alignment": True},
+                "model_calls": 1,
+                "total_tokens": 10,
+            },
+        ),
+    )
+
+    report = run_pipeline(args)
+
+    assert report["status"] == "validated"
+    assert report["phases"]["source_device"]["reason"] == "memory_only"
+    assert report["phases"]["target_devices"]["reason"] == "memory_only"
+
+
 @pytest.mark.parametrize(
     ("model_calls", "fallback_steps", "expected"),
     [(0, 0, True), (1, 0, False), (0, 1, False)],

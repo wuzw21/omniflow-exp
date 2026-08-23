@@ -28,6 +28,7 @@ from src.integrations import mobilegpt_memory
 from src.integrations.mobilegpt import (
     MobileGPTConversionError,
     _OfficialMobileGPTRunLogSocket,
+    _official_prompt_kind,
     validate_memory_manifest,
 )
 
@@ -435,6 +436,20 @@ def test_public_script_has_strong_mobilegpt_memory_only_mode() -> None:
 
     assert "--prepare-mobilegpt-memory-only" in script
     assert "strong validation passed; no target emulator started" in script
+
+
+def test_official_prompt_kind_distinguishes_derive_from_select() -> None:
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "Given a list of actions available on the current mobile screen, "
+                "guide users how to perform specific subtask within their final goal."
+            ),
+        }
+    ]
+
+    assert _official_prompt_kind(messages) == "derive"
 
 
 def test_converted_memory_rejects_incomplete_trajectory(tmp_path: Path) -> None:

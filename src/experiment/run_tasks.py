@@ -3486,6 +3486,63 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "evaluation_seed": _e2e_evaluation_seed(args),
         },
     )
+    if getattr(args, "mobilegpt_memory_only", False):
+        if _e2e_methods(args) != ("mobilegpt",):
+            raise ValueError("mobilegpt_memory_only_requires_mobilegpt_method")
+        phases["source_device"] = {
+            "status": "skipped",
+            "model_calls": 0,
+            "total_tokens": 0,
+            "reason": "memory_only",
+        }
+        phases["target_devices"] = {
+            "status": "skipped",
+            "model_calls": 0,
+            "total_tokens": 0,
+            "reason": "memory_only",
+        }
+        try:
+            memory_root, memory_phase = prepare_mobilegpt_memory(
+                args=args,
+                attempt_root=attempt_root,
+                deadline=deadline,
+            )
+            phases["mobilegpt_memory"] = memory_phase
+            status = "validated"
+            error = ""
+        except Exception as caught:
+            phases["mobilegpt_memory"] = {
+                "status": "failed",
+                "model_calls": 0,
+                "total_tokens": 0,
+                "error": f"{type(caught).__name__}: {caught}",
+            }
+            memory_root = None
+            status = "failed"
+            error = str(caught)
+        summary = {
+            "schema_version": "omniflow.androidworld.mobilegpt-memory-only.v1",
+            "immutable": True,
+            "task": args.task,
+            "attempt_id": attempt_id,
+            "status": status,
+            "memory_root": str(memory_root or ""),
+            "error": error,
+            "outer_wall_sec": deadline.elapsed,
+            "model_calls": sum(
+                int(phase.get("model_calls") or 0)
+                for phase in phases.values()
+                if isinstance(phase, dict)
+            ),
+            "total_tokens": sum(
+                int(phase.get("total_tokens") or 0)
+                for phase in phases.values()
+                if isinstance(phase, dict)
+            ),
+            "phases": phases,
+        }
+        _write_json(attempt_root / "pipeline_summary.json", summary)
+        return summary
     # Reuse the complete formal result set before touching the source or any
     # emulator.  A task can have a valid registered conclusion even when its
     # historical source pointer is no longer available; that must not turn a
@@ -5384,6 +5441,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Create and validate the task Function before E2E execution.",
     )
     parser.add_argument("--source-qualification-only", action="store_true")
+    parser.add_argument("--mobilegpt-memory-only", action="store_true")
     parser.add_argument("--source-only", action="store_true")
     parser.add_argument("--manual-source", action="store_true")
     parser.add_argument("--manual-reuse-emulator", action="store_true")

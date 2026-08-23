@@ -1953,10 +1953,10 @@ def _official_prompt_kind(messages: Any) -> str:
     )
     if "list out high-level functions" in text:
         return "explore"
-    if "list of actions available on the current mobile screen" in text:
-        return "select"
     if "specific subtask within their final goal" in text:
         return "derive"
+    if "list of actions available on the current mobile screen" in text:
+        return "select"
     if "List of commands to summarize" in text:
         return "action_summarize"
     if "check if it matches any of the known APIs" in text:
