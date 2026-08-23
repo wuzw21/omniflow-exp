@@ -776,6 +776,7 @@ def prepare_mobilegpt_server(
     workspace: str | Path,
     embedding_model: str = "",
     chat_model: str = "",
+    write_through_memory: bool = False,
 ) -> dict[str, str]:
     """Stage the official Server so its documented relative ``./memory`` works."""
 
@@ -840,12 +841,19 @@ def prepare_mobilegpt_server(
     _configure_mobilegpt_optional_completion_rate(target)
     _configure_mobilegpt_selection_compat(target)
     staged_memory = target / "memory"
-    for entry in overlay.iterdir():
-        destination = staged_memory / entry.name
-        if entry.is_dir():
-            shutil.copytree(entry, destination, symlinks=True, dirs_exist_ok=True)
-        else:
-            shutil.copy2(entry, destination)
+    if write_through_memory:
+        if staged_memory.is_symlink() or staged_memory.is_file():
+            staged_memory.unlink()
+        elif staged_memory.is_dir():
+            shutil.rmtree(staged_memory)
+        staged_memory.symlink_to(memory, target_is_directory=True)
+    else:
+        for entry in overlay.iterdir():
+            destination = staged_memory / entry.name
+            if entry.is_dir():
+                shutil.copytree(entry, destination, symlinks=True, dirs_exist_ok=True)
+            else:
+                shutil.copy2(entry, destination)
     return {
         "workspace": str(work),
         "server_root": str(target),

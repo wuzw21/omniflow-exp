@@ -23,6 +23,10 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
     MOBILEGPT_PREP_TYPE,
+    MOBILEGPT_RUNLOG_LEARNING_MODE,
+    MOBILEGPT_RUNLOG_MEMORY_SCHEMA,
+    MOBILEGPT_RUNLOG_PREP_TYPE,
+    MOBILEGPT_RUNLOG_SOURCE_METHOD,
     MOBILEGPT_SOURCE_METHOD,
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
     MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS,
@@ -68,10 +72,16 @@ _ARCHIVED_MOBILEGPT_RESULT_CONTRACTS = {
         "learning_mode": "mobilegpt_runlog_semantic_conversion",
     },
     MOBILEGPT_MEMORY_SCHEMA: {
-        "mode": "official",
+        "mode": "native_cold",
         "source_method": MOBILEGPT_SOURCE_METHOD,
         "prep_type": MOBILEGPT_PREP_TYPE,
         "learning_mode": MOBILEGPT_LEARNING_MODE,
+    },
+    MOBILEGPT_RUNLOG_MEMORY_SCHEMA: {
+        "mode": "official",
+        "source_method": MOBILEGPT_RUNLOG_SOURCE_METHOD,
+        "prep_type": MOBILEGPT_RUNLOG_PREP_TYPE,
+        "learning_mode": MOBILEGPT_RUNLOG_LEARNING_MODE,
     },
     "omniflow.mobilegpt-runlog-native-derive-memory.v2": {
         "mode": "native_derive",
@@ -883,6 +893,7 @@ def _mobilegpt_result_protocol_error(
     legacy = mode == "legacy"
     semantic = mode == "semantic"
     official = mode == "official"
+    native_cold = mode == "native_cold"
     native_derive = mode == "native_derive"
     expected_source_method = str(contract["source_method"])
     expected_prep_type = str(contract["prep_type"])
@@ -894,12 +905,16 @@ def _mobilegpt_result_protocol_error(
     if not isinstance(provenance, dict):
         return f"{prefix}:provenance"
     required_provenance = {
-        "native_mobilegpt_learning": legacy or native_derive or official,
+        "native_mobilegpt_learning": legacy or native_derive or official or native_cold,
         "task_local_memory": True,
         "learning_mode": str(contract["learning_mode"]),
         "teacher_forcing": legacy,
-        "synthetic_subtasks": not (legacy or semantic or native_derive or official),
-        "actions_supplied_to_mobilegpt": not (native_derive or official),
+        "synthetic_subtasks": not (
+            legacy or semantic or native_derive or official or native_cold
+        ),
+        "actions_supplied_to_mobilegpt": not (
+            native_derive or official or native_cold
+        ),
         "function_store_used": False,
         "function_conversion_enabled": False,
         "target_inputs_read": False,
@@ -907,7 +922,16 @@ def _mobilegpt_result_protocol_error(
         "validator_state_read": False,
         "coordinate_replay": False,
     }
-    if legacy:
+    if native_cold:
+        required_provenance.update(
+            {
+                "original_mobilegpt_prompts": True,
+                "official_authoring_session": True,
+                "official_reader_validation": True,
+                "source_emulator_used": True,
+            }
+        )
+    elif legacy:
         required_provenance["complete_teacher_action_consumption"] = True
     elif semantic:
         required_provenance.update(
@@ -960,7 +984,7 @@ def _mobilegpt_result_protocol_error(
     for field, expected in required_provenance.items():
         if provenance.get(field) != expected:
             return f"{prefix}:provenance_{field}"
-    if legacy:
+    if native_cold or legacy:
         official_source_result = manifest.get("official_source_result")
         if (
             not isinstance(official_source_result, dict)

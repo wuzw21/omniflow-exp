@@ -741,7 +741,196 @@ def _mobilegpt_manifest_evidence_path(
         raise ValueError(f"mobilegpt_cold_memory_{label}_outside_bundle") from error
     if not path.is_file():
         raise ValueError(f"mobilegpt_cold_memory_{label}_missing:{path}")
+    expected_sha256 = str(record.get("sha256") or "").strip()
+    if not expected_sha256 or _file_sha256(path) != expected_sha256:
+        raise ValueError(f"mobilegpt_cold_memory_{label}_hash_mismatch")
     return path
+
+
+def _official_source_result_summary(
+    result_path: Path,
+    *,
+    task_name: str,
+) -> dict[str, Any]:
+    rows = [
+        row
+        for row in _iter_jsonl_rows(result_path)
+        if str(row.get("task_name") or row.get("task") or "") == str(task_name)
+    ]
+    if not rows:
+        raise ValueError("mobilegpt_source_result_task_missing")
+
+    def official_used(row: dict[str, Any]) -> bool:
+        if "official_validator_used" in row:
+            return bool(row.get("official_validator_used"))
+        if "uses_androidworld_official_validator" in row:
+            return bool(row.get("uses_androidworld_official_validator"))
+        validator = row.get("androidworld_validator_result")
+        return bool(
+            isinstance(validator, dict)
+            and (
+                validator.get("uses_androidworld_official_validator") is True
+                or validator.get("validator") == "androidworld_official"
+            )
+        )
+
+    official_rows = [row for row in rows if official_used(row)]
+    if not official_rows:
+        raise ValueError("mobilegpt_source_official_validator_required")
+
+    def successful(row: dict[str, Any]) -> bool:
+        validator = row.get("androidworld_validator_result")
+        if isinstance(validator, dict) and "success" in validator:
+            return bool(validator.get("success"))
+        if "official_validator_success" in row:
+            return bool(row.get("official_validator_success"))
+        return bool(row.get("success"))
+
+    return {
+        "row_count": len(rows),
+        "official_validator_used": True,
+        "official_validator_success": any(successful(row) for row in official_rows),
+    }
+
+
+def _validate_mobilegpt_native_cold_memory(
+    root: Path,
+    manifest: dict[str, Any],
+    manifest_path: Path,
+    *,
+    task_name: str,
+    source_seed: int,
+    source_run_log: str | Path,
+    compatible_source_sha256s: Sequence[str],
+    expected_model: str,
+    expected_source_method: str,
+) -> dict[str, Any]:
+    if str(manifest.get("task_name") or "") != str(task_name):
+        raise ValueError("mobilegpt_cold_memory_task_name_mismatch")
+    if int(manifest.get("source_seed") or -1) != int(source_seed):
+        raise ValueError("mobilegpt_cold_memory_source_seed_mismatch")
+    if int(source_seed) != SOURCE_SEED:
+        raise ValueError("mobilegpt_cold_memory_requires_source_seed_111")
+    source_method = str(manifest.get("source_method") or "").strip()
+    if source_method != MOBILEGPT_SOURCE_METHOD_BY_SCHEMA[MOBILEGPT_MEMORY_SCHEMA]:
+        raise ValueError("mobilegpt_cold_memory_source_method_invalid")
+    normalized_expected_source_method = str(expected_source_method or "").strip()
+    if normalized_expected_source_method and source_method != normalized_expected_source_method:
+        raise ValueError("mobilegpt_cold_memory_source_method_mismatch")
+
+    provenance = manifest.get("provenance")
+    required_provenance = {
+        "native_mobilegpt_learning": True,
+        "task_local_memory": True,
+        "learning_mode": MOBILEGPT_LEARNING_MODE_BY_SCHEMA[MOBILEGPT_MEMORY_SCHEMA],
+        "teacher_forcing": False,
+        "synthetic_subtasks": False,
+        "original_mobilegpt_prompts": True,
+        "actions_supplied_to_mobilegpt": False,
+        "official_authoring_session": True,
+        "official_reader_validation": True,
+        "function_store_used": False,
+        "function_conversion_enabled": False,
+        "target_inputs_read": False,
+        "target_observations_read": False,
+        "validator_state_read": False,
+        "coordinate_replay": False,
+        "source_emulator_used": True,
+    }
+    if not isinstance(provenance, dict):
+        raise ValueError("mobilegpt_cold_memory_provenance_missing")
+    for field, expected in required_provenance.items():
+        if provenance.get(field) != expected:
+            raise ValueError(f"mobilegpt_cold_memory_provenance_invalid:{field}")
+
+    memory_record = manifest.get("memory")
+    if not isinstance(memory_record, dict):
+        raise ValueError("mobilegpt_cold_memory_record_missing")
+    if (root.parent / str(memory_record.get("relative_path") or "")).resolve() != root:
+        raise ValueError("mobilegpt_cold_memory_path_mismatch")
+    actual_digest, actual_file_count = mobilegpt_memory_digest(root)
+    if actual_digest != str(memory_record.get("sha256") or ""):
+        raise ValueError("mobilegpt_cold_memory_hash_mismatch")
+    if actual_file_count != int(memory_record.get("file_count") or -1):
+        raise ValueError("mobilegpt_cold_memory_file_count_mismatch")
+    inventory = inspect_mobilegpt_memory(root)
+    if inventory.get("task_local_memory") is not True:
+        raise ValueError("mobilegpt_cold_memory_not_task_local")
+    if inventory.get("native_memory_complete") is not True:
+        raise ValueError("mobilegpt_cold_memory_native_graph_incomplete")
+    if not inventory.get("has_recallable_subtasks"):
+        raise ValueError("mobilegpt_cold_memory_missing_recallable_subtasks")
+    if not inventory.get("has_useful_actions"):
+        raise ValueError("mobilegpt_cold_memory_missing_useful_actions")
+
+    bundle_root = root.parent.resolve()
+    source_record = manifest.get("source_run_log")
+    source_path = _mobilegpt_manifest_evidence_path(
+        bundle_root, source_record, label="source_run_log"
+    )
+    accepted_source_sha256s = {_file_sha256(_repo_path(source_run_log))}
+    for value in compatible_source_sha256s:
+        digest = str(value or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("mobilegpt_compatible_source_sha256_invalid")
+        accepted_source_sha256s.add(digest)
+    if _file_sha256(source_path) not in accepted_source_sha256s:
+        raise ValueError("mobilegpt_cold_memory_source_run_log_mismatch")
+
+    stats_path = _mobilegpt_manifest_evidence_path(
+        bundle_root, manifest.get("source_stats"), label="source_stats"
+    )
+    stats_summary = summarize_mobilegpt_stats(stats_path)
+    if int(stats_summary.get("task_started_count") or 0) != 1:
+        raise ValueError("mobilegpt_cold_memory_task_start_invalid")
+    if int(stats_summary.get("task_finished_count") or 0) <= 0:
+        raise ValueError("mobilegpt_cold_memory_task_finish_missing")
+    if int(stats_summary.get("model_calls") or 0) <= 0:
+        raise ValueError("mobilegpt_cold_memory_model_calls_missing")
+    if int(stats_summary.get("teacher_event_count") or 0) > 0:
+        raise ValueError("mobilegpt_cold_memory_teacher_forcing_detected")
+    normalized_expected_model = str(expected_model or "").strip()
+    if normalized_expected_model:
+        if str(manifest.get("source_model") or "").strip() != normalized_expected_model:
+            raise ValueError("mobilegpt_cold_memory_manifest_model_mismatch")
+        actual_models = {
+            str(model or "").strip()
+            for model in stats_summary.get("chat_models") or []
+            if str(model or "").strip()
+        }
+        if actual_models != {normalized_expected_model}:
+            raise ValueError("mobilegpt_cold_memory_model_mismatch")
+
+    result_record = manifest.get("official_source_result")
+    result_path = _mobilegpt_manifest_evidence_path(
+        bundle_root, result_record, label="official_source_result"
+    )
+    result_summary = _official_source_result_summary(result_path, task_name=task_name)
+    if result_summary["official_validator_success"] is not True:
+        raise ValueError("mobilegpt_cold_memory_official_source_failed")
+    if not isinstance(result_record, dict) or any(
+        result_record.get(key) != result_summary[key]
+        for key in ("official_validator_used", "official_validator_success")
+    ):
+        raise ValueError("mobilegpt_cold_memory_result_manifest_mismatch")
+
+    return {
+        "manifest": manifest,
+        "manifest_path": str(manifest_path),
+        "manifest_sha256": _file_sha256(manifest_path),
+        "memory_root": str(root),
+        "memory_sha256": actual_digest,
+        "memory_file_count": actual_file_count,
+        "memory_inventory": inventory,
+        "source_stats_summary": stats_summary,
+        "source_memory_write_status": {
+            "memory_written": True,
+            "task_started_count": int(stats_summary["task_started_count"]),
+            "task_finished_count": int(stats_summary["task_finished_count"]),
+        },
+        "target_package": str(manifest.get("target_package") or ""),
+        "target_app": str(manifest.get("target_app") or ""),
+    }
 
 
 def _validate_mobilegpt_converted_memory(
@@ -984,7 +1173,7 @@ def validate_mobilegpt_adapted_memory(
         raise ValueError("mobilegpt_cold_memory_manifest_invalid")
     if manifest.get("schema_version") != MOBILEGPT_MEMORY_SCHEMA:
         raise ValueError("mobilegpt_cold_memory_manifest_schema_invalid")
-    validated = _validate_mobilegpt_converted_memory(
+    validated = _validate_mobilegpt_native_cold_memory(
         root,
         manifest,
         manifest_path,

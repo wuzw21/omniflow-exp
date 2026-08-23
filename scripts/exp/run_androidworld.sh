@@ -94,8 +94,8 @@ player = load_official_droidrun_macro_player()
 print(f"[droidrun] version={actual} player={player.__name__}")
 PY
 }
-mobilegpt_source_schema="omniflow.mobilegpt.memory.v2"
-mobilegpt_source_method="mobilegpt_runlog_direct_memory"
+mobilegpt_source_schema="omniflow.mobilegpt-native-cold-memory.v1"
+mobilegpt_source_method="mobilegpt_native_source_cold"
 mobilegpt_source_manifest_name="mobilegpt_memory_manifest.json"
 expected_source_seed=""
 task_seed=""
@@ -571,7 +571,7 @@ Options:
   --check-only              Validate the complete selected run without creating
                             assets, attempts, result directories, or emulators.
   --prepare-mobilegpt-memory-only
-                            Generate or validate strong MobileGPT source memory,
+                            Build or validate original MobileGPT cold memory,
                             then stop before starting any target emulator.
   --development-run         Run one unregistered `omniflow` episode through this
                             script for bounded method debugging.
@@ -1894,8 +1894,7 @@ if lineage is not None:
         raise SystemExit(f"canonical_source_run_log_lineage_invalid:{sys.argv[5]}")
     compatible_source_sha256s.append(str(lineage.get("source_sha256") or ""))
 candidate_validator = None
-if sys.argv[7] == "omniflow.mobilegpt.memory.v2":
-    from src.integrations.mobilegpt import validate_memory_manifest
+if sys.argv[7] == "omniflow.mobilegpt-native-cold-memory.v1":
     from src.integrations.mobilegpt_memory import validate_mobilegpt_adapted_memory
     from src.experiment.data_index import (
         canonical_prepared_memory_from_index,
@@ -1934,7 +1933,6 @@ if sys.argv[7] == "omniflow.mobilegpt.memory.v2":
                         expected_model=sys.argv[6],
                         expected_source_method=indexed_source_method,
                     )
-                    validate_memory_manifest(indexed_memory["memory_root"])
                 except (OSError, TypeError, ValueError):
                     pass
                 else:
@@ -1952,7 +1950,6 @@ if sys.argv[7] == "omniflow.mobilegpt.memory.v2":
                 expected_model=sys.argv[6],
                 expected_source_method=sys.argv[8],
             )
-            validate_memory_manifest(candidate / "memory")
         except (OSError, TypeError, ValueError):
             return False
         return True
@@ -2409,7 +2406,7 @@ if [[ "$requires_mobilegpt_source_memory" -eq 1 ]]; then
   if [[ -f "$mobilegpt_source_manifest" ]]; then
     :
   elif [[ -e "$mobilegpt_source_attempt_root" ]]; then
-    echo "Immutable MobileGPT conversion attempt is incomplete and cannot be sealed in place: $mobilegpt_source_attempt_root" >&2
+    echo "Immutable MobileGPT cold-build attempt is incomplete and cannot be sealed in place: $mobilegpt_source_attempt_root" >&2
     exit 1
   else
     mobilegpt_source_generation_required=1
@@ -2461,29 +2458,6 @@ if [[ "$requires_appagent_source_memory" -eq 1 ]]; then
 fi
 if [[ "$check_only" -eq 1 ]]; then
   echo "[static] ready task=$task method=$method; no persistent output created"
-  exit 0
-fi
-if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
-  "$python_bin" -m src.experiment.mobilegpt_source prepare \
-    --index "$source_index" \
-    --task "$task" \
-    --mobilegpt-root "$mobilegpt_root" \
-    --output-root "$mobilegpt_source_attempt_root" \
-    --model "$paper_model" \
-    --memory-index "$memory_index"
-fi
-if [[ "$prepare_mobilegpt_memory_only" -eq 1 ]]; then
-  if [[ "$requires_mobilegpt_source_memory" -ne 1 ]]; then
-    echo "--prepare-mobilegpt-memory-only requires --e2e-method mobilegpt." >&2
-    exit 2
-  fi
-  "$python_bin" -m src.experiment.mobilegpt_source validate \
-    --index "$source_index" \
-    --task "$task" \
-    --memory-root "$mobilegpt_source_memory_root" \
-    --model "$paper_model" \
-    --memory-index "$memory_index"
-  echo "[mobilegpt-memory] strong validation passed; no target emulator started"
   exit 0
 fi
 select_model_endpoint "$formal_model_endpoint_profile"
@@ -2768,6 +2742,37 @@ PY
 )"
 
 mkdir -p "$preflight_output_root"
+if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
+  ensure_emulator "$source_serial"
+  "$python_bin" -m src.experiment.mobilegpt_source prepare \
+    --index "$source_index" \
+    --task "$task" \
+    --mobilegpt-root "$mobilegpt_root" \
+    --android-world-root "$android_world_root" \
+    --output-root "$mobilegpt_source_attempt_root" \
+    --model "$paper_model" \
+    --embedding-model "$MOBILEGPT_EMBEDDING_MODEL" \
+    --memory-index "$memory_index" \
+    --serial "$source_serial" \
+    --console-port "$source_console_port" \
+    --adb-path "$adb_bin" \
+    --max-steps "$max_steps" \
+    --timeout-sec "$timeout_sec"
+fi
+if [[ "$prepare_mobilegpt_memory_only" -eq 1 ]]; then
+  if [[ "$requires_mobilegpt_source_memory" -ne 1 ]]; then
+    echo "--prepare-mobilegpt-memory-only requires --e2e-method mobilegpt." >&2
+    exit 2
+  fi
+  "$python_bin" -m src.experiment.mobilegpt_source validate \
+    --index "$source_index" \
+    --task "$task" \
+    --memory-root "$mobilegpt_source_memory_root" \
+    --model "$paper_model" \
+    --memory-index "$memory_index"
+  echo "[mobilegpt-memory] original cold build validated; no target emulator started"
+  exit 0
+fi
 if [[ "$appagent_source_generation_required" -eq 1 ]]; then
   "$python_bin" -m src.experiment.appagent_source prepare \
     --index "$source_index" \

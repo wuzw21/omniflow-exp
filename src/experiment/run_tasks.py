@@ -85,8 +85,8 @@ from src.experiment.mobilegpt_contract import (
 from src.experiment.source_records import CanonicalRunLog
 from src.integrations.mobilegpt import (
     convert_runlog_to_mobilegpt_memory,
-    validate_memory_manifest,
 )
+from src.integrations import mobilegpt_memory as mobilegpt_memory_runtime
 from src.integrations.runlog import project_androidworld_step_actions
 from src.integrations.skilldroid_replay import compile_droidrun_macro
 from src.integrations.official_forward import validate_autodroid_memory_root
@@ -1628,19 +1628,35 @@ def _validate_prepared_mobilegpt_memory(
         and str(manifest.get("task_name") or "") == str(task_name)
         and isinstance(provenance, dict)
         and provenance.get("native_mobilegpt_learning") is True
+        and provenance.get("learning_mode") == "mobilegpt_native_cold"
+        and provenance.get("teacher_forcing") is False
+        and provenance.get("source_emulator_used") is True
         and provenance.get("official_authoring_session") is True
-        and provenance.get("official_prompt_extension") is True
-        and provenance.get("runlog_teacher_alignment") is True
     ):
         raise ValueError(
             f"mobilegpt_source_memory_not_authoritative:{manifest_path}"
         )
-    validation = validate_memory_manifest(root)
-    if str(validation.get("task_name") or "") != str(task_name):
-        raise ValueError(
-            f"mobilegpt_source_memory_task_mismatch:{manifest_path}"
-        )
-    return validation
+    memory_record = manifest.get("memory")
+    if not isinstance(memory_record, dict):
+        raise ValueError(f"mobilegpt_source_memory_record_missing:{manifest_path}")
+    digest, file_count = mobilegpt_memory_runtime.mobilegpt_memory_digest(root)
+    inventory = mobilegpt_memory_runtime.inspect_mobilegpt_memory(root)
+    if (
+        digest != str(memory_record.get("sha256") or "")
+        or file_count != int(memory_record.get("file_count") or -1)
+        or inventory.get("native_memory_complete") is not True
+        or not inventory.get("has_useful_actions")
+    ):
+        raise ValueError(f"mobilegpt_source_memory_content_invalid:{manifest_path}")
+    from src.integrations.mobilegpt import validate_mobilegpt_memory
+
+    validate_mobilegpt_memory(root)
+    return {
+        "task_name": str(task_name),
+        "memory_sha256": digest,
+        "memory_file_count": file_count,
+        "memory_inventory": inventory,
+    }
 
 
 def prepare_mobilegpt_memory(
@@ -1725,6 +1741,8 @@ def prepare_mobilegpt_memory(
             args.task,
             "--mobilegpt-root",
             str(args.mobilegpt_root),
+            "--android-world-root",
+            str(args.android_world_root),
             "--output-root",
             str(output_root),
             "--model",
@@ -1736,6 +1754,16 @@ def prepare_mobilegpt_memory(
             ),
             "--memory-index",
             str(args.memory_index),
+            "--serial",
+            str(args.source_device[1]),
+            "--console-port",
+            str(args.source_device[2]),
+            "--adb-path",
+            str(args.adb_path),
+            "--max-steps",
+            str(args.max_steps),
+            "--timeout-sec",
+            str(min(deadline.remaining(TASK_DEADLINE_SEC), 900.0)),
         ],
         cwd=args.repo,
         environment=dict(os.environ),
@@ -3489,19 +3517,18 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     if getattr(args, "mobilegpt_memory_only", False):
         if _e2e_methods(args) != ("mobilegpt",):
             raise ValueError("mobilegpt_memory_only_requires_mobilegpt_method")
-        phases["source_device"] = {
-            "status": "skipped",
-            "model_calls": 0,
-            "total_tokens": 0,
-            "reason": "memory_only",
-        }
         phases["target_devices"] = {
             "status": "skipped",
             "model_calls": 0,
             "total_tokens": 0,
-            "reason": "memory_only",
+            "reason": "source_cold_build_only",
         }
         try:
+            phases["source_device"] = ensure_source_device(
+                args=args,
+                attempt_root=attempt_root,
+                deadline=deadline,
+            )
             memory_root, memory_phase = prepare_mobilegpt_memory(
                 args=args,
                 attempt_root=attempt_root,
@@ -3511,6 +3538,15 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             status = "validated"
             error = ""
         except Exception as caught:
+            phases.setdefault(
+                "source_device",
+                {
+                    "status": "failed",
+                    "model_calls": 0,
+                    "total_tokens": 0,
+                    "error": f"{type(caught).__name__}: {caught}",
+                },
+            )
             phases["mobilegpt_memory"] = {
                 "status": "failed",
                 "model_calls": 0,

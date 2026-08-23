@@ -23,9 +23,9 @@ import xml.dom.minidom
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
     MOBILEGPT_EMBEDDING_MODEL,
-    MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
-    MOBILEGPT_MEMORY_SCHEMA,
+    MOBILEGPT_RUNLOG_LEARNING_MODE as MOBILEGPT_LEARNING_MODE,
+    MOBILEGPT_RUNLOG_MEMORY_SCHEMA as MOBILEGPT_MEMORY_SCHEMA,
 )
 from src.experiment.protocol import SOURCE_SEED
 from src.integrations.android_world.host import (

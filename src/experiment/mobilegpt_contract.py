@@ -2,25 +2,36 @@
 
 MOBILEGPT_MEMORY_MANIFEST = "mobilegpt_memory_manifest.json"
 
-MOBILEGPT_MEMORY_SCHEMA = "omniflow.mobilegpt.memory.v2"
-MOBILEGPT_SOURCE_METHOD = "mobilegpt_official_learning_memory"
-MOBILEGPT_PREP_TYPE = "mobilegpt_official_learning_memory"
-MOBILEGPT_LEARNING_MODE = "mobilegpt_official_learning"
-MOBILEGPT_AUDIT_SCHEMA = "omniflow.mobilegpt.audit.v2"
+MOBILEGPT_MEMORY_SCHEMA = "omniflow.mobilegpt-native-cold-memory.v1"
+MOBILEGPT_SOURCE_METHOD = "mobilegpt_native_source_cold"
+MOBILEGPT_PREP_TYPE = "mobilegpt_native_source_cold_memory"
+MOBILEGPT_LEARNING_MODE = "mobilegpt_native_cold"
 MOBILEGPT_EMBEDDING_MODEL = "GLM-Embedding-2"
+
+# Read-only compatibility for memory produced by the retired RunLog-guided
+# authoring adapter.  It is not an active source-memory contract and cannot be
+# selected by the runtime.
+MOBILEGPT_RUNLOG_MEMORY_SCHEMA = "omniflow.mobilegpt.memory.v2"
+MOBILEGPT_RUNLOG_SOURCE_METHOD = "mobilegpt_official_learning_memory"
+MOBILEGPT_RUNLOG_PREP_TYPE = "mobilegpt_official_learning_memory"
+MOBILEGPT_RUNLOG_LEARNING_MODE = "mobilegpt_official_learning"
+MOBILEGPT_AUDIT_SCHEMA = "omniflow.mobilegpt.audit.v2"
 
 MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS = frozenset({MOBILEGPT_MEMORY_SCHEMA})
 MOBILEGPT_SOURCE_METHOD_BY_SCHEMA = {
     MOBILEGPT_MEMORY_SCHEMA: MOBILEGPT_SOURCE_METHOD,
+    MOBILEGPT_RUNLOG_MEMORY_SCHEMA: MOBILEGPT_RUNLOG_SOURCE_METHOD,
 }
 MOBILEGPT_PREP_TYPE_BY_SCHEMA = {
     MOBILEGPT_MEMORY_SCHEMA: MOBILEGPT_PREP_TYPE,
+    MOBILEGPT_RUNLOG_MEMORY_SCHEMA: MOBILEGPT_RUNLOG_PREP_TYPE,
 }
 MOBILEGPT_LEARNING_MODE_BY_SCHEMA = {
     MOBILEGPT_MEMORY_SCHEMA: MOBILEGPT_LEARNING_MODE,
+    MOBILEGPT_RUNLOG_MEMORY_SCHEMA: MOBILEGPT_RUNLOG_LEARNING_MODE,
 }
 MOBILEGPT_AUDIT_SCHEMA_BY_SCHEMA = {
-    MOBILEGPT_MEMORY_SCHEMA: MOBILEGPT_AUDIT_SCHEMA,
+    MOBILEGPT_RUNLOG_MEMORY_SCHEMA: MOBILEGPT_AUDIT_SCHEMA,
 }
 MOBILEGPT_SUPPORTED_SOURCE_METHODS = frozenset({MOBILEGPT_SOURCE_METHOD})
 MOBILEGPT_SUPPORTED_PREP_TYPES = frozenset({MOBILEGPT_PREP_TYPE})

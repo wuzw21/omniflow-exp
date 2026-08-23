@@ -71,6 +71,24 @@ bash scripts/exp/run_androidworld.sh --setup-device small5554
 --e2e-device pixel5576:emulator-5576:5576,fold5564:emulator-5564:5564
 ```
 
+MobileGPT 的可复用 memory 只允许由官方 cold-start 流程生成：统一入口先在
+`source5560` 上启动空 memory 的官方 Server/Client，让 MobileGPT 按原始
+Explore/Select/Derive 流程完成 seed 111 的 AndroidWorld source episode；只有
+AndroidWorld 官方 validator 成功且官方 memory reader 可回读时才封存并注册。
+source RunLog 只作为任务与 provenance 边界，不向 MobileGPT 提供动作，不经过
+RunLog-to-memory converter，也不注入 teacher prompt。只 Build/校验 memory 而不启动
+target 时使用：
+
+```bash
+bash scripts/exp/run_androidworld.sh \
+  --e2e-task TASK \
+  --e2e-method mobilegpt \
+  --e2e-device all \
+  --e2e-source-seed 111 \
+  --e2e-evaluation-seed 113 \
+  --prepare-mobilegpt-memory-only
+```
+
 当前 AndroidWorld target 设备：
 
 | label | serial | profile |

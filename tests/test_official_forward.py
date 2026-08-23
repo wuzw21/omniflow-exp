@@ -696,6 +696,29 @@ def test_mobilegpt_forwarder_configures_staged_glm_models_and_overlays_memory(
     assert (staged / "memory" / "com.example.app" / "pages.csv").is_file()
 
 
+def test_mobilegpt_source_cold_build_writes_through_staged_memory(
+    tmp_path: Path,
+) -> None:
+    official = tmp_path / "MobileGPT"
+    server = official / "Server"
+    (server / "memory").mkdir(parents=True)
+    (server / "main.py").write_text("print('official server')\n", encoding="utf-8")
+    memory = tmp_path / "cold-memory"
+    memory.mkdir()
+
+    result = prepare_mobilegpt_server(
+        official_root=official,
+        memory_root=memory,
+        workspace=tmp_path / "workspace",
+        write_through_memory=True,
+    )
+
+    staged_memory = Path(result["server_root"]) / "memory"
+    assert staged_memory.is_symlink()
+    (staged_memory / "tasks.csv").write_text("name\n", encoding="utf-8")
+    assert (memory / "tasks.csv").read_text(encoding="utf-8") == "name\n"
+
+
 def test_mobilegpt_forwarder_keeps_official_server_source_unchanged(
     tmp_path: Path,
 ) -> None:
