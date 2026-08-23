@@ -407,6 +407,7 @@ fold_state="$formal_fold_state"
 fold_size="$formal_fold_size"
 dry_run=0
 check_only=0
+prepare_mobilegpt_memory_only=0
 development_run=0
 source_qualification_only=0
 source_collection=0
@@ -569,6 +570,9 @@ Options:
                             only the official environment, never the method.
   --check-only              Validate the complete selected run without creating
                             assets, attempts, result directories, or emulators.
+  --prepare-mobilegpt-memory-only
+                            Generate or validate strong MobileGPT source memory,
+                            then stop before starting any target emulator.
   --development-run         Run one unregistered `omniflow` episode through this
                             script for bounded method debugging.
   --dry-run                 Build one task command without executing it.
@@ -673,6 +677,9 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --check-only)
       check_only=1
+      ;;
+    --prepare-mobilegpt-memory-only)
+      prepare_mobilegpt_memory_only=1
       ;;
     --environment)
       shift
@@ -2461,6 +2468,20 @@ if [[ "$mobilegpt_source_generation_required" -eq 1 ]]; then
     --output-root "$mobilegpt_source_attempt_root" \
     --model "$paper_model" \
     --memory-index "$memory_index"
+fi
+if [[ "$prepare_mobilegpt_memory_only" -eq 1 ]]; then
+  if [[ "$requires_mobilegpt_source_memory" -ne 1 ]]; then
+    echo "--prepare-mobilegpt-memory-only requires --e2e-method mobilegpt." >&2
+    exit 2
+  fi
+  "$python_bin" -m src.experiment.mobilegpt_source validate \
+    --index "$source_index" \
+    --task "$task" \
+    --memory-root "$mobilegpt_source_memory_root" \
+    --model "$paper_model" \
+    --memory-index "$memory_index"
+  echo "[mobilegpt-memory] strong validation passed; no target emulator started"
+  exit 0
 fi
 select_model_endpoint "$formal_model_endpoint_profile"
 validate_experiment_model "$paper_model" "$formal_model_endpoint_profile"

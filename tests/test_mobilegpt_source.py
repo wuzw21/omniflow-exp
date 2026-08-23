@@ -425,6 +425,18 @@ def test_source_validation_rejects_legacy_memory_before_registration(
         )
 
 
+def test_public_script_has_strong_mobilegpt_memory_only_mode() -> None:
+    script = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "exp"
+        / "run_androidworld.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "--prepare-mobilegpt-memory-only" in script
+    assert "strong validation passed; no target emulator started" in script
+
+
 def test_converted_memory_rejects_incomplete_trajectory(tmp_path: Path) -> None:
     bundle = tmp_path / "bundle"
     memory = bundle / "memory"
