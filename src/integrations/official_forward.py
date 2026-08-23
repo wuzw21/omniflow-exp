@@ -2326,6 +2326,35 @@ def _run_mobilegpt_client(
             ["shell", "am", "force-stop", target_package],
             check=False,
         )
+        # The official Accessibility client receives the package broadcast,
+        # but it does not reliably cold-launch every AndroidWorld package
+        # after a task reset.  Starting the package here is setup, not an
+        # action decision: MobileGPT still owns all subsequent observation,
+        # planning, and physical actions.  Without this precondition the
+        # service only sees Launcher and waits forever for an app root.
+        launch_result = _run_adb(
+            adb_path,
+            serial,
+            [
+                "shell",
+                "am",
+                "start",
+                "-W",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LAUNCHER",
+                "-p",
+                target_package,
+            ],
+            check=False,
+            timeout_sec=45.0,
+        )
+        if launch_result.returncode != 0:
+            raise RuntimeError(
+                "mobilegpt_target_app_start_failed:"
+                f"{target_package}:{launch_result.stdout.strip()}"
+            )
     _run_adb(adb_path, serial, ["logcat", "-c"])
     _run_adb(
         adb_path,
