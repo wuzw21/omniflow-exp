@@ -1885,6 +1885,7 @@ if lineage is not None:
     compatible_source_sha256s.append(str(lineage.get("source_sha256") or ""))
 candidate_validator = None
 if sys.argv[7] == "omniflow.mobilegpt.memory.v2":
+    from src.integrations.mobilegpt import validate_memory_manifest
     from src.integrations.mobilegpt_memory import validate_mobilegpt_adapted_memory
     from src.experiment.data_index import (
         canonical_prepared_memory_from_index,
@@ -1923,6 +1924,7 @@ if sys.argv[7] == "omniflow.mobilegpt.memory.v2":
                         expected_model=sys.argv[6],
                         expected_source_method=indexed_source_method,
                     )
+                    validate_memory_manifest(indexed_memory["memory_root"])
                 except (OSError, TypeError, ValueError):
                     pass
                 else:
@@ -1940,6 +1942,7 @@ if sys.argv[7] == "omniflow.mobilegpt.memory.v2":
                 expected_model=sys.argv[6],
                 expected_source_method=sys.argv[8],
             )
+            validate_memory_manifest(candidate / "memory")
         except (OSError, TypeError, ValueError):
             return False
         return True

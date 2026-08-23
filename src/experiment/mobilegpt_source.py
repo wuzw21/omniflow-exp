@@ -26,6 +26,7 @@ from src.integrations.mobilegpt import (
     MobileGPTConversionError,
     convert_runlog_to_mobilegpt_memory,
     preflight_runlog_conversion,
+    validate_memory_manifest,
     validate_prepared_memory,
     write_conversion_failure_audit,
 )
@@ -303,6 +304,9 @@ def validate_mobilegpt_source_memory(
         expected_model=str(model),
         expected_source_method=MOBILEGPT_SOURCE_METHOD,
     )
+    strong_validation = validate_memory_manifest(memory_root)
+    if str(strong_validation.get("task_name") or "") != item.task:
+        raise ValueError("mobilegpt_source_memory_task_mismatch")
     result = {
         "schema_version": "omniflow.mobilegpt.memory-check.v2",
         "task_name": item.task,
@@ -311,6 +315,7 @@ def validate_mobilegpt_source_memory(
         "source_run_log": str(source_run_log),
         "model": str(model),
         "validated": validated,
+        "strong_validation": strong_validation,
     }
     if memory_index is not None:
         result["memory_registration"] = _register_mobilegpt_memory(

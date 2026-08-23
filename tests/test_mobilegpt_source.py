@@ -389,6 +389,40 @@ def test_converted_memory_seals_and_registers(tmp_path: Path) -> None:
     assert resolved is not None
     assert registered["memory_sha256"] == resolved["memory_sha256"]
     assert source_validation["source_method"] == MOBILEGPT_SOURCE_METHOD
+    assert source_validation["strong_validation"]["runlog_teacher_alignment"] is True
+
+
+def test_source_validation_rejects_legacy_memory_before_registration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    index, _ = _write_source_index(tmp_path / "source")
+    memory = tmp_path / "bundle" / "memory"
+    memory.mkdir(parents=True)
+    (memory.parent / MOBILEGPT_MEMORY_MANIFEST).write_text(
+        json.dumps({"schema_version": MOBILEGPT_MEMORY_SCHEMA}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        mobilegpt_source,
+        "validate_prepared_memory",
+        lambda *_args, **_kwargs: {"native_memory_complete": True},
+    )
+    monkeypatch.setattr(
+        mobilegpt_source,
+        "validate_memory_manifest",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("mobilegpt_memory_provenance_incomplete")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="mobilegpt_memory_provenance_incomplete"):
+        mobilegpt_source.validate_mobilegpt_source_memory(
+            index_path=index,
+            task_name="SystemBluetoothTurnOn",
+            memory_root=memory,
+            model="GLM-4.6V",
+        )
 
 
 def test_converted_memory_rejects_incomplete_trajectory(tmp_path: Path) -> None:
