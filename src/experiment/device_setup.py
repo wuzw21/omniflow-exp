@@ -90,6 +90,7 @@ def _python_requirement_installs(
     appagent_requirements = appagent_root / "requirements.txt"
     if appagent_requirements.is_file():
         installs.append(("requirements", ["-r", str(appagent_requirements)]))
+    installs.append(("package", ["colorama"]))
     installs.append(("package", ["dashscope"]))
     return installs
 

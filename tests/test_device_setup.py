@@ -64,3 +64,9 @@ def test_python_requirement_installs_skip_absent_optional_appagent_file(
     assert str(android_world / "requirements.txt") in requirement_paths
     assert str(mobilegpt / "Server" / "requirements.txt") in requirement_paths
     assert str(appagent / "requirements.txt") not in requirement_paths
+    packages = {
+        arguments[-1]
+        for kind, arguments in installs
+        if kind == "package"
+    }
+    assert packages == {"colorama", "dashscope"}
