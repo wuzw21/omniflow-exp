@@ -187,7 +187,9 @@ def _androidworld_task_startup(
 ) -> Iterator[tuple[Any, Any]]:
     """Prepare one official task through the canonical AndroidWorld seam."""
 
+    from android_world.env import adb_utils
     from src.integrations.android_world.run_episode import (
+        _patch_androidworld_current_activity,
         start_androidworld_task_session,
     )
 
@@ -205,15 +207,19 @@ def _androidworld_task_startup(
         perform_emulator_setup=bool(perform_emulator_setup),
         use_uiautomator=bool(use_uiautomator),
     )
+    original_current_activity = _patch_androidworld_current_activity(adb_utils)
     try:
         yield startup.env, task
     finally:
         try:
             task.tear_down(startup.env)
         finally:
-            close = getattr(startup.env, "close", None)
-            if callable(close):
-                close()
+            try:
+                adb_utils.get_current_activity = original_current_activity
+            finally:
+                close = getattr(startup.env, "close", None)
+                if callable(close):
+                    close()
 
 
 def validate_autodroid_memory_root(memory_root: str | Path) -> dict[str, Any]:

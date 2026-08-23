@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 import pytest
 
 import src.integrations.official_forward as official_forward
@@ -543,6 +543,72 @@ def test_adb_proxy_forwards_implicit_official_calls_to_selected_device(
         "emulator-5590",
         "wait-for-device",
     ]
+
+
+def test_androidworld_task_startup_reuses_current_activity_normalizer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.integrations.android_world import run_episode
+
+    events: list[str] = []
+    adb_utils = SimpleNamespace()
+    android_world_module = ModuleType("android_world")
+    env_module = ModuleType("android_world.env")
+    env_module.adb_utils = adb_utils
+    android_world_module.env = env_module
+    monkeypatch.setitem(sys.modules, "android_world", android_world_module)
+    monkeypatch.setitem(sys.modules, "android_world.env", env_module)
+
+    def original_current_activity(*_args, **_kwargs):
+        return "package-only", object()
+
+    def normalized_current_activity(*_args, **_kwargs):
+        return "com.example/com.example.Main", object()
+
+    adb_utils.get_current_activity = original_current_activity
+
+    def patch_current_activity(module):
+        assert module is adb_utils
+        events.append("patched")
+        module.get_current_activity = normalized_current_activity
+        return original_current_activity
+
+    monkeypatch.setattr(
+        run_episode,
+        "_patch_androidworld_current_activity",
+        patch_current_activity,
+    )
+
+    class Task:
+        def tear_down(self, _env):
+            events.append("tear_down")
+
+    class Env:
+        def close(self):
+            events.append("close")
+
+    env = Env()
+    task = Task()
+    monkeypatch.setattr(
+        run_episode,
+        "start_androidworld_task_session",
+        lambda **_kwargs: (SimpleNamespace(env=env), task),
+    )
+
+    with official_forward._androidworld_task_startup(
+        android_world_root="android-world",
+        task_name="OpenAppTaskEval",
+        task_params_json='{"app_name":"clock"}',
+        task_seed=111,
+        console_port=5560,
+        grpc_port=8560,
+        adb_path="adb",
+        perform_emulator_setup=False,
+    ):
+        assert adb_utils.get_current_activity is normalized_current_activity
+
+    assert adb_utils.get_current_activity is original_current_activity
+    assert events == ["patched", "tear_down", "close"]
 
 
 def test_appagent_forwarder_writes_validator_evidence(
